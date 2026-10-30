@@ -141,6 +141,60 @@ test("ConcurrencyLimitControl renders stored override warning and reset button",
   assert.match(markup, /Reset to config/);
 });
 
+test("ConcurrencyLimitControl says the config file was not read rather than naming its contents", () => {
+  // The Runtime publishes the config file's limit only when it read the file.
+  // An absent limit is a file that was there and could not be read -- so the
+  // cap the operator configured is not the cap in force, and the page must
+  // not claim the file's contents.
+  const unreadConfigFile: ControlApiConcurrencyStatus = {
+    scope: "router-admitted-child-requests",
+    configSource: "config_file",
+    configFileExists: true,
+    effectivePerSessionLimit: null,
+    activeSubagentThreads: 0,
+    activeSessions: 0,
+    denials: 0,
+    revision: 1
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(ConcurrencyLimitControl, {
+      concurrency: unreadConfigFile,
+      returnTo: "/agents"
+    })
+  );
+
+  assert.match(markup, /Config file not read/);
+  assert.doesNotMatch(markup, /From config file/);
+  assert.doesNotMatch(markup, /Unlimited<\/span>/);
+  // The limit in force is still the router's default, and that is a fact.
+  assert.match(markup, />∞<\/span>/);
+});
+
+test("ConcurrencyLimitControl says the config file was not read beside a stored override", () => {
+  // The stored override is in force, and the file's own limit is unknown.
+  // "Unlimited" there would be a claim about a file nobody read.
+  const markup = renderToStaticMarkup(
+    React.createElement(ConcurrencyLimitControl, {
+      concurrency: {
+        scope: "router-admitted-child-requests",
+        configSource: "stored_override",
+        configFileExists: true,
+        effectivePerSessionLimit: 4,
+        activeSubagentThreads: 0,
+        activeSessions: 0,
+        denials: 0,
+        revision: 7
+      },
+      returnTo: "/agents"
+    })
+  );
+
+  assert.match(markup, /Stored override active/);
+  assert.match(markup, /\(config file: not read\)/);
+  assert.doesNotMatch(markup, /config file: Unlimited/);
+});
+
 test("patchConcurrencyLimit fetcher PATCHes /control/runtime/concurrency", async () => {
   let captured: { url: string; init: RequestInit } | undefined;
   const result = await patchConcurrencyLimit(

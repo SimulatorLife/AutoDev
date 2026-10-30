@@ -14,7 +14,21 @@ export const SUBAGENT_SLOT_KIND = "subagent_slot";
 
 export interface ConcurrencyConfig {
   file: string;
-  maxConcurrentThreadsPerSession: number | null;
+  /**
+   * The limit the config file declares.
+   *
+   * Three states, and the third is the one that used to be missing. `null` is
+   * a file that was read and declares no limit -- the default deployment. A
+   * number is a file that was read and declares that limit. `undefined` is a
+   * file that was there and could not be read: nobody knows what it declares.
+   *
+   * `null` and `undefined` are different claims, and the deployment acts on
+   * the difference. A file that cannot be read leaves the router enforcing no
+   * limit at all, which is a cap the operator set silently disappearing -- so
+   * the state that says "nobody read it" has to survive all the way to the
+   * Console, which is where the operator would see it.
+   */
+  maxConcurrentThreadsPerSession: number | null | undefined;
 }
 
 export interface ConcurrencyDenialRecord {
@@ -34,7 +48,15 @@ export interface ConcurrencyStatus {
   scope: string;
   configSource: string;
   configFileExists: boolean;
-  maxConcurrentThreadsPerSession: number | null;
+  /**
+   * The limit the config file declares.
+   *
+   * `undefined` means the file was there and could not be read, so the limit
+   * in force (`effectivePerSessionLimit`) is not the one that was configured.
+   * It travels as an absent field rather than as `null`, because `null` is a
+   * file that declares no limit.
+   */
+  maxConcurrentThreadsPerSession?: number | null;
   effectivePerSessionLimit: number | null;
   activeSubagentThreads: number;
   activeSessions: number;
@@ -204,6 +226,11 @@ export function parseConcurrencyConfig(
       result.maxConcurrentThreadsPerSession = tomlInteger(keyMatch[1]);
     }
   } catch (error) {
+    // The file is there and could not be read, so nobody knows what it
+    // declares. `undefined` is that state; `null` is a file that declares no
+    // limit, and a cap the operator set is not the same thing as a cap that
+    // was never read.
+    result.maxConcurrentThreadsPerSession = undefined;
     writeErrorLine(
       `Warning: could not read Codex concurrency config from ${file}: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -252,7 +279,10 @@ export class ConcurrencyManager {
     if (this.storedLimit !== undefined) {
       return this.storedLimit;
     }
-    return this.config.maxConcurrentThreadsPerSession;
+    // A config file nobody read declares no enforceable limit, so the router
+    // admits without a cap -- but the status says so separately, because the
+    // cap that was configured is not the cap that is in force.
+    return this.config.maxConcurrentThreadsPerSession ?? null;
   }
 
   setMaxConcurrentThreadsPerSession(
@@ -431,12 +461,19 @@ export class ConcurrencyManager {
       at
     );
     const isStored = this.storedLimit !== undefined;
+    const configuredLimit = this.config.maxConcurrentThreadsPerSession;
     return {
       scope: "router-admitted-child-requests",
       configSource: isStored ? "stored_override" : this.configSource,
       configFileExists: existsSync(this.config.file),
-      maxConcurrentThreadsPerSession:
-        this.config.maxConcurrentThreadsPerSession,
+      // The configured limit travels only when it was read. A file that could
+      // not be read leaves the field absent rather than `null`, because `null`
+      // is a file that declares no limit -- and the difference is the
+      // difference between "the operator configured no cap" and "nobody read
+      // the cap the operator configured".
+      ...(configuredLimit === undefined
+        ? {}
+        : { maxConcurrentThreadsPerSession: configuredLimit }),
       effectivePerSessionLimit: this.effectivePerSessionLimit(),
       activeSubagentThreads: this.agentActivity.countLive(
         { kind: SUBAGENT_SLOT_KIND },

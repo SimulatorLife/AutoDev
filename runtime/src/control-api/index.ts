@@ -4693,7 +4693,14 @@ async function persistRoutingPolicy(): Promise<void> {
  * response reports.
  */
 interface EnablementReconciliation {
-  readonly desiredGeneration: string;
+  /**
+   * The generation the operator asked for, or `null` when it is unknown.
+   *
+   * `null` is not the same as a missing generation: a write whose desired
+   * state cannot be stated -- a reset to a config file nobody could read --
+   * has a desired state, and it is that nobody knows what it is.
+   */
+  readonly desiredGeneration: string | null;
   readonly observedGeneration: string | null;
   readonly restartRequired: boolean;
 }
@@ -4702,7 +4709,7 @@ interface EnablementReconciliation {
 function auditReconciliationFields(
   reconciliation: EnablementReconciliation | null
 ): Partial<{
-  desiredGeneration: string;
+  desiredGeneration: string | null;
   observedGeneration: string | null;
   restartRequired: boolean;
 }> {
@@ -4720,6 +4727,25 @@ function auditReconciliationFields(
  */
 function concurrencyLimitGeneration(limit: number | null): string {
   return limit === null ? "limit:unlimited" : `limit:${String(limit)}`;
+}
+
+/**
+ * The generation a concurrency write asked for.
+ *
+ * A write names its own limit, or asks for the config file's limit on a
+ * reset. A config file nobody could read declares no known limit, so a reset
+ * then has no generation to ask for -- and the write says so rather than
+ * claiming the limit in force is the one that was configured.
+ */
+function concurrencyDesiredGeneration(
+  nextLimit: number | null | undefined,
+  configuredLimit: number | null | undefined
+): string | null {
+  if (nextLimit === undefined) {
+    if (configuredLimit === undefined) return null;
+    return concurrencyLimitGeneration(configuredLimit);
+  }
+  return concurrencyLimitGeneration(nextLimit);
 }
 
 /**
@@ -5731,10 +5757,10 @@ async function patchConcurrencyLimit(
     // this limit" are two claims, and only the second one says what the
     // operator will actually get. A reset asks for the config file's limit,
     // so that is the generation the operator asked for -- not "no change".
-    const desiredGeneration = concurrencyLimitGeneration(
-      nextLimit === undefined
-        ? updatedStatus.maxConcurrentThreadsPerSession
-        : nextLimit
+    const configuredLimit = updatedStatus.maxConcurrentThreadsPerSession;
+    const desiredGeneration = concurrencyDesiredGeneration(
+      nextLimit,
+      configuredLimit
     );
     const observedGeneration = concurrencyLimitGeneration(
       updatedStatus.effectivePerSessionLimit

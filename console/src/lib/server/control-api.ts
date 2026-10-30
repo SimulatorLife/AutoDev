@@ -2789,6 +2789,13 @@ function isOptionalNumber(value: unknown): value is number | undefined {
  * answers `maxConcurrentThreadsPerSession: null` unless an operator configured a
  * limit, and this guard rejected it, so the Runtime page reported an incompatible
  * contract precisely when nothing was wrong.
+ *
+ * An absent value is a third state, and it is not this one's: the Runtime
+ * publishes the configured limit only when it read the config file, so absent
+ * means the file was there and could not be read. The guard accepts it, because
+ * the difference between a file that declares no limit and a file nobody read
+ * is the Runtime's to report, and dropping the whole response over it would
+ * hide every other concurrency fact along with it.
  */
 function isOptionalNullableNumber(
   value: unknown

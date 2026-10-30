@@ -44,6 +44,19 @@ function display(value: number | null | undefined): string {
 }
 
 /**
+ * What the config file declares, in the operator's words.
+ *
+ * The limit is absent when the file was there and could not be read, and that
+ * is not a file that declares no limit: it says the cap the operator
+ * configured is not the cap in force. So the three states keep three words.
+ */
+function configFileLimitLabel(limit: number | null | undefined): string {
+  if (limit === undefined) return "not read";
+  if (limit === null) return "Unlimited";
+  return String(limit);
+}
+
+/**
  * Interactive concurrency control for orchestrator subagent threads.
  *
  * Provides stepper (− / +), explicit Unlimited selection, and reset-to-config
@@ -205,9 +218,7 @@ export function ConcurrencyLimitControl({
               "data-concurrency-source": "stored_override"
             },
             "Stored override active",
-            configFileLimit !== undefined && configFileLimit !== null
-              ? ` (config file: ${configFileLimit})`
-              : " (config file: Unlimited)"
+            ` (config file: ${configFileLimitLabel(configFileLimit)})`
           )
         : React.createElement(
             "span",
@@ -215,9 +226,15 @@ export function ConcurrencyLimitControl({
               className: MUTED_TEXT_CLASS,
               "data-concurrency-source": concurrency.configSource ?? "default"
             },
-            concurrency.configSource === "config_file"
-              ? "From config file"
-              : "Default configuration"
+            // The config file's limit is absent when the file was there and
+            // could not be read. "From config file" would then be a claim about
+            // a file nobody read, and the limit in force is the router's
+            // default rather than the one that was configured.
+            configFileLimit === undefined
+              ? "Config file not read"
+              : concurrency.configSource === "config_file"
+                ? "From config file"
+                : "Default configuration"
           ),
       concurrency.revision === undefined
         ? null

@@ -1345,6 +1345,18 @@ is emitted before bridge-driven native spawn batches when the bridge has the
 parent session id. The owning orchestrator can therefore reclaim terminal
 handles before retrying; no global cleanup is safe.
 
+The concurrency status carries the configured limit as `maxConcurrentThreadsPerSession`,
+and it has three states rather than two. A number is a config file that was read and
+declares that limit; `null` is a config file that was read and declares no limit, which
+is the default deployment; and an **absent** field is a config file that was there and
+could not be read, so nobody knows what it declares. The limit in force is
+`effectivePerSessionLimit`, and it is published separately for exactly that reason: a
+config file nobody read leaves the router enforcing no cap at all, which would be a
+cap the operator set silently disappearing if the status reported it as a file that
+declares no limit. `configFileExists` answers whether the file is there, which is a
+different question from whether it could be read. The same status is published by
+`/control/runtime`, `/control/routing`, and the router's `/status`.
+
 Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
 provider-selection budget without finding one),
 `max_concurrent_threads_per_session`, and `spawn_tool_unavailable`. Only child

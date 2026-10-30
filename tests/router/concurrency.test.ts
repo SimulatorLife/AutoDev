@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -89,6 +89,47 @@ test("parseConcurrencyConfig reads every valid TOML integer spelling", async () 
       file,
       maxConcurrentThreadsPerSession: null
     });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a config file nobody could read is not a config file that declares no limit", async () => {
+  // The file is there and could not be read, so nobody knows what it
+  // declares. `null` is a file that was read and declares no limit, and the
+  // two are different claims: one is a deployment that runs without a cap on
+  // purpose, the other is a cap the operator configured that has silently
+  // stopped being enforced.
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-unreadable-test-"));
+  const file = join(dir, "config.toml");
+  try {
+    // A directory where the file should be: the path is there, and the read
+    // fails. That is the shape of a file that exists and cannot be read.
+    await mkdir(file);
+    const parsed = parseConcurrencyConfig(file);
+    assert.equal(parsed.maxConcurrentThreadsPerSession, undefined);
+    // The key is still there, so the field is a fact about the read rather
+    // than a field nobody filled in.
+    assert.equal(Object.hasOwn(parsed, "maxConcurrentThreadsPerSession"), true);
+
+    const manager = new ConcurrencyManager({
+      agentActivity: createAgentActivityTracker(),
+      initialConfig: parsed
+    });
+    const status = manager.concurrencyStatus();
+    // Nothing declared a limit, so nothing is enforced...
+    assert.equal(status.effectivePerSessionLimit, null);
+    // ...and the status does not claim the file declared that.
+    assert.equal(
+      Object.hasOwn(status, "maxConcurrentThreadsPerSession"),
+      false
+    );
+    // The wire carries the field only when the file was read: an absent key
+    // is what "nobody read it" looks like to a consumer of the payload.
+    assert.equal(
+      JSON.stringify(status).includes("maxConcurrentThreadsPerSession"),
+      false
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
