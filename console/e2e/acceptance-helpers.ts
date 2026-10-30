@@ -157,7 +157,20 @@ export const SWEEP_ROUTES: readonly string[] = [
   // sweeps had never asked the browser about it -- which is how the review's
   // completeness statuses came to be printed on the screen as the codes the
   // contract stores.
-  "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame"
+  "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
+  // The visual session is a different session with different content: a
+  // player debrief, a report source, a visual assessment. One episode is not
+  // the surface.
+  "/playtesting/sessions/episode-visual-debrief?workspaceId=fixture%2Fgame",
+  // The Playtesting page's own views. The canonical route reaches the page
+  // with no workspace chosen, which is the state that asks the operator to
+  // pick one -- so the overview that actually lists sessions was never
+  // walked, and neither were the sessions, findings and comparisons it
+  // switches to. Each is a table of its own.
+  "/playtesting?view=overview&workspaceId=fixture%2Fgame",
+  "/playtesting?view=sessions&workspaceId=fixture%2Fgame",
+  "/playtesting?view=findings&workspaceId=fixture%2Fgame",
+  "/playtesting?view=compare&workspaceId=fixture%2Fgame"
 ];
 
 /**
