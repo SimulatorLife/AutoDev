@@ -227,6 +227,26 @@ test("the Experiences tab renders the evidence it read, in the Console's words",
   await expect(assessments).toContainText("Used (1/1 memories cited)");
 });
 
+test("the Experiences table shows the moment it started, whole", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/memory?tab=experiences&experienceId=exp-0001");
+  await expect(memoryBody(page)).toBeVisible();
+
+  // The column was twelve pixels narrower than the instant it holds, and the
+  // cell carried the whole text on its title -- so it complied with the
+  // console's clipping rule while reading "2026-02-11 08:59:0...". A reader
+  // cannot tell whether the seconds are 00 or 09, and a timestamp that says
+  // less than the page knows says less about the run than the run does.
+  const cell = page.locator("tbody tr td").last();
+  await expect(cell).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/u);
+  const cut = await cell.evaluate(
+    (element) => element.scrollWidth > element.clientWidth + 1
+  );
+  expect(cut, "the column has to hold the whole instant").toBe(false);
+});
+
 test("the pager says which pages there are and its links reach them", async ({
   page
 }) => {

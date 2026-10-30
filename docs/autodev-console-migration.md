@@ -516,6 +516,14 @@ The role breakdown is observed now: seven requests for the orchestrator and five
 
 The widget is synthetic, like the rest of that fixture, and the fixture observes a widget because the acceptance reads it — not the other way round.
 
+## A timestamp was cut in half
+
+The Memory page's Experiences table cut the seconds off the end of its "Started At" column: `2026-02-11 08:59:0…`. The cell carried its whole text on its title, so the console's clipping rule was satisfied — a deliberate truncation with the full text one hover away — but a timestamp that reads `08:59:0…` says less than the page knows, and a reader cannot tell whether it is 08:59:00 or 08:59:09.
+
+The column was twelve pixels narrower than the instant it holds. It is now wide enough for the whole instant, and the Task / Run column — two short ids on two lines — gives up what it does not need.
+
+**And nothing had ever asked the browser about it.** The clipping sweep walks the Console's _canonical routes_, which are its sections, and the tables behind a section's own tabs are not among them — so the Memory page's three tables were never swept. The sweep now walks the Memory page's tabs as well.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

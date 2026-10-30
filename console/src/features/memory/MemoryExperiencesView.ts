@@ -142,7 +142,9 @@ export function MemoryExperiencesView({
     {
       id: "task",
       header: "Task / Run",
-      weight: 200,
+      // The task and the run are two short ids on two lines, and the column
+      // gives what the instant beside it needs.
+      weight: 155,
       cell: (exp) =>
         React.createElement(
           "div",
@@ -222,7 +224,11 @@ export function MemoryExperiencesView({
     {
       id: "startedAt",
       header: "Started At",
-      weight: 150,
+      // A whole instant -- the date, the clock and the zone -- is 173px, and
+      // the cell's own 32px of shared inset makes the column 205px. A column
+      // narrower than that cuts the seconds off the end of a timestamp, and a
+      // timestamp that reads "08:59:0..." says less than the page knows.
+      weight: 195,
       cell: (exp) =>
         React.createElement(
           "span",

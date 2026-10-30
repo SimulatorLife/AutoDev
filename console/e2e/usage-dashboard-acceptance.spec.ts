@@ -160,17 +160,15 @@ test("the breakdown chart draws the measured breakdown, and agrees with the coun
   // And the breakdown adds up to the count beside it. A chart that disagrees
   // with the total it breaks down is two claims, and the reader cannot tell
   // which one is wrong.
-  const total = await chart
-    .locator("li")
-    .evaluateAll((items) =>
-      items.reduce((sum, item) => {
-        // The row's own value is its last span; the label and the bar carry no
-        // number, and the spans are adjacent, so the row's text runs together.
-        const spans = item.querySelectorAll("span");
-        const value = spans[spans.length - 1]?.textContent ?? "";
-        return sum + Number(value.replace(/[^0-9.]/gu, ""));
-      }, 0)
-    );
+  const total = await chart.locator("li").evaluateAll((items) =>
+    items.reduce((sum, item) => {
+      // The row's own value is its last span; the label and the bar carry no
+      // number, and the spans are adjacent, so the row's text runs together.
+      const spans = Array.from(item.querySelectorAll("span"));
+      const value = spans.at(-1)?.textContent ?? "";
+      return sum + Number(value.replaceAll(/[^0-9.]/gu, ""));
+    }, 0)
+  );
   expect(total).toBe(Number(LOGICAL_REQUESTS));
 });
 
