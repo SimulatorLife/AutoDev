@@ -170,7 +170,15 @@ export const SWEEP_ROUTES: readonly string[] = [
   "/playtesting?view=overview&workspaceId=fixture%2Fgame",
   "/playtesting?view=sessions&workspaceId=fixture%2Fgame",
   "/playtesting?view=findings&workspaceId=fixture%2Fgame",
-  "/playtesting?view=compare&workspaceId=fixture%2Fgame"
+  "/playtesting?view=compare&workspaceId=fixture%2Fgame",
+  // The Evaluations page's second tab. The canonical route answers with the
+  // results tab, so the comparisons -- a table of its own -- were never
+  // walked.
+  "/evaluations?tab=comparisons",
+  // The Usage dashboard's live scope. It is not a time window at all: it is
+  // the sessions running now, and it reads a different set of facts, so it is
+  // a different surface from the window the canonical route answers with.
+  "/usage?range=ACTIVE_SESSIONS"
 ];
 
 /**
