@@ -540,6 +540,22 @@ That is how the Experiences tab's "Started At" column came to cut a timestamp fo
 
 `SWEEP_ROUTES` in `console/e2e/acceptance-helpers.ts` is now the one list of surfaces, and all three sweeps walk it: the fourteen sections, the eight detail pages, the Memory page's three tabs, and the claim drawer — twenty-seven surfaces in all.
 
+## The failure pages did not say where they were, or where they went
+
+The Console has two failure pages, and both of them claimed more than they knew.
+
+**The error boundary claimed a section.** `ConsoleErrorShell` resolved the section from the failed address and fell back to `Agents` when the address named none — the same fallback the not-found page had and the same one that was removed from it and from the loading shell. So a failure on an address that named no section was reported on the Agents page: the `h1` — the one thing the navigation owner announces after a navigation — read "Agents", and the rail marked Agents as the current page. The operator was told they were on a page they were not on, by the chrome, which is what they read first. The boundary claims no section now, and a page that belongs to none names itself: "Render failure".
+
+**Neither page took the operator back to where they were.** The not-found page offered Agents, Providers and Workspaces whatever the address said, so a stale deep link into a section — a hook event that was renamed, a link from a runbook that outlived it — sent the operator to a section they had never asked for while the section they were actually reaching for sat in the address bar and nowhere else. The address names the section; the page reads it, and it takes the operator back to _that_ one: "Return to Hooks", pointing at `/hooks`. The link's name says what it points at, and the page can keep the promise, because the operator was reaching for Hooks when the address failed.
+
+**And the link claimed a return that never happened.** "Return to Agents" on a page the operator was never on is a statement about where they had been, and they had not been there. A page that belongs to no section has nowhere to return to, so its link names a destination instead — "Go to Agents" — which is a claim the page can keep.
+
+**Neither failure page published the client's arrival.** Every other page carries the marker that says the client has taken the page over, and the Console's own waits depend on it: `waitForPageContent` requires the marker, the loading shell is checked to be gone, and the content to be there. Ten detail routes answer with the not-found page when their resource is absent — the hook, MCP, tool, provider, model, agent, skill, prompt and workspace routes — so a caller that waited for the client the way it waits everywhere else waited forever on the one page that says the address was wrong. Both failure pages publish the marker now, and it is the last thing in their content, so a caller that waits for it is waiting for the page's own controls — the failure page's "Try again" button — and not merely for the shell around them.
+
+The header's purpose line is marked on every page now, including the ones that belong to no section. A page that reports a missing resource or a failed read explains its own state rather than the resource's purpose, and it says so in the header — but the line was only marked when the page had a section, so a check that looked for it found nothing on exactly the pages that say something different.
+
+`console/e2e/console-routes-acceptance.spec.ts` opens an address that names no resource and an address that names a section, and reads the way out of both; `console/tests/route-boundaries.test.ts` holds the same claims at the markup level, and `console/tests/hydration-marker.test.ts` holds the marker's.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

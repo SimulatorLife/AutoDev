@@ -1,6 +1,10 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
-import { CANONICAL_ROUTES, routeHeading } from "./acceptance-helpers.ts";
+import {
+  CANONICAL_ROUTES,
+  routeHeading,
+  waitForPageContent
+} from "./acceptance-helpers.ts";
 
 /**
  * The generic surfaces the target state rules out.
@@ -59,6 +63,48 @@ test("an address that names no resource says so, and claims no section", async (
     page.getByRole("heading", { name: "Page not found", level: 1 })
   ).toBeVisible();
   await expect(page.locator('[aria-current="page"]')).toHaveCount(0);
+
+  // And the page publishes the client's arrival, like every other page. Ten
+  // detail routes answer with this page when their resource is absent, so a
+  // caller that waits for the client the way it waits on every other page
+  // would wait forever on the one page that says the address was wrong.
+  await waitForPageContent(page);
+
+  // The link names a destination rather than a return: the operator was never
+  // on Agents, so "Return to Agents" would be a claim about where they had
+  // been.
+  await expect(
+    page.getByRole("link", { name: "Go to Agents", exact: true })
+  ).toHaveAttribute("href", "/agents");
+  await expect(
+    page.getByRole("link", { name: "Return to Agents" })
+  ).toHaveCount(0);
+});
+
+test("an address that names a section takes the operator back to it", async ({
+  page
+}) => {
+  // A stale deep link -- a hook event that was renamed, a link from a runbook
+  // that outlived it -- used to answer with Agents, Providers and Workspaces
+  // whatever the address said. The section the operator was actually reaching
+  // for was in the address bar and nowhere else, so recognition had to give
+  // way to recall.
+  await page.goto("/hooks/no-such-hook-event");
+  await waitForPageContent(page);
+
+  await expect(
+    page.getByRole("heading", { name: "Page not found", level: 1 })
+  ).toBeVisible();
+  await expect(page.locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Return to Hooks", exact: true })
+  ).toHaveAttribute("href", "/hooks");
+
+  // And the way back is offered once: a second link to the same place under
+  // another name is a choice the operator has to make for no reason.
+  await expect(
+    page.getByRole("link", { name: "Return to Hooks", exact: true })
+  ).toHaveCount(1);
 });
 
 test("every canonical resource route answers with its own resource", async ({

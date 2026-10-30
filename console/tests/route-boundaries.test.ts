@@ -35,7 +35,84 @@ test("ConsoleNotFoundPage renders 404 heading and canonical resource navigation 
   assert.match(markup, /href="\/agents"/);
   assert.match(markup, /href="\/providers"/);
   assert.match(markup, /href="\/workspaces"/);
-  assert.match(markup, /Return to Agents/);
+  // The address named no section, so there is nowhere to return to and the
+  // link names a destination instead. "Return to Agents" was a claim about
+  // where the operator had been, and they had never been there.
+  assert.match(markup, /Go to Agents/);
+  assert.doesNotMatch(markup, /Return to/u);
+});
+
+test("the not-found page returns to the section the address was reaching for", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ConsoleNotFoundPage, {
+      title: "Page not found",
+      section: "Hooks"
+    })
+  );
+
+  // A stale deep link into a section takes the operator back to that section.
+  // The page used to offer Agents, Providers and Workspaces whatever the
+  // address said, so the section the operator was actually reaching for was
+  // in the address bar and nowhere else.
+  assert.match(markup, /Return to Hooks/);
+  assert.match(markup, /href="\/hooks"/);
+
+  // And the primary way out is not repeated among the others: one link per
+  // destination, so the operator has no choice to make for no reason.
+  assert.equal(markup.match(/Return to Hooks/gu)?.length, 1);
+});
+
+test("the error boundary claims no section when the failed address named none", () => {
+  const mockError = new Error("Render failed") as Error & {
+    digest?: string;
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(ConsoleErrorPage, {
+      error: mockError,
+      reset: () => {}
+    })
+  );
+
+  // The boundary used to fall back to Agents, so a failure on an address that
+  // named no section was reported on the Agents page: the heading said
+  // "Agents" and the rail marked Agents as the current one.
+  assert.match(
+    markup,
+    /<h1[^>]*>Render failure</u,
+    "the page's heading names the page, not a section"
+  );
+  assert.doesNotMatch(
+    markup,
+    /aria-current="page"/u,
+    "no section is the current one on a page that belongs to none"
+  );
+  assert.match(markup, /Go to Agents/);
+  assert.doesNotMatch(markup, /Return to/u);
+});
+
+test("the error boundary returns to the section that failed", () => {
+  const mockError = new Error("Render failed") as Error & {
+    digest?: string;
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(ConsoleErrorPage, {
+      error: mockError,
+      reset: () => {},
+      activeSection: "Providers"
+    })
+  );
+
+  // The link's name says where it points at, and the page can keep the
+  // promise: the operator was on Providers when it failed.
+  assert.match(markup, /Return to Providers/);
+  assert.match(markup, /href="\/providers"/);
+  assert.match(
+    markup,
+    /<h1[^>]*>Providers</u,
+    "the page's heading names the section that failed"
+  );
 });
 
 test("ConsoleErrorPage renders alert container with error message and actions", () => {

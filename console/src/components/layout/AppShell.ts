@@ -4,7 +4,10 @@ import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import { usePathname } from "next/navigation.js";
 import React from "react";
 
-import { canonicalSectionFromPath } from "../../lib/routes.ts";
+import {
+  canonicalNavPath,
+  canonicalSectionFromPath
+} from "../../lib/routes.ts";
 import {
   PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS
@@ -13,6 +16,7 @@ import { AppNav } from "../navigation/AppNav.ts";
 import { CommandPalette } from "../navigation/CommandPalette.ts";
 import { NavigationLink } from "../navigation/NavigationLink.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import { HydrationMarker } from "./HydrationMarker.ts";
 import { PageBody } from "./PageBody.ts";
 import { DETAIL_PANEL_CLASS, DETAIL_PANEL_SHAPE } from "./Panel.ts";
 import { SkipLink } from "./SkipLink.ts";
@@ -178,13 +182,20 @@ export function AppShell({
                   className:
                     "line-clamp-2 text-xs leading-snug text-fg-muted break-words",
                   title: description,
-                  // A hook, because "does this page say what the resource is
-                  // for" is a claim about every route and has to be checkable
-                  // on every route rather than read off thirteen source files.
+                  // A hook, because "does this page say what it is for" is a
+                  // claim about every route and has to be checkable on every
+                  // route rather than read off thirteen source files.
                   // It carries the section, so a check can compare the line
                   // against the canonical sentence for that resource rather
                   // than only notice that some text is there.
-                  "data-page-purpose": activeSection
+                  //
+                  // The line is marked even when the page belongs to no
+                  // section: such a page still says what it is for -- a page
+                  // that reports a missing resource or a failed read explains
+                  // its own state instead -- and a check that looked for the
+                  // line only on section pages would find nothing on exactly
+                  // the pages that say something different.
+                  "data-page-purpose": activeSection ?? ""
                 },
                 description
               )
@@ -271,20 +282,75 @@ export function ConsoleLoadingPage({
 }
 
 /**
+ * The other ways out of a failed address.
+ *
+ * Two of the Console's sections, so a pointer-only operator is never stranded
+ * with no way onward. The section the failed address named is the primary way
+ * out and is not repeated here.
+ */
+const OTHER_FAILURE_DESTINATIONS: readonly CanonicalNavSection[] = [
+  "Providers",
+  "Workspaces"
+];
+
+/**
+ * Where a failure page takes the operator, and what it calls that way.
+ *
+ * A failure page knows the section the operator was reaching for -- the
+ * address named it, and the address is the one thing the operator cannot
+ * check for themselves. So the page takes them back to *that* section, and
+ * the link says so: "Return to Hooks" is a promise the page can keep, because
+ * the operator was reaching for Hooks when the address failed.
+ *
+ * A page that belongs to no section has nowhere to return to, so its link
+ * names a destination instead of a return -- "Go to Agents" is a statement
+ * about where the link leads, where "Return to Agents" on a page the operator
+ * was never on would be a claim about where they had been.
+ */
+function failureEscape(section: CanonicalNavSection | undefined): {
+  readonly href: string;
+  readonly label: string;
+} {
+  return section === undefined
+    ? { href: canonicalNavPath("Agents"), label: "Go to Agents" }
+    : { href: canonicalNavPath(section), label: `Return to ${section}` };
+}
+
+/**
  * Route-level 404 boundary rendered when a route does not exist.
  */
 export function ConsoleNotFoundShell(): React.JSX.Element {
   // The page a bad address lands on belongs to no section, and it says so:
   // the old fallback claimed Workspaces, so the heading named a page the
   // operator was not on and the rail marked it as the current one.
-  return React.createElement(ConsoleNotFoundPage, { title: "Page not found" });
+  //
+  // The section the *address* named is a different thing, and it is the one
+  // the operator wants. A stale deep link into Hooks -- a hook event that was
+  // renamed, a link from a runbook that outlived it -- took the operator to
+  // Agents, a section they had never asked for, while the section they were
+  // actually reaching for sat in the address bar.
+  const section = canonicalSectionFromPath(usePathname() ?? "") ?? undefined;
+  return React.createElement(ConsoleNotFoundPage, {
+    title: "Page not found",
+    section
+  });
 }
 
 export function ConsoleNotFoundPage({
-  title
+  title,
+  section
 }: {
   readonly title: string;
+  /** The section the failed address was reaching for, when it named one. */
+  readonly section?: CanonicalNavSection | undefined;
 }): React.JSX.Element {
+  const escape = failureEscape(section);
+  // The other ways out of a failed address. The section the address named is
+  // the primary one, so it is not repeated here: two links to the same place
+  // under two names is a choice the operator has to make for no reason.
+  const others = OTHER_FAILURE_DESTINATIONS.filter(
+    (other) => other !== section
+  );
   return React.createElement(
     AppShell,
     {
@@ -321,37 +387,53 @@ export function ConsoleNotFoundPage({
           React.createElement(
             NavigationLink,
             {
-              href: "/agents",
+              href: escape.href,
               className: PRIMARY_BUTTON_CLASS
             },
-            "Return to Agents"
+            escape.label
           ),
-          React.createElement(
-            NavigationLink,
-            {
-              href: "/providers",
-              className: SECONDARY_BUTTON_CLASS
-            },
-            "Providers"
-          ),
-          React.createElement(
-            NavigationLink,
-            {
-              href: "/workspaces",
-              className: SECONDARY_BUTTON_CLASS
-            },
-            "Workspaces"
+          ...others.map((other) =>
+            React.createElement(
+              NavigationLink,
+              {
+                key: other,
+                href: canonicalNavPath(other),
+                className: SECONDARY_BUTTON_CLASS
+              },
+              other
+            )
           )
         )
       )
-    )
+    ),
+    // The page's own "the client has taken over" marker, and the last thing in
+    // the page's content. Every other page publishes it, and this page is
+    // reachable from ten detail routes whose resource is absent -- so a caller
+    // that waits for the client the way it waits on every other page would
+    // wait forever on the one page that says the address was wrong.
+    React.createElement(HydrationMarker)
   );
 }
 
 export interface ConsoleErrorPageProps {
   readonly error: Error & { readonly digest?: string };
   readonly reset: () => void;
+  /**
+   * The section that failed, when the failed address named one.
+   *
+   * Absent when it named none, and then the page claims none: the same
+   * answer the not-found page gives, because it is the same fact. A page that
+   * belongs to no section has no section to mark in the rail and no section
+   * to name in its heading.
+   */
   readonly activeSection?: CanonicalNavSection | undefined;
+  /**
+   * The page's own name, for a failure that belongs to no section.
+   *
+   * Every other page takes its name from the section it belongs to, so this is
+   * only for a page that is not a section's page.
+   */
+  readonly title?: string | undefined;
 }
 
 /**
@@ -361,20 +443,36 @@ export function ConsoleErrorShell(props: {
   readonly error: Error & { readonly digest?: string };
   readonly reset: () => void;
 }): React.JSX.Element {
-  const pathname = usePathname();
-  const activeSection = canonicalSectionFromPath(pathname ?? "") ?? "Agents";
-  return React.createElement(ConsoleErrorPage, { ...props, activeSection });
+  // The section the failed address named. It used to fall back to Agents, so
+  // an address that named no section had its failure reported on the Agents
+  // page: the heading said "Agents" and the rail marked Agents as the current
+  // page, and the operator was told they were on a page they were not on.
+  const activeSection =
+    canonicalSectionFromPath(usePathname() ?? "") ?? undefined;
+  return React.createElement(ConsoleErrorPage, {
+    error: props.error,
+    reset: props.reset,
+    activeSection
+  });
 }
 
 export function ConsoleErrorPage({
   error,
   reset,
-  activeSection = "Agents"
+  activeSection,
+  title
 }: ConsoleErrorPageProps): React.JSX.Element {
+  const escape = failureEscape(activeSection);
+  // The page's own name. A page that belongs to a section is named by that
+  // section; a page that belongs to none names itself, because there is no
+  // section to borrow a name from.
+  const heading =
+    title ?? (activeSection === undefined ? "Render failure" : undefined);
   return React.createElement(
     AppShell,
     {
       activeSection,
+      title: heading,
       description:
         "An unexpected error occurred while rendering this Console view."
     },
@@ -440,13 +538,17 @@ export function ConsoleErrorPage({
           React.createElement(
             NavigationLink,
             {
-              href: "/agents",
+              href: escape.href,
               className: SECONDARY_BUTTON_CLASS
             },
-            "Return to Agents"
+            escape.label
           )
         )
       )
-    )
+    ),
+    // The page's own "the client has taken over" marker, and the last thing in
+    // the page's content -- the same marker every other page publishes, and
+    // the one the page's own "Try again" control belongs to.
+    React.createElement(HydrationMarker)
   );
 }
