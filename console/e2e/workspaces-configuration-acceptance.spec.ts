@@ -88,6 +88,22 @@ test.afterEach(async ({ request }) => {
   await resetWorkspaceConfiguration(request);
 });
 
+test("the workspace row names the fields it cannot label", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(WORKSPACES_URL);
+
+  // The row's configuration is edited in the cell, so the cell's controls have
+  // to say what they are. A table row cannot carry four labels, so the two
+  // text fields name themselves with a placeholder instead -- and the roles
+  // field is empty whenever the scope admits any role, which is the common
+  // case, so without one it was an unnamed empty box.
+  const roles = page.locator("[data-workspace-configuration-roles]");
+  await expect(roles).toHaveAttribute("placeholder", /roles|worker/i);
+  await expect(
+    page.locator("[data-workspace-configuration-base-branch]")
+  ).toHaveAttribute("placeholder", /\S/);
+});
+
 test("the workspace row writes its configuration against the revision it loaded", async ({
   page,
   request

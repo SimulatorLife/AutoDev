@@ -500,6 +500,14 @@ The tab said "AutoDev Console" too — the root layout's default, which is what 
 
 `console/e2e/console-routes-acceptance.spec.ts` opens an address that names no resource and asserts that the page's heading names the page and that no item in the rail is the current one; `console/tests/route-boundaries.test.ts` holds the same claim at the markup level.
 
+## The row's controls did not say what they were
+
+The Workspaces table edits the configuration **in the row**, so the cell holds four live controls: whether the workspace is enabled, its base branch, its role scope, and the roles themselves. The cell hides their labels — a table row cannot carry four of them — and two of the four are text fields, so what the operator was left with was `main` in a box and an empty box beside it, with nothing saying what either was for.
+
+The roles field is empty whenever the scope admits any role, which is the common case, so most rows showed an unnamed empty box. Recognition beats recall, so the field now carries a placeholder that says what it takes (`worker, orchestrator`) — in the same voice as the other workspace forms (`e.g. /home/operator/games/fixture`, `node, server.js`). The full form on the detail page still carries its labels; the placeholder is only for the compact cell.
+
+`console/e2e/workspaces-configuration-acceptance.spec.ts` opens the row and asserts that both text fields name themselves.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

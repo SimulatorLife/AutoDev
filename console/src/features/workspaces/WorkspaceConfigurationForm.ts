@@ -179,6 +179,11 @@ export function WorkspaceConfigurationForm({
       label: "Base branch",
       hideLabel: compact,
       defaultValue: workspace.baseBranch,
+      // The compact cell hides the label, because a table row cannot carry
+      // four of them. A field with no visible name at all asks the operator
+      // to recall what it is, and an empty one gives them nothing to go on,
+      // so the placeholder says what the field holds.
+      ...(compact ? { placeholder: "main" } : {}),
       disabled,
       dataAttributes: {
         "data-workspace-configuration-base-branch": workspace.id
@@ -232,6 +237,10 @@ export function WorkspaceConfigurationForm({
       label: "Roles (comma-separated)",
       hideLabel: compact,
       defaultValue: roleScopeText(workspace),
+      // The roles field is empty whenever the scope admits any role, which is
+      // the common case -- so in the compact cell it is an unnamed empty box
+      // most of the time. The placeholder names what it takes.
+      ...(compact ? { placeholder: "worker, orchestrator" } : {}),
       disabled,
       dataAttributes: { "data-workspace-configuration-roles": workspace.id }
     }),
