@@ -416,6 +416,37 @@ export function reviewSectionStatusTone(
   return REVIEW_SECTION_STATUS_TONE[status] ?? NOT_OBSERVED_STATUS;
 }
 
+/**
+ * The operator-facing label for a player debrief's status.
+ *
+ * The debrief panel printed the status as the contract stores it, so a
+ * labelled field read "Report status: not-applicable" -- in the readable
+ * style the debrief's other facts use, which is the part that made it a
+ * defect rather than a disclosed token: the panel is prose, and a
+ * hyphenated key in the middle of prose is not prose.
+ *
+ * The word names the state; the sentence under it says what it means. "Absent"
+ * beside "No player debrief was persisted for this episode." reads as one
+ * fact said twice, which is what a field label and its explanation are.
+ */
+const PLAYER_DEBRIEF_STATUS_LABEL: Record<
+  PlaytestEpisode["playerDebrief"]["status"],
+  string
+> = {
+  absent: "Absent",
+  pending: "Pending",
+  "not-applicable": "Not applicable",
+  unavailable: "Unavailable",
+  partial: "Partial",
+  complete: "Complete"
+};
+
+export function playerDebriefStatusLabel(
+  status: PlaytestEpisode["playerDebrief"]["status"]
+): string {
+  return PLAYER_DEBRIEF_STATUS_LABEL[status] ?? UNRECOGNISED_LABEL;
+}
+
 /** The operator-facing label for a reason a piece of evidence is missing. */
 export function missingReasonLabel(reason: PlaytestMissingReason): string {
   switch (reason) {

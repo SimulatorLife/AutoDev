@@ -19,6 +19,7 @@ import {
   gameOutcomeLabel,
   limitTerminationReason,
   missingReasonLabel,
+  playerDebriefStatusLabel,
   playtestingSessionFailureHint,
   playtestingSessionFailureTitle,
   policyLabel,
@@ -238,6 +239,18 @@ test("a review section's status reads as a word, not as the code it was stored a
       `"${word}" still carries the contract's hyphen`
     );
   }
+});
+
+test("a player debrief's status reads as a word, not as the code it was stored as", () => {
+  // The debrief panel printed the status as the contract stores it, so a
+  // labelled field read "Report status: not-applicable" -- in the readable
+  // style the debrief's other facts use.
+  assert.equal(playerDebriefStatusLabel("absent"), "Absent");
+  assert.equal(playerDebriefStatusLabel("pending"), "Pending");
+  assert.equal(playerDebriefStatusLabel("not-applicable"), "Not applicable");
+  assert.equal(playerDebriefStatusLabel("unavailable"), "Unavailable");
+  assert.equal(playerDebriefStatusLabel("partial"), "Partial");
+  assert.equal(playerDebriefStatusLabel("complete"), "Complete");
 });
 
 test("a review section's status is painted as what it is", () => {

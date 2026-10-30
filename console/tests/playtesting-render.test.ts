@@ -304,6 +304,29 @@ test("overview renders visual batches without fabricating a source commit", () =
   assert.doesNotMatch(html, /earlier commit than the build currently/u);
 });
 
+test("the decision policy is named the way an operator names it", () => {
+  // The tile that says "Decision Policy" used to print the policy's own id --
+  // "smart-direct" -- where the Console already has a word for it, and where
+  // the run dashboard and the episode summary were already using that word.
+  // One policy, three spellings, and the raw one on the page the operator is
+  // looking at.
+  const smart = episode();
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail({
+        ...smart,
+        identity: { ...smart.identity, policyId: "smart-direct" }
+      }),
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+
+  assert.match(html, /Decision Policy/u);
+  assert.match(html, /Smart-directed/u);
+  assert.doesNotMatch(html, />smart-direct</u);
+});
+
 test("Playtesting list view uses accessible links and explicit empty/unavailable distinctions", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingView, {

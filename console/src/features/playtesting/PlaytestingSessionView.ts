@@ -40,6 +40,8 @@ import {
 import {
   executionModeLabel,
   executionStateExplanation,
+  playerDebriefStatusLabel,
+  policyLabel,
   reviewSectionStatusLabel,
   reviewSectionStatusTone,
   RUNTIME_FAILURE_TERMINATION_REASON,
@@ -1542,7 +1544,7 @@ function spectatorTelemetryStrip(
   executedAction: string | null,
   phaseText: string | null
 ): React.JSX.Element {
-  const policyText = episode.identity.policyId;
+  const policyText = policyLabel(episode.identity.policyId);
   const bankroll = episode.outcomeMetrics?.bankroll_gold ?? null;
   const ticks = episode.logicalTicks ?? episode.stepCount;
   return React.createElement(
@@ -2013,7 +2015,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "span",
           { className: MONO_META_CLASS },
-          "Policy: " + episode.identity.policyId
+          "Policy: " + policyLabel(episode.identity.policyId)
         )
       ),
       spectatorCockpitPanels(currentFacts, executedAction, phaseText),
@@ -2463,11 +2465,11 @@ function completePlayerReportContent(
     visualDebriefFact("Player self-reported outcome", focus.outcome),
     visualDebriefFact(
       "Report source",
-      `${report.source.modelId} · ${report.source.policyId} policy v${report.source.policyVersion} · model version ${report.source.modelVersion ?? "not reported"}`
+      `${report.source.modelId} · ${policyLabel(report.source.policyId)} policy v${report.source.policyVersion} · model version ${report.source.modelVersion ?? "not reported"}`
     ),
     visualDebriefFact(
       "Assessment status",
-      "Smart-direct self-report; not a verified game outcome."
+      `${policyLabel(report.source.policyId)} self-report; not a verified game outcome.`
     ),
     visualDebriefFact(
       "Player-reported evidence",
@@ -2645,7 +2647,10 @@ function playerDebriefPanel(
         className: "mt-3 space-y-2",
         "data-player-debrief-status": report.status
       },
-      visualDebriefFact("Report status", report.status),
+      visualDebriefFact(
+        "Report status",
+        playerDebriefStatusLabel(report.status)
+      ),
       authorFact,
       playerDebriefContent(episode, workspaceId, scope)
     )
