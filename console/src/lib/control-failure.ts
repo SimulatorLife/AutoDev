@@ -60,7 +60,13 @@ export const CONTROL_REFUSAL_REASONS = [
   // `runtime_refused`, which means it declined without saying why: here it did
   // say, and the answer is a failure rather than a refusal, so retrying is the
   // next move instead of looking for something in the form to correct.
-  "operation_failed"
+  "operation_failed",
+  // The Runtime accepted the request and has not yet observed the change. It is
+  // neither a refusal (the Runtime did not decline) nor a failure (nothing
+  // failed), and it is not the same as `operation_failed`: the write may still
+  // land. So the next move is to look again, not to resend or to re-enter the
+  // form.
+  "not_observed"
 ] as const;
 export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];
 

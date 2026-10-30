@@ -59,7 +59,6 @@ import type {
 } from "../playtesting/types.ts";
 import type { PlaytestVisualPolicyId } from "../playtesting/visual-decision.ts";
 import type {
-  OperationHistoryEntry,
   ReconciliationDiff,
   ReconciliationStatus,
   ReconciliationView
@@ -148,11 +147,7 @@ export interface ControlApiAgentDetailResponse extends ControlApiAgentRecord {
    * not be read. An unreadable prompt is not an empty prompt.
    */
   readonly systemPrompt: string | null;
-  /** Reusable reconciliation view shared with mutation responses. */
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiEnablement {
@@ -364,11 +359,7 @@ export interface ControlApiProviderRolePatchResponse {
    */
   readonly previous: ProviderRoleAssignment | null;
   readonly actor: string;
-  /** Reusable reconciliation view shared with read paths. */
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 /** Response of `PATCH /control/providers/:provider`. */
@@ -378,10 +369,7 @@ export interface ControlApiProviderEnabledPatchResponse {
   readonly disabled: boolean;
   readonly previous: boolean;
   readonly actor: string;
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 /** Response of `PATCH /control/providers/:provider/limits`. */
@@ -391,10 +379,7 @@ export interface ControlApiProviderLimitsPatchResponse {
   readonly agentLimits: ControlApiProviderAgentLimits;
   readonly previous: ControlApiProviderAgentLimits | null;
   readonly actor: string;
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 /** Exact body for the confirmation-bound provider overrides reset. */
@@ -423,10 +408,7 @@ export interface ControlApiProvidersResetResponse {
     readonly disabledModels: number;
     readonly providerLimits: number;
   };
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiModelRecord {
@@ -953,10 +935,7 @@ export interface ControlApiSkillContentPatchResponse {
   readonly changed: boolean;
   /** RuleSync generation and its check both confirmed the source projection. */
   readonly projectionApplied: true;
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 /**
@@ -1281,11 +1260,7 @@ export interface ControlApiPromptDetailResponse {
   readonly revision: string;
   /** Bounded diff summary between the canonical and projected state. */
   readonly diff: ReconciliationDiff;
-  /** Reusable reconciliation view shared with mutation responses. */
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiPromptVersionReference {
@@ -1331,11 +1306,7 @@ export interface ControlApiPromptCommandPatchResponse {
   readonly changed: boolean;
   /** Bounded diff summary between the canonical and projected state. */
   readonly diff: ReconciliationDiff;
-  /** Reusable reconciliation view shared with read paths. */
-  readonly reconciliation: {
-    readonly status: ReconciliationStatus;
-    readonly history: readonly OperationHistoryEntry[];
-  };
+  readonly reconciliation: ReconciliationView;
 }
 
 /**
@@ -1487,9 +1458,23 @@ export interface ControlApiConcurrencyPatchRequest {
   readonly revision?: number;
 }
 
+/**
+ * Response of `PATCH /control/runtime/concurrency` -- the session concurrency
+ * limit the Agents surface writes.
+ *
+ * It carries the shared reconciliation view because the limit is a mutable
+ * resource like every other one the Console writes: the desired generation is
+ * the limit the operator asked for, and the observed generation is the limit
+ * the Runtime is enforcing. The limit is applied by the router's own
+ * concurrency manager, in the same process that serves the write, so the
+ * observation is immediate -- but "the write was accepted" and "the Runtime is
+ * enforcing this limit" are two claims, and only the second one says what the
+ * operator will actually get.
+ */
 export interface ControlApiConcurrencyPatchResponse {
-  readonly schema: "autodev-control-concurrency-v1";
+  readonly schema: "autodev-control-concurrency-v2";
   readonly concurrency: ControlApiConcurrencyStatus;
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiRoutingResponse {

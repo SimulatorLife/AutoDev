@@ -339,6 +339,8 @@ converged | pending | error
 
 The reusable reconciliation contract should include desired state, actual state, desired generation, observed generation, diff, convergence status, last apply, last observation, last error, and operation history.
 
+Every mutable resource the Console writes publishes that view with its write, and it is the same shared contract for all of them: a resource that answers with the applied value alone leaves "the write was accepted" and "the Runtime is serving this" as one claim, and only the second one says what the operator will actually get. The generations are comparable within a resource -- a limit of `8` and a limit of `unlimited` are two generations, not a number and a missing field -- and a write the Runtime accepted but has not observed is neither a refusal nor a failure, so the Console says that rather than claiming the new value.
+
 Use desired/live/convergence interaction semantics similar to Argo CD where useful, but implement them through AutoDev Runtime/Control API rather than shipping OpenLIT's Controller daemon.
 
 ## 6. RuleSync and configuration authority
@@ -525,6 +527,8 @@ Last activity
 Agent detail may combine canonical role/prompt, assigned capabilities, a read-only effective provider/model summary linking to Providers, generated projections, actual readiness/health, and scoped activity/usage.
 
 The Agent enablement control is revision-bound through `PATCH /control/agents/{role}` and is shown on both the Agent row and its detail view. Runtime rejects a stale expected revision, persists the policy before confirming the mutation, and enforces disabled aliases before provider selection or subagent admission. Missing Runtime aliases render as unavailable and nonmutable; they are never represented as disabled or silently mapped to a provider assignment. This control has no effect on a concrete provider/model request, which does not carry named Agent identity.
+
+The session concurrency limit is a mutable resource too, and it is the one the Router enforces rather than the canonical source: `PATCH /control/runtime/concurrency` writes a stored override over the config file's limit, and a reset asks for the config file's limit rather than for "no change". The write publishes the shared reconciliation view, so the desired generation is the limit that was asked for and the observed generation is the limit the Router is enforcing -- and because both are limits, `unlimited` is a generation of its own rather than the absence of one. A write the Runtime accepted but has not observed is reported as unobserved, not as the new limit.
 
 The agent catalogue is the execution contract's roles, and the accessor that reads the contract falls back to an empty contract when the read fails. An empty contract and a contract nobody read look the same to a caller that only sees the roles, and they are not the same claim: the first says the contract declares no role, the second says nobody read it. The Runtime publishes whether the contract was read, the count over the catalogue is a number only when it was, and the list says which read did not happen instead of rendering an empty catalogue as a configured one. The skills catalogue draws its role assignments from the same contract and answers the same way.
 

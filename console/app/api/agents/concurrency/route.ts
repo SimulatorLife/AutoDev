@@ -106,6 +106,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const result = await patchConcurrencyLimit(requestPayload, config);
   if (result.kind === "ok") {
+    // The Runtime published its reconciliation view with the write, so the
+    // route can say whether the limit it is enforcing is the one that was
+    // asked for. A write that was accepted but not observed is neither a
+    // refusal nor a failure, and saying so is what keeps the redirect from
+    // claiming a limit the Runtime has not confirmed.
+    if (result.data.reconciliation.status.convergence !== "converged") {
+      return redirectTo(withControlRefusal(returnTo, "not_observed"));
+    }
     return redirectTo(returnTo);
   }
 

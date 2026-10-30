@@ -228,7 +228,12 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     "content_required",
     "prior_required",
     "evidence_required",
-    "provenance_required"
+    "provenance_required",
+    // The concurrency limit write is the one refusal the Runtime's own codes
+    // cannot produce: the Runtime accepted it and published a reconciliation
+    // view that says it has not observed the change. No Runtime code means
+    // that, because the Runtime did not refuse anything.
+    "not_observed"
   ]);
   const reachable = new Set(RUNTIME_CODES.map((entry) => entry[2]));
   // The fallback is reachable, but not through a listed code — through the

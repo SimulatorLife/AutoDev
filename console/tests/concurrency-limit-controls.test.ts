@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ControlApiConcurrencyStatus } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiConcurrencyStatus,
+  ReconciliationView
+} from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,6 +12,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { POST } from "../app/api/agents/concurrency/route.ts";
 import { ConcurrencyLimitControl } from "../src/features/agents/ConcurrencyLimitControl.ts";
 import { patchConcurrencyLimit } from "../src/lib/server/control-api.ts";
+
+/**
+ * The reconciliation view the Runtime publishes with the write.
+ *
+ * The limit is applied by the router's own concurrency manager, in the process
+ * that serves the write, so a successful write is a converged one -- the
+ * observed generation is the limit that is now enforced. The other convergence
+ * words are what the Console has to be able to read without inventing a
+ * verdict of its own.
+ */
+function mockReconciliation(
+  convergence: ReconciliationView["status"]["convergence"],
+  desiredGeneration: string | null,
+  observedGeneration: string | null
+): ReconciliationView {
+  return {
+    status: {
+      convergence,
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt: "2026-10-29T12:00:00.000Z",
+      lastObservationAt:
+        observedGeneration === null ? null : "2026-10-29T12:00:00.000Z",
+      lastError: null,
+      explanation: "The runtime has observed the latest desired generation."
+    },
+    history: []
+  };
+}
 
 const mockUnlimitedConcurrency: ControlApiConcurrencyStatus = {
   scope: "router-admitted-child-requests",
@@ -118,7 +150,7 @@ test("patchConcurrencyLimit fetcher PATCHes /control/runtime/concurrency", async
       fetchImpl: async (input, init) => {
         captured = { url: String(input), init: init ?? {} };
         return Response.json({
-          schema: "autodev-control-concurrency-v1",
+          schema: "autodev-control-concurrency-v2",
           concurrency: {
             scope: "router-admitted-child-requests",
             configSource: "stored_override",
@@ -129,7 +161,12 @@ test("patchConcurrencyLimit fetcher PATCHes /control/runtime/concurrency", async
             activeSessions: 0,
             denials: 0,
             revision: 3
-          }
+          },
+          reconciliation: mockReconciliation(
+            "converged",
+            "limit:12",
+            "limit:12"
+          )
         });
       }
     }
@@ -178,7 +215,7 @@ test("POST /api/agents/concurrency sets numeric limit and redirects to returnTo"
   globalThis.fetch = async (_input, init) => {
     requestBody = JSON.parse(String(init?.body));
     return Response.json({
-      schema: "autodev-control-concurrency-v1",
+      schema: "autodev-control-concurrency-v2",
       concurrency: {
         scope: "router-admitted-child-requests",
         configSource: "stored_override",
@@ -189,7 +226,8 @@ test("POST /api/agents/concurrency sets numeric limit and redirects to returnTo"
         activeSessions: 0,
         denials: 0,
         revision: 2
-      }
+      },
+      reconciliation: mockReconciliation("converged", "limit:10", "limit:10")
     });
   };
 
@@ -223,6 +261,93 @@ test("POST /api/agents/concurrency sets numeric limit and redirects to returnTo"
       process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
     }
   }
+});
+
+test("POST /api/agents/concurrency says the write was not observed rather than claiming the limit", async () => {
+  // The write was accepted, but the Runtime has not observed the limit it is
+  // enforcing. Redirecting as if it had would tell the operator that the limit
+  // they asked for is the one in force, which is the claim the Runtime did not
+  // make.
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "test-token";
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    return Response.json({
+      schema: "autodev-control-concurrency-v2",
+      concurrency: {
+        scope: "router-admitted-child-requests",
+        configSource: "stored_override",
+        configFileExists: true,
+        maxConcurrentThreadsPerSession: 8,
+        effectivePerSessionLimit: 8,
+        activeSubagentThreads: 0,
+        activeSessions: 0,
+        denials: 0,
+        revision: 2
+      },
+      reconciliation: mockReconciliation("pending", "limit:10", null)
+    });
+  };
+
+  try {
+    const request = new NextRequest(
+      "http://console.test/api/agents/concurrency",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: "returnTo=/agents&setLimit=10&revision=1"
+      }
+    );
+
+    const response = await POST(request);
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/agents?control=failed&refusal=not_observed"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("a concurrency write without a reconciliation view is not an answer the Console can use", async () => {
+  // The old response published the applied limit alone. Without the view there
+  // is nothing that says the limit is the one that was asked for, so the
+  // Console refuses the response rather than reading the limit as a verdict.
+  const result = await patchConcurrencyLimit(
+    { maxConcurrentThreadsPerSession: 12 },
+    { baseUrl: "http://runtime.test", serviceToken: "server-secret" },
+    {
+      fetchImpl: async () =>
+        Response.json({
+          schema: "autodev-control-concurrency-v1",
+          concurrency: {
+            scope: "router-admitted-child-requests",
+            configSource: "stored_override",
+            configFileExists: true,
+            maxConcurrentThreadsPerSession: 8,
+            effectivePerSessionLimit: 12,
+            activeSubagentThreads: 0,
+            activeSessions: 0,
+            denials: 0,
+            revision: 3
+          }
+        })
+    }
+  );
+
+  assert.notEqual(result.kind, "ok");
 });
 
 test("POST /api/agents/concurrency handles conflict (409) with refusal=conflicted", async () => {
@@ -280,7 +405,7 @@ test("POST /api/agents/concurrency resets to config file and redirects", async (
   globalThis.fetch = async (_input, init) => {
     requestBody = JSON.parse(String(init?.body));
     return Response.json({
-      schema: "autodev-control-concurrency-v1",
+      schema: "autodev-control-concurrency-v2",
       concurrency: {
         scope: "router-admitted-child-requests",
         configSource: "config_file",
@@ -291,7 +416,8 @@ test("POST /api/agents/concurrency resets to config file and redirects", async (
         activeSessions: 0,
         denials: 0,
         revision: 4
-      }
+      },
+      reconciliation: mockReconciliation("converged", "limit:8", "limit:8")
     });
   };
 

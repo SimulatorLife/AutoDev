@@ -4589,10 +4589,21 @@ test("Control API /control/runtime/concurrency mutates orchestrator concurrency 
       }
     });
     assert.equal(patched.response.statusCode, 200);
-    assert.equal(patched.body.schema, "autodev-control-concurrency-v1");
+    assert.equal(patched.body.schema, "autodev-control-concurrency-v2");
     assert.equal(patched.body.concurrency.effectivePerSessionLimit, 8);
     assert.equal(patched.body.concurrency.configSource, "stored_override");
     assert.equal(patched.body.concurrency.revision, initialStatus.revision + 1);
+    // The write publishes the limit it is enforcing, so "the write was
+    // accepted" and "the Runtime is enforcing this limit" are two claims.
+    assert.equal(patched.body.reconciliation.status.convergence, "converged");
+    assert.equal(
+      patched.body.reconciliation.status.desiredGeneration,
+      "limit:8"
+    );
+    assert.equal(
+      patched.body.reconciliation.status.observedGeneration,
+      "limit:8"
+    );
 
     // 4. Stale revision is rejected with 409 Conflict
     const staleAttempt = await call("PATCH", CONTROL_API_PATHS.concurrency, {

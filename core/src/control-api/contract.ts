@@ -92,11 +92,17 @@
  * falls back to an empty one -- so an empty matrix set, an empty tool-exposure
  * line and a navigation badge reading 0 were three ways of saying the
  * contract declares no role, which is not what happened.
+ * v27: the concurrency limit write publishes the shared reconciliation view.
+ * The limit is a mutable resource like every other one the Console writes,
+ * and it was the last one whose write answered with the applied value alone
+ * -- so "the write was accepted" and "the Runtime is enforcing this limit"
+ * were the same claim, and only the second one says what the operator will
+ * actually get.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 26
+  version: 27
 } as const;
 
 export type ControlApiContractResponse = {

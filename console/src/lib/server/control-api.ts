@@ -2843,8 +2843,12 @@ function isControlApiConcurrencyPatchResponse(
 ): value is ControlApiConcurrencyPatchResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-concurrency-v1" &&
-    isConcurrencyStatus(value.concurrency)
+    value.schema === "autodev-control-concurrency-v2" &&
+    isConcurrencyStatus(value.concurrency) &&
+    // The reconciliation is required, not optional: the write answers with the
+    // limit the Runtime is enforcing, and without the view the Console could
+    // not tell an applied limit from an accepted one.
+    isReconciliationBundle(value.reconciliation)
   );
 }
 

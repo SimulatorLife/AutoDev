@@ -4710,6 +4710,19 @@ function auditReconciliationFields(
 }
 
 /**
+ * The generation of a session concurrency limit.
+ *
+ * The limit is a number or "unlimited", and both are facts about the
+ * deployment rather than about a read: `null` is how this Runtime says
+ * "unlimited", and the status CLI prints it the same way. The generation
+ * carries both, so a change from `limit:8` to `limit:unlimited` is a change
+ * of generation rather than a change of type.
+ */
+function concurrencyLimitGeneration(limit: number | null): string {
+  return limit === null ? "limit:unlimited" : `limit:${String(limit)}`;
+}
+
+/**
  * Read the reconciliation evidence out of a mutation response body. Returns
  * `null` for a mutation that publishes no reconciliation, which leaves the audit
  * generations null rather than inventing them. Every enablement mutation
@@ -5594,7 +5607,8 @@ async function patchConcurrencyLimit(
   const audit = (
     outcome: "ok" | "denied" | "error",
     changes: Record<string, unknown> | null,
-    reason?: string
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
   ): void =>
     auditMutation({
       actor: actor.actor,
@@ -5604,7 +5618,8 @@ async function patchConcurrencyLimit(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {})
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
     });
 
   if (actor.role !== "operator") {
@@ -5710,17 +5725,54 @@ async function patchConcurrencyLimit(
     }
 
     const updatedStatus = manager.concurrencyStatus(Date.now());
-    audit("ok", {
-      limit: nextLimit,
-      previous: previousLimit,
-      revision: updatedStatus.revision
+    // The limit is enforced by the router's own concurrency manager, in the
+    // process that serves this write, so the observation is immediate. It is
+    // still stated: "the write was accepted" and "the Runtime is enforcing
+    // this limit" are two claims, and only the second one says what the
+    // operator will actually get. A reset asks for the config file's limit,
+    // so that is the generation the operator asked for -- not "no change".
+    const desiredGeneration = concurrencyLimitGeneration(
+      nextLimit === undefined
+        ? updatedStatus.maxConcurrentThreadsPerSession
+        : nextLimit
+    );
+    const observedGeneration = concurrencyLimitGeneration(
+      updatedStatus.effectivePerSessionLimit
+    );
+    const appliedAt = new Date().toISOString();
+    const auditReconciliation: EnablementReconciliation = {
+      desiredGeneration,
+      observedGeneration,
+      restartRequired: false
+    };
+    const reconciliation = buildReconciliationView({
+      evidence: {
+        desiredGeneration,
+        observedGeneration,
+        lastApplyAt: appliedAt,
+        lastObservationAt: observedGeneration === null ? null : appliedAt,
+        lastError: null
+      },
+      history: historyForResource(resource),
+      hasObservation: observedGeneration !== null
     });
+    audit(
+      "ok",
+      {
+        limit: nextLimit,
+        previous: previousLimit,
+        revision: updatedStatus.revision
+      },
+      undefined,
+      auditReconciliation
+    );
     sendJson(
       response,
       200,
       {
-        schema: "autodev-control-concurrency-v1",
-        concurrency: updatedStatus
+        schema: "autodev-control-concurrency-v2",
+        concurrency: updatedStatus,
+        reconciliation
       },
       { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
     );
