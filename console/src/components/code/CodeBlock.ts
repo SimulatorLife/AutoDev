@@ -1,5 +1,10 @@
 import React from "react";
 
+import {
+  VERBATIM_DATA_ATTRIBUTE,
+  VERBATIM_DATA_VALUE
+} from "../ui/verbatim.ts";
+
 /**
  * The Console's code and config surfaces.
  *
@@ -96,6 +101,10 @@ export function CodeBlock({
         className === undefined ? "" : ` ${className}`
       }`,
       ...(ariaLabel === undefined ? {} : { "aria-label": ariaLabel }),
+      // The block is quoted, not rendered: it carries the author's or the
+      // service's own words, and it says so, so a check that reads the page's
+      // text knows to leave it alone.
+      [VERBATIM_DATA_ATTRIBUTE]: VERBATIM_DATA_VALUE,
       ...dataAttributes
     },
     content
@@ -137,6 +146,9 @@ export function CodeEditor({
     defaultValue,
     "aria-label": ariaLabel,
     className: CODE_EDITOR_CLASS,
+    // The source being edited is the author's own words, quoted into the
+    // editor rather than rendered by the Console.
+    [VERBATIM_DATA_ATTRIBUTE]: VERBATIM_DATA_VALUE,
     ...dataAttributes
   });
 }

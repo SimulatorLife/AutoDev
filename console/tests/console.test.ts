@@ -21066,6 +21066,10 @@ test("CodeBlock and CodeEditor share one chrome instead of seven spellings", () 
   );
   assert.match(block, /aria-label="Example source"/);
   assert.match(block, /data-example="observed"/);
+  // The block is quoted, not rendered, and it says so: a check that reads the
+  // page's text has to be able to tell the Console's own words from the
+  // author's, and it can only do that if the page marks the difference.
+  assert.match(block, /data-verbatim="true"/);
   // Source is shown verbatim, never reformatted or truncated. React escapes
   // the apostrophe, so the entity form is what the markup carries.
   assert.match(block, />print\(&#x27;hi&#x27;\)<\/pre>$/);
@@ -21098,6 +21102,8 @@ test("CodeBlock and CodeEditor share one chrome instead of seven spellings", () 
   // announced with the name rather than a placeholder.
   assert.match(editor, /<textarea/);
   assert.match(editor, /aria-label="Canonical Markdown source"/);
+  // The source being edited is the author's own words, quoted into the editor.
+  assert.match(editor, /data-verbatim="true"/);
   assert.doesNotMatch(editor, /contenteditable/);
   assert.doesNotMatch(editor, /onChange|onInput/);
 });
