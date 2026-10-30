@@ -861,6 +861,15 @@ test("step details open only for the addressed step and raw trace JSON stays col
   // verbatim behind the collapsed summary.
   assert.match(html, /&quot;eventId&quot;: &quot;event-2&quot;/u);
   assert.match(html, /Recorded JSON/u);
+  // And it says that it is quoting rather than rendering, so a check that
+  // reads the page's text knows to leave the machine's own words alone. A
+  // recorded frame carries its moments in the wire's spelling, and the
+  // Console's instant sweep would otherwise read them as a second voice for
+  // the same question.
+  assert.equal(
+    rawJsonDetails.filter((tag) => /data-verbatim="true"/u.test(tag)).length,
+    2
+  );
 });
 
 test("RacingGame-shaped trace lines summarize recorded events and keep JSON closed by default", () => {

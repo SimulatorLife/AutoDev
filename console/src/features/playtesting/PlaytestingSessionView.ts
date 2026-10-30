@@ -31,6 +31,10 @@ import {
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
+  VERBATIM_DATA_ATTRIBUTE,
+  VERBATIM_DATA_VALUE
+} from "../../components/ui/verbatim.ts";
+import {
   defaultEpisodeInspectionStep,
   durationLabel,
   executionSourceSummary,
@@ -566,7 +570,11 @@ function recordedJsonDisclosure(
     "details",
     {
       className: "mt-2 rounded border border-border bg-surface-raised p-3",
-      "data-playtest-json": "true"
+      "data-playtest-json": "true",
+      // The recorded frame is quoted, not rendered. Its own moments carry the
+      // wire's spelling, and reformatting them would make the operator's copy
+      // of the record a different record.
+      [VERBATIM_DATA_ATTRIBUTE]: VERBATIM_DATA_VALUE
     },
     React.createElement(
       "summary",
@@ -1235,7 +1243,14 @@ function recordedStatusValues(
   ] as const;
   return React.createElement(
     "details",
-    { className: "mt-2 text-xs", "data-recorded-session-status": "true" },
+    {
+      className: "mt-2 text-xs",
+      "data-recorded-session-status": "true",
+      // The recorded values are quoted, not rendered -- they are the tokens
+      // the Runtime stored, and the point of the disclosure is that they are
+      // the stored ones.
+      [VERBATIM_DATA_ATTRIBUTE]: VERBATIM_DATA_VALUE
+    },
     React.createElement(
       "summary",
       { className: "cursor-pointer text-fg-muted" },

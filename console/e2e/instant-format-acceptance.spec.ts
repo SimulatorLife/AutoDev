@@ -23,6 +23,13 @@ import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
  * date with its clock and its zone, `2026-02-11 03:00:12 UTC`. A source that
  * stated a zone that is not UTC keeps it, because relabelling `+02:00` as UTC
  * would be a claim about the data rather than about its formatting.
+ *
+ * A region marked `data-verbatim` is the exception, and it is marked rather
+ * than assumed: the Console shows a service's own record in a few places --
+ * the frame a playtest recorded, the tokens a session stored -- and that text
+ * is quoted. Its moments carry the wire's spelling because it is the wire's
+ * text, and reformatting them would falsify the record the operator came to
+ * read.
  */
 test("every instant the Console shows is in the Console's own form", async ({
   page
@@ -57,6 +64,12 @@ test("every instant the Console shows is in the Console's own form", async ({
       ];
       for (const element of Array.from(document.querySelectorAll("main *"))) {
         if (element.children.length > 0) continue;
+        // Text the Console quotes rather than renders is not a second voice
+        // for a moment. A recorded frame is shown as the machine wrote it --
+        // its own moments carry the wire's spelling, and reformatting them
+        // would make the operator's copy of the record a different record.
+        // The page marks those regions, and this sweep leaves them alone.
+        if (element.closest("[data-verbatim='true']") !== null) continue;
         const text = (element.textContent ?? "").trim();
         if (!text) continue;
         let rest = text;
