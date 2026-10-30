@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * Every moment the Console shows is shown in one form.
@@ -33,8 +29,8 @@ test("every instant the Console shows is in the Console's own form", async ({
 }) => {
   const offenders: string[] = [];
 
-  for (const route of [...CANONICAL_ROUTES, ...DETAIL_ROUTES]) {
-    await page.goto(route.path);
+  for (const path of SWEEP_ROUTES) {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const found = await page.evaluate(() => {
@@ -74,7 +70,7 @@ test("every instant the Console shows is in the Console's own form", async ({
       return findings;
     });
 
-    for (const finding of found) offenders.push(`${route.path}: ${finding}`);
+    for (const finding of found) offenders.push(`${path}: ${finding}`);
   }
 
   expect(

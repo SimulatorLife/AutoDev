@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * A status badge names the state it shows.
@@ -35,8 +31,8 @@ test("every status the Console shows is named", async ({ page }) => {
   const unnamed: string[] = [];
   let seen = 0;
 
-  for (const route of [...CANONICAL_ROUTES, ...DETAIL_ROUTES]) {
-    await page.goto(route.path);
+  for (const path of SWEEP_ROUTES) {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const found = await page.evaluate(() => {
@@ -62,8 +58,7 @@ test("every status the Console shows is named", async ({ page }) => {
     });
 
     seen += found.counted;
-    for (const finding of found.findings)
-      unnamed.push(`${route.path}: ${finding}`);
+    for (const finding of found.findings) unnamed.push(`${path}: ${finding}`);
   }
 
   expect(

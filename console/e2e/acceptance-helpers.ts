@@ -138,6 +138,22 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
 ];
 
 /**
+ * Every surface the Console's own sweeps walk.
+ *
+ * The canonical routes are the Console's sections and the detail routes are
+ * its resources. The Memory page's tabs are surfaces of a surface, and so is
+ * the claim drawer behind a claim's link -- a sweep that stops at the sections
+ * never reaches either of them, and what it cannot reach it cannot report.
+ */
+export const SWEEP_ROUTES: readonly string[] = [
+  ...CANONICAL_ROUTES.map((route) => route.path),
+  ...DETAIL_ROUTES.map((route) => route.path),
+  "/memory?tab=experiences&experienceId=exp-0001",
+  "/memory?tab=cohorts",
+  "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001"
+];
+
+/**
  * The heading a route answers with.
  */
 export function routeHeading(page: Page, route: CanonicalRoute): Locator {

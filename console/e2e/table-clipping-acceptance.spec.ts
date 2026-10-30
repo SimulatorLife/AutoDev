@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { CANONICAL_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * A table cell never cuts its text.
@@ -31,23 +31,13 @@ import { CANONICAL_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
  * column-width problem" -- so the title on a badge cannot excuse a cut badge.
  */
 /**
- * The tables behind the Memory page's own tabs.
- *
- * The canonical routes are the Console's sections, and a section's tabs are
- * not among them -- so the tables behind the Memory page's three tabs were
- * never swept. The Experiences tab's "Started At" column was cutting a
- * timestamp for exactly that reason: the column was 12px narrower than the
- * instant it holds, and nothing had ever asked the browser about it.
+ * The tables behind the Memory page's own tabs, and the detail pages' own
+ * tables, are swept with the sections -- `SWEEP_ROUTES` holds every surface.
+ * They used to be left out, and the Experiences tab's "Started At" column was
+ * cutting a timestamp for exactly that reason: the column was 12px narrower
+ * than the instant it holds, and nothing had ever asked the browser about it.
  */
-const MEMORY_TAB_ROUTES = [
-  "/memory?tab=experiences&experienceId=exp-0001",
-  "/memory?tab=cohorts"
-] as const;
-
-const TABLE_ROUTES = [
-  ...CANONICAL_ROUTES.map((route) => route.path),
-  ...MEMORY_TAB_ROUTES
-];
+const TABLE_ROUTES = SWEEP_ROUTES;
 
 for (const path of TABLE_ROUTES) {
   test(`${path} does not cut the text in a table cell`, async ({ page }) => {

@@ -532,6 +532,14 @@ The drawer is the surface that carries a claim's provenance, its validity, its e
 
 `console/e2e/memory-acceptance.spec.ts` opens a claim and reads all four of its headings and one of its transitions, so the drawer cannot go back to being unreachable.
 
+## The sweeps walked the sections and stopped there
+
+The Console's three browser sweeps — that every status is named, that every instant is in the Console's own form, and that no table cell cuts its text — walked the _canonical routes_, which are the Console's sections. The detail pages were added; the Memory page's own tabs and its claim drawer were not, and neither were the detail pages' tables until now.
+
+That is how the Experiences tab's "Started At" column came to cut a timestamp for as long as it did: the tab is not a canonical route, so no sweep had ever asked the browser about it. It is the same shape as the gap that let the claim drawer's fixture go on answering 404 — a surface nothing measured.
+
+`SWEEP_ROUTES` in `console/e2e/acceptance-helpers.ts` is now the one list of surfaces, and all three sweeps walk it: the fourteen sections, the eight detail pages, the Memory page's three tabs, and the claim drawer — twenty-seven surfaces in all.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".
