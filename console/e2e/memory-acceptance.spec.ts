@@ -227,6 +227,39 @@ test("the Experiences tab renders the evidence it read, in the Console's words",
   await expect(assessments).toContainText("Used (1/1 memories cited)");
 });
 
+test("a claim's detail opens, and carries its evidence and its history", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(
+    "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001"
+  );
+  await expect(memoryBody(page)).toBeVisible();
+
+  // The fixture served the records but their detail 404'd, so the drawer never
+  // opened: an operator clicked a claim and the page said it could not be
+  // loaded. The drawer is the surface that carries the claim's provenance, its
+  // validity and its history, and nothing had ever rendered it.
+  const drawer = page.locator("[data-selected-record-panel]");
+  await expect(drawer).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: "Durable Claim" })
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: "Validity State" })
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: "Provenance & Citations" })
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: "Transition History" })
+  ).toBeVisible();
+
+  // The history is made of transitions, so one transition is the evidence that
+  // the history was read rather than empty.
+  await expect(drawer.getByText("promote").first()).toBeVisible();
+});
+
 test("the Experiences table shows the moment it started, whole", async ({
   page
 }) => {

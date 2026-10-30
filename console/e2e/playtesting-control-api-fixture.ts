@@ -4620,6 +4620,90 @@ const VALIDITY_BY_STATUS: Readonly<Record<string, string>> = {
   uncertain: "unverified"
 };
 
+/** The routes the record drawer reads. */
+const MEMORY_RECORD_DETAIL_ROUTE = /^\/control\/memory\/records\/([^/]+)$/u;
+const MEMORY_RECORD_WHY_ROUTE = /^\/control\/memory\/records\/([^/]+)\/why$/u;
+const MEMORY_RECORD_HISTORY_ROUTE =
+  /^\/control\/memory\/records\/([^/]+)\/history$/u;
+
+/**
+ * The record's own detail, and the two reads the drawer makes beside it.
+ *
+ * The list served the records but their detail 404'd, so the Console's record
+ * drawer never opened: an operator clicked a claim and the page said it could
+ * not be loaded. The drawer is the surface that carries a claim's provenance,
+ * its validity and its history, and nothing had ever rendered it.
+ */
+function memoryRecordRead(pathname: string, response: ServerResponse): boolean {
+  const detail = MEMORY_RECORD_DETAIL_ROUTE.exec(pathname);
+  if (detail !== null) {
+    const record = memoryRecordById(detail[1]);
+    if (record === undefined) {
+      response.writeHead(404).end();
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-memory-record-v1",
+      memory: record
+    });
+    return true;
+  }
+  const why = MEMORY_RECORD_WHY_ROUTE.exec(pathname);
+  if (why !== null) {
+    const record = memoryRecordById(why[1]);
+    if (record === undefined) {
+      response.writeHead(404).end();
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-memory-why-v1",
+      memory: record,
+      // The claim this one sits beside, and the experience it was observed in.
+      // The explanation panel reads both: a claim is not evidence on its own.
+      relatedMemories: memoryRecords().slice(0, 2),
+      sourceExperiences: [MEMORY_EXPERIENCE]
+    });
+    return true;
+  }
+  const history = MEMORY_RECORD_HISTORY_ROUTE.exec(pathname);
+  if (history !== null) {
+    const record = memoryRecordById(history[1]);
+    if (record === undefined) {
+      response.writeHead(404).end();
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-memory-history-v1",
+      // The history panel is entirely made of transitions, so the list is the
+      // evidence: a missing list is not an empty history.
+      transitions: [
+        {
+          fromStatus: "proposed",
+          toStatus: "active",
+          action: "promote",
+          actorId: "agent-0001",
+          reasonCode: "candidate_submitted",
+          occurredAt: "2026-02-11T09:05:00.000Z"
+        }
+      ],
+      memory: record
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * One record of the fixture's catalogue, by its id.
+ *
+ * The detail reads are addressed by id, so the fixture has to answer them from
+ * the same records the list serves. A record the list offers and the detail
+ * cannot find is a link that leads nowhere.
+ */
+function memoryRecordById(id: string): Record<string, unknown> | undefined {
+  return memoryRecords().find((record) => record.id === id);
+}
+
 function generatedMemoryRecords(): readonly Record<string, unknown>[] {
   const lifecycles: { readonly status: string; remaining: number }[] = [
     { status: "active", remaining: 602 },
@@ -4858,6 +4942,7 @@ function handleMemoryRead(
     sendJson(response, memoryRecordsResponse(url));
     return true;
   }
+  if (memoryRecordRead(url.pathname, response)) return true;
   if (url.pathname === "/control/memory/experiences") {
     sendJson(response, {
       schema: "autodev-memory-experiences-v1",
