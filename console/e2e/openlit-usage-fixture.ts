@@ -127,6 +127,22 @@ function observedWidgets(): readonly UsageWidget[] {
       rows: [{ g0: WORKSPACE_ID, requests: String(LOGICAL_REQUESTS) }],
       xAxis: "g0",
       yAxis: "requests"
+    },
+    {
+      // The breakdown of the same total, by agent role. The roles sum to the
+      // count the card beside the chart reports, so the chart and the card
+      // cannot disagree about how many requests were made -- which is the
+      // claim a reader makes when they read one and then the other.
+      key: "requests-by-agent",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { role: "orchestrator", count: 7 },
+        { role: "worker", count: 5 }
+      ],
+      xAxis: "role",
+      yAxis: "count"
     }
   ];
 }

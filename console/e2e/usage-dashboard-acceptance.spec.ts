@@ -138,6 +138,42 @@ test("a partial snapshot shows the measured metric beside the unobserved ones", 
   await expect(page.locator(STAT_GRID).getByText("$0.00")).toHaveCount(0);
 });
 
+test("the breakdown chart draws the measured breakdown, and agrees with the count", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  // The charts were never drawn in the acceptance: every chart widget answered
+  // as unobserved, so a chart that drew the wrong bar, the wrong label or the
+  // wrong number would have gone unnoticed. The role breakdown is observed
+  // now, and it is read the way a reader reads it.
+  const chart = page.getByRole("list", {
+    name: "Logical routed requests by agent role"
+  });
+  await expect(chart).toBeVisible();
+  await expect(chart.getByText("orchestrator")).toBeVisible();
+  await expect(chart.getByText("worker")).toBeVisible();
+  await expect(chart.getByText("7")).toBeVisible();
+  await expect(chart.getByText("5")).toBeVisible();
+
+  // And the breakdown adds up to the count beside it. A chart that disagrees
+  // with the total it breaks down is two claims, and the reader cannot tell
+  // which one is wrong.
+  const total = await chart
+    .locator("li")
+    .evaluateAll((items) =>
+      items.reduce((sum, item) => {
+        // The row's own value is its last span; the label and the bar carry no
+        // number, and the spans are adjacent, so the row's text runs together.
+        const spans = item.querySelectorAll("span");
+        const value = spans[spans.length - 1]?.textContent ?? "";
+        return sum + Number(value.replace(/[^0-9.]/gu, ""));
+      }, 0)
+    );
+  expect(total).toBe(Number(LOGICAL_REQUESTS));
+});
+
 test("the filters tell an observed dimension from an unobserved one", async ({
   page
 }) => {

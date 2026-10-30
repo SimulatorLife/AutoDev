@@ -504,9 +504,17 @@ The tab said "AutoDev Console" too — the root layout's default, which is what 
 
 The Workspaces table edits the configuration **in the row**, so the cell holds four live controls: whether the workspace is enabled, its base branch, its role scope, and the roles themselves. The cell hides their labels — a table row cannot carry four of them — and two of the four are text fields, so what the operator was left with was `main` in a box and an empty box beside it, with nothing saying what either was for.
 
-The roles field is empty whenever the scope admits any role, which is the common case, so most rows showed an unnamed empty box. Recognition beats recall, so the field now carries a placeholder that says what it takes (`worker, orchestrator`) — in the same voice as the other workspace forms (`e.g. /home/operator/games/fixture`, `node, server.js`). The full form on the detail page still carries its labels; the placeholder is only for the compact cell.
+The roles field is empty whenever the scope admits any role, which is the common case, so most rows showed an unnamed empty box. Recognition beats recall, so the field now carries a placeholder that says what it takes (`worker, orchestrator`) — in the same voice as the other workspace forms (a checkout directory, an argv list, a scenario list). The full form on the detail page still carries its labels; the placeholder is only for the compact cell.
 
 `console/e2e/workspaces-configuration-acceptance.spec.ts` opens the row and asserts that both text fields name themselves.
+
+## The dashboard's charts were never drawn
+
+Every chart widget on the Usage page answered as unobserved, so the acceptance never drew a chart. A bar that drew the wrong length, a label that was truncated away, a number that did not match the count it broke down — none of it would have failed a test, because no test had a chart to look at.
+
+The role breakdown is observed now: seven requests for the orchestrator and five for the worker, which sum to the twelve the "Logical Routed Requests" card reports. The acceptance reads the chart the way a reader reads it — the role names and the counts — and then checks that the breakdown adds up to the count beside it, because a chart that disagrees with the total it breaks down is two claims and the reader cannot tell which is wrong.
+
+The widget is synthetic, like the rest of that fixture, and the fixture observes a widget because the acceptance reads it — not the other way round.
 
 ## The Console's word for a source
 
