@@ -230,6 +230,16 @@ export const SWEEP_SURFACES: readonly CanonicalRoute[] = [
     path: "/no-such-resource",
     section: "",
     heading: "Page not found"
+  },
+  // The workspace detail page. It reads the Playtesting approval panel, and
+  // that panel belongs to the session working on Playtesting -- but a sweep
+  // that measures whether a page is legible and operable is not judging who
+  // owns the work behind it, and an operator lands on this page as surely as
+  // on any other.
+  {
+    path: "/workspaces/fixture/game",
+    section: "workspaces",
+    heading: "Workspaces"
   }
 ];
 

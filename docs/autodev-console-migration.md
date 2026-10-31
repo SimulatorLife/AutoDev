@@ -666,6 +666,8 @@ The not-found page is a page the Console renders: it has a heading, a reason, an
 
 It is in the surface list now, and it holds: one level-one heading that names the page rather than a section, no skipped heading level, no repeated id, nothing cut, every control named, every landmark named, and a document that fits a phone's width.
 
+The workspace detail page was skipped for a different reason: it reads the Playtesting approval panel, and that panel belongs to the session working on Playtesting, so a sweep that judged it would be answering for work that is not its own to judge. That is a statement about ownership, and a sweep that measures whether a page is legible and operable is not making that judgement. An operator lands on the page as surely as on any other, and it holds: every control named, every landmark named, nothing cut, and a document that fits a phone's width.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".
