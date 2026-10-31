@@ -204,6 +204,16 @@ async function waitForActiveRequestsToDrain(
 
 let defaultRouterLifecycle: RouterLifecycle | null = null;
 
+/**
+ * The router's lifecycle, which is the owner of every fact about it.
+ *
+ * This accessor and the owner are the only way in. The module used to also
+ * export a free function for each of the owner's methods -- `isDraining`,
+ * `getLifecycleStatus`, `beginShutdown` and six more -- each of which did
+ * nothing but forward to the instance this returns. Two names for one
+ * capability is two paths into it, and a reader of the router's public surface
+ * could not tell which one the runtime actually used.
+ */
 export function getDefaultRouterLifecycle(
   options?: RouterLifecycleOptions
 ): RouterLifecycle {
@@ -217,48 +227,4 @@ export function setDefaultRouterLifecycle(
   lifecycle: RouterLifecycle | null
 ): void {
   defaultRouterLifecycle = lifecycle;
-}
-
-export function isDraining(): boolean {
-  return getDefaultRouterLifecycle().isDraining();
-}
-
-export function getLifecycleStatus(): RouterLifecycleStatus {
-  return getDefaultRouterLifecycle().getLifecycleStatus();
-}
-
-export function setLifecycleState(next: RouterLifecycleState): void {
-  getDefaultRouterLifecycle().setLifecycleState(next);
-}
-
-export function registerActiveRequest(
-  abortController: AbortController | null | undefined
-): void {
-  getDefaultRouterLifecycle().registerActiveRequest(abortController);
-}
-
-export function unregisterActiveRequest(
-  abortController: AbortController | null | undefined
-): void {
-  getDefaultRouterLifecycle().unregisterActiveRequest(abortController);
-}
-
-export function abortActiveResponseRequests(): void {
-  getDefaultRouterLifecycle().abortActiveResponseRequests();
-}
-
-export function beginShutdown(
-  optionsOrSignal?: ShutdownOptions | string,
-  server?: ShutdownServer | null,
-  persistState?: () => Promise<void>
-): Promise<void> {
-  return getDefaultRouterLifecycle().beginShutdown(
-    optionsOrSignal,
-    server,
-    persistState
-  );
-}
-
-export function resetLifecycleForTests(): void {
-  getDefaultRouterLifecycle().resetLifecycleForTests();
 }

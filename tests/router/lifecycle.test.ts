@@ -10,7 +10,25 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import * as lifecycleModule from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { RouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
+
+test("the lifecycle module publishes one path into the capability", () => {
+  // The owner and the accessor that reaches it are the whole surface. The
+  // module used to export a free function for each of the owner's methods --
+  // `isDraining`, `getLifecycleStatus`, `beginShutdown` and six more -- each
+  // of which forwarded to the instance the accessor returns and nothing else.
+  // Two names for one capability is two paths into it, and a reader of the
+  // router's public surface could not tell which one the runtime used.
+  const exported = Object.keys(lifecycleModule)
+    .filter((name) => name !== "default")
+    .sort();
+  assert.deepEqual(exported, [
+    "RouterLifecycle",
+    "getDefaultRouterLifecycle",
+    "setDefaultRouterLifecycle"
+  ]);
+});
 
 const ROUTER_SERVER = fileURLToPath(
   new URL("../../runtime/src/router/server.ts", import.meta.url)

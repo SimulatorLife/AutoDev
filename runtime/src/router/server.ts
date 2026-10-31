@@ -8,7 +8,7 @@ import {
 } from "node:http";
 import { pathToFileURL } from "node:url";
 
-import { beginShutdown } from "@simulatorlife/autodev-runtime/router/lifecycle";
+import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import {
   loadRouterState,
   persistRouterStateNow,
@@ -185,12 +185,14 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   };
 
   const sigtermHandler = (signal: string) => {
-    void beginShutdown(signal, server, persistRouterStateNow).then(async () => {
-      cleanup();
-      await closePlaytestingSafely();
-      await closeMemoryHostSafely();
-      process.exit(0);
-    });
+    void getDefaultRouterLifecycle()
+      .beginShutdown(signal, server, persistRouterStateNow)
+      .then(async () => {
+        cleanup();
+        await closePlaytestingSafely();
+        await closeMemoryHostSafely();
+        process.exit(0);
+      });
   };
   const onSigint = () => sigtermHandler("SIGINT");
   const onSigterm = () => sigtermHandler("SIGTERM");

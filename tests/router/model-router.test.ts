@@ -21,12 +21,7 @@ import {
 import { spawnedChildren } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS as cooldowns } from "@simulatorlife/autodev-runtime/router/cooldown";
-import {
-  beginShutdown,
-  getLifecycleStatus,
-  isDraining,
-  resetLifecycleForTests
-} from "@simulatorlife/autodev-runtime/router/lifecycle";
+import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import type {
   OtelAttribute,
   OtelLogRecord
@@ -8440,7 +8435,7 @@ test("direct concrete request does not reroute to a different provider when the 
 });
 
 test("liveness stays 200 during draining while readiness returns 503 with structured router_draining body", async () => {
-  resetLifecycleForTests();
+  getDefaultRouterLifecycle().resetLifecycleForTests();
   const stateDirectory = await mkdtemp(
     join(tmpdir(), "autodev-readiness-state-")
   );
@@ -8458,7 +8453,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     const readyPayload = await readinessReady.json();
     assert.equal(readyPayload.status, "ready");
     assert.equal(readyPayload.lifecycle.state, "ready");
-    assert.equal(isDraining(), false);
+    assert.equal(getDefaultRouterLifecycle().isDraining(), false);
 
     // Force the lifecycle into draining without relying on the SIGTERM handler
     // (which would call process.exit in production).
@@ -8468,13 +8463,17 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
       await import("@simulatorlife/autodev-runtime/router/server");
     void internal;
 
-    // Trigger draining through the public lifecycle helper used by tests.
-    resetLifecycleForTests();
-    // Use the exported beginShutdown with a no-op server reference so we can
+    // Trigger draining through the lifecycle owner used by tests.
+    getDefaultRouterLifecycle().resetLifecycleForTests();
+    // Use the owner's beginShutdown with a no-op server reference so we can
     // probe the endpoints while draining; only the SIGTERM handler exits.
-    await beginShutdown("SIGTERM", null, stateFile as any);
-    assert.equal(isDraining(), true);
-    assert.equal(getLifecycleStatus().draining, true);
+    await getDefaultRouterLifecycle().beginShutdown(
+      "SIGTERM",
+      null,
+      stateFile as any
+    );
+    assert.equal(getDefaultRouterLifecycle().isDraining(), true);
+    assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().draining, true);
 
     const liveliness = await fetch(
       `http://127.0.0.1:${address.port}/health/liveliness`
@@ -8513,7 +8512,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     assert.equal(drainResponseBody.error.code, "router_draining");
   } finally {
     await closeServer(server);
-    resetLifecycleForTests();
+    getDefaultRouterLifecycle().resetLifecycleForTests();
     await rm(stateDirectory, { recursive: true, force: true });
   }
 });
@@ -8523,7 +8522,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
   const directory = await mkdtemp(join(tmpdir(), "autodev-shutdown-"));
   const stateFile = join(directory, "router-state.json");
   try {
-    resetLifecycleForTests();
+    getDefaultRouterLifecycle().resetLifecycleForTests();
     resetRouterTelemetry();
     recordRouterEvent({
       phase: "selected",
@@ -8577,15 +8576,15 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // Wait until the request is registered with the router before draining.
       const deadline = Date.now() + 1000;
       while (
-        getLifecycleStatus().activeResponseRequests === 0 &&
+        getDefaultRouterLifecycle().getLifecycleStatus().activeResponseRequests === 0 &&
         Date.now() < deadline
       ) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      assert.equal(getLifecycleStatus().activeResponseRequests >= 1, true);
+      assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().activeResponseRequests >= 1, true);
 
       // Begin shutdown while the request is still in flight.
-      const shutdownPromise = beginShutdown(
+      const shutdownPromise = getDefaultRouterLifecycle().beginShutdown(
         "SIGTERM",
         server,
         stateFile as any
@@ -8630,7 +8629,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
         1,
         `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`
       );
-      assert.equal(getLifecycleStatus().state, "draining");
+      assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().state, "draining");
     } finally {
       try {
         await new Promise<void>((resolve, reject) =>
@@ -8645,7 +8644,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
         // tolerate the duplicate close here.
       }
       globalThis.fetch = originalFetch;
-      resetLifecycleForTests();
+      getDefaultRouterLifecycle().resetLifecycleForTests();
     }
   } finally {
     resetRouterTelemetry();
