@@ -8473,7 +8473,10 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
       stateFile as any
     );
     assert.equal(getDefaultRouterLifecycle().isDraining(), true);
-    assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().draining, true);
+    assert.equal(
+      getDefaultRouterLifecycle().getLifecycleStatus().draining,
+      true
+    );
 
     const liveliness = await fetch(
       `http://127.0.0.1:${address.port}/health/liveliness`
@@ -8576,12 +8579,17 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // Wait until the request is registered with the router before draining.
       const deadline = Date.now() + 1000;
       while (
-        getDefaultRouterLifecycle().getLifecycleStatus().activeResponseRequests === 0 &&
+        getDefaultRouterLifecycle().getLifecycleStatus()
+          .activeResponseRequests === 0 &&
         Date.now() < deadline
       ) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().activeResponseRequests >= 1, true);
+      assert.equal(
+        getDefaultRouterLifecycle().getLifecycleStatus()
+          .activeResponseRequests >= 1,
+        true
+      );
 
       // Begin shutdown while the request is still in flight.
       const shutdownPromise = getDefaultRouterLifecycle().beginShutdown(
@@ -8629,7 +8637,10 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
         1,
         `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`
       );
-      assert.equal(getDefaultRouterLifecycle().getLifecycleStatus().state, "draining");
+      assert.equal(
+        getDefaultRouterLifecycle().getLifecycleStatus().state,
+        "draining"
+      );
     } finally {
       try {
         await new Promise<void>((resolve, reject) =>
