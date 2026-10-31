@@ -1649,7 +1649,7 @@ per request:
 | `x-autodev-agent-events-url`     | `http://127.0.0.1:4100/v1/agent-events`                                                 |
 
 A bridge matches the tool names its CLI reports against the watchlist and
-`POST`s `{ requestId, events: [ { type: "subagent_spawn", tool, role, status, count, children } ] }`,
+`POST`s `{ requestId, sessionId, events: [ { type: "subagent_spawn", tool, role, status, count, children } ] }`,
 where `children` is one `{ id, model }` per subagent the call created.
 The bridge therefore needs no routing config, no provider identity, and no
 router address of its own; and because the request id is an unguessable UUID a
@@ -1657,6 +1657,14 @@ bridge only learns by serving the request, presenting it is also what
 authorizes the report. A report naming an unknown request id is rejected with
 `404 router_unknown_request` and counted nowhere. Reporting is best effort in
 the bridge: a transport failure costs a count, never the model turn.
+
+The post carries the session id as well, because the router's registry of live
+requests is in memory: a restart loses it, and a long CLI turn keeps reporting
+against the request it started with. The session outlives the restart, so the
+router falls back to it and attributes the report to the session instead of
+dropping it. An audited Antigravity turn lost 17,336 reports this way -- every
+event of a turn that spanned a router restart -- which is how a bridge's
+delegation can go unobserved entirely.
 
 Codex receives none of these headers, and MiniMax receives no spawn-tool
 watchlist -- the router already observes their children as role requests, so

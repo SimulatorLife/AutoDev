@@ -16,6 +16,7 @@ import {
 import {
   getWorkspaceMetadata,
   noteBridgeRequest,
+  noteBridgeSession,
   rememberWorkspaceMetadata,
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
@@ -222,6 +223,40 @@ test("agent event ingestion accepts activity only for a router-owned request", (
   );
   assert.equal(
     ingestAgentEvents({ requestId: "unknown", events: [] }).reason,
+    "unknown_request_id"
+  );
+});
+
+test("agent event ingestion still attributes a report whose request id the router lost", () => {
+  // The router's registry of live requests is in memory, so a restart loses
+  // it while a long CLI turn keeps reporting against the request it started
+  // with. The session outlives the restart, so a report that carries it is
+  // attributed to the session rather than dropped.
+  resetSubagentTelemetry();
+  noteBridgeSession("http-restart-session", {
+    requestId: "http-restart-request",
+    activitySubject: "req:http-restart-request",
+    provider: "antigravity",
+    model: "gemini-3.8-flash-high",
+    role: "orchestrator",
+    workspace: "Owner/Repo"
+  });
+  assert.deepEqual(
+    ingestAgentEvents({
+      requestId: "http-request-the-router-forgot",
+      sessionId: "http-restart-session",
+      events: [{ type: "activity", state: "heartbeat" }]
+    }),
+    { accepted: 1, closed: 0, unavailable: 0, rejected: 0, reason: null }
+  );
+  // A report with neither a known request nor a known session is still
+  // refused: the session id is not a licence to post for any session.
+  assert.equal(
+    ingestAgentEvents({
+      requestId: "http-request-the-router-forgot",
+      sessionId: "http-session-nobody-registered",
+      events: []
+    }).reason,
     "unknown_request_id"
   );
 });

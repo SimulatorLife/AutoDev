@@ -162,6 +162,39 @@ test("a reported spawn names the request that authorizes it", async () => {
   }
 });
 
+test("a report travels with the session it belongs to", async () => {
+  // The router's registry of live requests is in memory, so a restart loses
+  // it while a long CLI turn keeps reporting against the request it started
+  // with. The session outlives the restart, so the post carries it and the
+  // router can still attribute the report.
+  const received: any[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  const port = await listen(server);
+  try {
+    const reporter = resolveAgentEventReporter({
+      ...routerHeaders,
+      [AGENT_EVENTS_URL_HEADER]: `http://127.0.0.1:${port}/v1/agent-events`,
+      [SESSION_ID_HEADER]: "session-1"
+    });
+    await reporter!.reportSpawn({ tool: "invoke_subagent", role: "explorer" });
+    assert.equal(received.length, 1);
+    assert.equal(received[0].sessionId, "session-1");
+    assert.equal(received[0].requestId, "request-1");
+  } finally {
+    await close(server);
+  }
+});
+
 test("a batch of children is reported as a batch, grouped by role", async () => {
   const received: any[] = [];
   const server = createServer((request, response) => {
@@ -1563,6 +1596,7 @@ test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag a
     assert.equal(received.length, 1);
     assert.deepEqual(received[0], {
       requestId: "session-1",
+      sessionId: "session-1",
       events: [
         {
           type: "skill_used",

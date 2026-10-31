@@ -1185,7 +1185,15 @@ export function ingestAgentEvents(
 ): AgentEventCounters & { reason: string | null } {
   const requestId =
     typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
-  const context = resolveIngestContext(requestId);
+  const sessionId =
+    typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
+  // The request id is the primary key, and the session id is the fallback:
+  // the router's registry of live requests is in memory, so a restart loses
+  // it while a long CLI turn keeps reporting against the request it started
+  // with. The session outlives the restart.
+  const context =
+    resolveIngestContext(requestId) ??
+    (sessionId ? resolveIngestContext(sessionId) : null);
   if (!context) {
     return {
       accepted: 0,

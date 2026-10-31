@@ -110,6 +110,7 @@ export const VALID_ACTIVITY_STATES = Object.freeze(
 export class AgentEventReporter {
   private url: string;
   private requestId: string;
+  private sessionId: string | null;
   private spawnTools: Set<string>;
   private childSequence: number;
   private lastActivityState: string | null;
@@ -119,10 +120,12 @@ export class AgentEventReporter {
     url: string,
     requestId: string,
     spawnTools: Set<string>,
+    sessionId: string | null = null,
     options: Record<string, unknown> = {}
   ) {
     this.url = url;
     this.requestId = requestId;
+    this.sessionId = sessionId;
     this.spawnTools = spawnTools;
     this.childSequence = 0;
     this.lastActivityState = null;
@@ -605,7 +608,15 @@ export class AgentEventReporter {
       const response = await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ requestId: this.requestId, events })
+        body: JSON.stringify({
+          requestId: this.requestId,
+          // The session id travels with the post so the router can attribute
+          // it when the request id is no longer one it knows: the router's
+          // registry is in memory, and a restart loses it while a long CLI
+          // turn keeps reporting.
+          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+          events
+        })
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     } catch (error) {
@@ -642,6 +653,7 @@ export function resolveAgentEventReporter(
   const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
   const requestId = headerValue(headers, REQUEST_ID_HEADER);
   if (!url || !requestId) return null;
+  const sessionId = headerValue(headers, SESSION_ID_HEADER);
   const tools = headerValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
   const spawnTools = new Set(
     tools
@@ -651,7 +663,7 @@ export function resolveAgentEventReporter(
           .filter(Boolean)
       : []
   );
-  return new AgentEventReporter(url, requestId, spawnTools);
+  return new AgentEventReporter(url, requestId, spawnTools, sessionId);
 }
 
 /**
@@ -679,6 +691,8 @@ export function resolveSkillReadReporter(
   if (!url || !sessionId) return null;
   // The session id is used in place of the request id. The router records
   // the post with the same request/bridge correlation machinery a bridge
-  // would use, attributed to whichever active request owns the session.
-  return new AgentEventReporter(url, sessionId, new Set());
+  // would use, attributed to whichever active request owns the session. It
+  // travels as the session id too, so the router can still attribute the
+  // post when the request id it knows has gone.
+  return new AgentEventReporter(url, sessionId, new Set(), sessionId);
 }
