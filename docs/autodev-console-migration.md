@@ -654,6 +654,12 @@ They found four things.
 
 **And two sweeps were measuring text nobody could see.** A closed disclosure hides its content with `content-visibility`, and the hidden content still reports a box and a colour — so the contrast and focus-ring sweeps were reading text that is not painted. Both now ask the browser whether the content is rendered at all, which is the same question the clipping sweep learned to ask.
 
+## The pulse that ran whether or not the operator had asked
+
+The target state names reduced motion in the acceptance contract — "Accessibility: named controls, live-region announcement without incessant focus changes, accessible data tables, reduced motion" — and the Console had one animation: the two-pixel dot that says a playtesting session is live. It pulsed on every screen, for as long as the session ran, whether or not the operator had asked the system not to move things on the page.
+
+A pulse is the easiest animation to write and the one nobody checks, because it looks deliberate and it is only two pixels. It honours the preference now, and the sweep that holds it asks the browser rather than the source: the page is rendered with `prefers-reduced-motion: reduce` emulated, and every element is asked whether it is still animating.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

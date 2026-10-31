@@ -41,7 +41,11 @@ export function PlaytestingSessionLiveWatch({
       "data-testid": "session-live-watch"
     },
     React.createElement("span", {
-      className: "h-2 w-2 rounded-full bg-accent animate-pulse"
+      // The dot says the session is live. It does not need to pulse to say
+      // so, and a pulse that never stops is motion an operator may have asked
+      // the system not to show them.
+      className:
+        "h-2 w-2 rounded-full bg-accent animate-pulse motion-reduce:animate-none"
     }),
     "Live · Watching session"
   );
