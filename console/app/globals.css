@@ -105,6 +105,39 @@ html {
   outline-offset: 2px;
 }
 
+/*
+ * A control that can act is a pointer target.
+ *
+ * The user agent's default for `<button>` is `cursor: default`, which
+ * contradicts the Console: a button that looks like a button and behaves like
+ * one is a target, and the pointer is the cheapest signal an operator has
+ * that it is one.
+ *
+ * The shared button vocabulary says so for the buttons it renders, and a
+ * button rendered outside that vocabulary did not: the command palette's
+ * trigger -- on every page of the Console -- the Playtesting page's own
+ * controls, the error page's "Try again", the pager's and the editors'
+ * buttons. Each one hand-written, each one asking for the default arrow
+ * while looking like a button and behaving like one.
+ *
+ * The rule lives here rather than at each of those call sites because the
+ * call sites are where the mistake happens: the newest feature code is the
+ * most likely to hand-write a control and the least likely to remember a
+ * class. It is the same shape as the focus ring above -- a property of the
+ * *kind* of control, stated once for the whole product rather than repeated
+ * by each component that renders one.
+ *
+ * A control that cannot act is left alone: `:disabled` and `aria-disabled`
+ * are both excluded, so a disabled button keeps whatever cursor its own
+ * chrome asks for, and a busy one -- which is working, not unavailable --
+ * keeps the "not allowed" the vocabulary gives it.
+ */
+@layer base {
+  button:not(:disabled):not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 html,
 body {
   height: 100%;

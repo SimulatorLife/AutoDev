@@ -15,7 +15,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { waitForPageContent } from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 const AGENTS_ROUTE = "/agents";
 const PROMPT_ROUTE = "/prompts/review";
@@ -104,4 +104,71 @@ test("a control that is working keeps the operator's place", async ({
         (document.activeElement as HTMLElement | null)?.dataset.button ?? null
     )
   ).toBe("prompt-preview");
+});
+
+/**
+ * A control that can act is a pointer target.
+ *
+ * The user agent's default for `<button>` is `cursor: default`, which
+ * contradicts the Console: a button that looks like a button and behaves like
+ * one is a target, and the pointer is the cheapest signal an operator has
+ * that it is.
+ *
+ * The shared button vocabulary says so for the buttons it renders. A button
+ * rendered outside that vocabulary did not: the command palette's trigger -- on
+ * every page of the Console -- the Playtesting page's own controls, the error
+ * page's "Try again". Each one hand-written, each one asking for the default
+ * arrow while looking like a button and behaving like one.
+ *
+ * This is a rendering claim about a computed style, so it is measured where it
+ * happens: in the browser, on every route, over every button that can act. A
+ * control that cannot act -- a disabled one, a busy one -- is not a target and
+ * is not asked to be one.
+ */
+test("a control that can act is a pointer target", async ({ page }) => {
+  const offenders: string[] = [];
+  let seen = 0;
+
+  for (const path of SWEEP_ROUTES) {
+    await page.goto(path);
+    await waitForPageContent(page);
+
+    const found = await page.evaluate(() => {
+      const findings: string[] = [];
+      let counted = 0;
+      for (const element of Array.from(
+        document.querySelectorAll<HTMLButtonElement>("button")
+      )) {
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        if (element.closest("[hidden]")) continue;
+        // A control that cannot act is not a target, so it is not asked to
+        // look like one.
+        if (element.disabled) continue;
+        if (element.getAttribute("aria-disabled") === "true") continue;
+        counted += 1;
+        if (style.cursor === "pointer") continue;
+        findings.push(
+          `"${(element.textContent ?? "").trim().slice(0, 40)}" shows ${style.cursor}`
+        );
+      }
+      return { findings, counted };
+    });
+
+    seen += found.counted;
+    for (const finding of found.findings) offenders.push(`${path}: ${finding}`);
+  }
+
+  expect(
+    offenders,
+    "a button that can act must not show the default arrow: the pointer is the cheapest signal that it is a target"
+  ).toEqual([]);
+  // The sweep has to have read something. A Console that failed to render would
+  // answer every route with an error page, and an error page carries no button
+  // at all -- so a sweep that found nothing would pass the rule above without
+  // having looked at a single control.
+  expect(
+    seen,
+    "the sweep has to read the buttons the Console renders, not an error page"
+  ).toBeGreaterThan(20);
 });
