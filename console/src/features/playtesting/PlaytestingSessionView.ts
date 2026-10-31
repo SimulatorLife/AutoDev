@@ -923,7 +923,19 @@ function reviewPanel(
     React.createElement(
       "p",
       { className: MUTED_META_CLASS },
-      `Review ${review.reviewId} · rubric ${review.rubricHash} · ${review.measurementVersion}`
+      "Review ",
+      // The review id and the rubric hash are the two runs on the line that
+      // cannot break on their own, and they are what the line says: which
+      // review, against which rubric. They break between characters rather
+      // than being shortened, because a shortened digest is a different claim.
+      React.createElement("span", { className: "break-all" }, review.reviewId),
+      " · rubric ",
+      React.createElement(
+        "span",
+        { className: "break-all" },
+        review.rubricHash
+      ),
+      ` · ${review.measurementVersion}`
     ),
     completenessPanel,
     review.anchors.length === 0
@@ -2824,7 +2836,18 @@ export function PlaytestingSessionView({
         ? React.createElement(
             "p",
             { className: MUTED_META_CLASS },
-            `Integrity verified · SHA-256 ${window.sha256} · ${window.sourceLineCount} source lines · ${window.omittedLineCount} not in this window`
+            "Integrity verified · SHA-256 ",
+            // The digest is 64 hex characters with nothing to break between
+            // them, so it is the one run on the page that cannot fit a phone's
+            // line. It breaks here rather than being cut off: the digest is
+            // the evidence the operator is reading the line for, and a
+            // shortened one would be a different claim.
+            React.createElement(
+              "span",
+              { className: "break-all" },
+              window.sha256
+            ),
+            ` · ${window.sourceLineCount} source lines · ${window.omittedLineCount} not in this window`
           )
         : null,
       episodeSteps(detail, traceScope, window, windowUnavailable)

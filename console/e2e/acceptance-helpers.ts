@@ -320,13 +320,22 @@ export interface ClippedContent {
 /**
  * The content a page holds that its own box cannot show.
  *
- * Four things are not a defect, and each of them is a decision rather than an
+ * Five things are not a defect, and each of them is a decision rather than an
  * accident: a box that scrolls (`overflow-x: auto`) is a box that says so, a
  * truncated line (`text-overflow: ellipsis`) keeps its full text on its title,
- * a box with no width of its own is not laid out, and a visually hidden label
- * is a 1px box whose content is its intrinsic width by construction. What is
- * left is content that is silently cut off with no way to reach it -- the
- * failure this looks for.
+ * a box with no width of its own is not laid out, a visually hidden label is a
+ * 1px box whose content is its intrinsic width by construction, and content
+ * inside a closed disclosure is not on the page at all. What is left is
+ * content that is silently cut off with no way to reach it -- the failure this
+ * looks for.
+ *
+ * The closed disclosure is the one that needed the browser's answer rather than
+ * the source's. A `<details>` that is closed hides its content with
+ * `content-visibility`, so the content still reports a box -- and a box whose
+ * content is wider than it reads as a clip to anything that measures. The
+ * operator cannot see any of it: the disclosure is closed, and opening it
+ * re-lays it out. `checkVisibility()` is the question the source cannot answer
+ * and the browser can: is this content rendered at all?
  *
  * A form control's own value is not that. An `<input>` reports its value's
  * width as its scroll width, so a filled field narrower than its value reads
@@ -344,6 +353,10 @@ export function clippedContent(page: Page): Promise<readonly ClippedContent[]> {
       if (style.textOverflow === "ellipsis") continue;
       if (element.clientWidth === 0) continue;
       if (element.tagName === "INPUT") continue;
+      // Content inside a closed disclosure is not rendered, so it cannot be
+      // read as cut off: nobody is looking at it, and opening the disclosure
+      // lays it out again.
+      if (!element.checkVisibility()) continue;
       // A visually hidden label is a 1px box; its content is wider than it by
       // definition and always has been.
       const box = element.getBoundingClientRect();

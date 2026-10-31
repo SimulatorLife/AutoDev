@@ -805,11 +805,17 @@ function RecordDetailPanel({
                 "li",
                 {
                   key: i,
-                  className: "flex items-center justify-between p-3 text-xs"
+                  // The row carries the transition, the reason, the action and
+                  // who did it when: more than a phone's line. It wraps rather
+                  // than running off the side, because the reason is the part
+                  // that says why the claim stopped being trustworthy, and a
+                  // row that is cut off is a row whose reason is unread.
+                  className:
+                    "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-3 text-xs"
                 },
                 React.createElement(
                   "div",
-                  { className: "flex items-center gap-2" },
+                  { className: "flex min-w-0 flex-wrap items-center gap-2" },
                   React.createElement(StatusBadge, {
                     status:
                       MEMORY_STATUS_VARIANT[t.toStatus] ?? NOT_OBSERVED_STATUS,
@@ -840,7 +846,7 @@ function RecordDetailPanel({
                   "div",
                   {
                     className:
-                      "flex items-center gap-3 text-fg-muted font-mono text-meta"
+                      "flex shrink-0 items-center gap-3 text-fg-muted font-mono text-meta"
                   },
                   React.createElement("span", null, t.actorId),
                   React.createElement("span", null, instantLabel(t.occurredAt))
