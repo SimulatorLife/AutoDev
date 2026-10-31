@@ -168,20 +168,11 @@ import {
   withExtractedTraceContext
 } from "./telemetry.ts";
 import {
-  attributionDiagnosticsStatus,
-  countLiveAgentActivity,
   getDefaultUsageTracker,
-  inFlightUsage,
-  projectLiveAgents,
-  recordUsageEvent,
   type RecordUsageEventParams,
-  registerWorkspaceId,
-  resetUsageTelemetry,
-  restoreUsagePersistenceSnapshot,
   safeWorkspaceId,
   usageOrigin,
-  usagePersistenceSnapshot,
-  usageStatus
+  type UsageTracker
 } from "./usage.ts";
 
 const GIT_REMOTE_PATTERN = /^git@([^:]+):/;
@@ -342,7 +333,7 @@ const routerEvents = new RouterEventRecorder({
       input.workspace,
       effectiveOrigin
     );
-    if (usageEvent) recordUsageEvent(usageEvent);
+    if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
     if (event.phase === "result")
       closeBridgeSubagentsForRequest(
         String(event.requestId ?? ""),
@@ -382,7 +373,8 @@ const subagentRegistry = new SubagentRegistry({
   agentActivity,
   executionContract: getDefaultExecutionContract(),
   onRecordRouterEvent: (event) => recordRouterEvent(event),
-  onRecordUsageEvent: (event) => recordUsageEvent(event),
+  onRecordUsageEvent: (event) =>
+    getDefaultUsageTracker().recordUsageEvent(event),
   onSchedulePersist: () => scheduleRouterStatePersist(),
   onMissingProviderDiagnostic: (count) => {
     getDefaultUsageTracker().recordMissingProviderDiagnostic(count);
@@ -424,7 +416,8 @@ setDefaultConcurrencyManager(concurrencyManager);
 
 ROUTING_POLICY.setRuntime({
   providerFailureStreak: (provider) => COOLDOWNS.failureStreak(provider),
-  liveProviderCount: (provider) => countLiveAgentActivity({ provider })
+  liveProviderCount: (provider) =>
+    getDefaultUsageTracker().countLiveAgentActivity({ provider })
 });
 COOLDOWNS.setRuntime({
   isProviderEnabled: (provider, role) =>
@@ -531,7 +524,7 @@ function restorePersistedSection(args: {
     return;
   }
   if (section === "usage") {
-    restoreUsagePersistenceSnapshot(value);
+    getDefaultUsageTracker().restoreUsagePersistenceSnapshot(value);
     return;
   }
   if (section === "concurrency" && value && typeof value === "object") {
@@ -569,12 +562,12 @@ function restoreRecentEvents(
 ): void {
   routerEvents.restore(value);
   if (parsed.usage) return;
-  resetUsageTelemetry();
+  getDefaultUsageTracker().resetUsageTelemetry();
   for (const event of routerEvents.getRecentEvents()) {
     const usageEvent = usageEventFromRouterEvent(event, null, null);
-    if (usageEvent) recordUsageEvent(usageEvent);
+    if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
   }
-  inFlightUsage.clear();
+  getDefaultUsageTracker().inFlightUsage.clear();
 }
 
 function assignCodexSnapshot(
@@ -649,7 +642,7 @@ const routerPersistence = new RouterPersistence({
     ...ROUTING_POLICY.runtimeState(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
-    usage: usagePersistenceSnapshot(),
+    usage: getDefaultUsageTracker().usagePersistenceSnapshot(),
     concurrency: concurrencyManager.persistenceSnapshot(),
     subagents: subagentRegistry.subagentTelemetry,
     spawnFailures: subagentRegistry.spawnFailureTelemetry,
@@ -677,7 +670,7 @@ export function resetRouterTelemetry(): void {
     state.lastFailureClass = null;
     state.lastFailure = null;
   }
-  resetUsageTelemetry();
+  getDefaultUsageTracker().resetUsageTelemetry();
   getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetSubagentTelemetry();
   resetSpawnFailureTelemetry();
@@ -771,7 +764,7 @@ export function limitsStatus(): Record<string, unknown> {
 }
 
 export function agentsStatus(at = Date.now()): Record<string, unknown> {
-  const projection = projectLiveAgents(at);
+  const projection = getDefaultUsageTracker().projectLiveAgents(at);
   const liveAgents = projection.allLiveAgents;
   const byState = agentActivity.snapshot(at).byState;
   const liveByKind: Record<string, number> = {};
@@ -809,7 +802,7 @@ export function agentsStatus(at = Date.now()): Record<string, unknown> {
 }
 
 function controlApiLiveAgentCounts(now: number): ControlApiLiveAgentCounts {
-  const projection = projectLiveAgents(now);
+  const projection = getDefaultUsageTracker().projectLiveAgents(now);
   return {
     count: projection.canonicalTotal,
     byRole: projection.byRole,
@@ -1241,7 +1234,7 @@ function providerTierPriorities(provider: string): string[] {
 function routerProviderStatus(
   route: (typeof ROUTES)[number],
   now: number,
-  projection: ReturnType<typeof projectLiveAgents>
+  projection: ReturnType<UsageTracker["projectLiveAgents"]>
 ): [string, Record<string, unknown>] {
   const state = providerState(route.provider);
   const cooldown = COOLDOWNS.get(route.provider, now);
@@ -1324,7 +1317,7 @@ function routerProviderStatus(
 function controlApiProviderHealth(
   now: number
 ): Record<string, ControlApiProviderHealth> {
-  const projection = projectLiveAgents(now);
+  const projection = getDefaultUsageTracker().projectLiveAgents(now);
   return Object.fromEntries(
     ROUTES.map((route) => {
       const state = providerState(route.provider);
@@ -1370,7 +1363,7 @@ function buildRouterStatus(
   now = Date.now(),
   includeActiveAgentCorrelation = false
 ): Record<string, unknown> {
-  const projection = projectLiveAgents(now);
+  const projection = getDefaultUsageTracker().projectLiveAgents(now);
   const codexTelemetry = codexTelemetryStatus();
   const recentEvents = getDefaultRouterEventRecorder().getRecentEvents(true);
   const statusTelemetry = includeActiveAgentCorrelation
@@ -1410,8 +1403,9 @@ function buildRouterStatus(
     routing: routingStatus(),
     limits: limitsStatus(),
     ...ROUTING_POLICY.runtimeState(),
-    usage: usageStatus(now, projection),
-    attributionDiagnostics: attributionDiagnosticsStatus(),
+    usage: getDefaultUsageTracker().usageStatus(now, projection),
+    attributionDiagnostics:
+      getDefaultUsageTracker().attributionDiagnosticsStatus(),
     liveAgentAttribution: {
       missingProvider: projection.missingProvider,
       missingModel: projection.missingModel
@@ -1739,9 +1733,10 @@ export function workspaceContextFromRequest(
   );
 
   if (key !== "unknown") {
-    if (workspaceId) registerWorkspaceId(workspaceId, key);
     if (workspaceId)
-      registerWorkspaceId(
+      getDefaultUsageTracker().registerWorkspaceId(workspaceId, key);
+    if (workspaceId)
+      getDefaultUsageTracker().registerWorkspaceId(
         `ws_${createHash("sha256").update(key).digest("hex").slice(0, 12)}`,
         key
       );

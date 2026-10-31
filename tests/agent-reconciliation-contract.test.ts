@@ -16,10 +16,7 @@ import {
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
 import { loadRouterState } from "@simulatorlife/autodev-runtime/router/persistence";
-import {
-  projectLiveAgents,
-  usageStatus
-} from "@simulatorlife/autodev-runtime/router/usage";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 type AgentActivityState = (typeof AGENT_ACTIVITY_STATES)[number];
 
@@ -255,10 +252,10 @@ describe("agent reconciliation contract: constants and module surface", () => {
     assert.equal(slotVsAgent.agentLive, status.canonicalLiveCount);
   });
 
-  test("agentsStatus(at) and projectLiveAgents(at) agree on the canonical live count", () => {
+  test("agentsStatus(at) and getDefaultUsageTracker().projectLiveAgents(at) agree on the canonical live count", () => {
     const at = Date.now();
     const status = agentsStatus(at);
-    const projection = projectLiveAgents(at);
+    const projection = getDefaultUsageTracker().projectLiveAgents(at);
     assert.equal(status.canonicalLiveCount, projection.canonicalTotal);
     assert.equal(status.missingProvider, projection.missingProvider);
     assert.equal(status.missingModel, projection.missingModel);
@@ -389,7 +386,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
         role: "worker",
         outcome: "success"
       });
-      const status = usageStatus();
+      const status = getDefaultUsageTracker().usageStatus();
       assert.equal(status.totals.attempts, 0);
       assert.equal(status.totals.successes, 0);
     } finally {
@@ -408,7 +405,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
         role: "worker",
         outcome: "success"
       });
-      const status = usageStatus();
+      const status = getDefaultUsageTracker().usageStatus();
       assert.equal(status.totals.successes, 1);
     } finally {
       resetRouterTelemetry();
@@ -434,7 +431,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
           outcome: null
         });
       });
-      const status = usageStatus();
+      const status = getDefaultUsageTracker().usageStatus();
       assert.equal(status.totals.successes, 0);
       assert.equal(status.totals.failures, 1);
     } finally {
@@ -458,7 +455,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
           workspace_id: "ws-contract-1"
         }
       });
-      const status = usageStatus();
+      const status = getDefaultUsageTracker().usageStatus();
       assert.equal(Object.hasOwn(status.byWorkspace, "AutoDev"), true);
     } finally {
       resetRouterTelemetry();
@@ -516,7 +513,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
         "utf8"
       );
       loadRouterState(tmpFile);
-      const status = usageStatus();
+      const status = getDefaultUsageTracker().usageStatus();
       // Only the event carrying a requestId is keyed into Usage; the
       // null-requestId event is skipped rather than invented an identity.
       assert.equal(status.totals.successes, 1);

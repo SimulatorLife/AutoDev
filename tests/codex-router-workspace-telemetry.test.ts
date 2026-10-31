@@ -26,10 +26,7 @@ import {
   noteBridgeRequest,
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
-import {
-  registerWorkspaceId,
-  resetAttributionDiagnostics
-} from "@simulatorlife/autodev-runtime/router/usage";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 const attrs = (
   entries: Array<[string, unknown]>
@@ -338,8 +335,11 @@ test("dedupes codex.tool_result events with the same call id from the same windo
 test("attaches unattributed coverage to the workspace bucket when workspace_id resolves", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
-  registerWorkspaceId("ws-unattr-1", "SimulatorLife/RacingGame");
+  getDefaultUsageTracker().resetAttributionDiagnostics();
+  getDefaultUsageTracker().registerWorkspaceId(
+    "ws-unattr-1",
+    "SimulatorLife/RacingGame"
+  );
 
   ingestOtelSignal("metrics", {
     resourceMetrics: [
@@ -379,13 +379,16 @@ test("attaches unattributed coverage to the workspace bucket when workspace_id r
   assert.equal(ws.toolsUnattributed, 2);
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 });
 
 test("records bridge tool_executed / tool_requested / tool_unavailable observations", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  registerWorkspaceId("ws-bridge-1", "SimulatorLife/AutoDev");
+  getDefaultUsageTracker().registerWorkspaceId(
+    "ws-bridge-1",
+    "SimulatorLife/AutoDev"
+  );
 
   noteBridgeRequest("req-bridge-1", {
     activitySubject: `req:${"req-bridge-1"}`,
@@ -626,7 +629,7 @@ test("rejects unknown bridge event types while keeping accepted observations int
 test("byTool/bySkill default to null until a first-class event confirms the dimension", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 
   recordRouterEvent({
     phase: "selected",
@@ -657,7 +660,7 @@ test("byTool/bySkill default to null until a first-class event confirms the dime
 
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 });
 
 test("persists and restores per-workspace tool/skill counters and bridge observations", async () => {
@@ -666,7 +669,10 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
   try {
     resetOtelTelemetry();
     resetRouterTelemetry();
-    registerWorkspaceId("ws-persist-1", "SimulatorLife/AutoDev");
+    getDefaultUsageTracker().registerWorkspaceId(
+      "ws-persist-1",
+      "SimulatorLife/AutoDev"
+    );
     noteBridgeRequest("req-persist-1", {
       activitySubject: `req:${"req-persist-1"}`,
       provider: "minimax",
@@ -888,7 +894,7 @@ test("deduplicates one tool result reported through both semantic logs and metri
 test("tool/skill attribution capability is workspace-scoped, not a single process-wide flag", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 
   noteBridgeRequest("req-has-evidence", {
     activitySubject: `req:${"req-has-evidence"}`,
@@ -946,7 +952,7 @@ test("tool/skill attribution capability is workspace-scoped, not a single proces
 
   resetOtelTelemetry();
   resetRouterTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 });
 
 test("mcp_exposed bridge observations populate per-workspace exposed rows without inflating uses", () => {

@@ -40,7 +40,7 @@ import {
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
-import { countLiveAgentActivity } from "@simulatorlife/autodev-runtime/router/usage";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 function responseRecorder(): any {
@@ -732,7 +732,10 @@ test(
           { key: "root-1", scope: "identified", thread: "child-1" }
         );
       }
-      assert.equal(countLiveAgentActivity({ role: "explorer" }), 1);
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity({ role: "explorer" }),
+        1
+      );
       assert.equal(agentActivity.getState("thread:child-1"), "tool_wait");
       // A second child of the same root is a second agent.
       await proxyRoleResponse(
@@ -746,7 +749,10 @@ test(
         null,
         { key: "root-1", scope: "identified", thread: "child-2" }
       );
-      assert.equal(countLiveAgentActivity({ role: "explorer" }), 2);
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity({ role: "explorer" }),
+        2
+      );
     } finally {
       globalThis.fetch = originalFetch;
       for (const [key, value] of Object.entries(saved)) {
@@ -850,8 +856,16 @@ test(
       // The router settled the child's request with a tool call: it is waiting on
       // that tool, not finished, whatever its bridge said about the request.
       assert.equal(agentActivity.getState("thread:child-1"), "tool_wait");
-      assert.equal(countLiveAgentActivity({ role: "explorer" }), 1);
-      assert.equal(countLiveAgentActivity({ role: "orchestrator" }), 1);
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity({ role: "explorer" }),
+        1
+      );
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity({
+          role: "orchestrator"
+        }),
+        1
+      );
 
       // What a child's bridge alone can report -- its own in-CLI delegation --
       // lands on the child.
@@ -1032,9 +1046,12 @@ test(
         { key: "root-3", scope: "identified", thread: "self" }
       );
       // Waiting on a tool, the agent stays live on its provider.
-      assert.equal(countLiveAgentActivity({ role: "explorer" }), 1);
       assert.equal(
-        countLiveAgentActivity(
+        getDefaultUsageTracker().countLiveAgentActivity({ role: "explorer" }),
+        1
+      );
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity(
           { role: "explorer" },
           Date.now(),
           undefined,
@@ -1163,7 +1180,10 @@ test(
         null,
         null
       );
-      assert.equal(countLiveAgentActivity({ provider: "claude" }), 1);
+      assert.equal(
+        getDefaultUsageTracker().countLiveAgentActivity({ provider: "claude" }),
+        1
+      );
       COOLDOWNS.cooldownProvider("claude", {
         failureClass: "unavailable",
         now: Date.now()

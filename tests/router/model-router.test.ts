@@ -41,7 +41,6 @@ import {
   AGENT_EVENTS_PATH,
   AGENT_EVENTS_URL_HEADER,
   agentActivity,
-  attributionDiagnosticsStatus,
   autodevEnrichOtlpPayload,
   bridgeTelemetryHeaders,
   carriesPendingToolResult,
@@ -79,7 +78,6 @@ import {
   recordRouterEvent,
   recordSpawnFailure,
   recordSubagentSpawn,
-  registerWorkspaceId,
   requestSession,
   resetOtelTelemetry,
   resetRouterTelemetry,
@@ -96,10 +94,12 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   subagentStatus,
   UNATTRIBUTED_SUBAGENT_ROLE,
-  usageStatus as rawUsageStatus,
   workspaceContextFromRequest
 } from "@simulatorlife/autodev-runtime/router/server";
-import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
+import {
+  getDefaultUsageTracker,
+  UsageTracker
+} from "@simulatorlife/autodev-runtime/router/usage";
 import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
   providerInjectsRoleMcp,
@@ -139,7 +139,8 @@ function restoreAssignment(
 
 const getRouterStatus = (...args: any[]): any =>
   (rawGetRouterStatus as any)(...args);
-const usageStatus = (...args: any[]): any => (rawUsageStatus as any)(...args);
+const usageStatus = (...args: any[]): any =>
+  (getDefaultUsageTracker().usageStatus as any)(...args);
 
 function listenServer(server: Server): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -2598,8 +2599,8 @@ test("dedupes cumulative and delta OTLP metrics independently across multiple wo
   resetRouterTelemetry();
   resetOtelTelemetry();
 
-  registerWorkspaceId("ws-1", "RepoA");
-  registerWorkspaceId("ws-2", "RepoB");
+  getDefaultUsageTracker().registerWorkspaceId("ws-1", "RepoA");
+  getDefaultUsageTracker().registerWorkspaceId("ws-2", "RepoB");
 
   const attrs = (entries: any[]) =>
     entries.map(([key, value]: [any, any]) => ({
@@ -2822,8 +2823,8 @@ test("attributes tool call durations per-workspace and preserves global duration
   resetRouterTelemetry();
   resetOtelTelemetry();
 
-  registerWorkspaceId("ws-dur-1", "RepoDurA");
-  registerWorkspaceId("ws-dur-2", "RepoDurB");
+  getDefaultUsageTracker().registerWorkspaceId("ws-dur-1", "RepoDurA");
+  getDefaultUsageTracker().registerWorkspaceId("ws-dur-2", "RepoDurB");
 
   const attrs = (entries: any[]) =>
     entries.map(([key, value]: [any, any]) => ({
@@ -2933,7 +2934,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
   resetRouterTelemetry();
   resetOtelTelemetry();
 
-  registerWorkspaceId("ws-known", "KnownRepo");
+  getDefaultUsageTracker().registerWorkspaceId("ws-known", "KnownRepo");
 
   const attrs = (entries: any[]) =>
     entries.map(([key, value]: [any, any]) => ({
@@ -2990,7 +2991,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
     2
   );
 
-  let diag = attributionDiagnosticsStatus();
+  let diag = getDefaultUsageTracker().attributionDiagnosticsStatus();
   assert.equal(diag.unattributed, 1);
   assert.equal(diag.byReason.unknown_workspace_id, 1);
   assert.equal(diag.unknownWorkspaceIds.includes("ws-unknown-999"), true);
@@ -3034,7 +3035,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
     )?.count,
     4
   );
-  diag = attributionDiagnosticsStatus();
+  diag = getDefaultUsageTracker().attributionDiagnosticsStatus();
   assert.equal(diag.attributed, 1);
   assert.equal(diag.bySource.resource, 1);
 
@@ -3075,7 +3076,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
     ]
   });
 
-  diag = attributionDiagnosticsStatus();
+  diag = getDefaultUsageTracker().attributionDiagnosticsStatus();
   assert.equal(diag.byReason.ambiguous_resource, 1);
   // KnownRepo should not have received the ambiguous call
   assert.equal(
@@ -3164,7 +3165,7 @@ test("ensures privacy by never leaking local filesystem paths in workspace attri
     attributionDiagnostics: status.attributionDiagnostics
   });
   assert.equal(serialized.includes("/Users/henrykirk"), false);
-  const diag = attributionDiagnosticsStatus();
+  const diag = getDefaultUsageTracker().attributionDiagnosticsStatus();
   assert.equal(JSON.stringify(diag).includes("/Users/henrykirk"), false);
 
   resetRouterTelemetry();
@@ -3180,8 +3181,14 @@ test("persists and restores per-workspace tool and skill attribution across rout
     resetRouterTelemetry();
     resetOtelTelemetry();
 
-    registerWorkspaceId("ws-pers-1", "OwnerA/ProjectA");
-    registerWorkspaceId("ws-pers-2", "OwnerB/ProjectB");
+    getDefaultUsageTracker().registerWorkspaceId(
+      "ws-pers-1",
+      "OwnerA/ProjectA"
+    );
+    getDefaultUsageTracker().registerWorkspaceId(
+      "ws-pers-2",
+      "OwnerB/ProjectB"
+    );
 
     const attrs = (entries: any[]) =>
       entries.map(([key, value]: [any, any]) => ({
@@ -4482,7 +4489,7 @@ test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metric
 test("counts explicit skill activations separately from injected contexts and bridge exposure", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  registerWorkspaceId("ws-skill-use", "SkillRepo");
+  getDefaultUsageTracker().registerWorkspaceId("ws-skill-use", "SkillRepo");
   const attrs = (entries: any[]) =>
     entries.map(([key, value]: [any, any]) => ({
       key,

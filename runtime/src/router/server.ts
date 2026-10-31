@@ -374,15 +374,7 @@ export {
   subagentStatus,
   UNATTRIBUTED_SUBAGENT_ROLE
 } from "./subagents.ts";
-export {
-  attributionDiagnosticsStatus,
-  projectLiveAgents,
-  registerWorkspaceId,
-  resetAttributionDiagnostics,
-  safeAgentIdentity,
-  safePrivacyWorkspace,
-  usageStatus
-} from "./usage.ts";
+export { safeAgentIdentity, safePrivacyWorkspace } from "./usage.ts";
 export {
   isLoopbackAddress,
   routerAuthorizationValid,

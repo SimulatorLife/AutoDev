@@ -45,6 +45,35 @@ function routerModules(directory: string): string[] {
   return found.sort();
 }
 
+test("the usage module publishes one path into the tracker", () => {
+  // The owner and the two accessors that reach it are the whole surface. The
+  // module used to publish the tracker's state as five module-level constants
+  // captured from the tracker at load time, plus a free function for each of
+  // twelve of the owner's methods.
+  //
+  // The constants were the sharper half: they held the *first* tracker's state
+  // objects, so they would have kept serving the original tracker if the
+  // default were ever replaced, while every forwarding function followed the
+  // replacement -- two homes for one tracker's state, with the router clearing
+  // `inFlightUsage` through the captured constant while it read everything
+  // else through the forwarding functions.
+  //
+  // The rule is therefore that nothing in the module may reach *through* the
+  // default tracker. The declaration and the two accessors name the variable
+  // itself; every alias and every captured state object names one of its
+  // properties, so a member access is exactly the shape being forbidden. This
+  // fails on both halves at once, and it fails on the alias being reintroduced
+  // by a later change that finds one convenient.
+  const source = readFileSync(path.join(routerRoot, "usage.ts"), "utf8");
+  assert.equal(
+    source.includes("defaultUsageTracker."),
+    false,
+    "only getDefaultUsageTracker and setDefaultUsageTracker may reach the default " +
+      "usage tracker; a module-level alias or a captured state object is a " +
+      "second path to the tracker"
+  );
+});
+
 test("a router module owns attribution diagnostics and is the only one that names them", () => {
   // Derived rather than hand-listed: the owner is whichever module declares the
   // field, so moving the state does not require editing this test, and a second

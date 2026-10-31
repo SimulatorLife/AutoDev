@@ -16,10 +16,7 @@ import { executionContractRevision } from "@simulatorlife/autodev-data";
 
 import { handleControlApiRequest } from "../src/control-api/index.ts";
 import { reloadExecutionContract } from "../src/router/subagents.ts";
-import {
-  getDefaultUsageTracker,
-  resetUsageTelemetry
-} from "../src/router/usage.ts";
+import { getDefaultUsageTracker } from "../src/router/usage.ts";
 import {
   contractRoleSkills,
   type ExecutionContract,
@@ -185,7 +182,7 @@ function harness(options: HarnessOptions = {}): Harness {
   mkdirSync(process.env.HOME, { recursive: true });
   mkdirSync(process.env.CODEX_HOME, { recursive: true });
   reloadExecutionContract();
-  resetUsageTelemetry();
+  getDefaultUsageTracker().resetUsageTelemetry();
 
   const restoreEnv = (name: string, value: string | undefined): void => {
     if (value === undefined) delete process.env[name];
@@ -212,7 +209,7 @@ function harness(options: HarnessOptions = {}): Harness {
       restoreEnv("HOME", previous.home);
       restoreEnv("CODEX_HOME", previous.codexHome);
       reloadExecutionContract();
-      resetUsageTelemetry();
+      getDefaultUsageTracker().resetUsageTelemetry();
     },
     call: async (method, pathname, body) => {
       const response = responseRecorder();

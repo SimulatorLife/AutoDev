@@ -17,7 +17,7 @@ import {
   orchestratorSessionInfo,
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
-import { countLiveAgentActivity } from "@simulatorlife/autodev-runtime/router/usage";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 test("orchestrator-active-subagents: orchestrator remains in subagent_wait while subagents are active", () => {
   resetRouterTelemetry();
@@ -83,7 +83,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     assert.equal(rec.role, ORCHESTRATOR_AGENT_ROLE);
 
     // Verify: countLiveAgentActivity counts this orchestrator under its provider
-    const claudeLive = countLiveAgentActivity({
+    const claudeLive = getDefaultUsageTracker().countLiveAgentActivity({
       provider: orchestratorProvider
     });
     assert.equal(
@@ -133,7 +133,12 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     // Subagent request is finished, but orchestrator is still in subagent_wait (slot still held)
     assert.equal(agentActivity.getState(subagentSubject), "finished");
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
-    assert.equal(countLiveAgentActivity({ provider: orchestratorProvider }), 1);
+    assert.equal(
+      getDefaultUsageTracker().countLiveAgentActivity({
+        provider: orchestratorProvider
+      }),
+      1
+    );
 
     // 5. Router load balancing check: A new orchestrator request should prefer an idle provider
     // over claude because claude has liveProviderCount === 1
@@ -237,7 +242,9 @@ test("orchestrator-active-subagents: bridge subagent usage keeps orchestrator se
     // Because a live child exists, orchestrator must transition to subagent_wait
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
-    assert.ok(countLiveAgentActivity({ provider }) >= 1);
+    assert.ok(
+      getDefaultUsageTracker().countLiveAgentActivity({ provider }) >= 1
+    );
 
     // When the bridge child closes, orchestrator transitions to resumed
     closeBridgeSubagentsForRequest("req-bridge-parent", "success");

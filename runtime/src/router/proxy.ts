@@ -93,7 +93,6 @@ import {
   withLogicalSpan
 } from "./telemetry.ts";
 import {
-  countLiveAgentActivity,
   getDefaultUsageTracker,
   UNATTRIBUTED_DIMENSION,
   usageOrigin
@@ -3296,7 +3295,7 @@ function runLastResortPass(
   // for every root turn until the cooldown lapsed (observed 2026-09-24, for up
   // to ten minutes), since nothing could attempt the success that clears it.
   const busy = (route: Candidate): number =>
-    countLiveAgentActivity(
+    getDefaultUsageTracker().countLiveAgentActivity(
       { provider: route.provider },
       Date.now(),
       undefined,

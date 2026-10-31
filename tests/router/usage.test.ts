@@ -3,19 +3,15 @@ import { test } from "node:test";
 
 import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
 import {
-  clearWorkspaceCapabilities,
   emptyUsageBucket,
   extractWorkspaceIdWithAmbiguity,
   formatWorkspaceMcpExposed,
   formatWorkspaceMcpUses,
   formatWorkspaceSkills,
   formatWorkspaceTools,
+  getDefaultUsageTracker,
   MAX_UNKNOWN_WORKSPACE_IDS,
   readNamedAttribute,
-  recordUsageEvent,
-  registerWorkspaceId,
-  resetAttributionDiagnostics,
-  resetUsageTelemetry,
   safeAgentIdentity,
   safePrivacyWorkspace,
   safeWorkspaceId,
@@ -25,8 +21,6 @@ import {
   UNATTRIBUTED_DIMENSION,
   usageKey,
   usageOrigin,
-  usagePersistenceSnapshot,
-  usageStatus,
   UsageTracker
 } from "@simulatorlife/autodev-runtime/router/usage";
 
@@ -545,11 +539,14 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 });
 
 test("default instance convenience exports delegate correctly", () => {
-  resetUsageTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetUsageTelemetry();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 
-  assert.equal(registerWorkspaceId("ws-default", "DefaultRepo"), true);
-  recordUsageEvent({
+  assert.equal(
+    getDefaultUsageTracker().registerWorkspaceId("ws-default", "DefaultRepo"),
+    true
+  );
+  getDefaultUsageTracker().recordUsageEvent({
     phase: "selected",
     requestId: "req-def",
     role: "worker",
@@ -559,13 +556,13 @@ test("default instance convenience exports delegate correctly", () => {
     timestamp: "2026-09-16T15:00:00Z"
   });
 
-  const snapshot = usagePersistenceSnapshot();
+  const snapshot = getDefaultUsageTracker().usagePersistenceSnapshot();
   assert.equal(snapshot.totals.attempts, 1);
 
-  const status = usageStatus();
+  const status = getDefaultUsageTracker().usageStatus();
   assert.equal(status.totals.attempts, 1);
 
-  clearWorkspaceCapabilities();
-  resetUsageTelemetry();
-  assert.equal(usageStatus().totals.attempts, 0);
+  getDefaultUsageTracker().clearWorkspaceCapabilities();
+  getDefaultUsageTracker().resetUsageTelemetry();
+  assert.equal(getDefaultUsageTracker().usageStatus().totals.attempts, 0);
 });

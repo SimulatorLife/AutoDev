@@ -2205,80 +2205,24 @@ export function setDefaultUsageTracker(tracker: UsageTracker): void {
   defaultUsageTracker = tracker;
 }
 
-export const usageTelemetry = defaultUsageTracker.usageTelemetry;
-export const inFlightUsage = defaultUsageTracker.inFlightUsage;
-export const workspaceIdRegistry = defaultUsageTracker.workspaceIdRegistry;
-export const workspaceIdConflicts = defaultUsageTracker.workspaceIdConflicts;
-export const attributionDiagnostics =
-  defaultUsageTracker.attributionDiagnostics;
-
-export function registerWorkspaceId(
-  workspaceId: unknown,
-  workspaceKey: unknown
-): boolean {
-  return defaultUsageTracker.registerWorkspaceId(workspaceId, workspaceKey);
-}
-
-export function attributionDiagnosticsStatus(): AttributionDiagnosticsStatus {
-  return defaultUsageTracker.attributionDiagnosticsStatus();
-}
-
-export function resetAttributionDiagnostics(): void {
-  defaultUsageTracker.resetAttributionDiagnostics();
-}
-
-export function recordUsageEvent(params: RecordUsageEventParams): void {
-  defaultUsageTracker.recordUsageEvent(params);
-}
-
-export function projectLiveAgents(
-  at?: number,
-  tracker?: AgentActivityTracker
-): LiveAgentsProjection {
-  return defaultUsageTracker.projectLiveAgents(at, tracker);
-}
-
-export function canonicalLiveAgentCount(
-  at?: number,
-  tracker?: AgentActivityTracker
-): number {
-  return defaultUsageTracker.canonicalLiveAgentCount(at, tracker);
-}
-
-export function countLiveAgentActivity(
-  filter?: Parameters<AgentActivityTracker["countLive"]>[0],
-  at?: number,
-  tracker?: AgentActivityTracker,
-  exceptSubject: string | null = null
-): number {
-  return defaultUsageTracker.countLiveAgentActivity(
-    filter,
-    at,
-    tracker,
-    exceptSubject
-  );
-}
-
-export function usageStatus(
-  now?: number,
-  projection?: LiveAgentsProjection,
-  tracker?: AgentActivityTracker
-): UsageStatus {
-  return defaultUsageTracker.usageStatus(now, projection, tracker);
-}
-
-export function usagePersistenceSnapshot(): UsagePersistenceSnapshot {
-  return defaultUsageTracker.usagePersistenceSnapshot();
-}
-
-export function restoreUsagePersistenceSnapshot(savedUsage: unknown): void {
-  defaultUsageTracker.restoreUsagePersistenceSnapshot(savedUsage);
-}
-
-export function resetUsageTelemetry(): void {
-  defaultUsageTracker.resetUsageTelemetry();
-}
-
-export function clearWorkspaceCapabilities(): void {
-  defaultUsageTracker.clearWorkspaceCapabilities();
-}
+/*
+ * The owner and the accessor that reaches it are the whole surface of this
+ * module's capability.
+ *
+ * The module used to publish the tracker's state as five module-level
+ * constants -- `usageTelemetry`, `inFlightUsage`, `workspaceIdRegistry`,
+ * `workspaceIdConflicts` and `attributionDiagnostics` -- captured from the
+ * tracker at load time, plus a free function for each of twelve of the
+ * owner's methods, each forwarding to the instance the accessor returns.
+ *
+ * The constants were the sharper half of it: they held the *first* tracker's
+ * state objects, so they would have kept serving the original tracker if the
+ * default were ever replaced, while every forwarding function followed the
+ * replacement. Two homes for one tracker's state, and the router clearing
+ * `inFlightUsage` through the captured constant while it read everything else
+ * through the forwarding functions.
+ *
+ * Nothing outside this module may read the tracker's state directly: the
+ * owner publishes the accessors, and `tests/router/usage-tracker-ownership.test.ts`
+ * holds the ownership rule.
+ */

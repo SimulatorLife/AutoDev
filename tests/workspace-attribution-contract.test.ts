@@ -18,9 +18,7 @@ import {
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
 import {
-  attributionDiagnosticsStatus,
-  registerWorkspaceId,
-  resetAttributionDiagnostics,
+  getDefaultUsageTracker,
   safePrivacyWorkspace
 } from "@simulatorlife/autodev-runtime/router/usage";
 
@@ -64,7 +62,7 @@ function resetAll() {
   resetOtelTelemetry();
   resetRouterTelemetry();
   resetSubagentTelemetry();
-  resetAttributionDiagnostics();
+  getDefaultUsageTracker().resetAttributionDiagnostics();
 }
 
 function workspace(key: string): unknown {
@@ -113,7 +111,10 @@ function runAssertOperation(
   }
   if (op.op === "diagnostics") {
     assert.deepEqual(
-      pathValue(attributionDiagnosticsStatus(), stringValue(op, "field")),
+      pathValue(
+        getDefaultUsageTracker().attributionDiagnosticsStatus(),
+        stringValue(op, "field")
+      ),
       op.expected,
       `${name}: diagnostics.${stringValue(op, "field")}`
     );
@@ -286,7 +287,7 @@ function runOperation(
     return;
   }
   if (op.op === "register") {
-    registerWorkspaceId(op.id, op.workspace);
+    getDefaultUsageTracker().registerWorkspaceId(op.id, op.workspace);
     return;
   }
   if (op.op === "enrich") {
