@@ -26,6 +26,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
+  bridgeDelegationInstruction,
   bridgeSkillContext,
   buildSpawnToolCallOutput,
   composeProviderPrompt,
@@ -2360,9 +2361,10 @@ function writeCodexToolsAgent(
       "it holds the sandbox, the approvals, and the history, and it executes the",
       "tools you call.",
       "",
-      "Everything you do goes through the `codex` MCP server -- reading files,",
-      "writing them, running commands, delegating. Do not describe a tool you",
-      "have not called as done. If a call returns an error, say what failed.",
+      "Your file and command tools come from the `codex` MCP server -- reading",
+      "files, writing them, running commands. Delegation is a separate server,",
+      "and the instructions name it. Do not describe a tool you have not called",
+      "as done. If a call returns an error, say what failed.",
       attachmentNote,
       ""
     ].join("\n"),
@@ -3540,10 +3542,6 @@ function prepareResponsesTurn(
     sendWorkspaceResolutionFailure(response, "agy", error);
     return null;
   }
-  const prompt = promptFromInput(
-    payload.input ?? "",
-    composeProviderPrompt(agentRole, cwd)
-  );
   // Only hold delegation state once all pre-flight validation has succeeded.
   // An invalid workspace must not leave an orphaned entry that a later shim
   // process could attach to.
@@ -3551,6 +3549,17 @@ function prepareResponsesTurn(
     spawnSessions.open(spawnSession, {
       orchestrator: isOrchestratorRole(agentRole)
     });
+  const prompt = promptFromInput(
+    payload.input ?? "",
+    composeProviderPrompt(agentRole, cwd) +
+      bridgeDelegationInstruction({
+        mayDelegate:
+          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
+        // agy reaches every MCP server through one built-in, so a tool is
+        // named twice: the server it lives on, and the tool itself.
+        reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
+      })
+  );
   const bootstrapContract = antigravityRoleContract(
     agentRole,
     workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])

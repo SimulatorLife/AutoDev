@@ -15,6 +15,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
+  bridgeDelegationInstruction,
   bridgeSkillContext,
   buildSpawnToolCallOutput,
   composeProviderPrompt,
@@ -1721,16 +1722,6 @@ function prepareCopilotRequest(
   const sandboxModeHeader = readOnlyHeaderValue(headers);
   const skillContextHeader = bridgeSkillContext(headers);
   const sandboxInjection = readOnlySystemPromptInjection(headers);
-  const composedPrompt =
-    composeProviderPrompt(agentRole, cwd) + sandboxInjection;
-  const finalPrompt =
-    composedPrompt +
-    (skillContextHeader
-      ? "\n\n## Selected skill context (propagated from orchestrator)\n\n" +
-        skillContextHeader +
-        "\n"
-      : "");
-  const prompt = inputText(payload.input, finalPrompt);
   const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
   const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
   const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope)
@@ -1740,6 +1731,24 @@ function prepareCopilotRequest(
     spawnSessions.open(spawnSession, {
       orchestrator: isOrchestratorRole(agentRole)
     });
+  const composedPrompt =
+    composeProviderPrompt(agentRole, cwd) +
+    sandboxInjection +
+    bridgeDelegationInstruction({
+      mayDelegate:
+        spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
+      // The Copilot CLI advertises each MCP tool directly, so the model calls
+      // one name rather than naming a server and a tool.
+      reach: { kind: "direct", prefix: "mcp__" }
+    });
+  const finalPrompt =
+    composedPrompt +
+    (skillContextHeader
+      ? "\n\n## Selected skill context (propagated from orchestrator)\n\n" +
+        skillContextHeader +
+        "\n"
+      : "");
+  const prompt = inputText(payload.input, finalPrompt);
   const bootstrapContract = copilotRoleContract(
     agentRole,
     workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])

@@ -1,4 +1,5 @@
 export * from "./agent-activity.ts";
+export * from "./bridge-delegation.ts";
 export * from "./bridge-role.ts";
 export * from "./bridge-sandbox.ts";
 export * from "./bridge-spawn-session.ts";

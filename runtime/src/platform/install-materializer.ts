@@ -160,6 +160,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/tool-call-ownership/index.ts",
   "runtime/src/agents/index.ts",
   "runtime/src/agents/agent-activity.ts",
+  "runtime/src/agents/bridge-delegation.ts",
   "runtime/src/agents/bridge-role.ts",
   "runtime/src/agents/bridge-sandbox.ts",
   "runtime/src/agents/bridge-spawn-session.ts",

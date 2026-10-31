@@ -11,18 +11,26 @@ workflow.
 
 ## Delegation
 
-To delegate to a child agent, call `multi_agent_v1__spawn_agent` with
-`{ agent_type: "<role>", message: "<full task>" }`. This is the canonical
-spawn surface across every configured model provider (Codex-native GPT,
-MiniMax, Claude subscription, Antigravity/Gemini, Copilot). Every catalog in
-`scripts/codex/catalogs/` and every model catalog in
+Delegate substantive work to child agents rather than doing all of it
+yourself. The delegation surface is the one your provider actually offers.
+
+On Codex -- Codex-native GPT and MiniMax -- that surface is
+`multi_agent_v1__spawn_agent` with
+`{ agent_type: "<role>", message: "<full task>" }`, and the "Code-mode
+availability" note below says how to reach it. A provider CLI bridge
+(Antigravity/Gemini, Copilot) serves a delegation tool of its own and states
+the exact call in the "Delegation on this provider" section of these
+instructions. Where that section is present it is the surface to use: it is
+the one call this provider can serve, and a child created through it is a real
+Codex session. Every catalog in
+`config/catalogs/` and every model catalog in
 `~/.codex/{codex,claude,minimax,antigravity}-model-catalog.json` declares
 `"tool_mode": "code_mode_only"` and `"multi_agent_version": "v1"`, so
 Codex delivers the entire tool surface as one `exec` custom tool whose input
 is raw JavaScript evaluated against a `tools` global; the spawn and
 lifecycle functions hang off that global. There is no current configuration
 that exposes them as native top-level `function_call` items, so treat code
-mode as the only reachable surface. Select `<role>` from the configured
+mode as the only reachable surface on Codex. Select `<role>` from the configured
 autodev/<role> aliases (default, docs-researcher, browser-tester, explorer,
 worker, validator, smart); do not hard-code a provider or model. Pass each
 child the full context it needs: a child cannot see this conversation.
@@ -31,7 +39,7 @@ breaks escaped (`\"`, `\\`, `\n`), never as a template literal: task text
 routinely contains Markdown backticks and `${`, which end or interpolate a
 template literal and fail the whole `exec` cell before any child spawns.
 
-Code-mode availability: in code mode the spawn and lifecycle tools
+Code-mode availability: on Codex, in code mode the spawn and lifecycle tools
 (`multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`,
 `multi_agent_v1__close_agent`, `multi_agent_v1__resume_agent`,
 `multi_agent_v1__send_input`) hang off the `tools` global inside the `exec`
@@ -72,8 +80,8 @@ and a double-underscore separator -- `mcp__<server>__<tool>` for MCP tools,
 `multi_agent_v1__<tool>` for delegation, and `autodev_spawn__spawn_subagent`
 for the bridge-injected spawn shim (the `mcp__<server>__` portion is added
 by Codex at the MCP boundary, so the shim only declares its own
-`name: "spawn_subagent"`, and the model sees
-`tools.mcp__autodev_spawn__spawn_subagent`). The Claude bridge keeps
+`name: "spawn_subagent"`, and a model that reaches MCP tools through Codex's
+`tools` global sees `tools.mcp__autodev_spawn__spawn_subagent`). The Claude bridge keeps
 `WebSearch` and `WebFetch` (PascalCase) and the `Agent` spawn tool
 because those names are fixed by the Claude CLI; every other tool name in
 the bridge already follows snake_case. Do not invent a new style -- when
@@ -130,3 +138,11 @@ when running on direct Codex. The canonical Codex spawn surface is
 `multi_agent_v1__spawn_agent`; `autodev_spawn` is only meaningful inside a
 provider bridge that already injected the shim, and probing for it via
 `tools.mcp__autodev_spawn__spawn_subagent` on direct Codex will not find it.
+
+The shim's own name is `spawn_subagent`, on the `autodev_spawn` MCP server.
+How a given provider's model reaches it is that provider's own surface -- the
+Copilot CLI advertises it as `mcp__autodev_spawn__spawn_subagent`, while a CLI
+that reaches every MCP server through one dispatcher names the server and the
+tool separately -- so the bridge states the exact call in the "Delegation on
+this provider" section of these instructions rather than this prompt guessing
+at it.
