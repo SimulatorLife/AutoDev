@@ -1083,6 +1083,11 @@ function RecordActionForm({
     {
       method: "POST",
       action: "/api/memory",
+      // A write surface is a group of controls rather than a landmark: the
+      // panel that holds it is the region an operator jumps to, and an
+      // unnamed form landmark in a landmark list is an entry that names
+      // nothing.
+      role: "group",
       // The reason and claim boxes sit above the button, so the row this form
       // occupies grows with its content rather than with the label.
       className: "flex flex-wrap items-end gap-2"

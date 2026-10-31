@@ -152,6 +152,8 @@ export function MemorySessionOutcome({
       {
         method: "POST",
         action: "/api/memory",
+        // A write surface is a group of controls rather than a landmark.
+        role: "group",
         className: "flex flex-wrap items-end gap-2"
       },
       React.createElement("input", {

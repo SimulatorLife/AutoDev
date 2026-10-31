@@ -3810,8 +3810,14 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
   // inside the cell; clamping the `<td>` itself breaks its table-cell layout.
   assert.match(
     markup,
-    /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"[^>]*><div class="line-clamp-2">/
+    /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"[^>]*><div class="line-clamp-2[^"]*">/
   );
+  // And the wrapper leaves the focus ring its room. A clamp is an
+  // `overflow: hidden` box, and it would clip the ring of a control inside it
+  // -- the ring is painted four pixels outside the control. The padding is the
+  // room; the negative margin is what keeps the cell's own layout where it
+  // was.
+  assert.match(markup, /<div class="line-clamp-2 p-1\.5 -m-1\.5">/u);
 });
 
 test("DataTable keeps a truncated cell's full value reachable, whatever it is built from", () => {

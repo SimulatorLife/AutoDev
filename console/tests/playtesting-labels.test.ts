@@ -453,7 +453,7 @@ test("a conclusion that fills its lines does not take the counts with it", () =>
   // The clamp is on the conclusion alone.
   assert.match(html, /line-clamp-3/u);
   const clampStart = html.indexOf("line-clamp-3");
-  const clampEnd = html.indexOf("</div>", clampStart);
+  const clampEnd = html.indexOf("</a>", clampStart);
   const counts = html.indexOf(
     "Discovery review · 2 hypotheses · 4 observations"
   );

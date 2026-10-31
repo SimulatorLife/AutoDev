@@ -640,6 +640,20 @@ Extending the responsive sweep to the Console's other surfaces found what the na
 
 The sweep now asks the browser the question the source cannot answer: is this content rendered at all? `checkVisibility()` is the answer, and it is the difference between a sweep that reports a defect and one that reports a defect _an operator could have_.
 
+## The accessibility sweeps measured twenty-two surfaces of thirty-three
+
+The six accessibility sweeps — every control names itself, the focus order is the page's, the focus ring is drawn whole, the accessible name contains the visible label, every landmark is named, every text is legible — walked the sections and their detail pages. The Console's other eleven surfaces were never measured by any of them.
+
+They found four things.
+
+**The Memory page's write surfaces were unnamed landmarks.** Chromium exposes an unnamed `<form>` as a landmark called "form", so the Memory page's record actions and its purge action each added an entry to the landmark list that named nothing. The Console already had the rule for this — a write surface is a group of controls rather than a landmark, which is how the providers, agents and skills tables were fixed — and the Memory page's four write forms never got it. They carry `role="group"` now, as does the Playtesting session's own analyst-dispatch form.
+
+**A clamp cut the focus ring off the links inside it.** The analyst review's conclusion is a sentence, so the list clamps it — and a clamp is an `overflow: hidden` box. A box that hides its overflow clips the focus ring of the control inside it, because the ring is painted four pixels outside the control. The clamp now leaves the ring its room: six pixels of padding, with a negative margin that keeps the cell's own layout where it was. That repair is in the shared table primitive, so every clamped cell in the Console gets it.
+
+**The playtesting session's overlay text was invisible.** The captured frame carries a HUD: a step chip at the top and a banner with the player's intention at the bottom. Both are drawn over a _dark_ scrim — a black backdrop and a black gradient — and both wrote their text in `text-fg-inverse`, which is near-black. The near-black text was on the near-black scrim: the step chip read as a smudge, and "Explore the setup menu." was not there at all. The inverse colour is what belongs on an _accent_ fill; on a scrim the text is the console's own foreground, and it is now.
+
+**And two sweeps were measuring text nobody could see.** A closed disclosure hides its content with `content-visibility`, and the hidden content still reports a box and a colour — so the contrast and focus-ring sweeps were reading text that is not painted. Both now ask the browser whether the content is rendered at all, which is the same question the clipping sweep learned to ask.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

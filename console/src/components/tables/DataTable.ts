@@ -164,6 +164,13 @@ const LINE_CLAMP_CLASSES: Readonly<Record<number, string>> = {
  * clamped table cell stops laying out as a table cell and the row height stops
  * tracking the content. Returns `null` when the column is not clamped, or when
  * it asks for a line count this component has no class for.
+ *
+ * The wrapper leaves the ring its room. A clamp is an `overflow: hidden` box,
+ * and a box that hides its overflow clips the focus ring of the control inside
+ * it -- the ring is painted four pixels outside the control, and the clamp
+ * cuts it off. The padding is the room; the negative margin is what keeps the
+ * cell's own layout where it was, because the padding would otherwise push
+ * the clamped text in and the row taller.
  */
 function proseClampClass(column: ColumnDef<never>): string | null {
   if ((column.align ?? "truncate") !== "prose") return null;
@@ -465,7 +472,11 @@ export function DataTable<T>({
                 },
                 clamp === null
                   ? content
-                  : React.createElement("div", { className: clamp }, content)
+                  : React.createElement(
+                      "div",
+                      { className: `${clamp} p-1.5 -m-1.5` },
+                      content
+                    )
               );
             })
           );

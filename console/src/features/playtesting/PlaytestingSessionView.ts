@@ -1822,7 +1822,11 @@ function visualGameSpectatorStage(
               "div",
               {
                 className:
-                  "flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-fg-inverse backdrop-blur-sm"
+                  // The chip is a dark scrim over a captured frame, so its
+                  // text is the console's own foreground: `text-fg-inverse`
+                  // is near-black, which is what belongs on an *accent* fill
+                  // and is invisible on a black one.
+                  "flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-fg backdrop-blur-sm"
               },
               React.createElement("span", { className: "text-accent" }, "●"),
               "STEP " +
@@ -1847,7 +1851,11 @@ function visualGameSpectatorStage(
                 "div",
                 {
                   className:
-                    "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 text-fg-inverse"
+                    // The banner is a black gradient over a captured frame,
+                    // so its text is the console's own foreground. The
+                    // inverse colour -- near-black -- is what belongs on an
+                    // accent fill, and on a black scrim it cannot be read.
+                    "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 text-fg"
                 },
                 React.createElement(
                   "p",
@@ -1860,8 +1868,7 @@ function visualGameSpectatorStage(
                 React.createElement(
                   "p",
                   {
-                    className:
-                      "mt-0.5 text-sm font-medium text-fg-inverse drop-shadow"
+                    className: "mt-0.5 text-sm font-medium text-fg drop-shadow"
                   },
                   currentFacts.intention
                 )

@@ -501,7 +501,13 @@ function ExperienceDetailPanel({
       ),
       React.createElement(
         "form",
-        { method: "POST", action: "/api/memory" },
+        {
+          method: "POST",
+          action: "/api/memory",
+          // A write surface is a group of controls rather than a landmark:
+          // the panel that holds it is the region an operator jumps to.
+          role: "group"
+        },
         React.createElement("input", {
           type: "hidden",
           name: "action",

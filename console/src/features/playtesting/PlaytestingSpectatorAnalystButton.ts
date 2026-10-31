@@ -64,6 +64,11 @@ export function PlaytestingSpectatorAnalystButton({
     "form",
     {
       onSubmit: (e: React.FormEvent<HTMLFormElement>) => void handleDispatch(e),
+      // A write surface is a group of controls rather than a landmark: the
+      // panel that holds it is the region an operator jumps to, and Chromium
+      // exposes an unnamed form as a landmark called "form", which names
+      // nothing.
+      role: "group",
       className: "flex flex-wrap items-center gap-2",
       "data-testid": "spectator-analyst-dispatch-form"
     },

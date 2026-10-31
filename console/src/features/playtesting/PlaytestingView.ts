@@ -716,20 +716,23 @@ function latestConclusions(
               // The conclusion is a sentence, so the list clamps it and the
               // detail carries it whole. The link is the whole of the clamped
               // text: the conclusion is the thing the reader came for.
+              //
+              // The clamp is on the link rather than around it. A clamp is an
+              // `overflow: hidden` box, and a box that hides its overflow
+              // clips the focus ring of the control inside it -- the ring is
+              // painted outside the control, and the clamp cuts it off. A
+              // link's own overflow does not clip its own ring.
               React.createElement(
-                "div",
-                { className: "line-clamp-2" },
-                React.createElement(
-                  NavigationLink,
-                  {
-                    href: playtestingReviewHref(scope, review.reviewId),
-                    className: "font-medium text-accent hover:underline",
-                    dataAttributes: {
-                      "data-overview-conclusion": review.reviewId
-                    }
-                  },
-                  reviewHeadlineText(review)
-                )
+                NavigationLink,
+                {
+                  href: playtestingReviewHref(scope, review.reviewId),
+                  className:
+                    "line-clamp-2 font-medium text-accent hover:underline",
+                  dataAttributes: {
+                    "data-overview-conclusion": review.reviewId
+                  }
+                },
+                reviewHeadlineText(review)
               ),
               React.createElement(
                 "p",
@@ -1128,22 +1131,23 @@ function analystHypotheses(
             "data-review-row": review.reviewId
           },
           React.createElement(
-            "div",
-            { className: "line-clamp-3" },
-            React.createElement(
-              NavigationLink,
-              {
-                href: playtestingReviewHref(scope, review.reviewId),
-                // The conclusion is the way into the review, so the whole of
-                // it is the target: an inline link's box is the union of its
-                // line boxes, and the middle of that union can be a gap
-                // between two lines where the click lands on the row instead
-                // of the link.
-                className: "block font-medium text-fg hover:underline",
-                dataAttributes: { "data-review-open": review.reviewId }
-              },
-              reviewHeadlineText(review)
-            )
+            NavigationLink,
+            {
+              href: playtestingReviewHref(scope, review.reviewId),
+              // The conclusion is the way into the review, so the whole of
+              // it is the target: an inline link's box is the union of its
+              // line boxes, and the middle of that union can be a gap
+              // between two lines where the click lands on the row instead
+              // of the link.
+              //
+              // The clamp is on the link rather than around it: a clamp is an
+              // `overflow: hidden` box, and it would clip the focus ring of
+              // the link inside it.
+              className:
+                "line-clamp-3 block font-medium text-fg hover:underline",
+              dataAttributes: { "data-review-open": review.reviewId }
+            },
+            reviewHeadlineText(review)
           ),
           React.createElement(
             "p",
