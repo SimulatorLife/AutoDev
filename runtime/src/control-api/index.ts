@@ -317,21 +317,52 @@ function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
   return result;
 }
 
-function modelCatalogReasoningLevels(
-  repositoryRoot: string = DEFAULT_REPO_ROOT
+/**
+ * The reasoning levels one catalog declares, or an empty map when the catalog
+ * is absent or unreadable. An absent catalog leaves the levels unobserved,
+ * which is not the same statement as "this model supports no effort".
+ */
+function catalogReasoningLevels(
+  catalogPath: string
 ): Map<string, ModelCatalogReasoningInfo> {
-  const catalogPath = path.join(
-    repositoryRoot,
-    "config",
-    "catalogs",
-    "codex-model-catalog.json"
-  );
   if (!existsSync(catalogPath)) return new Map();
   try {
     return loadModelCatalogData(catalogPath).reasoningLevels;
   } catch {
     return new Map();
   }
+}
+
+/**
+ * The reasoning levels a provider's models declare, read from the catalogs that
+ * own them.
+ *
+ * A provider's own catalog (`config/catalogs/<provider>-model-catalog.json`) is
+ * the authority for that provider's models, and the generated Codex catalog
+ * carries the models the Codex profile routes. The provider's catalog is read
+ * last, so it wins for the models it declares even when the generated catalog
+ * is stale.
+ *
+ * A model no catalog declares is absent from the map. That is the difference
+ * this distinction buys: an absent model has *unobserved* levels, so the
+ * Runtime cannot say it supports no effort, only that no catalog states which
+ * efforts it supports.
+ */
+function providerReasoningLevels(
+  provider: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Map<string, ModelCatalogReasoningInfo> {
+  const catalogDirectory = path.join(repositoryRoot, "config", "catalogs");
+  const levels = new Map<string, ModelCatalogReasoningInfo>();
+  for (const catalogPath of [
+    path.join(catalogDirectory, "codex-model-catalog.json"),
+    path.join(catalogDirectory, `${provider}-model-catalog.json`)
+  ]) {
+    for (const [slug, info] of catalogReasoningLevels(catalogPath)) {
+      levels.set(slug, info);
+    }
+  }
+  return levels;
 }
 
 /**
@@ -973,11 +1004,13 @@ function providersView(now: number): Record<string, unknown> {
   const names = ROUTING_POLICY.providerIds();
   const reasoningEffort = ROUTING_POLICY.config.orchestrator.reasoningEffort;
   const health = providerHealthSource?.(now) ?? null;
-  const reasoningCatalog = modelCatalogReasoningLevels();
   const providers = names.map((provider) => {
     const route = ROUTES.find((entry) => entry.provider === provider) ?? null;
     const disabled = !ROUTING_POLICY.isProviderEnabled(provider);
     const agentLimits = ROUTING_POLICY.limitsFor(provider) ?? null;
+    // The catalog that owns this provider's models decides which reasoning
+    // levels its assigned models declare.
+    const reasoningCatalog = providerReasoningLevels(provider);
     const assignments = Object.fromEntries(
       PROVIDER_ROLES.map((role) => [
         role,
@@ -5007,7 +5040,7 @@ async function patchProviderRole(
         ? rawEffort.trim()
         : rawEffort;
 
-  const reasoningCatalog = modelCatalogReasoningLevels();
+  const reasoningCatalog = providerReasoningLevels(provider);
   const assignedModel = typeof model === "string" ? model : null;
   const modelInfo = assignedModel
     ? reasoningCatalog.get(assignedModel)
@@ -5023,11 +5056,19 @@ async function patchProviderRole(
   // is checked inside the serialized mutation turn below, not against a value
   // that may be cleared or disabled while this request waits in the queue.
   const modelTypeIsValid = model === null || typeof model === "string";
+  // The effort is checked against the levels the assigned model's catalog entry
+  // declares. A model no catalog declares has *unobserved* levels: the Runtime
+  // cannot show that such a model refuses the effort, only that no catalog
+  // states which efforts it supports, so the operator's value is kept and the
+  // levels are reported as unobserved. Refusing the write there would make
+  // every model a provider offers but no catalog declares unassignable, which
+  // is what left the Claude provider's orchestrator role without a model.
   const reasoningEffortIsValid =
     reasoningEffort === null ||
     (typeof reasoningEffort === "string" &&
       model !== null &&
-      supportedReasoningLevels.includes(reasoningEffort));
+      (modelInfo === undefined ||
+        supportedReasoningLevels.includes(reasoningEffort)));
 
   if (
     Object.keys(body).some(
@@ -5043,7 +5084,7 @@ async function patchProviderRole(
       response,
       400,
       "autodev_control_api_bad_body",
-      'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that matches one of the assigned model\'s supported reasoning levels, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
+      'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that the assigned model supports, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
     );
     return;
   }
@@ -5113,7 +5154,7 @@ async function patchProviderRole(
         response,
         400,
         "autodev_control_api_bad_body",
-        'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that matches one of the assigned model\'s supported reasoning levels, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
+        'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that the assigned model supports, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
       );
       return;
     }

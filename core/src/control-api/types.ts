@@ -207,9 +207,28 @@ export interface ControlApiProviderHealth {
 export interface ControlApiProviderRoleAssignment {
   readonly priority: ProviderRolePriority;
   readonly model: string | null;
+  /**
+   * The reasoning effort this role runs with: the operator's own choice when
+   * they made one, otherwise the provider's configured orchestrator effort.
+   */
   readonly reasoningEffort?: string | null;
+  /** The effort that will actually be used, which a model id can override. */
   readonly effectiveReasoningEffort?: string | null;
+  /**
+   * Whether the configured effort is the one in force. False when the model's
+   * id fixes the effort (Antigravity's `-low`/`-medium`/`-high` suffixes) and
+   * the configured effort disagrees with it.
+   */
   readonly reasoningEffortInForce?: boolean;
+  /**
+   * The reasoning levels the assigned model's catalog entry declares.
+   *
+   * An empty list means the levels are *unobserved*: no catalog declares this
+   * model, which is not the same statement as "this model supports no effort".
+   * A provider offers models its catalogs do not describe, and the Runtime
+   * cannot show that such a model refuses an effort -- only that no catalog
+   * states which efforts it supports.
+   */
   readonly supportedReasoningLevels?: readonly string[];
   readonly mutable: boolean;
   /** Convergence for this single role; `not-observed` until a write occurs. */

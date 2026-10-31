@@ -14,6 +14,10 @@ import { AutoSubmitSelectField } from "../src/components/forms/AutoSubmitSelectF
 import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
+import {
+  type ControlRefusalReason,
+  readControlRefusal
+} from "../src/lib/control-failure.ts";
 
 const mockDiscovery: ProviderModelDiscoveryState = {
   status: "available",
@@ -304,6 +308,73 @@ test("ProviderRoleControls carries preserved reasoningEffort hidden input when r
   );
 });
 
+/**
+ * The Claude provider's orchestrator role as the Runtime reports it when the
+ * role holds no model of its own.
+ *
+ * The effort is the provider's configured orchestrator effort, and no catalog
+ * states which efforts the model the role will run supports: the levels are
+ * unobserved, which is a different fact from "this model supports no effort".
+ */
+const mockClaudeUnobservedProvider: ControlApiProviderRecord = {
+  ...mockClaudeProvider,
+  roles: {
+    ...mockClaudeProvider.roles,
+    orchestrator: {
+      ...mockClaudeProvider.roles.orchestrator,
+      priority: 1,
+      model: null,
+      reasoningEffort: "medium",
+      effectiveReasoningEffort: "medium",
+      reasoningEffortInForce: true,
+      supportedReasoningLevels: []
+    }
+  }
+};
+
+/** The markup of one role's form, so an assertion can name the role it means. */
+function roleForm(markup: string, provider: string, role: string): string {
+  const marker = `data-role-form="${provider}-${role}"`;
+  const start = markup.indexOf(marker);
+  assert.notEqual(start, -1, `the ${provider} ${role} row must be rendered`);
+  const next = markup.indexOf('data-role-form="', start + marker.length);
+  return markup.slice(start, next === -1 ? markup.length : next);
+}
+
+test("ProviderRoleControls shows the effort in force when the supported levels are unobserved", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: mockClaudeUnobservedProvider,
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers"
+    })
+  );
+
+  // The effort the role runs with is known even when the levels are not, so the
+  // cell says so instead of claiming that nothing is observed.
+  const form = roleForm(markup, "claude", "orchestrator");
+  assert.match(form, /data-role-effort-unobserved="claude-orchestrator"/);
+  assert.match(form, />medium</);
+  assert.doesNotMatch(form, new RegExp(NOT_OBSERVED_LABEL, "u"));
+});
+
+test("ProviderRoleControls submits no effort for a role that holds no model", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: mockClaudeUnobservedProvider,
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers"
+    })
+  );
+
+  // An effort names the model it applies to, and the Runtime refuses one that
+  // has no model to check it against. Submitting the inherited effort with no
+  // model was what left this row unable to change anything at all.
+  const form = roleForm(markup, "claude", "orchestrator");
+  assert.match(form, /name="reasoningEffort" value=""/);
+  assert.doesNotMatch(form, /name="reasoningEffort" value="medium"/);
+});
+
 test("ProviderRoleControls effort select auto-submits on change", () => {
   const controls = ProviderRoleControls({
     provider: mockClaudeProvider,
@@ -403,4 +474,90 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
   assert.equal(res.status, 303);
   const location = res.headers.get("location");
   assert.ok(location?.includes("control=failed"));
+});
+
+/**
+ * The refusal the operator is shown for each code the Runtime answers a
+ * provider-role mutation with.
+ *
+ * The Runtime states its reasons with machine-readable codes, and each asks for
+ * a different next move, so a code the route drops on the floor leaves the
+ * operator with a notice that says only "could not be confirmed". A code this
+ * build does not know keeps the generic notice: the generic notice makes no
+ * claim about the Runtime's reason, which is the only honest thing to say
+ * about a reason this build has not read.
+ */
+async function refusalForCode(
+  status: number,
+  code: string
+): Promise<string | undefined> {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
+  globalThis.fetch = (async () =>
+    Response.json(
+      { error: { message: "Runtime said so.", code, type: "t" } },
+      { status }
+    )) as typeof fetch;
+  try {
+    const body = new URLSearchParams({
+      provider: "claude",
+      role: "orchestrator",
+      priority: "1",
+      model: "sonnet",
+      reasoningEffort: "medium",
+      returnTo: "/providers"
+    }).toString();
+    const request = new NextRequest(
+      "http://127.0.0.1:3000/api/providers/claude/roles/orchestrator",
+      {
+        method: "POST",
+        headers: {
+          host: "127.0.0.1:3000",
+          origin: "http://127.0.0.1:3000",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body
+      }
+    );
+    const response = await POST(request, {
+      params: Promise.resolve({ provider: "claude", role: "orchestrator" })
+    });
+    const location = response.headers.get("location") ?? "";
+    return readControlRefusal(
+      new URL(location, "http://127.0.0.1:3000").searchParams.get("refusal") ??
+        undefined
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+  }
+}
+
+test("each Runtime code reaches the refusal that describes it", async () => {
+  const codes: readonly [number, string, ControlRefusalReason][] = [
+    [400, "autodev_control_api_bad_body", "request_invalid"],
+    [400, "autodev_control_api_invalid_body", "request_invalid"],
+    [404, "autodev_control_api_unknown_provider", "not_found"],
+    [403, "autodev_control_api_viewer_forbidden", "forbidden"],
+    [500, "autodev_control_api_persistence_failed", "operation_failed"]
+  ];
+
+  for (const [status, code, expected] of codes) {
+    assert.equal(
+      await refusalForCode(status, code),
+      expected,
+      `${code} (${status}) was reported as the wrong reason`
+    );
+  }
+});
+
+test("an unrecognised Runtime code keeps the generic notice rather than guessing", async () => {
+  assert.equal(
+    await refusalForCode(400, "autodev_control_api_some_future_thing"),
+    undefined
+  );
 });

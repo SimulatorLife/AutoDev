@@ -193,6 +193,25 @@ function RoleEffortSelect({
     MODEL_EFFORT_SUFFIX.test(assignment.model);
 
   if (!hasLevels && !isAgyFixed) {
+    // The effort in force is known even when the model's supported levels are
+    // not: the role's effort is the operator's choice, and the levels a model
+    // declares are a separate fact. Showing "Not observed" for the effort would
+    // hide a value the role is running with, so the value is shown and the
+    // unobserved levels are said out loud.
+    const effortInForce =
+      assignment.effectiveReasoningEffort ?? assignment.reasoningEffort;
+    if (effortInForce) {
+      return React.createElement(
+        "span",
+        {
+          className:
+            "min-w-0 w-28 truncate rounded border border-border bg-surface-muted/30 px-2 py-1 text-center font-mono text-xs text-fg-secondary",
+          title: `Reasoning effort in force. The supported levels of ${assignment.model ?? "the configured model"} have not been observed.`,
+          "data-role-effort-unobserved": `${provider}-${role}`
+        },
+        effortInForce
+      );
+    }
     return React.createElement(
       "span",
       {
@@ -404,7 +423,14 @@ function RoleRow({
             key: "preserved-effort",
             type: "hidden",
             name: "reasoningEffort",
-            value: assignment.reasoningEffort ?? ""
+            // An effort names the model it applies to: the Runtime refuses an
+            // effort that has no model to check it against, so a role with no
+            // model carries no effort. The role then keeps the effort its
+            // configured model resolves, which is the effort this cell shows.
+            value:
+              assignment.model === null
+                ? ""
+                : (assignment.reasoningEffort ?? "")
           })
         ])
   );

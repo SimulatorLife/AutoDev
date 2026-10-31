@@ -4800,3 +4800,124 @@ test("queued provider role patches recheck provider enablement after a disable c
     restoreEnv(saved);
   }
 });
+
+test("a provider role accepts a model no catalog declares, and keeps the effort it carries", async () => {
+  // A provider offers models that no catalog declares: the Claude account's own
+  // model list is the provider's, and a catalog entry is metadata about a
+  // model, not a gate on naming it. The role write was refused because the
+  // effort it carried could not be checked against levels that no catalog
+  // states, which left the Claude provider's orchestrator role with no model
+  // the operator could choose.
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  const previousClaude =
+    ROUTING_POLICY.assignmentFor("claude", "orchestrator") ?? null;
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((model) => model.provider === "claude")
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
+  const uncataloguedModel = "claude-opus-4-5-20251101";
+  const observed = [
+    {
+      id: uncataloguedModel,
+      displayName: null,
+      routeability: { status: "supported" as const }
+    },
+    {
+      id: "claude-opus-5-5",
+      displayName: null,
+      routeability: { status: "supported" as const }
+    },
+    {
+      id: "sonnet",
+      displayName: null,
+      routeability: { status: "supported" as const }
+    }
+  ];
+  try {
+    configure();
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: "claude",
+          discovery: {
+            status: "observed",
+            source: "fixture provider listing",
+            observedAt: "2026-10-31T12:00:00.000Z",
+            lastAttemptAt: "2026-10-31T12:00:00.000Z",
+            models: observed
+          }
+        }
+      ]
+    }));
+    ROUTING_POLICY.setDiscoveredProviderModels("claude", observed);
+
+    const orchestratorPath = `${CONTROL_API_PATHS.providers}/claude/roles/orchestrator`;
+
+    // The provider's own catalog states the levels of the models it owns.
+    const catalogued = await call("PATCH", orchestratorPath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "claude-opus-5-5", reasoningEffort: "medium" }
+    });
+    assert.equal(catalogued.response.statusCode, 200);
+    assert.deepEqual(catalogued.body.supportedReasoningLevels, [
+      "low",
+      "medium",
+      "high"
+    ]);
+
+    // A model no catalog declares has unobserved levels, so the effort it
+    // carries is kept rather than refused.
+    const accepted = await call("PATCH", orchestratorPath, {
+      actor: "operator-a",
+      body: {
+        priority: 1,
+        model: uncataloguedModel,
+        reasoningEffort: "medium"
+      }
+    });
+    assert.equal(accepted.response.statusCode, 200);
+    assert.equal(accepted.body.model, uncataloguedModel);
+    assert.equal(accepted.body.reasoningEffort, "medium");
+    assert.deepEqual(accepted.body.supportedReasoningLevels, []);
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "orchestrator")?.model,
+      uncataloguedModel
+    );
+
+    // The guardrail still holds where the catalog states the levels.
+    const refused = await call("PATCH", orchestratorPath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "sonnet", reasoningEffort: "extreme" }
+    });
+    assert.equal(refused.response.statusCode, 400);
+    assert.equal(refused.body.error.code, "autodev_control_api_bad_body");
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "orchestrator")?.model,
+      uncataloguedModel,
+      "a refused effort must leave the assignment alone"
+    );
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
+    ROUTING_POLICY.setDiscoveredProviderModels("claude", previousDiscovered);
+    if (previousClaude)
+      ROUTING_POLICY.setProviderAssignment(
+        "claude",
+        "orchestrator",
+        previousClaude
+      );
+    else ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});

@@ -23,7 +23,10 @@ import {
   isProvidersReturnPath,
   providersPath
 } from "../../../../../../src/features/providers/paths.ts";
-import { withControlFailure } from "../../../../../../src/lib/control-failure.ts";
+import {
+  withControlFailure,
+  withControlRefusal
+} from "../../../../../../src/lib/control-failure.ts";
 import {
   patchProviderRole,
   readControlApiConfig
@@ -32,6 +35,7 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../src/lib/server/form-mutation.ts";
+import { providerMutationRefusalFor } from "../../../../../../src/lib/server/provider-mutation-refusal.ts";
 
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MAX_FORM_BODY_BYTES = 4096;
@@ -118,5 +122,14 @@ export async function POST(
     },
     config
   );
-  return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
+  if (result.kind === "ok") return redirectTo(returnTo);
+  // The Runtime's code says why it declined. Carrying the reason keeps the
+  // notice from claiming only "could not be confirmed" when the Runtime named
+  // the refusal, which is what left the operator with no next move.
+  const refusal = providerMutationRefusalFor(result);
+  return redirectTo(
+    refusal === undefined
+      ? withControlFailure(returnTo)
+      : withControlRefusal(returnTo, refusal)
+  );
 }
