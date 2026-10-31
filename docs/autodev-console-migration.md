@@ -620,6 +620,14 @@ Now something does. `console/e2e/target-size-acceptance.spec.ts` measures the bo
 
 Measured across the thirty-two surfaces the sweep walks, the Console holds the floor: every control that does not qualify under an exception measures at least 24×24. The shared classes were carrying it, and the ones that did not qualify were the ones the criterion exempts.
 
+## The responsive sweep measured twenty-two surfaces of thirty-three
+
+The responsive sweep measures the Console at 390, 768 and 1280 pixels, and it walked the sections and their detail pages — twenty-two surfaces. The Console has thirty-three: the Memory page's three tabs, the Playtesting page's four views and its two sessions, the Evaluations page's comparisons and the Usage dashboard's live scope were never measured at any width.
+
+They are the surfaces with the widest tables in the Console — the comparison view's table is a third wider than the viewport at 390 pixels — and a table that wide is exactly what a narrow viewport breaks. Measured, they fit: each of them scrolls its wide table inside a region that says it scrolls, and each has one level-one heading, no skipped heading level and no repeated id.
+
+The surface list now lives in one place, `SWEEP_SURFACES`, with the heading each surface answers; the sweeps that need only a path take the paths from it, and the responsive one takes the routes so it can wait for the page's own name before it measures anything.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

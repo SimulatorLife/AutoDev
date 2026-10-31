@@ -1,12 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import {
-  CANONICAL_ROUTES,
   clippedContent,
-  DETAIL_ROUTES,
   documentStructure,
   expectRouteHeading,
   headingClipping,
+  SWEEP_SURFACES,
   waitForPageContent
 } from "./acceptance-helpers.ts";
 
@@ -28,8 +27,13 @@ const WIDTHS: readonly number[] = [390, 768, 1280];
  * claim is about the Console and not about one kind of page: a detail view
  * that is a list view's narrow neighbour has the same obligation to fit the
  * width it is read at.
+ *
+ * The sections' own views are measured too, for the same reason: the Memory
+ * page's tabs, the Playtesting page's four views, the Evaluations page's
+ * comparisons and the Usage dashboard's live scope each carry their own
+ * tables, and the canonical route never reaches any of them.
  */
-const SURFACES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const SURFACES = SWEEP_SURFACES;
 
 /**
  * What is wrong with one page at one width, said in a sentence.

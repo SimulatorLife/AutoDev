@@ -138,6 +138,72 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
 ];
 
 /**
+ * The surfaces that are a section's own view rather than the section itself.
+ *
+ * A section reached with a view chosen is a different surface from the section:
+ * the Memory page's tabs, the Playtesting page's four views, the Evaluations
+ * page's comparisons and the Usage dashboard's live scope each carry their own
+ * tables, and the canonical route never reaches them. A sweep that stops at
+ * the sections cannot report on any of them.
+ *
+ * Their heading is their section's heading, because a view is a view of that
+ * section and says so the same way its detail pages do.
+ */
+export const SUBSURFACE_ROUTES: readonly CanonicalRoute[] = [
+  {
+    path: "/memory?tab=experiences&experienceId=exp-0001",
+    section: "memory",
+    heading: "Memory"
+  },
+  { path: "/memory?tab=cohorts", section: "memory", heading: "Memory" },
+  {
+    path: "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001",
+    section: "memory",
+    heading: "Memory"
+  },
+  {
+    path: "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/playtesting/sessions/episode-visual-debrief?workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/playtesting?view=overview&workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/playtesting?view=sessions&workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/playtesting?view=findings&workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/playtesting?view=compare&workspaceId=fixture%2Fgame",
+    section: "playtesting",
+    heading: "Playtesting"
+  },
+  {
+    path: "/evaluations?tab=comparisons",
+    section: "evaluations",
+    heading: "Evaluations"
+  },
+  {
+    path: "/usage?range=ACTIVE_SESSIONS",
+    section: "usage",
+    heading: "Usage"
+  }
+];
+
+/**
  * Every surface the Console's own sweeps walk.
  *
  * The canonical routes are the Console's sections and the detail routes are
@@ -145,41 +211,23 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
  * the claim drawer behind a claim's link -- a sweep that stops at the sections
  * never reaches either of them, and what it cannot reach it cannot report.
  */
-export const SWEEP_ROUTES: readonly string[] = [
-  ...CANONICAL_ROUTES.map((route) => route.path),
-  ...DETAIL_ROUTES.map((route) => route.path),
-  "/memory?tab=experiences&experienceId=exp-0001",
-  "/memory?tab=cohorts",
-  "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001",
-  // A playtesting session is a detail page like any other, and it carries
-  // states: the execution state, the game's outcome, the completeness status
-  // of each section of the analyst's review. It was not in this list, so the
-  // sweeps had never asked the browser about it -- which is how the review's
-  // completeness statuses came to be printed on the screen as the codes the
-  // contract stores.
-  "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
-  // The visual session is a different session with different content: a
-  // player debrief, a report source, a visual assessment. One episode is not
-  // the surface.
-  "/playtesting/sessions/episode-visual-debrief?workspaceId=fixture%2Fgame",
-  // The Playtesting page's own views. The canonical route reaches the page
-  // with no workspace chosen, which is the state that asks the operator to
-  // pick one -- so the overview that actually lists sessions was never
-  // walked, and neither were the sessions, findings and comparisons it
-  // switches to. Each is a table of its own.
-  "/playtesting?view=overview&workspaceId=fixture%2Fgame",
-  "/playtesting?view=sessions&workspaceId=fixture%2Fgame",
-  "/playtesting?view=findings&workspaceId=fixture%2Fgame",
-  "/playtesting?view=compare&workspaceId=fixture%2Fgame",
-  // The Evaluations page's second tab. The canonical route answers with the
-  // results tab, so the comparisons -- a table of its own -- were never
-  // walked.
-  "/evaluations?tab=comparisons",
-  // The Usage dashboard's live scope. It is not a time window at all: it is
-  // the sessions running now, and it reads a different set of facts, so it is
-  // a different surface from the window the canonical route answers with.
-  "/usage?range=ACTIVE_SESSIONS"
+/**
+ * Every surface the Console's own sweeps walk, with the heading each answers.
+ *
+ * One list, so that a surface is named once: the sweeps that need only a path
+ * take the paths, and the sweeps that need a heading -- the responsive one,
+ * which waits for the page's own name before it measures anything -- take the
+ * routes.
+ */
+export const SWEEP_SURFACES: readonly CanonicalRoute[] = [
+  ...CANONICAL_ROUTES,
+  ...DETAIL_ROUTES,
+  ...SUBSURFACE_ROUTES
 ];
+
+export const SWEEP_ROUTES: readonly string[] = SWEEP_SURFACES.map(
+  (route) => route.path
+);
 
 /**
  * The heading a route answers with.
