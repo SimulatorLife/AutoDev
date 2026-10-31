@@ -62,11 +62,13 @@ function delegationCall(reach: McpToolReach): string {
  * The instruction a bridged orchestrator reads instead of Codex's own
  * `multi_agent_v1__*` functions.
  *
- * The shared prompt names those functions, because on direct Codex they are
- * the canonical surface. A CLI's model cannot call them: its tools are the
- * CLI's own, and the bridge's spawn server is the one tool here that creates
- * a child Codex can see. Without this section the model is told to call a
- * function it does not have, and it delegates to nothing.
+ * The shared prompt names those functions, because on Codex they are the
+ * canonical surface. On a CLI they are three inferences away -- the `exec`
+ * cell, its `tools` global, and a namespaced name -- and the catalogue that
+ * declares their signatures is truncated to its first line behind a pointer
+ * to a section only some bridges publish. The bridge's spawn server needs
+ * one name and one call, and the bridge that owns the surface is the one that
+ * knows both.
  *
  * The section is published for exactly the turns the bridge may delegate in --
  * the ones whose spawn server it registered -- because a turn told to
@@ -87,11 +89,11 @@ export function bridgeDelegationInstruction(options: {
       : `Call the \`${reach.prefix}${MCP_SERVER_AUTODEV_SPAWN}__${AUTODEV_SPAWN_BARE_TOOL}\` tool with these arguments:`;
   return [
     "## Delegation on this provider",
-    "This turn runs inside a provider CLI, so Codex's own `multi_agent_v1__*` functions are not tools you can call here. Delegate through the bridge's spawn server instead -- it is the one tool on this surface that creates a child Codex can see.",
+    "This turn runs inside a provider CLI, so the bridge's spawn server is the delegation surface here. Delegate with the call below: the bridge collects the children and asks Codex to create them, so each one is a real Codex session -- the app shows it in the thread and the router counts it -- and the bridge, not you, writes the spawn script.",
     how,
     "```json",
     delegationCall(reach),
     "```",
-    "One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation. A child created this way is a real Codex session: the app shows it in the thread and the router counts it. A child the CLI spawns inside its own runtime is invisible to both."
+    "One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation."
   ].join("\n\n");
 }

@@ -34,6 +34,10 @@ test("a bridge tells its model the delegation call its own surface can serve", (
   // The call must be one the model can make: a dispatcher call names both
   // halves, so a model that only reads the tool name still gets the server.
   assert.doesNotMatch(instruction, /mcp__autodev_spawn__spawn_subagent/);
+  // The instruction designates this surface; it does not deny that Codex's
+  // own functions are reachable somewhere else, because on Antigravity they
+  // are -- inside the exec cell's `tools` global.
+  assert.doesNotMatch(instruction, /are not tools you can call here/);
 });
 
 test("a bridge whose CLI advertises MCP tools directly names one tool", () => {

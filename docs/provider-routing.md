@@ -370,10 +370,11 @@ delegation paths:
   child: the shared prompt named only the Codex-native surface, and the
   bridge-injected shim was named `tools.mcp__autodev_spawn__spawn_subagent` --
   a name that exists only for a model that reaches MCP tools through Codex's
-  `tools` global. agy has no such global and advertises no MCP server names at
-  all, so the tool that was present, registered and permitted
-  (`spawnAllowed: true`, with `mcp(autodev_spawn)` already allowed) had no
-  usable name.
+  `tools` global -- and the shim is an agy-side server, so it is not on
+  Codex's global either. agy has no `tools` global of its own and advertises
+  no MCP server names at all, so the tool that was present, registered and
+  permitted (`spawnAllowed: true`, with `mcp(autodev_spawn)` already allowed)
+  had no usable name.
 
 - MiniMax remains a leaf/default-tier provider. It has no supported
   orchestration path and is therefore not a root-orchestrator fallback.
