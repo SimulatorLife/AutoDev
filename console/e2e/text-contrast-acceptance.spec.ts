@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * Every text the Console renders is legible.
@@ -23,11 +19,11 @@ import {
  * behind its text is measured against the flat colour beneath the gradient,
  * which is an approximation -- the one the Console's own scrims make.
  */
-const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const ROUTES = SWEEP_ROUTES;
 
-for (const route of ROUTES) {
-  test(`${route.path} renders legible text`, async ({ page }) => {
-    await page.goto(route.path);
+for (const path of ROUTES) {
+  test(`${path} renders legible text`, async ({ page }) => {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const failures = await page.evaluate(() => {
@@ -112,6 +108,11 @@ for (const route of ROUTES) {
         if (rect.width === 0 || rect.height === 0) return null;
         const style = getComputedStyle(element);
         if (style.visibility === "hidden") return null;
+        // Text that is not painted is not too faint to read. A closed
+        // disclosure hides its content with `content-visibility`, and the
+        // hidden content still reports a box and a colour -- so a sweep that
+        // measures it is measuring something no operator can see.
+        if (!element.checkVisibility()) return null;
         if (style.webkitTextFillColor === "transparent") return null;
         if (isInactive(element)) return null;
         const foreground = parse(style.color);
@@ -146,7 +147,7 @@ for (const route of ROUTES) {
 
     expect(
       failures,
-      `${route.path} renders text that is too faint to read: ${failures.join("; ")}`
+      `${path} renders text that is too faint to read: ${failures.join("; ")}`
     ).toEqual([]);
   });
 }

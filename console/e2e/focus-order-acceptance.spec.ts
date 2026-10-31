@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * The focus order is the page's own.
@@ -24,11 +20,11 @@ import {
  */
 const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
 
-const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const ROUTES = SWEEP_ROUTES;
 
-for (const route of ROUTES) {
-  test(`${route.path} keeps the focus order the page has`, async ({ page }) => {
-    await page.goto(route.path);
+for (const path of ROUTES) {
+  test(`${path} keeps the focus order the page has`, async ({ page }) => {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const findings = await page.evaluate((focusable) => {
@@ -57,7 +53,7 @@ for (const route of ROUTES) {
 
     expect(
       findings,
-      `${route.path} takes the focus out of the page's order: ${findings.join("; ")}`
+      `${path} takes the focus out of the page's order: ${findings.join("; ")}`
     ).toEqual([]);
   });
 }

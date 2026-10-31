@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * A control's accessible name contains what the control shows.
@@ -35,15 +31,13 @@ import {
  * route, in the browser, rather than read off the source of a few views.
  */
 
-const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const ROUTES = SWEEP_ROUTES;
 
 const CONTROLS = "a[href], button, [role='button'], [role='link']";
 
-for (const route of ROUTES) {
-  test(`${route.path} names every control after what it shows`, async ({
-    page
-  }) => {
-    await page.goto(route.path);
+for (const path of ROUTES) {
+  test(`${path} names every control after what it shows`, async ({ page }) => {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const controls = page.locator(CONTROLS);
@@ -100,9 +94,8 @@ for (const route of ROUTES) {
       }
     });
 
-    expect(
-      problems,
-      `${route.path} states a name that drops what it shows`
-    ).toEqual([]);
+    expect(problems, `${path} states a name that drops what it shows`).toEqual(
+      []
+    );
   });
 }

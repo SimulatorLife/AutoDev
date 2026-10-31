@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * Every control the operator can see whole shows its focus ring whole.
@@ -36,7 +32,7 @@ import {
  * its region is not a cut ring, it is a control that scrolls, and the rule
  * does not apply to it.
  */
-const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const ROUTES = SWEEP_ROUTES;
 
 /** The controls the keyboard can reach. */
 const FOCUSABLE =
@@ -54,16 +50,19 @@ const FOCUSABLE =
  */
 test.use({ viewport: { width: 1280, height: 600 } });
 
-for (const route of ROUTES) {
-  test(`${route.path} draws the focus ring whole`, async ({ page }) => {
-    await page.goto(route.path);
+for (const path of ROUTES) {
+  test(`${path} draws the focus ring whole`, async ({ page }) => {
+    await page.goto(path);
     await waitForPageContent(page);
 
     const cut = await page.evaluate((focusable) => {
       const findings: string[] = [];
       const controls = Array.from(
         document.querySelectorAll<HTMLElement>(focusable)
-      ).filter((element) => element.getClientRects().length > 0);
+      ).filter(
+        (element) =>
+          element.getClientRects().length > 0 && element.checkVisibility()
+      );
       for (const element of controls) {
         // Focusing moves the control into view, which is where the operator
         // would meet it, and it scrolls the page the way the keyboard would.

@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  CANONICAL_ROUTES,
-  DETAIL_ROUTES,
-  waitForPageContent
-} from "./acceptance-helpers.ts";
+import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * Every landmark the Console renders is named.
@@ -40,11 +36,11 @@ const NAMED_LANDMARK_ROLES = new Set([
   "search"
 ]);
 
-const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
+const ROUTES = SWEEP_ROUTES;
 
-for (const route of ROUTES) {
-  test(`${route.path} names every landmark it renders`, async ({ page }) => {
-    await page.goto(route.path);
+for (const path of ROUTES) {
+  test(`${path} names every landmark it renders`, async ({ page }) => {
+    await page.goto(path);
     await waitForPageContent(page);
 
     // The tree the browser builds for assistive technology.
@@ -71,7 +67,7 @@ for (const route of ROUTES) {
 
     expect(
       unnamed,
-      `${route.path} renders ${String(unnamed.length)} landmark(s) with no name`
+      `${path} renders ${String(unnamed.length)} landmark(s) with no name`
     ).toEqual([]);
 
     // Two landmarks of one kind may not share a name.
@@ -88,7 +84,7 @@ for (const route of ROUTES) {
 
     expect(
       ambiguous,
-      `${route.path} renders landmarks that share a name: ${ambiguous.join("; ")}`
+      `${path} renders landmarks that share a name: ${ambiguous.join("; ")}`
     ).toEqual([]);
   });
 }
