@@ -660,6 +660,12 @@ The target state names reduced motion in the acceptance contract — "Accessibil
 
 A pulse is the easiest animation to write and the one nobody checks, because it looks deliberate and it is only two pixels. It honours the preference now, and the sweep that holds it asks the browser rather than the source: the page is rendered with `prefers-reduced-motion: reduce` emulated, and every element is asked whether it is still animating.
 
+## The page an operator lands on after a stale link
+
+The not-found page is a page the Console renders: it has a heading, a reason, and three ways out. No sweep walked it — the sweeps walked routes, and a route that answers with a 404 is not one of the routes — so nothing had ever asked the browser about it.
+
+It is in the surface list now, and it holds: one level-one heading that names the page rather than a section, no skipped heading level, no repeated id, nothing cut, every control named, every landmark named, and a document that fits a phone's width.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

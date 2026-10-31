@@ -222,7 +222,15 @@ export const SUBSURFACE_ROUTES: readonly CanonicalRoute[] = [
 export const SWEEP_SURFACES: readonly CanonicalRoute[] = [
   ...CANONICAL_ROUTES,
   ...DETAIL_ROUTES,
-  ...SUBSURFACE_ROUTES
+  ...SUBSURFACE_ROUTES,
+  // The page an operator lands on after a stale link. It is a page the Console
+  // renders, with its own controls, its own heading and its own reason, and
+  // no sweep walked it -- so nothing had ever asked the browser about it.
+  {
+    path: "/no-such-resource",
+    section: "",
+    heading: "Page not found"
+  }
 ];
 
 export const SWEEP_ROUTES: readonly string[] = SWEEP_SURFACES.map(
