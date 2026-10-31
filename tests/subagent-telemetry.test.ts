@@ -770,23 +770,29 @@ test("a Claude orchestrator delegates through Codex, not inside its CLI", () => 
   // Claude acts only through Codex's tools, so an orchestrator spawns with
   // Codex's own multi_agent_v1__spawn_agent inside an `exec` call, exactly as
   // a Codex-served orchestrator does. The CLI has no Agent/Task tool to spawn
-  // invisible children with, and the bridge holds no delegation state.
+  // invisible children with. The bridge owns the delegation surface: it
+  // injects its spawn server and turns the model's request into Codex's own
+  // spawn, so the child is a session the app can show.
   const source = read("runtime/src/providers/claude.ts");
   assert.match(source, /"--tools", builtIns\.join\(","\)/);
-  for (const obsolete of [
-    "SpawnSessionRegistry",
-    "buildSpawnScript",
-    "bridge-spawn",
-    "isSpawnTool",
-    "reportSpawn"
-  ]) {
+  // The bridge must not grow a second way to spawn: the script, the tool
+  // definition and the reporting all stay with the Runtime owner.
+  for (const obsolete of ["buildSpawnScript", "isSpawnTool", "reportSpawn"]) {
     assert.doesNotMatch(source, new RegExp(obsolete), obsolete);
   }
+  // The delegation surface is the bridge's, and it is offered whether or not
+  // Codex offered this request any tools.
+  assert.match(source, /SpawnSessionRegistry/);
+  assert.match(source, /bridge-spawn/);
+  assert.match(
+    source,
+    /mcpServers\[MCP_SERVER_AUTODEV_SPAWN\] = spawnShimMcpServer\(/
+  );
   const contract = JSON.parse(read("config/execution-contract.json"));
   assert.deepEqual(contract.providers.claude, {
     spawnTools: [],
     permissionMode: "native",
-    delegation: "native"
+    delegation: "codex-shim"
   });
 });
 
@@ -1062,7 +1068,14 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
     source,
     /function agyEnvironment\(spawnSession: string \| null, isolatedHome: string \| null = null\)/
   );
-  assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
+  // The identity the shim calls back with is the shared owner's; agy carries
+  // it in the process environment, because agy's MCP config is a file and a
+  // token in a file outlives the turn.
+  assert.match(
+    source,
+    /const identity = spawnShimMcpServer\(\s*\{ url: `http:\/\/\$\{HOST\}:\$\{PORT\}`, token: AUTH_TOKEN \},\s*spawnSession \?\? ""\s*\)\.env;/
+  );
+  assert.match(source, /\.\.\.identity/);
   // The spawned child's environment must still be built by agyEnvironment and
   // passed through withAutoDevOtelResourceContext with the workspace and role.
   // The argument is now an object literal because the agent also carries a
@@ -1078,16 +1091,13 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
   assert.match(source, /\.\.\.gitCommitIdentityEnv\(\{\s*role: agentRole,/u);
   assert.match(
     source,
-    /mcpServers\.autodev_spawn = bridgeSpawnMcpEntry\(options\)/
+    /mcpServers\.autodev_spawn = bridgeSpawnMcpEntry\(spawnSession\)/
   );
-  // A leaf turn passes no session, so the handshake finds nothing to attach to.
+  // The session is opened by the shared owner, which is what decides whether
+  // the router identified the conversation the turn belongs to.
   assert.match(
     source,
-    /SpawnSessionRegistry\.canHold\(sessionHeader, sessionScope\)/
-  );
-  assert.match(
-    source,
-    /spawnSessions\.open\(spawnSession, \{ orchestrator: isOrchestratorRole\(agentRole\) \}\)/
+    /openSpawnSession\(request\.headers, spawnSessions, \{\s*orchestrator: isOrchestratorRole\(agentRole\)\s*\}\)/s
   );
   // The collected batch becomes one exec call appended to the turn's output.
   assert.match(

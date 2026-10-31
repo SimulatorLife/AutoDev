@@ -18,6 +18,10 @@
 import type { ServerResponse } from "node:http";
 
 import {
+  buildSpawnToolCallItem,
+  type SpawnChild
+} from "@simulatorlife/autodev-runtime/agents";
+import {
   INCOMPLETE_REASON_INTERRUPTED,
   incompleteDetails,
   type ProviderLimit,
@@ -471,6 +475,17 @@ interface AwaitingCall {
   resolve: (result: JsonRecord) => void;
 }
 
+/**
+ * The delegation a turn asked for, and the parent conversation it belongs to.
+ *
+ * The children are the ones the bridge collected while the CLI ran; the
+ * parent is the Codex conversation the spawn script creates them under.
+ */
+export interface TurnDelegation {
+  children: SpawnChild[];
+  parentId: string;
+}
+
 export interface ClaudeTurnOptions {
   tools: CodexTool[];
   registry: CodexToolTurnRegistry<ClaudeTurn>;
@@ -479,6 +494,16 @@ export interface ClaudeTurnOptions {
   /** How long to gather tool calls the CLI issues together before emitting them. */
   gatherMs?: number;
   describeFailure: (error: unknown) => TurnFailure;
+  /**
+   * The delegation this turn asked for, handed over once.
+   *
+   * The bridge owns the spawn session; the turn owns the moment the response
+   * completes. A turn that delegated gets one `exec` call in its response, so
+   * Codex creates the children and they become sessions the app can show. A
+   * turn that ended without completing takes the delegation and drops it: a
+   * failed turn must not dispatch children.
+   */
+  delegation?: () => TurnDelegation | null;
 }
 
 export class ClaudeTurn {
@@ -494,6 +519,7 @@ export class ClaudeTurn {
   private parkTimer: NodeJS.Timeout | null = null;
   private keepAliveTimer: NodeJS.Timeout | null = null;
   private finished = false;
+  private delegationTaken = false;
   private stashedFailure: TurnFailure | null = null;
   private lastText = "";
   private readonly options: ClaudeTurnOptions;
@@ -637,6 +663,7 @@ export class ClaudeTurn {
     this.finished = true;
     this.abortController.abort();
     this.release("This turn was cancelled; the call was not run.");
+    this.discardDelegation();
     if (this.stream)
       this.endStream({
         error: new Error("turn cancelled"),
@@ -698,6 +725,9 @@ export class ClaudeTurn {
     this.finished = true;
     this.release("This turn has ended; the call was not run.");
     const stream = this.stream;
+    // The turn is over, so this is the last moment its delegation can be
+    // handed over: the children become a Codex `exec` call in this response.
+    this.emitDelegation(stream);
     this.detach();
     stream?.complete(event.usage);
     this.options.registry.remove(this);
@@ -706,6 +736,7 @@ export class ClaudeTurn {
   private fail(failure: TurnFailure): void {
     this.finished = true;
     this.release("This turn failed; the call was not run.");
+    this.discardDelegation();
     if (this.stream) {
       this.endStream(failure);
       this.options.registry.remove(this);
@@ -714,6 +745,34 @@ export class ClaudeTurn {
     // Parked: the next continuation request is the one that reports it.
     this.stashedFailure = failure;
     this.startParkTimer();
+  }
+
+  /**
+   * Hand the turn's delegation to Codex as one `exec` call.
+   *
+   * The bridge writes the spawn script and the bridge creates the children,
+   * so the model never has to author one. A turn that did not delegate gets
+   * no item, and a turn whose delegation was already taken gets nothing.
+   */
+  private emitDelegation(stream: ResponseStream | null): void {
+    if (this.delegationTaken) return;
+    this.delegationTaken = true;
+    const delegation = this.options.delegation?.();
+    if (!delegation || !stream) return;
+    const item = buildSpawnToolCallItem(
+      delegation.children,
+      delegation.parentId,
+      `call_${this.id}_${++this.sequence}`
+    );
+    if (!item) return;
+    stream.toolCall(item);
+  }
+
+  /** A turn that ended without completing must not dispatch children. */
+  private discardDelegation(): void {
+    if (this.delegationTaken) return;
+    this.delegationTaken = true;
+    this.options.delegation?.();
   }
 
   private endStream(failure: TurnFailure): void {

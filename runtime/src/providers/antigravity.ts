@@ -31,10 +31,12 @@ import {
   buildSpawnToolCallOutput,
   composeProviderPrompt,
   isOrchestratorRole,
+  openSpawnSession,
   readOnlySystemPromptInjection,
   resolveAgentRole,
   roleMcpEnvironment,
   SpawnSessionRegistry,
+  spawnShimMcpServer,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
@@ -2373,20 +2375,26 @@ function writeCodexToolsAgent(
   return pathApi.join(isolatedHome, INVOCATION_CUSTOMIZATION_DIRECTORY);
 }
 
-function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
-  const codexHome =
-    options?.codexHome ??
-    process.env.CODEX_HOME ??
-    pathApi.join(
-      options?.originalHome ?? process.env.HOME ?? homedir(),
-      ".codex"
-    );
-  const repoShim = resolveRuntimeSourcePath(REPO_ROOT, "mcp/spawn-shim.ts");
-  const codexShim = pathApi.join(codexHome, "src", "mcp", "spawn-shim.ts");
-  const targetShim = existsSync(repoShim) ? repoShim : codexShim;
+/**
+ * The MCP server that offers this turn the bridge's delegation tool.
+ *
+ * The entry is the shared one every CLI bridge writes; agy reads it in its own
+ * config schema. The shim calls back into this bridge over loopback, so it
+ * needs the bridge's address, its token, and the turn the calls belong to.
+ *
+ * agy's MCP registry is a **file** in the isolated home, so that identity is
+ * not written into it: a token in a file outlives the turn. The shim inherits
+ * it from agy's own environment instead, which `agyEnvironment` builds from
+ * the same owner.
+ */
+function bridgeSpawnMcpEntry(spawnSession: string): AntigravityMcpServerConfig {
+  const server = spawnShimMcpServer(
+    { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+    spawnSession
+  );
   return {
-    command: "bash",
-    args: ["-lc", `exec node "${targetShim}"`]
+    command: server.command,
+    args: server.args
   };
 }
 
@@ -2445,7 +2453,7 @@ function buildInvocationMcpConfig(
     );
   }
   if (isOrchestratorRole(agentRole) && spawnSession)
-    mcpServers.autodev_spawn = bridgeSpawnMcpEntry(options);
+    mcpServers.autodev_spawn = bridgeSpawnMcpEntry(spawnSession);
   // A turn is offered the shim exactly when it has somewhere to park a call:
   // streaming, and carrying at least one Codex tool. Minting the id under the
   // same condition keeps "the shim was launched" and "there is a turn to park
@@ -2831,13 +2839,18 @@ function agyEnvironment(
   isolatedHome: string | null = null
 ): NodeJS.ProcessEnv {
   const codexHome = process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex");
+  // The shim's identity -- the bridge it calls back, and the turn its calls
+  // belong to -- is the shared owner's. It travels in the environment rather
+  // than in agy's MCP config because that config is a file.
+  const identity = spawnShimMcpServer(
+    { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+    spawnSession ?? ""
+  ).env;
   return {
     ...process.env,
     ...(isolatedHome ? { HOME: isolatedHome } : {}),
     CODEX_HOME: codexHome,
-    AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
-    AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
-    AUTODEV_SPAWN_SESSION: spawnSession ?? ""
+    ...identity
   };
 }
 
@@ -3516,15 +3529,6 @@ function prepareResponsesTurn(
   // served here reads as "never delegated".
   const agentEvents = resolveAgentEventReporter(request.headers);
   logInboundRequest(payload, request.headers);
-  // Router-generated identity of the Codex conversation. Delegation through
-  // Codex needs it so the shim's out-of-band call can find the turn it belongs
-  // to; a turn the router could not identify holds none and falls back to agy's
-  // own in-CLI delegation.
-  const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
-  const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
-  const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope)
-    ? sessionHeader
-    : null;
   // The router's own correlation id for this request. It already travels on
   // every router-issued call (AgentEventReporter is authorized from the same
   // header) so a failure this bridge reports back can be matched to the
@@ -3545,10 +3549,9 @@ function prepareResponsesTurn(
   // Only hold delegation state once all pre-flight validation has succeeded.
   // An invalid workspace must not leave an orphaned entry that a later shim
   // process could attach to.
-  if (spawnSession)
-    spawnSessions.open(spawnSession, {
-      orchestrator: isOrchestratorRole(agentRole)
-    });
+  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
+    orchestrator: isOrchestratorRole(agentRole)
+  });
   const prompt = promptFromInput(
     payload.input ?? "",
     composeProviderPrompt(agentRole, cwd) +

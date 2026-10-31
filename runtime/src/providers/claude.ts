@@ -31,9 +31,15 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
+  bridgeDelegationInstruction,
   bridgeSkillContext,
+  isOrchestratorRole,
+  openSpawnSession,
   readOnlySystemPromptInjection,
-  resolveAgentRole
+  resolveAgentRole,
+  type SpawnChild,
+  SpawnSessionRegistry,
+  spawnShimMcpServer
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -60,6 +66,7 @@ import {
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import { MCP_SERVER_AUTODEV_SPAWN } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -508,21 +515,20 @@ export class ToolUseAccumulator {
  * How a bridged turn is to act. Deliberately not the role policy: that is in
  * Codex's own developer instructions, which open the conversation Claude
  * receives, exactly as they would for a Codex-native model.
+ *
+ * `delegation` is the bridge's own instruction for this provider's delegation
+ * surface. It is empty for a turn that may not delegate, and a turn with no
+ * Codex tools at all still gets one when its bridge holds the spawn server --
+ * delegation never depended on the caller declaring Codex's `exec`.
  */
-export function systemPrompt(cwd: string, surface: CodexToolSurface): string {
+export function systemPrompt(
+  cwd: string,
+  surface: CodexToolSurface,
+  delegation = ""
+): string {
   const names = new Set(surface.tools.map((tool) => tool.name));
-  const tools =
-    surface.tools.length === 0
-      ? "No Codex tools are available on this turn; answer from the conversation alone (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly."
-      : [
-          "You act only through the tools in this session. They are the agent's Codex tools: Codex runs each call in the workspace under the turn's sandbox, approval policy, and hooks, shows it to the user, and returns its output to you.",
-          "Treat tool-call and tool-output entries in the conversation as history, not as a format for requesting new work. Call Codex tools through the CLI-exposed MCP names in the mcp__codex__<tool> namespace (the reference below uses each tool's bare name and schema). Codex treats invocation-looking assistant text as ordinary text and will not execute it. Do not serialize tool calls in your response; if the native tool interface is unavailable, state that plainly.",
-          ...(names.has("exec")
-            ? [
-                "`exec` runs JavaScript whose `tools` global carries the agent's full tool set -- shell commands, file patches, MCP servers, and, for an orchestrator, subagent management. Its description lists them. Read files and skills through these tools, as the instructions describe."
-              ]
-            : [])
-        ].join(" ");
+  const mayDelegate = delegation.trim().length > 0;
+  const tools = toolGuidance(surface, names, mayDelegate);
   const web = surface.webSearch
     ? "\n\nWeb research uses your own WebSearch and WebFetch tools."
     : "";
@@ -533,8 +539,36 @@ export function systemPrompt(cwd: string, surface: CodexToolSurface): string {
     `## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`,
     ...(surface.tools.length > 0
       ? [`## Codex tools\n\n${codexToolReference(surface.tools)}`]
-      : [])
+      : []),
+    ...(mayDelegate ? [delegation] : [])
   ].join("\n\n");
+}
+
+/**
+ * What the model is to do with the tools it has.
+ *
+ * A turn with no Codex tools still has the bridge's delegation tool, and
+ * saying otherwise would have the model report a delegation failure that is
+ * not one.
+ */
+function toolGuidance(
+  surface: CodexToolSurface,
+  names: Set<string>,
+  mayDelegate: boolean
+): string {
+  if (surface.tools.length === 0)
+    return mayDelegate
+      ? "No Codex tools are available on this turn. You may still delegate through the bridge's spawn server, described below; apart from that, answer from the conversation alone (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly."
+      : "No Codex tools are available on this turn; answer from the conversation alone (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly.";
+  return [
+    "You act only through the tools in this session. They are the agent's Codex tools: Codex runs each call in the workspace under the turn's sandbox, approval policy, and hooks, shows it to the user, and returns its output to you.",
+    "Treat tool-call and tool-output entries in the conversation as history, not as a format for requesting new work. Call Codex tools through the CLI-exposed MCP names in the mcp__codex__<tool> namespace (the reference below uses each tool's bare name and schema). Codex treats invocation-looking assistant text as ordinary text and will not execute it. Do not serialize tool calls in your response; if the native tool interface is unavailable, state that plainly.",
+    ...(names.has("exec")
+      ? [
+          "`exec` runs JavaScript whose `tools` global carries the agent's full tool set -- shell commands, file patches, MCP servers, and, for an orchestrator, subagent management. Its description lists them. Read files and skills through these tools, as the instructions describe."
+        ]
+      : [])
+  ].join(" ");
 }
 
 /** The MCP server that offers this turn Codex's tools. */
@@ -553,11 +587,44 @@ export function codexToolsMcpConfig(
   });
 }
 
+/**
+ * The MCP servers this turn is offered.
+ *
+ * Two servers, and they are independent of each other: `codex` mirrors the
+ * tools Codex offered on the request, and `autodev_spawn` is the bridge's own
+ * delegation surface. A turn Codex offered no tools to still gets the spawn
+ * server, so delegation never depends on the caller declaring `exec`.
+ */
+export function bridgeMcpConfig(
+  turnId: string | null,
+  spawnSession: string | null,
+  environment: NodeJS.ProcessEnv = process.env
+): string | null {
+  const bridge = { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN };
+  const mcpServers: Record<string, unknown> = {};
+  if (turnId)
+    mcpServers[CODEX_TOOLS_SERVER] = codexToolsMcpServer(
+      turnId,
+      bridge,
+      environment
+    );
+  if (spawnSession)
+    mcpServers[MCP_SERVER_AUTODEV_SPAWN] = spawnShimMcpServer(
+      bridge,
+      spawnSession,
+      environment
+    );
+  if (Object.keys(mcpServers).length === 0) return null;
+  return JSON.stringify({ mcpServers });
+}
+
 export interface ClaudeCliOptions {
   systemPrompt: string;
   /** The turn whose Codex tools the CLI is offered; null when Codex offered none. */
   turnId: string | null;
   webSearch: boolean;
+  /** The turn's delegation session; null when the turn may not delegate. */
+  spawnSession?: string | null;
 }
 
 /** Build the CLI argv for one Claude turn. The prompt itself goes in on stdin. */
@@ -570,8 +637,14 @@ export function claudeCliArgs(
   const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : [];
   const allowed = [
     ...builtIns,
-    ...(options.turnId ? [`mcp__${CODEX_TOOLS_SERVER}`] : [])
+    ...(options.turnId ? [`mcp__${CODEX_TOOLS_SERVER}`] : []),
+    ...(options.spawnSession ? [`mcp__${MCP_SERVER_AUTODEV_SPAWN}`] : [])
   ];
+  const mcpConfig = bridgeMcpConfig(
+    options.turnId,
+    options.spawnSession ?? null,
+    environment
+  );
   return [
     CLI,
     "-p",
@@ -586,9 +659,7 @@ export function claudeCliArgs(
     // Only the servers named here: user-level ~/.claude.json servers and a
     // workspace's .mcp.json never add tools that bypass Codex.
     "--strict-mcp-config",
-    ...(options.turnId
-      ? ["--mcp-config", codexToolsMcpConfig(options.turnId, environment)]
-      : []),
+    ...(mcpConfig ? ["--mcp-config", mcpConfig] : []),
     ...(allowed.length > 0 ? ["--allowed-tools", allowed.join(",")] : []),
     "--permission-mode",
     // Codex, not the CLI, owns approvals: its tools run under the turn's own
@@ -902,6 +973,10 @@ export async function* runClaudeStream(
 // Live turns, parked or streaming. See runtime/src/providers/claude-turn.ts.
 const turns = new CodexToolTurnRegistry<ClaudeTurn>();
 
+// Delegation requests the spawn shim collects while a turn is in flight. See
+// runtime/src/agents/bridge-spawn-session.ts for why the session key matters.
+const spawnSessions = new SpawnSessionRegistry();
+
 /** How an error ends a turn: a provider limit, a timeout, or an interruption. */
 export function describeFailure(error: unknown): TurnFailure {
   const message = error instanceof Error ? error.message : String(error);
@@ -979,6 +1054,49 @@ async function handleBridgeTools(
     body?.arguments ?? {}
   );
   if (!response.destroyed) sendJson(response, 200, result);
+}
+
+/**
+ * Handles `/v1/bridge-spawn/attach` and `/v1/bridge-spawn/call`, the spawn
+ * shim's loopback calls into this bridge.
+ *
+ * The shim is how a CLI's model asks for delegation: it names the bridge's
+ * spawn server, the bridge collects the children, and the bridge asks Codex to
+ * create them. The bridge decides whether this turn may delegate at all -- a
+ * leaf turn, or a CLI that outlived its request, is offered no tool rather
+ * than one that fails.
+ */
+async function handleBridgeSpawn(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  // The shim reaches this loopback route behind the same bearer check.
+  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+    sendJson(response, 401, { error: "invalid local gateway key" });
+    return;
+  }
+  const body = await readJsonBody(request);
+  const session = typeof body?.session === "string" ? body.session : "";
+  if (pathname.endsWith("/attach")) {
+    sendJson(response, 200, {
+      spawnAllowed: spawnSessions.mayDelegate(session)
+    });
+    return;
+  }
+  const result = spawnSessions.record(session, body?.children);
+  if (!result.accepted) {
+    sendJson(response, 409, { error: result.message });
+    return;
+  }
+  // Dispatch, rather than await: Codex creates and tracks these children.
+  sendJson(response, 200, {
+    text:
+      `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by ` +
+      "the orchestration layer, not by you. End your turn now with a brief statement of what you delegated -- " +
+      "do not wait for them, and do not do their work yourself. Their results are delivered to you " +
+      "automatically on your next turn."
+  });
 }
 
 /** Resolves the turn's workspace, reporting the failure itself when it cannot. */
@@ -1062,14 +1180,30 @@ function startResponsesTurn(
   const orchestratorSkillContext = bridgeSkillContext(
     request.headers as Record<string, unknown>
   );
+  // The delegation surface is the bridge's, not Codex's: a turn may delegate
+  // whether or not Codex offered this request any tools at all. The session
+  // is opened here, after the parked turn has been reattached, so a
+  // continuation never replaces the children its own turn collected.
+  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
+    orchestrator: isOrchestratorRole(agentRole)
+  });
+  const mayDelegate =
+    spawnSession !== null && spawnSessions.mayDelegate(spawnSession);
+  const delegation = bridgeDelegationInstruction({
+    mayDelegate,
+    // The Claude CLI advertises each MCP tool directly, so the model calls one
+    // name rather than naming a server and a tool.
+    reach: { kind: "direct", prefix: "mcp__" }
+  });
   const turn = new ClaudeTurn({
     tools: surface.tools,
     registry: turns,
     parkMs: CLAUDE_PARK_SECONDS * 1000,
-    describeFailure
+    describeFailure,
+    delegation: () => collectSpawnDelegation(spawnSession)
   });
   writeErrorLine(
-    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch}`
+    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${spawnSession !== null}`
   );
   turn.attach(stream, reporter);
   void turn.run(
@@ -1094,7 +1228,7 @@ function startResponsesTurn(
         signal: turn.signal,
         waitingOnCodex: () => turn.waitingOnCodex,
         systemPrompt:
-          systemPrompt(cwd, surface) +
+          systemPrompt(cwd, surface, delegation) +
           sandboxInjection +
           (orchestratorSkillContext
             ? `
@@ -1106,10 +1240,30 @@ ${orchestratorSkillContext}
             : ""),
         selectedSkillContext: orchestratorSkillContext,
         turnId: surface.tools.length > 0 ? turn.id : null,
+        spawnSession: mayDelegate ? spawnSession : null,
         webSearch: surface.webSearch
       }
     )
   );
+}
+
+/**
+ * The children this turn asked to spawn, and the parent conversation they
+ * belong to.
+ *
+ * Closing the session is what ends it: a turn that asked for children gets
+ * them once, and a turn that failed or was cancelled discards them.
+ */
+function collectSpawnDelegation(
+  spawnSession: string | null
+): { children: SpawnChild[]; parentId: string } | null {
+  if (!spawnSession) return null;
+  const children = spawnSessions.close(spawnSession);
+  if (children.length === 0) return null;
+  writeErrorLine(
+    `claude delegating ${children.length} subagent(s) through Codex`
+  );
+  return { children, parentId: spawnSession };
 }
 
 async function handle(
@@ -1118,7 +1272,11 @@ async function handle(
 ): Promise<void> {
   const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
   if (pathname === "/health" || pathname === "/health/liveliness") {
-    sendJson(response, 200, { status: "ok", turns: turns.status() });
+    sendJson(response, 200, {
+      status: "ok",
+      turns: turns.status(),
+      spawnSessions: spawnSessions.status()
+    });
     return;
   }
   if (
@@ -1126,6 +1284,13 @@ async function handle(
     pathname === "/v1/bridge-tools/call"
   ) {
     await handleBridgeTools(pathname, request, response);
+    return;
+  }
+  if (
+    pathname === "/v1/bridge-spawn/attach" ||
+    pathname === "/v1/bridge-spawn/call"
+  ) {
+    await handleBridgeSpawn(pathname, request, response);
     return;
   }
   if (pathname === "/v1/models") {

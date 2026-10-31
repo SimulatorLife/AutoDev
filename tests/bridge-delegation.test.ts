@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { bridgeDelegationInstruction } from "@simulatorlife/autodev-runtime/agents";
+import {
+  bridgeDelegationInstruction,
+  openSpawnSession,
+  SpawnSessionRegistry,
+  spawnShimMcpServer
+} from "@simulatorlife/autodev-runtime/agents";
 import {
   AUTODEV_SPAWN_BARE_TOOL,
   MCP_SERVER_AUTODEV_SPAWN
@@ -88,4 +93,68 @@ test("the shared prompt no longer names the shim in a shape no CLI has", () => {
   // The catalog path moved; the prompt still pointed at the old one.
   assert.doesNotMatch(prompt, /scripts\/codex\/catalogs/);
   assert.match(prompt, /config\/catalogs\//);
+});
+
+test("the spawn shim is launched the one way, by the one owner", () => {
+  // Three bridges write the entry, and each CLI renders it in its own schema.
+  // What the shim *is* -- the path, the bridge it calls back, the turn its
+  // calls belong to -- has one owner, or the three drift apart.
+  const server = spawnShimMcpServer(
+    { url: "http://127.0.0.1:4000", token: "bridge-token" },
+    "session-a"
+  );
+  assert.match(server.args[0] ?? "", /mcp\/spawn-shim\.ts$/);
+  assert.equal(server.env.AUTODEV_BRIDGE_URL, "http://127.0.0.1:4000");
+  assert.equal(server.env.AUTODEV_BRIDGE_TOKEN, "bridge-token");
+  assert.equal(server.env.AUTODEV_SPAWN_SESSION, "session-a");
+  for (const sourcePath of [
+    "runtime/src/providers/antigravity.ts",
+    "runtime/src/providers/copilot.ts",
+    "runtime/src/providers/claude.ts"
+  ]) {
+    const source = read(sourcePath);
+    assert.match(source, /spawnShimMcpServer\(/, sourcePath);
+    // No bridge may name the shim's path itself.
+    assert.doesNotMatch(source, /mcp\/spawn-shim\.ts/, sourcePath);
+  }
+});
+
+test("a turn holds delegation state only when the router identified its conversation", () => {
+  const registry = new SpawnSessionRegistry();
+  // The router's process-wide fallback names no single conversation, so a
+  // turn holding it would attach one conversation's delegation to another's.
+  assert.equal(
+    openSpawnSession(
+      {
+        "x-autodev-session-id": "session-a",
+        "x-autodev-session-scope": "process-fallback"
+      },
+      registry,
+      { orchestrator: true }
+    ),
+    null
+  );
+  assert.equal(
+    openSpawnSession(
+      {
+        "x-autodev-session-id": "session-a",
+        "x-autodev-session-scope": "identified"
+      },
+      registry,
+      { orchestrator: true }
+    ),
+    "session-a"
+  );
+  assert.equal(registry.mayDelegate("session-a"), true);
+  // A leaf turn may not delegate, so its session is held but closed to it.
+  const leaves = new SpawnSessionRegistry();
+  openSpawnSession(
+    {
+      "x-autodev-session-id": "session-b",
+      "x-autodev-session-scope": "identified"
+    },
+    leaves,
+    { orchestrator: false }
+  );
+  assert.equal(leaves.mayDelegate("session-b"), false);
 });

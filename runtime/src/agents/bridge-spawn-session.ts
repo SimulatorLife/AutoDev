@@ -30,6 +30,15 @@
 /** Sessions the router could not identify never collect delegation state. */
 export const UNIDENTIFIED_SESSION_SCOPE = "process-fallback";
 
+/** The Codex conversation a request belongs to. */
+const SESSION_ID_HEADER = "x-autodev-session-id";
+/**
+ * Whether that id is the conversation's own or the router's process-wide
+ * fallback. A fallback id names no single conversation, so it cannot hold one
+ * conversation's delegation.
+ */
+const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
+
 export interface SpawnChild {
   agentType: string | null;
   message: string;
@@ -190,4 +199,45 @@ export class SpawnSessionRegistry {
   status(): { held: number; maxSessions: number } {
     return { held: this.sessions.size, maxSessions: this.maxSessions };
   }
+}
+
+/**
+ * One header's value, or null when it was not sent.
+ *
+ * Node lowercases inbound header names; intermediaries may not.
+ */
+function headerValue(headers: unknown, name: string): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const record = headers as Record<string, unknown>;
+  const key = Object.keys(record).find(
+    (candidate) => candidate.toLowerCase() === name
+  );
+  const value = key === undefined ? undefined : record[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return typeof single === "string" && single.trim() ? single.trim() : null;
+}
+
+/**
+ * The delegation session this request holds, or null when it holds none.
+ *
+ * The session key is the Codex conversation: the spawn script recovers
+ * terminal children under it, so it has to be the thread id and not a
+ * bridge-local token. A request the router could not identify holds none --
+ * the router falls back to one process-wide key, and collecting under it
+ * would attach one conversation's delegation to another's turn.
+ *
+ * Opening replaces whatever was there: the previous turn on that conversation
+ * is over, and carrying its children forward would spawn them twice.
+ */
+export function openSpawnSession(
+  headers: unknown,
+  registry: SpawnSessionRegistry,
+  { orchestrator }: { orchestrator: boolean }
+): string | null {
+  const session = headerValue(headers, SESSION_ID_HEADER);
+  const scope = headerValue(headers, SESSION_SCOPE_HEADER);
+  if (session === null) return null;
+  if (!SpawnSessionRegistry.canHold(session, scope)) return null;
+  registry.open(session, { orchestrator });
+  return session;
 }

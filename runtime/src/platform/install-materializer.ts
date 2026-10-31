@@ -165,6 +165,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/agents/bridge-sandbox.ts",
   "runtime/src/agents/bridge-spawn-session.ts",
   "runtime/src/agents/role-mcp-environment.ts",
+  "runtime/src/agents/spawn-shim-server.ts",
   "runtime/src/agents/spawn-tools.ts",
   "runtime/src/config/index.ts",
   "runtime/src/config/cli-args.ts",

@@ -160,7 +160,7 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
     ),
     {
       codex: "native",
-      claude: "native",
+      claude: "codex-shim",
       antigravity: "codex-shim",
       copilot: "codex-shim",
       minimax: "none"

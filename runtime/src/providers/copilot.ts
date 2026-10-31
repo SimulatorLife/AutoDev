@@ -20,10 +20,12 @@ import {
   buildSpawnToolCallOutput,
   composeProviderPrompt,
   isOrchestratorRole,
+  openSpawnSession,
   readOnlySystemPromptInjection,
   resolveAgentRole,
   roleMcpEnvironment,
   SpawnSessionRegistry,
+  spawnShimMcpServer,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import {
@@ -51,10 +53,7 @@ import {
   resolveCwd,
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
-import {
-  resolveRuntimeSourcePath,
-  resolveRuntimeSourceRoot
-} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -774,16 +773,12 @@ function copilotMcpArgs(
     // The CLI cannot reach Codex directly. Give only this identified root turn
     // a per-request MCP server whose call is collected and returned as a
     // synthetic Codex exec item after the CLI turn completes.
-    const shim = resolveRuntimeSourcePath(REPO_ROOT, "mcp/spawn-shim.ts");
     additional.autodev_spawn = {
       type: "stdio",
-      command: process.execPath,
-      args: [shim],
-      env: {
-        AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
-        AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
-        AUTODEV_SPAWN_SESSION: spawnSession
-      }
+      ...spawnShimMcpServer(
+        { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+        spawnSession
+      )
     };
   }
   if (Object.keys(additional).length > 0)
@@ -1722,15 +1717,9 @@ function prepareCopilotRequest(
   const sandboxModeHeader = readOnlyHeaderValue(headers);
   const skillContextHeader = bridgeSkillContext(headers);
   const sandboxInjection = readOnlySystemPromptInjection(headers);
-  const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
-  const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
-  const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope)
-    ? sessionHeader
-    : null;
-  if (spawnSession)
-    spawnSessions.open(spawnSession, {
-      orchestrator: isOrchestratorRole(agentRole)
-    });
+  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
+    orchestrator: isOrchestratorRole(agentRole)
+  });
   const composedPrompt =
     composeProviderPrompt(agentRole, cwd) +
     sandboxInjection +

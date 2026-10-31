@@ -60,7 +60,14 @@ export interface SpawnResult {
   nickname: string | null;
 }
 
-export interface CustomToolCallItem {
+/**
+ * One Codex `exec` call.
+ *
+ * It carries an index signature because the item crosses into the SSE
+ * payload shapes the provider bridges serialize, and those are plain JSON
+ * records.
+ */
+export interface CustomToolCallItem extends Record<string, unknown> {
   id: string;
   type: "custom_tool_call";
   call_id: string;
@@ -107,6 +114,8 @@ export type ExecToolCallSseEvent = readonly [
 
 export interface SpawnToolCallOutput {
   childCount: number;
+  /** The completed `exec` item, for a bridge that emits items itself. */
+  item: CustomToolCallItem;
   events: ExecToolCallSseEvent;
 }
 
@@ -323,19 +332,48 @@ export function execToolCallSseEvents({
   ];
 }
 
+/**
+ * The one Codex `exec` call that dispatches a collected child batch.
+ *
+ * `callId` is the call's identity on the wire: Codex pairs the item with the
+ * output it returns, so it has to be unique within the turn that carries it.
+ * A bridge that owns several turns over one conversation mints its own.
+ */
+export function buildSpawnToolCallItem(
+  children: readonly SpawnChild[],
+  parentId: string,
+  callId: string
+): CustomToolCallItem | null {
+  if (children.length === 0) return null;
+  return {
+    id: mintCallItemId(),
+    type: "custom_tool_call",
+    call_id: callId,
+    name: EXEC_TOOL,
+    input: buildSpawnScript(children, { recoverParentId: parentId }),
+    status: "completed"
+  };
+}
+
 /** Build the one Codex exec call that dispatches a collected child batch. */
 export function buildSpawnToolCallOutput(
   children: readonly SpawnChild[],
   parentId: string,
   outputIndex: number
 ): SpawnToolCallOutput | null {
-  if (children.length === 0) return null;
+  const item = buildSpawnToolCallItem(
+    children,
+    parentId,
+    mintCallId(parentId, outputIndex)
+  );
+  if (!item) return null;
   return {
     childCount: children.length,
+    item,
     events: execToolCallSseEvents({
-      itemId: mintCallItemId(),
-      callId: mintCallId(parentId, outputIndex),
-      source: buildSpawnScript(children, { recoverParentId: parentId }),
+      itemId: item.id,
+      callId: item.call_id,
+      source: item.input,
       outputIndex
     })
   };

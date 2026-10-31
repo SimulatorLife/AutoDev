@@ -390,7 +390,7 @@
     "claude": {
       "spawnTools": [],
       "permissionMode": "native",
-      "delegation": "native"
+      "delegation": "codex-shim"
     },
     "antigravity": {
       "spawnTools": [
