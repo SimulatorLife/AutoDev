@@ -1328,6 +1328,15 @@ What stayed, because the Control API reads it:
 - The MCP runtime evidence is read from the live bridge observations, so a server's health, last-seen time, failures and call durations come from the calls the bridges reported. The two counts nothing observes -- the MCP client's own initialization and tool-discovery attempts -- are published as **not observed** (`null`), because a zero there would claim the server was never brought up.
 - The usage projection's OTLP-sourced twins (`byTool`, `toolsUnattributed`, `skillsUnattributed`) are deleted with the receiver; the workspace's tool list is the bridge evidence (`bridgeTools`).
 
+Verified against the deployed stack after the cutover was installed and the services restarted:
+
+- The router's OTLP ingress is gone: `POST /v1/logs`, `POST /v1/traces` and `POST /v1/metrics` on port 4100 answer 404.
+- The status publishes `correlation` and no longer publishes `codexTelemetry`: the live correlation carried 109 tool executions, 67 tool requests, 4 skill exposures, 1 skill use and 356 MCP exposures across 5 MCP servers.
+- The Control API's `/control/mcp-runtime` publishes `initAttempts: null` and `toolDiscoveryAttempts: null` -- not observed -- and the servers carry the last-seen time the live exposure recorded.
+- The persisted router state carries the `correlation` section at schema version 7; `otelTelemetry` is gone from it.
+- The router still produces to OpenLIT: `autodev.router.logical_requests` and `autodev.skill.events` continued to arrive after the restart.
+- The installed tree holds `runtime/src/router/correlation.ts` and none of the retired modules, and the retired `~/.codex/otel-ingress.mode` file is gone.
+
 ## Current acceptance evidence
 
 The historical Console baseline below was recorded on 2026-10-06; runtime performance measurements were added on 2026-10-09. During the 2026-10-13 continuation, Playwright/Chromium exercised the stale-v3 `/usage` fail-closed state at 1440×900 and 390×900, proving filter visibility and no document overflow only. After the p85 deployment, direct live Data-client checks validated v4 with 19 widgets and all widget queries succeeding; the same-origin `/usage` route returned HTTP 200 without the schema error. Post-upgrade rendered compaction charts, mutations, and general navigation interactions remain unverified.
