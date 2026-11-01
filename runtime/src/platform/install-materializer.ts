@@ -247,6 +247,9 @@ export const RUNTIME_MODULES = [
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
   "src/shared/otel-resource-context.ts",
+  "src/router/otel.ts",
+  "src/router/otel-attributes.ts",
+  "src/router/workspace-attribution.ts",
   "src/router/cooldown.ts",
   "src/router/lifecycle.ts",
   "src/router/tool-call-ownership.ts",
