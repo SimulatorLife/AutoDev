@@ -73,3 +73,23 @@ export function resolveCodeGraphContextBinary(
     (env.HOME ? path.join(env.HOME, ".local/bin/codegraphcontext") : null);
   return candidate && isExecutable(candidate) ? candidate : null;
 }
+
+/**
+ * The CocoIndex Code CLI (`ccc`): `AUTODEV_COCOINDEX_BIN` as given, else
+ * pipx's `~/.local/bin` install, else the first executable on PATH.
+ *
+ * The install is looked for before PATH because pipx's is the copy AutoDev
+ * installed, and it is looked for at all because the home it lives in is not
+ * necessarily the process's own. Under a home that holds no install that path
+ * names a file that is not there, and answering with it would report an
+ * installed tool as missing while a working copy sits on PATH.
+ */
+export function resolveCocoIndexBinary(
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const configured = env.AUTODEV_COCOINDEX_BIN;
+  if (configured) return configured;
+  const installed = env.HOME ? path.join(env.HOME, ".local/bin/ccc") : null;
+  if (installed && isExecutable(installed)) return installed;
+  return findExecutable("ccc", env.PATH);
+}

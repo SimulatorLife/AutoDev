@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import test from "node:test";
 
+import { resolveMcpCommand } from "@simulatorlife/autodev-runtime/mcp";
 import {
   agyArgs,
   agyEnvironment,
@@ -292,6 +294,71 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.ok(denyList.includes("mcp(playwright/browser_drag)"));
     } finally {
       cleanup();
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the MCP servers a turn starts are told the user's own home", () => {
+  // Observed 2026-10-31: agy runs under a temporary HOME, and the MCP
+  // launcher resolves the tools it starts -- `ccc`, `codegraphcontext` -- from
+  // the home its server runs with, so both were reported as missing while they
+  // were installed in the user's own home. The role contract decides which
+  // server may learn where that home is.
+  const env = createFixtureEnvironment();
+  try {
+    const config = buildInvocationMcpConfig("explorer", null, {
+      originalHome: env.userHome,
+      codexHome: env.codexHome
+    });
+    for (const name of ["cocoindex-code", "codegraphcontext"]) {
+      const server = config.mcpServers[name];
+      assert.ok(server, `the explorer role must be granted the ${name} server`);
+      const entry = server.env as Record<string, string> | undefined;
+      assert.equal(
+        entry?.HOME,
+        env.userHome,
+        `${name} must be told the user's own home`
+      );
+    }
+    // A server the contract does not name is told nothing, and a remote
+    // server launches nothing.
+    assert.equal(config.mcpServers.lsp?.env, undefined);
+    assert.equal(config.mcpServers.context7?.env, undefined);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the home the bridge hands the launcher is the one it resolves the tools from", () => {
+  // The two halves have to agree: the bridge tells the launcher which home
+  // holds the user's tools, and the launcher resolves them from that home.
+  // Either half alone leaves an installed tool reported as missing.
+  const env = createFixtureEnvironment();
+  try {
+    const toolHome = join(env.userHome, ".local", "bin");
+    mkdirSync(toolHome, { recursive: true });
+    for (const name of ["ccc", "codegraphcontext"]) {
+      writeFileSync(join(toolHome, name), "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(join(toolHome, name), 0o755);
+    }
+    const config = buildInvocationMcpConfig("explorer", null, {
+      originalHome: env.userHome,
+      codexHome: env.codexHome
+    });
+    for (const [name, tool] of [
+      ["cocoindex-code", "ccc"],
+      ["codegraphcontext", "codegraphcontext"]
+    ] as const) {
+      const entry = config.mcpServers[name]?.env as
+        Record<string, string> | undefined;
+      assert.ok(entry, `${name} must carry an environment`);
+      const resolved = resolveMcpCommand(name, REPO_ROOT, {
+        PATH: "/usr/bin:/bin",
+        HOME: entry.HOME
+      });
+      assert.equal(resolved.binary, join(toolHome, tool));
     }
   } finally {
     env.cleanup();

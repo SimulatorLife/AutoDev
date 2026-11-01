@@ -4,8 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  findExecutable,
   isExecutable,
+  resolveCocoIndexBinary,
   resolveCodeGraphContextBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -37,6 +37,16 @@ export interface McpCommand {
   pathPrepend: string[];
 }
 
+/**
+ * The command an MCP server runs, and the tools it is resolved from.
+ *
+ * The tool is resolved from the launcher's own environment, so the home that
+ * holds the user's install is the one the server runs with. A bridge that
+ * isolates HOME -- the Antigravity bridge runs its CLI under a temporary one --
+ * has to tell the servers it starts the user's own home, or the launcher looks
+ * for `ccc` and `codegraphcontext` in a home that holds neither and reports
+ * both as missing.
+ */
 export function resolveMcpCommand(
   name: string,
   repoRoot: string,
@@ -56,11 +66,7 @@ export function resolveMcpCommand(
       pathPrepend: []
     };
   if (tool === "cocoindex-code") {
-    const configured = env.AUTODEV_COCOINDEX_BIN;
-    const binary =
-      configured ??
-      (env.HOME ? path.join(env.HOME, ".local/bin/ccc") : null) ??
-      findExecutable("ccc", env.PATH);
+    const binary = resolveCocoIndexBinary(env);
     if (!binary)
       throw new Error(
         "AutoDev CocoIndex MCP binary is missing; install ccc or set AUTODEV_COCOINDEX_BIN"

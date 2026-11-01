@@ -155,6 +155,27 @@ export function codexToolReference(tools: readonly CodexTool[]): string {
     .join("\n\n");
 }
 
+/**
+ * The full reference for every mirrored tool, for a bridge that reaches MCP
+ * servers through one generic dispatcher.
+ *
+ * A dispatcher names a tool twice -- the server it lives on, and the tool
+ * itself -- so the reference the Claude CLI gets cannot say how to call one.
+ * A model without the list guesses the names (`read_file`, `exec_command`), the
+ * bridge refuses every guess, and a turn that could have read the repository
+ * ends as a capability failure that is not one.
+ */
+export function codexToolReferenceForDispatcher(
+  tools: readonly CodexTool[],
+  dispatcher: string
+): string {
+  return [
+    "## Codex tools",
+    `Your file and command tools are not your own: they are the Codex agent's, and they run in its sandbox, under its approvals and with its hooks, so every action they take is recorded against this thread. They live on the \`${CODEX_TOOLS_SERVER}\` MCP server, which you reach through your \`${dispatcher}\` dispatcher: \`ServerName\` is \`${CODEX_TOOLS_SERVER}\`, \`ToolName\` is the tool named below, and \`Arguments\` are that tool's own arguments.`,
+    codexToolReference(tools)
+  ].join("\n\n");
+}
+
 /** The MCP `tools/list` entry that stands in for one Codex tool. */
 export function mcpToolDefinition(tool: CodexTool): JsonRecord {
   const trimmed = tool.description.trim();

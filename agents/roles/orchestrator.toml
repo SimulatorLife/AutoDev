@@ -10,6 +10,7 @@ enabled = true
 
 [mcp_servers."cocoindex-code"]
 enabled = true
+env_vars = ["HOME"]
 
 [mcp_servers.codegraphcontext]
 enabled = true
@@ -20,6 +21,7 @@ enabled_tools = [
   "analyze_code_relationships",
   "get_repository_stats",
 ]
+env_vars = ["HOME"]
 
 [mcp_servers.playwright]
 enabled = false

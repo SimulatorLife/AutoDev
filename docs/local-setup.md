@@ -233,6 +233,27 @@ AutoDev checkout supplying the launcher code and its pinned binaries, so a host
 with more than one AutoDev checkout still runs the workspace it intends.
 `tests/config/mcp-launcher.test.ts` covers both.
 
+The launcher also resolves the tools it starts — `ccc` and `codegraphcontext`,
+which pipx installs into `~/.local/bin` — and it resolves them from the home the
+server runs with. A host that runs its provider CLI under a temporary `HOME`
+(the Antigravity bridge does, to isolate the CLI's own configuration) hands the
+servers it starts a home that holds none of the user's tools, and the launcher
+then reports an installed tool as missing: "AutoDev CodeGraphContext MCP binary
+is missing" or "AutoDev MCP binary is missing or not executable: `<temporary
+home>/.local/bin/ccc`". `ccc` also reads its global settings from that home, so
+the same home decides whether the server can serve at all.
+
+The role contract is what tells a server whose home it runs with: the roles
+that use `cocoindex-code` and `codegraphcontext` declare `HOME` in their
+`[mcp_servers.<name>]` `env_vars`, and the bridge passes the user's own home
+to exactly those servers. That is the same home the native Codex path already
+gives them, so a bridged turn and a native turn run the same tool the same way.
+The launcher checks every candidate it resolves before answering with it, so a
+home that holds no install falls through to `PATH` rather than shadowing a
+working copy with a path that names a file that is not there.
+`tests/config/mcp-launcher.test.ts` and `tests/antigravity-mcp-isolation.test.ts`
+cover both halves.
+
 Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
 than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
 every cold start (network + startup latency), grows the pnpm `dlx` cache, and

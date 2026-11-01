@@ -91,6 +91,14 @@
           "analyze_code_relationships",
           "get_repository_stats"
         ]
+      },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
+        ]
       }
     },
     "docs-researcher": {
@@ -129,6 +137,14 @@
           "analyze_code_relationships",
           "get_repository_stats"
         ]
+      },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
+        ]
       }
     },
     "orchestrator": {
@@ -155,6 +171,14 @@
         ],
         "codex_app": [
           "request_user_input"
+        ]
+      },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
         ]
       },
       "webResearch": {
@@ -309,6 +333,14 @@
           "get_repository_stats"
         ]
       },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
+        ]
+      },
       "webResearch": {
         "search": true,
         "fetch": true,
@@ -337,6 +369,14 @@
           "find_code",
           "analyze_code_relationships",
           "get_repository_stats"
+        ]
+      },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
         ]
       }
     },
@@ -382,6 +422,14 @@
           "find_code",
           "analyze_code_relationships",
           "get_repository_stats"
+        ]
+      },
+      "mcpEnvVars": {
+        "cocoindex-code": [
+          "HOME"
+        ],
+        "codegraphcontext": [
+          "HOME"
         ]
       }
     }

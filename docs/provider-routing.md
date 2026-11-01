@@ -2245,6 +2245,28 @@ file(s)` — but no hook command executed during a turn that demonstrably called
   `init.tools` lists all 60 built-ins, of which `call_mcp_tool` is the only one
   that can reach Codex's tools.
 
+  Because of that, the mirrored tool's own description cannot be enough. Each
+  mirrored entry says "Full reference: the `<tool>` section under "Codex tools"
+  in your instructions" -- the CLI truncates MCP tool descriptions, so the
+  reference lives in the model's instructions instead. The Claude bridge puts it
+  there in its replacement system prompt. The Antigravity bridge did not, so a
+  turn had a `codex` server offering `exec` and a description pointing at a
+  section that did not exist: the model guessed the tool's name instead
+  (`read_file`, `exec_command`, `shell`, `write_file`), the bridge refused every
+  guess with "Codex did not offer a tool named `<tool>` on this turn", and the
+  turn ended as a capability failure that named a missing capability rather than
+  a misnamed call. Observed 2026-10-31 on subagent thread
+  `01a19538-1438-72f2-b813-3c942260a484`.
+
+  A bridge that reaches MCP servers through a dispatcher therefore has to publish
+  the reference in the dispatcher's terms: `codexToolReferenceForDispatcher` in
+  `runtime/src/providers/claude-codex-tools.ts` names the server, the tool, and
+  the `ServerName`/`ToolName`/`Arguments` the call has to carry, and the
+  Antigravity bridge puts it in the prompt for exactly the turns whose `codex`
+  server it registers -- a turn told about a server it does not have would look
+  for tools that are not there.
+  `tests/antigravity-codex-tools-prompt.test.ts` covers it.
+
 Ordering matters, and it is why the shim landed first: removing the built-ins
 while the shim is unregistered would leave agy with no execution path at all.
 

@@ -17,6 +17,14 @@ export interface RoleMcpEnvironmentContext {
   readonly workspaceRoot?: string | null;
   readonly repositoryRoot: string;
   readonly codeHome: string;
+  /**
+   * The user's own home, which the bridge's own HOME is not when the bridge
+   * isolates it for the CLI it starts. The MCP launcher resolves the tools it
+   * starts -- `ccc`, `codegraphcontext` -- from the home its server runs with,
+   * and `ccc` reads its global settings from there too, so under an isolated
+   * one the launcher reports an installed tool as missing.
+   */
+  readonly userHome?: string | null;
 }
 
 /**
@@ -41,7 +49,7 @@ export function roleMcpEnvironment(
     if (allowedSet.has(name) && value?.trim()) values[name] = value.trim();
   };
 
-  setAllowed("HOME", env.HOME?.trim() || homedir());
+  setAllowed("HOME", context.userHome?.trim() || env.HOME?.trim() || homedir());
   setAllowed("CODEX_HOME", context.codeHome);
   setAllowed("AUTODEV_REPO_ROOT", context.repositoryRoot);
   setAllowed("AUTODEV_NODE_BIN", env.AUTODEV_NODE_BIN || process.execPath);

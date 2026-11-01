@@ -200,6 +200,65 @@ test("MCP launcher fails clearly when codegraphcontext is missing", () => {
   );
 });
 
+test("the launcher resolves installed tools from the home the server runs with", () => {
+  // Observed 2026-10-31: the Antigravity bridge runs its CLI under a temporary
+  // HOME, so the launcher looked for `ccc` and `codegraphcontext` in a home
+  // that holds neither and reported both as missing -- "AutoDev MCP binary is
+  // missing or not executable: /var/folders/.../user/.local/bin/ccc" -- while
+  // both were installed in the user's own home.
+  const root = createIsolatedTempDir("autodev-mcp-tool-home-");
+  try {
+    const toolHome = join(root, "user");
+    const bin = join(toolHome, ".local", "bin");
+    mkdirSync(bin, { recursive: true });
+    for (const name of ["ccc", "codegraphcontext"]) {
+      writeFileSync(join(bin, name), "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(join(bin, name), 0o755);
+    }
+    const env = {
+      HOME: toolHome,
+      PATH: "/usr/bin:/bin"
+    };
+    assert.deepEqual(resolveMcpCommand("cocoindex-code", "/repo", env), {
+      binary: join(bin, "ccc"),
+      args: ["mcp"],
+      pathPrepend: []
+    });
+    assert.deepEqual(
+      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", env),
+      {
+        binary: join(bin, "codegraphcontext"),
+        args: ["mcp", "start"],
+        pathPrepend: []
+      }
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a home with no install does not shadow the copy on PATH", () => {
+  // The CocoIndex resolution answered with `$HOME/.local/bin/ccc` without
+  // checking it, so under a home that holds no install it reported an
+  // installed tool as missing while a working copy sat on PATH.
+  const root = createIsolatedTempDir("autodev-mcp-ccc-path-");
+  try {
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "ccc"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(bin, "ccc"), 0o755);
+    assert.deepEqual(
+      resolveMcpCommand("cocoindex-code", "/repo", {
+        HOME: join(root, "isolated"),
+        PATH: bin
+      }),
+      { binary: join(bin, "ccc"), args: ["mcp"], pathPrepend: [] }
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("MCP launcher rejects unknown tools", () => {
   assert.throws(
     () => resolveMcpCommand("unknown", "/repo"),

@@ -45,6 +45,7 @@ import {
   type CodexTool,
   codexToolCallEvents,
   codexToolCallItem,
+  codexToolReferenceForDispatcher,
   codexToolSurface,
   mcpResultFromCodexOutput,
   mcpToolDefinition
@@ -2443,7 +2444,10 @@ function buildInvocationMcpConfig(
         pathApi.join(
           options?.originalHome ?? process.env.HOME ?? homedir(),
           ".codex"
-        )
+        ),
+      // The user's own home, which the CLI's temporary HOME is not. The MCP
+      // launcher resolves the tools it starts from it.
+      userHome: options?.originalHome ?? process.env.HOME ?? homedir()
     });
     mcpServers[name] = bridgeMcpEntry(
       name,
@@ -3552,16 +3556,33 @@ function prepareResponsesTurn(
   const spawnSession = openSpawnSession(request.headers, spawnSessions, {
     orchestrator: isOrchestratorRole(agentRole)
   });
+  const codexTools = codexToolSurface(payload).tools;
+  // Only a streamed turn can park a call and be continued by the request
+  // carrying its output; a non-streamed one answers in a single body and has
+  // nowhere to put a continuation.
+  const toolTurnId = payload.stream ? turnId(12) : null;
   const prompt = promptFromInput(
     payload.input ?? "",
-    composeProviderPrompt(agentRole, cwd) +
+    [
+      composeProviderPrompt(agentRole, cwd),
       bridgeDelegationInstruction({
         mayDelegate:
           spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
         // agy reaches every MCP server through one built-in, so a tool is
         // named twice: the server it lives on, and the tool itself.
         reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
-      })
+      }),
+      // The Codex tools are published for exactly the turns whose MCP server
+      // carries them: a turn told about a server it does not have would look
+      // for tools that are not there, and one told nothing about them guesses
+      // their names -- every guess refused by the bridge, which reads as a
+      // capability failure rather than as a misnamed call.
+      toolTurnId && codexTools.length > 0
+        ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
+        : ""
+    ]
+      .filter((section) => section.length > 0)
+      .join("\n\n")
   );
   const bootstrapContract = antigravityRoleContract(
     agentRole,
@@ -3575,7 +3596,6 @@ function prepareResponsesTurn(
     `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`
   );
   reportRoleExposure(agentEvents, bootstrapContract);
-  const codexTools = codexToolSurface(payload).tools;
   return {
     responseModel: payload.model ?? model,
     model,
@@ -3593,10 +3613,7 @@ function prepareResponsesTurn(
     spawnTracker,
     toolObserver,
     codexTools,
-    // Only a streamed turn can park a call and be continued by the request
-    // carrying its output; a non-streamed one answers in a single body and has
-    // nowhere to put a continuation.
-    toolTurnId: payload.stream ? turnId(12) : null,
+    toolTurnId,
     logTurnEnd: createTurnLog(requestId)
   };
 }
