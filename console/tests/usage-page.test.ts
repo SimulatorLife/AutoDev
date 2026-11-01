@@ -26,6 +26,7 @@ const usageWidgetIds = [
   "context-compactions-by-workspace",
   "context-compactions-by-model",
   "context-compactions-by-agent",
+  "context-compactions-by-provider",
   "git-commits",
   "git-files-changed",
   "git-files-added",

@@ -54,6 +54,7 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "context-compactions-by-workspace",
   "context-compactions-by-model",
   "context-compactions-by-agent",
+  "context-compactions-by-provider",
   "git-commits",
   "git-files-changed",
   "git-files-added",
@@ -757,11 +758,16 @@ function toUsageSnapshot(
     widgets.get("context-compactions-by-agent"),
     compactions
   );
+  const compactionsByProvider = contextCompactionRows(
+    widgets.get("context-compactions-by-provider"),
+    compactions
+  );
   const compactionsAvailable = unsupportedCompactionFilters.length === 0;
   const breakdownsPartial = [
     "context-compactions-by-workspace",
     "context-compactions-by-model",
-    "context-compactions-by-agent"
+    "context-compactions-by-agent",
+    "context-compactions-by-provider"
   ].some((id) => {
     const widget = widgets.get(id as UsageWidgetId);
     return widget?.querySucceeded === true && widget.partial;
@@ -803,6 +809,9 @@ function toUsageSnapshot(
       : null,
     contextCompactionsByModel: compactionsAvailable ? compactionsByModel : null,
     contextCompactionsByAgent: compactionsAvailable ? compactionsByAgent : null,
+    contextCompactionsByProvider: compactionsAvailable
+      ? compactionsByProvider
+      : null,
     contextCompactionsUnsupportedFilters: unsupportedCompactionFilters,
     contextCompactionsBreakdownsPartial:
       compactionsAvailable && breakdownsPartial,

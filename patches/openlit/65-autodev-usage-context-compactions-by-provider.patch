@@ -1,0 +1,138 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 6d1e6557..1c733e67 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -103,6 +103,7 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+         "context-compactions-by-workspace",
+         "context-compactions-by-model",
+         "context-compactions-by-agent",
++        "context-compactions-by-provider",
+         "skill-events-by-event",
+         "estimated-cost",
+         "requests-by-workspace"
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index 05e85542..eb30cf4e 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -391,6 +391,7 @@ describe("AutoDev Usage dashboard seed", () => {
+ 			["Context compactions by workspace", "autodev.workspace"],
+ 			["Context compactions by requested model", "autodev.requested_model"],
+ 			["Context compactions by agent role", "autodev.agent.role"],
++			["Context compactions by provider", "autodev.compaction.provider"],
+ 		] as const) {
+ 			const widget = widgets.find((candidate) => candidate.title === title);
+ 			const query = widget?.config.structuredQuery?.query;
+@@ -410,6 +411,27 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		}
+ 	});
+ 
++	it("groups compactions by the provider that served them, not by the route's provider", () => {
++		// A logical route may touch several providers, so the logical-request
++		// span never carries gen_ai.provider.name. A compaction is different: it
++		// is served by exactly one provider, and the router publishes that
++		// provider on the compaction's own span. Grouping by the standard
++		// attribute would read an attribute the span does not have, and would
++		// read it as "the route's provider" if it ever did.
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Context compactions by provider",
++		);
++		expect(widget).toBeDefined();
++		expect(widget?.config.structuredQuery?.query?.groupBy).toEqual([
++			"autodev.compaction.provider",
++		]);
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"model",
++			"agent",
++		]);
++	});
++
+ 	it("groups skill observations by event and filters by bounded skill name", () => {
+ 		const widget = widgets.find((candidate) => candidate.title === "Skill events by event");
+ 		expect(widget).toBeDefined();
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index 2945ca0d..cd6e5303 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -44,6 +44,7 @@ const USAGE_WIDGET_IDS = {
+ 	"context-compactions-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b113",
+ 	"context-compactions-by-model": "47c52af8-0c4a-4e85-8a9e-a8f85745b114",
+ 	"context-compactions-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b115",
++	"context-compactions-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b117",
+ 	"skill-events-by-event": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
+ 	"estimated-cost": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
+ } as const;
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index 8d77b53e..17af97fa 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -480,6 +480,69 @@
+         }
+       }
+     },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b117": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b117",
++      "title": "Context compactions by provider",
++      "description": "Counts source-confirmed logical compaction requests grouped by autodev.compaction.provider, the provider that served the compaction. A compaction served before that provider was published is grouped separately rather than assigned to a provider. Provider and skill filters do not apply to this logical-request signal.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "compactions",
++        "color": "#fb7185",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ],
++            "groupBy": [
++              "autodev.compaction.provider"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "compactions"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
+     "47c52af8-0c4a-4e85-8a9e-a8f85745b201": {
+       "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
+       "title": "MCP tool calls",

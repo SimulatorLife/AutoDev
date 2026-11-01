@@ -69,6 +69,7 @@ const observedMetrics: UsageMetricsData = {
   contextCompactionsByWorkspace: [{ name: "repo-a", count: 3 }],
   contextCompactionsByModel: [{ name: "gpt-6-luna", count: 3 }],
   contextCompactionsByAgent: [{ name: "orchestrator", count: 3 }],
+  contextCompactionsByProvider: [{ name: "anthropic", count: 3 }],
   contextCompactionsUnsupportedFilters: [],
   contextCompactionsBreakdownsPartial: false,
   gitChanges: {
@@ -141,6 +142,7 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     contextCompactionsByWorkspace: null,
     contextCompactionsByModel: null,
     contextCompactionsByAgent: null,
+    contextCompactionsByProvider: null,
     skillEventsByEvent: null,
     requestsByRole: null,
     requestsByWorkspace: null,
@@ -228,6 +230,8 @@ test("UsageView groups validated request, reliability, skill, and MCP metrics wi
   assert.match(markup, /Context Compactions by Workspace/);
   assert.match(markup, /Context Compactions by Requested Model/);
   assert.match(markup, /Context Compactions by Agent Role/);
+  assert.match(markup, /Context Compactions by Provider/);
+  assert.match(markup, /anthropic/);
   assert.match(markup, /Failed attempts by provider/);
   assert.match(markup, /Skill observations by event/);
   assert.doesNotMatch(markup, /Shim-owned/);
@@ -256,6 +260,7 @@ test("UsageView fails compaction widgets closed for unsupported provider and ski
         contextCompactionsByWorkspace: null,
         contextCompactionsByModel: null,
         contextCompactionsByAgent: null,
+        contextCompactionsByProvider: null,
         contextCompactionsUnsupportedFilters: ["provider", "skill"]
       },
       selection
@@ -293,6 +298,7 @@ test("UsageView shows the bounded recent-attempt table and preserves filters whe
         contextCompactionsByWorkspace: null,
         contextCompactionsByModel: null,
         contextCompactionsByAgent: null,
+        contextCompactionsByProvider: null,
         contextCompactionsUnsupportedFilters: ["provider", "skill"]
       },
       traceList,

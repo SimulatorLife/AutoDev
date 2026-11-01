@@ -25,6 +25,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/proxy";
 import type { Candidate } from "@simulatorlife/autodev-runtime/router/routing";
 import {
+  ATTR_AUTODEV_COMPACTION_PROVIDER,
   ATTR_AUTODEV_GIT_ATTRIBUTION,
   ATTR_AUTODEV_GIT_PARTIAL,
   compactCompactionDimension,
@@ -1704,6 +1705,98 @@ test(
       0,
       "failed compaction requests must not increment the compaction counter"
     );
+  }
+);
+
+test(
+  "a completed compaction names its serving provider on the span and the counter agrees",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const compactionMetadata = JSON.stringify({
+      request_kind: "compaction",
+      compaction: { trigger: "threshold" }
+    });
+
+    const logical = startLogicalRequestSpan({
+      requestId: "compaction-provider-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "compaction-provider-workspace" },
+      subject: "compaction request",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: compactionMetadata
+    });
+    endLogicalRequestSpan(logical, { status: "ok", provider: "anthropic" });
+    await flushTelemetryMetrics();
+
+    const logicalSpan = findLogical(snapshotSpans())[0];
+    assert.equal(
+      logicalSpan?.attributes[ATTR_AUTODEV_COMPACTION_PROVIDER],
+      "anthropic",
+      "a completed compaction must name the provider that served it"
+    );
+    assert.equal(
+      logicalSpan?.attributes["gen_ai.provider.name"],
+      undefined,
+      "the logical request span must not carry the standard provider attribute"
+    );
+
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) =>
+        p.attributes["autodev.workspace"] === "compaction-provider-workspace"
+    );
+    assert.equal(points.length, 1);
+    assert.equal(
+      points[0]?.attributes["gen_ai.provider.name"],
+      logicalSpan?.attributes[ATTR_AUTODEV_COMPACTION_PROVIDER],
+      "the span and the counter must name the same provider"
+    );
+  }
+);
+
+test(
+  "a request that is not a compaction, and a compaction that failed, name no provider",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    const ordinary = startLogicalRequestSpan({
+      requestId: "ordinary-provider-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "ordinary-provider-workspace" },
+      subject: "ordinary request",
+      requestedModel: "gpt-4o"
+    });
+    endLogicalRequestSpan(ordinary, { status: "ok", provider: "openai" });
+
+    const failed = startLogicalRequestSpan({
+      requestId: "failed-compaction-provider-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "failed-compaction-provider-workspace" },
+      subject: "failed compaction",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: JSON.stringify({
+        request_kind: "compaction",
+        compaction: { trigger: "threshold" }
+      })
+    });
+    endLogicalRequestSpan(failed, {
+      status: "error",
+      errorMessage: "upstream 503 unavailable"
+    });
+
+    const logicalSpans = findLogical(snapshotSpans());
+    assert.equal(logicalSpans.length, 2);
+    for (const span of logicalSpans) {
+      assert.equal(
+        span.attributes[ATTR_AUTODEV_COMPACTION_PROVIDER],
+        undefined,
+        "only a completed compaction may name a provider"
+      );
+    }
   }
 );
 

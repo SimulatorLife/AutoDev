@@ -39,6 +39,7 @@ export type UsageWidgetId =
   | "context-compactions-by-workspace"
   | "context-compactions-by-model"
   | "context-compactions-by-agent"
+  | "context-compactions-by-provider"
   | "git-commits"
   | "git-files-changed"
   | "git-files-added"
@@ -255,6 +256,15 @@ export interface UsageMetricsData {
   readonly contextCompactionsByWorkspace: readonly UsageBreakdownCount[] | null;
   readonly contextCompactionsByModel: readonly UsageBreakdownCount[] | null;
   readonly contextCompactionsByAgent: readonly UsageBreakdownCount[] | null;
+  /**
+   * Compactions grouped by the provider that served them.
+   *
+   * A compaction is served by exactly one provider, and the router publishes
+   * that provider on the compaction's own span. A compaction served before
+   * that provider was published is grouped under an empty name, which means
+   * "not observed" rather than "no provider served it".
+   */
+  readonly contextCompactionsByProvider: readonly UsageBreakdownCount[] | null;
   /** Provider/skill scopes are unsupported for this logical-request signal. */
   readonly contextCompactionsUnsupportedFilters: readonly UsageCompactionUnsupportedFilter[];
   /** True when one or more bounded compaction breakdowns may be truncated. */

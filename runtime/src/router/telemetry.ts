@@ -145,6 +145,17 @@ export const ATTR_AUTODEV_COMPACTION_PHASE =
   "autodev.compaction.phase" as const;
 export const ATTR_AUTODEV_COMPACTION_STRATEGY =
   "autodev.compaction.strategy" as const;
+/**
+ * The provider that served a compaction.
+ *
+ * The logical request span never carries `gen_ai.provider.name`: a logical
+ * route may touch several providers, so a single provider name on the parent
+ * would be a claim the source cannot make. A compaction is different -- one
+ * request, one serving provider -- so the provider is published under a
+ * compaction-scoped key and only on the compaction it actually describes.
+ */
+export const ATTR_AUTODEV_COMPACTION_PROVIDER =
+  "autodev.compaction.provider" as const;
 const METRIC_GEN_AI_CLIENT_TOKEN_USAGE = "gen_ai.client.token.usage";
 const METRIC_GEN_AI_CLIENT_OPERATION_DURATION =
   "gen_ai.client.operation.duration";
@@ -1106,6 +1117,33 @@ export interface EndLogicalRequestSpanOptions {
   provider?: string | null | undefined;
 }
 
+/**
+ * Publish the serving provider on a compaction's own span.
+ *
+ * A compaction is served by exactly one provider, and the router knows which
+ * one by the time the request completes. The value is sanitized with the same
+ * helper the compaction counter uses, so the span and the counter can never
+ * disagree about which provider served the event.
+ *
+ * Returns the published name, or null when this span is not a completed
+ * compaction. The counter reuses that value instead of resolving a provider
+ * of its own, so the two readings of "which provider served this compaction"
+ * cannot drift apart.
+ */
+function publishCompactionProvider(
+  span: Span,
+  signal: ParsedCompactionSignal | null | undefined,
+  status: "ok" | "error",
+  provider: string | null | undefined
+): string | null {
+  if (status !== "ok") return null;
+  if (!signal?.isCompaction) return null;
+  const name = safeProviderName(provider);
+  if (!name) return null;
+  span.setAttribute(ATTR_AUTODEV_COMPACTION_PROVIDER, name);
+  return name;
+}
+
 export function endLogicalRequestSpan(
   span: Span,
   options: EndLogicalRequestSpanOptions
@@ -1120,6 +1158,12 @@ export function endLogicalRequestSpan(
       span.setStatus({ code: SpanStatusCode.OK });
     }
     const metricContext = logicalMetricContexts.get(span);
+    const compactionProvider = publishCompactionProvider(
+      span,
+      metricContext?.compactionSignal,
+      options.status,
+      options.provider
+    );
     if (metricContext && instruments) {
       const outcome = options.status === "error" ? "error" : "success";
       const attributes = {
@@ -1137,10 +1181,7 @@ export function endLogicalRequestSpan(
       ) {
         recordContextCompaction({
           requestId: metricContext.requestId,
-          provider:
-            options.provider ??
-            metricContext.attributes[ATTR_GEN_AI_PROVIDER_NAME] ??
-            null,
+          provider: compactionProvider,
           model: metricContext.attributes[ATTR_GEN_AI_REQUEST_MODEL] ?? null,
           workspace: metricContext.attributes[ATTR_AUTODEV_WORKSPACE]
             ? { key: metricContext.attributes[ATTR_AUTODEV_WORKSPACE] }

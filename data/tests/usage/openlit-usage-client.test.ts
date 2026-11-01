@@ -140,6 +140,12 @@ const partialPayload = {
       xAxis: "g0",
       yAxis: "compactions"
     }),
+    makeWidget("context-compactions-by-provider", {
+      observed: true,
+      rows: [{ g0: "anthropic", compactions: "3" }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    }),
     makeWidget("git-commits", {
       observed: true,
       rows: [{ commits: "2" }],
@@ -265,6 +271,9 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
   assert.deepEqual(result.data.metrics.contextCompactionsByAgent, [
     { name: "orchestrator", count: 3 }
   ]);
+  assert.deepEqual(result.data.metrics.contextCompactionsByProvider, [
+    { name: "anthropic", count: 3 }
+  ]);
   assert.deepEqual(
     result.data.metrics.contextCompactionsUnsupportedFilters,
     []
@@ -333,6 +342,35 @@ test("OpenLITUsageClient keeps unattributed requests out of every workspace with
     ],
     partial: false
   });
+});
+
+test("OpenLITUsageClient keeps a compaction with no published provider out of every provider", async () => {
+  // A compaction served before the router published its provider carries no
+  // provider attribute, so the source groups it under an empty key. That group
+  // is a real measurement that belongs to no provider, and it must not be
+  // folded into a provider that did serve other compactions.
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "context-compactions-by-provider"
+  );
+  assert.ok(widget);
+  widget.rows = [
+    { g0: "anthropic", compactions: "2" },
+    { g0: "", compactions: "1" }
+  ];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.contextCompactionsByProvider, [
+    { name: "anthropic", count: 2 },
+    { name: "", count: 1 }
+  ]);
 });
 
 test("OpenLITUsageClient reports a truncated workspace breakdown as partial", async () => {
@@ -582,7 +620,8 @@ test("OpenLITUsageClient distinguishes a successful empty series from a failed q
     "context-compactions-over-time",
     "context-compactions-by-workspace",
     "context-compactions-by-model",
-    "context-compactions-by-agent"
+    "context-compactions-by-agent",
+    "context-compactions-by-provider"
   ]) {
     const widget = empty.widgets.find((item) => item.key === key);
     assert.ok(widget);

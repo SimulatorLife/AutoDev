@@ -1151,7 +1151,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         ),
         React.createElement(
           "div",
-          { className: gridRowClass(3, "gap-6") },
+          { className: gridRowClass(2, "gap-6") },
           React.createElement(
             "div",
             { className: LIST_PANEL_CLASS },
@@ -1225,6 +1225,31 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
               barClass: "bg-chart-4",
               valueClass: "text-chart-4"
+            })
+          ),
+          React.createElement(
+            "div",
+            { className: LIST_PANEL_CLASS },
+            React.createElement(
+              "h3",
+              { className: SECTION_HEADING_CLASS },
+              "Context Compactions by Provider"
+            ),
+            React.createElement(BarChart, {
+              data:
+                metrics.contextCompactionsByProvider === null
+                  ? null
+                  : metrics.contextCompactionsByProvider.map((item) => ({
+                      label: formatDimension(item.name),
+                      value: item.count,
+                      valueText: formatCount(item.count)
+                    })),
+              label:
+                "Source-confirmed context compactions by the provider that served them",
+              notObservedMessage: "Provider compaction breakdown not observed.",
+              emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
+              barClass: "bg-chart-5",
+              valueClass: "text-chart-5"
             })
           )
         ),
@@ -1367,6 +1392,7 @@ function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {
     metrics.contextCompactionsByWorkspace,
     metrics.contextCompactionsByModel,
     metrics.contextCompactionsByAgent,
+    metrics.contextCompactionsByProvider,
     metrics.skillEventsByEvent,
     metrics.requestsByRole,
     metrics.attemptsByProvider,
