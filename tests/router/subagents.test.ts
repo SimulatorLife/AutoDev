@@ -448,6 +448,35 @@ test("synthetic bridge parent activity settles with the parent outcome", () => {
   ]);
 });
 
+test("SubagentRegistry counts the provider/model identity gaps it could not attribute", () => {
+  const registry = new SubagentRegistry();
+
+  // A spawn the registry was told about that named no provider.
+  registry.recordSubagentSpawn({
+    mechanism: "bridge_native",
+    role: "worker",
+    requestId: "req-gap",
+    count: 2
+  });
+
+  // A bridge subagent whose context named neither a provider nor a model.
+  registry.openBridgeSubagentUsage({
+    requestId: "req-gap",
+    context: { activitySubject: "req:req-gap" },
+    childId: "child-1"
+  });
+
+  const status = registry.subagentStatus();
+  assert.deepEqual(status.identityGaps, {
+    missingProvider: 3,
+    missingModel: 1
+  });
+  // A gap is a missing identity, never a guessed one: the spawn is counted,
+  // but it is not filed under a provider that was never named.
+  assert.equal(status.total, 2);
+  assert.deepEqual(status.byProvider, {});
+});
+
 test("SubagentRegistry restores persisted subagent telemetry preserving unknown/missing semantics", () => {
   const registry = new SubagentRegistry();
   registry.restoreSubagentTelemetry({
@@ -501,6 +530,12 @@ test("SubagentRegistry restores persisted subagent telemetry preserving unknown/
   const status = registry.subagentStatus();
   assert.equal(status.total, 3);
   assert.equal(status.recent.length, 3);
+  // A snapshot that carries no identity gaps leaves them at zero rather than
+  // inventing a gap the snapshot never recorded.
+  assert.deepEqual(status.identityGaps, {
+    missingProvider: 0,
+    missingModel: 0
+  });
 
   const restoredMissing = status.recent.find(
     (r) => r.requestId === "req-missing-status"
@@ -534,4 +569,17 @@ test("SubagentRegistry restores persisted subagent telemetry preserving unknown/
   assert.equal(restoredFailure.requestedModel, null);
   assert.equal(restoredFailure.reason, "unknown");
   assert.equal(registry.spawnFailureStatus().recent.length, 1);
+
+  // The identity gaps are restored with the counts they complement, so a
+  // restored total and byProvider still account for the spawns that named no
+  // provider.
+  registry.restoreSubagentTelemetry({
+    total: 5,
+    byProvider: { claude: 3 },
+    identityGaps: { missingProvider: 2, missingModel: 1 }
+  });
+  assert.deepEqual(registry.subagentStatus().identityGaps, {
+    missingProvider: 2,
+    missingModel: 1
+  });
 });

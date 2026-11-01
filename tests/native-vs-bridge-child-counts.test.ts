@@ -42,7 +42,7 @@ const contract = await import(
 
 assert.equal(
   contract.schema,
-  "autodev-native-vs-bridge-child-counts-v2",
+  "autodev-native-vs-bridge-child-counts-v3",
   "native-vs-bridge child count contract must match its schema tag"
 );
 assert.deepEqual(
@@ -283,7 +283,7 @@ function runOperation(name: string, op: Operation): void {
 
 describe("native-vs-bridge child count contract: constants and module surface", () => {
   test("schema tag is frozen", () => {
-    assert.equal(contract.schema, "autodev-native-vs-bridge-child-counts-v2");
+    assert.equal(contract.schema, "autodev-native-vs-bridge-child-counts-v3");
   });
 
   test("canonical mechanisms cover the documented two paths", () => {
@@ -319,6 +319,7 @@ describe("native-vs-bridge child count contract: constants and module surface", 
         "byProvider",
         "byRole",
         "byStatus",
+        "identityGaps",
         "recent",
         "spawnCapableProviders",
         "total"

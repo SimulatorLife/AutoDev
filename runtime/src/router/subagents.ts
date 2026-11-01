@@ -260,12 +260,26 @@ export interface RecordSubagentSpawnInput {
   count?: number | undefined;
 }
 
+/**
+ * Agents the registry was told about but could not attribute to a provider or
+ * a model.
+ *
+ * A gap is a missing identity, never a guessed one: the target state requires
+ * a provider/model attribution gap to stay visible as missing attribution
+ * rather than being assigned to an entity the registry never saw.
+ */
+export interface AgentIdentityGaps {
+  missingProvider: number;
+  missingModel: number;
+}
+
 export interface SubagentTelemetry {
   total: number;
   byMechanism: Record<string, number>;
   byProvider: Record<string, number>;
   byRole: Record<string, number>;
   byStatus: Record<string, number>;
+  identityGaps: AgentIdentityGaps;
   recent: SubagentSpawnRecord[];
 }
 
@@ -275,6 +289,7 @@ export interface SubagentStatus {
   byProvider: Record<string, number>;
   byRole: Record<string, number>;
   byStatus: Record<string, number>;
+  identityGaps: AgentIdentityGaps;
   spawnCapableProviders: string[];
   recent: SubagentSpawnRecord[];
 }
@@ -632,8 +647,6 @@ export interface SubagentRegistryOptions {
   onRecordRouterEvent?: ((event: RecordRouterEventInput) => void) | undefined;
   onRecordUsageEvent?: ((event: RecordUsageEventParams) => void) | undefined;
   onSchedulePersist?: (() => void) | undefined;
-  onMissingProviderDiagnostic?: ((count: number) => void) | undefined;
-  onMissingModelDiagnostic?: ((count: number) => void) | undefined;
   getSpawnCapableProviders?: (() => string[]) | undefined;
 }
 
@@ -649,10 +662,6 @@ export class SubagentRegistry {
   private readonly onRecordUsageEvent?:
     ((event: RecordUsageEventParams) => void) | undefined;
   private readonly onSchedulePersist?: (() => void) | undefined;
-  private readonly onMissingProviderDiagnostic?:
-    ((count: number) => void) | undefined;
-  private readonly onMissingModelDiagnostic?:
-    ((count: number) => void) | undefined;
   private readonly getSpawnCapableProviders?: (() => string[]) | undefined;
 
   readonly subagentTelemetry: SubagentTelemetry;
@@ -693,8 +702,6 @@ export class SubagentRegistry {
     this.onRecordRouterEvent = options.onRecordRouterEvent;
     this.onRecordUsageEvent = options.onRecordUsageEvent;
     this.onSchedulePersist = options.onSchedulePersist;
-    this.onMissingProviderDiagnostic = options.onMissingProviderDiagnostic;
-    this.onMissingModelDiagnostic = options.onMissingModelDiagnostic;
     this.getSpawnCapableProviders = options.getSpawnCapableProviders;
 
     this.subagentTelemetry = {
@@ -705,6 +712,10 @@ export class SubagentRegistry {
       byProvider: {},
       byRole: {},
       byStatus: {},
+      identityGaps: {
+        missingProvider: 0,
+        missingModel: 0
+      },
       recent: []
     };
 
@@ -920,7 +931,7 @@ export class SubagentRegistry {
     const { requestId, context, role, childId, model } = input;
     const key = bridgeSubagentKey(requestId, childId);
     if (this.bridgeSubagentUsage.has(key)) return;
-    if (!this.recordSubagentDiagnostics(context)) return;
+    if (!this.recordSubagentIdentityGaps(context)) return;
 
     const settled = context.finished ?? null;
     const entry = this.recordSubagentUsageEntry(
@@ -950,20 +961,22 @@ export class SubagentRegistry {
     this.evictStaleSubagentUsageEntries();
   }
 
-  // Record the missing-provider / missing-model diagnostics for a context
-  // that lacks the fields the registry needs to attribute the subagent.
+  // Record the provider/model identity gaps for a context that lacks the
+  // fields the registry needs to attribute the subagent.
   // Returns `false` (caller should bail out) when either field is missing.
-  private recordSubagentDiagnostics(
+  private recordSubagentIdentityGaps(
     context: BridgeRequestContext
   ): context is BridgeRequestContext & { provider: string; model: string } {
     const missingProvider =
       typeof context.provider !== "string" || !context.provider.trim();
     const missingModel =
       typeof context.model !== "string" || !context.model.trim();
-    if (missingProvider && this.onMissingProviderDiagnostic)
-      this.onMissingProviderDiagnostic(1);
-    if (missingModel && this.onMissingModelDiagnostic)
-      this.onMissingModelDiagnostic(1);
+    if (missingProvider) {
+      this.subagentTelemetry.identityGaps.missingProvider += 1;
+    }
+    if (missingModel) {
+      this.subagentTelemetry.identityGaps.missingModel += 1;
+    }
     return !missingProvider && !missingModel;
   }
 
@@ -1192,8 +1205,8 @@ export class SubagentRegistry {
       typeof provider === "string" && provider.trim()
         ? safeMetricLabel(provider)
         : null;
-    if (!resolvedProvider && this.onMissingProviderDiagnostic) {
-      this.onMissingProviderDiagnostic(count);
+    if (!resolvedProvider) {
+      this.subagentTelemetry.identityGaps.missingProvider += count;
     }
     const entry: SubagentSpawnRecord = {
       timestamp: new Date().toISOString(),
@@ -1244,6 +1257,10 @@ export class SubagentRegistry {
     this.subagentTelemetry.byProvider = {};
     this.subagentTelemetry.byRole = {};
     this.subagentTelemetry.byStatus = {};
+    this.subagentTelemetry.identityGaps = {
+      missingProvider: 0,
+      missingModel: 0
+    };
     this.subagentTelemetry.recent = [];
     this.orchestratorSessions.clear();
     this.bridgeRequestContext.clear();
@@ -1278,6 +1295,7 @@ export class SubagentRegistry {
       byProvider: { ...this.subagentTelemetry.byProvider },
       byRole: { ...this.subagentTelemetry.byRole },
       byStatus: { ...this.subagentTelemetry.byStatus },
+      identityGaps: { ...this.subagentTelemetry.identityGaps },
       spawnCapableProviders,
       recent: [...this.subagentTelemetry.recent].reverse()
     };
@@ -1346,6 +1364,23 @@ export class SubagentRegistry {
       "byStatus"
     ] as const) {
       restoreMetricCounts(saved[section], this.subagentTelemetry[section]);
+    }
+    // The identity gaps are restored with the counts they complement: a
+    // restored `total` with a restored `byProvider` would otherwise describe
+    // spawns without a provider that the gap counter did not account for.
+    if (isRecord(saved.identityGaps)) {
+      const missingProvider = restoredNonnegativeInteger(
+        saved.identityGaps.missingProvider
+      );
+      if (missingProvider !== null) {
+        this.subagentTelemetry.identityGaps.missingProvider = missingProvider;
+      }
+      const missingModel = restoredNonnegativeInteger(
+        saved.identityGaps.missingModel
+      );
+      if (missingModel !== null) {
+        this.subagentTelemetry.identityGaps.missingModel = missingModel;
+      }
     }
     const recent = restoreRecentSubagentSpawns(
       saved.recent,

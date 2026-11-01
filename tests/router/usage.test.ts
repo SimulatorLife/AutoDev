@@ -191,23 +191,13 @@ test("Attribution diagnostics tracks counts, reason breakdowns, and caps unknown
     unattributed: 0,
     byReason: {
       missing_workspace: 0,
-      unknown_workspace_id: 0,
-      ambiguous_resource: 0,
-      missing_provider: 0,
-      missing_model: 0
-    },
-    bySource: {
-      datapoint: 0,
-      resource: 0
+      unknown_workspace_id: 0
     },
     unknownWorkspaceIds: []
   });
 
-  tracker.recordAttributionDiagnostic({
-    attributed: true,
-    source: "datapoint"
-  });
-  tracker.recordAttributionDiagnostic({ attributed: true, source: "resource" });
+  tracker.recordAttributionDiagnostic({ attributed: true });
+  tracker.recordAttributionDiagnostic({ attributed: true });
   tracker.recordAttributionDiagnostic({
     attributed: false,
     reason: "missing_workspace"
@@ -217,19 +207,13 @@ test("Attribution diagnostics tracks counts, reason breakdowns, and caps unknown
     reason: "unknown_workspace_id",
     unknownWorkspaceId: "ws-bad"
   });
-  tracker.recordMissingProviderDiagnostic(3);
-  tracker.recordMissingModelDiagnostic(2);
 
   const status = tracker.attributionDiagnosticsStatus();
   assert.equal(status.total, 4);
   assert.equal(status.attributed, 2);
   assert.equal(status.unattributed, 2);
-  assert.equal(status.bySource.datapoint, 1);
-  assert.equal(status.bySource.resource, 1);
   assert.equal(status.byReason.missing_workspace, 1);
   assert.equal(status.byReason.unknown_workspace_id, 1);
-  assert.equal(status.byReason.missing_provider, 3);
-  assert.equal(status.byReason.missing_model, 2);
   assert.deepEqual(status.unknownWorkspaceIds, ["ws-bad"]);
 
   // Add 120 unique unknown workspace IDs to test eviction cap

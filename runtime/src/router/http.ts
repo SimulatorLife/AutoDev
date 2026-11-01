@@ -371,12 +371,6 @@ const subagentRegistry = new SubagentRegistry({
   onRecordUsageEvent: (event) =>
     getDefaultUsageTracker().recordUsageEvent(event),
   onSchedulePersist: () => scheduleRouterStatePersist(),
-  onMissingProviderDiagnostic: (count) => {
-    getDefaultUsageTracker().recordMissingProviderDiagnostic(count);
-  },
-  onMissingModelDiagnostic: (count) => {
-    getDefaultUsageTracker().recordMissingModelDiagnostic(count);
-  },
   getSpawnCapableProviders: () =>
     Object.keys(ROUTING.providers).filter(
       (provider) => providerCapabilities(provider).subagentSpawn

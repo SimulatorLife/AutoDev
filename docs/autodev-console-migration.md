@@ -1337,6 +1337,27 @@ Verified against the deployed stack after the cutover was installed and the serv
 - The router still produces to OpenLIT: `autodev.router.logical_requests` and `autodev.skill.events` continued to arrive after the restart.
 - The installed tree holds `runtime/src/router/correlation.ts` and none of the retired modules, and the retired `~/.codex/otel-ingress.mode` file is gone.
 
+## The router's attribution diagnostic counted two subjects in one total
+
+The router's status publishes `attributionDiagnostics`. Live, it read `total: 0, attributed: 0, unattributed: 0, byReason: {missing_workspace: 0, unknown_workspace_id: 0, ambiguous_resource: 0, missing_provider: 1, missing_model: 0}, bySource: {datapoint: 0, resource: 0}` -- a reason count of 1 beside an unattributed count of 0 and a total of 0. The block contradicted itself, and it had done so for a long time: it was assembled when the router still ran an OTLP receiver, and the receiver is gone.
+
+The block held two subjects at once:
+
+- **workspace attribution of an observation.** The receiver asked, for each OTLP datapoint, whether it could be attributed to a workspace, and whether the datapoint's attributes or the resource's answered. `bySource` recorded which one did; `ambiguous_resource` recorded that both did and they disagreed.
+- **provider/model identity of an agent.** The subagent registry noticed a bridge subagent or a spawn that arrived with no provider or no model. Those counts were filed under the same `byReason` map as the workspace reasons, but they were never observations of the receiver's kind, so they never moved `total` or `unattributed`.
+
+Neither family was honest about the other. The receiver's family kept two keys that no longer have a producer (`ambiguous_resource` and `bySource`), and it kept the identity counters in a map whose other keys were reasons for an observation it could not attribute. Counting the identity counters inside `total` -- the obvious repair -- would have been worse: a bridge observation is an event and an agent is a turn or a spawn, so one total that added them together would answer neither question.
+
+The fix gives each family its own counters, its own unit and its own owner:
+
+- `attributionDiagnostics.total`, `.attributed` and `.unattributed` count observations, and `byReason` holds only the reasons an observation can fail to be attributed -- `missing_workspace` and `unknown_workspace_id`. The decision is a discriminated union, so an observation that was not attributed cannot be recorded without the reason it was not, and the reasons account for the unattributed count by construction rather than by comment.
+- The provider/model identity gaps belong to the registry that sees the agents, so they are counted there and published as `subagents.identityGaps`. They stay visible, as the target state requires, rather than being assigned to a guessed entity -- and they stay apart from the observation counters they never shared a unit with. They are persisted with the spawn counts they complement, so a restored `total` and `byProvider` still account for the spawns that named no provider. The live snapshot of the same fact, `liveAgentAttribution`, is unchanged: it counts the agents that are live now, while the gaps count every agent the registry has been told about.
+- The callback layer that carried the gaps from the registry into the tracker's diagnostics is gone: it had one producer and one consumer, and it was the reason the two subjects ended up in one block.
+
+Two resets were restored with it. `resetCorrelation` clears the attribution diagnostics and the workspace facts the correlation wrote, because a diagnostic that still counted observations the correlation no longer holds describes a history that is gone. The tracker's `rememberUnknownWorkspaceId` became private: the ring of unknown ids is a property of the attribution record, and nothing needs to add an id without counting it.
+
+Nothing reads either block -- the Console and the CLI do not -- so the change is visible to an operator reading the router's status and to no one else.
+
 ## Current acceptance evidence
 
 The historical Console baseline below was recorded on 2026-10-06; runtime performance measurements were added on 2026-10-09. During the 2026-10-13 continuation, Playwright/Chromium exercised the stale-v3 `/usage` fail-closed state at 1440×900 and 390×900, proving filter visibility and no document overflow only. After the p85 deployment, direct live Data-client checks validated v4 with 19 widgets and all widget queries succeeding; the same-origin `/usage` route returned HTTP 200 without the schema error. Post-upgrade rendered compaction charts, mutations, and general navigation interactions remain unverified.

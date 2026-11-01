@@ -128,21 +128,38 @@ export interface WorkspaceUsageBucket extends UsageBucket {
   };
 }
 
+/**
+ * Why an observation could not be attributed to a workspace.
+ *
+ * The reasons are the ones the router can actually hit on the live path: the
+ * observation carried no workspace at all, or it carried an id the router was
+ * never told about.
+ */
+export interface AttributionReasons {
+  missing_workspace: number;
+  unknown_workspace_id: number;
+}
+
+/**
+ * How the router attributed the observations it was given to a workspace.
+ *
+ * Every observation the router attributes is counted here, and the counts
+ * agree with each other: `total` is what was attributed plus what was not,
+ * and `byReason` says why an observation was not attributed. An observation
+ * that was not attributed always carries exactly one reason, so the reasons
+ * account for every unattributed observation.
+ *
+ * The provider/model identity gaps of the agents the router was told about
+ * are not counted here: an agent is a turn or a spawn, while an attribution
+ * diagnostic counts an observation, and one total that added the two
+ * together would answer neither question. The registry that sees the agents
+ * owns those gaps.
+ */
 export interface AttributionDiagnostics {
   total: number;
   attributed: number;
   unattributed: number;
-  byReason: {
-    missing_workspace: number;
-    unknown_workspace_id: number;
-    ambiguous_resource: number;
-    missing_provider: number;
-    missing_model: number;
-  };
-  bySource: {
-    datapoint: number;
-    resource: number;
-  };
+  byReason: AttributionReasons;
   unknownWorkspaceIds: Set<string>;
 }
 
@@ -150,10 +167,27 @@ export interface AttributionDiagnosticsStatus {
   total: number;
   attributed: number;
   unattributed: number;
-  byReason: Record<string, number>;
-  bySource: Record<string, number>;
+  byReason: AttributionReasons;
   unknownWorkspaceIds: string[];
 }
+
+/**
+ * One attribution decision.
+ *
+ * An observation the router attributed to a workspace, or an observation it
+ * could not, carrying the reason it could not. The reason is required
+ * whenever the observation was not attributed, so the reasons always account
+ * for every unattributed observation, and an unknown workspace id is required
+ * whenever that is the reason.
+ */
+export type AttributionDecision =
+  | { attributed: true }
+  | { attributed: false; reason: "missing_workspace" }
+  | {
+      attributed: false;
+      reason: "unknown_workspace_id";
+      unknownWorkspaceId: string;
+    };
 
 export interface ProjectedAgent {
   provider?: string | null;
@@ -890,14 +924,7 @@ export class UsageTracker {
       unattributed: 0,
       byReason: {
         missing_workspace: 0,
-        unknown_workspace_id: 0,
-        ambiguous_resource: 0,
-        missing_provider: 0,
-        missing_model: 0
-      },
-      bySource: {
-        datapoint: 0,
-        resource: 0
+        unknown_workspace_id: 0
       },
       unknownWorkspaceIds: new Set()
     };
@@ -971,7 +998,6 @@ export class UsageTracker {
       attributed: this.attributionDiagnostics.attributed,
       unattributed: this.attributionDiagnostics.unattributed,
       byReason: { ...this.attributionDiagnostics.byReason },
-      bySource: { ...this.attributionDiagnostics.bySource },
       unknownWorkspaceIds: [...this.attributionDiagnostics.unknownWorkspaceIds]
     };
   }
@@ -982,77 +1008,47 @@ export class UsageTracker {
     this.attributionDiagnostics.unattributed = 0;
     this.attributionDiagnostics.byReason = {
       missing_workspace: 0,
-      unknown_workspace_id: 0,
-      ambiguous_resource: 0,
-      missing_provider: 0,
-      missing_model: 0
-    };
-    this.attributionDiagnostics.bySource = {
-      datapoint: 0,
-      resource: 0
+      unknown_workspace_id: 0
     };
     this.attributionDiagnostics.unknownWorkspaceIds.clear();
   }
 
-  recordAttributionDiagnostic({
-    attributed,
-    source,
-    reason,
-    unknownWorkspaceId
-  }: {
-    attributed: boolean;
-    source?: "datapoint" | "resource";
-    reason?:
-      | "missing_workspace"
-      | "unknown_workspace_id"
-      | "ambiguous_resource"
-      | "missing_provider"
-      | "missing_model";
-    unknownWorkspaceId?: string;
-  }): void {
+  /**
+   * Records one attribution decision.
+   *
+   * The counters are the whole point of the record: an observation the router
+   * could not attribute is counted once as unattributed and once under the
+   * reason it could not, so the reasons account for every unattributed
+   * observation. A diagnostic whose reasons disagree with its totals is worse
+   * than no diagnostic.
+   */
+  recordAttributionDiagnostic(decision: AttributionDecision): void {
     this.attributionDiagnostics.total += 1;
-    if (attributed) {
+    if (decision.attributed) {
       this.attributionDiagnostics.attributed += 1;
-      if (source) {
-        this.attributionDiagnostics.bySource[source] += 1;
-      }
-    } else {
-      this.attributionDiagnostics.unattributed += 1;
-      if (reason) {
-        this.attributionDiagnostics.byReason[reason] += 1;
-      }
-      if (unknownWorkspaceId) {
-        this.rememberUnknownWorkspaceId(unknownWorkspaceId);
-      }
+      return;
+    }
+    this.attributionDiagnostics.unattributed += 1;
+    this.attributionDiagnostics.byReason[decision.reason] += 1;
+    if (decision.reason === "unknown_workspace_id") {
+      this.rememberUnknownWorkspaceId(decision.unknownWorkspaceId);
     }
   }
 
   /**
    * Adds an unresolvable workspace id to the bounded diagnostic ring.
    *
-   * The ring is a sample of what could not be attributed, kept here rather than
-   * exposed as `attributionDiagnostics.unknownWorkspaceIds` so that the bound
-   * and the insertion policy have one owner. A caller observing the id must not
-   * have to know how many are retained to add one correctly.
-   *
-   * It is deliberately *not* folded into {@link recordAttributionDiagnostic}:
-   * the ring follows every observation, including ones that are not counted,
-   * and a duplicate identity still tells us which id was unknown.
+   * The ring is a sample of the ids the router could not attribute, kept here
+   * rather than exposed as `attributionDiagnostics.unknownWorkspaceIds` so that
+   * the bound and the insertion policy have one owner. A caller observing the
+   * id must not have to know how many are retained to add one correctly.
    */
-  rememberUnknownWorkspaceId(id: string): void {
+  private rememberUnknownWorkspaceId(id: string): void {
     rememberRecentId(
       this.attributionDiagnostics.unknownWorkspaceIds,
       id,
       MAX_UNKNOWN_WORKSPACE_IDS
     );
-  }
-
-  recordMissingProviderDiagnostic(count: number = 1): void {
-    this.attributionDiagnostics.byReason.missing_provider += count;
-  }
-
-  recordMissingModelDiagnostic(count: number = 1): void {
-    this.attributionDiagnostics.byReason.missing_model += count;
   }
 
   recordUsageEvent({

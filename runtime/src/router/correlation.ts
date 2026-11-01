@@ -23,16 +23,9 @@ import {
  */
 export type AttributeMap = Record<string, unknown>;
 
-export const MCP_OBSERVATION_TTL_MS_DEFAULT = 120_000;
 export const MCP_OBSERVATION_TTL_MS = Number.parseInt(
   process.env.CODEX_ROUTER_MCP_OBSERVATION_TTL_MS ?? "120000"
 );
-export const PENDING_MCP_MODEL_CONVERSATION_LIMIT = 1000;
-export const PENDING_MCP_MODEL_OBSERVATION_LIMIT = 200;
-export const MCP_DISCOVERY_SPAN_NAMES = new Set([
-  "list_tools_for_client_uncached",
-  "list_tools_with_connector_ids"
-]);
 
 export interface McpServerDimensionBucket {
   observed: number;
@@ -75,14 +68,14 @@ export interface ContextDimensions {
  * The dimensions a context is counted under, and the context field each one
  * takes its value from.
  */
-export const CONTEXT_DIMENSION_FIELDS = [
+const CONTEXT_DIMENSION_FIELDS = [
   ["byRole", "role"],
   ["byWorkspace", "workspace"],
   ["byModel", "model"],
   ["byAgent", "agent"]
 ] as const;
 
-export function emptyContextDimensions(): ContextDimensions {
+function emptyContextDimensions(): ContextDimensions {
   return { byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {} };
 }
 
@@ -404,7 +397,7 @@ interface BridgeEventsStatusView {
  * OpenLIT is the system of record for history, and a status that carried a
  * second, stale copy of it was a second answer to a question that has one.
  */
-export function timestampNotOlder(
+function timestampNotOlder(
   next: string | null | undefined,
   previous: string | null | undefined
 ): boolean {
@@ -425,7 +418,7 @@ export interface CorrelationStatus {
   bridgeEvents: BridgeEventsStatusView;
 }
 
-export function formatContextDimensions(
+function formatContextDimensions(
   dimensions: Record<string, ContextDimensions> | null | undefined
 ): Record<string, ContextDimensions> {
   return Object.fromEntries(
@@ -441,7 +434,7 @@ export function formatContextDimensions(
   );
 }
 
-export function formatMcpDimensionBuckets(
+function formatMcpDimensionBuckets(
   dimensions: Record<string, McpServerDimensionBucket> | null | undefined,
   now: number,
   healthTtlMs: number = MCP_OBSERVATION_TTL_MS
@@ -470,9 +463,7 @@ export function formatMcpDimensionBuckets(
   );
 }
 
-export function formatBridgeEvents(
-  events: BridgeEventsState
-): BridgeEventsStatusView {
+function formatBridgeEvents(events: BridgeEventsState): BridgeEventsStatusView {
   const formatBucket = (bucket: BridgeToolBucket) => ({
     total: bucket.total,
     byReason: {},
@@ -562,7 +553,7 @@ export function formatBridgeEvents(
   };
 }
 
-export function createEmptyCorrelation(): CorrelationState {
+function createEmptyCorrelation(): CorrelationState {
   return {
     mcpServers: new Map(),
     dimensions: {
@@ -778,6 +769,15 @@ export class CorrelationTracker {
     return this.telemetry.mcpServers.get(cleanName)!;
   }
 
+  /**
+   * The workspace an observation belongs to, and the record of how it was
+   * decided.
+   *
+   * The router attributes every observation it is given, so the attribution
+   * diagnostic counts one decision per observation: an observation that
+   * resolved to a workspace is attributed, and one that did not is counted
+   * with the reason it did not.
+   */
   private resolveWorkspaceDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
@@ -787,10 +787,18 @@ export class CorrelationTracker {
     const dpWs = extractWorkspaceIdWithAmbiguity(attributes);
     if (!dpWs.ambiguous && dpWs.id) {
       const safeId = safeWorkspaceId(dpWs.id);
-      return (
-        this.usageTracker.workspaceIdRegistry.get(safeId) ??
-        safePrivacyWorkspace(dpWs.id)
-      );
+      const registered = this.usageTracker.workspaceIdRegistry.get(safeId);
+      if (registered) return this.attributedWorkspace(registered);
+      // The id names a workspace the router was never told about. The
+      // observation lands in a privacy-hashed bucket so it is not mistaken
+      // for a named workspace, and the diagnostic records that the router
+      // could not attribute it.
+      this.usageTracker.recordAttributionDiagnostic({
+        attributed: false,
+        reason: "unknown_workspace_id",
+        unknownWorkspaceId: dpWs.id
+      });
+      return safePrivacyWorkspace(dpWs.id);
     }
     const directWs = firstString([
       attributes?.workspace,
@@ -799,33 +807,51 @@ export class CorrelationTracker {
       attributes?.project_key,
       attributes?.projectKey
     ]);
-    if (directWs) return safePrivacyWorkspace(directWs);
+    if (directWs)
+      return this.attributedWorkspace(safePrivacyWorkspace(directWs));
     if (reqContext?.workspace)
-      return safePrivacyWorkspace(reqContext.workspace);
+      return this.attributedWorkspace(
+        safePrivacyWorkspace(reqContext.workspace)
+      );
     if (thread) {
       const key =
         (thread as RequestContext).projectKey ??
         (thread as RequestContext).workspaceKey ??
         (thread as RequestContext).cwdBasename;
       if (typeof key === "string" && key.trim()) {
-        return safePrivacyWorkspace(key);
+        return this.attributedWorkspace(safePrivacyWorkspace(key));
       }
     }
     const resWs = extractWorkspaceIdWithAmbiguity(resourceAttributes);
     if (!resWs.ambiguous && resWs.id) {
       const safeId = safeWorkspaceId(resWs.id);
-      return (
-        this.usageTracker.workspaceIdRegistry.get(safeId) ??
-        safePrivacyWorkspace(resWs.id)
-      );
+      const registered = this.usageTracker.workspaceIdRegistry.get(safeId);
+      if (registered) return this.attributedWorkspace(registered);
+      this.usageTracker.recordAttributionDiagnostic({
+        attributed: false,
+        reason: "unknown_workspace_id",
+        unknownWorkspaceId: resWs.id
+      });
+      return safePrivacyWorkspace(resWs.id);
     }
     if (
       typeof resourceAttributes?.workspace === "string" &&
       resourceAttributes.workspace.trim()
     ) {
-      return safePrivacyWorkspace(resourceAttributes.workspace);
+      return this.attributedWorkspace(
+        safePrivacyWorkspace(resourceAttributes.workspace)
+      );
     }
+    this.usageTracker.recordAttributionDiagnostic({
+      attributed: false,
+      reason: "missing_workspace"
+    });
     return null;
+  }
+
+  private attributedWorkspace(key: string): string {
+    this.usageTracker.recordAttributionDiagnostic({ attributed: true });
+    return key;
   }
 
   private resolveRoleDimension(
@@ -987,7 +1013,7 @@ export class CorrelationTracker {
    * The router correlates its own live threads by this id, so it reads the
    * attribute names the bridges and the router write it under.
    */
-  telemetryConversationId(
+  private telemetryConversationId(
     attributes: AttributeMap = {},
     resourceAttributes: AttributeMap = {},
     options: { conversationId?: unknown } = {}
@@ -1796,6 +1822,12 @@ export class CorrelationTracker {
         seenKeys: new Set()
       }
     };
+    // The correlation is what records the attribution decisions and the
+    // workspace facts below, so resetting it resets the ones it wrote: a
+    // diagnostic that still counted observations the correlation no longer
+    // holds would describe a history that is gone.
+    this.usageTracker.resetAttributionDiagnostics();
+    this.usageTracker.clearWorkspaceCapabilities();
   }
 
   correlationStatus(now: number = Date.now()): CorrelationStatus {
@@ -2272,34 +2304,6 @@ export function setDefaultCorrelationTracker(
   tracker: CorrelationTracker
 ): void {
   defaultCorrelationTracker = tracker;
-}
-
-export function mcpServer(name: string): McpServerEntry {
-  return defaultCorrelationTracker.mcpServer(name);
-}
-
-export function telemetryConversationId(
-  attributes: AttributeMap = {},
-  resourceAttributes: AttributeMap = {},
-  options: { conversationId?: unknown } = {}
-): string | null {
-  return defaultCorrelationTracker.telemetryConversationId(
-    attributes,
-    resourceAttributes,
-    options
-  );
-}
-
-export function resolveCorrelationContext(
-  attributes: AttributeMap = {},
-  resourceAttributes: AttributeMap = {},
-  options: ResolveCorrelationContextOptions = {}
-): CorrelationContext {
-  return defaultCorrelationTracker.resolveCorrelationContext(
-    attributes,
-    resourceAttributes,
-    options
-  );
 }
 
 export function recordBridgeToolObservation({

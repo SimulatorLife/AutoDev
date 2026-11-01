@@ -12,11 +12,11 @@ import {
  * `UsageTracker`'s attribution diagnostics belong to `UsageTracker`.
  *
  * The counters are a state machine: one observation increments `total`, then
- * exactly one of `attributed`/`unattributed`, and then `bySource` or `byReason`
- * depending on which. Two router modules were performing that transition by
- * hand -- four levels down into `usageTracker.attributionDiagnostics.total`,
- * `.byReason.<key>`, `.bySource.<key>` -- while the tracker already exposed it
- * as `recordAttributionDiagnostic` and `recordMissing{Provider,Model}Diagnostic`.
+ * exactly one of `attributed`/`unattributed`, and an observation that was not
+ * attributed also increments exactly one `byReason` entry. Two router modules
+ * were performing that transition by hand -- four levels down into
+ * `usageTracker.attributionDiagnostics.total` and `.byReason.<key>` -- while
+ * the tracker already exposed it as `recordAttributionDiagnostic`.
  *
  * The result was two sources of truth for one invariant, in the one place a
  * partial re-implementation is invisible until a counter disagrees: a caller
@@ -107,61 +107,53 @@ test("a router module owns attribution diagnostics and is the only one that name
     reachers.map((file) => path.relative(routerRoot, file)),
     [],
     "no module may read or mutate another object's diagnostics directly; " +
-      "call UsageTracker's recordAttributionDiagnostic / recordMissing*Diagnostic instead"
+      "call UsageTracker's recordAttributionDiagnostic instead"
   );
 });
 
 test("the diagnostics state machine increments total exactly once per observation", () => {
   const tracker = new UsageTracker();
 
-  tracker.recordAttributionDiagnostic({
-    attributed: true,
-    source: "datapoint"
-  });
-  tracker.recordAttributionDiagnostic({ attributed: true, source: "resource" });
+  tracker.recordAttributionDiagnostic({ attributed: true });
+  tracker.recordAttributionDiagnostic({ attributed: true });
   tracker.recordAttributionDiagnostic({
     attributed: false,
     reason: "missing_workspace"
   });
-  tracker.recordMissingProviderDiagnostic(3);
-  tracker.recordMissingModelDiagnostic(2);
+  tracker.recordAttributionDiagnostic({
+    attributed: false,
+    reason: "unknown_workspace_id",
+    unknownWorkspaceId: "ws-unknown"
+  });
 
-  // `missing_provider`/`missing_model` are reasons, not observations, so they
-  // must not inflate `total` -- a caller that conflated the two would report
-  // more observations than the router actually attributed.
   const status = tracker.attributionDiagnosticsStatus();
-  assert.equal(status.total, 3);
+  assert.equal(status.total, 4);
   assert.equal(status.attributed, 2);
-  assert.equal(status.unattributed, 1);
-  assert.equal(status.bySource.datapoint, 1);
-  assert.equal(status.bySource.resource, 1);
+  assert.equal(status.unattributed, 2);
   assert.equal(status.byReason.missing_workspace, 1);
-  assert.equal(status.byReason.missing_provider, 3);
-  assert.equal(status.byReason.missing_model, 2);
-});
-
-test("an unknown workspace id can be remembered without being counted", () => {
-  // The ring deliberately follows every observation rather than only the counted
-  // ones, so it cannot be folded into recordAttributionDiagnostic: an observer
-  // that did not count the datapoint still needs to learn which id was unknown.
-  // That is the whole reason this is a separate method.
-  const tracker = new UsageTracker();
-  const before = tracker.attributionDiagnosticsStatus();
-
-  tracker.rememberUnknownWorkspaceId("ws-never-counted");
-
-  const after = tracker.attributionDiagnosticsStatus();
-  assert.equal(after.total, before.total);
-  assert.equal(after.attributed, before.attributed);
-  assert.equal(after.unattributed, before.unattributed);
-  assert.deepEqual(after.unknownWorkspaceIds, ["ws-never-counted"]);
+  assert.equal(status.byReason.unknown_workspace_id, 1);
+  // Every observation that was not attributed is accounted for by exactly one
+  // reason, so the reasons account for the unattributed count. A reason that
+  // did not explain an observation would leave the operator reading two
+  // different totals from one block.
+  assert.equal(
+    status.byReason.missing_workspace + status.byReason.unknown_workspace_id,
+    status.unattributed
+  );
 });
 
 test("the remembered-id ring stays bounded and drops the oldest first", () => {
   const tracker = new UsageTracker();
-  tracker.rememberUnknownWorkspaceId("oldest");
-  for (let i = 0; i < MAX_UNKNOWN_WORKSPACE_IDS; i++)
-    tracker.rememberUnknownWorkspaceId(`ws-${i}`);
+  const unknownId = (id: string): void => {
+    tracker.recordAttributionDiagnostic({
+      attributed: false,
+      reason: "unknown_workspace_id",
+      unknownWorkspaceId: id
+    });
+  };
+
+  unknownId("oldest");
+  for (let i = 0; i < MAX_UNKNOWN_WORKSPACE_IDS; i++) unknownId(`ws-${i}`);
 
   const ids = tracker.attributionDiagnosticsStatus().unknownWorkspaceIds;
   assert.equal(ids.length, MAX_UNKNOWN_WORKSPACE_IDS);
