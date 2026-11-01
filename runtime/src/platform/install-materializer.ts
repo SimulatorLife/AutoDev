@@ -973,7 +973,9 @@ function removeObsoleteRuntimeArtifacts(
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs"),
-    path.join(codexHome, "run", "autodev-otel-collector.pid")
+    path.join(codexHome, "run", "autodev-otel-collector.pid"),
+    // The ingress mode the router used to read before the telemetry cutover.
+    path.join(codexHome, "otel-ingress.mode")
   ];
   removeStalePaths(obsoletePaths, "obsolete-runtime-path");
   removeStalePaths(
