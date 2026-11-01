@@ -6,7 +6,6 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  applyOtelIngress,
   atomicWrite,
   compose,
   loadPortable,
@@ -141,31 +140,16 @@ test("bridge-injected autodev_spawn is absent from Codex leaf role TOMLs", () =>
   }
 });
 
-test("OpenLIT ingress targets its authenticated first-party OTLP receiver without storing secrets", () => {
-  const config: TomlTable = {
-    otel: {
-      exporter: {
-        "otlp-http": {
-          endpoint: "http://127.0.0.1:4100/v1/logs",
-          protocol: "json"
-        }
-      },
-      trace_exporter: {
-        "otlp-http": {
-          endpoint: "http://127.0.0.1:4100/v1/traces",
-          protocol: "json"
-        }
-      },
-      metrics_exporter: {
-        "otlp-http": {
-          endpoint: "http://127.0.0.1:4100/v1/metrics",
-          protocol: "json"
-        }
-      }
-    }
-  };
-  const composed = applyOtelIngress(config, "openlit");
-  const otel = composed.otel as TomlTable;
+test("the portable Codex configuration exports its telemetry to OpenLIT without storing secrets", () => {
+  // The router no longer receives OTLP: the agents export straight to the
+  // authenticated first-party receiver, so the portable configuration is
+  // where that decision is made.
+  const portablePath = join(
+    import.meta.dirname,
+    "../../config/config.autodev.toml"
+  );
+  const source = readFileSync(portablePath, "utf8");
+  const otel = (parse(source) as TomlTable).otel as TomlTable;
   assert.equal(
     ((otel.exporter as TomlTable)["otlp-http"] as TomlTable).endpoint,
     "http://127.0.0.1:4318/v1/logs"
@@ -178,7 +162,11 @@ test("OpenLIT ingress targets its authenticated first-party OTLP receiver withou
     ((otel.metrics_exporter as TomlTable)["otlp-http"] as TomlTable).endpoint,
     "http://127.0.0.1:4318/v1/metrics"
   );
-  assert.doesNotMatch(serializeToml(composed), /Bearer|API_KEY/u);
+  // The receiver is authenticated with a bearer token, and the token lives in
+  // the out-of-repository secret file -- never in the configuration. The
+  // provider `env_key` names are not secrets: they name variables the agent
+  // reads from its own environment.
+  assert.doesNotMatch(source, /Bearer|OTLP_API_KEY/u);
 });
 
 test("atomic writes replace the target without leaving temporary files", async () => {

@@ -57,7 +57,6 @@ import {
   RUNTIME_MODULES,
   SKILLS
 } from "./install-materializer.ts";
-import { readOtelIngressMode } from "./install-state.ts";
 import {
   launchAgentMatches,
   resolveLaunchAgentValues
@@ -700,7 +699,6 @@ function checkPortableConfig(
 function checkUserConfigAndAgents(
   paths: RunInstallPaths,
   projection: ReturnType<typeof createCodexMcpSource>,
-  mode: string,
   failures: { value: number }
 ): void {
   check(
@@ -711,8 +709,7 @@ function checkUserConfigAndAgents(
       path.join(paths.repositoryRoot, "agents/roles/orchestrator.toml"),
       path.join(paths.codexHome, USER_CONFIG_FILE),
       path.join(paths.codexHome, USER_CONFIG_FILE),
-      true,
-      mode
+      true
     ) === 0,
     failures
   );
@@ -826,36 +823,22 @@ function checkRulesync(
 
 function checkOtelIngress(
   paths: RunInstallPaths,
-  mode: string,
   failures: { value: number }
 ): void {
   check(
-    `OTLP ingress mode ${mode}`,
-    mode === "direct" || mode === "openlit",
+    "private OpenLIT secret and receiver key files",
+    privateOpenlitSecretsReady(paths.codexHome),
     failures
   );
-  if (mode === "openlit") {
-    check(
-      "private OpenLIT secret and receiver key files",
-      privateOpenlitSecretsReady(paths.codexHome),
-      failures
-    );
-    const configPath = path.join(paths.codexHome, USER_CONFIG_FILE);
-    const config = existsSync(configPath)
-      ? readFileSync(configPath, "utf8")
-      : "";
-    check(
-      "OpenLIT receiver URL configuration",
-      ["/v1/logs", "/v1/traces", "/v1/metrics"].every((signal) =>
-        config.includes(`127.0.0.1:4318${signal}`)
-      ) && !config.includes("Authorization"),
-      failures
-    );
-  } else {
-    writeLine(
-      "ok direct router OTLP ingress selected; OpenLIT first-party ingress is not enabled"
-    );
-  }
+  const configPath = path.join(paths.codexHome, USER_CONFIG_FILE);
+  const config = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  check(
+    "OpenLIT receiver URL configuration",
+    ["/v1/logs", "/v1/traces", "/v1/metrics"].every((signal) =>
+      config.includes(`127.0.0.1:4318${signal}`)
+    ) && !config.includes("Authorization"),
+    failures
+  );
 }
 
 function checkObsoleteSkillPaths(
@@ -1087,9 +1070,6 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   trackedFilesCache.clear();
   const paths = resolveRunInstallPaths(overrides);
   const failures = { value: 0 };
-  const mode = readOtelIngressMode(
-    path.join(paths.codexHome, "otel-ingress.mode")
-  );
   const projection = createCodexMcpSource(paths.repositoryRoot);
   try {
     checkRulesAndSkills(paths, failures);
@@ -1098,9 +1078,9 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkScripts(paths, failures);
     checkProfilesAndCatalogs(paths, failures);
     checkPortableConfig(paths, failures);
-    checkUserConfigAndAgents(paths, projection, mode, failures);
+    checkUserConfigAndAgents(paths, projection, failures);
     checkRulesync(paths, failures);
-    checkOtelIngress(paths, mode, failures);
+    checkOtelIngress(paths, failures);
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
     checkGitExcludes(paths, failures);

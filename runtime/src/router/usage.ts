@@ -84,17 +84,6 @@ export interface UsageBucket {
   averageDurationMs?: number;
 }
 
-export interface WorkspaceTool {
-  tool: string;
-  source: string;
-  server: string;
-  count: number;
-  byStatus: Record<string, number>;
-  durationCount: number;
-  durationMs: number;
-  averageDurationMs?: number;
-}
-
 export interface WorkspaceSkill {
   skill: string;
   total: number;
@@ -125,15 +114,11 @@ export interface WorkspaceUsageBucket extends UsageBucket {
   byModel: Record<string, UsageBucket>;
   byProvider: Record<string, UsageBucket>;
   byMcp: Record<string, number>;
-  tools: Map<string, WorkspaceTool>;
   skills: Map<string, WorkspaceSkill>;
-  toolsUnattributed: number;
-  skillsUnattributed: number;
   toolsExecuted: number;
   toolsRequested: number;
   toolsUnavailable: number;
   skillsExposed: number;
-  toolsCapable: boolean;
   skillsCapable: boolean;
   mcpCapable: boolean;
   mcpExposed: Map<string, WorkspaceMcpEntry>;
@@ -481,24 +466,6 @@ export function toolKey(attributes: Record<string, unknown>): string {
   ].join("::");
 }
 
-export function formatWorkspaceTools(
-  toolsMap?: Map<string, WorkspaceTool> | null
-): WorkspaceTool[] {
-  if (!toolsMap) return [];
-  return Array.from(toolsMap.values(), (tool) => ({
-    ...tool,
-    averageDurationMs: tool.durationCount
-      ? Math.round(tool.durationMs / tool.durationCount)
-      : 0,
-    byStatus: { ...tool.byStatus }
-  })).sort((a, b) =>
-    STRING_COLLATOR.compare(
-      `${a.tool}/${a.source}/${a.server}`,
-      `${b.tool}/${b.source}/${b.server}`
-    )
-  );
-}
-
 export function formatWorkspaceSkills(
   skillsMap?: Map<string, WorkspaceSkill> | null
 ): WorkspaceSkill[] {
@@ -633,15 +600,11 @@ function createWorkspaceBucket(cwd: string | null): WorkspaceUsageBucket {
     byModel: {},
     byProvider: {},
     byMcp: {},
-    tools: new Map(),
     skills: new Map(),
-    toolsUnattributed: 0,
-    skillsUnattributed: 0,
     toolsExecuted: 0,
     toolsRequested: 0,
     toolsUnavailable: 0,
     skillsExposed: 0,
-    toolsCapable: false,
     skillsCapable: false,
     mcpCapable: false,
     mcpExposed: new Map(),
@@ -655,19 +618,13 @@ function normalizeWorkspaceBucket(
 ): WorkspaceUsageBucket {
   if (cwd && !bucket.cwd) bucket.cwd = cwd;
   if (!bucket.byMcp) bucket.byMcp = {};
-  if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
   if (!bucket.mcpExposed) bucket.mcpExposed = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
-  if (typeof bucket.toolsUnattributed !== "number")
-    bucket.toolsUnattributed = 0;
-  if (typeof bucket.skillsUnattributed !== "number")
-    bucket.skillsUnattributed = 0;
   if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
   if (typeof bucket.toolsRequested !== "number") bucket.toolsRequested = 0;
   if (typeof bucket.toolsUnavailable !== "number") bucket.toolsUnavailable = 0;
   if (typeof bucket.skillsExposed !== "number") bucket.skillsExposed = 0;
-  if (typeof bucket.toolsCapable !== "boolean") bucket.toolsCapable = false;
   if (typeof bucket.skillsCapable !== "boolean") bucket.skillsCapable = false;
   if (typeof bucket.mcpCapable !== "boolean") bucket.mcpCapable = false;
   if (!bucket.bridgeObservations)
@@ -696,29 +653,6 @@ export function workspaceMcpBucket(
   if (!wsBucket.mcpExposed.has(server))
     wsBucket.mcpExposed.set(server, { server, count: 0 });
   return wsBucket.mcpExposed.get(server)!;
-}
-
-export function workspaceToolBucket(
-  wsBucket: WorkspaceUsageBucket,
-  attributes: Record<string, unknown>
-): WorkspaceTool {
-  if (!wsBucket.tools) wsBucket.tools = new Map();
-  const tool = toolNameAttribute(attributes);
-  const source = safeMetricLabel(attributes?.source);
-  const server = toolServerAttribute(attributes);
-  const key = toolKey(attributes);
-  if (!wsBucket.tools.has(key)) {
-    wsBucket.tools.set(key, {
-      tool,
-      source,
-      server,
-      count: 0,
-      byStatus: {},
-      durationCount: 0,
-      durationMs: 0
-    });
-  }
-  return wsBucket.tools.get(key)!;
 }
 
 export function workspaceSkillBucket(
@@ -906,11 +840,10 @@ function withoutWorkspaceTransientFields(
   bucket: WorkspaceUsageBucket
 ): Omit<
   WorkspaceUsageBucket,
-  "active" | "tools" | "skills" | "bridgeObservations" | "mcpExposed"
+  "active" | "skills" | "bridgeObservations" | "mcpExposed"
 > {
   const {
     active: _active,
-    tools: _tools,
     skills: _skills,
     bridgeObservations: _bridgeObservations,
     mcpExposed: _mcpExposed,
@@ -1001,13 +934,6 @@ export class UsageTracker {
     server: string
   ): WorkspaceMcpEntry {
     return workspaceMcpBucket(wsBucket, server);
-  }
-
-  workspaceToolBucket(
-    wsBucket: WorkspaceUsageBucket,
-    attributes: Record<string, unknown>
-  ): WorkspaceTool {
-    return workspaceToolBucket(wsBucket, attributes);
   }
 
   workspaceSkillBucket(
@@ -1448,11 +1374,9 @@ export class UsageTracker {
 
   clearWorkspaceCapabilities(): void {
     for (const bucket of Object.values(this.usageTelemetry.byWorkspace)) {
-      bucket.tools?.clear();
       bucket.skills?.clear();
       bucket.mcpExposed?.clear();
       bucket.skillUses = 0;
-      bucket.toolsCapable = false;
       bucket.skillsCapable = false;
       bucket.mcpCapable = false;
     }
@@ -1697,15 +1621,11 @@ export class UsageTracker {
           byModel: {},
           byProvider: {},
           byMcp: {},
-          tools: new Map(),
           skills: new Map(),
-          toolsUnattributed: 0,
-          skillsUnattributed: 0,
           toolsExecuted: 0,
           toolsRequested: 0,
           toolsUnavailable: 0,
           skillsExposed: 0,
-          toolsCapable: false,
           skillsCapable: false,
           mcpCapable: false,
           mcpExposed: new Map(),
@@ -1715,20 +1635,13 @@ export class UsageTracker {
           }
         };
         const {
-          tools,
           skills,
           bridgeObservations,
           mcpExposed,
-          toolsCapable: _toolsCapable,
           skillsCapable: _skillsCapable,
           mcpCapable: _mcpCapable,
           ...publicBucket
         } = bucket;
-        const toolsCapable =
-          bucket.toolsCapable === true ||
-          (bucket.toolsExecuted ?? 0) > 0 ||
-          (bucket.toolsRequested ?? 0) > 0 ||
-          (bucket.toolsUnavailable ?? 0) > 0;
         const skillsCapable =
           bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
         const formatBridgeTools = (
@@ -1775,15 +1688,10 @@ export class UsageTracker {
             mcpUses: bucket.mcpCapable
               ? formatWorkspaceMcpUses(bucket.byMcp)
               : null,
-            toolsUnattributed: bucket.toolsUnattributed ?? 0,
-            skillsUnattributed: bucket.skillsUnattributed ?? 0,
             toolsExecuted: bucket.toolsExecuted ?? 0,
             toolsRequested: bucket.toolsRequested ?? 0,
             toolsUnavailable: bucket.toolsUnavailable ?? 0,
             skillsExposed: bucket.skillsExposed ?? 0,
-            ...(toolsCapable
-              ? { byTool: formatWorkspaceTools(tools) }
-              : { byTool: null }),
             ...(skillsCapable
               ? { bySkill: formatWorkspaceSkills(skills) }
               : { bySkill: null }),
@@ -1851,8 +1759,6 @@ export class UsageTracker {
           {
             ...withoutWorkspaceTransientFields(bucket),
             skillUses: bucket.skillUses ?? 0,
-            toolsUnattributed: bucket.toolsUnattributed ?? 0,
-            skillsUnattributed: bucket.skillsUnattributed ?? 0,
             toolsExecuted: bucket.toolsExecuted ?? 0,
             toolsRequested: bucket.toolsRequested ?? 0,
             toolsUnavailable: bucket.toolsUnavailable ?? 0,
@@ -1877,10 +1783,6 @@ export class UsageTracker {
                 withoutActive(value)
               ])
             ),
-            byTool: Array.from(bucket.tools?.values() ?? [], (t) => ({
-              ...t,
-              byStatus: { ...t.byStatus }
-            })),
             bySkill: Array.from(bucket.skills?.values() ?? [], (s) => ({
               ...s,
               byStatus: { ...s.byStatus },
@@ -1983,8 +1885,6 @@ function restoreWorkspaceCounters(
     current.skillUses = skillUses;
   }
   for (const counter of [
-    "toolsUnattributed",
-    "skillsUnattributed",
     "toolsExecuted",
     "toolsRequested",
     "toolsUnavailable",
@@ -1995,7 +1895,7 @@ function restoreWorkspaceCounters(
       current[counter] = value;
     }
   }
-  for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"] as const) {
+  for (const flag of ["skillsCapable", "mcpCapable"] as const) {
     if (saved[flag] === true) current[flag] = true;
   }
 }
@@ -2100,48 +2000,7 @@ function restoreWorkspaceUsageDimensions(
       restoreUsageBucket(usageBucket(current[section], name), value);
     }
   }
-  restoreWorkspaceTools(current, saved);
   restoreWorkspaceSkills(current, saved);
-}
-
-function restoreWorkspaceTools(
-  current: WorkspaceUsageBucket,
-  saved: Record<string, unknown>
-): void {
-  const byTool = saved.byTool;
-  if (!isUnknownArray(byTool)) return;
-  for (const tool of byTool) {
-    if (!isPlainRecord(tool) || typeof tool.tool !== "string") continue;
-    const restored = {
-      tool: safeMetricLabel(tool.tool, "unknown-tool"),
-      source: safeMetricLabel(tool.source),
-      server: toolServerAttribute({
-        server: tool.server,
-        mcp_server: tool.mcp_server
-      }),
-      count: 0,
-      byStatus: {} as Record<string, number>,
-      durationCount: 0,
-      durationMs: 0
-    };
-    restoreToolCounters(restored, tool);
-    current.tools.set(toolKey(restored), restored);
-  }
-}
-
-function restoreToolCounters(
-  restored: {
-    count: number;
-    durationCount: number;
-    durationMs: number;
-    byStatus: Record<string, number>;
-  },
-  tool: Record<string, unknown>
-): void {
-  for (const field of ["count", "durationCount", "durationMs"] as const)
-    if (typeof tool[field] === "number" && tool[field] >= 0)
-      restored[field] = tool[field];
-  restoreBridgeToolStatuses(restored, tool);
 }
 
 function restoreWorkspaceSkills(

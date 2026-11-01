@@ -8,7 +8,6 @@ import {
   formatWorkspaceMcpExposed,
   formatWorkspaceMcpUses,
   formatWorkspaceSkills,
-  formatWorkspaceTools,
   getDefaultUsageTracker,
   MAX_UNKNOWN_WORKSPACE_IDS,
   readNamedAttribute,
@@ -264,22 +263,6 @@ test("Workspace bucket management and formatting", () => {
   const tracker = new UsageTracker();
   const wsBucket = tracker.workspaceBucket("test-repo", "test-cwd");
   assert.equal(wsBucket.cwd, "test-cwd");
-  assert.equal(wsBucket.toolsCapable, false);
-
-  const tool = tracker.workspaceToolBucket(wsBucket, {
-    tool: "grep",
-    source: "builtin",
-    server: "search"
-  });
-  tool.count = 5;
-  tool.durationCount = 2;
-  tool.durationMs = 200;
-  tool.byStatus = { success: 4, error: 1 };
-
-  const formattedTools = formatWorkspaceTools(wsBucket.tools);
-  assert.equal(formattedTools.length, 1);
-  assert.equal(formattedTools[0]!.tool, "grep");
-  assert.equal(formattedTools[0]!.averageDurationMs, 100);
 
   const skill = tracker.workspaceSkillBucket(wsBucket, "git-commit");
   skill.total = 3;
@@ -456,7 +439,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 
   const wsBucket = tracker.workspaceBucket("RepoPersistence");
   wsBucket.skillUses = 5;
-  wsBucket.toolsCapable = true;
   wsBucket.skillsCapable = true;
   wsBucket.mcpCapable = true;
   wsBucket.byMcp = { filesystem: 3 };
@@ -489,7 +471,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   const restoredWs = cleanTracker.workspaceBucket("RepoPersistence");
   assert.equal(restoredWs.attempts, 1);
   assert.equal(restoredWs.skillUses, 5);
-  assert.equal(restoredWs.toolsCapable, true);
   assert.equal(restoredWs.skillsCapable, true);
   assert.equal(restoredWs.mcpCapable, true);
   assert.equal(restoredWs.byMcp.filesystem, 3);
@@ -532,7 +513,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 
   // Verify clearWorkspaceCapabilities
   cleanTracker.clearWorkspaceCapabilities();
-  assert.equal(restoredWs.toolsCapable, false);
   assert.equal(restoredWs.skillsCapable, false);
   assert.equal(restoredWs.mcpCapable, false);
   assert.equal(restoredWs.skillUses, 0);

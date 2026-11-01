@@ -66,49 +66,26 @@ fi
 export AUTODEV_CONTROL_API_LISTEN_HOST="${AUTODEV_CONTROL_API_LISTEN_HOST:-0.0.0.0}"
 export AUTODEV_CONTROL_API_LISTEN_PORT="${AUTODEV_CONTROL_API_LISTEN_PORT:-4101}"
 
-# The OpenLIT ingress mode is committed only after config materialization and
-# before service restart. Publish the same endpoint/key to the router and the
-# GUI launchd domain so both Codex's exporters and router-owned spans use the
-# protected first-party receiver. No secret is written into config.toml/plist.
-mode_file="$codex_home/otel-ingress.mode"
-otel_mode="direct"
-if [[ -f "$mode_file" ]]; then
-  otel_mode="$(tr -d '\r\n ' < "$mode_file")"
+# The agents export their telemetry to OpenLIT. Publish the same endpoint and
+# key to the router and the GUI launchd domain so both Codex's exporters and
+# the router's own spans reach the protected first-party receiver. No secret
+# is written into config.toml/plist.
+otlp_api_key="${OPENLIT_OTLP_API_KEY:-}"
+if [[ ${#otlp_api_key} -lt 32 ]]; then
+  echo "run-codex-model-router: the OpenLIT OTLP key is required" >&2
+  exit 1
 fi
-if [[ "$otel_mode" == "openlit" ]]; then
-  otlp_api_key="${OPENLIT_OTLP_API_KEY:-}"
-  if [[ ${#otlp_api_key} -lt 32 ]]; then
-    echo "run-codex-model-router: OpenLIT ingress needs the CODEX_HOME OTLP key" >&2
-    exit 1
-  fi
-  export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318"
-  export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20${otlp_api_key}"
-  export AUTODEV_OPENLIT_OTLP_AUTH="1"
-  if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
-    && command -v launchctl >/dev/null 2>&1; then
-    launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT "$OTEL_EXPORTER_OTLP_ENDPOINT" 2>/dev/null || \
-      echo "run-codex-model-router: could not publish OpenLIT OTLP endpoint to launchd" >&2
-    launchctl setenv OTEL_EXPORTER_OTLP_HEADERS "$OTEL_EXPORTER_OTLP_HEADERS" 2>/dev/null || \
-      echo "run-codex-model-router: could not publish OpenLIT OTLP auth to launchd" >&2
-    launchctl setenv AUTODEV_OPENLIT_OTLP_AUTH "1" 2>/dev/null || \
-      echo "run-codex-model-router: could not publish OpenLIT ingress marker to launchd" >&2
-  fi
-elif [[ "${AUTODEV_OPENLIT_OTLP_AUTH:-}" == "1" ]]; then
-  # Remove only values previously published by this launcher. Explicit values
-  # in the user .env remain the user's configuration and are not overwritten.
-  if ! grep -q '^OTEL_EXPORTER_OTLP_ENDPOINT=' "$codex_home/.env" 2>/dev/null; then
-    unset OTEL_EXPORTER_OTLP_ENDPOINT
-  fi
-  if ! grep -q '^OTEL_EXPORTER_OTLP_HEADERS=' "$codex_home/.env" 2>/dev/null; then
-    unset OTEL_EXPORTER_OTLP_HEADERS
-  fi
-  if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
-    && command -v launchctl >/dev/null 2>&1; then
-    launchctl unsetenv OTEL_EXPORTER_OTLP_ENDPOINT 2>/dev/null || true
-    launchctl unsetenv OTEL_EXPORTER_OTLP_HEADERS 2>/dev/null || true
-    launchctl unsetenv AUTODEV_OPENLIT_OTLP_AUTH 2>/dev/null || true
-  fi
-  unset AUTODEV_OPENLIT_OTLP_AUTH
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20${otlp_api_key}"
+export AUTODEV_OPENLIT_OTLP_AUTH="1"
+if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
+  && command -v launchctl >/dev/null 2>&1; then
+  launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT "$OTEL_EXPORTER_OTLP_ENDPOINT" 2>/dev/null || \
+    echo "run-codex-model-router: could not publish OpenLIT OTLP endpoint to launchd" >&2
+  launchctl setenv OTEL_EXPORTER_OTLP_HEADERS "$OTEL_EXPORTER_OTLP_HEADERS" 2>/dev/null || \
+    echo "run-codex-model-router: could not publish OpenLIT OTLP auth to launchd" >&2
+  launchctl setenv AUTODEV_OPENLIT_OTLP_AUTH "1" 2>/dev/null || \
+    echo "run-codex-model-router: could not publish OpenLIT ingress marker to launchd" >&2
 fi
 
 # launchd starts us with a minimal PATH that lacks nvm/homebrew node.

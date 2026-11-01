@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
+import { resetCorrelation } from "@simulatorlife/autodev-runtime/router/correlation";
 import {
   ingestAgentEvents,
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import {
-  ingestOtelSignal,
-  resetOtelTelemetry
-} from "@simulatorlife/autodev-runtime/router/otel";
-import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   closeBridgeSubagentsForRequest,
   noteBridgeRequest,
@@ -46,7 +42,7 @@ const contract = await import(
 
 assert.equal(
   contract.schema,
-  "autodev-native-vs-bridge-child-counts-v1",
+  "autodev-native-vs-bridge-child-counts-v2",
   "native-vs-bridge child count contract must match its schema tag"
 );
 assert.deepEqual(
@@ -68,13 +64,6 @@ assert.equal(contract.recentCap, 50, "the recent-list cap is frozen");
 
 const SCENARIOS = contract.scenarios;
 
-function attrs(entries: ReadonlyArray<readonly [string, unknown]>) {
-  return entries.map(([key, item]) => ({
-    key,
-    value: { stringValue: String(item) }
-  }));
-}
-
 function pathValue(object: unknown, path: string): unknown {
   return path
     .split(".")
@@ -89,7 +78,7 @@ function pathValue(object: unknown, path: string): unknown {
 
 function resetAll() {
   resetSubagentTelemetry();
-  resetOtelTelemetry();
+  resetCorrelation();
   resetRouterTelemetry();
 }
 
@@ -136,40 +125,6 @@ function assertRecentRow(
     op.expected,
     `${name}: recent[${value<number>(op, "index")}].${value<string>(op, "field")}`
   );
-}
-
-function ingestOtelMultiAgentSpawn(total: number): void {
-  ingestOtelSignal("metrics", {
-    resourceMetrics: [
-      {
-        resource: { attributes: attrs([["service.name", "codex"]]) },
-        scopeMetrics: [
-          {
-            metrics: [
-              {
-                name: "codex.multi_agent.spawn",
-                sum: {
-                  aggregationTemporality: 1,
-                  dataPoints: [
-                    {
-                      attributes: attrs([
-                        ["agent_role", "explorer"],
-                        ["requested_model", CONFIGURED_ORCHESTRATOR_MODEL],
-                        ["status", "success"]
-                      ]),
-                      startTimeUnixNano: String(1_000_000_000 + total),
-                      timeUnixNano: String(1_000_000_000 + total),
-                      asInt: String(total)
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-        ]
-      }
-    ]
-  });
 }
 
 function seedBridgeChildrenOverflow(op: Operation): void {
@@ -315,8 +270,6 @@ const OPERATION_HANDLERS: Record<string, OperationHandler> = {
         `${name}: closeBridgeSubagentsForRequest returned ${closed}`
       );
   },
-  ingest_otel_multi_agent_spawn: (_name, op) =>
-    ingestOtelMultiAgentSpawn(value<number>(op, "total")),
   seed_bridge_children_overflow: (_name, op) => seedBridgeChildrenOverflow(op)
 };
 
@@ -330,7 +283,7 @@ function runOperation(name: string, op: Operation): void {
 
 describe("native-vs-bridge child count contract: constants and module surface", () => {
   test("schema tag is frozen", () => {
-    assert.equal(contract.schema, "autodev-native-vs-bridge-child-counts-v1");
+    assert.equal(contract.schema, "autodev-native-vs-bridge-child-counts-v2");
   });
 
   test("canonical mechanisms cover the documented two paths", () => {
@@ -366,7 +319,6 @@ describe("native-vs-bridge child count contract: constants and module surface", 
         "byProvider",
         "byRole",
         "byStatus",
-        "codexNativeSpawns",
         "recent",
         "spawnCapableProviders",
         "total"
@@ -381,7 +333,6 @@ describe("native-vs-bridge child count contract: constants and module surface", 
     try {
       const status = subagentStatus();
       assert.equal(status.total, 0);
-      assert.equal(status.codexNativeSpawns, 0);
       assert.deepEqual(status.byMechanism, {
         bridge_native: 0,
         router_alias: 0

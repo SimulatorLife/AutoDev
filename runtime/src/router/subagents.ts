@@ -275,7 +275,6 @@ export interface SubagentStatus {
   byProvider: Record<string, number>;
   byRole: Record<string, number>;
   byStatus: Record<string, number>;
-  codexNativeSpawns: number;
   spawnCapableProviders: string[];
   recent: SubagentSpawnRecord[];
 }
@@ -635,7 +634,6 @@ export interface SubagentRegistryOptions {
   onSchedulePersist?: (() => void) | undefined;
   onMissingProviderDiagnostic?: ((count: number) => void) | undefined;
   onMissingModelDiagnostic?: ((count: number) => void) | undefined;
-  getCodexNativeSpawns?: (() => number) | undefined;
   getSpawnCapableProviders?: (() => string[]) | undefined;
 }
 
@@ -655,7 +653,6 @@ export class SubagentRegistry {
     ((count: number) => void) | undefined;
   private readonly onMissingModelDiagnostic?:
     ((count: number) => void) | undefined;
-  private readonly getCodexNativeSpawns?: (() => number) | undefined;
   private readonly getSpawnCapableProviders?: (() => string[]) | undefined;
 
   readonly subagentTelemetry: SubagentTelemetry;
@@ -698,7 +695,6 @@ export class SubagentRegistry {
     this.onSchedulePersist = options.onSchedulePersist;
     this.onMissingProviderDiagnostic = options.onMissingProviderDiagnostic;
     this.onMissingModelDiagnostic = options.onMissingModelDiagnostic;
-    this.getCodexNativeSpawns = options.getCodexNativeSpawns;
     this.getSpawnCapableProviders = options.getSpawnCapableProviders;
 
     this.subagentTelemetry = {
@@ -1270,9 +1266,6 @@ export class SubagentRegistry {
   }
 
   subagentStatus(): SubagentStatus {
-    const codexNativeSpawns = this.getCodexNativeSpawns
-      ? this.getCodexNativeSpawns()
-      : 0;
     const spawnCapableProviders = this.getSpawnCapableProviders
       ? this.getSpawnCapableProviders()
       : Object.keys(this.executionContract?.providers ?? {}).filter(
@@ -1285,7 +1278,6 @@ export class SubagentRegistry {
       byProvider: { ...this.subagentTelemetry.byProvider },
       byRole: { ...this.subagentTelemetry.byRole },
       byStatus: { ...this.subagentTelemetry.byStatus },
-      codexNativeSpawns,
       spawnCapableProviders,
       recent: [...this.subagentTelemetry.recent].reverse()
     };

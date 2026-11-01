@@ -167,48 +167,16 @@ export function compose(portable: TomlTable, existing: TomlTable): TomlTable {
   return result;
 }
 
-export function applyOtelIngress(
-  config: TomlTable,
-  ingress: string
-): TomlTable {
-  if (ingress === "direct") return config;
-  if (ingress !== "openlit")
-    throw new ConfigError(`unsupported OTLP ingress: ${ingress}`);
-  const otel = table(config.otel);
-  const endpoints: Record<string, string> = {
-    exporter: "http://127.0.0.1:4318/v1/logs",
-    trace_exporter: "http://127.0.0.1:4318/v1/traces",
-    metrics_exporter: "http://127.0.0.1:4318/v1/metrics"
-  };
-  for (const [key, endpoint] of Object.entries(endpoints)) {
-    const exporter = table(otel[key]);
-    const http = table(exporter["otlp-http"]);
-    if (!exporter["otlp-http"] || Object.keys(http).length === 0)
-      throw new ConfigError(
-        `portable config is missing [otel].${key}.otlp-http`
-      );
-    http.endpoint = endpoint;
-    exporter["otlp-http"] = http;
-    otel[key] = exporter;
-  }
-  config.otel = otel;
-  return config;
-}
-
 export function runCompose(
   portable: string,
   mcp: string,
   rootRole: string,
   existing: string,
   output: string,
-  check: boolean,
-  ingress: string
+  check: boolean
 ): number {
   const rendered = serializeToml(
-    applyOtelIngress(
-      compose(loadPortable(portable, mcp, rootRole), loadExisting(existing)),
-      ingress
-    )
+    compose(loadPortable(portable, mcp, rootRole), loadExisting(existing))
   );
   if (check) {
     if (!existsSync(output)) {
@@ -260,8 +228,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       requiredArg(values, "root-role"),
       requiredArg(values, "existing-config"),
       requiredArg(values, "output"),
-      flags.has("check"),
-      values["otel-ingress"] ?? "direct"
+      flags.has("check")
     );
   } catch (error) {
     writeErrorLine(`compose-user-config: ${errorMessage(error)}`);

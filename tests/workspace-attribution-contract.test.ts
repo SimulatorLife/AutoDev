@@ -1,18 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
+import { resetCorrelation } from "@simulatorlife/autodev-runtime/router/correlation";
 import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
   getRouterStatus,
   ingestAgentEvents,
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import {
-  autodevEnrichOtlpPayload,
-  ingestOtelSignal,
-  type OtelPayload,
-  resetOtelTelemetry
-} from "@simulatorlife/autodev-runtime/router/otel";
 import {
   noteBridgeRequest,
   resetSubagentTelemetry
@@ -26,40 +21,17 @@ type JsonObject = Record<string, unknown>;
 type Operation = JsonObject & { op: string };
 type Scenario = { operations: Operation[] };
 type Contract = { schema: string; scenarios: Record<string, Scenario> };
-type Attribute = { key: string; value?: { stringValue?: string } };
-type ResourceLog = {
-  resource?: { attributes?: Attribute[] };
-  scopeLogs?: Array<{ logRecords?: Array<{ attributes?: Attribute[] }> }>;
-};
-type OperationState = {
-  enriched?: { resourceLogs?: ResourceLog[] } | undefined;
-};
 
 const contract = await import(
   "./fixtures/contracts/workspace-attribution-contract.json",
   { with: { type: "json" } }
 ).then((m) => (m.default ?? m) as Contract);
-assert.equal(contract.schema, "autodev-workspace-attribution-v1");
+assert.equal(contract.schema, "autodev-workspace-attribution-v2");
 
-const attrs = (entries: ReadonlyArray<readonly [string, unknown]>) =>
-  entries.map(([key, value]) => ({
-    key,
-    value: { stringValue: String(value) }
-  }));
-const point = (
-  entries: ReadonlyArray<readonly [string, unknown]>,
-  value: unknown
-) => ({
-  attributes: attrs(entries),
-  startTimeUnixNano: "1",
-  timeUnixNano: "2",
-  asInt: String(value)
-});
 const stringValue = (op: Operation, key: string): string => String(op[key]);
-const numberValue = (op: Operation, key: string): number => Number(op[key]);
 
 function resetAll() {
-  resetOtelTelemetry();
+  resetCorrelation();
   resetRouterTelemetry();
   resetSubagentTelemetry();
   getDefaultUsageTracker().resetAttributionDiagnostics();
@@ -84,11 +56,7 @@ function pathValue(object: unknown, path: string): unknown {
     );
 }
 
-function runAssertOperation(
-  name: string,
-  op: Operation,
-  state: OperationState
-): boolean {
+function runAssertOperation(name: string, op: Operation): boolean {
   if (op.op === "privacyHelper") {
     assert.equal(
       safePrivacyWorkspace(op.path),
@@ -109,154 +77,22 @@ function runAssertOperation(
     );
     return true;
   }
-  if (op.op === "diagnostics") {
-    assert.deepEqual(
+  if (op.op === "assertFieldAbsent") {
+    assert.equal(
       pathValue(
-        getDefaultUsageTracker().attributionDiagnosticsStatus(),
+        workspace(stringValue(op, "workspace")),
         stringValue(op, "field")
       ),
-      op.expected,
-      `${name}: diagnostics.${stringValue(op, "field")}`
-    );
-    return true;
-  }
-  if (op.op === "assertAbsentWorkspace") {
-    assert.equal(
-      workspace(stringValue(op, "workspace")),
       undefined,
-      `${name}: workspace ${stringValue(op, "workspace")} must not be guessed`
-    );
-    return true;
-  }
-  if (op.op === "assertEnrichedNoPrompt") {
-    const emitted: Attribute[] = [];
-    for (const resourceLog of state.enriched?.resourceLogs ?? []) {
-      emitted.push(...(resourceLog.resource?.attributes ?? []));
-      for (const scopeLog of resourceLog.scopeLogs ?? []) {
-        for (const record of scopeLog.logRecords ?? [])
-          emitted.push(...(record.attributes ?? []));
-      }
-    }
-    assert.equal(
-      emitted
-        .filter((entry) => entry.key.startsWith("autodev."))
-        .some((entry) => JSON.stringify(entry).includes("secret")),
-      false,
-      `${name}: prompt content must not enter autodev attributes`
-    );
-    const workspaceAttribute = emitted.find(
-      (entry) => entry.key === "autodev.workspace"
-    );
-    assert.equal(
-      workspaceAttribute?.value?.stringValue,
-      stringValue(op, "expectedWorkspace")
+      `${name}: ${stringValue(op, "workspace")}.${stringValue(op, "field")} must not be published`
     );
     return true;
   }
   return false;
 }
 
-function runOtelOperation(op: Operation): boolean {
-  if (op.op === "metric") {
-    ingestOtelSignal("metrics", {
-      resourceMetrics: [
-        {
-          resource: {
-            attributes: attrs([
-              ["workspace_id", stringValue(op, "workspaceId")]
-            ])
-          },
-          scopeMetrics: [
-            {
-              metrics: [
-                {
-                  name: "codex.tool_result",
-                  sum: {
-                    aggregationTemporality: 1,
-                    dataPoints: [
-                      point(
-                        [
-                          ["tool", stringValue(op, "tool")],
-                          ["status", "ok"]
-                        ],
-                        numberValue(op, "value")
-                      )
-                    ]
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    });
-    return true;
-  }
-  if (op.op === "ambiguousMetric") {
-    ingestOtelSignal("metrics", {
-      resourceMetrics: [
-        {
-          resource: {
-            attributes: attrs([
-              ["workspace_id", stringValue(op, "first")],
-              ["workspace.id", stringValue(op, "second")]
-            ])
-          },
-          scopeMetrics: [
-            {
-              metrics: [
-                {
-                  name: "codex.tool_result",
-                  sum: {
-                    aggregationTemporality: 1,
-                    dataPoints: [
-                      point(
-                        [["tool", stringValue(op, "tool")]],
-                        numberValue(op, "value")
-                      )
-                    ]
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    });
-    return true;
-  }
-  if (op.op === "trace") {
-    const spans = op.spans as Array<{ name: string; server: string }>;
-    ingestOtelSignal("traces", {
-      resourceSpans: [
-        {
-          scopeSpans: [
-            {
-              spans: spans.map((span) => ({
-                name: span.name,
-                startTimeUnixNano: "1",
-                endTimeUnixNano: "2",
-                attributes: attrs([
-                  ["server_name", span.server],
-                  ["workspace", stringValue(op, "workspace")]
-                ])
-              }))
-            }
-          ]
-        }
-      ]
-    });
-    return true;
-  }
-  return false;
-}
-
-function runOperation(
-  name: string,
-  op: Operation,
-  state: OperationState
-): void {
-  if (runAssertOperation(name, op, state) || runOtelOperation(op)) return;
+function runOperation(name: string, op: Operation): void {
+  if (runAssertOperation(name, op)) return;
   if (op.op === "record") {
     recordRouterEvent({
       phase: stringValue(op, "phase"),
@@ -286,18 +122,6 @@ function runOperation(
     });
     return;
   }
-  if (op.op === "register") {
-    getDefaultUsageTracker().registerWorkspaceId(op.id, op.workspace);
-    return;
-  }
-  if (op.op === "enrich") {
-    const payload = op.payload as { logs: unknown };
-    state.enriched = autodevEnrichOtlpPayload(
-      "logs",
-      payload.logs as OtelPayload
-    ) as OperationState["enriched"];
-    return;
-  }
   throw new Error(`${name}: unknown operation ${op.op}`);
 }
 
@@ -305,9 +129,8 @@ describe("workspace attribution contract", () => {
   for (const [name, scenario] of Object.entries(contract.scenarios)) {
     test(name, () => {
       resetAll();
-      const state: OperationState = {};
       try {
-        for (const op of scenario.operations) runOperation(name, op, state);
+        for (const op of scenario.operations) runOperation(name, op);
       } finally {
         resetAll();
       }

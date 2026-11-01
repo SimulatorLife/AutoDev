@@ -10,10 +10,10 @@ import {
   setControlApiMcpObservationsSource
 } from "../src/control-api/index.ts";
 import {
-  getDefaultOtelTracker,
+  getDefaultCorrelationTracker,
   mcpServerObservations,
-  resetOtelTelemetry
-} from "../src/router/otel.ts";
+  resetCorrelation
+} from "../src/router/correlation.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 const SERVICE_TOKEN = "m".repeat(64);
@@ -91,63 +91,33 @@ async function readCatalog(call: Call): Promise<readonly McpCatalogRecord[]> {
 }
 
 /**
- * Records the Runtime's observation of a server and of a tool call on it.
+ * Records the Runtime's observation of a server and of the calls on it.
  *
- * The initialization span and the tool-discovery span are separate: the second
- * is the one that carries the readiness signal, so a server that was only
- * initialized is not reported as ready.
+ * The observation is the one the bridges report: a call that ran against the
+ * server and came back. That is the evidence the server's health is read
+ * from, and it is the only evidence the Runtime has now that the OTLP
+ * receiver is gone.
  */
-function observeServer(serverName: string): void {
-  const tracker = getDefaultOtelTracker();
-  const observedAtNanos = BigInt(Date.now()) * 1_000_000n;
-  tracker.noteMcpServer(
-    serverName,
-    {
-      name: "make_rmcp_client",
-      startTimeUnixNano: (observedAtNanos - 1_000_000_000n).toString(),
-      endTimeUnixNano: observedAtNanos.toString(),
-      status: { code: 1 }
-    },
-    {
-      server_name: serverName,
-      workspace: "SimulatorLife/AutoDev",
-      role: "orchestrator",
-      model: "gpt-5"
-    }
-  );
-  tracker.noteMcpServer(
-    serverName,
-    {
-      name: "list_tools_for_client_uncached",
-      startTimeUnixNano: (observedAtNanos - 500_000_000n).toString(),
-      endTimeUnixNano: observedAtNanos.toString(),
-      status: { code: 1 }
-    },
-    {
-      server_name: serverName,
-      workspace: "SimulatorLife/AutoDev",
-      role: "orchestrator",
-      model: "gpt-5"
-    }
-  );
-  tracker.noteToolCounter(
-    "codex.tool.call",
-    {
-      tool_name: "lsp_goto_definition",
-      source: "codex",
-      server: serverName,
-      status: "success",
-      workspace: "SimulatorLife/AutoDev",
-      role: "orchestrator",
-      model: "gpt-5"
-    },
-    {
-      startTimeUnixNano: "1000000000",
-      timeUnixNano: "2000000000",
-      asInt: 3
-    },
-    "CUMULATIVE"
-  );
+function observeServer(serverName: string, calls: number): void {
+  const tracker = getDefaultCorrelationTracker();
+  for (let index = 0; index < calls; index += 1) {
+    tracker.recordBridgeToolObservation({
+      event: {
+        type: "tool_executed",
+        tool: "lsp_goto_definition",
+        server: serverName,
+        status: "ok",
+        callId: `call-${String(index)}`,
+        durationMs: 40
+      },
+      context: {
+        server_name: serverName,
+        workspace: "SimulatorLife/AutoDev",
+        role: "orchestrator",
+        model: "gpt-5"
+      }
+    });
+  }
 }
 
 const OBSERVATION: ControlApiMcpRuntimeServer = {
@@ -172,7 +142,7 @@ const OBSERVATION: ControlApiMcpRuntimeServer = {
 };
 
 test("the MCP catalog stays a configuration read and carries no runtime evidence", async () => {
-  resetOtelTelemetry();
+  resetCorrelation();
   const h = harness();
   try {
     const read = await h.call("GET", "/control/mcps");
@@ -192,7 +162,7 @@ test("the MCP catalog stays a configuration read and carries no runtime evidence
     }
   } finally {
     h.restore();
-    resetOtelTelemetry();
+    resetCorrelation();
   }
 });
 
@@ -261,10 +231,10 @@ test("the MCP runtime read distinguishes an observation of nothing from an unava
 });
 
 test("the runtime projects its own telemetry into the MCP observations it publishes", () => {
-  resetOtelTelemetry();
+  resetCorrelation();
   try {
     const observedAt = new Date().toISOString();
-    observeServer(OBSERVED_SERVER);
+    observeServer(OBSERVED_SERVER, 3);
 
     const servers = mcpServerObservations();
     const server = servers.find((entry) => entry.name === OBSERVED_SERVER);
@@ -279,8 +249,11 @@ test("the runtime projects its own telemetry into the MCP observations it publis
       Math.abs(Date.parse(server.lastSeenAt) - Date.parse(observedAt)) < 5000,
       "the last-seen time is the observation the runtime recorded"
     );
-    assert.equal(server.initAttempts, 1);
-    assert.equal(server.toolDiscoveryAttempts, 1);
+    // Nothing observes the MCP client's own initialization, so the Runtime
+    // publishes no count for it: a zero would claim the server was never
+    // brought up, which is a claim about a read that never happens.
+    assert.equal(server.initAttempts, null);
+    assert.equal(server.toolDiscoveryAttempts, null);
     assert.equal(server.failures, 0);
     // The tool call the runtime saw is the server's observed call count.
     assert.equal(server.toolCalls, 3);
@@ -292,6 +265,6 @@ test("the runtime projects its own telemetry into the MCP observations it publis
     assert.equal(server.roles[0]?.role, "orchestrator");
     assert.equal(server.roles[0]?.health, "ready");
   } finally {
-    resetOtelTelemetry();
+    resetCorrelation();
   }
 });

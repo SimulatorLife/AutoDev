@@ -3,81 +3,16 @@ import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
-  closeSync,
   existsSync,
-  lstatSync,
   mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeSync
+  readFileSync
 } from "node:fs";
 import path from "node:path";
 
-import {
-  writeErrorLine,
-  writeLine
-} from "@simulatorlife/autodev-runtime/shared/output";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-export type OtelIngressMode = "direct" | "openlit";
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
 export const COPILOT_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_COPILOT_API_KEY";
-
-function fail(message: string): never {
-  throw new Error(message);
-}
-function mode(value: string): OtelIngressMode {
-  if (value === "direct" || value === "openlit") return value;
-  return fail(`invalid OTLP ingress mode: ${value}`);
-}
-
-export function readOtelIngressMode(filePath: string): OtelIngressMode {
-  try {
-    if (lstatSync(filePath).isSymbolicLink())
-      fail(`refusing symlinked OTLP ingress mode file: ${filePath}`);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  if (!existsSync(filePath)) return "direct";
-  const stored = readFileSync(filePath, "utf8").replaceAll(/\s+/gu, "");
-  if (stored === "collector") {
-    // One-time state migration: the standalone Collector is removed, and its
-    // old forward-only route maps to the existing direct router ingress.
-    writeOtelIngressMode(filePath, "direct");
-    writeErrorLine(
-      "migrated obsolete Collector ingress selection to direct router ingress"
-    );
-    return "direct";
-  }
-  return mode(stored);
-}
-
-export function writeOtelIngressMode(
-  filePath: string,
-  value: OtelIngressMode
-): void {
-  const directory = path.dirname(filePath);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporary = `${filePath}.${process.pid}.tmp`;
-  const fd = openSync(temporary, "wx", 0o600);
-  try {
-    writeSync(fd, `${mode(value)}\n`, undefined, "utf8");
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, filePath);
-    chmodSync(filePath, 0o600);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      /* already renamed */
-    }
-  }
-}
 
 function existingToken(filePath: string, variable: string): string | null {
   if (!existsSync(filePath)) return null;
@@ -156,21 +91,11 @@ export function ensureCopilotRouterAuth(filePath: string): string {
 
 function cli(argv: string[]): number {
   const [command, filePath, value] = argv;
-  if (command === "mode-read" && filePath && value === undefined) {
-    writeLine(readOtelIngressMode(filePath));
-    return 0;
-  }
-  if (command === "mode-write" && filePath && value) {
-    writeOtelIngressMode(filePath, mode(value));
-    return 0;
-  }
   if (command === "auth" && filePath && value === undefined) {
     ensureRouterAuth(filePath);
     return 0;
   }
-  throw new Error(
-    "usage: install-state mode-read <path> | mode-write <path> <direct|openlit> | auth <env-file>"
-  );
+  throw new Error("usage: install-state auth <env-file>");
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

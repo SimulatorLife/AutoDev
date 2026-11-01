@@ -5631,6 +5631,69 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
   assert.match(toolsMarkup, /Configured tool allowlist/);
 });
 
+test("McpDetailView says a count the Runtime does not observe is not observed", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  // The Runtime does not observe the MCP client's own initialization, so it
+  // publishes no count for it. A zero there would claim the server was never
+  // brought up, which is a claim about a read that never happens.
+  const runtime: ControlApiMcpRuntimeResponse = {
+    schema: "autodev-control-mcp-runtime-v1",
+    source: "runtime.telemetry",
+    observedServers: 1,
+    health: {
+      ready: 1,
+      error: 0,
+      stale: 0,
+      configured: 0,
+      observed: 0
+    },
+    servers: [
+      {
+        name: "context7",
+        health: "ready",
+        lastSeenAt: "2026-10-22T12:00:00.000Z",
+        lastStatus: "ready",
+        initAttempts: null,
+        toolDiscoveryAttempts: null,
+        failures: 0,
+        toolCalls: 0,
+        averageDurationMs: 0,
+        roles: [],
+        tools: []
+      }
+    ]
+  };
+  const connectionHealthMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
+      sourceValidity: true,
+      runtime,
+      applied: null,
+      configuredTools: null,
+      server,
+      activeTab: "connection-health"
+    })
+  );
+  assert.match(connectionHealthMarkup, /Initialization attempts/);
+  assert.match(connectionHealthMarkup, /Tool discovery attempts/);
+  assert.doesNotMatch(
+    connectionHealthMarkup,
+    /Initialization attempts[^<]*<[^>]*>0</
+  );
+  assert.doesNotMatch(
+    connectionHealthMarkup,
+    /Tool discovery attempts[^<]*<[^>]*>0</
+  );
+  assert.match(connectionHealthMarkup, /Not observed/);
+});
+
 test("McpDetailView distinguishes no enumerated allowlist entries from an empty live inventory", () => {
   const server: McpServerResource = {
     name: "context7",

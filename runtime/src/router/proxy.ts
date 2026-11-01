@@ -53,11 +53,11 @@ import {
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
+import { recordMcpExposure } from "./correlation.ts";
 import {
   currentRouterMemoryMode,
   injectOrchestratorMemory
 } from "./memory-injection.ts";
-import { recordMcpExposure } from "./otel.ts";
 import {
   bufferedEnvelope,
   collectToolCallIds,

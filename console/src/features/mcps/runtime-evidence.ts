@@ -111,12 +111,16 @@ export function McpRuntimeEvidence({
       React.createElement(
         FieldBox,
         { label: "Initialization attempts" },
-        String(evidence.initAttempts)
+        evidence.initAttempts === null
+          ? NOT_OBSERVED_LABEL
+          : String(evidence.initAttempts)
       ),
       React.createElement(
         FieldBox,
         { label: "Tool discovery attempts" },
-        String(evidence.toolDiscoveryAttempts)
+        evidence.toolDiscoveryAttempts === null
+          ? NOT_OBSERVED_LABEL
+          : String(evidence.toolDiscoveryAttempts)
       )
     )
   );

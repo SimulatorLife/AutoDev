@@ -4,8 +4,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
-  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,9 +12,7 @@ import test from "node:test";
 
 import {
   ensureCopilotRouterAuth,
-  ensureRouterAuth,
-  readOtelIngressMode,
-  writeOtelIngressMode
+  ensureRouterAuth
 } from "@simulatorlife/autodev-runtime/platform/install-state";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
@@ -27,21 +23,6 @@ function withTempDir<T>(callback: (directory: string) => T): T {
     rmSync(directory, { recursive: true, force: true });
   }
 }
-
-test("OTLP ingress state persists direct/OpenLIT modes and migrates the obsolete Collector selection", () =>
-  withTempDir((directory) => {
-    const path = join(directory, "otel-ingress.mode");
-    assert.equal(readOtelIngressMode(path), "direct");
-    writeFileSync(path, "collector\n", { mode: 0o600 });
-    assert.equal(readOtelIngressMode(path), "direct");
-    assert.equal(readFileSync(path, "utf8"), "direct\n");
-    writeOtelIngressMode(path, "openlit");
-    assert.equal(readOtelIngressMode(path), "openlit");
-    assert.equal(statSync(path).mode & 0o777, 0o600);
-    const link = join(directory, "link");
-    symlinkSync(path, link);
-    assert.throws(() => readOtelIngressMode(link), /symlinked/);
-  }));
 
 test("router auth creates a private token, preserves existing env content, and is idempotent", () =>
   withTempDir((directory) => {

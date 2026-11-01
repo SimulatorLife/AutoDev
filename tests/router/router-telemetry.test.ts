@@ -14,7 +14,7 @@ import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   recordBridgeSkillExposure,
   recordBridgeSkillUsed
-} from "@simulatorlife/autodev-runtime/router/otel";
+} from "@simulatorlife/autodev-runtime/router/correlation";
 import {
   EXHAUSTION_WAIT_MS,
   fetchUpstream,

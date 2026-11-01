@@ -38,7 +38,6 @@ import {
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
-import { readOtelIngressMode } from "./install-state.ts";
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
@@ -142,9 +141,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/subagents.ts",
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
-  "runtime/src/router/workspace-attribution.ts",
-  "runtime/src/router/otel.ts",
-  "runtime/src/router/otel-attributes.ts",
+  "runtime/src/router/correlation.ts",
   "runtime/src/router/proxy.ts",
   "runtime/src/router/http.ts",
   "runtime/src/router/server.ts",
@@ -458,7 +455,6 @@ interface MaterializeOptions {
   repositoryRoot: string;
   home: string;
   codexHome: string;
-  otelMode: string;
   materializeOnly: boolean;
   codexMcpSource: string;
 }
@@ -1207,7 +1203,6 @@ export function materializeMcpConfiguration(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
   readonly codexMcpSource: string;
-  readonly otelMode: string;
 }): void {
   materializeRenderedAgents(
     options.repositoryRoot,
@@ -1227,8 +1222,7 @@ export function materializeMcpConfiguration(options: {
     path.join(options.repositoryRoot, "agents/roles/orchestrator.toml"),
     configPath,
     configPath,
-    false,
-    options.otelMode
+    false
   );
 }
 
@@ -1291,13 +1285,7 @@ export function materializeCurrentMcpConfiguration(options: {
     materializeMcpConfiguration({
       repositoryRoot: options.repositoryRoot,
       codexHome: options.codexHome,
-      codexMcpSource: projection.source,
-      // The persisted ingress is the one the install check compares the
-      // composed configuration against, so composing with it keeps the two
-      // owners of the user configuration in agreement.
-      otelMode: readOtelIngressMode(
-        path.join(options.codexHome, "otel-ingress.mode")
-      )
+      codexMcpSource: projection.source
     });
   } finally {
     rmSync(projection.root, { recursive: true, force: true });
@@ -1774,8 +1762,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   materializeMcpConfiguration({
     repositoryRoot: options.repositoryRoot,
     codexHome: options.codexHome,
-    codexMcpSource: options.codexMcpSource,
-    otelMode: options.otelMode
+    codexMcpSource: options.codexMcpSource
   });
   runRulesyncGenerate(options.repositoryRoot, {
     configPath: path.join(options.repositoryRoot, "rulesync.jsonc"),
@@ -1840,7 +1827,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       repositoryRoot,
       home,
       codexHome,
-      otelMode: env.AUTODEV_OTEL_MODE ?? "direct",
       materializeOnly: env.AUTODEV_MATERIALIZE_ONLY === "1",
       codexMcpSource: mcp
     });

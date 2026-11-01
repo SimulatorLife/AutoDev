@@ -127,7 +127,7 @@ export interface RouterPersistenceSnapshot {
   providerCooldowns?: unknown[] | undefined;
   recentEvents?: unknown[] | undefined;
   liveFeed?: unknown[] | undefined;
-  otelTelemetry?: unknown;
+  correlation?: unknown;
   [key: string]: unknown;
 }
 

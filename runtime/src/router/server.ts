@@ -315,20 +315,6 @@ export {
   workspaceMetadataForSession
 } from "./http.ts";
 export {
-  autodevEnrichOtlpPayload,
-  codexTelemetryStatus,
-  ingestOtelLogs,
-  ingestOtelMetrics,
-  ingestOtelSignal,
-  ingestOtelTraces,
-  isAutodevAttributesEnabled,
-  OTEL_PERSISTENCE_SCHEMA_VERSION,
-  otelPersistenceSnapshot,
-  resetOtelTelemetry,
-  resolveTelemetryContext,
-  restoreOtelTelemetry
-} from "./otel.ts";
-export {
   activeProviderRequests,
   carriesPendingToolResult,
   declaredLimit,

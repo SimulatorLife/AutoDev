@@ -11,7 +11,7 @@ test("typed install command rejects check mode until diagnostic ownership migrat
   );
 });
 
-test("typed install command rejects the removed Collector mode and contradictory OpenLIT flags", () => {
+test("typed install command rejects the removed Collector mode and the removed OpenLIT ingress flags", () => {
   assert.throws(
     () => runInstallCommand(["--enable-otel-collector"]),
     /unsupported install option/
@@ -20,17 +20,15 @@ test("typed install command rejects the removed Collector mode and contradictory
     () => runInstallCommand(["--disable-otel-collector"]),
     /unsupported install option/
   );
+  // The ingress mode is gone: the agents export to OpenLIT and the portable
+  // configuration says so, so there is nothing left to select.
   assert.throws(
-    () => runInstallCommand(["--disable-otel-collector"]),
+    () => runInstallCommand(["--enable-openlit-ingress"]),
     /unsupported install option/
   );
   assert.throws(
-    () =>
-      runInstallCommand([
-        "--enable-openlit-ingress",
-        "--disable-openlit-ingress"
-      ]),
-    /mutually exclusive/
+    () => runInstallCommand(["--disable-openlit-ingress"]),
+    /unsupported install option/
   );
 });
 

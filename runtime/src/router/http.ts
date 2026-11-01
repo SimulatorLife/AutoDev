@@ -95,24 +95,20 @@ import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
-import { safeMetricLabel } from "./metric-label.ts";
 import {
-  checkOtelPayload,
-  codexTelemetryStatus,
-  getDefaultOtelTracker,
-  ingestOtelSignal,
+  correlationSnapshot,
+  correlationStatus,
+  CorrelationTracker,
+  MCP_OBSERVATION_TTL_MS,
   mcpServerObservations,
-  OTEL_HEALTH_TTL_MS,
-  otelPersistenceSnapshot,
-  otelTelemetry,
-  OtelTracker,
   recordBridgeMcpExposure,
   recordBridgeSkillExposure,
   recordBridgeSkillUsed,
   recordBridgeToolObservation,
-  restoreOtelTelemetry,
-  setDefaultOtelTracker
-} from "./otel.ts";
+  restoreCorrelation,
+  setDefaultCorrelationTracker
+} from "./correlation.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 import {
   activeProviderRequests,
   activitySubjectFor,
@@ -231,7 +227,6 @@ const MAX_RECENT_EVENTS = Number.parseInt(
   process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
 );
 const liveFeedEvents = new LiveFeedRecorder();
-const OTEL_UNIX_NANOS_PATTERN = /^\d+$/;
 
 function usageWorkspaceForEvent(
   workspaceKey: string | null,
@@ -382,7 +377,6 @@ const subagentRegistry = new SubagentRegistry({
   onMissingModelDiagnostic: (count) => {
     getDefaultUsageTracker().recordMissingModelDiagnostic(count);
   },
-  getCodexNativeSpawns: () => otelTelemetry.threads.spawns.total,
   getSpawnCapableProviders: () =>
     Object.keys(ROUTING.providers).filter(
       (provider) => providerCapabilities(provider).subagentSpawn
@@ -390,8 +384,8 @@ const subagentRegistry = new SubagentRegistry({
 });
 setDefaultSubagentRegistry(subagentRegistry);
 
-const otelTracker = new OtelTracker({
-  healthTtlMs: OTEL_HEALTH_TTL_MS,
+const otelTracker = new CorrelationTracker({
+  healthTtlMs: MCP_OBSERVATION_TTL_MS,
   usageTracker: getDefaultUsageTracker(),
   getConversationThread: (id) => {
     const thread = codexState.lastSnapshot?.conversationThreads?.[id];
@@ -400,7 +394,7 @@ const otelTracker = new OtelTracker({
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
   onSchedulePersist: () => scheduleRouterStatePersist()
 });
-setDefaultOtelTracker(otelTracker);
+setDefaultCorrelationTracker(otelTracker);
 
 const CODEX_CONFIG_FILE =
   process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
@@ -535,8 +529,8 @@ function restorePersistedSection(args: {
     subagentRegistry.restoreSpawnFailureTelemetry(value);
     return;
   }
-  if (section === "otelTelemetry") {
-    restoreOtelTelemetry(value);
+  if (section === "correlation") {
+    restoreCorrelation(value);
     return;
   }
   if (section === "subagents" && value && typeof value === "object") {
@@ -649,7 +643,7 @@ const routerPersistence = new RouterPersistence({
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
     recentEvents: routerEvents.getRecentEvents(false),
     liveFeed: liveFeedEvents.getRecentEvents(false, true),
-    otelTelemetry: otelPersistenceSnapshot()
+    correlation: correlationSnapshot()
   }),
   restoreSection: (section, value, parsed) => {
     restorePersistedSection({ section, value, parsed });
@@ -1367,26 +1361,15 @@ setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
 // the tracker itself.
 setControlApiMcpObservationsSource(mcpServerObservations);
 
-function buildRouterStatus(
-  now = Date.now(),
-  includeActiveAgentCorrelation = false
-): Record<string, unknown> {
+function buildRouterStatus(now = Date.now()): Record<string, unknown> {
   const projection = getDefaultUsageTracker().projectLiveAgents(now);
-  const codexTelemetry = codexTelemetryStatus();
   const recentEvents = getDefaultRouterEventRecorder().getRecentEvents(true);
-  const statusTelemetry = includeActiveAgentCorrelation
-    ? codexTelemetry
-    : {
-        ...codexTelemetry,
-        lookbackEvents: codexTelemetry.lookbackEvents.map(
-          ({ agent: _agent, ...event }) => event
-        )
-      };
-  const statusRecentEvents = includeActiveAgentCorrelation
-    ? recentEvents
-    : recentEvents.map(
-        ({ activitySubject: _activitySubject, ...event }) => event
-      );
+  // The agent identity is not published on the public status: it is the
+  // correlation an operator reads on the Control API, not a fact every
+  // reader of the router's status is entitled to.
+  const statusRecentEvents = recentEvents.map(
+    ({ activitySubject: _activitySubject, ...event }) => event
+  );
   const providers = Object.fromEntries(
     ROUTES.map((route) => routerProviderStatus(route, now, projection))
   );
@@ -1418,7 +1401,7 @@ function buildRouterStatus(
       missingProvider: projection.missingProvider,
       missingModel: projection.missingModel
     },
-    codexTelemetry: statusTelemetry,
+    correlation: correlationStatus(),
     agents: agentsStatus(now),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     subagents: subagentStatus(),
@@ -1427,10 +1410,7 @@ function buildRouterStatus(
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: statusRecentEvents,
-    liveFeed: liveFeedEvents.getRecentEvents(
-      true,
-      includeActiveAgentCorrelation
-    ),
+    liveFeed: liveFeedEvents.getRecentEvents(true, false),
     codexState: codexStateStatus()
   };
 }
@@ -2155,190 +2135,6 @@ export async function handleRequest(
   await handleResponseRequest(pathname, request, response);
 }
 
-function otelLiveFeedCategory(
-  signal: "logs" | "traces" | "metrics",
-  item: Record<string, unknown>
-): LiveFeedCategory {
-  const attributes = otelRecordAttributes(item.attributes);
-  const text = [
-    item.name,
-    item.type,
-    item.event_name,
-    attributes["event.name"],
-    item.hook_name,
-    item.skill_name,
-    item.mcp_server,
-    ...Object.values(attributes)
-  ]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ")
-    .toLowerCase();
-  if (text.includes("mcp")) return "mcp";
-  if (text.includes("skill")) return "skills";
-  if (text.includes("hook")) return "hooks";
-  if (text.includes("tool")) return "tools";
-  return signal === "logs" ? "runtime" : "telemetry";
-}
-
-function recordOtelLiveFeed(
-  signal: "logs" | "traces" | "metrics",
-  payload: Record<string, unknown>
-): void {
-  const records = collectOtelRecords(signal, payload);
-  if (records.length === 0) {
-    liveFeedEvents.record({
-      category: signal === "logs" ? "runtime" : "telemetry",
-      type: `otel.${signal}`,
-      summary: `OTLP ${signal} batch`
-    });
-    return;
-  }
-  for (const { item, resourceAttributes } of records)
-    recordOtelLiveFeedItem(signal, item, resourceAttributes);
-}
-
-interface OTelLiveFeedRecord {
-  item: Record<string, unknown>;
-  resourceAttributes: Record<string, unknown>;
-}
-
-function collectOtelRecords(
-  signal: "logs" | "traces" | "metrics",
-  payload: Record<string, unknown>
-): OTelLiveFeedRecord[] {
-  const records: OTelLiveFeedRecord[] = [];
-  const signalCollections = {
-    logs: ["resourceLogs", "scopeLogs", "logRecords"],
-    traces: ["resourceSpans", "scopeSpans", "spans"],
-    metrics: ["resourceMetrics", "scopeMetrics", "metrics"]
-  } as const;
-  const [resourcesKey, scopesKey, recordsKey] = signalCollections[signal];
-  for (const resource of otelRecords(payload[resourcesKey])) {
-    const resourceAttributes = otelRecordAttributes(
-      (resource.resource as Record<string, unknown> | undefined)?.attributes
-    );
-    for (const scope of otelRecords(resource[scopesKey])) {
-      records.push(
-        ...otelRecords(scope[recordsKey]).map((item) => ({
-          item,
-          resourceAttributes
-        }))
-      );
-    }
-  }
-  return records;
-}
-
-function otelRecords(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-        (item): item is Record<string, unknown> =>
-          Boolean(item) && typeof item === "object" && !Array.isArray(item)
-      )
-    : [];
-}
-
-function otelRecordAttributes(value: unknown): Record<string, unknown> {
-  if (Array.isArray(value)) {
-    const attributes: Record<string, unknown> = {};
-    for (const entry of otelRecords(value)) {
-      if (typeof entry.key !== "string") continue;
-      attributes[entry.key] = otelAttributeValue(entry.value);
-    }
-    return attributes;
-  }
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function otelAttributeValue(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const item = value as Record<string, unknown>;
-  for (const key of ["stringValue", "intValue", "doubleValue", "boolValue"]) {
-    if (item[key] !== undefined) return item[key];
-  }
-  return value;
-}
-
-function recordOtelLiveFeedItem(
-  signal: "logs" | "traces" | "metrics",
-  item: Record<string, unknown>,
-  resourceAttributes: Record<string, unknown>
-): void {
-  const attributes = otelRecordAttributes(item.attributes);
-  const agent = getDefaultOtelTracker().resolveTelemetryContext(
-    attributes,
-    resourceAttributes
-  ).agent;
-  const text = (...keys: string[]): string | null => {
-    for (const key of keys) {
-      const value = item[key] ?? attributes[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    return null;
-  };
-  const name =
-    [item.name, item.type, item.event_name, attributes["event.name"]].find(
-      (value): value is string =>
-        typeof value === "string" && Boolean(value.trim())
-    ) ?? `OTLP ${signal} record`;
-  const rawDuration = Number(
-    item.durationMs ?? item.duration_ms ?? attributes.duration_ms
-  );
-  const duration =
-    Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : null;
-  const timestamp = otelRecordTimestamp(item, attributes);
-  const rawStatus = item.status ?? attributes.status;
-  const status =
-    typeof rawStatus === "string" || typeof rawStatus === "number"
-      ? rawStatus
-      : null;
-  liveFeedEvents.record({
-    category: otelLiveFeedCategory(signal, item),
-    type: `otel.${signal}`,
-    summary: name,
-    timestamp,
-    agent: agent === "unattributed" ? null : agent,
-    phase: text("phase"),
-    outcome: text("outcome"),
-    status,
-    failureClass: text("failureClass", "failure_class"),
-    durationMs: duration,
-    name,
-    server: text("server", "mcp_server", "serverName", "server_name"),
-    source: text("source"),
-    tool: text("tool", "toolName", "tool_name"),
-    skill: text("skill", "skillName", "skill_name"),
-    hook: text("hook", "hook_name", "hookName"),
-    handlerType: text("handler_type", "handlerType"),
-    workspace: text("workspace", "autodev.workspace.key"),
-    role: text("role", "autodev.agent.role"),
-    model: text("model", "gen_ai.request.model")
-  });
-}
-
-function otelRecordTimestamp(
-  item: Record<string, unknown>,
-  attributes: Record<string, unknown>
-): string | null {
-  const timestamp = item.timestamp ?? attributes.timestamp;
-  if (typeof timestamp === "string" && Number.isFinite(Date.parse(timestamp)))
-    return timestamp;
-  const rawNanos =
-    item.timeUnixNano ??
-    item.observedTimeUnixNano ??
-    attributes.timeUnixNano ??
-    attributes.observed_time_unix_nano;
-  if (typeof rawNanos !== "string" || !OTEL_UNIX_NANOS_PATTERN.test(rawNanos)) {
-    return null;
-  }
-  const millis = Number(BigInt(rawNanos) / 1_000_000n);
-  if (!Number.isFinite(millis)) return null;
-  const date = new Date(millis);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
-}
-
 async function handlePreflightRoutes(
   pathname: string,
   request: IncomingMessage,
@@ -2378,35 +2174,6 @@ async function handlePreflightRoutes(
     return true;
   }
   if (await handleControlApiRequest(request, response, pathname)) return true;
-  const otelSignals: Record<string, "logs" | "traces" | "metrics"> = {
-    "/v1/logs": "logs",
-    "/v1/traces": "traces",
-    "/v1/metrics": "metrics"
-  };
-  if (request.method === "POST" && otelSignals[pathname]) {
-    const signal = otelSignals[pathname]!;
-    let payload: unknown;
-    try {
-      payload = JSON.parse(await requestBody(request));
-    } catch {
-      getDefaultOtelTracker().recordInvalidOtelSignal();
-      sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
-      return true;
-    }
-    // Distinguished from a JSON syntax failure: a body that parses but is not
-    // an OTLP payload was being reported as invalid JSON, which sends an
-    // operator to debug bytes that were always well-formed.
-    const checked = checkOtelPayload(signal, payload);
-    if (!checked.ok) {
-      getDefaultOtelTracker().recordInvalidOtelSignal();
-      sendJson(response, 400, errorBody(checked.message));
-      return true;
-    }
-    recordOtelLiveFeed(signal, checked.payload);
-    ingestOtelSignal(signal, checked.payload);
-    sendJson(response, 200, {});
-    return true;
-  }
   return false;
 }
 

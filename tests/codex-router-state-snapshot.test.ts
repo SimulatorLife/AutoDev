@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { resetCorrelation } from "@simulatorlife/autodev-runtime/router/correlation";
 import {
   getRouterStatus,
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import { resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
 import {
   CodexStateCollector,
   loadCodexStateCollectorConfig
@@ -181,7 +181,7 @@ function assertNoLeakedPaths(value: any, path: string = "$"): void {
 
 test("codexStateStatus surfaces the pending envelope before the first snapshot", () => {
   resetRouterTelemetry();
-  resetOtelTelemetry();
+  resetCorrelation();
   const status = getRouterStatus() as JsonRecord;
   assert.equal(status.codexState.localTelemetry.status, "pending");
   assert.equal(

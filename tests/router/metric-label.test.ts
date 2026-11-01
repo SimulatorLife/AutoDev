@@ -39,7 +39,7 @@ test("the router has one owner for safeMetricLabel", () => {
   const routerSources = [
     "runtime/src/router/subagents.ts",
     "runtime/src/router/usage.ts",
-    "runtime/src/router/otel.ts",
+    "runtime/src/router/correlation.ts",
     "runtime/src/router/http.ts",
     "runtime/src/router/state-collector.ts",
     "runtime/src/router/index.ts"

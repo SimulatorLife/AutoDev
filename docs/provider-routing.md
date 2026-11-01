@@ -880,12 +880,11 @@ The router makes its effective choice visible in two ways:
   Responses API tool-call items on that workspace's turns, the same inference
   the top-level `usage.totals.toolCalls` uses -- it is not a count of
   OTLP-named tool invocations. Historical/cross-workspace visualization belongs in the AutoDev Console **Usage** surface, not a router-local HTML dashboard.
-- A workspace bucket may additionally carry `byTool`, `bySkill`, `byMcp`, and
-  coverage counters. These rows come from local causally-linked evidence:
-  AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
-  records joined by `conversation.id` to the local Codex thread database, and
-  authenticated provider-bridge reports. When resolving telemetry context across
-  MCP, tool, hook, skill, and bridge events, the router applies canonical precedence:
+- A workspace bucket may additionally carry `bySkill`, `byMcp`, and
+  `bridgeTools`/`bridgeSkills`. These rows come from local causally-linked
+  evidence: AutoDev request context and authenticated provider-bridge reports.
+  The router no longer receives OTLP, so nothing else contributes to them.
+  When resolving telemetry context across MCP, tool, skill, and bridge events, the router applies canonical precedence:
   (1) explicit event or resource attributes, (2) verified provider bridge or request context,
   (3) verified `conversation.id` -> session/thread-state join, and (4) `unattributed`.
   The router does not require Codex to emit `workspace_id`, does not distribute
@@ -1015,9 +1014,9 @@ headers and body metadata, and also from `session_id` or `conversation_id` in
 the structured `x-codex-turn-metadata` JSON. It never derives a session key
 from a workspace path or task text.
 
-The same status payload's `codexTelemetry` includes current Codex OTEL lifecycle and
-skill-injection observations (`codex.skill.injected` and
-`codex.thread.skills.*`). The canonical telemetry ownership, OpenLIT ingestion, and Usage semantics are defined in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
+The same status payload's `correlation` includes the router's live correlation with
+the agents it serves: the bridge tool/skill/MCP events, the MCP servers the bridges
+reached, and the skill usage. The canonical telemetry ownership, OpenLIT ingestion, and Usage semantics are defined in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
 Read-only roles (`explorer`, `docs-researcher`, `validator`, and
 `browser-tester`) run with filesystem access broad enough to inspect approved
@@ -1164,9 +1163,9 @@ The retired router HTML dashboard is not a control surface. Provider-role and mo
 ### Local provider/workspace diagnostics
 
 The router extends the live `usage.byWorkspace` diagnostic contract with first-class event counters so attribution can fail closed on per-workspace tool and skill evidence. A workspace must receive a first-class event from a provider
-bridge before its `byTool` and `bySkill` rows move off the `unavailable`
-state; OTLP datapoints alone are not sufficient because the OTLP exporter
-only describes what Codex's own runtime emitted.
+bridge before its `bySkill` and `byMcp` rows move off the `unavailable`
+state; the bridge's report is the only evidence the router holds, because it
+no longer receives OTLP.
 
 The new fields on every `usage.byWorkspace[*]` bucket are:
 
@@ -1181,29 +1180,14 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   where the bridge refused a tool (workspace settings, permission deny).
 - `skillsExposed`: count of `skill_exposed` events. The first `skill_exposed`
   for a workspace is what unlocks per-workspace skill attribution.
-- `toolsUnattributed`, `skillsUnattributed`: coverage of OTLP datapoints that
-  could not be joined to a specific name (no `call_id`, no skill attribute)
-  on a workspace where the workspace_id itself resolved. Distinct from
-  `toolsExecuted`/`skillsExposed` because it counts unjoined coverage rather
-  than first-class evidence.
 - `bridgeTools`: the raw `tool_executed` rows the bridge reported for this
-  workspace (`{ tool, server, count, byStatus }`). It is bridge evidence and must not be summed with OTLP-sourced `byTool` into the same total.
+  workspace (`{ tool, server, count, byStatus }`). It is the workspace's tool
+  list: the router's OTLP-sourced twin was deleted with the receiver.
 - `bridgeSkills`: the raw `skill_exposed` rows the bridge reported for this
   workspace (`{ skill, count }`) -- evidence a skill was made available to the
   workspace, not that it was used. This is a distinct claim from `bySkill`
   (confirmed uses, the same source as `skillUses`): a workspace can have
   `bridgeSkills` entries with zero `bySkill` entries. Consumers must keep exposure and confirmed use distinct rather than folding them into one count.
-
-The companion OTLP metric `codex.tool_result` is the runtime-causal "the
-tool call landed" signal. Each datapoint carries a `call_id` (the same id
-emitted on the originating `codex.tool.call`); the router dedupes the
-result against the call id and reports:
-
-- `executed`: number of tool results that were causally resolved to a
-  tool call (unique `call_id`).
-- `unattributed`: number of result events whose `call_id` was either missing
-  or had already been counted under another datapoint. This is the raw
-  coverage needed to distinguish observed result events from causally resolved executed tools.
 
 The router also persists a derived snapshot of the local Codex state
 database under `status.codexState`. The collector is read-only, opens
@@ -1788,10 +1772,11 @@ session, which is the only join available: a child thread's request carries no
 trace of which provider ran its parent. The join is skipped for callers that
 supply no session id, because they all share one fallback bucket and would
 otherwise be credited to an unrelated caller's parent turn. A role request with
-no joinable parent turn is attributed to `unattributed` rather than guessed. `codexNativeSpawns` reports Codex's own OTLP
-`codex.multi_agent.spawn` counter beside the router's count rather than merged
-into it, because it covers only Codex-exported threads and adding the two would
-double-count every `router_alias` spawn.
+no joinable parent turn is attributed to `unattributed` rather than guessed.
+The projection publishes no second counter beside the router's: Codex's own
+`codex.multi_agent.spawn` metric reaches OpenLIT, not the router, so a count
+beside the router's would always read zero and claim a spawn count the router
+never observed.
 
 #### CLI-delegated children as measured turns
 
@@ -2535,16 +2520,17 @@ does not overlap the router's job. A `thread/list` snapshot was surfaced in
 it, and it cold-spawned a `codex app-server` process on every refresh, so it
 was removed rather than reworked.
 
-### Why the OTLP receiver lives in the router
+### Where the agents' telemetry goes
 
-Codex's exporter posts logs, traces, and metrics to one endpoint, and the
-router is the only always-on local service on the request path, so it receives
-them. Co-location also lets `/status` present router-owned request telemetry
-and Codex-native metrics together while keeping them separately sourced --
-`codexNativeSpawns` sits _beside_ the router's subagent count rather than being
-summed into it, because adding the two would double-count every `router_alias`
-spawn. The router owns provider selection, fallback, cooldown, concurrency, and
-origin telemetry because Codex emits none of those semantics.
+The agents export their logs, traces, and metrics to OpenLIT's authenticated
+first-party receiver on port 4318, and the Console reads that store. The
+router does not receive OTLP: it has no OTLP routes, no historical
+aggregation of its own, and no metric series. What it keeps is the live
+correlation it observes itself -- the tool, skill, and MCP events the
+provider bridges report -- because those are the facts about the agents it
+serves that only it can hold. The router owns provider selection, fallback,
+cooldown, concurrency, and origin telemetry because Codex emits none of those
+semantics.
 
 ## Distribution and validation strategy
 

@@ -527,10 +527,20 @@ export interface ControlApiMcpRuntimeEvidence {
   readonly lastSeenAt: string | null;
   /** The status of the last observation, as the Runtime recorded it. */
   readonly lastStatus: string;
-  /** How many times the Runtime has tried to initialize the server. */
-  readonly initAttempts: number;
-  /** How many times the Runtime has tried to discover the server's tools. */
-  readonly toolDiscoveryAttempts: number;
+  /**
+   * How many times the Runtime has tried to initialize the server.
+   *
+   * `null` when nothing observes the Runtime's MCP client initialization: the
+   * count is not a measurement then, and a zero would claim the server was
+   * never brought up.
+   */
+  readonly initAttempts: number | null;
+  /**
+   * How many times the Runtime has tried to discover the server's tools.
+   *
+   * `null` for the same reason as `initAttempts`.
+   */
+  readonly toolDiscoveryAttempts: number | null;
   /** How many of the Runtime's attempts on this server failed. */
   readonly failures: number;
   /**

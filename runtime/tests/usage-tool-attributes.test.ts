@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  AUTODEV_MCP_SERVER_ALIASES,
-  AUTODEV_SKILL_ALIASES
-} from "../src/router/otel-attributes.ts";
-import {
   toolKey,
   toolNameAttribute,
   toolServerAttribute
@@ -75,15 +71,4 @@ test("the tool key separates two calls of the same tool on different servers", (
     second,
     "two servers offering the same tool are two different tools in use"
   );
-});
-
-test("the alias lists name the attributes the telemetry carries", () => {
-  assert.equal(
-    AUTODEV_MCP_SERVER_ALIASES.includes("mcp.server.name"),
-    true,
-    "the Runtime's MCP client names the server this way"
-  );
-  assert.equal(AUTODEV_MCP_SERVER_ALIASES.includes("mcp.connector.name"), true);
-  assert.equal(AUTODEV_SKILL_ALIASES.includes("skill"), true);
-  assert.equal(AUTODEV_SKILL_ALIASES.includes("skill.name"), true);
 });
