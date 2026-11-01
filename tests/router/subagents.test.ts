@@ -530,10 +530,11 @@ test("SubagentRegistry restores persisted subagent telemetry preserving unknown/
   const status = registry.subagentStatus();
   assert.equal(status.total, 3);
   assert.equal(status.recent.length, 3);
-  // A snapshot that carries no identity gaps leaves them at zero rather than
-  // inventing a gap the snapshot never recorded.
+  // The spawn gap is derived from the counts beside it, so it follows them:
+  // three spawns that named two providers leave one gap. A snapshot that
+  // carries no bridge gaps leaves those at zero rather than inventing one.
   assert.deepEqual(status.identityGaps, {
-    missingProvider: 0,
+    missingProvider: 1,
     missingModel: 0
   });
 
@@ -572,14 +573,15 @@ test("SubagentRegistry restores persisted subagent telemetry preserving unknown/
 
   // The identity gaps are restored with the counts they complement, so a
   // restored total and byProvider still account for the spawns that named no
-  // provider.
+  // provider: the published gap is the derived spawn gap plus the bridge
+  // subagents the registry could not attribute.
   registry.restoreSubagentTelemetry({
     total: 5,
     byProvider: { claude: 3 },
-    identityGaps: { missingProvider: 2, missingModel: 1 }
+    bridgeIdentityGaps: { missingProvider: 2, missingModel: 1 }
   });
   assert.deepEqual(registry.subagentStatus().identityGaps, {
-    missingProvider: 2,
+    missingProvider: 4,
     missingModel: 1
   });
 });

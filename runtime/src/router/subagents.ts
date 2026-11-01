@@ -261,8 +261,8 @@ export interface RecordSubagentSpawnInput {
 }
 
 /**
- * Agents the registry was told about but could not attribute to a provider or
- * a model.
+ * Bridge subagents the registry was told about but could not attribute to a
+ * provider or a model.
  *
  * A gap is a missing identity, never a guessed one: the target state requires
  * a provider/model attribution gap to stay visible as missing attribution
@@ -279,7 +279,7 @@ export interface SubagentTelemetry {
   byProvider: Record<string, number>;
   byRole: Record<string, number>;
   byStatus: Record<string, number>;
-  identityGaps: AgentIdentityGaps;
+  bridgeIdentityGaps: AgentIdentityGaps;
   recent: SubagentSpawnRecord[];
 }
 
@@ -712,7 +712,7 @@ export class SubagentRegistry {
       byProvider: {},
       byRole: {},
       byStatus: {},
-      identityGaps: {
+      bridgeIdentityGaps: {
         missingProvider: 0,
         missingModel: 0
       },
@@ -972,10 +972,10 @@ export class SubagentRegistry {
     const missingModel =
       typeof context.model !== "string" || !context.model.trim();
     if (missingProvider) {
-      this.subagentTelemetry.identityGaps.missingProvider += 1;
+      this.subagentTelemetry.bridgeIdentityGaps.missingProvider += 1;
     }
     if (missingModel) {
-      this.subagentTelemetry.identityGaps.missingModel += 1;
+      this.subagentTelemetry.bridgeIdentityGaps.missingModel += 1;
     }
     return !missingProvider && !missingModel;
   }
@@ -1205,9 +1205,6 @@ export class SubagentRegistry {
       typeof provider === "string" && provider.trim()
         ? safeMetricLabel(provider)
         : null;
-    if (!resolvedProvider) {
-      this.subagentTelemetry.identityGaps.missingProvider += count;
-    }
     const entry: SubagentSpawnRecord = {
       timestamp: new Date().toISOString(),
       mechanism: mechanism as SubagentMechanism,
@@ -1257,7 +1254,7 @@ export class SubagentRegistry {
     this.subagentTelemetry.byProvider = {};
     this.subagentTelemetry.byRole = {};
     this.subagentTelemetry.byStatus = {};
-    this.subagentTelemetry.identityGaps = {
+    this.subagentTelemetry.bridgeIdentityGaps = {
       missingProvider: 0,
       missingModel: 0
     };
@@ -1289,13 +1286,32 @@ export class SubagentRegistry {
           (provider) =>
             providerCapabilities(provider, this.executionContract).subagentSpawn
         );
+    // The spawns that named no provider are the difference between the
+    // spawns and the providers they named, so the gap is derived from the
+    // counts beside it rather than counted separately: a second counter for
+    // the same fact would be free to disagree with it, and after a restore it
+    // would. The bridge subagents the registry could not attribute are the
+    // ones no other count holds, so they are counted.
+    const spawnsMissingProvider = Math.max(
+      0,
+      this.subagentTelemetry.total -
+        Object.values(this.subagentTelemetry.byProvider).reduce(
+          (sum, count) => sum + count,
+          0
+        )
+    );
     return {
       total: this.subagentTelemetry.total,
       byMechanism: { ...this.subagentTelemetry.byMechanism },
       byProvider: { ...this.subagentTelemetry.byProvider },
       byRole: { ...this.subagentTelemetry.byRole },
       byStatus: { ...this.subagentTelemetry.byStatus },
-      identityGaps: { ...this.subagentTelemetry.identityGaps },
+      identityGaps: {
+        missingProvider:
+          spawnsMissingProvider +
+          this.subagentTelemetry.bridgeIdentityGaps.missingProvider,
+        missingModel: this.subagentTelemetry.bridgeIdentityGaps.missingModel
+      },
       spawnCapableProviders,
       recent: [...this.subagentTelemetry.recent].reverse()
     };
@@ -1365,21 +1381,22 @@ export class SubagentRegistry {
     ] as const) {
       restoreMetricCounts(saved[section], this.subagentTelemetry[section]);
     }
-    // The identity gaps are restored with the counts they complement: a
-    // restored `total` with a restored `byProvider` would otherwise describe
-    // spawns without a provider that the gap counter did not account for.
-    if (isRecord(saved.identityGaps)) {
+    // The bridge subagents the registry could not attribute are restored with
+    // the counts they complement, so a restored total and byProvider still
+    // account for the spawns that named no provider.
+    if (isRecord(saved.bridgeIdentityGaps)) {
       const missingProvider = restoredNonnegativeInteger(
-        saved.identityGaps.missingProvider
+        saved.bridgeIdentityGaps.missingProvider
       );
       if (missingProvider !== null) {
-        this.subagentTelemetry.identityGaps.missingProvider = missingProvider;
+        this.subagentTelemetry.bridgeIdentityGaps.missingProvider =
+          missingProvider;
       }
       const missingModel = restoredNonnegativeInteger(
-        saved.identityGaps.missingModel
+        saved.bridgeIdentityGaps.missingModel
       );
       if (missingModel !== null) {
-        this.subagentTelemetry.identityGaps.missingModel = missingModel;
+        this.subagentTelemetry.bridgeIdentityGaps.missingModel = missingModel;
       }
     }
     const recent = restoreRecentSubagentSpawns(
