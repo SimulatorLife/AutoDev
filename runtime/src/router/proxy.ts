@@ -2721,6 +2721,18 @@ type FallbackContext = {
   response: ServerResponse;
   candidates: Candidate[] | OrchestratorCandidate[];
   role: string | null;
+  /**
+   * The agent role this request actually runs under.
+   *
+   * `role` is the role the requested model maps to, which is null for the
+   * orchestrator alias; `agentRole` is the role the request is served under.
+   * The logical request span carries the effective role, and an attempt is a
+   * child of that request, so an attempt that carried only `role` would drop
+   * the role of every orchestrator turn -- the largest tier -- and leave the
+   * Usage attempt list reading `Not observed` where the request beside it
+   * names one.
+   */
+  effectiveRole: string | null;
   origin: string | null;
   subject: string;
   agentRole: string | null;
@@ -2970,6 +2982,7 @@ export async function proxyFallbackChain(
     response,
     candidates,
     role,
+    effectiveRole: role ?? agentRole,
     origin,
     subject,
     agentRole,
@@ -3596,7 +3609,7 @@ async function fetchCandidate(
         attemptNumber: attempt,
         model: route.model,
         requestedModel: ctx.modelName,
-        role: ctx.role,
+        role: ctx.effectiveRole,
         workspace: ctx.workspace
       }
     );

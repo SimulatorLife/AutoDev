@@ -1127,6 +1127,68 @@ test(
 );
 
 test(
+  "an orchestrator attempt carries the same agent role as the request it belongs to",
+  { concurrency: false },
+  async () => {
+    // The orchestrator alias maps to no model role, so the request's role is
+    // null and the effective role is the orchestrator one. The logical request
+    // span carries that effective role, and its attempt is a child of it: an
+    // attempt that carried only the model-derived role dropped the role of
+    // every orchestrator turn -- the largest tier -- so the Usage attempt list
+    // read `Not observed` beside a request that named one.
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp-orchestrator-role",
+        status: "completed",
+        model: "claude-test",
+        output: []
+      })) as typeof fetch;
+    installExporter();
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [route("claude", "LITELLM_API_KEY")],
+          agentRole: "orchestrator",
+          origin: "orchestrator",
+          subject: "the orchestrator"
+        },
+        { model: "autodev/orchestrator", input: [], stream: false },
+        false,
+        "req-orchestrator-role",
+        null,
+        { key: "orchestrator-role-workspace" }
+      );
+
+      const spans = snapshotSpans();
+      const logical = findLogical(spans);
+      assert.equal(logical.length, 1);
+      assert.equal(
+        logical[0]?.attributes["autodev.agent.role"],
+        "orchestrator"
+      );
+      const attempts = findAttemptSpans(spans);
+      assert.equal(attempts.length, 1);
+      assert.equal(
+        attempts[0]?.attributes["autodev.agent.role"],
+        "orchestrator",
+        "the attempt must carry the role its request carries"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
   "the Responses API cache shape reaches the attempt span; the Usage cache-rate panel is not blind to it",
   { concurrency: false },
   async () => {
