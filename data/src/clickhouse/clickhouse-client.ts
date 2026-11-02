@@ -55,16 +55,6 @@ function requestSignal(timeoutMs: number): AbortSignal | null {
   return AbortSignal.timeout(timeoutMs);
 }
 
-/** Options every ClickHouse request accepts. */
-export interface ClickHouseRequestOptions {
-  /**
-   * Ceiling for the request in milliseconds. Defaults to
-   * `DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS`; a non-positive value disables
-   * the ceiling.
-   */
-  readonly timeoutMs?: number;
-}
-
 export interface ParameterizedQuery {
   readonly query: string;
   readonly params: Record<string, string | number | boolean>;
@@ -156,6 +146,10 @@ export class ClickHouseStatementError extends Error {
  * content type belongs here rather than in the caller: it is part of how the
  * request is made, and a second place that decides it is a second way for the
  * request to be wrong.
+ *
+ * `timeoutMs` is the ceiling for the request in milliseconds. It defaults to
+ * `DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS`; a non-positive value disables the
+ * ceiling.
  */
 export function runParameterizedClickHouseStatement(
   endpoint: string,
