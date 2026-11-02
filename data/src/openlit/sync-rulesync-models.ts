@@ -168,6 +168,35 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools"],
       isDefault: false
     },
+    // The models the Claude CLI names when it serves them. The reasoning
+    // effort is not part of the name the CLI reports, so these carry the same
+    // prices their effort-suffixed siblings do.
+    {
+      provider: "claude",
+      modelId: "claude-opus-5-5",
+      displayName: "Claude Opus 5.5",
+      modelType: "chat",
+      contextWindow: 200_000,
+      inputPricePerMToken: 15,
+      outputPricePerMToken: 75,
+      cacheReadPricePerMToken: 1.5,
+      cacheCreationPricePerMToken: 18.75,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    },
+    {
+      provider: "claude",
+      modelId: "claude-sonnet-5-5",
+      displayName: "Claude Sonnet 5.5",
+      modelType: "chat",
+      contextWindow: 200_000,
+      inputPricePerMToken: 3,
+      outputPricePerMToken: 15,
+      cacheReadPricePerMToken: 0.3,
+      cacheCreationPricePerMToken: 3.75,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    },
 
     // Antigravity (Google)
     {
@@ -182,6 +211,19 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       cacheCreationPricePerMToken: 0,
       capabilities: ["chat", "tools", "reasoning"],
       isDefault: true
+    },
+    {
+      provider: "antigravity",
+      modelId: "gemini-3.8-flash-high",
+      displayName: "Gemini 3.8 Flash High",
+      modelType: "chat",
+      contextWindow: 1_000_000,
+      inputPricePerMToken: 0.5,
+      outputPricePerMToken: 3,
+      cacheReadPricePerMToken: 0.05,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
     },
     {
       provider: "antigravity",
@@ -246,6 +288,19 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       provider: "minimax",
       modelId: "MiniMax-M3.1-Flash-Preview",
       displayName: "MiniMax-M3.1-Flash-Preview",
+      modelType: "chat",
+      contextWindow: 1_000_000,
+      inputPricePerMToken: 0.3,
+      outputPricePerMToken: 1.2,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    },
+    {
+      provider: "minimax",
+      modelId: "MiniMax-M3.1-Flash",
+      displayName: "MiniMax-M3.1-Flash",
       modelType: "chat",
       contextWindow: 1_000_000,
       inputPricePerMToken: 0.3,

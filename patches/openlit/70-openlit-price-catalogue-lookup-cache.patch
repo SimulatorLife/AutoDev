@@ -1,0 +1,74 @@
+diff --git a/src/client/src/lib/platform/providers/provider-registry.ts b/src/client/src/lib/platform/providers/provider-registry.ts
+index 295e0c52..02de0742 100644
+--- a/src/client/src/lib/platform/providers/provider-registry.ts
++++ b/src/client/src/lib/platform/providers/provider-registry.ts
+@@ -128,9 +128,50 @@ async function loadAllModelsFromDb(
+ 	return grouped;
+ }
+ 
++/**
++ * How long a provider's models are kept before they are read again.
++ *
++ * The catalogue changes when the models are synchronized, so the copy is
++ * short-lived: a pricing run that starts after a sync sees the new prices.
++ */
++const PROVIDER_MODEL_CACHE_TTL_MS = 60_000;
++
++const providerModelCache = new Map<
++	string,
++	{ models: ModelMetadata[]; expiresAt: number }
++>();
++const providerModelLoads = new Map<string, Promise<ModelMetadata[]>>();
++
+ async function loadProviderModelsFromDb(
+ 	providerId: string,
+ 	databaseConfigId: string
++): Promise<ModelMetadata[]> {
++	const key = `${databaseConfigId}:${providerId}`;
++	const cached = providerModelCache.get(key);
++	if (cached && cached.expiresAt > Date.now()) return cached.models;
++	const loading = providerModelLoads.get(key);
++	if (loading) return loading;
++	const request = readProviderModelsFromDb(providerId, databaseConfigId).then(
++		(models) => {
++			providerModelCache.set(key, {
++				models,
++				expiresAt: Date.now() + PROVIDER_MODEL_CACHE_TTL_MS,
++			});
++			providerModelLoads.delete(key);
++			return models;
++		},
++		(error) => {
++			providerModelLoads.delete(key);
++			throw error;
++		}
++	);
++	providerModelLoads.set(key, request);
++	return request;
++}
++
++async function readProviderModelsFromDb(
++	providerId: string,
++	databaseConfigId: string
+ ): Promise<ModelMetadata[]> {
+ 	const query = `
+ 		SELECT
+@@ -192,7 +233,7 @@ export class ProviderRegistry {
+ 		if (!provider) return null;
+ 
+ 		const models = await loadProviderModelsFromDb(providerId, databaseConfigId);
+-		return { ...provider, supportedModels: models };
++		return { ...provider, supportedModels: [...models] };
+ 	}
+ 
+ 	/**
+@@ -218,7 +259,8 @@ export class ProviderRegistry {
+ 		providerId: string,
+ 		databaseConfigId: string
+ 	): Promise<ModelMetadata[]> {
+-		return loadProviderModelsFromDb(providerId, databaseConfigId);
++		const models = await loadProviderModelsFromDb(providerId, databaseConfigId);
++		return [...models];
+ 	}
+ 
+ 	/**
