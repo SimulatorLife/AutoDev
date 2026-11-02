@@ -82,7 +82,8 @@ export const OPENLIT_PATCH_NAMES = [
   "65-autodev-usage-context-compactions-by-provider",
   "66-autodev-clickhouse-status-filter-vocabulary",
   "67-remove-openlit-prompt-hub",
-  "68-remove-openlit-agents-hub"
+  "68-remove-openlit-agents-hub",
+  "69-openlit-openapi-drops-removed-routes"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

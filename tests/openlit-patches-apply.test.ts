@@ -496,6 +496,45 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "the retained coding-agents surface"
   );
 
+  // The OpenAPI spec ships in the image (it is served from `public/`), so a
+  // path it lists is a route the product claims to have. Every path below
+  // answers 404 in the deployed image: the prompt routes went with the Prompt
+  // Hub, the chat routes with the fork's Chat product, and the rule-engine
+  // and controller routes with earlier subtractions. A spec that advertises a
+  // 404 is a second answer to "what routes does this product serve", and it
+  // is the wrong one.
+  const openapi = readFileSync(
+    join(dir, "src/client/public/openapi.yaml"),
+    "utf8"
+  );
+  for (const route of [
+    "/api/prompt",
+    "/api/prompt/get",
+    "/api/prompt/get-compiled",
+    "/api/prompt/improve",
+    "/api/rule-engine/evaluate",
+    "/api/controller/poll",
+    "/api/chat/improvement/{spanId}",
+    "/api/chat/config",
+    "/api/chat/conversation",
+    "/api/chat/conversation/{id}",
+    "/api/chat/message",
+    "/api/chat/message/execute",
+    "/api/chat/message/save-widget",
+    "/api/chat/usage"
+  ]) {
+    assert.doesNotMatch(
+      openapi,
+      new RegExp(`^ {2}${route.replaceAll(/[{}/]/gu, String.raw`\$&`)}:`, "mu"),
+      `the shipped OpenAPI spec must not advertise ${route}, which the product does not serve`
+    );
+  }
+  assert.match(
+    openapi,
+    /^ {2}\/api\/telemetry\/trace:/mu,
+    "the spec must still advertise the routes the product serves"
+  );
+
   // The Vault administration product is gone; its read paths are not.
   assertPathsRemoved(
     dir,
