@@ -407,7 +407,17 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
     assert.ok(argv.includes("--add-dir"));
   } finally {
     await stopChild(bridge);
-    rmSync(root, { recursive: true, force: true });
+    // The child is stopped, but the fake CLI it spawned may still be closing
+    // its log inside the temporary directory. `rmSync` does not retry by
+    // default, and on macOS a file that appears while the tree is being
+    // removed fails the whole removal with ENOTEMPTY -- which reads as a
+    // failed test rather than as a race with a process that is exiting.
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
   }
 });
 
@@ -464,7 +474,12 @@ test("a call against a turn that is gone is refused rather than left to hang", a
     assert.match(body.error, /no longer active/);
   } finally {
     await stopChild(bridge);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
   }
 });
 
@@ -624,7 +639,12 @@ test("a second tool call made while the turn is parked still reaches Codex", asy
     );
   } finally {
     await stopChild(bridge);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
   }
 });
 
@@ -724,7 +744,12 @@ test("a continuation for a call no live turn owns starts a turn instead of hangi
     );
   } finally {
     await stopChild(bridge);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
   }
 });
 
@@ -837,6 +862,11 @@ test("an image the user attached is written where agy can open it, and named in 
     );
   } finally {
     await stopChild(bridge);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
   }
 });
