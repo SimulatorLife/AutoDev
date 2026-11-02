@@ -114,7 +114,8 @@ export default async function HookEventDetailPage({
       React.createElement(ResourceUnavailable, {
         title: outcome.title,
         code: outcome.code,
-        message: outcome.message
+        message: outcome.message,
+        hint: outcome.hint
       })
     );
   }

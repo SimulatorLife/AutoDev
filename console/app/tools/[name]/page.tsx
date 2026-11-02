@@ -161,7 +161,8 @@ export default async function ToolDetailPage({
       React.createElement(ResourceUnavailable, {
         title: outcome.title,
         code: outcome.code,
-        message: outcome.message
+        message: outcome.message,
+        hint: outcome.hint
       })
     );
   }

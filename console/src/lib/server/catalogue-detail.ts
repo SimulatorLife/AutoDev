@@ -78,6 +78,16 @@ export type CatalogueDetailOutcome =
       readonly title: string;
       readonly code: string;
       readonly message: string;
+      /**
+       * What the operator does about it.
+       *
+       * The shared failure shell's default advice is for a service that is not
+       * there, and a catalogue that could not be applied is not that: the
+       * declaration was published and the Runtime could not apply it, so the
+       * remedy is on the Runtime's side and not in the Console's
+       * configuration.
+       */
+      readonly hint: string;
     };
 
 /**
@@ -103,7 +113,8 @@ export function catalogueDetailOutcome(options: {
       code: options.invalidCode,
       message:
         options.observation.reason ??
-        `The ${options.source} is invalid, so its contents could not be read.`
+        `The ${options.source} is invalid, so its contents could not be read.`,
+      hint: `The Runtime published a ${options.source} it could not apply. Fix the declaration and the Console will read it.`
     };
   }
   return {
@@ -112,6 +123,7 @@ export function catalogueDetailOutcome(options: {
     code: options.unobservedCode,
     message:
       options.observation.reason ??
-      `The ${options.source} was not observed, so its contents could not be read.`
+      `The ${options.source} was not observed, so its contents could not be read.`,
+    hint: `Nothing was read, so nothing is known about the ${options.source}. The read has to answer before the Console can say what it holds.`
   };
 }

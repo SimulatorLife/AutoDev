@@ -73,6 +73,37 @@ const CONTROL_API_TIMEOUT_CODE = "autodev_control_api_timeout";
 const CONTROL_API_TIMEOUT_HINT =
   "The Control API accepted the read and did not answer before the Console gave up. Check whether the query is slow against the telemetry store.";
 
+/**
+ * The codes that mean the service, or its credential, is not there at all.
+ *
+ * These are the failures the shell's own advice is true of: there is nothing
+ * listening, or nothing is allowed to listen, so the operator has to configure
+ * the integration before the read can answer.
+ *
+ * Every other failure got that advice too, and it was wrong for them: a
+ * declaration the Runtime could not apply, a catalogue nobody read, a response
+ * the Console could not parse. The service answered in all three, and telling
+ * the operator to configure an integration that is already configured sends
+ * them to repair the wrong thing.
+ */
+const SERVICE_ABSENT_CODES: ReadonlySet<string> = new Set([
+  "autodev_unreachable",
+  "autodev_control_api_disabled",
+  "autodev_usage_credentials_disabled",
+  "autodev_openlit_usage_unauthorized"
+]);
+
+/**
+ * What to do when the service answered, but not with anything usable.
+ *
+ * The reason above is the service's own, and it is the thing to act on: a
+ * declaration that could not be applied names what is wrong with the
+ * declaration, and a catalogue nobody read says that the read has to answer
+ * first. This says so rather than inventing a cause the shell does not know.
+ */
+const READ_DID_NOT_COMPLETE_HINT =
+  "The Console could not complete this read. The reason above is what to act on.";
+
 /** Trailing sentence punctuation, which a heading may omit and a message may not. */
 const TRAILING_PUNCTUATION = /[.!?:;]+$/;
 
@@ -200,7 +231,9 @@ export function ResourceUnavailable({
       hint ??
         (code === CONTROL_API_TIMEOUT_CODE
           ? CONTROL_API_TIMEOUT_HINT
-          : "Configure the required server-side integration and restart the Console.")
+          : SERVICE_ABSENT_CODES.has(code)
+            ? "Configure the required server-side integration and restart the Console."
+            : READ_DID_NOT_COMPLETE_HINT)
     )
   );
 }

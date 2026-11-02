@@ -5,6 +5,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ResourceUnavailable } from "../app/_console.ts";
+import { catalogueDetailOutcome } from "../src/lib/server/catalogue-detail.ts";
 
 /**
  * A slow read is not a misconfigured integration.
@@ -66,5 +67,79 @@ test("a route that knows better than the shell keeps its own advice", () => {
     markup,
     /Configure the required server-side integration/u,
     "an explicit hint wins over the shell's default"
+  );
+});
+
+test("a declaration that could not be applied is not a missing integration", () => {
+  // The Runtime published the declaration and could not apply it. The service
+  // answered, so the advice "configure the required server-side integration"
+  // sends the operator to repair a credential that is working.
+  const markup = renderToStaticMarkup(
+    React.createElement(ResourceUnavailable, {
+      title: "Hook event could not be read",
+      code: "autodev_console_hooks_catalogue_invalid",
+      message: "The hook declaration could not be applied."
+    })
+  );
+  assert.doesNotMatch(
+    markup,
+    /Configure the required server-side integration/u,
+    "the service answered, so its configuration is not what is broken"
+  );
+  assert.match(
+    markup,
+    /The reason above is what to act on/u,
+    "the shell says what is true of a read it could not complete"
+  );
+});
+
+test("a catalogue nobody read is not a missing integration either", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ResourceUnavailable, {
+      title: "Hook event could not be read",
+      code: "autodev_console_hooks_catalogue_not_observed",
+      message: "The canonical hook declaration was not observed."
+    })
+  );
+  assert.doesNotMatch(
+    markup,
+    /Configure the required server-side integration/u,
+    "nothing was read, which is not a thing an operator configures away"
+  );
+  assert.match(markup, /The reason above is what to act on/u);
+});
+
+test("a catalogue refusal carries the advice the catalogue knows", () => {
+  // The catalogue knows which of the two happened -- a declaration that could
+  // not be applied, or a read that did not answer -- and the two have
+  // different remedies.
+  const applied = catalogueDetailOutcome({
+    subject: "Hook event",
+    source: "canonical hook declaration",
+    invalidCode: "autodev_console_hooks_catalogue_invalid",
+    unobservedCode: "autodev_console_hooks_catalogue_not_observed",
+    observation: { kind: "invalid", reason: null }
+  });
+  assert.equal(applied.kind, "unavailable");
+  assert.match(
+    applied.kind === "unavailable" ? applied.hint : "",
+    /could not apply/u
+  );
+  assert.doesNotMatch(
+    applied.kind === "unavailable" ? applied.hint : "",
+    /Configure the required server-side integration/u
+  );
+
+  const notObserved = catalogueDetailOutcome({
+    subject: "Hook event",
+    source: "canonical hook declaration",
+    invalidCode: "autodev_console_hooks_catalogue_invalid",
+    unobservedCode: "autodev_console_hooks_catalogue_not_observed",
+    observation: { kind: "not-observed", reason: null }
+  });
+  assert.equal(notObserved.kind, "unavailable");
+  assert.match(
+    notObserved.kind === "unavailable" ? notObserved.hint : "",
+    /Nothing was read/u
   );
 });
