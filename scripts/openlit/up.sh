@@ -335,9 +335,6 @@ echo "==> Verifying the deployed AutoDev Usage response contract"
 AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
 	pnpm --filter @simulatorlife/autodev-runtime openlit:verify-usage
 
-echo "==> Synchronizing rulesync prompts to AutoDev Prompt Hub"
-OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts || echo "Warning: prompt synchronization failed" >&2
-
 echo "==> Synchronizing rulesync agent roles to AutoDev Agents Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-agents || echo "Warning: agent synchronization failed" >&2
 

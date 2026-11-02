@@ -412,6 +412,37 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "the drop migration must run with the other product-removal drops"
   );
 
+  // The Prompt Hub's tables are the product's storage, and the fork's own
+  // convention is that a removed product's tables are dropped on existing
+  // installs. A subtraction that deletes the pages and the API but leaves
+  // the tables behind leaves a store with no owner: something that believes
+  // it is looking at prompts can still read rows out of it.
+  const dropPrompt = readFileSync(
+    join(dir, "src/client/src/clickhouse/migrations/drop-prompt-migration.ts"),
+    "utf8"
+  );
+  for (const table of [
+    "openlit_prompts",
+    "openlit_prompt_versions",
+    "openlit_prompt_version_downloads"
+  ]) {
+    assert.match(
+      dropPrompt,
+      new RegExp(`DROP TABLE IF EXISTS ${table}`),
+      `${table} must be dropped from existing installs`
+    );
+  }
+  assert.match(
+    boardMigrations,
+    /await DropPromptMigration\(databaseConfigId\);/u,
+    "the prompt drop migration must run with the other product-removal drops"
+  );
+  assert.doesNotMatch(
+    boardMigrations,
+    /CreatePromptMigration/u,
+    "no migration may create the removed Prompt Hub tables"
+  );
+
   // The Vault administration product is gone; its read paths are not.
   assertPathsRemoved(
     dir,
@@ -708,8 +739,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   for (const route of [
     "src/client/src/app/api/db-config/route.ts",
     "src/client/src/app/api/providers/route.ts",
-    "src/client/src/app/api/api-key/route.ts",
-    "src/client/src/app/api/prompt/route.ts"
+    "src/client/src/app/api/api-key/route.ts"
   ]) {
     const source = readFileSync(join(dir, route), "utf8");
     assert.doesNotMatch(
@@ -718,6 +748,17 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
       `${route} must not call a permission gate that cannot refuse`
     );
   }
+
+  // The prompt route was the fourth member of that list, and it left by a
+  // different door: the whole Prompt Hub product was subtracted, so there is
+  // no route left to gate. A read of a deleted file would have failed the
+  // suite for the wrong reason, and the prompt API is the one AutoDev's
+  // console does not use.
+  assertPathsRemoved(
+    dir,
+    ["src/client/src/app/api/prompt/route.ts"],
+    "OpenLIT Prompt Hub subtraction"
+  );
 
   // Ownership replaces grants: the caller's own link is the check now, and it
   // must refuse a config that is not the caller's.
@@ -1392,8 +1433,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     // These decide whether to OFFER a write action. Hiding "New prompt" while
     // the connector is unreachable is correct; hiding the evidence that nothing
     // can be read is not.
-    "components/(playground)/context/header.tsx",
-    "components/(playground)/prompt-hub/header.tsx"
+    "components/(playground)/context/header.tsx"
   ]);
   const gatedReads = modules.filter((rel) => {
     const body = readFileSync(join(clientSrc, rel), "utf8");
@@ -1422,8 +1462,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "app/(playground)/dashboard/evaluations/metrics-per-time.tsx",
     "app/(playground)/dashboard/llm/requests-per-time.tsx",
     "app/(playground)/dashboard/llm/token-charts.tsx",
-    "app/(playground)/dashboard/vector/operations.tsx",
-    "app/(playground)/prompt-hub/[id]/page.tsx"
+    "app/(playground)/dashboard/vector/operations.tsx"
   ]) {
     const source = readFileSync(join(clientSrc, site), "utf8");
     // The surface must BRANCH on the state, not merely name it. A bare

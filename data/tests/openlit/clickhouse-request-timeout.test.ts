@@ -61,7 +61,7 @@ test("a ClickHouse request that never answers is abandoned instead of hanging", 
   await withFetch(hangingFetch(), async (requests) => {
     const started = Date.now();
     await assert.rejects(
-      selectRows(ENDPOINT, "openlit_prompts", ["id"], { timeoutMs: 50 }),
+      selectRows(ENDPOINT, "openlit_agents_summary", ["id"], { timeoutMs: 50 }),
       /timeout|abort/iu
     );
     assert.ok(
@@ -76,7 +76,9 @@ test("a ClickHouse request that never answers is abandoned instead of hanging", 
 test("every ClickHouse wire helper puts a ceiling on its request", async () => {
   await withFetch(hangingFetch(), async (requests) => {
     await assert.rejects(
-      insertRows(ENDPOINT, "openlit_prompts", [{ id: "1" }], { timeoutMs: 50 }),
+      insertRows(ENDPOINT, "openlit_agents_summary", [{ id: "1" }], {
+        timeoutMs: 50
+      }),
       /timeout|abort/iu
     );
     assert.equal(requests.length, 1);
@@ -93,9 +95,9 @@ test("the stale-row deletions both carry a ceiling", async () => {
       ENDPOINT,
       [{ id: "1" }],
       {
-        versionsTable: "openlit_prompt_versions",
-        versionsKeyColumn: "prompt_id",
-        summaryTable: "openlit_prompts",
+        versionsTable: "openlit_agent_versions",
+        versionsKeyColumn: "agent_key",
+        summaryTable: "openlit_agents_summary",
         summaryKeyColumn: "id",
         keyOf: (row) => row.id,
         labelOf: (row) => row.id
@@ -119,7 +121,7 @@ test("the stale-row deletions both carry a ceiling", async () => {
 
 test("a ClickHouse request carries the default ceiling when no timeout is named", async () => {
   await withFetch(answeringFetch(), async (requests) => {
-    await selectRows(ENDPOINT, "openlit_prompts", ["id"]);
+    await selectRows(ENDPOINT, "openlit_agents_summary", ["id"]);
     assert.equal(requests.length, 1);
     assert.ok(
       requests[0]?.signal,

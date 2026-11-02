@@ -35,10 +35,7 @@ test("the Data sources are the domain this rule governs", () => {
     dataSources.some((file) => file.path === clientModule),
     `the ClickHouse client this rule centres on must exist at ${clientModule}`
   );
-  for (const adapter of [
-    "data/src/openlit/sync-rulesync-agents.ts",
-    "data/src/openlit/sync-rulesync-prompts.ts"
-  ]) {
+  for (const adapter of ["data/src/openlit/sync-rulesync-agents.ts"]) {
     assert.ok(
       dataSources.some((file) => file.path === adapter),
       `the ${adapter} adapter this rule governs must exist`

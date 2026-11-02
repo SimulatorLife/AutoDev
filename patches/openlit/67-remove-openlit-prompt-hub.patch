@@ -1,0 +1,4559 @@
+diff --git a/src/client/src/__tests__/components/sidebar.test.tsx b/src/client/src/__tests__/components/sidebar.test.tsx
+index 6c7b63ee..6c62145b 100644
+--- a/src/client/src/__tests__/components/sidebar.test.tsx
++++ b/src/client/src/__tests__/components/sidebar.test.tsx
+@@ -34,9 +34,9 @@ jest.mock("@/constants/sidebar", () => {
+ 				type: "section",
+ 				children: [
+ 					{
+-						icon: icon("prompt"),
+-						text: "Prompt Hub",
+-						link: "/prompt-hub",
++						icon: icon("context"),
++						text: "Contexts",
++						link: "/context",
+ 						type: "action",
+ 					},
+ 				],
+@@ -136,7 +136,7 @@ describe("Sidebar", () => {
+ 		fireEvent.click(screen.getByRole("button", { name: "R" }));
+ 
+ 		expect(screen.getByTestId("layout-state")).toHaveTextContent("collapsed");
+-		expect(screen.getByRole("link", { name: "Prompt Hub" })).toBeInTheDocument();
++		expect(screen.getByRole("link", { name: "Contexts" })).toBeInTheDocument();
+ 		expect(screen.getAllByText("Resources").length).toBeGreaterThanOrEqual(1);
+ 	});
+ 
+diff --git a/src/client/src/__tests__/constants/api-reference.test.ts b/src/client/src/__tests__/constants/api-reference.test.ts
+index be165d79..3d3fb22e 100644
+--- a/src/client/src/__tests__/constants/api-reference.test.ts
++++ b/src/client/src/__tests__/constants/api-reference.test.ts
+@@ -6,7 +6,7 @@ describe("API_REFERENCE_ENDPOINTS", () => {
+ 		expect(API_REFERENCE_ENDPOINTS.length).toBeGreaterThan(0);
+ 	});
+ 
+-	it("includes core telemetry, vault, and prompt endpoints", () => {
++	it("includes core telemetry and vault endpoints", () => {
+ 		const ids = API_REFERENCE_ENDPOINTS.map((endpoint) => endpoint.id);
+ 		expect(ids).toEqual(
+ 			expect.arrayContaining([
+@@ -14,11 +14,20 @@ describe("API_REFERENCE_ENDPOINTS", () => {
+ 				"query-metrics",
+ 				"query-traces",
+ 				"get-secrets",
+-				"create-prompt",
+ 			])
+ 		);
+ 	});
+ 
++	it("does not document the removed Prompt Hub endpoints", () => {
++		// The Prompt Hub and its API are gone, so a reference entry for them
++		// would advertise a route that answers 404.
++		const ids = API_REFERENCE_ENDPOINTS.map((endpoint) => endpoint.id);
++		expect(ids).not.toContain("create-prompt");
++		expect(ids).not.toContain("get-prompt");
++		expect(ids).not.toContain("list-prompts");
++		expect(ids).not.toContain("get-compiled-prompt");
++	});
++
+ 	it("each endpoint has required fields and a curl example", () => {
+ 		for (const endpoint of API_REFERENCE_ENDPOINTS) {
+ 			expect(endpoint.id).toBeTruthy();
+diff --git a/src/client/src/__tests__/constants/events.test.ts b/src/client/src/__tests__/constants/events.test.ts
+index 2e7db221..63709d36 100644
+--- a/src/client/src/__tests__/constants/events.test.ts
++++ b/src/client/src/__tests__/constants/events.test.ts
+@@ -46,29 +46,6 @@ describe("CLIENT_EVENTS", () => {
+ 		expect(CLIENT_EVENTS.PROFILE_UPDATE_FAILURE).toBe("PROFILE_UPDATE_FAILURE");
+ 	});
+ 
+-	it("has prompt events", () => {
+-		expect(CLIENT_EVENTS.PROMPT_ADD_SUCCESS).toBe("PROMPT_ADD_SUCCESS");
+-		expect(CLIENT_EVENTS.PROMPT_ADD_FAILURE).toBe("PROMPT_ADD_FAILURE");
+-		expect(CLIENT_EVENTS.PROMPT_VERSION_ADD_SUCCESS).toBe(
+-			"PROMPT_VERSION_ADD_SUCCESS"
+-		);
+-		expect(CLIENT_EVENTS.PROMPT_VERSION_ADD_FAILURE).toBe(
+-			"PROMPT_VERSION_ADD_FAILURE"
+-		);
+-		expect(CLIENT_EVENTS.PROMPT_IMPROVEMENT_RUN_SUCCESS).toBe(
+-			"PROMPT_IMPROVEMENT_RUN_SUCCESS"
+-		);
+-		expect(CLIENT_EVENTS.PROMPT_IMPROVEMENT_RUN_FAILURE).toBe(
+-			"PROMPT_IMPROVEMENT_RUN_FAILURE"
+-		);
+-		expect(CLIENT_EVENTS.PROMPT_IMPROVEMENT_SUGGESTION_ACCEPTED).toBe(
+-			"PROMPT_IMPROVEMENT_SUGGESTION_ACCEPTED"
+-		);
+-		expect(CLIENT_EVENTS.PROMPT_IMPROVEMENT_SUGGESTION_DECLINED).toBe(
+-			"PROMPT_IMPROVEMENT_SUGGESTION_DECLINED"
+-		);
+-	});
+-
+ 	it("has vault events", () => {
+ 		expect(CLIENT_EVENTS.VAULT_SECRET_ADD_SUCCESS).toBe(
+ 			"VAULT_SECRET_ADD_SUCCESS"
+@@ -96,7 +73,6 @@ describe("CLIENT_EVENTS", () => {
+ 	it("has inventory-on-view count events", () => {
+ 		expect(CLIENT_EVENTS.AGENTS_HUB_VIEWED).toBe("AGENTS_HUB_VIEWED");
+ 		expect(CLIENT_EVENTS.CODING_AGENTS_VIEWED).toBe("CODING_AGENTS_VIEWED");
+-		expect(CLIENT_EVENTS.PROMPT_HUB_LIST).toBe("PROMPT_HUB_LIST");
+ 		expect(CLIENT_EVENTS.EVALUATION_TYPES_LIST).toBe("EVALUATION_TYPES_LIST");
+ 		expect(CLIENT_EVENTS.OBSERVABILITY_PAGE_VISITED).toBe(
+ 			"OBSERVABILITY_PAGE_VISITED"
+@@ -153,15 +129,6 @@ describe("SERVER_EVENTS", () => {
+ 		});
+ 	});
+ 
+-	it("has prompt SDK events", () => {
+-		expect(SERVER_EVENTS.PROMPT_SDK_FETCH_SUCCESS).toBe(
+-			"PROMPT_SDK_FETCH_SUCCESS"
+-		);
+-		expect(SERVER_EVENTS.PROMPT_SDK_FETCH_FAILURE).toBe(
+-			"PROMPT_SDK_FETCH_FAILURE"
+-		);
+-	});
+-
+ 	it("has vault SDK events", () => {
+ 		expect(SERVER_EVENTS.VAULT_SECRET_SDK_FETCH_SUCCESS).toBe(
+ 			"VAULT_SECRET_SDK_FETCH_SUCCESS"
+@@ -187,12 +154,6 @@ describe("SERVER_EVENTS", () => {
+ 		expect(SERVER_EVENTS.AI_ANALYSIS_RUN_FAILURE).toBe(
+ 			"AI_ANALYSIS_RUN_FAILURE"
+ 		);
+-		expect(SERVER_EVENTS.PROMPT_IMPROVEMENT_SUCCESS).toBe(
+-			"PROMPT_IMPROVEMENT_SUCCESS"
+-		);
+-		expect(SERVER_EVENTS.PROMPT_IMPROVEMENT_FAILURE).toBe(
+-			"PROMPT_IMPROVEMENT_FAILURE"
+-		);
+ 	});
+ 
+ 	it("has folder events", () => {
+diff --git a/src/client/src/__tests__/constants/messages.test.ts b/src/client/src/__tests__/constants/messages.test.ts
+index a5af52b6..d3e59813 100644
+--- a/src/client/src/__tests__/constants/messages.test.ts
++++ b/src/client/src/__tests__/constants/messages.test.ts
+@@ -33,8 +33,6 @@ describe("getMessage()", () => {
+ 	it("has prompt-related messages", () => {
+ 		const msgs = getMessage();
+ 		expect(msgs.NO_PROMPT).toBeDefined();
+-		expect(msgs.PROMPT_SAVED).toBe("Prompt saved successfully!");
+-		expect(msgs.PROMPT_DELETED).toBe("Prompt deleted successfully!");
+ 	});
+ 
+ 	it("has vault-related messages", () => {
+diff --git a/src/client/src/__tests__/constants/route.test.ts b/src/client/src/__tests__/constants/route.test.ts
+index 59f25a67..ba07de8d 100644
+--- a/src/client/src/__tests__/constants/route.test.ts
++++ b/src/client/src/__tests__/constants/route.test.ts
+@@ -18,8 +18,10 @@ describe('ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN', () => {
+     expect(Array.isArray(ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN)).toBe(true);
+   });
+ 
+-  it('includes the prompt get-compiled route', () => {
+-    expect(ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN).toContain('/api/prompt/get-compiled');
++  it('does not include the removed prompt route', () => {
++    // The Prompt Hub and its API are gone; an allowlist entry for a route
++    // that no longer exists would keep the path unauthenticated for no reason.
++    expect(ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN).not.toContain('/api/prompt/get-compiled');
+   });
+ 
+   it('includes the vault get-secrets route', () => {
+@@ -73,10 +75,9 @@ describe('RESTRICTED_DEMO_ACCOUNT_ROUTES', () => {
+   it('DELETE restricts the routes that still exist', () => {
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/db-config');
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/api-key');
+-    // The prompt routes live at /api/prompt; /api/prompt-hub has no route
+-    // file and no rewrite, so restricting it was a no-op on a path that could
+-    // never be reached.
+-    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/prompt-hub');
++    // The Prompt Hub and its API are gone, so there is no prompt route left
++    // to restrict or to leave unrestricted.
++    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/prompt');
+     // The Vault administration routes are gone; only the SDK read endpoint
+     // remains, and it is read-only, so there is nothing to restrict.
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/vault');
+diff --git a/src/client/src/__tests__/helpers/server/prompt.test.ts b/src/client/src/__tests__/helpers/server/prompt.test.ts
+deleted file mode 100644
+index 652bc23d..00000000
+--- a/src/client/src/__tests__/helpers/server/prompt.test.ts
++++ /dev/null
+@@ -1,54 +0,0 @@
+-import { verifyPromptInput, validatePromptCompiledInput } from '@/helpers/server/prompt';
+-
+-describe('verifyPromptInput', () => {
+-  it('returns failure when name is empty', () => {
+-    const result = verifyPromptInput({ name: '', prompt: 'Hello' } as any);
+-    expect(result.success).toBe(false);
+-    expect(result.err).toMatch(/name/i);
+-  });
+-
+-  it('returns failure when prompt is empty', () => {
+-    const result = verifyPromptInput({ name: 'MyPrompt', prompt: '' } as any);
+-    expect(result.success).toBe(false);
+-    expect(result.err).toMatch(/prompt/i);
+-  });
+-
+-  it('returns success when both name and prompt are provided', () => {
+-    const result = verifyPromptInput({ name: 'MyPrompt', prompt: 'Say hello' } as any);
+-    expect(result.success).toBe(true);
+-    expect((result as any).err).toBeUndefined();
+-  });
+-});
+-
+-describe('validatePromptCompiledInput', () => {
+-  it('returns failure when apiKey is missing', () => {
+-    const result = validatePromptCompiledInput({ id: 'abc' } as any);
+-    expect(result.success).toBe(false);
+-    expect(result.err).toMatch(/api key/i);
+-  });
+-
+-  it('returns failure when both id and name are missing', () => {
+-    const result = validatePromptCompiledInput({ apiKey: 'key123' } as any);
+-    expect(result.success).toBe(false);
+-    expect(result.err).toMatch(/id and name/i);
+-  });
+-
+-  it('returns success when apiKey and id are provided', () => {
+-    const result = validatePromptCompiledInput({ apiKey: 'key123', id: 'prompt-1' } as any);
+-    expect(result.success).toBe(true);
+-  });
+-
+-  it('returns success when apiKey and name are provided', () => {
+-    const result = validatePromptCompiledInput({ apiKey: 'key123', name: 'my-prompt' } as any);
+-    expect(result.success).toBe(true);
+-  });
+-
+-  it('returns success when apiKey, id, and name are all provided', () => {
+-    const result = validatePromptCompiledInput({
+-      apiKey: 'key123',
+-      id: 'prompt-1',
+-      name: 'my-prompt',
+-    } as any);
+-    expect(result.success).toBe(true);
+-  });
+-});
+diff --git a/src/client/src/__tests__/lib/platform/prompt/compiled.test.ts b/src/client/src/__tests__/lib/platform/prompt/compiled.test.ts
+deleted file mode 100644
+index 52f64415..00000000
+--- a/src/client/src/__tests__/lib/platform/prompt/compiled.test.ts
++++ /dev/null
+@@ -1,202 +0,0 @@
+-jest.mock('@/lib/platform/api-keys', () => ({
+-  getAPIKeyInfo: jest.fn(),
+-}));
+-jest.mock('@/helpers/server/prompt', () => ({
+-  validatePromptCompiledInput: jest.fn(),
+-}));
+-jest.mock('@/lib/platform/prompt/index', () => ({
+-  getSpecificPrompt: jest.fn(),
+-}));
+-jest.mock('@/lib/platform/prompt/version', () => ({
+-  updateDownloadDetails: jest.fn(),
+-}));
+-jest.mock('@/utils/object', () => ({
+-  objectEntries: jest.fn((obj: Record<string, unknown>) => Object.entries(obj)),
+-}));
+-jest.mock('@/utils/json', () => ({
+-  jsonParse: jest.fn((v: string) => {
+-    try { return JSON.parse(v); } catch { return {}; }
+-  }),
+-}));
+-jest.mock('@/utils/error', () => ({
+-  throwIfError: jest.fn((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  }),
+-}));
+-jest.mock('@/constants/messages', () => ({
+-  __esModule: true,
+-  default: jest.fn(() => ({
+-    MALFORMED_INPUTS: 'Malformed inputs',
+-    NO_API_KEY: 'No API key',
+-    NO_PROMPT: 'No prompt',
+-  })),
+-}));
+-jest.mock('@/utils/string', () => ({
+-  unescapeString: jest.fn((s: string) => s),
+-}));
+-
+-import { getCompiledPrompt, getCompiledPromptByDbConfig } from '@/lib/platform/prompt/compiled';
+-import { getAPIKeyInfo } from '@/lib/platform/api-keys';
+-import { validatePromptCompiledInput } from '@/helpers/server/prompt';
+-import { getSpecificPrompt } from '@/lib/platform/prompt/index';
+-import { updateDownloadDetails } from '@/lib/platform/prompt/version';
+-
+-const mockApiInfo = { id: 'key-1', databaseConfigId: 'db-1' };
+-// Use factory to prevent mutation of shared object across tests
+-const makeMockPromptData = () => ({
+-  promptId: 'p1',
+-  versionId: 'v1',
+-  version: '1.0.0',
+-  prompt: 'Hello {{name}}, your role is {{role}}',
+-  metaProperties: '{"key":"val"}',
+-  tags: '["tag1"]',
+-});
+-
+-beforeEach(() => {
+-  jest.clearAllMocks();
+-  (validatePromptCompiledInput as jest.Mock).mockReturnValue({ success: true, err: null });
+-  (getAPIKeyInfo as jest.Mock).mockResolvedValue([null, mockApiInfo]);
+-  (getSpecificPrompt as jest.Mock).mockResolvedValue({ err: null, data: [makeMockPromptData()] });
+-  (updateDownloadDetails as jest.Mock).mockResolvedValue(true);
+-});
+-
+-describe('getCompiledPrompt', () => {
+-  const validInput = {
+-    apiKey: 'ak-test',
+-    id: 'p1',
+-    name: 'my-prompt',
+-    version: '1.0.0',
+-    variables: { name: 'Alice', role: 'admin' },
+-  };
+-
+-  it('returns compiled prompt with variables substituted', async () => {
+-    const result = await getCompiledPrompt(validInput as any);
+-    expect(result.compiledPrompt).toBe('Hello Alice, your role is admin');
+-  });
+-
+-  it('parses metaProperties and tags', async () => {
+-    const result = await getCompiledPrompt(validInput as any);
+-    expect(result.metaProperties).toEqual({ key: 'val' });
+-    expect(result.tags).toEqual(['tag1']);
+-  });
+-
+-  it('calls updateDownloadDetails with correct args', async () => {
+-    await getCompiledPrompt(validInput as any);
+-    expect(updateDownloadDetails).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        versionId: 'v1',
+-        promptId: 'p1',
+-        metaProperties: expect.objectContaining({ apiKeyId: 'key-1' }),
+-        downloadSource: 'api',
+-      }),
+-      'db-1'
+-    );
+-  });
+-
+-  it('uses custom downloadSource when provided', async () => {
+-    await getCompiledPrompt({ ...validInput, downloadSource: 'sdk' } as any);
+-    expect(updateDownloadDetails).toHaveBeenCalledWith(
+-      expect.objectContaining({ downloadSource: 'sdk' }),
+-      'db-1'
+-    );
+-  });
+-
+-  it('merges downloadMetaProperties into metaProperties for download', async () => {
+-    await getCompiledPrompt({ ...validInput, downloadMetaProperties: { custom: 'value' } } as any);
+-    expect(updateDownloadDetails).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        metaProperties: expect.objectContaining({ custom: 'value', apiKeyId: 'key-1' }),
+-      }),
+-      'db-1'
+-    );
+-  });
+-
+-  it('returns raw prompt without substitution when shouldCompile=false', async () => {
+-    const result = await getCompiledPrompt({ ...validInput, shouldCompile: false } as any);
+-    expect(result.compiledPrompt).toBe('Hello {{name}}, your role is {{role}}');
+-  });
+-
+-  it('throws MALFORMED_INPUTS when validation fails', async () => {
+-    (validatePromptCompiledInput as jest.Mock).mockReturnValue({ success: false, err: 'Malformed inputs' });
+-    await expect(getCompiledPrompt(validInput as any)).rejects.toThrow('Malformed inputs');
+-  });
+-
+-  it('throws NO_API_KEY when getAPIKeyInfo returns an error', async () => {
+-    (getAPIKeyInfo as jest.Mock).mockResolvedValue(['No API key', null]);
+-    await expect(getCompiledPrompt(validInput as any)).rejects.toThrow('No API key');
+-  });
+-
+-  it('throws NO_API_KEY when apiInfo has no databaseConfigId', async () => {
+-    (getAPIKeyInfo as jest.Mock).mockResolvedValue([null, { id: 'key-1', databaseConfigId: null }]);
+-    await expect(getCompiledPrompt(validInput as any)).rejects.toThrow('No API key');
+-  });
+-
+-  it('throws when getSpecificPrompt returns error', async () => {
+-    (getSpecificPrompt as jest.Mock).mockResolvedValue({ err: 'DB error', data: null });
+-    await expect(getCompiledPrompt(validInput as any)).rejects.toThrow();
+-  });
+-
+-  it('throws NO_PROMPT when prompt data is empty', async () => {
+-    (getSpecificPrompt as jest.Mock).mockResolvedValue({ err: null, data: [] });
+-    await expect(getCompiledPrompt(validInput as any)).rejects.toThrow('No prompt');
+-  });
+-
+-  it('calls getSpecificPrompt with id, name, version from input', async () => {
+-    await getCompiledPrompt(validInput as any);
+-    expect(getSpecificPrompt).toHaveBeenCalledWith(
+-      { id: 'p1', name: 'my-prompt', version: '1.0.0' },
+-      'db-1'
+-    );
+-  });
+-
+-  it('handles empty variables object gracefully', async () => {
+-    const result = await getCompiledPrompt({ ...validInput, variables: {} } as any);
+-    expect(result.compiledPrompt).toBe('Hello {{name}}, your role is {{role}}');
+-  });
+-});
+-
+-describe('getCompiledPromptByDbConfig', () => {
+-  const validInput = {
+-    id: 'p1',
+-    version: '1.0.0',
+-    variables: { name: 'Bob', role: 'editor' },
+-    shouldCompile: true,
+-    databaseConfigId: 'db-42',
+-  };
+-
+-  it('returns compiled prompt with variables substituted', async () => {
+-    const result = await getCompiledPromptByDbConfig(validInput);
+-    expect(result.compiledPrompt).toBe('Hello Bob, your role is editor');
+-  });
+-
+-  it('returns raw prompt when shouldCompile=false', async () => {
+-    const result = await getCompiledPromptByDbConfig({ ...validInput, shouldCompile: false });
+-    expect(result.compiledPrompt).toBe('Hello {{name}}, your role is {{role}}');
+-  });
+-
+-  it('passes databaseConfigId to getSpecificPrompt', async () => {
+-    await getCompiledPromptByDbConfig(validInput);
+-    expect(getSpecificPrompt).toHaveBeenCalledWith({ id: 'p1', version: '1.0.0' }, 'db-42');
+-  });
+-
+-  it('parses metaProperties and tags JSON', async () => {
+-    const result = await getCompiledPromptByDbConfig(validInput);
+-    expect(result.metaProperties).toEqual({ key: 'val' });
+-    expect(result.tags).toEqual(['tag1']);
+-  });
+-
+-  it('throws NO_PROMPT when getSpecificPrompt returns empty data', async () => {
+-    (getSpecificPrompt as jest.Mock).mockResolvedValue({ err: null, data: [] });
+-    await expect(getCompiledPromptByDbConfig(validInput)).rejects.toThrow('No prompt');
+-  });
+-
+-  it('throws when getSpecificPrompt returns an error', async () => {
+-    (getSpecificPrompt as jest.Mock).mockResolvedValue({ err: 'DB error', data: null });
+-    await expect(getCompiledPromptByDbConfig(validInput)).rejects.toThrow();
+-  });
+-
+-  it('compiles prompt with empty variables when none provided', async () => {
+-    const result = await getCompiledPromptByDbConfig({ ...validInput, variables: undefined });
+-    expect(result.compiledPrompt).toBe('Hello {{name}}, your role is {{role}}');
+-  });
+-});
+diff --git a/src/client/src/__tests__/lib/platform/prompt/prompt-index.test.ts b/src/client/src/__tests__/lib/platform/prompt/prompt-index.test.ts
+deleted file mode 100644
+index 0e3259d6..00000000
+--- a/src/client/src/__tests__/lib/platform/prompt/prompt-index.test.ts
++++ /dev/null
+@@ -1,573 +0,0 @@
+-jest.mock('@/lib/platform/common', () => ({
+-  dataCollector: jest.fn(),
+-}));
+-jest.mock('@/lib/platform/prompt/table-details', () => ({
+-  OPENLIT_PROMPTS_TABLE_NAME: 'openlit_prompts',
+-  OPENLIT_PROMPT_VERSIONS_TABLE_NAME: 'openlit_prompt_versions',
+-  OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME: 'openlit_prompt_version_downloads',
+-}));
+-jest.mock('@/lib/session', () => ({
+-  getCurrentUser: jest.fn(),
+-}));
+-jest.mock('@/utils/error', () => ({
+-  throwIfError: jest.fn((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  }),
+-}));
+-jest.mock('@/constants/messages', () => ({
+-  __esModule: true,
+-  default: jest.fn(() => ({
+-    UNAUTHORIZED_USER: 'Unauthorized',
+-    PROMPT_NAME_TAKEN: 'Prompt name taken',
+-    PROMPT_SAVED: 'Prompt saved!',
+-    PROMPT_NOT_CREATED: 'Prompt not created',
+-    VERSION_NOT_CREATED: 'Version not created',
+-    PROMPT_DELETED: 'Prompt deleted!',
+-    PROMPT_NOT_DELETED: 'Prompt not deleted',
+-  })),
+-}));
+-jest.mock('@/utils/sanitizer', () => ({
+-  __esModule: true,
+-  default: {
+-    sanitizeValue: jest.fn((v: string) => v),
+-    sanitizeObject: jest.fn((o: object) => o),
+-  },
+-}));
+-jest.mock('@/helpers/server/prompt', () => ({
+-  verifyPromptInput: jest.fn(() => ({ success: true })),
+-}));
+-jest.mock('@/utils/json', () => ({
+-  jsonStringify: jest.fn((v: unknown) => JSON.stringify(v)),
+-}));
+-jest.mock('@/utils/log', () => ({
+-  consoleLog: jest.fn(),
+-}));
+-
+-import {
+-  createPrompt,
+-  getPrompts,
+-  getSpecificPrompt,
+-  getPromptDetails,
+-  deletePrompt,
+-} from '@/lib/platform/prompt/index';
+-import { dataCollector } from '@/lib/platform/common';
+-import { getCurrentUser } from '@/lib/session';
+-import { verifyPromptInput } from '@/helpers/server/prompt';
+-
+-// ---------------------------------------------------------------------------
+-// Shared test data
+-// ---------------------------------------------------------------------------
+-const VALID_PROMPT_INPUT = {
+-  name: 'my-prompt',
+-  prompt: 'Hello {{name}}',
+-  version: '1.0.0',
+-  status: 'PUBLISHED' as const,
+-  tags: ['tag1'],
+-  metaProperties: { key: 'value' },
+-};
+-
+-beforeEach(() => {
+-  jest.clearAllMocks();
+-  (dataCollector as jest.Mock).mockResolvedValue({ data: [], err: null });
+-  (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+-});
+-
+-// ===========================================================================
+-// createPrompt
+-// ===========================================================================
+-describe('createPrompt', () => {
+-  // Happy-path setup:
+-  //   call 1 → checkNameValidity → getPromptByName: data:[] (name available)
+-  //   call 2 → insert prompt: { err: null }
+-  //   call 3 → getPromptByName (after insert): data:[{ id:'p1', name:'my-prompt' }]
+-  //   call 4 → insert version: { err: null, data: { query_id: 'qid-1' } }
+-  function mockHappyPath() {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })                            // 1. checkNameValidity
+-      .mockResolvedValueOnce({ err: null })                                      // 2. insert prompt
+-      .mockResolvedValueOnce({ data: [{ id: 'p1', name: 'my-prompt' }], err: null }) // 3. getPromptByName
+-      .mockResolvedValueOnce({ err: null, data: { query_id: 'qid-v1' } });      // 4. insert version
+-  }
+-
+-  it('creates a prompt and returns promptId and success message', async () => {
+-    mockHappyPath();
+-    const result = await createPrompt(VALID_PROMPT_INPUT);
+-    expect(result).toEqual({ data: { promptId: 'p1' }, message: 'Prompt saved!' });
+-    expect(dataCollector).toHaveBeenCalledTimes(4);
+-  });
+-
+-  it('calls getCurrentUser for auth check', async () => {
+-    mockHappyPath();
+-    await createPrompt(VALID_PROMPT_INPUT);
+-    expect(getCurrentUser).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('sanitizes the input object', async () => {
+-    const Sanitizer = require('@/utils/sanitizer').default;
+-    mockHappyPath();
+-    await createPrompt(VALID_PROMPT_INPUT);
+-    expect(Sanitizer.sanitizeObject).toHaveBeenCalledWith(VALID_PROMPT_INPUT);
+-  });
+-
+-  it('verifies prompt input shape via verifyPromptInput', async () => {
+-    mockHappyPath();
+-    await createPrompt(VALID_PROMPT_INPUT);
+-    expect(verifyPromptInput).toHaveBeenCalledWith(VALID_PROMPT_INPUT);
+-  });
+-
+-  it('inserts prompt into openlit_prompts with correct values', async () => {
+-    mockHappyPath();
+-    await createPrompt(VALID_PROMPT_INPUT);
+-    // Call index 1 (0-based) is the prompt insert
+-    const [insertParams, mode] = (dataCollector as jest.Mock).mock.calls[1];
+-    expect(mode).toBe('insert');
+-    expect(insertParams.table).toBe('openlit_prompts');
+-    expect(insertParams.values[0]).toMatchObject({
+-      name: 'my-prompt',
+-      created_by: 'user@example.com',
+-    });
+-  });
+-
+-  it('inserts version into openlit_prompt_versions with correct values', async () => {
+-    mockHappyPath();
+-    await createPrompt(VALID_PROMPT_INPUT);
+-    // Call index 3 is the version insert
+-    const [versionParams, mode] = (dataCollector as jest.Mock).mock.calls[3];
+-    expect(mode).toBe('insert');
+-    expect(versionParams.table).toBe('openlit_prompt_versions');
+-    expect(versionParams.values[0]).toMatchObject({
+-      prompt_id: 'p1',
+-      updated_by: 'user@example.com',
+-      version: '1.0.0',
+-      status: 'PUBLISHED',
+-      prompt: 'Hello {{name}}',
+-    });
+-  });
+-
+-  it('throws UNAUTHORIZED_USER when no user is logged in', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Unauthorized');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-
+-  it('throws when verifyPromptInput fails', async () => {
+-    (verifyPromptInput as jest.Mock).mockReturnValueOnce({ success: false, err: 'Name required' });
+-    await expect(createPrompt({ ...VALID_PROMPT_INPUT, name: '' })).rejects.toThrow('Name required');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-
+-  it('throws PROMPT_NAME_TAKEN when prompt name already exists', async () => {
+-    // checkNameValidity finds an existing prompt
+-    (dataCollector as jest.Mock).mockResolvedValueOnce({ data: [{ id: 'existing', name: 'my-prompt' }] });
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Prompt name taken');
+-    // Only 1 call made (the name check) — insert was never reached
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('throws when prompt insert dataCollector returns an error', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })         // checkNameValidity: available
+-      .mockResolvedValueOnce({ err: 'Insert error' });        // prompt insert fails
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Insert error');
+-  });
+-
+-  it('throws PROMPT_NOT_CREATED when getPromptByName returns no id after insert', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })         // checkNameValidity
+-      .mockResolvedValueOnce({ err: null })                   // insert prompt succeeds
+-      .mockResolvedValueOnce({ data: [], err: null });        // getPromptByName: no record
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Prompt not created');
+-  });
+-
+-  it('throws VERSION_NOT_CREATED when version insert returns no query_id', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })
+-      .mockResolvedValueOnce({ err: null })
+-      .mockResolvedValueOnce({ data: [{ id: 'p1', name: 'my-prompt' }], err: null })
+-      .mockResolvedValueOnce({ err: null, data: null }); // no query_id
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Version not created');
+-  });
+-
+-  it('throws VERSION_NOT_CREATED with version error message when version insert returns an error', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })
+-      .mockResolvedValueOnce({ err: null })
+-      .mockResolvedValueOnce({ data: [{ id: 'p1', name: 'my-prompt' }], err: null })
+-      .mockResolvedValueOnce({ err: 'Version DB error', data: null });
+-    await expect(createPrompt(VALID_PROMPT_INPUT)).rejects.toThrow('Version DB error');
+-  });
+-
+-  it('returns promptId from the fetched prompt record', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ data: [], err: null })
+-      .mockResolvedValueOnce({ err: null })
+-      .mockResolvedValueOnce({ data: [{ id: 'prompt-abc', name: 'my-prompt' }], err: null })
+-      .mockResolvedValueOnce({ err: null, data: { query_id: 'qid-1' } });
+-    const result = await createPrompt(VALID_PROMPT_INPUT);
+-    expect(result.data.promptId).toBe('prompt-abc');
+-  });
+-});
+-
+-// ===========================================================================
+-// getPrompts
+-// ===========================================================================
+-describe('getPrompts', () => {
+-  it('returns dataCollector result', async () => {
+-    const mockData = [{ promptId: 'p1', name: 'my-prompt', totalVersions: 2 }];
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: mockData, err: null });
+-    const result = await getPrompts();
+-    expect(result).toEqual({ data: mockData, err: null });
+-  });
+-
+-  it('calls dataCollector exactly once with a SELECT query', async () => {
+-    await getPrompts();
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('SELECT');
+-  });
+-
+-  it('queries from openlit_prompts table', async () => {
+-    await getPrompts();
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('openlit_prompts');
+-  });
+-
+-  it('joins with openlit_prompt_versions and openlit_prompt_version_downloads', async () => {
+-    await getPrompts();
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('openlit_prompt_versions');
+-    expect(query).toContain('openlit_prompt_version_downloads');
+-  });
+-
+-  it('orders results by created_at DESC', async () => {
+-    await getPrompts();
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('created_at DESC');
+-  });
+-
+-  it('calls getCurrentUser for auth check', async () => {
+-    await getPrompts();
+-    expect(getCurrentUser).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('throws UNAUTHORIZED_USER when no user is logged in', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(getPrompts()).rejects.toThrow('Unauthorized');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-});
+-
+-// ===========================================================================
+-// getSpecificPrompt
+-// ===========================================================================
+-describe('getSpecificPrompt', () => {
+-  it('calls dataCollector with a SELECT query', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [{ promptId: 'p1' }], err: null });
+-    await getSpecificPrompt({ id: 'p1' });
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('SELECT');
+-  });
+-
+-  it('adds id condition to WHERE clause when id is provided', async () => {
+-    await getSpecificPrompt({ id: 'prompt-1' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain("p.id = 'prompt-1'");
+-  });
+-
+-  it('adds name condition to WHERE clause when name is provided', async () => {
+-    await getSpecificPrompt({ name: 'my-prompt' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain("p.name = 'my-prompt'");
+-  });
+-
+-  it('adds version condition to WHERE clause when version is provided', async () => {
+-    await getSpecificPrompt({ version: '2.0.0' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain("v.version = '2.0.0'");
+-  });
+-
+-  it('combines multiple conditions with AND', async () => {
+-    await getSpecificPrompt({ name: 'my-prompt', version: '1.0.0' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain("p.name = 'my-prompt'");
+-    expect(query).toContain("v.version = '1.0.0'");
+-    expect(query).toContain('AND');
+-  });
+-
+-  it('queries from openlit_prompts joined with openlit_prompt_versions', async () => {
+-    await getSpecificPrompt({ id: 'p1' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('openlit_prompts');
+-    expect(query).toContain('openlit_prompt_versions');
+-  });
+-
+-  it('orders by version DESC', async () => {
+-    await getSpecificPrompt({ id: 'p1' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('v.version DESC');
+-  });
+-
+-  it('uses "query" mode when calling dataCollector', async () => {
+-    await getSpecificPrompt({ id: 'p1' });
+-    const [, mode] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(mode).toBe('query');
+-  });
+-
+-  it('forwards dbConfigId as third argument to dataCollector', async () => {
+-    await getSpecificPrompt({ id: 'p1' }, 'db-cfg-99');
+-    const [, , dbConfigId] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(dbConfigId).toBe('db-cfg-99');
+-  });
+-
+-  it('sanitizes the input parameters', async () => {
+-    const Sanitizer = require('@/utils/sanitizer').default;
+-    await getSpecificPrompt({ id: 'p1', name: 'test' });
+-    expect(Sanitizer.sanitizeObject).toHaveBeenCalledWith({ id: 'p1', name: 'test' });
+-  });
+-
+-  it('does NOT call getCurrentUser (no auth required)', async () => {
+-    await getSpecificPrompt({ id: 'p1' });
+-    expect(getCurrentUser).not.toHaveBeenCalled();
+-  });
+-
+-  it('returns raw dataCollector result', async () => {
+-    const mockResult = { data: [{ promptId: 'p1', name: 'my-prompt', prompt: 'Hi!' }], err: null };
+-    (dataCollector as jest.Mock).mockResolvedValue(mockResult);
+-    const result = await getSpecificPrompt({ id: 'p1' });
+-    expect(result).toEqual(mockResult);
+-  });
+-});
+-
+-// ===========================================================================
+-// getPromptDetails
+-// ===========================================================================
+-describe('getPromptDetails', () => {
+-  // getPromptDetails runs Promise.all with two dataCollector calls.
+-  function mockBothQueries(
+-    versionDataResult: object,
+-    versionsListResult: object
+-  ) {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce(versionDataResult)
+-      .mockResolvedValueOnce(versionsListResult);
+-  }
+-
+-  it('calls dataCollector twice (via Promise.all)', async () => {
+-    mockBothQueries(
+-      { data: [{ promptId: 'p1', name: 'test', prompt: 'Hello' }], err: null },
+-      { data: [{ versionId: 'v1', version: '1.0.0' }], err: null }
+-    );
+-    await getPromptDetails('p1');
+-    expect(dataCollector).toHaveBeenCalledTimes(2);
+-  });
+-
+-  it('calls getCurrentUser for auth check', async () => {
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('p1');
+-    expect(getCurrentUser).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('throws UNAUTHORIZED_USER when no user', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(getPromptDetails('p1')).rejects.toThrow('Unauthorized');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-
+-  it('returns combined data with versions list attached to first record', async () => {
+-    const versionRecord = { promptId: 'p1', name: 'my-prompt', prompt: 'Hi!', version: '1.0.0' };
+-    const versionsList = [
+-      { versionId: 'v1', version: '1.0.0', status: 'PUBLISHED' },
+-      { versionId: 'v2', version: '2.0.0', status: 'DRAFT' },
+-    ];
+-    mockBothQueries(
+-      { data: [versionRecord], err: null },
+-      { data: versionsList, err: null }
+-    );
+-    const result = await getPromptDetails('p1');
+-    expect(result.data[0]).toMatchObject({ promptId: 'p1', name: 'my-prompt' });
+-    expect(result.data[0].versions).toEqual(versionsList);
+-  });
+-
+-  it('returns { data: [null], err: null } when versionData has no records', async () => {
+-    mockBothQueries(
+-      { data: [], err: null },
+-      { data: [{ versionId: 'v1' }], err: null }
+-    );
+-    const result = await getPromptDetails('p1');
+-    expect(result.data[0]).toBeNull();
+-    expect(result.err).toBeNull();
+-  });
+-
+-  it('returns err from versionData when first query fails', async () => {
+-    mockBothQueries(
+-      { data: null, err: 'Version query failed' },
+-      { data: [], err: null }
+-    );
+-    const result = await getPromptDetails('p1');
+-    expect(result.err).toBe('Version query failed');
+-  });
+-
+-  it('returns err from versionsList when second query fails', async () => {
+-    mockBothQueries(
+-      { data: [{ promptId: 'p1', name: 'test' }], err: null },
+-      { data: null, err: 'Versions list failed' }
+-    );
+-    const result = await getPromptDetails('p1');
+-    expect(result.err).toBe('Versions list failed');
+-  });
+-
+-  it('includes promptId in both dataCollector queries', async () => {
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('prompt-xyz');
+-    const [firstCall] = (dataCollector as jest.Mock).mock.calls[0];
+-    const [secondCall] = (dataCollector as jest.Mock).mock.calls[1];
+-    expect(firstCall.query).toContain('prompt-xyz');
+-    expect(secondCall.query).toContain('prompt-xyz');
+-  });
+-
+-  it('both calls use "query" mode', async () => {
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('p1');
+-    expect((dataCollector as jest.Mock).mock.calls[0][1]).toBe('query');
+-    expect((dataCollector as jest.Mock).mock.calls[1][1]).toBe('query');
+-  });
+-
+-  it('applies version filter in first query when version parameter is provided', async () => {
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('p1', { version: '2.0.0' });
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain("version='2.0.0'");
+-    expect(query).toContain("status != 'DRAFT'");
+-  });
+-
+-  it('does not apply version filter when no version parameter is given', async () => {
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('p1');
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).not.toContain("status != 'DRAFT'");
+-  });
+-
+-  it('sets versions to empty array when versionsList data is null', async () => {
+-    const versionRecord = { promptId: 'p1', name: 'my-prompt', prompt: 'Hi!' };
+-    mockBothQueries(
+-      { data: [versionRecord], err: null },
+-      { data: null, err: null }
+-    );
+-    const result = await getPromptDetails('p1');
+-    expect(result.data[0].versions).toEqual([]);
+-  });
+-
+-  it('sanitizes the parameters object', async () => {
+-    const Sanitizer = require('@/utils/sanitizer').default;
+-    mockBothQueries({ data: [], err: null }, { data: [], err: null });
+-    await getPromptDetails('p1', { version: '1.0.0' });
+-    expect(Sanitizer.sanitizeObject).toHaveBeenCalledWith({ version: '1.0.0' });
+-  });
+-});
+-
+-// ===========================================================================
+-// deletePrompt
+-// ===========================================================================
+-describe('deletePrompt', () => {
+-  it('returns [undefined, success message] when all three deletes succeed', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    const result = await deletePrompt('p1');
+-    expect(result).toEqual([undefined, 'Prompt deleted!']);
+-  });
+-
+-  it('calls dataCollector three times via Promise.all', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('p1');
+-    expect(dataCollector).toHaveBeenCalledTimes(3);
+-  });
+-
+-  it('deletes from openlit_prompts with the correct id', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('prompt-id-1');
+-    const promptDeleteCall = (dataCollector as jest.Mock).mock.calls.find(([{ query }]) =>
+-      query.includes('openlit_prompts') && !query.includes('openlit_prompt_versions')
+-    );
+-    expect(promptDeleteCall).toBeDefined();
+-    expect(promptDeleteCall[0].query).toContain("WHERE id = 'prompt-id-1'");
+-  });
+-
+-  it('deletes from openlit_prompt_versions with prompt_id', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('prompt-id-1');
+-    const versionDeleteCall = (dataCollector as jest.Mock).mock.calls.find(([{ query }]) =>
+-      query.includes('openlit_prompt_versions') && !query.includes('openlit_prompt_version_downloads')
+-    );
+-    expect(versionDeleteCall).toBeDefined();
+-    expect(versionDeleteCall[0].query).toContain("WHERE prompt_id = 'prompt-id-1'");
+-  });
+-
+-  it('deletes from openlit_prompt_version_downloads with prompt_id', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('prompt-id-1');
+-    const downloadsDeleteCall = (dataCollector as jest.Mock).mock.calls.find(([{ query }]) =>
+-      query.includes('openlit_prompt_version_downloads')
+-    );
+-    expect(downloadsDeleteCall).toBeDefined();
+-    expect(downloadsDeleteCall[0].query).toContain("WHERE prompt_id = 'prompt-id-1'");
+-  });
+-
+-  it('uses "exec" mode for all dataCollector calls', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('p1');
+-    for (const call of (dataCollector as jest.Mock).mock.calls) {
+-      expect(call[1]).toBe('exec');
+-    }
+-  });
+-
+-  it('returns [PROMPT_NOT_DELETED] when any delete fails', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ err: null })
+-      .mockResolvedValueOnce({ err: 'DB error' })
+-      .mockResolvedValueOnce({ err: null });
+-    const result = await deletePrompt('p1');
+-    expect(result).toEqual(['Prompt not deleted']);
+-  });
+-
+-  it('returns [PROMPT_NOT_DELETED] when all deletes fail', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'Connection refused' });
+-    const result = await deletePrompt('p1');
+-    expect(result).toEqual(['Prompt not deleted']);
+-  });
+-
+-  it('returns [PROMPT_NOT_DELETED] when only the first delete fails', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ err: 'First error' })
+-      .mockResolvedValueOnce({ err: null })
+-      .mockResolvedValueOnce({ err: null });
+-    const result = await deletePrompt('p1');
+-    expect(result).toEqual(['Prompt not deleted']);
+-  });
+-
+-  it('throws UNAUTHORIZED_USER when no user is logged in', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(deletePrompt('p1')).rejects.toThrow('Unauthorized');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-
+-  it('sanitizes the promptId parameter', async () => {
+-    const Sanitizer = require('@/utils/sanitizer').default;
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('  p1  ');
+-    expect(Sanitizer.sanitizeValue).toHaveBeenCalledWith('  p1  ');
+-  });
+-
+-  it('calls getCurrentUser once for auth', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('p1');
+-    expect(getCurrentUser).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('all DELETE queries contain DELETE FROM keyword', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    await deletePrompt('p1');
+-    for (const [{ query }] of (dataCollector as jest.Mock).mock.calls) {
+-      expect(query.toUpperCase()).toContain('DELETE FROM');
+-    }
+-  });
+-});
+diff --git a/src/client/src/__tests__/lib/platform/prompt/prompt.test.ts b/src/client/src/__tests__/lib/platform/prompt/prompt.test.ts
+deleted file mode 100644
+index 83b75236..00000000
+--- a/src/client/src/__tests__/lib/platform/prompt/prompt.test.ts
++++ /dev/null
+@@ -1,192 +0,0 @@
+-jest.mock('@/lib/platform/common', () => ({
+-  dataCollector: jest.fn(),
+-}));
+-jest.mock('@/lib/platform/prompt/table-details', () => ({
+-  OPENLIT_PROMPTS_TABLE_NAME: 'openlit_prompts',
+-  OPENLIT_PROMPT_VERSIONS_TABLE_NAME: 'openlit_prompt_versions',
+-  OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME: 'openlit_prompt_version_downloads',
+-}));
+-jest.mock('@/lib/session', () => ({
+-  getCurrentUser: jest.fn(),
+-}));
+-jest.mock('@/utils/error', () => ({
+-  throwIfError: jest.fn((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  }),
+-}));
+-jest.mock('@/constants/messages', () => ({
+-  __esModule: true,
+-  default: jest.fn(() => ({
+-    UNAUTHORIZED_USER: 'Unauthorized',
+-    PROMPT_NAME_TAKEN: 'Prompt name taken',
+-    PROMPT_NOT_CREATED: 'Prompt not created',
+-    VERSION_NOT_SAVED: 'Version not saved',
+-    VERSION_SAVED: 'Version saved!',
+-    DOWNLOAD_INFO_NOT_SAVED: 'Download info not saved',
+-  })),
+-}));
+-jest.mock('@/utils/sanitizer', () => ({
+-  __esModule: true,
+-  default: {
+-    sanitizeValue: jest.fn((v: string) => v),
+-    sanitizeObject: jest.fn((o: object) => o),
+-  },
+-}));
+-jest.mock('@/helpers/server/prompt', () => ({
+-  verifyPromptInput: jest.fn(() => ({ success: true })),
+-}));
+-jest.mock('@/utils/json', () => ({
+-  jsonStringify: jest.fn((v: unknown) => JSON.stringify(v)),
+-}));
+-jest.mock('@/utils/log', () => ({
+-  consoleLog: jest.fn(),
+-}));
+-
+-import { getPromptByName, checkNameValidity } from '@/lib/platform/prompt/index';
+-import { upsertPromptVersion, updateDownloadDetails } from '@/lib/platform/prompt/version';
+-import { dataCollector } from '@/lib/platform/common';
+-import { getCurrentUser } from '@/lib/session';
+-
+-beforeEach(() => {
+-  jest.clearAllMocks();
+-  (dataCollector as jest.Mock).mockResolvedValue({ data: [], err: null });
+-  (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+-});
+-
+-describe('getPromptByName', () => {
+-  it('queries by name and returns first record', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [{ id: 'p1', name: 'my-prompt' }] });
+-    const result = await getPromptByName({ name: 'my-prompt' });
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain("name='my-prompt'");
+-    expect(result).toEqual({ id: 'p1', name: 'my-prompt' });
+-  });
+-
+-  it('returns undefined when not found', async () => {
+-    const result = await getPromptByName({ name: 'unknown' });
+-    expect(result).toBeUndefined();
+-  });
+-});
+-
+-describe('checkNameValidity', () => {
+-  it('returns isValid=true when no existing prompt', async () => {
+-    const result = await checkNameValidity({ name: 'new-prompt' });
+-    expect(result.isValid).toBe(true);
+-  });
+-
+-  it('returns isValid=false when prompt name exists', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [{ id: 'p1' }] });
+-    const result = await checkNameValidity({ name: 'taken' });
+-    expect(result.isValid).toBe(false);
+-  });
+-});
+-
+-describe('upsertPromptVersion', () => {
+-  it('creates a new version (insert path)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: { query_id: 'qid-1' } });
+-    const result = await upsertPromptVersion({
+-      promptId: 'p1',
+-      version: '1.0.0',
+-      status: 'published',
+-      prompt: 'Hello {{name}}',
+-      tags: [],
+-      metaProperties: {},
+-    } as any);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const [params, mode] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(mode).toBe('insert');
+-    expect(params.table).toBe('openlit_prompt_versions');
+-    expect(result).toBe('Version saved!');
+-  });
+-
+-  it('updates an existing version (update path)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: { query_id: 'qid-1' } });
+-    await upsertPromptVersion({
+-      promptId: 'p1',
+-      versionId: 'v1',
+-      version: '1.0.1',
+-      status: 'published',
+-      prompt: 'Updated prompt',
+-      tags: [],
+-      metaProperties: {},
+-    } as any);
+-    const [{ query }, mode] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(mode).toBe('exec');
+-    expect(query).toContain('ALTER TABLE');
+-    expect(query).toContain("WHERE version_id = 'v1'");
+-  });
+-
+-  it('throws when user is not authenticated', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(
+-      upsertPromptVersion({ promptId: 'p1' } as any)
+-    ).rejects.toThrow('Unauthorized');
+-  });
+-
+-  it('throws when dataCollector fails (no query_id)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: null });
+-    await expect(
+-      upsertPromptVersion({ promptId: 'p1' } as any)
+-    ).rejects.toThrow();
+-  });
+-
+-  it('uses versionErr.toString() in error message when versionErr is a string (covers line 73)', async () => {
+-    // versionErr is a string → typeof versionErr?.toString === "function" → true → versionErr.toString() called
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'Version DB error', data: null });
+-    await expect(
+-      upsertPromptVersion({ promptId: 'p1' } as any)
+-    ).rejects.toThrow('Version DB error');
+-  });
+-
+-  it('uses versionErr.toString() in error message when versionErr is an Error object (covers line 73)', async () => {
+-    const err = new Error('Version object error');
+-    (dataCollector as jest.Mock).mockResolvedValue({ err, data: null });
+-    await expect(
+-      upsertPromptVersion({ promptId: 'p1' } as any)
+-    ).rejects.toThrow('Version object error');
+-  });
+-
+-  it('defaults version, status, and promptId to empty strings in the alert signal when omitted', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: { query_id: 'qid-1' } });
+-    // No version, status, or promptId supplied -> exercises the `|| ""` fallbacks
+-    // in the emitManagementAlertSignalSafe call.
+-    const result = await upsertPromptVersion({} as any);
+-    expect(result).toBe('Version saved!');
+-  });
+-});
+-
+-describe('updateDownloadDetails', () => {
+-  it('inserts download details and returns true', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: { query_id: 'qid-1' } });
+-    const result = await updateDownloadDetails({
+-      promptId: 'p1',
+-      versionId: 'v1',
+-      metaProperties: {},
+-      downloadSource: 'sdk',
+-    } as any);
+-    expect(result).toBe(true);
+-    const [params, mode] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(mode).toBe('insert');
+-    expect(params.table).toBe('openlit_prompt_version_downloads');
+-  });
+-
+-  it('returns true even when dataCollector fails (just logs)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'DB error', data: null });
+-    const result = await updateDownloadDetails({
+-      promptId: 'p1',
+-      versionId: 'v1',
+-    } as any);
+-    expect(result).toBe(true);
+-  });
+-
+-  it('logs DOWNLOAD_INFO_NOT_SAVED when err is null but data has no query_id (covers line 105 fallback)', async () => {
+-    // err is falsy, data is null → err || getMessage().DOWNLOAD_INFO_NOT_SAVED
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null, data: null });
+-    const result = await updateDownloadDetails({
+-      promptId: 'p1',
+-      versionId: 'v1',
+-    } as any);
+-    expect(result).toBe(true);
+-  });
+-});
+diff --git a/src/client/src/__tests__/lib/platform/prompt/table-details.test.ts b/src/client/src/__tests__/lib/platform/prompt/table-details.test.ts
+deleted file mode 100644
+index 8b46ba6b..00000000
+--- a/src/client/src/__tests__/lib/platform/prompt/table-details.test.ts
++++ /dev/null
+@@ -1,19 +0,0 @@
+-import {
+-  OPENLIT_PROMPTS_TABLE_NAME,
+-  OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-  OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME,
+-} from '@/lib/platform/prompt/table-details';
+-
+-describe('prompt table-details', () => {
+-  it('exports the correct prompts table name', () => {
+-    expect(OPENLIT_PROMPTS_TABLE_NAME).toBe('openlit_prompts');
+-  });
+-
+-  it('exports the correct prompt versions table name', () => {
+-    expect(OPENLIT_PROMPT_VERSIONS_TABLE_NAME).toBe('openlit_prompt_versions');
+-  });
+-
+-  it('exports the correct prompt version downloads table name', () => {
+-    expect(OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME).toBe('openlit_prompt_version_downloads');
+-  });
+-});
+diff --git a/src/client/src/__tests__/middleware/middleware.test.ts b/src/client/src/__tests__/middleware/middleware.test.ts
+index e5486efb..f7342e93 100644
+--- a/src/client/src/__tests__/middleware/middleware.test.ts
++++ b/src/client/src/__tests__/middleware/middleware.test.ts
+@@ -68,7 +68,11 @@ describe('middleware', () => {
+   });
+ 
+   it('matches nested playground routes that previously bypassed auth', () => {
+-    expect(config.matcher).toContain('/prompt-hub/:path*');
++    // The Prompt Hub and its pages are gone, so its matcher is gone with them:
++    // a matcher with no page behind it would still put the request through
++    // the auth middleware for a route that cannot be reached.
++    expect(config.matcher).not.toContain('/prompt-hub');
++    expect(config.matcher).not.toContain('/prompt-hub/:path*');
+     expect(config.matcher).not.toContain('/fleet-hub/:path*');
+     expect(config.matcher).not.toContain('/rule-engine');
+     expect(config.matcher).toContain('/context');
+diff --git a/src/client/src/__tests__/utils/active-app.test.ts b/src/client/src/__tests__/utils/active-app.test.ts
+index 17d001f1..5f38e46a 100644
+--- a/src/client/src/__tests__/utils/active-app.test.ts
++++ b/src/client/src/__tests__/utils/active-app.test.ts
+@@ -1,15 +1,12 @@
+ import { getActiveApp } from '@/utils/active-app';
+ 
+ describe('getActiveApp', () => {
+-	it('returns Prompts for prompt hub routes', () => {
+-		expect(getActiveApp('/prompt-hub')).toEqual({
+-			title: 'Prompts',
+-			href: '/prompt-hub',
+-		});
+-		expect(getActiveApp('/prompt-hub/my-prompt')).toEqual({
+-			title: 'Prompts',
+-			href: '/prompt-hub',
+-		});
++	it('does not map the removed Prompt Hub routes', () => {
++		// The Prompt Hub and its pages are gone, so neither the hub nor a
++		// prompt detail path resolves to an app any more. A header that still
++		// labelled them would be pointing at a 404.
++		expect(getActiveApp('/prompt-hub')).toBeNull();
++		expect(getActiveApp('/prompt-hub/my-prompt')).toBeNull();
+ 	});
+ 
+ 	it('returns sidebar apps for other routes', () => {
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index 22eb44f7..c438c722 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -1,30 +1,9 @@
+ import {
+   generatePageHeader,
+-  extractRouteParams,
+   updatePageHeaderWithData,
+   ROUTE_CONFIGS,
+ } from '@/utils/breadcrumbs';
+ 
+-describe('extractRouteParams', () => {
+-  it('returns empty object when pathname does not match regex', () => {
+-    const result = extractRouteParams('/no-match', /^\/does-not-match$/);
+-    expect(result).toEqual({});
+-  });
+-
+-  it('extracts prompt hub id', () => {
+-    const result = extractRouteParams('/prompt-hub/abc-123', /^\/prompt-hub\/[^/]+$/);
+-    expect(result.id).toBe('abc-123');
+-  });
+-
+-  it('extracts prompt-hub id from a real detail path', () => {
+-    const result = extractRouteParams(
+-      '/prompt-hub/my-prompt-id',
+-      /^\/prompt-hub\/[^/]+$/
+-    );
+-    expect(result.id).toBe('my-prompt-id');
+-  });
+-});
+-
+ describe('generatePageHeader', () => {
+   it('does not retain separate OpenLIT Costs or Pricing routes', () => {
+     expect(ROUTE_CONFIGS.some(({ regex }) => regex.test('/costs'))).toBe(false);
+@@ -49,18 +28,6 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /prompt-hub', () => {
+-    const header = generatePageHeader('/prompt-hub');
+-    expect(header.title).toBe('Prompts');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+-  it('generates empty title for /prompt-hub/:id until data loads', () => {
+-    const header = generatePageHeader('/prompt-hub/abc-123');
+-    expect(header.title).toBe('');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+   it('generates breadcrumbs for /evaluations/evaluators/:id', () => {
+     const header = generatePageHeader('/evaluations/evaluators/bias');
+     expect(header.title).toBe('Evaluator');
+@@ -95,11 +62,6 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates empty title for /prompt-hub/:id without params', () => {
+-    const header = generatePageHeader('/prompt-hub/abc');
+-    expect(header.title).toBe('');
+-  });
+-
+   it('titles a log detail page', () => {
+     // /telemetry/logs/<id> is a real route: the logs signal pushes
+     // getDetailHref() on row select and from the sheet's full-screen button.
+@@ -128,6 +90,10 @@ describe('routes removed from the product', () => {
+     '/agents',
+     '/agents/cursor',
+     '/coding-agents/users/alice%40example.com',
++    '/prompt-hub',
++    '/prompt-hub/new',
++    '/prompt-hub/my-prompt',
++    '/prompt-hub/my-prompt/edit',
+   ];
+ 
+   it('has no ROUTE_CONFIGS entry matching a removed page', () => {
+@@ -188,23 +154,21 @@ describe('updatePageHeaderWithData', () => {
+ 
+ describe('ROUTE_CONFIGS handlers', () => {
+   it('invokes every route title/breadcrumb/description handler', () => {
+-    const params = { id: 'abc' };
+-
+     expect(ROUTE_CONFIGS.length).toBeGreaterThan(10);
+ 
+     for (const config of ROUTE_CONFIGS) {
+-      expect(typeof config.getTitle('/sample', params)).toBe('string');
+-      const crumbs = config.getBreadcrumbs('/sample', params);
++      expect(typeof config.getTitle('/sample')).toBe('string');
++      const crumbs = config.getBreadcrumbs('/sample');
+       expect(Array.isArray(crumbs)).toBe(true);
+       if (config.getDescription) {
+-        expect(typeof config.getDescription('/sample', params)).toBe('string');
++        expect(typeof config.getDescription('/sample')).toBe('string');
+       }
+     }
+   });
+ 
+   it('every breadcrumb href points at a route config that still exists', () => {
+     for (const config of ROUTE_CONFIGS) {
+-      for (const crumb of config.getBreadcrumbs('/sample', { id: 'abc' })) {
++      for (const crumb of config.getBreadcrumbs('/sample')) {
+         const href = (crumb.href ?? '').split('?')[0];
+         expect({ href, matched: ROUTE_CONFIGS.filter(({ regex }) => regex.test(href)).length > 0 }).toEqual(
+           { href, matched: true }
+diff --git a/src/client/src/app/(playground)/prompt-hub/[id]/edit/page.tsx b/src/client/src/app/(playground)/prompt-hub/[id]/edit/page.tsx
+deleted file mode 100644
+index 3443e75f..00000000
+--- a/src/client/src/app/(playground)/prompt-hub/[id]/edit/page.tsx
++++ /dev/null
+@@ -1,443 +0,0 @@
+-"use client";
+-import { Badge } from "@/components/ui/badge";
+-import { Button } from "@/components/ui/button";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+-import PromptCodeEditor from "@/components/(playground)/prompt-hub/prompt-code-editor";
+-import PromptMarkdownViewer from "@/components/(playground)/prompt-hub/prompt-markdown-viewer";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import getMessage from "@/constants/messages";
+-import { Prompt, PromptVersion, PromptVersionStatus } from "@/types/prompt";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { useCustomBreadcrumbs } from "@/utils/hooks/useBreadcrumbs";
+-import { jsonParse } from "@/utils/json";
+-import { objectEntries } from "@/utils/object";
+-import { unescapeString } from "@/utils/string";
+-import { ArrowLeftIcon, PlusIcon, XIcon } from "lucide-react";
+-import Link from "next/link";
+-import { useParams, useRouter } from "next/navigation";
+-import { usePostHog } from "posthog-js/react";
+-import { KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
+-import { toast } from "sonner";
+-import PromptHubHeader from "@/components/(playground)/prompt-hub/header";
+-
+-const getVersions = (startingVersion: string) => {
+-	const v = startingVersion.split(".").map(Number);
+-	return {
+-		draft: startingVersion,
+-		major: [v[0] + 1, 0, 0].join("."),
+-		minor: [v[0], v[1] + 1, 0].join("."),
+-		patch: [v[0], v[1], v[2] + 1].join("."),
+-	};
+-};
+-
+-const m = getMessage();
+-
+-export default function EditPromptPage() {
+-	const router = useRouter();
+-	const posthog = usePostHog();
+-	const params = useParams();
+-	const { fireRequest: fetchReq, data: promptData, isLoading: isFetching } =
+-		useFetchWrapper<Prompt>();
+-	const { fireRequest: saveReq, isLoading: isSaving } = useFetchWrapper();
+-
+-	const [promptText, setPromptText] = useState("");
+-	const [tags, setTags] = useState<string[]>([]);
+-	const [tagInput, setTagInput] = useState("");
+-	const [metaProps, setMetaProps] = useState<{ key: string; value: string }[]>([]);
+-	const [selectedVersion, setSelectedVersion] = useState("");
+-	const [versionOptions, setVersionOptions] = useState<
+-		{ value: string; title: string; subText: string; description: string }[]
+-	>([]);
+-	const [versionData, setVersionData] = useState<any>(null);
+-
+-	// Fetch the prompt data
+-	useEffect(() => {
+-		fetchReq({
+-			requestType: "GET",
+-			url: `/api/prompt/get/${params.id}`,
+-			responseDataKey: "data.[0]",
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.CANNOT_CONNECT_TO_SERVER, { id: "prompt-edit" });
+-			},
+-		});
+-	}, [params.id]);
+-
+-	// Once data is loaded, initialise state
+-	useEffect(() => {
+-		if (!promptData) return;
+-		const d = promptData as any;
+-
+-		// Prefer the draft version for editing; fall back to latest published
+-		const draft = d.versions?.find(
+-			(v: PromptVersion) => v.status === PromptVersionStatus.DRAFT
+-		);
+-		const latest = d.versions?.find(
+-			(v: PromptVersion) => v.status !== PromptVersionStatus.DRAFT
+-		);
+-		const active = draft || latest || d;
+-
+-		setVersionData(active);
+-
+-		setPromptText(unescapeString(active.prompt || ""));
+-
+-		const parsedTags = jsonParse(active.tags) || [];
+-		setTags(Array.isArray(parsedTags) ? parsedTags : []);
+-
+-		const parsedMeta = jsonParse(active.metaProperties) || {};
+-		setMetaProps(
+-			objectEntries(parsedMeta).map(([k, v]: string[]) => ({ key: k, value: v as string }))
+-		);
+-
+-		const versions = getVersions(active.version || "0.0.0");
+-		const opts = [
+-			{
+-				value: versions.draft,
+-				title: m.PROMPT_HUB_DRAFT,
+-				subText: m.PROMPT_HUB_NO_VERSION_CHANGE,
+-				description: m.PROMPT_HUB_KEEP_DRAFT,
+-			},
+-			{
+-				value: versions.major,
+-				title: m.PROMPT_HUB_MAJOR,
+-				subText: `v${versions.major}`,
+-				description: m.PROMPT_HUB_MAJOR_DESCRIPTION,
+-			},
+-			{
+-				value: versions.minor,
+-				title: m.PROMPT_HUB_MINOR,
+-				subText: `v${versions.minor}`,
+-				description: m.PROMPT_HUB_MINOR_DESCRIPTION,
+-			},
+-			{
+-				value: versions.patch,
+-				title: m.PROMPT_HUB_PATCH,
+-				subText: `v${versions.patch}`,
+-				description: m.PROMPT_HUB_PATCH_DESCRIPTION,
+-			},
+-		];
+-		setVersionOptions(opts);
+-		setSelectedVersion(versions.draft);
+-	}, [promptData]);
+-
+-	const customHeader = useMemo(
+-		() => ({
+-			title: (promptData as Prompt | undefined)?.name || (isFetching ? m.LOADING : ""),
+-			breadcrumbs: [],
+-		}),
+-		[(promptData as Prompt | undefined)?.name, isFetching]
+-	);
+-	useCustomBreadcrumbs(customHeader, [(promptData as Prompt | undefined)?.name, isFetching]);
+-
+-	const addTag = useCallback(() => {
+-		const val = tagInput.trim();
+-		if (val && !tags.includes(val)) setTags((prev) => [...prev, val]);
+-		setTagInput("");
+-	}, [tagInput, tags]);
+-
+-	const removeTag = (tag: string) => setTags((prev) => prev.filter((t) => t !== tag));
+-
+-	const addMetaProp = () =>
+-		setMetaProps((prev) => [...prev, { key: "", value: "" }]);
+-	const removeMetaProp = (idx: number) =>
+-		setMetaProps((prev) => prev.filter((_, i) => i !== idx));
+-	const updateMetaProp = (idx: number, field: "key" | "value", val: string) =>
+-		setMetaProps((prev) =>
+-			prev.map((p, i) => (i === idx ? { ...p, [field]: val } : p))
+-		);
+-
+-	const handleSubmit = useCallback(() => {
+-		if (!promptText.trim()) {
+-			toast.error(m.PROMPT_HUB_CONTENT_REQUIRED, { id: "prompt-edit" });
+-			return;
+-		}
+-		if (!versionData) return;
+-
+-		toast.loading(m.PROMPT_HUB_SAVING, { id: "prompt-edit" });
+-
+-		const metaProperties = metaProps.reduce(
+-			(acc: Record<string, string>, { key, value }) => {
+-				if (key.trim()) acc[key.trim()] = value;
+-				return acc;
+-			},
+-			{}
+-		);
+-
+-		const isKeepingDraftVersion = selectedVersion === versionData.version;
+-
+-		const payload: Record<string, any> = {
+-			promptId: versionData.promptId,
+-			prompt: promptText,
+-			version: selectedVersion,
+-			status: isKeepingDraftVersion ? "DRAFT" : "PUBLISHED",
+-			tags,
+-			metaProperties,
+-		};
+-
+-		// If editing an existing draft, carry its versionId so it updates in place
+-		if (versionData.status === PromptVersionStatus.DRAFT) {
+-			payload.versionId = versionData.versionId;
+-		}
+-
+-		saveReq({
+-			body: JSON.stringify(payload),
+-			requestType: "POST",
+-			url: "/api/prompt/version",
+-			successCb: (response: any) => {
+-				toast.success(m.PROMPT_HUB_SAVED_SUCCESS, { id: "prompt-edit" });
+-				posthog?.capture(CLIENT_EVENTS.PROMPT_VERSION_ADD_SUCCESS);
+-				const promptId = response?.data?.promptId;
+-				const version = payload.version;
+-				if (promptId) {
+-					router.push(
+-						`/prompt-hub/${promptId}${isKeepingDraftVersion ? "" : `?version=${version}`}`
+-					);
+-				} else {
+-					router.push(`/prompt-hub/${params.id}`);
+-				}
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.PROMPT_HUB_SAVE_FAILED, { id: "prompt-edit" });
+-				posthog?.capture(CLIENT_EVENTS.PROMPT_VERSION_ADD_FAILURE);
+-			},
+-		});
+-	}, [promptText, tags, metaProps, selectedVersion, versionData]);
+-
+-	if (isFetching && !promptData) {
+-		return (
+-			<div className="flex flex-col w-full h-full overflow-hidden gap-4 items-center justify-center">
+-				<div className="h-4 w-1/5 bg-stone-200 dark:bg-stone-700 rounded animate-pulse" />
+-				<div className="h-4 w-3/5 bg-stone-200 dark:bg-stone-700 rounded animate-pulse" />
+-				<div className="h-4 w-2/3 bg-stone-200 dark:bg-stone-700 rounded animate-pulse" />
+-			</div>
+-		);
+-	}
+-
+-	if (!promptData) return null;
+-
+-	const promptName = (promptData as any).name;
+-	const isDraft = versionData?.status === PromptVersionStatus.DRAFT;
+-
+-	return (
+-		<div className="flex flex-col w-full h-full overflow-hidden">
+-			<PromptHubHeader createNew={false} title={`Prompt : ${promptName}`} promptUsage={false} extraButtons={(
+-				<>
+-					<Button variant="outline" size="sm" className="h-8" onClick={() => router.push(`/prompt-hub/${params.id}`)}>
+-						<ArrowLeftIcon className="mr-1.5 size-3.5" />
+-						{m.PROMPT_HUB_BACK_TO} {promptName}
+-					</Button>
+-					<Button
+-						onClick={handleSubmit}
+-						disabled={isSaving || isFetching}
+-						className={`${isSaving ? "animate-pulse" : ""} h-8`}
+-						size={"sm"}
+-					>
+-						{isSaving ? m.SAVING : m.SAVE}
+-					</Button>
+-				</>
+-			)} />
+-
+-			{/* Body */}
+-			<div className="grid grid-cols-3 gap-4 flex-1 overflow-hidden p-4">
+-				{/* Left: markdown editor */}
+-				<Card className="col-span-2 flex flex-col overflow-hidden border border-stone-200 dark:border-stone-800">
+-					<CardHeader className="p-4 pb-2 border-b border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<div className="flex items-center gap-3">
+-							<CardTitle className="text-lg text-stone-900 dark:text-stone-100">
+-								{promptName}
+-							</CardTitle>
+-							{isDraft && (
+-								<Badge variant="secondary" className="text-xs">
+-									{m.PROMPT_HUB_DRAFT}
+-								</Badge>
+-							)}
+-						</div>
+-						<p className="text-xs text-stone-500 dark:text-stone-400 mt-1">
+-							{isDraft
+-								? m.PROMPT_HUB_EDITING_DRAFT
+-								: m.PROMPT_HUB_CREATING_VERSION}
+-						</p>
+-					</CardHeader>
+-					<CardContent className="flex flex-col gap-3 p-4 flex-1 overflow-hidden">
+-						<div className="flex items-center justify-between flex-shrink-0">
+-							<Label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.PROMPT}
+-							</Label>
+-							<span className="text-xs text-stone-500 dark:text-stone-400">
+-								{m.PROMPT_HUB_VARIABLE_HINT}
+-							</span>
+-						</div>
+-
+-						<Tabs defaultValue="write" className="flex flex-col flex-1 overflow-hidden">
+-							<TabsList className="grid w-48 grid-cols-2 bg-stone-100 dark:bg-stone-900 self-start flex-shrink-0">
+-								<TabsTrigger
+-									value="write"
+-									className="data-[state=active]:bg-primary data-[state=active]:text-stone-50 text-stone-700 dark:text-stone-300 text-xs"
+-								>
+-									{m.WRITE}
+-								</TabsTrigger>
+-								<TabsTrigger
+-									value="preview"
+-									className="data-[state=active]:bg-primary data-[state=active]:text-stone-50 text-stone-700 dark:text-stone-300 text-xs"
+-								>
+-									{m.PREVIEW}
+-								</TabsTrigger>
+-							</TabsList>
+-							<TabsContent value="write" className="flex-1 overflow-hidden mt-2">
+-								<PromptCodeEditor
+-									value={promptText}
+-									onChange={setPromptText}
+-									placeholder={m.PROMPT_HUB_CONTENT_PLACEHOLDER}
+-								/>
+-							</TabsContent>
+-							<TabsContent value="preview" className="flex-1 overflow-auto mt-2">
+-								<PromptMarkdownViewer value={promptText} />
+-							</TabsContent>
+-						</Tabs>
+-					</CardContent>
+-				</Card>
+-
+-				{/* Right: settings */}
+-				<div className="flex flex-col gap-4 overflow-y-auto scrollbar-hidden">
+-					{/* Version picker */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.PROMPT_HUB_VERSION}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							<div className="grid grid-cols-2 gap-2">
+-								{versionOptions.map((opt) => (
+-									<button
+-										key={opt.value}
+-										type="button"
+-										onClick={() => setSelectedVersion(opt.value)}
+-										className={`text-left p-3 rounded-md border transition-colors ${selectedVersion === opt.value
+-												? "border-primary bg-primary/5 dark:bg-primary/10"
+-												: "border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600"
+-											}`}
+-									>
+-										<div className="text-sm font-medium text-stone-800 dark:text-stone-200">
+-											{opt.title}
+-										</div>
+-										<div className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+-											{opt.subText}
+-										</div>
+-									</button>
+-								))}
+-							</div>
+-							{selectedVersion && (
+-								<p className="text-xs text-stone-500 dark:text-stone-400 mt-1">
+-									{versionOptions.find((o) => o.value === selectedVersion)?.description}
+-								</p>
+-							)}
+-						</CardContent>
+-					</Card>
+-
+-					{/* Tags */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.TAGS}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							<div className="flex gap-2">
+-								<Input
+-									value={tagInput}
+-									onChange={(e) => setTagInput(e.target.value)}
+-									onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+-										if (e.key === "Enter") {
+-											e.preventDefault();
+-											addTag();
+-										}
+-									}}
+-									placeholder={m.CONTEXT_TAGS_ENTER_PLACEHOLDER}
+-									className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-								/>
+-								<Button
+-									type="button"
+-									size="sm"
+-									variant="outline"
+-									onClick={addTag}
+-									className="h-8 border-stone-300 dark:border-stone-600 flex-shrink-0"
+-								>
+-									<PlusIcon className="w-3 h-3" />
+-								</Button>
+-							</div>
+-							{tags.length > 0 && (
+-								<div className="flex flex-wrap gap-1.5 mt-1">
+-									{tags.map((tag) => (
+-										<Badge
+-											key={tag}
+-											variant="secondary"
+-											className="flex items-center gap-1 text-xs px-2 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300"
+-										>
+-											{tag}
+-											<button
+-												type="button"
+-												onClick={() => removeTag(tag)}
+-												className="ml-0.5 hover:text-red-500"
+-											>
+-												<XIcon className="w-3 h-3" />
+-											</button>
+-										</Badge>
+-									))}
+-								</div>
+-							)}
+-						</CardContent>
+-					</Card>
+-
+-					{/* Meta Properties */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.META_PROPERTIES}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							{metaProps.map((prop, idx) => (
+-								<div key={idx} className="flex gap-1.5 items-center">
+-									<Input
+-										value={prop.key}
+-										onChange={(e) => updateMetaProp(idx, "key", e.target.value)}
+-										placeholder={m.KEY}
+-										className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-									/>
+-									<Input
+-										value={prop.value}
+-										onChange={(e) => updateMetaProp(idx, "value", e.target.value)}
+-										placeholder={m.VALUE}
+-										className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-									/>
+-									<Button
+-										type="button"
+-										size="icon"
+-										variant="ghost"
+-										onClick={() => removeMetaProp(idx)}
+-										className="h-8 w-8 flex-shrink-0 text-stone-400 hover:text-red-500"
+-									>
+-										<XIcon className="w-3.5 h-3.5" />
+-									</Button>
+-								</div>
+-							))}
+-							<Button
+-								type="button"
+-								variant="outline"
+-								size="sm"
+-								onClick={addMetaProp}
+-								className="border-stone-300 dark:border-stone-600 text-stone-600 dark:text-stone-400 mt-1"
+-							>
+-								<PlusIcon className="w-3.5 h-3.5 mr-1" />
+-								{m.ADD_PROPERTY}
+-							</Button>
+-						</CardContent>
+-					</Card>
+-				</div>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx b/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx
+deleted file mode 100644
+index 40e521e2..00000000
+--- a/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx
++++ /dev/null
+@@ -1,373 +0,0 @@
+-"use client";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import getMessage from "@/constants/messages";
+-import { Badge } from "@/components/ui/badge";
+-import { Button } from "@/components/ui/button";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import {
+-	Select,
+-	SelectContent,
+-	SelectItem,
+-	SelectTrigger,
+-	SelectValue,
+-} from "@/components/ui/select";
+-import {
+-	Table,
+-	TableBody,
+-	TableCell,
+-	TableHead,
+-	TableHeader,
+-	TableRow,
+-} from "@/components/ui/table";
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-import { Prompt, PromptVersion, PromptVersionStatus } from "@/types/prompt";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { useDynamicBreadcrumbs } from "@/utils/hooks/useBreadcrumbs";
+-import { jsonParse } from "@/utils/json";
+-import { objectEntries } from "@/utils/object";
+-import { unescapeString } from "@/utils/string";
+-import { format, formatDistance } from "date-fns";
+-import { ArrowLeftIcon, CalendarDays, CloudDownload, Component, LinkIcon, PlusIcon, Rocket, SlidersHorizontal } from "lucide-react";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import Link from "next/link";
+-import ReactMarkdown from "react-markdown";
+-import {
+-	useParams,
+-	useRouter,
+-	useSearchParams,
+-} from "next/navigation";
+-import { useCallback, useEffect, useState } from "react";
+-import { toast } from "sonner";
+-import PromptHubHeader from "@/components/(playground)/prompt-hub/header";
+-
+-const m = getMessage();
+-
+-export default function PromptHub() {
+-	const router = useRouter();
+-	const posthog = usePostHog();
+-	const pingStatus = useRootStore(getPingStatus);
+-	const params = useParams();
+-	const searchParams = useSearchParams();
+-	const version = searchParams.get("version") || undefined;
+-	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper<Prompt>();
+-
+-	useDynamicBreadcrumbs(
+-		{ title: (data as Prompt | undefined)?.name || (isLoading ? m.LOADING : "") },
+-		[(data as Prompt | undefined)?.name, isLoading]
+-	);
+-
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			requestType: "GET",
+-			url: `/api/prompt/get/${params.id}${version ? "?version=" + version : ""}`,
+-			responseDataKey: "data.[0]",
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.CANNOT_CONNECT_TO_SERVER, {
+-					id: "prompt-hub",
+-				});
+-			},
+-		});
+-	}, [version]);
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.PROMPT_HUB_DETAIL_PAGE_VISITED);
+-	}, []);
+-
+-	useEffect(() => {
+-		fetchData();
+-	}, [version, pingStatus]);
+-
+-	const promptHeaderTone = "border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-900/70 dark:bg-pink-950/40 dark:text-pink-300";
+-
+-	// "This prompt does not exist" and "we could not ask" are different
+-	// answers. A failed read lands here with the same missing promptId a real
+-	// miss produces, so the failure has to be read from the request, not from
+-	// the payload's shape.
+-	const unreadable = pingStatus === "failure" || !!error;
+-
+-	if (!isFetched || (!unreadable && !(data as any)?.promptId && isLoading)) {
+-		return (
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<FeaturePageHeader eyebrow={getMessage().SIDEBAR_DEVELOP} title={m.LOADING} icon={<Component className="h-4 w-4" />} tone={promptHeaderTone} />
+-				<div className="flex flex-col w-full h-full overflow-hidden gap-6 items-center justify-center">
+-					<div className="h-4 w-1/5 bg-secondary/[0.9] rounded" />
+-					<div className="h-4 w-3/5 bg-secondary/[0.9] rounded" />
+-					<div className="h-4 w-2/3 bg-secondary/[0.9] rounded" />
+-					<div className="h-4 w-1/3 bg-secondary/[0.9] rounded" />
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	if (!data || !(data as any)?.promptId) {
+-		return (
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<FeaturePageHeader
+-					eyebrow={getMessage().SIDEBAR_DEVELOP}
+-					title={unreadable ? m.PROMPT_HUB_UNAVAILABLE_TITLE : m.FEATURE_PROMPTS}
+-					icon={<Component className="h-4 w-4" />}
+-					tone={promptHeaderTone}
+-				/>
+-				<div className="flex w-full h-full overflow-hidden items-center justify-center px-6 text-center text-stone-600 dark:text-stone-400">
+-					{unreadable ? m.PROMPT_HUB_UNAVAILABLE : m.PROMPT_HUB_NO_PROMPT_EXISTS}
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	if (
+-		(data as any)?.promptId &&
+-		version &&
+-		(data as any).version !== version &&
+-		!isLoading
+-	) {
+-		return (
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<FeaturePageHeader eyebrow={getMessage().SIDEBAR_DEVELOP} title={m.FEATURE_PROMPTS} icon={<Component className="h-4 w-4" />} tone={promptHeaderTone} />
+-				<div className="flex w-full h-full overflow-hidden items-center justify-center text-stone-600 dark:text-stone-400">
+-					{m.PROMPT_HUB_NO_VERSION_EXISTS}{" "}
+-					<span className="bg-secondary text-primary px-2 text-sm mx-3">
+-						{" "}
+-						{(data as any).name}{" "}
+-					</span>{" "}
+-					{m.PROMPT_HUB_EXISTS}
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	const tags = jsonParse((data as any).versions[0].tags) || [];
+-	const metaProperties =
+-		jsonParse((data as any).versions[0].metaProperties) || {};
+-	const metaPropertiesMap = objectEntries(metaProperties);
+-
+-	const latestVersion = (data as any).versions.find(
+-		(v: PromptVersion) => v.status !== PromptVersionStatus.DRAFT
+-	);
+-	const draftVersion = (data as any).versions.find(
+-		(v: PromptVersion) => v.status === PromptVersionStatus.DRAFT
+-	);
+-
+-	const promptText = unescapeString((data as any).prompt);
+-
+-	return (
+-		<div className="flex flex-col w-full h-full">
+-			<PromptHubHeader
+-				createNew={false}
+-				title={`Prompt : ${data.name}`}
+-				promptUsage={false}
+-				leading={(
+-					<Button
+-						variant="outline"
+-						size="sm"
+-						className="h-8 w-8 shrink-0 p-0"
+-						onClick={() => router.push("/prompt-hub")}
+-						title={getMessage().BACK}
+-						aria-label={getMessage().BACK}
+-					>
+-						<ArrowLeftIcon className="size-3.5" />
+-					</Button>
+-				)}
+-			/>
+-			<div className="grid grid-cols-3 w-full h-full overflow-hidden gap-4 p-4">
+-				{/* Left: prompt details */}
+-				<Card className="grow col-span-2 overflow-hidden flex flex-col border border-stone-200 dark:border-stone-800">
+-					<CardHeader className="p-4 border-b border-stone-200 dark:border-stone-800">
+-						<CardTitle>
+-							<div className="flex w-full">
+-								<div className="flex flex-col grow">
+-									<div className="flex items-center text-2xl font-semibold text-stone-900 dark:text-stone-100 gap-4">
+-										<h1>{(data as any).name}</h1>
+-										{(data as any).status === PromptVersionStatus.DRAFT && (
+-											<Badge
+-												variant="default"
+-												className="transition-none py-0 text-xs"
+-											>
+-												{m.PROMPT_HUB_DRAFT}
+-											</Badge>
+-										)}
+-									</div>
+-									<div className="flex items-center text-stone-500 dark:text-stone-400 gap-8 mt-2">
+-										<div className="flex items-center">
+-											<Rocket className="mr-2 h-4 w-4" />
+-											<span className="text-xs">
+-												{(data as any).version}
+-											</span>
+-										</div>
+-										<div className="flex items-center">
+-											<CalendarDays className="mr-2 h-4 w-4" />
+-											<span className="text-xs">
+-												{m.PROMPT_HUB_PUBLISHED_ON} {format((data as any).updatedAt, "MMM do, y")}
+-											</span>
+-										</div>
+-									</div>
+-								</div>
+-								<div className="flex items-center">
+-									{(data as any).versionId === draftVersion?.versionId ? (
+-										<Button
+-											asChild
+-											variant="secondary"
+-											className="bg-primary hover:bg-primary dark:bg-primary dark:hover:bg-primary text-stone-100 dark:text-stone-100 px-8 h-9 py-1 rounded-sm"
+-										>
+-											<Link href={`/prompt-hub/${params.id}/edit`}>
+-												{m.PROMPT_HUB_PUBLISH}
+-											</Link>
+-										</Button>
+-									) : null}
+-									{(data as any).version === latestVersion?.version &&
+-										!draftVersion?.version ? (
+-										<Button
+-											asChild
+-											variant="secondary"
+-											className="bg-primary hover:bg-primary dark:bg-primary dark:hover:bg-primary text-stone-100 dark:text-stone-100 px-8 h-9 py-1 rounded-sm"
+-										>
+-											<Link href={`/prompt-hub/${params.id}/edit`}>
+-												{m.PROMPT_HUB_CREATE_VERSION}
+-											</Link>
+-										</Button>
+-									) : null}
+-								</div>
+-							</div>
+-						</CardTitle>
+-					</CardHeader>
+-					<CardContent className="flex flex-col w-full p-4 pt-4 gap-4 overflow-auto scrollbar-hidden">
+-						{tags.length > 0 ? (
+-							<div className="flex gap-2 flex-wrap">
+-								{tags.map((tag: string) => (
+-									<Badge
+-										key={tag}
+-										className="rounded-pill bg-stone-500 transition-none"
+-									>
+-										{tag}
+-									</Badge>
+-								))}
+-							</div>
+-						) : null}
+-
+-						{/* Prompt with Write / Preview tabs */}
+-						<div className="flex flex-col gap-2 flex-1">
+-							<h3 className="text-sm font-medium text-stone-500 dark:text-stone-400">
+-								{m.PROMPT}
+-							</h3>
+-							<div className="min-h-[200px] h-full bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-md p-4 overflow-auto scrollbar-hidden">
+-								{promptText ? (
+-									<div className="prose prose-sm dark:prose-invert max-w-none prose-stone prose-headings:font-semibold prose-code:rounded prose-code:px-1 prose-pre:bg-stone-100 dark:prose-pre:bg-stone-800">
+-										<ReactMarkdown>{promptText}</ReactMarkdown>
+-									</div>
+-								) : (
+-									<p className="text-sm text-stone-400 dark:text-stone-600 italic">
+-										{m.PROMPT_HUB_NO_CONTENT}
+-									</p>
+-								)}
+-							</div>
+-						</div>
+-
+-						{metaPropertiesMap.length > 0 ? (
+-							<div className="flex flex-col gap-2">
+-								<h3 className="text-sm font-medium text-stone-500 dark:text-stone-400">
+-									{m.META_PROPERTIES}
+-								</h3>
+-								<div className="rounded-sm border border-stone-200 dark:border-stone-800">
+-									<Table>
+-										<TableHeader className="bg-stone-100 dark:bg-stone-800">
+-											<TableRow>
+-												<TableHead className="h-8 text-stone-400">{m.KEY}</TableHead>
+-												<TableHead className="h-8 text-stone-400">{m.VALUE}</TableHead>
+-											</TableRow>
+-										</TableHeader>
+-										<TableBody>
+-											{metaPropertiesMap.map(([itemKey, value]: string[]) => (
+-												<TableRow
+-													key={itemKey}
+-													className="bg-stone-50 dark:bg-stone-900 data-[state=selected]:bg-stone-50 dark:data-[state=selected]:bg-stone-900 text-stone-600 dark:text-stone-300"
+-												>
+-													<TableCell className="p-0 px-4 align-middle font-medium h-10">
+-														{itemKey}
+-													</TableCell>
+-													<TableCell className="p-0 px-4 align-middle h-10">
+-														{value}
+-													</TableCell>
+-												</TableRow>
+-											))}
+-										</TableBody>
+-									</Table>
+-								</div>
+-							</div>
+-						) : null}
+-					</CardContent>
+-				</Card>
+-
+-				{/* Right: Versions */}
+-				<Card className="flex flex-col overflow-hidden border border-stone-200 dark:border-stone-800">
+-					<Tabs defaultValue="versions" className="flex flex-col h-full overflow-hidden">
+-						<CardHeader className="p-0 flex-shrink-0 border-b border-stone-200 dark:border-stone-800">
+-							<TabsList className="w-full rounded-none bg-stone-50 dark:bg-stone-900 border-b border-stone-200 dark:border-stone-800 h-10 gap-0 p-0">
+-								<TabsTrigger
+-									value="versions"
+-									className="flex-1 rounded-none h-full data-[state=active]:bg-white dark:data-[state=active]:bg-stone-950 data-[state=active]:border-b-2 data-[state=active]:border-primary text-stone-600 dark:text-stone-400 data-[state=active]:text-stone-900 dark:data-[state=active]:text-stone-100 text-sm"
+-								>
+-									{m.PROMPT_HUB_VERSIONS}
+-								</TabsTrigger>
+-							</TabsList>
+-						</CardHeader>
+-
+-						{/* Versions tab */}
+-						<TabsContent value="versions" className="flex-1 overflow-y-auto scrollbar-hidden mt-0">
+-							<CardContent className="p-4">
+-								<div className="flex flex-col w-full gap-4">
+-									{(data as any).versions.map((versionItem: PromptVersion) => (
+-										<Link
+-											href={`/prompt-hub/${params.id}${versionItem.status === PromptVersionStatus.DRAFT
+-												? ""
+-												: `?version=${versionItem.version}`
+-												}`}
+-											key={versionItem.versionId}
+-											className="flex w-full items-center text-sm gap-2 text-stone-500 dark:text-stone-300"
+-										>
+-											<div className="flex w-min gap-2">
+-												{versionItem.version}
+-												{versionItem.versionId === latestVersion?.versionId ? (
+-													<Badge
+-														variant="outline"
+-														className="rounded-pill text-xs text-stone-500 dark:text-stone-300 dark:border-stone-600 font-light transition-none"
+-													>
+-														{m.PROMPT_HUB_LATEST}
+-													</Badge>
+-												) : null}
+-												{versionItem.versionId === draftVersion?.versionId ? (
+-													<Badge
+-														variant="outline"
+-														className="rounded-pill text-xs text-stone-500 dark:text-stone-300 dark:border-stone-600 font-light transition-none"
+-													>
+-														{m.PROMPT_HUB_DRAFT}
+-													</Badge>
+-												) : null}
+-											</div>
+-											<hr className="flex-1 border-stone-400 dark:border-stone-500 border-dotted" />
+-											<div className="flex gap-1 text-xs items-center shrink-0">
+-												<CloudDownload className="w-4" />
+-												{versionItem.totalDownloads}
+-											</div>
+-											...
+-											<div className="w-max">
+-												{formatDistance(
+-													new Date(versionItem.updatedAt),
+-													new Date().toISOString().slice(0, -1),
+-													{ addSuffix: true }
+-												)}
+-											</div>
+-										</Link>
+-									))}
+-								</div>
+-							</CardContent>
+-						</TabsContent>
+-
+-					</Tabs>
+-				</Card>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/prompt-hub/new/page.tsx b/src/client/src/app/(playground)/prompt-hub/new/page.tsx
+deleted file mode 100644
+index 38d88f43..00000000
+--- a/src/client/src/app/(playground)/prompt-hub/new/page.tsx
++++ /dev/null
+@@ -1,367 +0,0 @@
+-"use client";
+-import { Badge } from "@/components/ui/badge";
+-import { Button } from "@/components/ui/button";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+-import PromptCodeEditor from "@/components/(playground)/prompt-hub/prompt-code-editor";
+-import PromptMarkdownViewer from "@/components/(playground)/prompt-hub/prompt-markdown-viewer";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import getMessage from "@/constants/messages";
+-import { usePageHeader } from "@/selectors/page";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { ArrowLeftIcon, PlusIcon, XIcon } from "lucide-react";
+-import { useRouter } from "next/navigation";
+-import { usePostHog } from "posthog-js/react";
+-import { KeyboardEvent, useCallback, useEffect, useState } from "react";
+-import { toast } from "sonner";
+-import PromptHubHeader from "@/components/(playground)/prompt-hub/header";
+-
+-const m = getMessage();
+-
+-const getVersions = (startingVersion: string) => {
+-	const v = startingVersion.split(".").map(Number);
+-	return {
+-		draft: startingVersion,
+-		major: [v[0] + 1, 0, 0].join("."),
+-		minor: [v[0], v[1] + 1, 0].join("."),
+-		patch: [v[0], v[1], v[2] + 1].join("."),
+-	};
+-};
+-
+-const VERSION_OPTIONS = (versions: ReturnType<typeof getVersions>) => [
+-	{
+-		value: versions.draft,
+-		title: m.PROMPT_HUB_DRAFT,
+-		subText: m.PROMPT_HUB_NO_VERSION,
+-		description: m.PROMPT_HUB_DRAFT_DESCRIPTION,
+-	},
+-	{
+-		value: versions.major,
+-		title: m.PROMPT_HUB_MAJOR,
+-		subText: `v${versions.major}`,
+-		description: m.PROMPT_HUB_MAJOR_DESCRIPTION,
+-	},
+-	{
+-		value: versions.minor,
+-		title: m.PROMPT_HUB_MINOR,
+-		subText: `v${versions.minor}`,
+-		description: m.PROMPT_HUB_MINOR_DESCRIPTION,
+-	},
+-	{
+-		value: versions.patch,
+-		title: m.PROMPT_HUB_PATCH,
+-		subText: `v${versions.patch}`,
+-		description: m.PROMPT_HUB_PATCH_DESCRIPTION,
+-	},
+-];
+-
+-export default function NewPromptPage() {
+-	const router = useRouter();
+-	const posthog = usePostHog();
+-	const { setHeader } = usePageHeader();
+-	const { fireRequest, isLoading } = useFetchWrapper();
+-
+-	const versions = getVersions("0.0.0");
+-	const versionOptions = VERSION_OPTIONS(versions);
+-
+-	const [name, setName] = useState("");
+-	const [promptText, setPromptText] = useState("");
+-	const [tags, setTags] = useState<string[]>([]);
+-	const [tagInput, setTagInput] = useState("");
+-	const [metaProps, setMetaProps] = useState<{ key: string; value: string }[]>([]);
+-	const [selectedVersion, setSelectedVersion] = useState(versions.draft);
+-
+-	useEffect(() => {
+-		setHeader({
+-			title: m.PROMPT_HUB_CREATE_PROMPT,
+-			breadcrumbs: [],
+-		});
+-	}, [setHeader]);
+-
+-	const addTag = useCallback(() => {
+-		const val = tagInput.trim();
+-		if (val && !tags.includes(val)) {
+-			setTags((prev) => [...prev, val]);
+-		}
+-		setTagInput("");
+-	}, [tagInput, tags]);
+-
+-	const removeTag = (tag: string) => setTags((prev) => prev.filter((t) => t !== tag));
+-
+-	const addMetaProp = () => setMetaProps((prev) => [...prev, { key: "", value: "" }]);
+-	const removeMetaProp = (idx: number) =>
+-		setMetaProps((prev) => prev.filter((_, i) => i !== idx));
+-	const updateMetaProp = (idx: number, field: "key" | "value", val: string) =>
+-		setMetaProps((prev) => prev.map((p, i) => (i === idx ? { ...p, [field]: val } : p)));
+-
+-	const handleSubmit = useCallback(() => {
+-		if (!name.trim()) {
+-			toast.error(m.PROMPT_HUB_NAME_REQUIRED, { id: "prompt-new" });
+-			return;
+-		}
+-		if (!promptText.trim()) {
+-			toast.error(m.PROMPT_HUB_CONTENT_REQUIRED, { id: "prompt-new" });
+-			return;
+-		}
+-		toast.loading(m.PROMPT_HUB_CREATING, { id: "prompt-new" });
+-
+-		const metaProperties = metaProps.reduce(
+-			(acc: Record<string, string>, { key, value }) => {
+-				if (key.trim()) acc[key.trim()] = value;
+-				return acc;
+-			},
+-			{}
+-		);
+-
+-		const payload = {
+-			name: name.trim(),
+-			prompt: promptText,
+-			version: selectedVersion,
+-			status: selectedVersion === versions.draft ? "DRAFT" : "PUBLISHED",
+-			tags,
+-			metaProperties,
+-		};
+-
+-		fireRequest({
+-			body: JSON.stringify(payload),
+-			requestType: "POST",
+-			url: "/api/prompt",
+-			successCb: (response: any) => {
+-				toast.success(m.PROMPT_HUB_CREATED_SUCCESS, { id: "prompt-new" });
+-				posthog?.capture(CLIENT_EVENTS.PROMPT_ADD_SUCCESS);
+-				if (response?.data?.promptId) {
+-					router.push(`/prompt-hub/${response.data.promptId}`);
+-				} else {
+-					router.push("/prompt-hub");
+-				}
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.PROMPT_HUB_CREATE_FAILED_TOAST, { id: "prompt-new" });
+-				posthog?.capture(CLIENT_EVENTS.PROMPT_ADD_FAILURE);
+-			},
+-		});
+-	}, [name, promptText, tags, metaProps, selectedVersion]);
+-
+-	return (
+-		<div className="flex flex-col w-full h-full overflow-hidden">
+-			<PromptHubHeader createNew={false} promptUsage={false} extraButtons={(
+-				<>
+-					<Button variant="outline" size="sm" className="h-8" onClick={() => router.push("/prompt-hub")}>
+-						<ArrowLeftIcon className="mr-1.5 size-3.5" />
+-							{getMessage().BACK}
+-					</Button>
+-					<Button
+-						onClick={handleSubmit}
+-						disabled={isLoading}
+-						size={"sm"}
+-						className={`${isLoading ? "animate-pulse" : ""} h-8`}
+-					>
+-						{m.PROMPT_HUB_SAVE}
+-					</Button>
+-				</>
+-			)} />
+-
+-			{/* Body */}
+-			<div className="grid grid-cols-3 gap-4 flex-1 overflow-hidden p-4">
+-				{/* Left: name + markdown editor */}
+-				<Card className="col-span-2 flex flex-col overflow-hidden border border-stone-200 dark:border-stone-800">
+-					<CardContent className="flex flex-col gap-4 p-4 flex-1 overflow-hidden">
+-						{/* Name */}
+-						<div className="flex flex-col gap-1.5 flex-shrink-0">
+-							<Label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.NAME}
+-								<span className="text-stone-500 dark:text-stone-400 font-normal ml-1 text-xs">
+-									{m.PROMPT_HUB_NAME_HINT}
+-								</span>
+-							</Label>
+-							<Input
+-								value={name}
+-								onChange={(e) => {
+-									let v = e.target.value.toLowerCase().replace(/ /g, "_").replace(/[^a-z_]/g, "");
+-									setName(v);
+-								}}
+-								placeholder={m.PROMPT_HUB_NAME_PLACEHOLDER}
+-								className="border-stone-300 dark:border-stone-600"
+-							/>
+-						</div>
+-
+-						{/* Markdown editor */}
+-						<div className="flex flex-col gap-2 flex-1 overflow-auto">
+-							<div className="flex items-center justify-between">
+-								<Label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-									{m.PROMPT}
+-								</Label>
+-								<span className="text-xs text-stone-500 dark:text-stone-400">
+-									{m.PROMPT_HUB_VARIABLE_HINT}
+-								</span>
+-							</div>
+-
+-							<Tabs defaultValue="write" className="flex flex-col flex-1 overflow-hidden min-h-[200px]">
+-								<TabsList className="grid w-48 grid-cols-2 bg-stone-100 dark:bg-stone-900 self-start flex-shrink-0">
+-									<TabsTrigger
+-										value="write"
+-										className="data-[state=active]:bg-primary data-[state=active]:text-stone-50 text-stone-700 dark:text-stone-300 text-xs"
+-									>
+-										{m.WRITE}
+-									</TabsTrigger>
+-									<TabsTrigger
+-										value="preview"
+-										className="data-[state=active]:bg-primary data-[state=active]:text-stone-50 text-stone-700 dark:text-stone-300 text-xs"
+-									>
+-										{m.PREVIEW}
+-									</TabsTrigger>
+-								</TabsList>
+-								<TabsContent value="write" className="flex-1 overflow-hidden mt-2">
+-									<PromptCodeEditor
+-										value={promptText}
+-										onChange={setPromptText}
+-										placeholder={m.PROMPT_HUB_CONTENT_PLACEHOLDER}
+-									/>
+-								</TabsContent>
+-								<TabsContent value="preview" className="flex-1 overflow-auto mt-2">
+-									<PromptMarkdownViewer value={promptText} />
+-								</TabsContent>
+-							</Tabs>
+-						</div>
+-					</CardContent>
+-				</Card>
+-
+-				{/* Right: settings */}
+-				<div className="flex flex-col gap-4 overflow-y-auto scrollbar-hidden">
+-					{/* Version picker */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.PROMPT_HUB_VERSION}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							<div className="grid grid-cols-2 gap-2">
+-								{versionOptions.map((opt) => (
+-									<button
+-										key={opt.value}
+-										type="button"
+-										onClick={() => setSelectedVersion(opt.value)}
+-										className={`text-left p-3 rounded-md border transition-colors ${
+-											selectedVersion === opt.value
+-												? "border-primary bg-primary/5 dark:bg-primary/10"
+-												: "border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600"
+-										}`}
+-									>
+-										<div className="text-sm font-medium text-stone-800 dark:text-stone-200">
+-											{opt.title}
+-										</div>
+-										<div className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+-											{opt.subText}
+-										</div>
+-									</button>
+-								))}
+-							</div>
+-							<p className="text-xs text-stone-500 dark:text-stone-400 mt-1">
+-								{versionOptions.find((o) => o.value === selectedVersion)?.description}
+-							</p>
+-						</CardContent>
+-					</Card>
+-
+-					{/* Tags */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.TAGS}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							<div className="flex gap-2">
+-								<Input
+-									value={tagInput}
+-									onChange={(e) => setTagInput(e.target.value)}
+-									onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+-										if (e.key === "Enter") {
+-											e.preventDefault();
+-											addTag();
+-										}
+-									}}
+-									placeholder={m.CONTEXT_TAGS_ENTER_PLACEHOLDER}
+-									className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-								/>
+-								<Button
+-									type="button"
+-									size="sm"
+-									variant="outline"
+-									onClick={addTag}
+-									className="h-8 border-stone-300 dark:border-stone-600 flex-shrink-0"
+-								>
+-									<PlusIcon className="w-3 h-3" />
+-								</Button>
+-							</div>
+-							{tags.length > 0 && (
+-								<div className="flex flex-wrap gap-1.5 mt-1">
+-									{tags.map((tag) => (
+-										<Badge
+-											key={tag}
+-											variant="secondary"
+-											className="flex items-center gap-1 text-xs px-2 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300"
+-										>
+-											{tag}
+-											<button type="button" onClick={() => removeTag(tag)} className="ml-0.5 hover:text-red-500">
+-												<XIcon className="w-3 h-3" />
+-											</button>
+-										</Badge>
+-									))}
+-								</div>
+-							)}
+-						</CardContent>
+-					</Card>
+-
+-					{/* Meta Properties */}
+-					<Card className="border border-stone-200 dark:border-stone-800 flex-shrink-0">
+-						<CardHeader className="p-4 pb-2">
+-							<CardTitle className="text-sm font-medium text-stone-700 dark:text-stone-300">
+-								{m.META_PROPERTIES}
+-							</CardTitle>
+-						</CardHeader>
+-						<CardContent className="p-4 pt-0 flex flex-col gap-2">
+-							{metaProps.map((prop, idx) => (
+-								<div key={idx} className="flex gap-1.5 items-center">
+-									<Input
+-										value={prop.key}
+-										onChange={(e) => updateMetaProp(idx, "key", e.target.value)}
+-										placeholder={m.KEY}
+-										className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-									/>
+-									<Input
+-										value={prop.value}
+-										onChange={(e) => updateMetaProp(idx, "value", e.target.value)}
+-										placeholder={m.VALUE}
+-										className="h-8 text-sm border-stone-300 dark:border-stone-600"
+-									/>
+-									<Button
+-										type="button"
+-										size="icon"
+-										variant="ghost"
+-										onClick={() => removeMetaProp(idx)}
+-										className="h-8 w-8 flex-shrink-0 text-stone-400 hover:text-red-500"
+-									>
+-										<XIcon className="w-3.5 h-3.5" />
+-									</Button>
+-								</div>
+-							))}
+-							<Button
+-								type="button"
+-								variant="outline"
+-								size="sm"
+-								onClick={addMetaProp}
+-								className="border-stone-300 dark:border-stone-600 text-stone-600 dark:text-stone-400 mt-1"
+-							>
+-								<PlusIcon className="w-3.5 h-3.5 mr-1" />
+-								{m.ADD_PROPERTY}
+-							</Button>
+-						</CardContent>
+-					</Card>
+-				</div>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/prompt-hub/page.tsx b/src/client/src/app/(playground)/prompt-hub/page.tsx
+deleted file mode 100644
+index 3058ba5f..00000000
+--- a/src/client/src/app/(playground)/prompt-hub/page.tsx
++++ /dev/null
+@@ -1,167 +0,0 @@
+-"use client";
+-
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { useCallback, useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-import { toast } from "sonner";
+-import { format } from "date-fns";
+-import { useRootStore } from "@/store";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { TrashIcon } from "lucide-react";
+-import ConfirmationModal from "@/components/common/confirmation-modal";
+-import getMessage from "@/constants/messages";
+-import DataTable from "@/components/data-table/table";
+-import { Columns } from "@/components/data-table/columns";
+-import { PromptList } from "@/types/prompt";
+-import PromptHubHeader from "@/components/(playground)/prompt-hub/header";
+-
+-const m = getMessage();
+-
+-const columns: Columns<string, PromptList> = {
+-	name: {
+-		header: () => m.NAME,
+-		cell: ({ row }) => row.name,
+-	},
+-	createdBy: {
+-		header: () => m.CREATED_BY,
+-		cell: ({ row }) => row.createdBy,
+-	},
+-	latestVersion: {
+-		header: () => m.PROMPT_HUB_LATEST_VERSION,
+-		cell: ({ row }) => {
+-			const latestVersion = row.latestVersion;
+-			return latestVersion || m.PROMPT_HUB_DRAFT.toLowerCase();
+-		},
+-	},
+-	downloads: {
+-		header: () => m.PROMPT_HUB_DOWNLOADS,
+-		cell: ({ row }) => {
+-			const totalDownloads = row.totalDownloads;
+-			const latestVersion = row.latestVersion;
+-			return latestVersion ? totalDownloads : m.NO_DASH;
+-		},
+-	},
+-	lastReleasedOn: {
+-		header: () => m.PROMPT_HUB_LAST_RELEASED,
+-		cell: ({ row }) => {
+-			const latestVersionDate = row.latestVersionDate;
+-			const latestVersion = row.latestVersion;
+-			return latestVersion ? format(latestVersionDate, "MMM do, y") : m.NO_DASH;
+-		},
+-	},
+-	actions: {
+-		header: () => m.ACTIONS,
+-		cell: ({ row, extraFunctions }) => {
+-			return (
+-				<div
+-					className="flex justify-start items-center gap-4"
+-					onClick={(e) => e.stopPropagation()}
+-				>
+-					<ConfirmationModal
+-						handleYes={extraFunctions?.handleDelete}
+-						title={m.PROMPT_HUB_DELETE_CONFIRM}
+-						subtitle={m.PROMPT_HUB_DELETE_WARNING}
+-						params={{
+-							id: row.promptId,
+-						}}
+-					>
+-						<TrashIcon className="w-4 cursor-pointer" />
+-					</ConfirmationModal>
+-				</div>
+-			);
+-		},
+-	},
+-};
+-
+-export default function PromptHub() {
+-	const posthog = usePostHog();
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper<PromptList[]>();
+-	const { fireRequest: fireDeleteRequest, isLoading: isDeleting } =
+-		useFetchWrapper();
+-	const pingStatus = useRootStore(getPingStatus);
+-	const router = useRouter();
+-
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			requestType: "POST",
+-			url: `/api/prompt/get`,
+-			successCb: (response: PromptList[]) => {
+-				posthog?.capture(CLIENT_EVENTS.PROMPT_HUB_LIST, {
+-					count: Array.isArray(response) ? response.length : 0,
+-				});
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.CANNOT_CONNECT_TO_SERVER, {
+-					id: "prompt-hub",
+-				});
+-			},
+-		});
+-	}, [posthog]);
+-
+-	const deletePrompt = useCallback(
+-		async ({ id }: { id: string }) => {
+-			fireDeleteRequest({
+-				requestType: "DELETE",
+-				url: `/api/prompt/${id}`,
+-				successCb: (data: any) => {
+-					toast.success(data, {
+-						id: "prompt-hub",
+-					});
+-					fetchData();
+-				},
+-				failureCb: (err?: string) => {
+-					toast.error(err || m.CANNOT_CONNECT_TO_SERVER, {
+-						id: "prompt-hub",
+-					});
+-				},
+-			});
+-		},
+-		[fetchData]
+-	);
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.PROMPT_HUB_PAGE_VISITED);
+-	}, []);
+-
+-	useEffect(() => {
+-		if (pingStatus !== "pending") {
+-			fetchData();
+-		}
+-	}, [pingStatus]);
+-
+-	if (!data?.length && !isLoading && isFetched) {
+-		return (
+-			<div className="flex flex-col items-center mx-auto p-8 overflow-auto">
+-				<p className="text-sm text-stone-500">{getMessage().NO_DATA_FOUND}</p>
+-			</div>
+-		);
+-	}
+-
+-	return (
+-		<div className="flex flex-col w-full h-full">
+-			<PromptHubHeader createNew />
+-			<div className="flex flex-col w-full h-full p-4 overflow-hidden">
+-				<DataTable
+-					columns={columns}
+-					data={data || []}
+-					isFetched={isFetched || pingStatus === "failure"}
+-					isLoading={isLoading || isDeleting}
+-					visibilityColumns={{
+-						name: true,
+-						createdBy: true,
+-						latestVersion: true,
+-						downloads: true,
+-						lastReleasedOn: true,
+-						actions: true,
+-					}}
+-					onClick={(row: PromptList) => router.push(`/prompt-hub/${row.promptId}`)}
+-					extraFunctions={{
+-						handleDelete: deletePrompt,
+-					}}
+-				/>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/api/prompt/[id]/route.ts b/src/client/src/app/api/prompt/[id]/route.ts
+deleted file mode 100644
+index 36826821..00000000
+--- a/src/client/src/app/api/prompt/[id]/route.ts
++++ /dev/null
+@@ -1,16 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { deletePrompt } from "@/lib/platform/prompt";
+-
+-async function DELETEHandler(_: Request, context: any) {
+-	const { id } = context.params;
+-	const [err, res] = await deletePrompt(id);
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/prompt/get-compiled/route.ts b/src/client/src/app/api/prompt/get-compiled/route.ts
+deleted file mode 100644
+index 91358272..00000000
+--- a/src/client/src/app/api/prompt/get-compiled/route.ts
++++ /dev/null
+@@ -1,77 +0,0 @@
+-import { SERVER_EVENTS } from "@/constants/events";
+-import getMessage from "@/constants/messages";
+-import { PromptCompiledInput } from "@/constants/prompts";
+-import { resolveSdkIntelligenceDatabaseConfig } from "@/helpers/server/sdk-intelligence";
+-import { getCompiledPrompt } from "@/lib/platform/prompt/compiled";
+-import PostHogServer from "@/lib/posthog";
+-import asaw from "@/utils/asaw";
+-
+-const CORS_HEADERS =
+-	"Content-Type, Authorization, x-openlit-organisation-id, x-openlit-project-id, x-openlit-environment, x-openlit-database-config-id";
+-
+-export async function POST(request: Request) {
+-	const startTimestamp = Date.now();
+-	const authorizationHeader = request.headers.get("Authorization") || "";
+-	let apiKey: string = "";
+-	if (authorizationHeader.startsWith("Bearer ")) {
+-		apiKey = authorizationHeader.replace(/^Bearer /, "");
+-	} else {
+-		return Response.json({
+-			err: getMessage().NO_API_KEY,
+-			res: null,
+-		});
+-	}
+-
+-	const [resolveErr, resolved] = await resolveSdkIntelligenceDatabaseConfig(
+-		request,
+-		apiKey
+-	);
+-	if (resolveErr || !resolved) {
+-		return Response.json({
+-			err: resolveErr || getMessage().NO_API_KEY,
+-			res: null,
+-		});
+-	}
+-
+-	const formData = await request.json();
+-
+-	const promptInput: PromptCompiledInput = {
+-		id: formData.id,
+-		name: formData.name,
+-		version: formData.version,
+-		apiKey,
+-		variables: formData.variables || {},
+-		shouldCompile: !!formData.shouldCompile,
+-		downloadMetaProperties: formData.metaProperties,
+-		downloadSource: formData.source,
+-		databaseConfigId: resolved.databaseConfigId,
+-	};
+-
+-	const [err, res]: any = await asaw(getCompiledPrompt(promptInput));
+-	PostHogServer.fireEvent({
+-		event: err
+-			? SERVER_EVENTS.PROMPT_SDK_FETCH_FAILURE
+-			: SERVER_EVENTS.PROMPT_SDK_FETCH_SUCCESS,
+-		properties: {
+-			downloadSource: formData.source,
+-			resolveVia: resolved.via,
+-		},
+-		startTimestamp,
+-	});
+-
+-	return Response.json({
+-		err,
+-		res,
+-	});
+-}
+-
+-export async function OPTIONS() {
+-	return new Response(null, {
+-		status: 200,
+-		headers: {
+-			"Access-Control-Allow-Origin": "*",
+-			"Access-Control-Allow-Methods": "POST, OPTIONS",
+-			"Access-Control-Allow-Headers": CORS_HEADERS,
+-		},
+-	});
+-}
+diff --git a/src/client/src/app/api/prompt/get/[id]/route.ts b/src/client/src/app/api/prompt/get/[id]/route.ts
+deleted file mode 100644
+index b5a4e04c..00000000
+--- a/src/client/src/app/api/prompt/get/[id]/route.ts
++++ /dev/null
+@@ -1,14 +0,0 @@
+-import { getPromptDetails } from "@/lib/platform/prompt";
+-import { errorResponse } from "@/helpers/server/response";
+-import { NextRequest } from "next/server";
+-
+-export async function GET(request: NextRequest, context: any) {
+-	const { searchParams } = request.nextUrl;
+-	const version = searchParams.get("version") || undefined;
+-	const { id } = context.params || {};
+-
+-	const res: any = await getPromptDetails(id, { version });
+-	if (res?.err) return errorResponse(res.err, 404);
+-
+-	return Response.json(res);
+-}
+diff --git a/src/client/src/app/api/prompt/get/route.ts b/src/client/src/app/api/prompt/get/route.ts
+deleted file mode 100644
+index f3a2b049..00000000
+--- a/src/client/src/app/api/prompt/get/route.ts
++++ /dev/null
+@@ -1,17 +0,0 @@
+-import { getPrompts } from "@/lib/platform/prompt";
+-import { errorResponse } from "@/helpers/server/response";
+-import { resolveDbConfigId } from "@/helpers/server/auth";
+-
+-export async function POST(request: Request) {
+-	const [authErr, databaseConfigId] = await resolveDbConfigId(request);
+-	if (authErr) {
+-		return Response.json({ err: authErr }, { status: 401 });
+-	}
+-
+-	const { err, data }: any = await getPrompts({ databaseConfigId });
+-	if (err) {
+-		return errorResponse(err);
+-	}
+-
+-	return Response.json(data);
+-}
+diff --git a/src/client/src/app/api/prompt/route.ts b/src/client/src/app/api/prompt/route.ts
+deleted file mode 100644
+index c37aebfd..00000000
+--- a/src/client/src/app/api/prompt/route.ts
++++ /dev/null
+@@ -1,29 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { PromptInput } from "@/constants/prompts";
+-import { createPrompt } from "@/lib/platform/prompt";
+-import asaw from "@/utils/asaw";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-
+-	const promptInput: PromptInput = {
+-		name: formData.name,
+-		prompt: formData.prompt,
+-		version: formData.version,
+-		status: formData.status,
+-		tags: formData.tags,
+-		metaProperties: formData.metaProperties,
+-	};
+-
+-	const [err, res]: any = await asaw(createPrompt(promptInput));
+-
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/prompt/version/route.ts b/src/client/src/app/api/prompt/version/route.ts
+deleted file mode 100644
+index 750118cd..00000000
+--- a/src/client/src/app/api/prompt/version/route.ts
++++ /dev/null
+@@ -1,30 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { PromptUpdate } from "@/constants/prompts";
+-import { upsertPromptVersion } from "@/lib/platform/prompt/version";
+-import asaw from "@/utils/asaw";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-
+-	const promptInput: PromptUpdate = {
+-		versionId: formData.versionId,
+-		promptId: formData.promptId,
+-		prompt: formData.prompt,
+-		version: formData.version,
+-		status: formData.status,
+-		tags: formData.tags,
+-		metaProperties: formData.metaProperties,
+-	};
+-
+-	const [err, res]: any = await asaw(upsertPromptVersion(promptInput));
+-
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/clickhouse/migrations/create-prompt-migration.ts b/src/client/src/clickhouse/migrations/create-prompt-migration.ts
+deleted file mode 100644
+index 5496e55a..00000000
+--- a/src/client/src/clickhouse/migrations/create-prompt-migration.ts
++++ /dev/null
+@@ -1,56 +0,0 @@
+-import {
+-	OPENLIT_PROMPTS_TABLE_NAME,
+-	OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-	OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME,
+-} from "@/lib/platform/prompt/table-details";
+-import migrationHelper from "./migration-helper";
+-
+-const MIGRATION_ID = "create-prompt-table";
+-
+-export default async function CreatePromptMigration(databaseConfigId?: string) {
+-	const queries = [
+-		`
+-      CREATE TABLE IF NOT EXISTS ${OPENLIT_PROMPTS_TABLE_NAME} (
+-          id UUID DEFAULT generateUUIDv4(),  -- Unique ID for each prompt
+-          name String,                       -- Unique name for the prompt
+-          created_by String,                 -- Who created the prompt
+-          created_at DateTime DEFAULT now(), -- Timestamp for when the prompt was created
+-          PRIMARY KEY id,                  -- Unique primary key constraint
+-      ) ENGINE = MergeTree()
+-      ORDER BY id;
+-    `,
+-		`
+-      CREATE TABLE IF NOT EXISTS ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME} (
+-        version_id UUID DEFAULT generateUUIDv4(),            -- Unique identifier for each version
+-        prompt_id UUID,                                      -- Foreign key to prompt
+-        updated_by String,                                   -- Who updated the version
+-        updated_at DateTime DEFAULT now(),                   -- When the version was updated
+-        version String,                                      -- Version in '1.0.0' format
+-        status Enum('PUBLISHED', 'DRAFT'),                   -- DRAFT or PUBLISHED status
+-        prompt String DEFAULT '',                            -- The actual prompt content
+-        tags String DEFAULT '[]',                              -- Tags for the version
+-        meta_properties String DEFAULT '{}',                   -- Meta properties for the version
+-        INDEX prompt_version_index (prompt_id, version) TYPE minmax GRANULARITY 1 
+-      ) ENGINE = MergeTree()
+-      ORDER BY (prompt_id, version_id);
+-    `,
+-		`
+-      CREATE TABLE IF NOT EXISTS ${OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME} (
+-        download_id UUID DEFAULT generateUUIDv4(),          -- Unique ID for each download
+-        prompt_id UUID,                                     -- Links to the prompts table
+-        version_id UUID,                                    -- Version id of the prompt
+-        downloaded_at DateTime DEFAULT now(),               -- Timestamp when the download occurred
+-        download_source String DEFAULT 'api',               -- Source of the download (e.g., 'python', 'typescript', 'api')
+-        meta_properties String DEFAULT '{}'                   -- String field with default empty object for additional properties
+-      ) 
+-      ENGINE = MergeTree()
+-      ORDER BY (prompt_id, version_id, downloaded_at);
+-    `,
+-	];
+-
+-	return migrationHelper({
+-		clickhouseMigrationId: MIGRATION_ID,
+-		databaseConfigId,
+-		queries,
+-	});
+-}
+diff --git a/src/client/src/clickhouse/migrations/drop-prompt-migration.ts b/src/client/src/clickhouse/migrations/drop-prompt-migration.ts
+new file mode 100644
+index 00000000..3a43b246
+--- /dev/null
++++ b/src/client/src/clickhouse/migrations/drop-prompt-migration.ts
+@@ -0,0 +1,35 @@
++import migrationHelper from "./migration-helper";
++
++const MIGRATION_ID = "drop-prompt-tables";
++
++/**
++ * Drops the tables that the Prompt Hub product owned.
++ *
++ * The Prompt Hub's pages, API and components are gone, so nothing reads or
++ * writes these tables any more. A fresh install must not create them, and an
++ * existing install should not keep them: the tables were the product's
++ * storage, and storage with no owner is a place a stale row can still be
++ * read from by something that believes it is looking at prompts.
++ *
++ * The table names are spelled out here rather than imported, because the
++ * module that named them was part of the removed product. The drop
++ * migration is the one place that still has to say what the tables were
++ * called, and it has to survive the removal that took the names with it.
++ *
++ * `DROP TABLE IF EXISTS` keeps an install that never had them a no-op.
++ */
++export default async function DropPromptMigration(databaseConfigId?: string) {
++	const queries = [
++		`DROP TABLE IF EXISTS openlit_prompt_version_downloads`,
++		`DROP TABLE IF EXISTS openlit_prompt_versions`,
++		`DROP TABLE IF EXISTS openlit_prompts`,
++	];
++
++	const { migrationExist, queriesRun } = await migrationHelper({
++		clickhouseMigrationId: MIGRATION_ID,
++		databaseConfigId,
++		queries,
++	});
++
++	return { migrationExist, queriesRun };
++}
+diff --git a/src/client/src/clickhouse/migrations/index.ts b/src/client/src/clickhouse/migrations/index.ts
+index 7a05540a..b98862c0 100644
+--- a/src/client/src/clickhouse/migrations/index.ts
++++ b/src/client/src/clickhouse/migrations/index.ts
+@@ -1,7 +1,6 @@
+ import CreateEvaluationMigration from "./create-evaluation-migration";
+ import CreateEvaluationTypeDefaultsMigration from "./create-evaluation-type-defaults-migration";
+ import CreateCronLogMigration from "./create-cron-log-migration";
+-import CreatePromptMigration from "./create-prompt-migration";
+ import CreateVaultMigration from "./create-vault-migration";
+ import CreateChatMigration from "./create-chat-migration";
+ import AddChatConversationTypeMigration from "./add-chat-conversation-type-migration";
+@@ -22,6 +21,7 @@ import DropOpengroundMigration from "./drop-openground-migration";
+ import CreateContextMigration from "./create-context-migration";
+ import DropRuleEngineMigration from "./drop-rule-engine-migration";
+ import DropDashboardAuthoringMigration from "./drop-dashboard-authoring-migration";
++import DropPromptMigration from "./drop-prompt-migration";
+ import AddProviderModelsCachePricesMigration from "./add-provider-models-cache-prices-migration";
+ import CreateTelemetryRollupsMigration from "./create-telemetry-rollups-migration";
+ import AlterTelemetryRollupsDimensionsMigration from "./alter-telemetry-rollups-dimensions-migration";
+@@ -29,7 +29,6 @@ import AlterTelemetryRollupsDimensionsMigration from "./alter-telemetry-rollups-
+ export default async function migrations(databaseConfigId?: string) {
+ 	// Group 1: Independent table creations (safe to parallel)
+ 	await Promise.all([
+-		CreatePromptMigration(databaseConfigId),
+ 		CreateVaultMigration(databaseConfigId),
+ 		CreateEvaluationMigration(databaseConfigId),
+ 		CreateEvaluationTypeDefaultsMigration(databaseConfigId),
+@@ -81,4 +80,5 @@ export default async function migrations(databaseConfigId?: string) {
+ 	await DropOpengroundMigration(databaseConfigId);
+ 	await DropRuleEngineMigration(databaseConfigId);
+ 	await DropDashboardAuthoringMigration(databaseConfigId);
++	await DropPromptMigration(databaseConfigId);
+ }
+diff --git a/src/client/src/components/(playground)/prompt-hub/header.tsx b/src/client/src/components/(playground)/prompt-hub/header.tsx
+deleted file mode 100644
+index e8087223..00000000
+--- a/src/client/src/components/(playground)/prompt-hub/header.tsx
++++ /dev/null
+@@ -1,55 +0,0 @@
+-"use client";
+-import { Button } from "@/components/ui/button";
+-import getMessage from "@/constants/messages";
+-import { useRootStore } from "@/store";
+-import { getPingStatus } from "@/selectors/database-config";
+-import Link from "next/link";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import { Component } from "lucide-react";
+-import type { ReactNode } from "react";
+-
+-export default function PromptHubHeader({
+-	title,
+-	createNew,
+-	className = "flex w-full items-center justify-end gap-3",
+-	extraButtons,
+-	leading,
+-	promptUsage = false,
+-}: {
+-	title?: string;
+-	createNew?: boolean;
+-	className?: string;
+-	extraButtons?: JSX.Element;
+-	/** Left-side control (icon-only back on detail pages). */
+-	leading?: ReactNode;
+-	promptUsage?: boolean;
+-}) {
+-	const m = getMessage();
+-	const pingStatus = useRootStore(getPingStatus);
+-	const pageHeaderTitle = title || m.FEATURE_PROMPTS;
+-	const actions = (
+-		<div className={className}>
+-						{createNew && pingStatus === "success" && (
+-				<Button
+-					asChild
+-					variant="secondary"
+-					className="bg-primary hover:bg-primary dark:bg-primary dark:hover:bg-primary text-stone-100 dark:text-stone-100 px-8 h-8"
+-				>
+-					<Link href="/prompt-hub/new">{m.PROMPT_HUB_CREATE}</Link>
+-				</Button>
+-			)}
+-			{extraButtons}
+-		</div>
+-	);
+-
+-	return (
+-		<FeaturePageHeader
+-			eyebrow={getMessage().SIDEBAR_DEVELOP}
+-			title={pageHeaderTitle}
+-			icon={<Component className="h-4 w-4" />}
+-			tone="border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-900/70 dark:bg-pink-950/40 dark:text-pink-300"
+-			leading={leading}
+-			actions={actions}
+-		/>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/prompt-hub/prompt-code-editor.tsx b/src/client/src/components/(playground)/prompt-hub/prompt-code-editor.tsx
+deleted file mode 100644
+index 27387edc..00000000
+--- a/src/client/src/components/(playground)/prompt-hub/prompt-code-editor.tsx
++++ /dev/null
+@@ -1,46 +0,0 @@
+-"use client";
+-
+-import { Textarea } from "@/components/ui/textarea";
+-import { useMemo, useRef, useState } from "react";
+-
+-export default function PromptCodeEditor({
+-	value,
+-	onChange,
+-	placeholder,
+-}: {
+-	value: string;
+-	onChange: (value: string) => void;
+-	placeholder?: string;
+-}) {
+-	const gutterRef = useRef<HTMLDivElement>(null);
+-	const [scrollTop, setScrollTop] = useState(0);
+-	const lineCount = useMemo(
+-		() => Math.max(1, value.split("\n").length),
+-		[value]
+-	);
+-
+-	return (
+-		<div className="relative h-full min-h-[300px] overflow-hidden rounded-md border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
+-			<div
+-				ref={gutterRef}
+-				className="pointer-events-none absolute bottom-0 left-0 top-0 w-9 overflow-hidden border-r border-stone-200 bg-stone-50 py-3 text-right font-mono text-xs leading-6 text-stone-400 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-600"
+-			>
+-				<div style={{ transform: `translateY(-${scrollTop}px)` }}>
+-					{Array.from({ length: lineCount }, (_, index) => (
+-						<div key={index} className="h-6 pr-1.5">
+-							{index + 1}
+-						</div>
+-					))}
+-				</div>
+-			</div>
+-			<Textarea
+-				value={value}
+-				onChange={(event) => onChange(event.target.value)}
+-				onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+-				placeholder={placeholder}
+-				spellCheck={false}
+-				className="h-full min-h-[300px] resize-none rounded-none border-0 bg-transparent py-3 pl-12 pr-4 font-mono text-sm leading-6 text-stone-900 shadow-none outline-none ring-0 focus-visible:ring-0 dark:text-stone-100 dark:placeholder:text-stone-500"
+-			/>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/prompt-hub/prompt-markdown-viewer.tsx b/src/client/src/components/(playground)/prompt-hub/prompt-markdown-viewer.tsx
+deleted file mode 100644
+index de1ca6d8..00000000
+--- a/src/client/src/components/(playground)/prompt-hub/prompt-markdown-viewer.tsx
++++ /dev/null
+@@ -1,22 +0,0 @@
+-"use client";
+-
+-import getMessage from "@/constants/messages";
+-import ReactMarkdown from "react-markdown";
+-
+-const m = getMessage();
+-
+-export default function PromptMarkdownViewer({ value }: { value: string }) {
+-	return (
+-		<div className="h-full min-h-[300px] overflow-auto rounded-md border border-stone-200 bg-white px-5 py-4 dark:border-stone-800 dark:bg-stone-950">
+-			{value ? (
+-				<div className="prose prose-sm max-w-none prose-stone prose-headings:font-semibold prose-p:leading-6 prose-li:leading-6 prose-code:rounded prose-code:bg-stone-100 prose-code:px-1 prose-pre:border prose-pre:border-stone-200 prose-pre:bg-stone-50 dark:prose-invert dark:prose-code:bg-stone-800 dark:prose-pre:border-stone-800 dark:prose-pre:bg-stone-900">
+-					<ReactMarkdown>{value}</ReactMarkdown>
+-				</div>
+-			) : (
+-				<p className="text-sm italic text-stone-400 dark:text-stone-600">
+-					{m.PROMPT_HUB_NOTHING_TO_PREVIEW}
+-				</p>
+-			)}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/constants/api-reference.ts b/src/client/src/constants/api-reference.ts
+index 390019e1..0c7024a7 100644
+--- a/src/client/src/constants/api-reference.ts
++++ b/src/client/src/constants/api-reference.ts
+@@ -166,18 +166,6 @@ ${bearerAuthHeaders(apiKey)} \\
+     },
+     "metricType": "Sum"
+   }'`,
+-	},
+-	{
+-		id: "get-compiled-prompt",
+-		method: "GET",
+-		path: "/api/prompt/get-compiled",
+-		summary: "Fetch compiled prompt",
+-		description:
+-			"Fetch and compile a prompt by name. Prefer environment signal routing for the intelligence ClickHouse; API-key-only clients and optional x-openlit-database-config-id remain supported.",
+-		curlExample: (apiKey) => `curl -X POST "http://localhost:3000/api/prompt/get-compiled" \\
+-${bearerSdkAuthHeaders(apiKey)} \\
+-  -H "Content-Type: application/json" \\
+-  -d '{ "name": "summarize-prompt", "shouldCompile": true }'`,
+ 	},
+ 	{
+ 		id: "get-secrets",
+@@ -243,62 +231,6 @@ ${bearerAuthHeaders(apiKey)} \\
+       "environment": "production"
+     }
+   }'`,
+-	},
+-	{
+-		id: "create-prompt",
+-		method: "POST",
+-		path: "/api/prompt",
+-		summary: "Create prompt",
+-		description: "Create or save prompt configurations in OpenLIT Prompt Hub.",
+-		requestBody: `{
+-  "name": "summarize-prompt",
+-  "prompt": "Summarize this: {{text}}",
+-  "version": "1.0.0"
+-}`,
+-		responseBody: `{
+-  "success": true
+-}`,
+-		curlExample: (apiKey) => `curl -X POST http://localhost:3000/api/prompt \\
+-${bearerAuthHeaders(apiKey)} \\
+-  -H "Content-Type: application/json" \\
+-  -d '{
+-    "name": "summarize-prompt",
+-    "prompt": "Summarize this: {{text}}",
+-    "version": "1.0.0"
+-  }'`,
+-	},
+-	{
+-		id: "get-prompt",
+-		method: "POST",
+-		path: "/api/prompt/get",
+-		summary: "Get prompt details",
+-		description: "Retrieve details of a prompt version by its name.",
+-		requestBody: `{
+-  "name": "summarize-prompt"
+-}`,
+-		responseBody: `{
+-  "id": "prompt-id-123",
+-  "name": "summarize-prompt",
+-  "prompt": "Summarize this: {{text}}",
+-  "version": "1.0.0"
+-}`,
+-		curlExample: (apiKey) => `curl -X POST http://localhost:3000/api/prompt/get \\
+-${bearerAuthHeaders(apiKey)} \\
+-  -H "Content-Type: application/json" \\
+-  -d '{
+-    "name": "summarize-prompt"
+-  }'`,
+-	},
+-	{
+-		id: "list-prompts",
+-		method: "POST",
+-		path: "/api/prompt/get",
+-		summary: "List prompts",
+-		description: "Retrieve a list of all prompt configurations saved in the Prompt Hub.",
+-		requestBody: ``,
+-		responseBody: `[]`,
+-		curlExample: (apiKey) => `curl -X POST http://localhost:3000/api/prompt/get \\
+-${bearerAuthHeaders(apiKey)}`,
+ 	},
+ 	{
+ 		id: "query-traces",
+diff --git a/src/client/src/constants/events.ts b/src/client/src/constants/events.ts
+index 8453e113..02592721 100644
+--- a/src/client/src/constants/events.ts
++++ b/src/client/src/constants/events.ts
+@@ -14,15 +14,6 @@ export const CLIENT_EVENTS = {
+ 	// Profile
+ 	PROFILE_UPDATE_SUCCESS: "PROFILE_UPDATE_SUCCESS",
+ 	PROFILE_UPDATE_FAILURE: "PROFILE_UPDATE_FAILURE",
+-	// Prompt
+-	PROMPT_ADD_SUCCESS: "PROMPT_ADD_SUCCESS",
+-	PROMPT_ADD_FAILURE: "PROMPT_ADD_FAILURE",
+-	PROMPT_VERSION_ADD_SUCCESS: "PROMPT_VERSION_ADD_SUCCESS",
+-	PROMPT_VERSION_ADD_FAILURE: "PROMPT_VERSION_ADD_FAILURE",
+-	PROMPT_IMPROVEMENT_RUN_SUCCESS: "PROMPT_IMPROVEMENT_RUN_SUCCESS",
+-	PROMPT_IMPROVEMENT_RUN_FAILURE: "PROMPT_IMPROVEMENT_RUN_FAILURE",
+-	PROMPT_IMPROVEMENT_SUGGESTION_ACCEPTED: "PROMPT_IMPROVEMENT_SUGGESTION_ACCEPTED",
+-	PROMPT_IMPROVEMENT_SUGGESTION_DECLINED: "PROMPT_IMPROVEMENT_SUGGESTION_DECLINED",
+ 	// Vault
+ 	VAULT_SECRET_ADD_SUCCESS: "VAULT_SECRET_ADD_SUCCESS",
+ 	VAULT_SECRET_UPDATE_SUCCESS: "VAULT_SECRET_UPDATE_SUCCESS",
+@@ -73,7 +64,6 @@ export const CLIENT_EVENTS = {
+ 	CODING_AGENTS_VIEWED: "CODING_AGENTS_VIEWED",
+ 
+ 	// Inventory counts on list page loads ("how many X exist").
+-	PROMPT_HUB_LIST: "PROMPT_HUB_LIST",
+ 	EVALUATION_TYPES_LIST: "EVALUATION_TYPES_LIST",
+ 
+ 	// Observability / telemetry explorer page.
+@@ -103,8 +93,6 @@ export const CLIENT_EVENTS = {
+ 	EVALUATION_TYPES_PAGE_VISITED: "EVALUATION_TYPES_PAGE_VISITED",
+ 	EVALUATION_TYPE_NEW_PAGE_VISITED: "EVALUATION_TYPE_NEW_PAGE_VISITED",
+ 	EVALUATION_TYPE_EDIT_PAGE_VISITED: "EVALUATION_TYPE_EDIT_PAGE_VISITED",
+-	PROMPT_HUB_PAGE_VISITED: "PROMPT_HUB_PAGE_VISITED",
+-	PROMPT_HUB_DETAIL_PAGE_VISITED: "PROMPT_HUB_DETAIL_PAGE_VISITED",
+ 	OTTER_CHAT_PAGE_VISITED: "OTTER_CHAT_PAGE_VISITED",
+ 	VAULT_PAGE_VISITED: "VAULT_PAGE_VISITED",
+ 	CONTEXT_PAGE_VISITED: "CONTEXT_PAGE_VISITED",
+@@ -115,9 +103,6 @@ export const CLIENT_EVENTS = {
+ };
+ 
+ export const SERVER_EVENTS = {
+-	// Prompt
+-	PROMPT_SDK_FETCH_SUCCESS: "PROMPT_SDK_FETCH_SUCCESS",
+-	PROMPT_SDK_FETCH_FAILURE: "PROMPT_SDK_FETCH_FAILURE",
+ 	// Vault
+ 	VAULT_SECRET_SDK_FETCH_SUCCESS: "VAULT_SECRET_SDK_FETCH_SUCCESS",
+ 	VAULT_SECRET_SDK_FETCH_FAILURE: "VAULT_SECRET_SDK_FETCH_FAILURE",
+@@ -127,8 +112,6 @@ export const SERVER_EVENTS = {
+ 
+ 	AI_ANALYSIS_RUN_SUCCESS: "AI_ANALYSIS_RUN_SUCCESS",
+ 	AI_ANALYSIS_RUN_FAILURE: "AI_ANALYSIS_RUN_FAILURE",
+-	PROMPT_IMPROVEMENT_SUCCESS: "PROMPT_IMPROVEMENT_SUCCESS",
+-	PROMPT_IMPROVEMENT_FAILURE: "PROMPT_IMPROVEMENT_FAILURE",
+ 
+ 	// Custom dashboard
+ 	FOLDER_CREATE_SUCCESS: "FOLDER_CREATE_SUCCESS",
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 90561809..9c560afa 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -26,18 +26,8 @@ export const COPIED = "Copied";
+ export const COPIED_TO_CLIPBOARD = "Copied to clipboard!";
+ 
+ // Prompts
+-export const PROMPT_NAME_TAKEN = "Prompt name is already taken!";
+-
+-export const PROMPT_NOT_CREATED = "Prompt cannot be created!";
+-
+-export const PROMPT_SAVED = "Prompt saved successfully!";
+-
+ export const NO_PROMPT = "No such prompt exists or isn't released yet!";
+ 
+-export const PROMPT_DELETED = "Prompt deleted successfully!";
+-
+-export const PROMPT_NOT_DELETED = "Error deleting prompt!";
+-
+ export const VERSION_NOT_CREATED = "Version cannot be created";
+ 
+ export const VERSION_NOT_SAVED = "Version cannot be saved";
+@@ -729,8 +719,6 @@ export const MANAGE_PROVIDERS_DESCRIPTION = "Description";
+ 
+ export const MANAGE_PROVIDERS_REQUIRES_VAULT = "Requires API Key (Vault)";
+ 
+-export const FEATURE_PROMPTS = "Prompt Hub";
+-
+ export const FEATURE_EVALS = "Evaluations";
+ 
+ export const SIDEBAR_MONITOR = "Monitor";
+@@ -843,8 +831,6 @@ export const AGENTS_LIFECYCLE_STATUS_UNKNOWN = "Unknown";
+ 
+ export const AGENTS_TAB_TOOLS = "Tools";
+ 
+-export const AGENTS_TAB_PROMPTS = "Prompts";
+-
+ export const AGENTS_VERSION_RECENT_LABEL = "Recent versions";
+ 
+ export const AGENTS_DAG_TITLE = "Call Graph";
+@@ -968,10 +954,6 @@ export const VARIABLES = "Variables";
+ 
+ export const PROMPT = "Prompt";
+ 
+-export const PROMPT_HUB = "Prompt Hub";
+-
+-export const NAV_APP_PROMPTS = "Prompts";
+-
+ export const PROVIDERS = "Providers";
+ 
+ export const NO_DATA_FOUND = "No data found!";
+@@ -1277,109 +1259,7 @@ export const CONTEXT_DELETE_WARNING = "Deleting context might break applications
+ 
+ export const CONTEXT_CREATED_BY = "Created By";
+ 
+-// Prompt Hub UI
+-export const PROMPT_HUB_CREATE = "Create new";
+-
+-export const PROMPT_HUB_CREATE_PROMPT = "Create Prompt";
+-
+-export const PROMPT_HUB_BACK = "Back to Prompt Hub";
+-
+-export const PROMPT_HUB_SAVE = "Save Prompt";
+-
+-export const PROMPT_HUB_NAME_HINT = "(lowercase letters and _ only)";
+-
+-export const PROMPT_HUB_NAME_PLACEHOLDER = "my_prompt";
+-
+-export const PROMPT_HUB_NAME_REQUIRED = "Prompt name is required";
+-
+-export const PROMPT_HUB_CONTENT_REQUIRED = "Prompt content is required";
+-
+-export const PROMPT_HUB_VARIABLE_HINT = "Use {{variableName}} for dynamic variables";
+-
+-export const PROMPT_HUB_CONTENT_PLACEHOLDER = "Write your prompt here. Use {{variable}} for dynamic content.";
+-
+-export const PROMPT_HUB_NOTHING_TO_PREVIEW = "Nothing to preview yet.";
+-
+-export const PROMPT_HUB_NO_CONTENT = "No prompt content.";
+-
+-export const PROMPT_HUB_VERSION = "Version";
+-
+-export const PROMPT_HUB_LATEST_VERSION = "Latest Version";
+-
+-export const PROMPT_HUB_DRAFT = "Draft";
+-
+-export const PROMPT_HUB_NO_VERSION = "No version assigned";
+-
+-export const PROMPT_HUB_DRAFT_DESCRIPTION = "Save as a draft — not yet published";
+-
+-export const PROMPT_HUB_MAJOR = "Major";
+-
+-export const PROMPT_HUB_MAJOR_DESCRIPTION = "Significant changes, not backwards compatible";
+-
+-export const PROMPT_HUB_MINOR = "Minor";
+-
+-export const PROMPT_HUB_MINOR_DESCRIPTION = "New features, backwards compatible";
+-
+-export const PROMPT_HUB_PATCH = "Patch";
+-
+-export const PROMPT_HUB_PATCH_DESCRIPTION = "Bug fixes and minor updates";
+-
+-export const PROMPT_HUB_PUBLISH = "Publish Version";
+-
+-export const PROMPT_HUB_CREATE_VERSION = "Create New Version";
+-
+-export const PROMPT_HUB_PUBLISHED_ON = "Published on";
+-
+-export const PROMPT_HUB_VERSIONS = "Versions";
+-
+-export const PROMPT_HUB_LATEST = "latest";
+-
+-export const PROMPT_HUB_DOWNLOADS = "Downloads";
+-
+-export const PROMPT_HUB_LAST_RELEASED = "Last Released On";
+-
+-export const PROMPT_HUB_DELETE_CONFIRM = "Are you sure you want to delete this prompt?";
+-
+-export const PROMPT_HUB_DELETE_WARNING = "Deleting prompts might result in breaking application if they are getting used. Please confirm before deleting it.";
+-
+-export const PROMPT_HUB_CREATING = "Creating prompt...";
+-
+-export const PROMPT_HUB_CREATED_SUCCESS = "Prompt created successfully!";
+-
+-export const PROMPT_HUB_CREATE_FAILED_TOAST = "Failed to create prompt";
+-
+-export const PROMPT_HUB_SAVING = "Saving...";
+-
+-export const PROMPT_HUB_SAVED_SUCCESS = "Prompt saved!";
+-
+-export const PROMPT_HUB_SAVE_FAILED = "Failed to save prompt";
+-
+-export const PROMPT_HUB_EDITING_DRAFT = "Editing draft — publish when ready";
+-
+-export const PROMPT_HUB_CREATING_VERSION = "Creating a new version from the latest published";
+-
+-export const PROMPT_HUB_BACK_TO = "Back to";
+-
+-export const PROMPT_HUB_NO_PROMPT_EXISTS = "No such prompt exists!";
+-
+ // A prompt read that never landed must not be reported as a missing prompt.
+-export const PROMPT_HUB_UNAVAILABLE_TITLE = "Unavailable";
+-
+-export const PROMPT_HUB_UNAVAILABLE =
+-	"This prompt could not be read from the configured connector.";
+-
+-export const PROMPT_HUB_NO_VERSION_EXISTS = "No such version of the prompt";
+-
+-export const PROMPT_HUB_EXISTS = "exists!";
+-
+-export const PROMPT_HUB_RULE_NAME = "Rule name";
+-
+-export const PROMPT_HUB_RULE_DESCRIPTION = "Rule description";
+-
+-export const PROMPT_HUB_NO_VERSION_CHANGE = "No version change";
+-
+-export const PROMPT_HUB_KEEP_DRAFT = "Keep as draft — not published";
+-
+ // Common UI
+ export const CREATED_BY = "Created By";
+ 
+diff --git a/src/client/src/constants/prompts.ts b/src/client/src/constants/prompts.ts
+deleted file mode 100644
+index 06baf47c..00000000
+--- a/src/client/src/constants/prompts.ts
++++ /dev/null
+@@ -1,65 +0,0 @@
+-export type Prompt = {
+-	id: string;
+-	name: string;
+-	createdBy: string;
+-	createdAt: Date;
+-};
+-
+-export type PromptStatus = "PUBLISHED" | "DRAFT";
+-
+-export interface PromptInput {
+-	name: string;
+-	prompt: string;
+-	version: string;
+-	status: PromptStatus;
+-	tags: string[];
+-	metaProperties: Record<string, unknown>;
+-}
+-
+-export interface PromptUpdate {
+-	versionId?: string;
+-	promptId: string;
+-	prompt?: string;
+-	version?: string;
+-	status?: PromptStatus;
+-	tags?: string[];
+-	metaProperties?: Record<string, unknown>;
+-}
+-
+-export type PromptVersion = {
+-	id: string;
+-	promptId: string;
+-	version: string;
+-	updatedBy: string;
+-	updatedAt: Date;
+-	prompt: string;
+-	status: PromptStatus;
+-	tags: string;
+-	metaProperties: Record<string, unknown>;
+-};
+-
+-export type PromptCompiledInput = {
+-	id?: string;
+-	name?: string;
+-	apiKey: string;
+-	variables?: Record<string, any>;
+-	version?: string;
+-	shouldCompile?: boolean;
+-	downloadSource?: string;
+-	downloadMetaProperties?: Record<string, unknown>;
+-	/** Optional override from signal routing / explicit database-config header. */
+-	databaseConfigId?: string;
+-};
+-
+-export type SpecificPromptInput = {
+-	id?: string;
+-	name?: string;
+-	version?: string;
+-};
+-
+-export type PromptDownloadInput = {
+-	promptId: string;
+-	versionId: string;
+-	downloadSource: string;
+-	metaProperties?: Record<string, unknown>;
+-};
+diff --git a/src/client/src/constants/route.ts b/src/client/src/constants/route.ts
+index 8b8fccc8..b80fc02e 100644
+--- a/src/client/src/constants/route.ts
++++ b/src/client/src/constants/route.ts
+@@ -2,7 +2,6 @@
+ // read-only observability dashboard is the surviving landing surface.
+ export const DEFAULT_LOGGED_IN_ROUTE = "/dashboard";
+ export const ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN = [
+-	"/api/prompt/get-compiled",
+ 	"/api/vault/get-secrets",
+ 	"/api/evaluation/offline",
+ ];
+@@ -13,7 +12,6 @@ export const ALLOWED_OPENLIT_ROUTE_PREFIXES_WITHOUT_TOKEN = [
+ ];
+ 
+ export const ALLOWED_OPENLIT_ROUTES_WITH_TOKEN = [
+-	"/api/prompt/get-compiled",
+ 	"/api/vault/get-secrets",
+ 	"/api/api-key",
+ 	"/api/db-config",
+@@ -22,7 +20,6 @@ export const ALLOWED_OPENLIT_ROUTES_WITH_TOKEN = [
+ export const ALLOWED_OPENLIT_ROUTE_PREFIXES_WITH_TOKEN = [
+ 	"/api/telemetry/",
+ 	"/api/evaluation/",
+-	"/api/prompt/",
+ 	"/api/metrics/",
+ 	"/api/api-key/",
+ ];
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index 9a14eb41..347f87e6 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -6,7 +6,6 @@ import {
+ 	Cable,
+ 	BookOpen,
+ 	Boxes,
+-	Component,
+ 	LayoutDashboard,
+ 	MonitorCog,
+ } from "lucide-react";
+@@ -48,12 +47,6 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 			{
+ 				title: m.SIDEBAR_DEVELOP,
+ 				children: [
+-					{
+-						icon: <Component className={ICON_CLASSES} />,
+-						text: "Prompt Hub",
+-						link: "/prompt-hub",
+-						type: "action",
+-					},
+ 					{
+ 					icon: <BookOpen className={ICON_CLASSES} />,
+ 					text: "Contexts",
+diff --git a/src/client/src/helpers/server/prompt.ts b/src/client/src/helpers/server/prompt.ts
+deleted file mode 100644
+index cf81b15b..00000000
+--- a/src/client/src/helpers/server/prompt.ts
++++ /dev/null
+@@ -1,39 +0,0 @@
+-import { PromptCompiledInput, PromptInput } from "@/constants/prompts";
+-
+-export function verifyPromptInput(promptInput: PromptInput) {
+-	if (promptInput.name.length === 0) {
+-		return {
+-			success: false,
+-			err: "Name should be present!",
+-		};
+-	}
+-
+-	if (promptInput.prompt.length === 0) {
+-		return {
+-			success: false,
+-			err: "Prompt should be present!",
+-		};
+-	}
+-
+-	return { success: true };
+-}
+-
+-export function validatePromptCompiledInput(
+-	promptCompiledInput: PromptCompiledInput
+-) {
+-	if (!promptCompiledInput.apiKey) {
+-		return {
+-			success: false,
+-			err: "API key should be present!",
+-		};
+-	}
+-
+-	if (!promptCompiledInput.id && !promptCompiledInput.name) {
+-		return {
+-			success: false,
+-			err: "Both Id and Name cannot be undefined!",
+-		};
+-	}
+-
+-	return { success: true };
+-}
+diff --git a/src/client/src/lib/platform/prompt/compiled.ts b/src/client/src/lib/platform/prompt/compiled.ts
+deleted file mode 100644
+index 16a8e1a2..00000000
+--- a/src/client/src/lib/platform/prompt/compiled.ts
++++ /dev/null
+@@ -1,128 +0,0 @@
+-import { PromptCompiledInput } from "@/constants/prompts";
+-import { getAPIKeyInfo } from "../api-keys";
+-import { validatePromptCompiledInput } from "@/helpers/server/prompt";
+-import { getSpecificPrompt } from ".";
+-import { objectEntries } from "@/utils/object";
+-import { updateDownloadDetails } from "./version";
+-import { jsonParse } from "@/utils/json";
+-import { throwIfError } from "@/utils/error";
+-import getMessage from "@/constants/messages";
+-import { unescapeString } from "@/utils/string";
+-
+-function compilePrompt(
+-	prompt: string,
+-	variables: Record<string, unknown>
+-): string {
+-	return objectEntries(variables).reduce((acc, [key, value]) => {
+-		return acc.replaceAll(`{{${key}}}`, value as string);
+-	}, prompt);
+-}
+-
+-export async function getCompiledPrompt(
+-	promptCompiledInput: PromptCompiledInput
+-) {
+-	const verifiedInput = validatePromptCompiledInput(promptCompiledInput);
+-	throwIfError(
+-		!!(verifiedInput.err || !verifiedInput.success),
+-		verifiedInput.err || getMessage().MALFORMED_INPUTS
+-	);
+-
+-	const [err, apiInfo] = await getAPIKeyInfo({
+-		apiKey: promptCompiledInput.apiKey,
+-	});
+-
+-	throwIfError(
+-		!!(err || !apiInfo?.databaseConfigId),
+-		err || getMessage().NO_API_KEY
+-	);
+-
+-	const databaseConfigId =
+-		promptCompiledInput.databaseConfigId || apiInfo?.databaseConfigId;
+-
+-	const { err: promptErr, data: promptData } = await getSpecificPrompt(
+-		{
+-			id: promptCompiledInput.id,
+-			name: promptCompiledInput.name,
+-			version: promptCompiledInput.version,
+-		},
+-		databaseConfigId
+-	);
+-
+-	const promptObject = (promptData as any)?.[0] || {};
+-
+-	throwIfError(
+-		!!(promptErr || !promptObject?.promptId || !promptObject?.version),
+-		(promptErr as any) || getMessage().NO_PROMPT
+-	);
+-
+-	await updateDownloadDetails(
+-		{
+-			versionId: promptObject.versionId,
+-			promptId: promptObject.promptId,
+-			metaProperties: {
+-				...(promptCompiledInput.downloadMetaProperties || {}),
+-				apiKeyId: apiInfo.id,
+-			},
+-			downloadSource: promptCompiledInput.downloadSource || "api",
+-		},
+-		databaseConfigId
+-	);
+-
+-	promptObject.metaProperties = jsonParse(promptObject.metaProperties);
+-	promptObject.tags = jsonParse(promptObject.tags);
+-	promptObject.prompt = unescapeString(promptObject.prompt);
+-
+-	if (promptCompiledInput.shouldCompile === false) {
+-		promptObject.compiledPrompt = promptObject.prompt;
+-	} else {
+-		promptObject.compiledPrompt = compilePrompt(
+-			promptObject.prompt,
+-			promptCompiledInput.variables || {}
+-		);
+-	}
+-	return promptObject;
+-}
+-
+-/**
+- * Internal variant used by the rule-engine evaluate flow.
+- * Accepts a resolved databaseConfigId directly — no API key lookup, no download tracking.
+- */
+-export async function getCompiledPromptByDbConfig({
+-	id,
+-	version,
+-	variables,
+-	shouldCompile,
+-	databaseConfigId,
+-}: {
+-	id: string;
+-	version?: string;
+-	variables?: Record<string, any>;
+-	shouldCompile?: boolean;
+-	databaseConfigId?: string;
+-}) {
+-	const { err: promptErr, data: promptData } = await getSpecificPrompt(
+-		{ id, version },
+-		databaseConfigId
+-	);
+-
+-	const promptObject = (promptData as any)?.[0] || {};
+-
+-	throwIfError(
+-		!!(promptErr || !promptObject?.promptId || !promptObject?.version),
+-		(promptErr as any) || getMessage().NO_PROMPT
+-	);
+-
+-	promptObject.metaProperties = jsonParse(promptObject.metaProperties);
+-	promptObject.tags = jsonParse(promptObject.tags);
+-	promptObject.prompt = unescapeString(promptObject.prompt);
+-
+-	if (shouldCompile === false) {
+-		promptObject.compiledPrompt = promptObject.prompt;
+-	} else {
+-		promptObject.compiledPrompt = compilePrompt(
+-			promptObject.prompt,
+-			variables || {}
+-		);
+-	}
+-	return promptObject;
+-}
+diff --git a/src/client/src/lib/platform/prompt/index.ts b/src/client/src/lib/platform/prompt/index.ts
+deleted file mode 100644
+index d78aaef3..00000000
+--- a/src/client/src/lib/platform/prompt/index.ts
++++ /dev/null
+@@ -1,278 +0,0 @@
+-import { PromptInput, SpecificPromptInput } from "@/constants/prompts";
+-import { dataCollector } from "../common";
+-import {
+-	OPENLIT_PROMPTS_TABLE_NAME,
+-	OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-	OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME,
+-} from "./table-details";
+-import { verifyPromptInput } from "@/helpers/server/prompt";
+-import { getCurrentUser } from "@/lib/session";
+-import getMessage from "@/constants/messages";
+-import Sanitizer from "@/utils/sanitizer";
+-import { throwIfError } from "@/utils/error";
+-
+-export async function getPromptByName({ name }: { name: string }) {
+-	const query = `
+-		SELECT * FROM ${OPENLIT_PROMPTS_TABLE_NAME} WHERE name='${Sanitizer.sanitizeValue(
+-		name
+-	)}';
+-  `;
+-
+-	const { data }: { data?: any } = await dataCollector({ query });
+-	return data?.[0];
+-}
+-
+-export async function checkNameValidity({ name }: { name: string }) {
+-	const data = await getPromptByName({ name });
+-	return { isValid: !data?.id };
+-}
+-
+-export async function createPrompt(promptInputParams: PromptInput) {
+-	const user = await getCurrentUser();
+-
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-
+-	const promptInput = Sanitizer.sanitizeObject(promptInputParams);
+-
+-	const verifiedPrompt = verifyPromptInput(promptInput);
+-	throwIfError(!verifiedPrompt.success, verifiedPrompt.err!);
+-
+-	const { isValid } = await checkNameValidity({ name: promptInput.name });
+-	throwIfError(!isValid, getMessage().PROMPT_NAME_TAKEN);
+-
+-	const { err } = await dataCollector(
+-		{
+-			table: OPENLIT_PROMPTS_TABLE_NAME,
+-			values: [{ name: promptInput.name, created_by: user!.email }],
+-		},
+-		"insert"
+-	);
+-
+-	throwIfError(
+-		!!err,
+-		typeof err?.toString === "function" ? err.toString() : (err as string)
+-	);
+-
+-	const promptData = await getPromptByName({
+-		name: promptInput.name,
+-	});
+-
+-	throwIfError(!promptData?.id, getMessage().PROMPT_NOT_CREATED);
+-
+-	const { err: versionErr, data: versionData } = await dataCollector(
+-		{
+-			table: OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-			values: [
+-				{
+-					prompt_id: promptData.id,
+-					updated_by: user!.email,
+-					version: promptInput.version,
+-					status: promptInput.status,
+-					prompt: promptInput.prompt,
+-					tags: promptInput.tags,
+-					meta_properties: promptInput.metaProperties,
+-				},
+-			],
+-		},
+-		"insert"
+-	);
+-
+-	throwIfError(
+-		!!(versionErr || !(versionData as { query_id: unknown })?.query_id),
+-
+-		typeof versionErr?.toString === "function"
+-			? versionErr.toString()
+-			: (versionErr as string) || getMessage().VERSION_NOT_CREATED
+-	);
+-
+-	return {
+-		data: { promptId: promptData.id },
+-		message: getMessage().PROMPT_SAVED,
+-	};
+-}
+-
+-export async function getPrompts({ databaseConfigId }: { databaseConfigId?: string } = {}) {
+-	if (!databaseConfigId) {
+-		const user = await getCurrentUser();
+-		throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-	}
+-
+-	const query = `SELECT
+-			p.id AS promptId,
+-			p.name AS name,
+-			p.created_by AS createdBy,
+-			CAST(COUNT(DISTINCT v.version) AS INTEGER) AS totalVersions,         -- Total number of versions for each prompt
+-			MAX(v.version) AS latestVersion,                    -- Latest version by version number
+-			any(v.updated_at) AS latestVersionDate,             -- The date when the latest version was updated
+-			any(v.status) AS latestVersionStatus,               -- Status of the latest version in PUBLISHED state
+-    	CAST(countDistinctIf(d.download_id, d.download_id != '00000000-0000-0000-0000-000000000000') AS INTEGER) AS totalDownloads
+-		FROM
+-				${OPENLIT_PROMPTS_TABLE_NAME} p
+-		LEFT JOIN
+-				${OPENLIT_PROMPT_VERSIONS_TABLE_NAME} v ON p.id = v.prompt_id
+-				AND v.status != 'DRAFT'
+-		LEFT JOIN
+-				${OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME} d ON p.id = d.prompt_id  -- Join with downloads table
+-		GROUP BY
+-				p.id, p.name, p.created_by, p.created_at
+-		ORDER BY
+-				p.created_at DESC;
+-	`;
+-
+-	return await dataCollector({ query }, "query", databaseConfigId);
+-}
+-
+-export async function getSpecificPrompt(
+-	promptInputParams: Partial<SpecificPromptInput>,
+-	dbConfigId?: string
+-) {
+-	const promptInput = Sanitizer.sanitizeObject(promptInputParams);
+-	const conditionClauses = [];
+-	if (promptInput.id) {
+-		conditionClauses.push(`p.id = '${promptInput.id}'`);
+-	}
+-
+-	if (promptInput.name) {
+-		conditionClauses.push(`p.name = '${promptInput.name}'`);
+-	}
+-
+-	if (promptInput.version) {
+-		conditionClauses.push(`v.version = '${promptInput.version}'`);
+-	}
+-
+-	const query = `
+-    SELECT
+-      p.id AS promptId,
+-      v.version_id AS versionId,
+-      p.name AS name,
+-      v.version AS version,
+-      v.tags AS tags,
+-      v.meta_properties AS metaProperties,
+-      v.prompt AS prompt
+-    FROM
+-      ${OPENLIT_PROMPTS_TABLE_NAME} p
+-    LEFT JOIN
+-      ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME} v ON p.id = v.prompt_id
+-      AND v.status != 'DRAFT'
+-    WHERE ${conditionClauses.join(" AND ")}
+-    ORDER BY
+-      v.version DESC
+-    `;
+-
+-	return dataCollector({ query }, "query", dbConfigId);
+-}
+-
+-export async function getPromptDetails(
+-	promptId: string,
+-	parameters?: { version?: string }
+-) {
+-	const params = Sanitizer.sanitizeObject(parameters || {});
+-	const user = await getCurrentUser();
+-
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-
+-	const promptVersionQuery = `
+-    SELECT
+-    p.id AS promptId,
+-    p.name AS name,
+-    p.created_by AS createdBy,
+-    p.created_at AS createdAt,
+-		v.version_id AS versionId,
+-    v.prompt AS prompt,                                         -- Selected prompt content
+-    toString(v.status) AS status,                               -- Version status (e.g., DRAFT, PUBLISHED)
+-    v.updated_at AS updatedAt,                                  -- When the version was last updated
+-    v.version AS version,                                       -- Version number (e.g., 1.0.0)
+-    v.meta_properties AS metaProperties,                        -- Meta properties for the version
+-    v.tags AS tags                                              -- Tags for the version
+-FROM
+-    ${OPENLIT_PROMPTS_TABLE_NAME} p
+-LEFT JOIN
+-    (
+-        SELECT
+-            version_id, prompt_id, prompt, version, status, meta_properties, tags, updated_by, updated_at
+-        FROM
+-            ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME}
+-        WHERE
+-            prompt_id = '${promptId}'
+-						${
+-							params?.version
+-								? `AND version='${params.version}' AND status != 'DRAFT'`
+-								: ""
+-						}
+-        ORDER BY
+-            status DESC,         -- Prioritize draft versions (DRAFT first)
+-            version DESC                   -- Then order by version number (latest first)
+-        LIMIT 1                            -- Fetch the highest priority version (either DRAFT or latest PUBLISHED)
+-    ) v
+-ON p.id = v.prompt_id
+-WHERE
+-    p.id = '${promptId}'                   -- Filter by specific prompt ID
+-ORDER BY
+-    p.created_at DESC;
+-
+-    `;
+-
+-	const promptVersionsListQuery = `SELECT
+-    v.version_id AS versionId,
+-    v.prompt_id AS promptId,
+-    v.prompt AS prompt,
+-    v.version AS version,                       -- Version number (e.g., 1.0.0)
+-    v.status AS status,                         -- Status of the version (e.g., DRAFT or PUBLISHED)
+-    v.meta_properties AS metaProperties,        -- Meta properties for the version
+-    v.tags AS tags,                             -- Tags for the version
+-    v.updated_by AS updatedBy,                  -- Who updated the version
+-    v.updated_at AS updatedAt,                   -- When the version was last updated
+-		CAST(countDistinctIf(d.download_id, d.download_id != '00000000-0000-0000-0000-000000000000') AS INTEGER) AS totalDownloads      -- Total downloads for the prompt
+-FROM
+-    ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME} v
+-LEFT JOIN
+-		${OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME} d ON v.version_id = d.version_id  -- Join with downloads table
+-WHERE
+-    v.prompt_id = '${promptId}'                 -- Filter by specific prompt ID
+-GROUP BY
+-		v.version_id, v.prompt_id, v.prompt, v.version, v.status, v.meta_properties, v.tags, v.updated_by, v.updated_at
+-ORDER BY
+-    v.status = 'DRAFT' DESC,                  -- Prioritize DRAFT versions
+-    v.version DESC;                            
+-`;
+-
+-	return Promise.all([
+-		await dataCollector({ query: promptVersionQuery }, "query"),
+-		await dataCollector({ query: promptVersionsListQuery }, "query"),
+-	]).then(([versionData, versionsList]) => {
+-		let combinedData: any | null = null;
+-		if ((versionData.data as any[])?.[0]) {
+-			combinedData = (versionData.data as any[])[0];
+-			combinedData.versions = versionsList.data || [];
+-		}
+-
+-		return {
+-			err: versionData.err || versionsList.err,
+-			data: [combinedData],
+-		};
+-	});
+-}
+-
+-export async function deletePrompt(promptIdParam: string) {
+-	const user = await getCurrentUser();
+-
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-	const promptId = Sanitizer.sanitizeValue(promptIdParam);
+-
+-	const queries = [
+-		`DELETE FROM ${OPENLIT_PROMPTS_TABLE_NAME} WHERE id = '${promptId}';`,
+-		`DELETE FROM ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME} WHERE prompt_id = '${promptId}';`,
+-		`DELETE FROM ${OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME} WHERE prompt_id = '${promptId}';`,
+-	];
+-
+-	const queryResponses = await Promise.all(
+-		queries.map(async (query) => await dataCollector({ query }, "exec"))
+-	);
+-
+-	const errors = queryResponses.map(({ err }) => err).filter((e) => !!e);
+-	if (errors.length > 0) {
+-		return [getMessage().PROMPT_NOT_DELETED];
+-	}
+-
+-	return [undefined, getMessage().PROMPT_DELETED];
+-}
+diff --git a/src/client/src/lib/platform/prompt/table-details.ts b/src/client/src/lib/platform/prompt/table-details.ts
+deleted file mode 100644
+index 3519f5a4..00000000
+--- a/src/client/src/lib/platform/prompt/table-details.ts
++++ /dev/null
+@@ -1,4 +0,0 @@
+-export const OPENLIT_PROMPTS_TABLE_NAME = "openlit_prompts";
+-export const OPENLIT_PROMPT_VERSIONS_TABLE_NAME = "openlit_prompt_versions";
+-export const OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME =
+-	"openlit_prompt_version_downloads";
+diff --git a/src/client/src/lib/platform/prompt/version.ts b/src/client/src/lib/platform/prompt/version.ts
+deleted file mode 100644
+index 032340bc..00000000
+--- a/src/client/src/lib/platform/prompt/version.ts
++++ /dev/null
+@@ -1,125 +0,0 @@
+-import { PromptDownloadInput, PromptUpdate } from "@/constants/prompts";
+-import { dataCollector } from "../common";
+-import {
+-	OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-	OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME,
+-} from "./table-details";
+-import { consoleLog } from "@/utils/log";
+-import { getCurrentUser } from "@/lib/session";
+-import { jsonStringify } from "@/utils/json";
+-import getMessage from "@/constants/messages";
+-import Sanitizer from "@/utils/sanitizer";
+-import { throwIfError } from "@/utils/error";
+-import { emitManagementAlertSignalSafe } from "@/lib/platform/alerts/signals";
+-
+-export async function upsertPromptVersion(promptInputParams: PromptUpdate) {
+-	const user = await getCurrentUser();
+-
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-
+-	const promptInput = Sanitizer.sanitizeObject(promptInputParams);
+-
+-	let versionErr;
+-	let versionData;
+-
+-	if (promptInput.versionId) {
+-		const updateValues = [
+-			`updated_by = '${user!.email}'`,
+-			promptInput.version && "version = '" + promptInput.version + "'",
+-			promptInput.status && "status = '" + promptInput.status + "'",
+-			promptInput.prompt && "prompt = '" + promptInput.prompt + "'",
+-			promptInput.tags && "tags = '" + jsonStringify(promptInput.tags) + "'",
+-			promptInput.metaProperties &&
+-				"meta_properties = '" + jsonStringify(promptInput.metaProperties) + "'",
+-		];
+-		const updateQuery = `
+-      ALTER TABLE ${OPENLIT_PROMPT_VERSIONS_TABLE_NAME}
+-      UPDATE 
+-        ${updateValues.filter((e) => e).join(" , ")}
+-      WHERE version_id = '${promptInput.versionId}'`;
+-		const { err, data } = await dataCollector(
+-			{
+-				query: updateQuery,
+-			},
+-			"exec"
+-		);
+-
+-		versionErr = err;
+-		versionData = data;
+-	} else {
+-		const { err, data } = await dataCollector(
+-			{
+-				table: OPENLIT_PROMPT_VERSIONS_TABLE_NAME,
+-				values: [
+-					{
+-						prompt_id: promptInput.promptId,
+-						updated_by: user!.email,
+-						version: promptInput.version,
+-						status: promptInput.status,
+-						prompt: promptInput.prompt,
+-						tags: jsonStringify(promptInput.tags),
+-						meta_properties: jsonStringify(promptInput.metaProperties),
+-					},
+-				],
+-			},
+-			"insert"
+-		);
+-		versionErr = err;
+-		versionData = data;
+-	}
+-
+-	throwIfError(
+-		!!(versionErr || !(versionData as { query_id: unknown })?.query_id),
+-		typeof versionErr?.toString === "function"
+-			? versionErr.toString()
+-			: (versionErr as string) || getMessage().VERSION_NOT_SAVED
+-	);
+-
+-	emitManagementAlertSignalSafe({
+-		triggerType: "prompt_version_update",
+-		event: promptInput.versionId ? "prompt_version_updated" : "prompt_version_created",
+-		message: `Prompt version ${promptInput.version || ""} was saved.`,
+-		sourceId: promptInput.versionId || promptInput.promptId,
+-		fields: {
+-			prompt_id: promptInput.promptId || "",
+-			version: promptInput.version || "",
+-			status: promptInput.status || "",
+-		},
+-		payloadSummary: {
+-			promptId: promptInput.promptId,
+-			version: promptInput.version,
+-			status: promptInput.status,
+-		},
+-	});
+-
+-	return getMessage().VERSION_SAVED;
+-}
+-
+-export async function updateDownloadDetails(
+-	promptDownloadInputParams: PromptDownloadInput,
+-	dbConfigId?: string
+-) {
+-	const promptDownloadInput = Sanitizer.sanitizeObject(
+-		promptDownloadInputParams
+-	);
+-
+-	const { err, data } = await dataCollector(
+-		{
+-			table: OPENLIT_PROMPT_VERSION_DOWNLOADS_TABLE_NAME,
+-			values: [
+-				{
+-					prompt_id: promptDownloadInput.promptId,
+-					version_id: promptDownloadInput.versionId,
+-					meta_properties: jsonStringify(promptDownloadInput.metaProperties),
+-					download_source: promptDownloadInput.downloadSource,
+-				},
+-			],
+-		},
+-		"insert",
+-		dbConfigId
+-	);
+-
+-	if (err || !(data as any)?.query_id)
+-		consoleLog(err || getMessage().DOWNLOAD_INFO_NOT_SAVED);
+-	return true;
+-}
+diff --git a/src/client/src/lib/platform/telemetry-snapshot/index.ts b/src/client/src/lib/platform/telemetry-snapshot/index.ts
+index 4993cf5d..9c4233b2 100644
+--- a/src/client/src/lib/platform/telemetry-snapshot/index.ts
++++ b/src/client/src/lib/platform/telemetry-snapshot/index.ts
+@@ -3,7 +3,6 @@ import asaw from "@/utils/asaw";
+ import PostHogServer from "@/lib/posthog";
+ import { SERVER_EVENTS } from "@/constants/events";
+ import { dataCollector, OTEL_TRACES_TABLE_NAME } from "@/lib/platform/common";
+-import { OPENLIT_PROMPTS_TABLE_NAME } from "@/lib/platform/prompt/table-details";
+ import { AGENTS_SUMMARY_TABLE } from "@/lib/platform/agents/table-details";
+ import { getInstallId } from "./install-id";
+ import { readFileSync } from "fs";
+@@ -36,7 +35,6 @@ interface ClickHouseTotals {
+ 	traces_total: number;
+ 	spans_ingested_24h: number;
+ 	traces_ingested_24h: number;
+-	prompts_total: number;
+ 	coding_agents_vendors_total: number;
+ 	app_agents_total: number;
+ }
+@@ -46,7 +44,6 @@ const EMPTY_TOTALS: ClickHouseTotals = {
+ 	traces_total: 0,
+ 	spans_ingested_24h: 0,
+ 	traces_ingested_24h: 0,
+-	prompts_total: 0,
+ 	coding_agents_vendors_total: 0,
+ 	app_agents_total: 0,
+ };
+@@ -59,7 +56,6 @@ async function collectClickHouseTotals(
+ 		traces_total,
+ 		spans_ingested_24h,
+ 		traces_ingested_24h,
+-		prompts_total,
+ 		coding_agents_vendors_total,
+ 		app_agents_total,
+ 	] = await Promise.all([
+@@ -79,10 +75,6 @@ async function collectClickHouseTotals(
+ 			`SELECT uniqExact(TraceId) AS c FROM ${OTEL_TRACES_TABLE_NAME} WHERE Timestamp >= now() - INTERVAL 24 HOUR`,
+ 			dbConfigId
+ 		),
+-		safeScalar(
+-			`SELECT COUNT(*) AS c FROM ${OPENLIT_PROMPTS_TABLE_NAME}`,
+-			dbConfigId
+-		),
+ 		safeScalar(
+ 			`SELECT COUNT(*) AS c FROM ${AGENTS_SUMMARY_TABLE} FINAL WHERE source = 'coding'`,
+ 			dbConfigId
+@@ -98,7 +90,6 @@ async function collectClickHouseTotals(
+ 		traces_total,
+ 		spans_ingested_24h,
+ 		traces_ingested_24h,
+-		prompts_total,
+ 		coding_agents_vendors_total,
+ 		app_agents_total,
+ 	};
+@@ -110,7 +101,6 @@ function sumTotals(a: ClickHouseTotals, b: ClickHouseTotals): ClickHouseTotals {
+ 		traces_total: a.traces_total + b.traces_total,
+ 		spans_ingested_24h: a.spans_ingested_24h + b.spans_ingested_24h,
+ 		traces_ingested_24h: a.traces_ingested_24h + b.traces_ingested_24h,
+-		prompts_total: a.prompts_total + b.prompts_total,
+ 		coding_agents_vendors_total:
+ 			a.coding_agents_vendors_total + b.coding_agents_vendors_total,
+ 		app_agents_total: a.app_agents_total + b.app_agents_total,
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index 0fb75821..408ae886 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -30,8 +30,6 @@ export const config = {
+ 		"/telemetry/:path*",
+ 		"/requests",
+ 		"/exceptions",
+-		"/prompt-hub",
+-		"/prompt-hub/:path*",
+ 		"/connectors",
+ 		"/evaluations",
+ 		"/evaluations/:path*",
+diff --git a/src/client/src/middleware/check-auth.ts b/src/client/src/middleware/check-auth.ts
+index 3f3aa32d..361eb193 100644
+--- a/src/client/src/middleware/check-auth.ts
++++ b/src/client/src/middleware/check-auth.ts
+@@ -38,7 +38,6 @@ const RATE_LIMITED_API_PREFIXES = [
+ 	"/api/metrics",
+ 	"/api/telemetry",
+ 	"/api/observability",
+-	"/api/prompt",
+ 	"/api/evaluation",
+ 	"/api/agents",
+ 	"/api/alerts",
+diff --git a/src/client/src/types/prompt.ts b/src/client/src/types/prompt.ts
+deleted file mode 100644
+index 8ef579cc..00000000
+--- a/src/client/src/types/prompt.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-export interface PromptList {
+-	promptId: string;
+-	name: string;
+-	createdBy: string,
+-	version: string;
+-	totalVersions: number;
+-	latestVersion: string;
+-	latestVersionDate: string;
+-	latestVersionStatus: PromptVersionStatus,
+-	totalDownloads: number
+-}
+-
+-export interface Prompt {
+-	promptId: string;
+-	name: string;
+-	createdBy: string;
+-	createdAt: string;
+-	versionId: string;
+-	prompt: string;
+-	status: PromptVersionStatus;
+-	updatedAt: string;
+-	version: string;
+-	metaProperties: string;
+-	tags: string;
+-  versions: PromptVersion[]
+-}
+-
+-export interface PromptVersion {
+-	versionId: string;
+-	promptId: string;
+-	prompt: string;
+-	version: string;
+-	status: PromptVersionStatus;
+-	metaProperties: string;
+-	tags: string;
+-	updatedBy: string;
+-	updatedAt: string;
+-	totalDownloads: number;
+-}
+-
+-export enum PromptVersionStatus {
+-	PUBLISHED = "PUBLISHED",
+-	DRAFT = "DRAFT",
+-}
+\ No newline at end of file
+diff --git a/src/client/src/utils/active-app.ts b/src/client/src/utils/active-app.ts
+index 7dcaa512..78931506 100644
+--- a/src/client/src/utils/active-app.ts
++++ b/src/client/src/utils/active-app.ts
+@@ -1,4 +1,3 @@
+-import getMessage from "@/constants/messages";
+ import { SIDEBAR_ITEMS } from "@/constants/sidebar";
+ import { SidebarActionItem, SidebarItemProps } from "@/types/sidebar";
+ 
+@@ -7,11 +6,6 @@ export type ActiveApp = {
+ 	href: string;
+ };
+ 
+-const HEADER_APP_LABEL_OVERRIDES: Record<string, keyof ReturnType<typeof getMessage>> =
+-	{
+-		"/prompt-hub": "NAV_APP_PROMPTS",
+-	};
+-
+ function flattenSidebarActions(items: SidebarItemProps[]): SidebarActionItem[] {
+ 	return items.flatMap((item) => {
+ 		if (item.type !== "section") return [item];
+@@ -25,18 +19,9 @@ function matchesAppPath(pathname: string, link: string): boolean {
+ 	return pathname === link || pathname.startsWith(`${link}/`);
+ }
+ 
+-function getHeaderAppLabel(link: string, sidebarText: string): string {
+-	const messageKey = HEADER_APP_LABEL_OVERRIDES[link];
+-	if (messageKey) {
+-		return getMessage()[messageKey] as string;
+-	}
+-
+-	return sidebarText;
+-}
+-
+ function resolveApp(link: string, sidebarText: string): ActiveApp {
+ 	return {
+-		title: getHeaderAppLabel(link, sidebarText),
++		title: sidebarText,
+ 		href: link,
+ 	};
+ }
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index bd67dc67..29183894 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -8,29 +8,9 @@ export interface BreadcrumbConfig {
+ 
+ export interface RouteConfig {
+ 	regex: RegExp;
+-	getTitle: (pathname: string, params?: Record<string, string>) => string;
+-	getBreadcrumbs: (pathname: string, params?: Record<string, string>) => BreadcrumbConfig[];
+-	getDescription?: (pathname: string, params?: Record<string, string>) => string;
+-}
+-
+-// Utility function to extract route parameters from pathname
+-export function extractRouteParams(pathname: string, regex: RegExp): Record<string, string> {
+-	const match = pathname.match(regex);
+-	if (!match) return {};
+-	
+-	const params: Record<string, string> = {};
+-	
+-	// Extract prompt hub ID
+-	if (pathname.includes('/prompt-hub/') && !pathname.endsWith('/prompt-hub')) {
+-		const parts = pathname.split('/');
+-		const idIndex = parts.indexOf('prompt-hub') + 1;
+-		if (idIndex < parts.length) {
+-			params.id = parts[idIndex];
+-		}
+-	}
+-	
+-
+-	return params;
++	getTitle: (pathname: string) => string;
++	getBreadcrumbs: (pathname: string) => BreadcrumbConfig[];
++	getDescription?: (pathname: string) => string;
+ }
+ 
+ // Route configurations for all pages
+@@ -84,28 +64,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getBreadcrumbs: () => [],
+ 	},
+ 	
+-	// Prompt Hub
+-	{
+-		regex: /^\/prompt-hub$/,
+-		getTitle: () => getMessage().NAV_APP_PROMPTS,
+-		getBreadcrumbs: () => [],
+-	},
+-	{
+-		regex: /^\/prompt-hub\/new$/,
+-		getTitle: () => getMessage().PROMPT_HUB_CREATE_PROMPT,
+-		getBreadcrumbs: () => [],
+-	},
+-	{
+-		regex: /^\/prompt-hub\/[^/]+\/edit$/,
+-		getTitle: () => "",
+-		getBreadcrumbs: () => [],
+-	},
+-	{
+-		regex: /^\/prompt-hub\/[^/]+$/,
+-		getTitle: () => "",
+-		getBreadcrumbs: () => [],
+-	},
+-
+ 	// Context
+ 	{
+ 		regex: /^\/context$/,
+@@ -182,12 +140,10 @@ export function generatePageHeader(pathname: string): PageHeader {
+ 		};
+ 	}
+ 	
+-	const params = extractRouteParams(pathname, config.regex);
+-	
+ 	return {
+-		title: config.getTitle(pathname, params),
+-		description: config.getDescription?.(pathname, params),
+-		breadcrumbs: config.getBreadcrumbs(pathname, params),
++		title: config.getTitle(pathname),
++		description: config.getDescription?.(pathname),
++		breadcrumbs: config.getBreadcrumbs(pathname),
+ 	};
+ }
+ 

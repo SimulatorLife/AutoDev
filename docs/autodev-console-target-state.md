@@ -414,7 +414,7 @@ Retain or adapt:
 - telemetry query/source abstractions;
 - Memory connector/domain capabilities and useful Memory UI components;
 - Evaluation definitions/results/history capabilities that remain independent of removed product concepts;
-- Prompt Hub browsing/edit/version/diff/preview interaction patterns while RuleSync remains canonical;
+- Prompt Hub browsing/edit/version/diff/preview interaction patterns, realized in the AutoDev Console's Prompts surface while RuleSync remains canonical. The OpenLIT's own Prompt Hub product is not retained: those patterns are kept by the Console that owns prompts, and a second copy of the surface would be a second authority over them.
 - useful Agent presentation patterns, but not OpenLIT discovery/instrumentation semantics;
 - desired/live/convergence interaction patterns, reimplemented through AutoDev Runtime/Control API.
 
@@ -440,6 +440,7 @@ These are out of scope, not merely hidden navigation:
 - **Duplicate Costs/Pricing UI:** remove OpenLIT `/costs` and `/pricing` pages, its price/model editor, and manual per-span price mutation. Console `/usage` is the canonical cost-analytics surface. Retained telemetry detail may show the existing cost attribute as read-only evidence, but may not expose manual per-span repricing. Keep the source-side pricing catalog and batched AutoPricing implementation only as telemetry infrastructure for `gen_ai.usage.cost`, not as a second model or cost UI.
 - **Arbitrary raw SQL/query-builder UI** unless a specific approved AutoDev diagnostic requires it. Browser users never receive a general telemetry SQL endpoint.
 - **Generic Vault/secrets/model administration UI** where AutoDev's provider/runtime configuration owns the same concern. Do not create a second credential/model authority.
+- **OpenLIT's own Prompt Hub product:** its pages, API routes, components, navigation entry, ClickHouse prompt tables and migration, and every allowlist, analytics event, message label and dead helper that existed only to serve them. The Console's Prompts surface owns prompts and reads them from the canonical source through the Control API. A writable copy of a prompt surface whose tables a projection sync overwrites is not an authority: the operator's write would not be what the system reads. The removed product's tables are dropped from existing installs rather than left orphaned — storage with no owner is still a place something can read rows from.
 - **Theme switching/light theme:** no theme selector or light-theme product path.
 - **Generic onboarding, sample/demo data, quickstarts, “create your first…” flows, and removed-feature setup pages.**
 - **Multi-user collaboration/share/team affordances** with no single-user AutoDev purpose.
