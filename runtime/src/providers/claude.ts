@@ -749,21 +749,17 @@ export function claudeUsageFrom(value: unknown): ClaudeUsage {
  * provider had consumed nothing.
  *
  * `modelUsage` is either one usage object or a map of them, one per model the
- * turn used, so both shapes are read and a map is summed.
+ * turn used, so both shapes are read and a map is summed. The two names
+ * report the same counts, so the one that carries them wins whichever it is.
  */
 export function claudeUsageFromResult(result: JsonRecord | null): ClaudeUsage {
   if (!result) return claudeUsageFrom(null);
-  const direct = result.usage;
-  if (direct && typeof direct === "object") return claudeUsageFrom(direct);
+  const direct = claudeUsageFrom(result.usage);
+  if (carriesTokenCounts(direct)) return direct;
   const modelUsage = result.modelUsage;
-  if (!modelUsage || typeof modelUsage !== "object") return claudeUsageFrom(null);
+  if (!modelUsage || typeof modelUsage !== "object") return direct;
   const record = modelUsage as JsonRecord;
-  const carriesCounts =
-    "input_tokens" in record ||
-    "inputTokens" in record ||
-    "output_tokens" in record ||
-    "outputTokens" in record;
-  if (carriesCounts) return claudeUsageFrom(record);
+  if (carriesTokenCounts(claudeUsageFrom(record))) return claudeUsageFrom(record);
   const total = claudeUsageFrom(null);
   for (const value of Object.values(record)) {
     const perModel = claudeUsageFrom(value);
@@ -773,6 +769,16 @@ export function claudeUsageFromResult(result: JsonRecord | null): ClaudeUsage {
     total.cache_creation_tokens += perModel.cache_creation_tokens;
   }
   return total;
+}
+
+/** True when a usage object reports any count at all. */
+function carriesTokenCounts(usage: ClaudeUsage): boolean {
+  return (
+    usage.input_tokens > 0 ||
+    usage.output_tokens > 0 ||
+    usage.cache_read_tokens > 0 ||
+    usage.cache_creation_tokens > 0
+  );
 }
 
 /**

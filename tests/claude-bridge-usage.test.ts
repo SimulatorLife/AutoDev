@@ -159,6 +159,42 @@ test("the Claude bridge reads a flat modelUsage the CLI reports", async () => {
   );
 });
 
+test("the Claude bridge reads the counts the CLI reports under modelUsage when its usage carries none", async () => {
+  // The two names report the same counts, and a result whose `usage` is
+  // empty still has to be read from the per-model counts beside it.
+  await withBridge(
+    [
+      {
+        type: "result",
+        is_error: false,
+        result: "done",
+        usage: { input_tokens: 0, output_tokens: 0 },
+        modelUsage: {
+          "claude-sonnet-5-5": {
+            inputTokens: 12,
+            outputTokens: 3,
+            cacheReadInputTokens: 90,
+            cacheCreationInputTokens: 0
+          }
+        }
+      }
+    ],
+    async (options) => {
+      const events = await collect(options);
+      assert.deepEqual(events.at(-1), {
+        kind: "complete",
+        text: "done",
+        usage: {
+          input_tokens: 102,
+          output_tokens: 3,
+          cache_read_tokens: 90,
+          cache_creation_tokens: 0
+        }
+      });
+    }
+  );
+});
+
 test("the Claude bridge still reads the usage the CLI reports under usage", async () => {
   await withBridge(
     [
