@@ -1,0 +1,44 @@
+diff --git a/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts b/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
+index b12020f5..1d49d6b8 100644
+--- a/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
++++ b/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
+@@ -130,6 +130,24 @@ describe('getLastRunCronLogByCronId', () => {
+     );
+   });
+ 
++  it('asks for the started_at column under the name it reads', async () => {
++    // The column is `started_at`; the row is read as `startedAt`. A plain
++    // `SELECT *` returns the column under its own name, so the reader found
++    // nothing and the pricing cron never advanced its window.
++    (dataCollector as jest.Mock).mockResolvedValue({
++      data: [{ startedAt: new Date('2024-01-15') }],
++      err: null,
++    });
++    await getLastRunCronLogByCronId('cron-1', 'db-1');
++    expect(dataCollector).toHaveBeenCalledWith(
++      expect.objectContaining({
++        query: expect.stringContaining('started_at as startedAt'),
++      }),
++      'query',
++      'db-1'
++    );
++  });
++
+   it('returns null when there is no successful run yet', async () => {
+     (dataCollector as jest.Mock).mockResolvedValue({ data: [], err: null });
+     await expect(getLastRunCronLogByCronId('cron-1', 'db-1')).resolves.toBeNull();
+diff --git a/src/client/src/lib/platform/cron-log/index.ts b/src/client/src/lib/platform/cron-log/index.ts
+index 0477bc15..e8d8bcbd 100644
+--- a/src/client/src/lib/platform/cron-log/index.ts
++++ b/src/client/src/lib/platform/cron-log/index.ts
+@@ -123,7 +123,9 @@ export async function getLastRunCronLogByCronId(
+ 	databaseConfigId?: string
+ ) {
+ 	const query = `
+-		SELECT * FROM ${OPENLIT_CRON_LOG_TABLE_NAME} WHERE cron_id = '${cronId}' AND run_status = '${CronRunStatus.SUCCESS}'
++		SELECT started_at as startedAt
++		FROM ${OPENLIT_CRON_LOG_TABLE_NAME}
++		WHERE cron_id = '${cronId}' AND run_status = '${CronRunStatus.SUCCESS}'
+ 		ORDER BY started_at DESC
+ 		LIMIT 1
+ 	`;
