@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { syncRulesyncAgents } from "@simulatorlife/autodev-data/openlit";
-
-const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+import { syncRulesyncModels } from "@simulatorlife/autodev-data/openlit";
 
 const connection = {
   clickhouseUrl: "http://clickhouse.test:8123",
@@ -22,13 +19,16 @@ interface RecordedRequest {
 
 interface StubResponse {
   readonly status?: number;
-  readonly rows?: readonly unknown[];
   readonly text?: string;
 }
 
 /**
  * Stand in for ClickHouse, recording every request the adapter makes and
  * answering each query from `responses`, keyed by a substring of the query.
+ *
+ * The catalog tables are read as `FORMAT JSONEachRow`, so a read is answered
+ * with newline-delimited JSON rather than the `{ data: [...] }` envelope the
+ * `FORMAT JSON` tables use.
  */
 function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
   const realFetch = globalThis.fetch;
@@ -54,7 +54,7 @@ function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
     if (status >= 400) {
       return new Response(response?.text ?? "", { status });
     }
-    return Response.json({ data: response?.rows ?? [] });
+    return new Response(response?.text ?? "", { status });
   }) as typeof globalThis.fetch;
 
   return {
@@ -71,101 +71,132 @@ function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
   };
 }
 
-function jsonEachRowBody(
+/**
+ * Split an `application/x-ndjson` body into its rows.
+ *
+ * The catalog tables take newline-delimited JSON with no trailing newline, so
+ * there is no terminator to strip here -- the last line is a row, not an empty
+ * one.
+ */
+function ndjsonBody(
   body: string | undefined
 ): readonly Record<string, unknown>[] {
-  assert.ok(body, "a JSONEachRow insert must send a body");
+  assert.ok(body, "an ndjson insert must send a body");
   assert.ok(
-    body.endsWith("\n"),
-    "the final newline is what tells ClickHouse the last row is complete"
+    !body.endsWith("\n"),
+    "the catalog tables are written without a trailing newline"
   );
-  const lines = body.split("\n");
-  assert.equal(lines.at(-1), "", "the body ends with exactly one terminator");
-  return lines
-    .slice(0, -1)
+  return body
+    .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-test("the agents adapter reads, then writes, the two ClickHouse tables it owns", async () => {
+test("the catalog adapter reads, then writes, the two ClickHouse tables it owns", async () => {
   const clickhouse = stubClickHouse({});
   try {
-    const result = await syncRulesyncAgents({ repositoryRoot, ...connection });
+    const result = await syncRulesyncModels(connection);
 
-    assert.ok(result.totalCatalogAgents > 0);
+    assert.ok(result.totalProviders > 0);
+    assert.ok(result.totalModels > 0);
     assert.deepEqual(
       clickhouse.recorded.map((request) => [request.method, request.query]),
       [
         [
-          "GET",
-          "SELECT agent_key, service_name, source FROM openlit_agents_summary FORMAT JSON"
+          "POST",
+          "SELECT provider_id FROM openlit.openlit_provider_metadata FORMAT JSONEachRow"
         ],
         [
-          "GET",
-          "SELECT agent_key, version_hash, version_number, system_prompt, tools, runtime_config FROM openlit_agent_versions FORMAT JSON"
+          "POST",
+          "SELECT provider, model_id, context_window, input_price_per_m_token, output_price_per_m_token FROM openlit.openlit_provider_models FORMAT JSONEachRow"
         ],
-        ["POST", "INSERT INTO openlit_agents_summary FORMAT JSONEachRow"],
-        ["POST", "INSERT INTO openlit_agent_versions FORMAT JSONEachRow"]
+        [
+          "POST",
+          "INSERT INTO openlit.openlit_provider_metadata FORMAT JSONEachRow"
+        ],
+        [
+          "POST",
+          "INSERT INTO openlit.openlit_provider_models FORMAT JSONEachRow"
+        ]
       ]
     );
 
-    const summaries = clickhouse.requestAt(2);
-    const versions = clickhouse.requestAt(3);
-    assert.equal(summaries.contentType, "application/json");
-    assert.equal(versions.contentType, "application/json");
+    const providers = clickhouse.requestAt(2);
+    const models = clickhouse.requestAt(3);
+    assert.equal(providers.contentType, "application/x-ndjson");
+    assert.equal(models.contentType, "application/x-ndjson");
 
-    const summaryRows = jsonEachRowBody(summaries.body);
-    assert.equal(
-      summaryRows.length,
-      result.inserted.length + result.updated.length
-    );
+    const providerRows = ndjsonBody(providers.body);
+    assert.equal(providerRows.length, result.providersInserted.length);
     assert.ok(
-      summaryRows.every((row) => typeof row.agent_key === "string"),
-      "every summary row carries its primary key"
+      providerRows.every((row) => typeof row.provider_id === "string"),
+      "every provider row carries its id"
     );
 
-    const versionRows = jsonEachRowBody(versions.body);
-    assert.equal(versionRows.length, summaryRows.length);
+    const modelRows = ndjsonBody(models.body);
+    assert.equal(modelRows.length, result.modelsInserted.length);
     assert.ok(
-      versionRows.every((row) => typeof row.version_hash === "string"),
-      "every version row carries its content hash"
+      modelRows.every((row) => typeof row.model_id === "string"),
+      "every model row carries its model id"
     );
   } finally {
     clickhouse.restore();
   }
 });
 
-test("a rejected insert names the table it failed to write", async () => {
+test("a catalog table that already holds the row is not rewritten", async () => {
   const clickhouse = stubClickHouse({
-    "INSERT INTO openlit_agents_summary": {
+    "FROM openlit.openlit_provider_metadata FORMAT": {
+      text: '{"provider_id":"claude"}\n'
+    }
+  });
+  try {
+    const result = await syncRulesyncModels(connection);
+
+    assert.deepEqual(result.providersUnchanged, ["claude"]);
+    assert.ok(
+      !result.providersInserted.includes("claude"),
+      "a provider ClickHouse already holds is not inserted again"
+    );
+    const insert = clickhouse.recorded.find((request) =>
+      request.query.includes("INSERT INTO openlit.openlit_provider_metadata")
+    );
+    assert.ok(insert, "the providers ClickHouse does not hold are inserted");
+    assert.ok(
+      !ndjsonBody(insert.body).some((row) => row.provider_id === "claude"),
+      "the row ClickHouse already holds is not written a second time"
+    );
+  } finally {
+    clickhouse.restore();
+  }
+});
+
+test("a rejected insert names the status ClickHouse returned", async () => {
+  const clickhouse = stubClickHouse({
+    "INSERT INTO openlit.openlit_provider_metadata": {
       status: 507,
       text: "Not enough memory"
     }
   });
   try {
-    await assert.rejects(
-      syncRulesyncAgents({ repositoryRoot, ...connection }),
-      {
-        message:
-          "Failed to bulk insert into openlit_agents_summary: Not enough memory"
-      }
-    );
+    await assert.rejects(syncRulesyncModels(connection), {
+      message: "ClickHouse statement failed (507): Not enough memory"
+    });
   } finally {
     clickhouse.restore();
   }
 });
 
-test("a rejected read names the table and the status ClickHouse returned", async () => {
+test("a rejected read names the status ClickHouse returned", async () => {
   const clickhouse = stubClickHouse({
-    "FROM openlit_agents_summary FORMAT": { status: 404, text: "no table" }
+    "FROM openlit.openlit_provider_metadata FORMAT": {
+      status: 404,
+      text: "no table"
+    }
   });
   try {
-    await assert.rejects(
-      syncRulesyncAgents({ repositoryRoot, ...connection }),
-      {
-        message:
-          "Failed to query openlit_agents_summary from ClickHouse (404): no table"
-      }
-    );
+    await assert.rejects(syncRulesyncModels(connection), {
+      message: "ClickHouse statement failed (404): no table"
+    });
   } finally {
     clickhouse.restore();
   }

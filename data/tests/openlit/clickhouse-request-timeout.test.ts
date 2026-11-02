@@ -3,20 +3,13 @@ import test from "node:test";
 
 import {
   DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS,
-  insertRows,
-  removeStaleRows,
-  selectRows
+  runParameterizedClickHouseStatement
 } from "../../src/clickhouse/clickhouse-client.ts";
 
 const ENDPOINT = "http://127.0.0.1:8123/?user=default&password=secret";
 
 interface RecordedRequest {
   readonly signal: AbortSignal | null | undefined;
-}
-
-/** A fetch that answers at once, so only the recorded ceiling is under test. */
-function answeringFetch(): typeof globalThis.fetch {
-  return (async () => Response.json({ data: [] })) as typeof globalThis.fetch;
 }
 
 /**
@@ -35,6 +28,11 @@ function hangingFetch(): typeof globalThis.fetch {
         reject(signal.reason ?? new Error("aborted"));
       });
     })) as typeof globalThis.fetch;
+}
+
+/** A fetch that answers at once, so only the recorded ceiling is under test. */
+function answeringFetch(): typeof globalThis.fetch {
+  return (async () => new Response("")) as typeof globalThis.fetch;
 }
 
 async function withFetch(
@@ -61,7 +59,12 @@ test("a ClickHouse request that never answers is abandoned instead of hanging", 
   await withFetch(hangingFetch(), async (requests) => {
     const started = Date.now();
     await assert.rejects(
-      selectRows(ENDPOINT, "openlit_agents_summary", ["id"], { timeoutMs: 50 }),
+      runParameterizedClickHouseStatement(
+        ENDPOINT,
+        "SELECT id FROM openlit.openlit_provider_metadata FORMAT JSONEachRow",
+        {},
+        { timeoutMs: 50 }
+      ),
       /timeout|abort/iu
     );
     assert.ok(
@@ -73,12 +76,15 @@ test("a ClickHouse request that never answers is abandoned instead of hanging", 
   });
 });
 
-test("every ClickHouse wire helper puts a ceiling on its request", async () => {
+test("the ClickHouse wire helper puts a ceiling on its request", async () => {
   await withFetch(hangingFetch(), async (requests) => {
     await assert.rejects(
-      insertRows(ENDPOINT, "openlit_agents_summary", [{ id: "1" }], {
-        timeoutMs: 50
-      }),
+      runParameterizedClickHouseStatement(
+        ENDPOINT,
+        "INSERT INTO openlit.openlit_provider_metadata FORMAT JSONEachRow",
+        {},
+        { body: '{"provider_id":"claude"}', timeoutMs: 50 }
+      ),
       /timeout|abort/iu
     );
     assert.equal(requests.length, 1);
@@ -89,39 +95,12 @@ test("every ClickHouse wire helper puts a ceiling on its request", async () => {
   });
 });
 
-test("the stale-row deletions both carry a ceiling", async () => {
-  await withFetch(answeringFetch(), async (requests) => {
-    await removeStaleRows(
-      ENDPOINT,
-      [{ id: "1" }],
-      {
-        versionsTable: "openlit_agent_versions",
-        versionsKeyColumn: "agent_key",
-        summaryTable: "openlit_agents_summary",
-        summaryKeyColumn: "id",
-        keyOf: (row) => row.id,
-        labelOf: (row) => row.id
-      },
-      { timeoutMs: 50 }
-    );
-
-    assert.equal(
-      requests.length,
-      2,
-      "the versions table and the summary table are deleted separately"
-    );
-    for (const request of requests) {
-      assert.ok(
-        request.signal,
-        "no ClickHouse request may be sent without a ceiling"
-      );
-    }
-  });
-});
-
 test("a ClickHouse request carries the default ceiling when no timeout is named", async () => {
   await withFetch(answeringFetch(), async (requests) => {
-    await selectRows(ENDPOINT, "openlit_agents_summary", ["id"]);
+    await runParameterizedClickHouseStatement(
+      ENDPOINT,
+      "SELECT id FROM openlit.openlit_provider_metadata FORMAT JSONEachRow"
+    );
     assert.equal(requests.length, 1);
     assert.ok(
       requests[0]?.signal,

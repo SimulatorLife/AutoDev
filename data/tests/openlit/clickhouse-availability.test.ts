@@ -61,9 +61,7 @@ test("only a refused connection counts as an absent ClickHouse", () => {
 test("a real product failure is never mistaken for an absent server", () => {
   assert.equal(
     isClickHouseUnavailable(
-      new Error(
-        "Failed to bulk insert into openlit_agents_summary: Not enough memory"
-      )
+      new Error("ClickHouse statement failed (507): Not enough memory")
     ),
     false
   );

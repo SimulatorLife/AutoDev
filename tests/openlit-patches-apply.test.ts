@@ -443,6 +443,59 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "no migration may create the removed Prompt Hub tables"
   );
 
+  // The Agents Hub's tables are the product's storage, and its API was the
+  // only thing that ever read them: the fork had no Agents Hub page, nothing
+  // called /api/agents, and the fork's own materializer cron was never
+  // registered. The tables are dropped for the same reason the prompt tables
+  // are: storage with no owner is still a place something can read rows from.
+  const dropAgents = readFileSync(
+    join(dir, "src/client/src/clickhouse/migrations/drop-agents-migration.ts"),
+    "utf8"
+  );
+  for (const table of ["openlit_agents_summary", "openlit_agent_versions"]) {
+    assert.match(
+      dropAgents,
+      new RegExp(`DROP TABLE IF EXISTS ${table}`),
+      `${table} must be dropped from existing installs`
+    );
+  }
+  assert.match(
+    boardMigrations,
+    /await DropAgentsMigration\(databaseConfigId\);/u,
+    "the agents drop migration must run with the other product-removal drops"
+  );
+  assert.doesNotMatch(
+    boardMigrations,
+    /CreateAgentsSummaryMigration|CreateAgentVersionsMigration/u,
+    "no migration may create the removed Agents Hub tables"
+  );
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/api/agents/route.ts",
+      "src/client/src/app/api/agents/materialize/route.ts",
+      "src/client/src/lib/platform/agents/snapshot.ts",
+      "src/client/src/lib/platform/agents/materialize.ts",
+      "src/client/src/lib/platform/agents/table-details.ts",
+      "src/client/src/types/agents.ts",
+      "src/client/scripts/agents/materialize.js"
+    ],
+    "OpenLIT Agents Hub subtraction"
+  );
+
+  // The coding-agents surface is retained and must keep working: the fork's
+  // observability pages read it, and it reads otel_traces, not the tables the
+  // Agents Hub owned.
+  assertPathsSurvive(
+    dir,
+    [
+      "src/client/src/app/api/coding-agents/sessions/route.ts",
+      "src/client/src/app/api/coding-agents/users/route.ts",
+      "src/client/src/lib/platform/coding-agents/source.ts"
+    ],
+    "the retained coding-agents surface"
+  );
+
   // The Vault administration product is gone; its read paths are not.
   assertPathsRemoved(
     dir,
@@ -595,8 +648,8 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.equal(
     existsSync(join(dir, "src/client/src/app/api/agents/materialize/route.ts")),
-    true,
-    "the materialize cron refreshes the agent summary tables AutoDev syncs"
+    false,
+    "the materialize cron goes with the Agents Hub: it refreshed tables nothing reads"
   );
 
   const agentsMiddleware = readFileSync(

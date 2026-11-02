@@ -22,10 +22,6 @@ const dataSources = collectTypeScript(dataRoot).map((file) => ({
   source: readFileSync(file, "utf8")
 }));
 
-const declaresJsonInsert = (source: string): boolean =>
-  source.includes(`"Content-Type": "application/json"`) &&
-  source.includes("INSERT INTO");
-
 test("the Data sources are the domain this rule governs", () => {
   assert.ok(
     dataSources.length > 15,
@@ -35,7 +31,7 @@ test("the Data sources are the domain this rule governs", () => {
     dataSources.some((file) => file.path === clientModule),
     `the ClickHouse client this rule centres on must exist at ${clientModule}`
   );
-  for (const adapter of ["data/src/openlit/sync-rulesync-agents.ts"]) {
+  for (const adapter of ["data/src/openlit/sync-rulesync-models.ts"]) {
     assert.ok(
       dataSources.some((file) => file.path === adapter),
       `the ${adapter} adapter this rule governs must exist`
@@ -43,38 +39,25 @@ test("the Data sources are the domain this rule governs", () => {
   }
 });
 
-test("the JSON-bodied ClickHouse insert protocol has exactly one owner", () => {
-  const owners = dataSources
-    .filter((file) => declaresJsonInsert(file.source))
-    .map((file) => file.path);
-
-  assert.deepEqual(
-    owners,
-    [clientModule],
-    `every adapter posting newline-terminated JSONEachRow to ClickHouse must call the shared insert; the request is hand-built in ${owners.join(", ")}`
+test("no adapter assembles a ClickHouse request of its own", () => {
+  // The catalog tables are the one projection left, and it has a protocol of
+  // its own: `FORMAT JSONEachRow` reads and `application/x-ndjson` writes.
+  // That protocol is the adapter's business; the request itself -- the URL,
+  // the content type, the ceiling, the error -- belongs to the shared client.
+  // An adapter that calls `fetch` itself has taken that back, and a second
+  // place that decides how a request is made is a second way for it to be
+  // wrong.
+  const adapters = dataSources.filter((file) => file.path !== clientModule);
+  assert.ok(
+    adapters.length > 15,
+    "expected the whole Data package to be scanned"
   );
-});
 
-test("the shared ClickHouse wire helpers have exactly one declaration each", () => {
-  const helpers = ["selectRows", "insertRows", "removeStaleRows"];
-  const owners = new Map<string, string[]>();
-
-  for (const file of dataSources) {
-    for (const helper of helpers) {
-      // Generics sit between the name and the parameter list, so match past them.
-      const declaration = new RegExp(
-        String.raw`^(?:export )?(?:async )?function ${helper}(?:<[\w, <>]*>)?\(`,
-        "mu"
-      );
-      if (declaration.test(file.source)) {
-        owners.set(helper, [...(owners.get(helper) ?? []), file.path]);
-      }
-    }
+  for (const adapter of adapters) {
+    assert.doesNotMatch(
+      adapter.source,
+      /\bfetch\s*\(/u,
+      `${adapter.path} must go through the shared ClickHouse client, not call fetch itself`
+    );
   }
-
-  assert.deepEqual(
-    helpers.map((helper) => [helper, owners.get(helper)]),
-    helpers.map((helper) => [helper, [clientModule]]),
-    "each ClickHouse wire helper must have exactly one owner"
-  );
 });

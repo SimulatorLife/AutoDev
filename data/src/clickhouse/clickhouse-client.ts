@@ -1,17 +1,26 @@
 /**
  * The one owner of how Data speaks to ClickHouse.
  *
- * Every OpenLIT projection adapter needs the same four things: read the rows a
- * table already holds, index or group them, append new ones, and delete the ones
- * that fell out of the catalog. Each of those was written out again inside the
- * second adapter that needed it, which is how the agents and prompts adapters
- * ended up with five near-identical private functions each -- and how the two
- * copies of `fetchExistingVersions` came to report a failed read with two
- * different sentences.
+ * A caller binds its values into the statement and hands it over; this module
+ * builds the request -- the URL, the content type, the ceiling on how long the
+ * request may wait, and the error raised when ClickHouse says no. Nobody
+ * assembles a URL, picks a content type, or words an error of their own.
  *
- * These helpers own the request instead. An adapter supplies the table names,
- * the columns it cares about, and the rows it computed; it never assembles a
- * URL, chooses a content type, or formats an error.
+ * The earlier shape of this module was a second owner as much as a first one.
+ * The OpenLIT projection adapters each wanted to read a table, index or group
+ * what came back, append rows, and delete the rows that fell out of the
+ * catalog, so each one grew its own private copies of those four operations
+ * -- and the two copies of the same read ended up reporting a failed read with
+ * two different sentences. Those helpers are gone with the adapters that were
+ * the last thing to use them.
+ *
+ * What remains is the statement runner, and the two things that both halves of
+ * Data need to know: the default endpoint, and the ceiling. The provider and
+ * model catalog projection is the one caller with a protocol of its own: it
+ * reads `FORMAT JSONEachRow` and writes `application/x-ndjson` without a
+ * trailing newline, because those are the tables' own shapes. It still comes
+ * through here for the request itself, so there is exactly one place that
+ * knows how a ClickHouse request is made.
  *
  * `ClickHouseTelemetryClient` stays here too: it builds trace queries against
  * the same server, and the default endpoint is knowledge both halves need.
@@ -103,152 +112,6 @@ export class ClickHouseTelemetryClient {
   }
 }
 
-/** Run a `SELECT … FORMAT JSON` and return the rows ClickHouse sent back. */
-export async function selectRows<Row>(
-  endpoint: string,
-  table: string,
-  columns: readonly string[],
-  options: ClickHouseRequestOptions = {}
-): Promise<Row[]> {
-  const query = `SELECT ${columns.join(", ")} FROM ${table} FORMAT JSON`;
-  const res = await fetch(`${endpoint}&query=${encodeURIComponent(query)}`, {
-    method: "GET",
-    signal: requestSignal(
-      options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
-    )
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(
-      `Failed to query ${table} from ClickHouse (${res.status}): ${errText}`
-    );
-  }
-  const json = (await res.json()) as { data?: Row[] };
-  return json.data || [];
-}
-
-/** Index rows by a key, so the last row ClickHouse returned for a key wins. */
-export function indexRowsBy<Row>(
-  rows: readonly Row[],
-  keyOf: (row: Row) => string
-): Map<string, Row> {
-  const map = new Map<string, Row>();
-  for (const row of rows) map.set(keyOf(row), row);
-  return map;
-}
-
-/** Group rows by a key, keeping them in the order ClickHouse returned them. */
-export function groupRowsBy<Row>(
-  rows: readonly Row[],
-  keyOf: (row: Row) => string
-): Map<string, Row[]> {
-  const map = new Map<string, Row[]>();
-  for (const row of rows) {
-    const key = keyOf(row);
-    const list = map.get(key) || [];
-    list.push(row);
-    map.set(key, list);
-  }
-  return map;
-}
-
-/**
- * Append rows to a table as newline-delimited JSON.
- *
- * The trailing newline is load-bearing rather than tidy: `JSONEachRow` reads one
- * line per row, and the final terminator is what tells it the last row is
- * complete.
- */
-export async function insertRows<Row>(
-  endpoint: string,
-  table: string,
-  rows: readonly Row[],
-  options: ClickHouseRequestOptions = {}
-): Promise<void> {
-  if (rows.length === 0) return;
-  const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `INSERT INTO ${table} FORMAT JSONEachRow`
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      signal: requestSignal(
-        options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
-      )
-    }
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to bulk insert into ${table}: ${await res.text()}`);
-  }
-}
-
-/**
- * Where a projection's stale rows live, and what to report as removed.
- *
- * Versions go first because the summary row is the one that names them, and the
- * key column is spelled out per table because an adapter is free to name the
- * same row differently in its child and parent tables.
- */
-export interface StaleRowProjection<Row> {
-  readonly versionsTable: string;
-  readonly versionsKeyColumn: string;
-  readonly summaryTable: string;
-  readonly summaryKeyColumn: string;
-  readonly keyOf: (row: Row) => string;
-  readonly labelOf: (row: Row) => string;
-}
-
-async function deleteWhereKeyIn(
-  endpoint: string,
-  table: string,
-  keyColumn: string,
-  keys: string,
-  options: ClickHouseRequestOptions = {}
-): Promise<void> {
-  await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `ALTER TABLE ${table} DELETE WHERE ${keyColumn} IN (${keys})`
-    )}`,
-    {
-      method: "POST",
-      signal: requestSignal(
-        options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
-      )
-    }
-  );
-}
-
-/** Delete rows that fell out of the catalog, and report what went. */
-export async function removeStaleRows<Row>(
-  endpoint: string,
-  staleRows: readonly Row[],
-  projection: StaleRowProjection<Row>,
-  options: ClickHouseRequestOptions = {}
-): Promise<string[]> {
-  if (staleRows.length === 0) return [];
-  const keys = staleRows.map((row) => `'${projection.keyOf(row)}'`).join(", ");
-  // Versions first, deliberately in sequence: the summary row is the one that
-  // names them, so ClickHouse must not be asked to delete it before they go.
-  await deleteWhereKeyIn(
-    endpoint,
-    projection.versionsTable,
-    projection.versionsKeyColumn,
-    keys,
-    options
-  );
-  await deleteWhereKeyIn(
-    endpoint,
-    projection.summaryTable,
-    projection.summaryKeyColumn,
-    keys,
-    options
-  );
-  return staleRows.map(projection.labelOf);
-}
-
 /**
  * A single bound ClickHouse query parameter value.
  *
@@ -285,6 +148,14 @@ export class ClickHouseStatementError extends Error {
  * column identifiers; every value that varies by caller or request travels as
  * a named `params` entry bound through ClickHouse's native `{name:Type}`
  * placeholder syntax, never through string interpolation into `query`.
+ *
+ * `contentType` names the media type of `body`. It defaults to
+ * `application/json` because that is what a JSON body is, but a caller whose
+ * table expects newline-delimited JSON says `application/x-ndjson` instead --
+ * the catalog projection writes the provider and model tables that way. The
+ * content type belongs here rather than in the caller: it is part of how the
+ * request is made, and a second place that decides it is a second way for the
+ * request to be wrong.
  */
 export function runParameterizedClickHouseStatement(
   endpoint: string,
@@ -293,6 +164,7 @@ export function runParameterizedClickHouseStatement(
   options: {
     readonly fetchImpl?: typeof fetch;
     readonly body?: string;
+    readonly contentType?: string;
     readonly timeoutMs?: number;
   } = {}
 ): Promise<string> {
@@ -310,7 +182,9 @@ export function runParameterizedClickHouseStatement(
         ...(options.body === undefined
           ? {}
           : {
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": options.contentType ?? "application/json"
+              },
               body: options.body
             }),
         signal: requestSignal(

@@ -991,21 +991,28 @@ apply only after the restart.
 Current out-of-band OpenLIT projections:
 
 ```bash
-pnpm --filter @simulatorlife/autodev-data openlit:sync-agents
 pnpm --filter @simulatorlife/autodev-data openlit:sync-models
 pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces
 ```
 
-The Data-owned agents and models adapters populate transitional OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership. **Do not add new product consumers, mutation authority, or canonical state to these sync paths.** Delete each sync command/adapter after its retained feature is served directly through the unified Console/Data integration and no verified consumer still requires the OpenLIT projection. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter, and should be removed when the retained OpenLIT internals no longer require that singleton compatibility row.
+The Data-owned models adapter populates a transitional OpenLIT read model; it does not supersede canonical RuleSync/AutoDev configuration ownership. **Do not add new product consumers, mutation authority, or canonical state to these sync paths.** Delete each sync command/adapter after its retained feature is served directly through the unified Console/Data integration and no verified consumer still requires the OpenLIT projection. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter, and should be removed when the retained OpenLIT internals no longer require that singleton compatibility row.
 
-The agents adapter reaches ClickHouse only through
-`data/src/clickhouse/clickhouse-client.ts`, which owns reading, indexing,
-grouping, inserting, and stale-row deletion — including the newline-terminated
-`JSONEachRow` body. An adapter supplies table names, columns, and rows; it must
-not assemble a URL, choose a content type, or format its own read error. The
-models adapter is the deliberate exception: it writes `application/x-ndjson`
-without a trailing newline and reports insert failures in its own wording, so
-it still builds its requests itself. `data/src/openlit/clickhouse-config.ts`
+The agents adapter is gone. It wrote the OpenLIT's `openlit_agents_summary` and `openlit_agent_versions` tables, and the only thing that ever read those tables was the fork's `/api/agents` API — which had no page, no caller inside the fork, and no caller in AutoDev. The fork's own materializer cron, which would have been the second writer, was never registered: `restoreAgentsMaterializeCron` was called only by its own test. A projection whose only reader has no reader is a write to a table nobody looks at.
+
+The models adapter reaches ClickHouse only through
+`data/src/clickhouse/clickhouse-client.ts`, which owns the request: the URL,
+the content type, the ceiling on how long the request may wait, and the error
+it raises when ClickHouse says no. An adapter supplies the query and the rows
+it computed; it must not assemble a URL, choose a content type, or format its
+own read error.
+
+The provider and model tables have a protocol of their own — they are read as
+`FORMAT JSONEachRow` and written as `application/x-ndjson` with no trailing
+newline — so the models adapter says which protocol it wants and the client
+carries it out. That protocol used to be the adapter's excuse to build its
+requests from scratch, which is how the one projection left in the package was
+also the one request without a ceiling: an unresponsive ClickHouse hung the
+catalog sync instead of failing with the reason. `data/src/openlit/clickhouse-config.ts`
 owns credentials only, and the default endpoint now lives with the client.
 
 The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.

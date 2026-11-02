@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
+import { runParameterizedClickHouseStatement } from "../clickhouse/clickhouse-client.ts";
 import {
   type OpenLitClickHouseOptions,
   resolveOpenLitClickHouseConnection
@@ -555,16 +556,23 @@ interface ExistingModelRow {
   readonly output_price_per_m_token: number;
 }
 
+/**
+ * The provider and model tables have a protocol of their own: they are read as
+ * `FORMAT JSONEachRow` and written as `application/x-ndjson` with no trailing
+ * newline, which is what those tables expect. The request itself -- the URL,
+ * the content type, the ceiling on how long it may wait, and the error raised
+ * when ClickHouse says no -- still belongs to the shared client, so this
+ * adapter supplies the query and the rows and nothing else.
+ */
+const PROVIDER_METADATA_TABLE = "openlit.openlit_provider_metadata";
+const PROVIDER_MODELS_TABLE = "openlit.openlit_provider_models";
+const NDJSON_CONTENT_TYPE = "application/x-ndjson";
+
 async function fetchExistingProviders(endpoint: string): Promise<Set<string>> {
-  const query =
-    "SELECT provider_id FROM openlit.openlit_provider_metadata FORMAT JSONEachRow";
-  const res = await fetch(`${endpoint}&query=${encodeURIComponent(query)}`);
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch providers from ClickHouse: ${res.statusText}`
-    );
-  }
-  const text = await res.text();
+  const text = await runParameterizedClickHouseStatement(
+    endpoint,
+    `SELECT provider_id FROM ${PROVIDER_METADATA_TABLE} FORMAT JSONEachRow`
+  );
   const set = new Set<string>();
   for (const line of text.trim().split("\n")) {
     if (!line) continue;
@@ -581,15 +589,10 @@ async function fetchExistingProviders(endpoint: string): Promise<Set<string>> {
 async function fetchExistingModels(
   endpoint: string
 ): Promise<Map<string, ExistingModelRow>> {
-  const query =
-    "SELECT provider, model_id, context_window, input_price_per_m_token, output_price_per_m_token FROM openlit.openlit_provider_models FORMAT JSONEachRow";
-  const res = await fetch(`${endpoint}&query=${encodeURIComponent(query)}`);
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch models from ClickHouse: ${res.statusText}`
-    );
-  }
-  const text = await res.text();
+  const text = await runParameterizedClickHouseStatement(
+    endpoint,
+    `SELECT provider, model_id, context_window, input_price_per_m_token, output_price_per_m_token FROM ${PROVIDER_MODELS_TABLE} FORMAT JSONEachRow`
+  );
   const map = new Map<string, ExistingModelRow>();
   for (const line of text.trim().split("\n")) {
     if (!line) continue;
@@ -624,23 +627,12 @@ async function insertProviders(
     })
   );
 
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "INSERT INTO openlit.openlit_provider_metadata FORMAT JSONEachRow"
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-ndjson" },
-      body: jsonLines.join("\n")
-    }
+  await runParameterizedClickHouseStatement(
+    endpoint,
+    `INSERT INTO ${PROVIDER_METADATA_TABLE} FORMAT JSONEachRow`,
+    {},
+    { body: jsonLines.join("\n"), contentType: NDJSON_CONTENT_TYPE }
   );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `ClickHouse provider insert failed (${res.status}): ${errorText}`
-    );
-  }
 }
 
 async function insertModels(
@@ -669,23 +661,12 @@ async function insertModels(
     })
   );
 
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "INSERT INTO openlit.openlit_provider_models FORMAT JSONEachRow"
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-ndjson" },
-      body: jsonLines.join("\n")
-    }
+  await runParameterizedClickHouseStatement(
+    endpoint,
+    `INSERT INTO ${PROVIDER_MODELS_TABLE} FORMAT JSONEachRow`,
+    {},
+    { body: jsonLines.join("\n"), contentType: NDJSON_CONTENT_TYPE }
   );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `ClickHouse model insert failed (${res.status}): ${errorText}`
-    );
-  }
 }
 
 export async function syncRulesyncModels(
