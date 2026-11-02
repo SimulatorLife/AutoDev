@@ -1380,6 +1380,8 @@ The fix belongs to the adapter, because the adapter is where the storage represe
 
 This is also what made the provider breakdown possible at all. The new widget filters on the same status as the other compaction widgets, so without this fix it would have inherited the same zero, and the compaction panel would have kept reporting an empty source while the store held the events.
 
+The whole panel was then checked against the store, because one silent zero is evidence about the others. Every remaining widget agrees with it: the breakdowns sum to the counts beside them (1,992 logical requests by agent role and by workspace, 2,077 attempts across five providers, 299 MCP calls across fifteen tools), the headline figures match the store's own counts (input tokens 448.4M, output tokens 1.34M), and the cache-read rate is a true zero -- 747 spans in ninety days carry the cache-read attribute, and none did in the day the sweep covered. The panel's numbers and the store's numbers now tell the same story.
+
 ## A compaction could not be read by the provider that served it
 
 The target state asks Usage for bounded breakdowns of context compactions by workspace, provider, requested model and agent/role, "where those dimensions are source-confirmed". Three of the four were there. The provider breakdown was not, and the reason it was not is the same reason it should not have been faked: the logical-request span never carries a provider.
