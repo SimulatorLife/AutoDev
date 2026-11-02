@@ -1360,6 +1360,26 @@ Two resets were restored with it. `resetCorrelation` clears the attribution diag
 
 Nothing reads either block -- the Console and the CLI do not -- so the change is visible to an operator reading the router's status and to no one else.
 
+## A filter that selected nothing read as a measured zero
+
+The compaction panels rendered an empty state -- "No source-confirmed compactions were observed in this time range" -- and the ledger recorded that as an empty source result. It was not one. ClickHouse held **27** source-confirmed compaction spans over the range the panel covered: `ServiceName=autodev-router`, `SpanName=autodev.routed_request`, `autodev.request_kind=compaction`, `StatusCode=Ok`, all inside the window the panel was looking at.
+
+The cause was a word. The widget's status filter names the status in the OTel vocabulary -- `OK` -- and the fork's ClickHouse query path compared that string *literally* against the column, which stores the span status in an enum of its own whose names are title-cased: `Ok`. Two spellings of the same word, compared literally, select nothing. And a filter that selects nothing is indistinguishable, in the response, from a measurement of zero -- which is why the panel said "none observed" rather than "this filter never fired".
+
+Three families of signal were silently zeroed:
+
+| Widget | What the panel showed | What the store held (90 days) |
+| --- | --- | --- |
+| Context compactions | 0 | 27 spans |
+| Failed attempts by provider | no rows | 4,388 errored attempt spans |
+| MCP tool-call errors | 0 | 440 errored tool calls |
+
+The OpenLIT core already knew the two spellings disagreed. Its exception routes pass `["STATUS_CODE_ERROR", "Error", "ERROR"]` -- three spellings of one status -- because the comparison is literal, so a caller has to enumerate every spelling to be right. A caller that knows one spelling has no way to be right at all, and the AutoDev Usage widgets are such a caller.
+
+The fix belongs to the adapter, because the adapter is where the storage representation is known: the ClickHouse query path now maps the status vocabulary onto the stored spelling (`Ok`, `Error`, `Unset`) before it compares, so every spelling the contract speaks selects the spans it names, and the spellings that already worked are untouched. The mapping is the same one the core was doing by hand, done once, in the one place that can see both sides.
+
+This is also what made the provider breakdown possible at all. The new widget filters on the same status as the other compaction widgets, so without this fix it would have inherited the same zero, and the compaction panel would have kept reporting an empty source while the store held the events.
+
 ## A compaction could not be read by the provider that served it
 
 The target state asks Usage for bounded breakdowns of context compactions by workspace, provider, requested model and agent/role, "where those dimensions are source-confirmed". Three of the four were there. The provider breakdown was not, and the reason it was not is the same reason it should not have been faked: the logical-request span never carries a provider.
@@ -1384,6 +1404,8 @@ A compaction served before the router began publishing the provider is grouped s
 What did **not** change: the provider *filter* still fails closed for the compaction signal. The filter selects attempts by `gen_ai.provider.name`, which the logical-request signal does not carry, so a provider or skill selection still reports the compaction panels as unavailable rather than quietly reinterpreting the scope.
 
 The Console and OpenLIT agree on the widget set exactly: the Usage client rejects a response whose widget set is not the contract's, so the patched OpenLIT image must be rebuilt before the Console's Usage view reads the new breakdown.
+
+Live, after the router restarted with the new telemetry: a compaction served through the router carries `autodev.compaction.provider=codex` on its own span, the `autodev.context.compactions` counter carries the same `gen_ai.provider.name=codex`, and the logical-request span still carries **no** `gen_ai.provider.name` -- the three readings agree, and the parent still refuses to name a provider it cannot know.
 
 ## Current acceptance evidence
 

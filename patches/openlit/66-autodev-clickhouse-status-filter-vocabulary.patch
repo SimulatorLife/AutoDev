@@ -1,0 +1,128 @@
+diff --git a/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts b/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts
+index 4c7329ca..535db46f 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts
+@@ -54,6 +54,44 @@ describe("ParameterizedTraceQuery", () => {
+ 		expect(bindings.queryParams.autodev_filter_2).toEqual(values);
+ 	});
+ 
++	it("selects spans by the status vocabulary the caller uses, not by the stored spelling", () => {
++		// ClickHouse stores the span status as its own title-cased enum. A
++		// filter that names the status in the OTel vocabulary has to reach the
++		// spans it names; comparing the two spellings literally selects
++		// nothing, and the panel then reads as a measured zero.
++		const bindings = new ParameterizedTraceQuery();
++		const where = bindings.where(
++			{
++				...base,
++				filters: [{ target: "status", op: "eq", value: "OK" }],
++			},
++			"`openlit`.`otel_traces`",
++		);
++
++		expect(where).toContain("StatusCode = {autodev_filter_2:String}");
++		expect(bindings.queryParams.autodev_filter_2).toBe("Ok");
++	});
++
++	it("accepts every spelling of a status and collapses them to the stored one", () => {
++		const bindings = new ParameterizedTraceQuery();
++		const where = bindings.where(
++			{
++				...base,
++				filters: [
++					{
++						target: "status",
++						op: "in",
++						value: ["STATUS_CODE_ERROR", "Error", "ERROR"],
++					},
++				],
++			},
++			"`openlit`.`otel_traces`",
++		);
++
++		expect(where).toContain("StatusCode IN {autodev_filter_2:Array(String)}");
++		expect(bindings.queryParams.autodev_filter_2).toEqual(["Error"]);
++	});
++
+ 	it("rejects unsafe attribute keys before producing query text", () => {
+ 		const bindings = new ParameterizedTraceQuery();
+ 		expect(() =>
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts
+index 4fde1846..977cf153 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts
+@@ -8,6 +8,30 @@ import type {
+ } from "../types";
+ 
+ const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++
++/**
++ * The stored spelling of each span status.
++ *
++ * ClickHouse keeps the OTel span status in an enum of its own, whose names
++ * are title-cased (`Ok`, `Error`, `Unset`). The query contract speaks the
++ * OTel vocabulary (`OK`, `ERROR`, `UNSET`), and some callers use the
++ * `STATUS_CODE_` prefix the OTLP JSON encoding uses. Comparing those
++ * spellings literally makes a status filter select nothing, and a filter
++ * that selects nothing reads as a measured zero rather than as a filter that
++ * never fired. Map each spelling onto the stored one here, where the storage
++ * representation is known.
++ */
++const CLICKHOUSE_STATUS_NAMES: Readonly<Record<string, string>> = {
++	ok: "Ok",
++	error: "Error",
++	unset: "Unset",
++};
++
++function clickhouseStatusName(value: string): string {
++	const key = value.trim().toLowerCase().replace(/^status_code_/u, "");
++	return CLICKHOUSE_STATUS_NAMES[key] ?? value;
++}
++
+ const ALLOWED_COLUMNS = new Set([
+ 	"SpanId",
+ 	"TraceId",
+@@ -106,8 +130,11 @@ export class ParameterizedTraceQuery {
+ 				expression = "SpanName";
+ 				break;
+ 			case "status":
+-				expression = "StatusCode";
+-				break;
++				return this.comparison(
++					"StatusCode",
++					filter.op,
++					this.statusFilterValue(filter.value)
++				);
+ 			case "duration":
+ 				expression = "Duration / 1000000000";
+ 				break;
+@@ -117,6 +144,29 @@ export class ParameterizedTraceQuery {
+ 		return this.comparison(expression, filter.op, filter.value);
+ 	}
+ 
++	/**
++	 * The status spellings a filter asks for, in the spelling ClickHouse
++	 * stores. A caller may name the same status more than once (the OTel
++	 * vocabulary and the stored one side by side), so the names are collapsed
++	 * to the ones that are actually stored.
++	 */
++	private statusFilterValue(
++		rawValue: NormalizedFilter["value"]
++	): NormalizedFilter["value"] {
++		if (rawValue === undefined) return rawValue;
++		if (!Array.isArray(rawValue)) {
++			return typeof rawValue === "string"
++				? clickhouseStatusName(rawValue)
++				: rawValue;
++		}
++		const names: string[] = [];
++		for (const value of rawValue) {
++			const name = clickhouseStatusName(value);
++			if (names.indexOf(name) === -1) names.push(name);
++		}
++		return names;
++	}
++
+ 	private comparison(
+ 		expression: string,
+ 		op: FilterOp,
