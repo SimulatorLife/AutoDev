@@ -705,11 +705,56 @@ interface ClaudeStreamOptions extends ClaudeCliOptions {
  * whole Codex transcript, which can exceed the platform's argument limit.
  */
 
+/**
+ * The tokens one Claude response consumed, in the CLI's own accounting.
+ *
+ * Anthropic reports the prompt three ways: the tokens that were neither read
+ * from nor written to the cache (`input_tokens`), the tokens read from the
+ * cache (`cache_read_input_tokens`), and the tokens written to it
+ * (`cache_creation_input_tokens`). The Responses shape the bridge speaks
+ * carries the prompt as one total, so the two cached counts are added into it
+ * and the read count is reported separately as the cached subset.
+ */
+export interface ClaudeUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
+/** Read the CLI's usage object, defaulting every count to zero. */
+export function claudeUsageFrom(value: unknown): ClaudeUsage {
+  const usage =
+    value && typeof value === "object" ? (value as JsonRecord) : ({} as JsonRecord);
+  return {
+    input_tokens: Number(usage.input_tokens ?? 0),
+    output_tokens: Number(usage.output_tokens ?? 0),
+    cache_read_tokens: Number(usage.cache_read_input_tokens ?? 0),
+    cache_creation_tokens: Number(usage.cache_creation_input_tokens ?? 0)
+  };
+}
+
+/**
+ * The same counts on the Responses basis: the prompt is one total and the
+ * tokens read from the cache are the cached subset of it.
+ */
+export function claudeResponsesUsage(usage: ClaudeUsage): ClaudeUsage {
+  return {
+    input_tokens:
+      usage.input_tokens + usage.cache_read_tokens + usage.cache_creation_tokens,
+    output_tokens: usage.output_tokens,
+    cache_read_tokens: usage.cache_read_tokens,
+    cache_creation_tokens: usage.cache_creation_tokens
+  };
+}
+
 /** Mutable progress through one Claude CLI stream-json session. */
 interface ClaudeStreamState {
   terminalResult: JsonRecord | null;
   sawStreamText: boolean;
   assistantSnapshot: string;
+  /** The usage of the message the CLI last finished. */
+  usage: ClaudeUsage | null;
 }
 
 type ClaudeLineSignal = { kind: "line"; line: string } | { kind: "timeout" };
@@ -816,10 +861,16 @@ function* translateAssistantEvent(
 ): Generator<ClaudeCliEvent, void, void> {
   // The CLI's snapshot of a finished message. Its text is streamed already
   // unless this CLI emitted no partial messages at all.
+  const message = event.message as JsonRecord | undefined;
+  // The message's usage is the only place the CLI reports what this response
+  // cost before the turn ends, and a turn that calls a tool ends the response
+  // there -- before the CLI's own result event arrives. Without it every
+  // tool-calling response reported no tokens at all.
+  const usage = claudeResponsesUsage(claudeUsageFrom(message?.usage));
+  state.usage = usage;
+  yield { kind: "usage", usage };
   if (!state.sawStreamText) {
-    const fullText = textFromContent(
-      (event.message as JsonRecord | undefined)?.content
-    );
+    const fullText = textFromContent(message?.content);
     const delta = fullText.startsWith(state.assistantSnapshot)
       ? fullText.slice(state.assistantSnapshot.length)
       : fullText;
@@ -905,7 +956,8 @@ export async function* runClaudeStream(
   const state: ClaudeStreamState = {
     terminalResult: null,
     sawStreamText: false,
-    assistantSnapshot: ""
+    assistantSnapshot: "",
+    usage: null
   };
   const toolUses = new ToolUseAccumulator();
 
@@ -951,14 +1003,11 @@ export async function* runClaudeStream(
         `Claude CLI exited without a terminal result event: ${stderr.slice(-4000)}`
       );
     }
-    const usage = (state.terminalResult.usage as JsonRecord | undefined) ?? {};
+    const usage = claudeResponsesUsage(claudeUsageFrom(state.terminalResult.usage));
     yield {
       kind: "complete",
       text: String(state.terminalResult.result ?? ""),
-      usage: {
-        input_tokens: Number(usage.input_tokens ?? 0),
-        output_tokens: Number(usage.output_tokens ?? 0)
-      }
+      usage
     };
   } finally {
     options.signal.removeEventListener("abort", kill);

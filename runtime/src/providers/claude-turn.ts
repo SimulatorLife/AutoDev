@@ -50,7 +50,12 @@ type JsonRecord = Record<string, unknown>;
 
 const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
 const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
-const DEFAULT_USAGE = { input_tokens: 0, output_tokens: 0 };
+const DEFAULT_USAGE = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_tokens: 0,
+  cache_creation_tokens: 0
+};
 const DEFAULT_AWAITED: AwaitedToolResults = {
   outputs: new Map(),
   messages: []
@@ -65,9 +70,23 @@ export type ClaudeCliEvent =
   | { kind: "block_stop" }
   | { kind: "native_tool"; name: string; input: JsonRecord }
   | {
+      kind: "usage";
+      usage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+      };
+    }
+  | {
       kind: "complete";
       text: string;
-      usage: { input_tokens: number; output_tokens: number };
+      usage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+      };
     };
 
 /** How a failed turn ends its response. */
@@ -427,15 +446,24 @@ export class ResponseStream {
   }
 
   complete(
-    usage: { input_tokens: number; output_tokens: number } = DEFAULT_USAGE
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+    } = DEFAULT_USAGE
   ): void {
     this.closeBlocks();
     this.end({
       ...this.snapshot("completed"),
       output_text: this.outputText(),
+      // The Responses shape: the prompt is one total, and the tokens read
+      // from the cache are the cached subset of it.
       usage: {
-        ...usage,
-        total_tokens: usage.input_tokens + usage.output_tokens
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.input_tokens + usage.output_tokens,
+        input_tokens_details: { cached_tokens: usage.cache_read_tokens }
       }
     });
   }
@@ -522,6 +550,14 @@ export class ClaudeTurn {
   private delegationTaken = false;
   private stashedFailure: TurnFailure | null = null;
   private lastText = "";
+  /**
+   * What the last finished message cost.
+   *
+   * A response that carries tool calls ends before the turn does, so it has
+   * to report the tokens of the message it carries; the CLI's own result
+   * event only arrives when the whole turn ends.
+   */
+  private usage: typeof DEFAULT_USAGE = DEFAULT_USAGE;
   private readonly options: ClaudeTurnOptions;
 
   constructor(options: ClaudeTurnOptions) {
@@ -703,6 +739,10 @@ export class ClaudeTurn {
         stream?.progress(nativeToolSummary(event.name, event.input));
         return;
       }
+      case "usage": {
+        this.usage = event.usage;
+        return;
+      }
       case "complete": {
         this.complete(event);
       }
@@ -821,7 +861,10 @@ export class ClaudeTurn {
       this.reporter?.toolRequested(call.tool.name, callId);
     }
     this.detach();
-    stream.complete();
+    // This response ends the message it carries, so it reports the tokens
+    // that message cost. The turn itself continues; its own result event
+    // arrives later and reports the turn's totals.
+    stream.complete(this.usage);
     this.startParkTimer();
   }
 
