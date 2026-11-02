@@ -722,16 +722,57 @@ export interface ClaudeUsage {
   cache_creation_tokens: number;
 }
 
-/** Read the CLI's usage object, defaulting every count to zero. */
+/** Read one usage object, defaulting every count to zero. */
 export function claudeUsageFrom(value: unknown): ClaudeUsage {
   const usage =
     value && typeof value === "object" ? (value as JsonRecord) : ({} as JsonRecord);
   return {
-    input_tokens: Number(usage.input_tokens ?? 0),
-    output_tokens: Number(usage.output_tokens ?? 0),
-    cache_read_tokens: Number(usage.cache_read_input_tokens ?? 0),
-    cache_creation_tokens: Number(usage.cache_creation_input_tokens ?? 0)
+    input_tokens: Number(usage.input_tokens ?? usage.inputTokens ?? 0),
+    output_tokens: Number(usage.output_tokens ?? usage.outputTokens ?? 0),
+    cache_read_tokens: Number(
+      usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? 0
+    ),
+    cache_creation_tokens: Number(
+      usage.cache_creation_input_tokens ?? usage.cacheCreationInputTokens ?? 0
+    )
   };
+}
+
+/**
+ * The usage a result event carries.
+ *
+ * The CLI reports it under two names: `usage` for the turn's totals, and
+ * `modelUsage` for the same counts per model. A result that carried only
+ * `modelUsage` -- which is what the CLI sends when it names the model it ran
+ * on -- left the bridge reading nothing at all, so every Claude response
+ * reported no tokens and the Usage token and cost panels read as if the
+ * provider had consumed nothing.
+ *
+ * `modelUsage` is either one usage object or a map of them, one per model the
+ * turn used, so both shapes are read and a map is summed.
+ */
+export function claudeUsageFromResult(result: JsonRecord | null): ClaudeUsage {
+  if (!result) return claudeUsageFrom(null);
+  const direct = result.usage;
+  if (direct && typeof direct === "object") return claudeUsageFrom(direct);
+  const modelUsage = result.modelUsage;
+  if (!modelUsage || typeof modelUsage !== "object") return claudeUsageFrom(null);
+  const record = modelUsage as JsonRecord;
+  const carriesCounts =
+    "input_tokens" in record ||
+    "inputTokens" in record ||
+    "output_tokens" in record ||
+    "outputTokens" in record;
+  if (carriesCounts) return claudeUsageFrom(record);
+  const total = claudeUsageFrom(null);
+  for (const value of Object.values(record)) {
+    const perModel = claudeUsageFrom(value);
+    total.input_tokens += perModel.input_tokens;
+    total.output_tokens += perModel.output_tokens;
+    total.cache_read_tokens += perModel.cache_read_tokens;
+    total.cache_creation_tokens += perModel.cache_creation_tokens;
+  }
+  return total;
 }
 
 /**
@@ -1003,7 +1044,9 @@ export async function* runClaudeStream(
         `Claude CLI exited without a terminal result event: ${stderr.slice(-4000)}`
       );
     }
-    const usage = claudeResponsesUsage(claudeUsageFrom(state.terminalResult.usage));
+    const usage = claudeResponsesUsage(
+      claudeUsageFromResult(state.terminalResult)
+    );
     yield {
       kind: "complete",
       text: String(state.terminalResult.result ?? ""),
