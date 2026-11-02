@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
-import { waitForPageContent } from "./acceptance-helpers.ts";
+import { illegibleText, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
  * The palette's trigger, once the client has written the key that opens it.
@@ -277,4 +277,77 @@ test("the palette selects a result the keyboard can move", async ({ page }) => {
   const href = await selected.getAttribute("href");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(`${href}$`, "u"));
+});
+
+/**
+ * The open palette is legible, whole and named.
+ *
+ * The palette is the one surface the Console renders outside the page: it is
+ * an overlay, and the sweeps that read the pages read `main`. So the overlay
+ * was never measured for the things every other surface is measured for --
+ * whether its text can be read, whether anything in it is cut off, and whether
+ * every control in it has a name.
+ *
+ * The palette is where the Console says what each of its fourteen surfaces is
+ * *for*, so those sentences are read more often than any other prose in the
+ * product. A purpose line too faint to read is a sentence the operator cannot
+ * use, and it is the one sentence that tells them which surface they want.
+ */
+test("the open palette is legible, whole and named", async ({ page }) => {
+  await page.goto("/agents");
+  await waitForPageContent(page);
+  await paletteTrigger(page);
+  await page.keyboard.press("Meta+k");
+  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  await expect(dialog).toBeVisible();
+
+  const illegible = await illegibleText(page, "[data-command-palette] *");
+
+  const cut = await page.evaluate(() => {
+    const overlay = document.querySelector("[data-command-palette]");
+    if (overlay === null) return [] as string[];
+    const findings: string[] = [];
+    for (const element of Array.from(overlay.querySelectorAll("*"))) {
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (!element.checkVisibility()) continue;
+      const box = element.getBoundingClientRect();
+      if (box.width <= 1 || box.height <= 1) continue;
+      if (style.overflowX === "auto" || style.overflowX === "scroll") continue;
+      if (style.textOverflow === "ellipsis") continue;
+      if (element.clientWidth === 0) continue;
+      const over = element.scrollWidth - element.clientWidth;
+      if (over <= 1) continue;
+      findings.push(
+        `"${(element.textContent ?? "").trim().slice(0, 40)}" loses ${String(over)}px`
+      );
+    }
+    return findings;
+  });
+
+  expect(
+    illegible,
+    "the palette's words have to be readable: they say what each surface is for"
+  ).toEqual([]);
+  expect(cut, "nothing in the palette may be cut off").toEqual([]);
+
+  // And every control in it is named: the palette is a list of links, and a
+  // link with no name is a link the operator cannot tell from another.
+  const client = await page.context().newCDPSession(page);
+  await client.send("Accessibility.enable");
+  const { nodes } = await client.send("Accessibility.getFullAXTree");
+  const unnamed = nodes
+    .filter((node) => {
+      const role = node.role?.value;
+      if (
+        role === undefined ||
+        !["link", "button", "textbox", "option", "checkbox"].includes(role)
+      ) {
+        return false;
+      }
+      if (node.ignored === true) return false;
+      return (node.name?.value ?? "").trim() === "";
+    })
+    .map((node) => node.role?.value ?? "");
+  expect(unnamed, "every control in the palette names itself").toEqual([]);
 });

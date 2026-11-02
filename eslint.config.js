@@ -60,7 +60,11 @@ const TEST_FILES = [
   "**/tests/**/*.ts",
   "**/tests/**/*.tsx",
   "**/e2e/**/*.spec.ts",
-  "**/e2e/**/*.spec.tsx"
+  "**/e2e/**/*.spec.tsx",
+  // The e2e support file holds browser-side code, the way the specs do: the
+  // helpers it measures with are serialised into the page, so they cannot be
+  // hoisted out of the callback that runs them.
+  "**/e2e/acceptance-helpers.ts"
 ];
 
 const baseIgnorePatterns = [
