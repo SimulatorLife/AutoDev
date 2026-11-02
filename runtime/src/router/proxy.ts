@@ -767,23 +767,48 @@ function providerTokenCount(value: unknown): number | null {
     : null;
 }
 
+/**
+ * The cached input tokens a provider reported, in every shape any provider uses.
+ *
+ * The three shapes are different names for one number:
+ *
+ * - Anthropic's Messages API reports `cache_read_input_tokens` beside the
+ *   input count.
+ * - OpenAI's Chat Completions API reports `prompt_tokens_details.cached_tokens`.
+ * - OpenAI's Responses API -- the endpoint every AutoDev provider route
+ *   actually calls (`${baseUrl}/responses`) -- reports
+ *   `input_tokens_details.cached_tokens`.
+ *
+ * Reading only one of them silently drops the cache count for the providers
+ * that use the others, and the Usage cache-rate panel then selects no row at
+ * all, so the Console reads the rate as never observed.
+ * The first shape that carries a usable count wins; they never disagree in
+ * practice because a provider reports one shape.
+ */
+function providerCacheReadTokens(
+  usage: Record<string, unknown>
+): number | null {
+  const detailCache = (detail: unknown): number | null =>
+    detail && typeof detail === "object"
+      ? providerTokenCount((detail as Record<string, unknown>).cached_tokens)
+      : null;
+  return (
+    providerTokenCount(usage.cache_read_input_tokens) ??
+    detailCache(usage.input_tokens_details) ??
+    detailCache(usage.prompt_tokens_details)
+  );
+}
+
 function usageFromResponse(value: unknown): ProviderUsage | null {
   if (!value || typeof value !== "object") return null;
   const response = value as Record<string, unknown>;
   const rawUsage = response.usage;
   if (!rawUsage || typeof rawUsage !== "object") return null;
   const usage = rawUsage as Record<string, unknown>;
-  const detail = usage.prompt_tokens_details;
-  const detailCache =
-    detail && typeof detail === "object"
-      ? (detail as Record<string, unknown>).cached_tokens
-      : undefined;
   const result = {
     input: providerTokenCount(usage.input_tokens),
     output: providerTokenCount(usage.output_tokens),
-    cacheRead:
-      providerTokenCount(usage.cache_read_input_tokens) ??
-      providerTokenCount(detailCache)
+    cacheRead: providerCacheReadTokens(usage)
   };
   return result.input === null &&
     result.output === null &&

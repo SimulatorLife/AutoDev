@@ -1127,6 +1127,152 @@ test(
 );
 
 test(
+  "the Responses API cache shape reaches the attempt span; the Usage cache-rate panel is not blind to it",
+  { concurrency: false },
+  async () => {
+    // Every AutoDev provider route calls `${baseUrl}/responses`, whose usage
+    // reports cached input tokens as `input_tokens_details.cached_tokens`.
+    // Reading only the Chat Completions shape made the router record no cache
+    // count at all for those responses, so the Usage cache-rate panel had no
+    // row to select and read as a measured zero rather than as a missing
+    // measurement.
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp_responses_cache",
+        status: "completed",
+        model: "sonnet",
+        output: [],
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          input_tokens_details: { cached_tokens: 20 }
+        }
+      })) as typeof fetch;
+    installExporter();
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [
+            { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" }
+          ],
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: "session-responses-cache",
+          session: { key: "session-responses-cache", scope: "identified" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-responses-cache",
+        null,
+        null
+      );
+      const attempts = findAttemptSpans(snapshotSpans());
+      assert.equal(attempts.length, 1);
+      const attemptAttrs = attempts[0]?.attributes ?? {};
+      assert.equal(attemptAttrs["gen_ai.usage.input_tokens"], 100);
+      assert.equal(attemptAttrs["gen_ai.usage.output_tokens"], 50);
+      assert.equal(
+        attemptAttrs["gen_ai.usage.cache_read.input_tokens"],
+        20,
+        "the Responses API cache count must reach the attempt span"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
+  "the streamed Responses API cache shape reaches the attempt span",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    const event =
+      'data: {"type":"response.completed","response":{"id":"stream-responses-cache","status":"completed","model":"claude-3","usage":{"input_tokens":40,"output_tokens":10,"input_tokens_details":{"cached_tokens":15}}}}\n\n';
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(event));
+            controller.close();
+          }
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )) as typeof fetch;
+    installExporter();
+    try {
+      let pending: Awaited<ReturnType<typeof fetchUpstream>> | null = null;
+      const logical = startLogicalRequestSpan({
+        requestId: "private-stream-responses-cache",
+        role: "worker",
+        providerRole: "subagent",
+        workspace: null,
+        subject: "stream fixture",
+        requestedModel: "claude-3"
+      });
+      await withLogicalSpan(logical, async () => {
+        pending = await fetchUpstream(
+          route("claude", "LITELLM_API_KEY"),
+          { model: "claude-3", input: [], stream: true },
+          true,
+          null,
+          null,
+          "worker",
+          "private-stream-responses-cache",
+          null,
+          {
+            selection: "primary",
+            attemptNumber: 1,
+            model: "claude-3",
+            role: "worker"
+          }
+        );
+        assert.equal(pending.ok, true);
+        if (!pending.ok) throw new Error("mock provider should succeed");
+        await writeResponseStream(
+          responseRecorder(),
+          pending.upstream,
+          "claude-3",
+          pending.signal,
+          null,
+          null,
+          false,
+          {
+            ...(pending.attemptSpan ? { span: pending.attemptSpan } : {}),
+            ...(pending.attemptStatusCode === undefined
+              ? {}
+              : { statusCode: pending.attemptStatusCode })
+          }
+        );
+      });
+      endLogicalRequestSpan(logical, { status: "ok" });
+      const attempt = findAttemptSpans(snapshotSpans())[0];
+      assert.equal(
+        attempt?.attributes["gen_ai.usage.cache_read.input_tokens"],
+        15
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
   "absent cache_read input tokens produce no SyntheticError field; logical span omits both",
   { concurrency: false },
   async () => {
