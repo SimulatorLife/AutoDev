@@ -726,9 +726,23 @@ export class SubagentRegistry {
     };
   }
 
+  /**
+   * Remember the workspace a session is working in, for the turns that follow.
+   *
+   * The client's own entry for that workspace is kept when there is one: it
+   * carries the workspace's git identity, and a remembered copy that dropped
+   * it would label the same workspace by its path basename on every later
+   * turn. Two labels for one workspace split the Usage per-workspace
+   * breakdown and leave the Console's Workspaces surface counting only the
+   * turns that happened to arrive with metadata.
+   *
+   * A session whose client sent no entry keeps the path-only one, which is
+   * all there is to remember.
+   */
   rememberWorkspaceMetadata(
     sessionKey: string | null | undefined,
-    workspacePath: string | null | undefined
+    workspacePath: string | null | undefined,
+    workspaces?: Record<string, Record<string, unknown>> | null
   ): void {
     if (
       !sessionKey ||
@@ -736,10 +750,14 @@ export class SubagentRegistry {
       !workspacePath
     )
       return;
+    const remembered =
+      workspaces && Object.keys(workspaces).length > 0
+        ? workspaces
+        : { [workspacePath]: {} };
     this.workspaceMetadataBySession.delete(sessionKey);
     this.workspaceMetadataBySession.set(
       sessionKey,
-      JSON.stringify({ workspaces: { [workspacePath]: {} } })
+      JSON.stringify({ workspaces: remembered })
     );
     while (this.workspaceMetadataBySession.size > this.maxTrackedSessions) {
       const oldest = this.workspaceMetadataBySession.keys().next().value;
@@ -1537,11 +1555,13 @@ export function closeBridgeSubagentsForRequest(
 
 export function rememberWorkspaceMetadata(
   sessionKey: string | null | undefined,
-  workspacePath: string | null | undefined
+  workspacePath: string | null | undefined,
+  workspaces?: Record<string, Record<string, unknown>> | null
 ): void {
   getDefaultSubagentRegistry().rememberWorkspaceMetadata(
     sessionKey,
-    workspacePath
+    workspacePath,
+    workspaces
   );
 }
 

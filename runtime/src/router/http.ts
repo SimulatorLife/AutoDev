@@ -1744,6 +1744,43 @@ export function addWorkspaceIdToTurnMetadata(
   return JSON.stringify({ ...parsed, workspace_id: context.workspace_id });
 }
 
+/**
+ * The client's own entry for one workspace, as a one-entry `workspaces` map.
+ *
+ * The client's map carries the workspace's git identity in each entry, and a
+ * remembered copy that dropped it would label the workspace by its path
+ * basename on every later turn. Only the entry for the workspace that was
+ * resolved is kept: the map's shape stays one workspace per map, which is
+ * what the downstream resolver treats as unambiguous.
+ */
+function clientWorkspaceEntry(
+  workspaces: Record<string, Record<string, unknown>>,
+  workspacePath: string
+): Record<string, Record<string, unknown>> | null {
+  const direct = workspaces[workspacePath];
+  if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+    return { [workspacePath]: direct };
+  }
+  for (const [key, entry] of Object.entries(workspaces)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const paths = [
+      key,
+      record.path,
+      ...WORKSPACE_KEYS.map((name) => record[name])
+    ];
+    if (
+      paths.some(
+        (candidate) =>
+          typeof candidate === "string" && candidate === workspacePath
+      )
+    ) {
+      return { [workspacePath]: entry };
+    }
+  }
+  return null;
+}
+
 export function workspaceMetadataForSession(
   payload: Record<string, unknown> | null | undefined,
   turnMetadataHeader: string | null,
@@ -1760,9 +1797,15 @@ export function workspaceMetadataForSession(
   }
   if (workspacePath) {
     if (session?.scope === "identified") {
-      rememberWorkspaceMetadata(session.key, workspacePath);
+      // The client's own workspace entry is remembered alongside the path: it
+      // carries the workspace's git identity, and a remembered copy that
+      // dropped it would relabel the workspace by its basename on every later
+      // turn, splitting the per-workspace Usage breakdown in two.
+      const workspaces = resolveTurnMetadataWorkspaces(turnMetadataHeader);
+      const clientEntry = clientWorkspaceEntry(workspaces, workspacePath);
+      rememberWorkspaceMetadata(session.key, workspacePath, clientEntry);
       if (session.thread && session.thread !== session.key) {
-        rememberWorkspaceMetadata(session.thread, workspacePath);
+        rememberWorkspaceMetadata(session.thread, workspacePath, clientEntry);
       }
     }
     return addWorkspaceIdToTurnMetadata(

@@ -935,11 +935,15 @@ test("git change metrics are defined with exact counting and cardinality rules",
   );
   assert.match(
     migration,
-    /Runtime producer \+ v5 Usage consumer deployed; live metric sample not observed/u
+    /Runtime producer \+ v5 Usage consumer deployed; live metric samples observed/u
   );
+  // The live sample is observed, so what remains open is narrower: a browser
+  // view scoped to a production workspace still has no source-confirmed
+  // AutoDev commit to show, because the observed sample came from the
+  // acceptance workspace.
   assert.match(
     migration,
-    /real producer sample and full Git-metric ingestion\/query acceptance remain open/u
+    /browser view scoped to a production workspace still has no source-confirmed AutoDev commit/u
   );
   assert.match(migration, /cumulative temporality/u);
 });

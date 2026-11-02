@@ -2540,7 +2540,15 @@ test("restores validated workspace metadata on role and concrete continuations",
       );
       assert.equal((await send({})).status, 200);
       const continuedHeader = observedHeaders.at(-1);
-      assert.deepEqual(JSON.parse(continuedHeader!).workspaces[workspace], {});
+      // The continuation restores the client's own workspace entry, including
+      // the git metadata the client sent. An entry emptied to `{}` would make
+      // the router label the workspace by its path basename on every turn that
+      // arrives without metadata, publishing one workspace under two
+      // `autodev.workspace` values and splitting the per-workspace Usage
+      // breakdown.
+      assert.deepEqual(JSON.parse(continuedHeader!).workspaces[workspace], {
+        git: { branch: "main" }
+      });
     }
   } finally {
     await closeServer(server);

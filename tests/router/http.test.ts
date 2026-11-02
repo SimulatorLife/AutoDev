@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -356,6 +356,85 @@ test("Codex thread-id header identifies metadata-less continuation and restores 
     assert.equal(parsed.turn_trigger, "goal");
     assert.equal(parsed.thread_id, threadId);
   } finally {
+    resetSubagentTelemetry();
+  }
+});
+
+test("a remembered workspace keeps the client's git identity instead of falling back to its basename", async () => {
+  // The client's `workspaces` map is where a workspace's git identity lives.
+  // Remembering only the path dropped that identity, so every later turn on
+  // the session was labelled by the path's basename: one workspace published
+  // under two `autodev.workspace` values ("SimulatorLife/RacingGame" and
+  // "RacingGame"), which split the Usage per-workspace breakdown and left
+  // the Console's Workspaces surface counting only the turns that happened
+  // to arrive with metadata.
+  resetSubagentTelemetry();
+  const root = await mkdtemp(join(tmpdir(), "autodev-workspace-identity-"));
+  const workspacePath = join(root, "RacingGame");
+  await mkdir(workspacePath, { recursive: true });
+  const sessionKey = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  try {
+    const turnMetadata = JSON.stringify({
+      workspaces: {
+        [workspacePath]: {
+          associated_remote_urls: {
+            origin: "https://github.com/SimulatorLife/RacingGame.git"
+          }
+        }
+      }
+    });
+    const session = { key: sessionKey, scope: "identified", thread: null };
+
+    // The turn that carries the client's map is the one that remembers it.
+    workspaceMetadataForSession({}, turnMetadata, session);
+
+    // A later metadata-less continuation restores what was remembered.
+    const restored = workspaceMetadataForSession({}, null, session);
+    assert.ok(restored, "expected restored turn-metadata");
+
+    // The restored metadata still resolves the workspace's git identity. The
+    // basename is what a remembered path-only entry resolves to, and it is the
+    // second label this fix removes.
+    const context = workspaceContextFromRequest({ headers: {} }, {}, restored);
+    assert.equal(context.key, "SimulatorLife/RacingGame");
+    assert.equal(context.cwd, "RacingGame");
+
+    // A client that names more than one workspace still restores one
+    // workspace: only the entry for the workspace that was resolved is kept,
+    // so the remembered map keeps the shape the downstream resolver treats as
+    // unambiguous. The second workspace is one that does not exist on this
+    // host, which is how a client's map looks when it names several repos.
+    const otherWorkspace = join(root, "NotOnThisHost", "AutoDev");
+    const twoWorkspaceMetadata = JSON.stringify({
+      workspaces: {
+        [workspacePath]: {
+          associated_remote_urls: {
+            origin: "https://github.com/SimulatorLife/RacingGame.git"
+          }
+        },
+        [otherWorkspace]: {
+          associated_remote_urls: {
+            origin: "https://github.com/SimulatorLife/AutoDev.git"
+          }
+        }
+      }
+    });
+    const otherSession = {
+      key: "01a0ba14-d54c-78f2-9367-3f80e9a8f75g",
+      scope: "identified",
+      thread: null
+    };
+    workspaceMetadataForSession({}, twoWorkspaceMetadata, otherSession);
+    const restoredTwo = workspaceMetadataForSession({}, null, otherSession);
+    assert.ok(restoredTwo, "expected restored turn-metadata");
+    const restoredWorkspaces = JSON.parse(restoredTwo!).workspaces;
+    assert.deepEqual(Object.keys(restoredWorkspaces), [workspacePath]);
+    assert.equal(
+      workspaceContextFromRequest({ headers: {} }, {}, restoredTwo).key,
+      "SimulatorLife/RacingGame"
+    );
+  } finally {
+    rm(root, { recursive: true, force: true });
     resetSubagentTelemetry();
   }
 });
