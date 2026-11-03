@@ -199,32 +199,36 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     },
 
     // Antigravity (Google)
-    {
-      provider: "antigravity",
-      modelId: "gemini-3.8-flash-medium",
-      displayName: "Gemini 3.8 Flash Medium",
-      modelType: "chat",
-      contextWindow: 1_000_000,
-      inputPricePerMToken: 0.5,
-      outputPricePerMToken: 3,
-      cacheReadPricePerMToken: 0.05,
-      cacheCreationPricePerMToken: 0,
-      capabilities: ["chat", "tools", "reasoning"],
-      isDefault: true
-    },
-    {
-      provider: "antigravity",
-      modelId: "gemini-3.8-flash-high",
-      displayName: "Gemini 3.8 Flash High",
-      modelType: "chat",
-      contextWindow: 1_000_000,
-      inputPricePerMToken: 0.5,
-      outputPricePerMToken: 3,
-      cacheReadPricePerMToken: 0.05,
-      cacheCreationPricePerMToken: 0,
-      capabilities: ["chat", "tools", "reasoning"],
-      isDefault: false
-    },
+    //
+    // agy encodes reasoning depth in the model id, so each effort is its own
+    // model and carries the family's prices. The family is generated rather
+    // than written out one effort at a time: a variant written by hand is a
+    // variant that can be left out, and a model the provider serves with no
+    // price row is a model whose attempts the pricing cron skips, so its
+    // traffic reads as though it cost nothing.
+    ...([
+      {
+        family: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        input: 0.5,
+        output: 3,
+        cacheRead: 0.05
+      }
+    ] as const).flatMap((entry) =>
+      (["low", "medium", "high"] as const).map((effort) => ({
+        provider: "antigravity",
+        modelId: `${entry.family}-${effort}`,
+        displayName: `${entry.name} ${effort[0]!.toUpperCase()}${effort.slice(1)}`,
+        modelType: "chat" as const,
+        contextWindow: 1_000_000,
+        inputPricePerMToken: entry.input,
+        outputPricePerMToken: entry.output,
+        cacheReadPricePerMToken: entry.cacheRead,
+        cacheCreationPricePerMToken: 0,
+        capabilities: ["chat", "tools", "reasoning"],
+        isDefault: effort === "medium"
+      }))
+    ),
     {
       provider: "antigravity",
       modelId: "gemini-2.5-pro",

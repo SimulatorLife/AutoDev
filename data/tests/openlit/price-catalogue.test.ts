@@ -27,7 +27,10 @@ const PROVIDER_CATALOGUES = {
  */
 const SERVED_MODEL_IDS: ReadonlyArray<readonly [string, string]> = [
   ["claude", "claude-sonnet-5-5"],
-  ["minimax", "MiniMax-M3.1-Flash"]
+  ["minimax", "MiniMax-M3.1-Flash"],
+  // agy serves the third effort of this family too, and the Console offers
+  // every model the provider serves, so it has to carry a price.
+  ["antigravity", "gemini-3.8-flash-low"]
 ];
 
 function pricedModelIds(provider: string): Set<string> {
@@ -62,5 +65,38 @@ test("every model a provider served has a price row", () => {
       pricedModelIds(provider).has(modelId),
       `${provider} | ${modelId} has no price row, so its attempts are never priced`
     );
+  }
+});
+
+/**
+ * The efforts a family is served at.
+ *
+ * agy encodes reasoning depth in the model id, so a family is a set of models
+ * that differ only by their suffix, and a provider serves every effort of
+ * the families it serves.
+ */
+const EFFORT_SUFFIXES = ["low", "medium", "high"] as const;
+
+test("every effort of a priced family is priced", () => {
+  const byProvider = new Map<string, Set<string>>();
+  for (const model of getAutoDevModels()) {
+    const ids = byProvider.get(model.provider) ?? new Set<string>();
+    ids.add(model.modelId);
+    byProvider.set(model.provider, ids);
+  }
+  for (const [provider, ids] of byProvider) {
+    for (const modelId of ids) {
+      const suffix = EFFORT_SUFFIXES.find((candidate) =>
+        modelId.endsWith(`-${candidate}`)
+      );
+      if (!suffix) continue;
+      const family = modelId.slice(0, modelId.length - suffix.length - 1);
+      for (const effort of EFFORT_SUFFIXES) {
+        assert.ok(
+          ids.has(`${family}-${effort}`),
+          `${provider} | ${family} is priced at ${suffix} but not at ${effort}, so the unpriced variant's attempts are never priced`
+        );
+      }
+    }
   }
 });

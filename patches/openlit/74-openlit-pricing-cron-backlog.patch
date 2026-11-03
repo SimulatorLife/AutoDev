@@ -1,0 +1,77 @@
+diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+index 55f42086..f14d25c7 100644
+--- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
++++ b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+@@ -394,7 +394,7 @@ describe('autoUpdatePricing', () => {
+     );
+   });
+ 
+-  it('computes lastRunIso from a Date instance and filters the SQL query by it', async () => {
++  it('takes the oldest spans that carry no cost, bounded by a limit, instead of a window that strands them', async () => {
+     (getPricingConfigById as jest.Mock).mockResolvedValue({
+       id: 'pc-1',
+       databaseConfigId: 'db-1',
+@@ -413,9 +413,13 @@ describe('autoUpdatePricing', () => {
+ 
+     expect(result.success).toBe(true);
+     const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain(
+-      "parseDateTimeBestEffort('2026-01-01T00:00:00.000Z')"
+-    );
++    // A span that arrived in a run that could not price everything must
++    // still be read by the next run. A window that advances past it strands
++    // it for good, and the traffic it covers reads as though it cost
++    // nothing. The limit is what bounds the read.
++    expect(query).not.toContain('parseDateTimeBestEffort');
++    expect(query).toContain('ORDER BY Timestamp');
++    expect(query).toContain('LIMIT 200');
+   });
+ 
+   it('returns an empty trace list when the SELECT query resolves with no data and no error', async () => {
+diff --git a/src/client/src/lib/platform/pricing/index.ts b/src/client/src/lib/platform/pricing/index.ts
+index 487d1ea1..850e54c7 100644
+--- a/src/client/src/lib/platform/pricing/index.ts
++++ b/src/client/src/lib/platform/pricing/index.ts
+@@ -20,6 +20,9 @@ import {
+ 
+ const COST_KEY = getTraceMappingKeyFullPath("cost") as string; // gen_ai.usage.cost
+ const AUTO_PRICING_MUTATION_BATCH_SIZE = 200;
++// How many candidate spans one run prices. The candidates are the oldest
++// spans that carry no cost, so this is also how fast a backlog drains.
++const AUTO_PRICING_CANDIDATE_LIMIT = 200;
+ const MODEL_KEY = getTraceMappingKeyFullPath("model") as string; // gen_ai.request.model
+ const PROVIDER_KEYS = getTraceMappingKeyFullPaths("provider") as string[]; // gen_ai.provider.name, gen_ai.system
+ const TYPE_KEY = getTraceMappingKeyFullPath("type") as string; // gen_ai.operation.name
+@@ -288,17 +291,27 @@ async function fetchAutoPricingCandidateSpans({
+ 		(op) => `'${op}'`
+ 	).join(", ");
+ 
++	// The candidates are the spans that carry no cost, and the run takes the
++	// oldest of them, so a backlog drains from its head and nothing is left
++	// behind when a run cannot keep up.
++	//
++	// The window used to be "since the last run". A span that arrived in a
++	// run that could not price everything was then older than the next
++	// window and was never read again: the cron stranded it permanently, and
++	// the traffic it covered read as though it cost nothing. The backlog came
++	// from a day when the store's disk was full and the cron could not write
++	// its costs at all.
++	//
++	// The limit is what bounds the read. The cost filter is what narrows it,
++	// and it narrows the same rows whatever the window says, so the window
++	// bought nothing and cost the spans it passed over.
+ 	const query = `
+ 		SELECT SpanId, Timestamp, SpanAttributes
+ 		FROM ${OTEL_TRACES_TABLE_NAME}
+ 		WHERE ${typeKeyPath} IN (${operationList})
+ 			AND (${costKeyPath} = '' OR toFloat64OrZero(${costKeyPath}) = 0)
+-		${
+-			lastRunIso
+-				? `AND Timestamp >= parseDateTimeBestEffort('${lastRunIso}')`
+-				: ""
+-		}
+ 		ORDER BY Timestamp
++		LIMIT ${AUTO_PRICING_CANDIDATE_LIMIT}
+ 	`;
+ 
+ 	const { data, err } = await dataCollector(

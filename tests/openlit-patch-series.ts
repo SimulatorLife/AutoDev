@@ -87,7 +87,8 @@ export const OPENLIT_PATCH_NAMES = [
   "70-openlit-price-catalogue-lookup-cache",
   "71-openlit-pricing-cron-window",
   "72-autodev-clickhouse-diagnostic-log-retention",
-  "73-openlit-clickhouse-request-timeout"
+  "73-openlit-clickhouse-request-timeout",
+  "74-openlit-pricing-cron-backlog"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */
