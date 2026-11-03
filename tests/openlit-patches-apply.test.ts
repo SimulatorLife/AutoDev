@@ -1682,7 +1682,9 @@ function assertClickHouseRequestTimeoutStated(dir: string): void {
   assert.match(
     client,
     new RegExp(
-      `const CLICKHOUSE_REQUEST_TIMEOUT_MS = ${OPENLIT_QUERY_TIMEOUT_MS};`,
+      `const CLICKHOUSE_REQUEST_TIMEOUT_MS = ${String(
+        OPENLIT_QUERY_TIMEOUT_MS
+      ).replace(/\B(?=(\d{3})+(?!\d))/gu, "_")};`,
       "u"
     ),
     "the service's stated ceiling must be the number the Console's client is written against"
