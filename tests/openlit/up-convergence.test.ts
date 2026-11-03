@@ -76,8 +76,12 @@ function createFixture(): Fixture {
     "services:\n  clickhouse:\n    image: clickhouse/clickhouse-server:24.4.1\n"
   );
   writeFileSync(join(root, "config", "openlit", "openlit.env"), "PORT=3000\n");
+  writeFileSync(
+    join(root, "config", "openlit", "assets", "clickhouse-config.xml"),
+    "<clickhouse>\n    <query_log>\n        <table_ttl>604800</table_ttl>\n    </query_log>\n</clickhouse>\n"
+  );
   for (const asset of [
-    "clickhouse-config.xml",
+    "clickhouse-users.xml",
     "clickhouse-init.sh",
     "otel-collector-config.yaml"
   ]) {
@@ -155,6 +159,17 @@ case "\${1:-}" in
       if [[ -f "$STUB_STATE_DIR/readiness-down" ]]; then
         exit 22
       fi
+      # The diagnostic log discovery lists the persistent system logs.
+      if [[ "$*" == *"engine = 'MergeTree'"* ]]; then
+        printf '%s\\n' processors_profile_log query_log trace_log
+        exit 0
+      fi
+      # The retention statements are read from stdin; keep them so a test can
+      # assert what the runner asked ClickHouse to do.
+      if [[ "$*" == *"--queries-file"* ]]; then
+        cat > "$STUB_STATE_DIR/retention-statements.sql"
+        exit 0
+      fi
       exit 0
     fi
     if [[ "$mode" == "up" ]]; then
@@ -207,6 +222,12 @@ interface RunOptions {
   readonly readiness?: boolean;
   /** Whether the published ClickHouse port is unreachable. */
   readonly publishedPortUnreachable?: boolean;
+  /**
+   * The ClickHouse configuration the runner reads. It defaults to a
+   * configuration that states one retention window; a configuration that
+   * states none, or two, is the case the runner has to refuse.
+   */
+  readonly clickhouseConfiguration?: string;
 }
 
 function runUp(fixture: Fixture, options: RunOptions = {}) {
@@ -278,6 +299,17 @@ function withFixture(
       writeFileSync(join(fixture.state, "readiness-down"), "");
     if (options.publishedPortUnreachable === true)
       writeFileSync(join(fixture.state, "port-down"), "");
+    if (options.clickhouseConfiguration !== undefined)
+      writeFileSync(
+        join(
+          fixture.root,
+          "config",
+          "openlit",
+          "assets",
+          "clickhouse-config.xml"
+        ),
+        options.clickhouseConfiguration
+      );
     body(fixture, runUp(fixture, options));
   } finally {
     for (const directory of [
@@ -381,6 +413,117 @@ test("the OpenLIT runner reports an unresponsive Engine instead of an API versio
         result.output,
         /the version is not the problem/u,
         "the failure must steer the reader away from the API-version hint"
+      );
+    }
+  );
+});
+
+test("the OpenLIT runner bounds the retention of every diagnostic log it finds", () => {
+  withFixture({}, (fixture, result) => {
+    assert.equal(result.status, 0, result.output);
+    const statements = readFileSync(
+      join(fixture.state, "retention-statements.sql"),
+      "utf8"
+    );
+    for (const table of [
+      "processors_profile_log",
+      "query_log",
+      "trace_log"
+    ]) {
+      assert.match(
+        statements,
+        new RegExp(
+          `ALTER TABLE system\\.${table} MODIFY TTL event_date \\+ INTERVAL 604800 SECOND;`,
+          "u"
+        ),
+        `the retention must be applied to ${table}`
+      );
+    }
+  });
+});
+
+test("the ClickHouse configuration states one retention window for the diagnostic logs", () => {
+  const configuration = readFileSync(
+    join(
+      repositoryRoot,
+      "config",
+      "openlit",
+      "assets",
+      "clickhouse-config.xml"
+    ),
+    "utf8"
+  );
+  const windows = new Set(
+    [...configuration.matchAll(/<table_ttl>(\d+)<\/table_ttl>/gu)].map(
+      (match) => match[1]
+    )
+  );
+  assert.equal(
+    windows.size,
+    1,
+    "the runner can only apply one window, so the configuration must name one"
+  );
+});
+
+test("the ClickHouse user profile stops the diagnostic logs from growing without bound", () => {
+  const users = readFileSync(
+    join(
+      repositoryRoot,
+      "config",
+      "openlit",
+      "assets",
+      "clickhouse-users.xml"
+    ),
+    "utf8"
+  );
+  assert.match(
+    users,
+    /<log_processors_profiles>0<\/log_processors_profiles>/u,
+    "processor profiles are a row per processor per query and nothing reads them"
+  );
+  assert.match(
+    users,
+    /<log_queries_min_query_duration_ms>\d+<\/log_queries_min_query_duration_ms>/u,
+    "the console's own fast widget queries must not all reach the query log"
+  );
+
+  const compose = readFileSync(
+    join(repositoryRoot, "config", "openlit", "docker-compose.yml"),
+    "utf8"
+  );
+  assert.match(
+    compose,
+    /clickhouse-users\.xml:\/etc\/clickhouse-server\/users\.d\/autodev\.xml:ro/u,
+    "the user profile has to be mounted for the settings to take effect"
+  );
+});
+
+test("the OpenLIT runner refuses a configuration that states no retention window", () => {
+  withFixture(
+    { clickhouseConfiguration: "<clickhouse>\n</clickhouse>\n" },
+    (_fixture, result) => {
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.output,
+        /must state exactly one retention window/u,
+        "the failure must say the configuration is the cause"
+      );
+    }
+  );
+});
+
+test("the OpenLIT runner refuses a configuration that states two retention windows", () => {
+  withFixture(
+    {
+      clickhouseConfiguration:
+        "<clickhouse>\n    <query_log>\n        <table_ttl>604800</table_ttl>\n    </query_log>\n    <trace_log>\n        <table_ttl>86400</table_ttl>\n    </trace_log>\n</clickhouse>\n"
+    },
+    (_fixture, result) => {
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.output,
+        /must state exactly one retention window/u,
+        "the failure must say the configuration is the cause"
       );
     }
   );

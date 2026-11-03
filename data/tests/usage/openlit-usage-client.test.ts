@@ -3,7 +3,11 @@ import test from "node:test";
 
 import type { UsageFilterSelection } from "@simulatorlife/autodev-core";
 
-import { OpenLITUsageClient } from "../../src/usage/openlit-usage-client.ts";
+import {
+  OPENLIT_QUERY_TIMEOUT_MS,
+  OpenLITUsageClient,
+  REQUEST_TIMEOUT_MS
+} from "../../src/usage/openlit-usage-client.ts";
 
 const selection: UsageFilterSelection = {
   range: "7D",
@@ -1005,4 +1009,15 @@ test("OpenLITUsageClient treats malformed or over-limit trace detail as unavaila
   assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
     kind: "unreachable"
   });
+});
+
+test("the Usage client waits longer than the OpenLIT service does", () => {
+  assert.ok(
+    REQUEST_TIMEOUT_MS > OPENLIT_QUERY_TIMEOUT_MS,
+    "the client must not give up at the same instant as the service, or a range the service is about to answer is reported as unreachable"
+  );
+  assert.ok(
+    REQUEST_TIMEOUT_MS >= OPENLIT_QUERY_TIMEOUT_MS * 2,
+    "the client must leave room for the API's own fan-out and for the answer to travel back"
+  );
 });

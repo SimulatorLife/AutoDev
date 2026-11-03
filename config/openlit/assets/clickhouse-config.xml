@@ -35,16 +35,37 @@
     <mark_cache_size>536870912</mark_cache_size>
     <uncompressed_cache_size>0</uncompressed_cache_size>
 
-    <!-- Configure trace_log table settings -->
+    <!-- ClickHouse's own diagnostic logs are not product telemetry.
+
+         Nothing in AutoDev reads the system.* tables; the Usage console reads
+         otel_traces and otel_metrics_sum. Left unbounded they are a
+         disk-exhaustion risk, and a full disk is not a slow query; it is a
+         dead store: ClickHouse refuses every write and answers every read
+         with "no space left on device", so all 31 Usage widgets report
+         "query failed" on a store that is full of the very rows they want.
+
+         The two logs that grew without bound here were processors_profile_log
+         (8.3 GiB / 350M rows in two weeks, one row per processor per
+         query) and query_log (5.5 GiB / 58M rows, the console's own widget
+         queries are most of them). The processor profiles are switched off
+         in clickhouse-users.xml, where the setting that controls them
+         actually lives; it is a query setting, and a query setting in a
+         system log section is silently ignored.
+
+         A table_ttl here is applied when ClickHouse creates the table and is
+         never revisited afterwards, so on its own it does not bound a table
+         that already exists. The runner in scripts/openlit/up.sh gives those
+         tables the same retention, and it reads the window from here, so the
+         two cannot drift apart. -->
     <trace_log>
-        <!-- Only log critical trace events (level 6 and above - more restrictive) -->
-        <level>6</level>
+        <!-- Only log warning level and above -->
+        <level>warning</level>
         <!-- Reduce the frequency of trace log flushing -->
         <flush_interval_milliseconds>120000</flush_interval_milliseconds>
         <!-- Set table TTL to reduce storage (7 days) -->
         <table_ttl>604800</table_ttl>
     </trace_log>
-    
+
     <!-- Configure text_log table settings (also large in your case) -->
     <text_log>
         <!-- Only log warning level and above -->
@@ -54,22 +75,55 @@
         <!-- Reduce flush frequency -->
         <flush_interval_milliseconds>120000</flush_interval_milliseconds>
     </text_log>
-    
+
     <!-- Reduce other system table logging -->
     <query_log>
-        <!-- Only log slow queries (over 1 second) -->
-        <log_queries_min_query_duration_ms>1000</log_queries_min_query_duration_ms>
         <!-- Reduce flush frequency -->
         <flush_interval_milliseconds>60000</flush_interval_milliseconds>
         <!-- Set TTL to 7 days -->
         <table_ttl>604800</table_ttl>
     </query_log>
-    
+
+    <!-- Per-thread query logging. Only populated for queries that ask for it,
+         but it carries no retention of its own otherwise. -->
+    <query_thread_log>
+        <flush_interval_milliseconds>120000</flush_interval_milliseconds>
+        <table_ttl>604800</table_ttl>
+    </query_thread_log>
+
+    <!-- Dependent-view query logging. Same reasoning as query_thread_log. -->
+    <query_views_log>
+        <flush_interval_milliseconds>120000</flush_interval_milliseconds>
+        <table_ttl>604800</table_ttl>
+    </query_views_log>
+
+    <!-- Processor-level profiling: one row per processor per query. The rows
+         are pure debugging output for query pipelines, and the volume they
+         add to the disk is the single largest consumer on a busy store. The
+         switch that stops them is the log_processors_profiles query setting
+         in clickhouse-users.xml. -->
+    <processors_profile_log>
+        <flush_interval_milliseconds>120000</flush_interval_milliseconds>
+        <table_ttl>604800</table_ttl>
+    </processors_profile_log>
+
+    <!-- Asynchronous inserts. -->
+    <asynchronous_log>
+        <flush_interval_milliseconds>120000</flush_interval_milliseconds>
+        <table_ttl>604800</table_ttl>
+    </asynchronous_log>
+
+    <!-- Session log. -->
+    <session_log>
+        <flush_interval_milliseconds>120000</flush_interval_milliseconds>
+        <table_ttl>604800</table_ttl>
+    </session_log>
+
     <!-- Configure system log levels -->
     <system_log>
         <level>warning</level>
     </system_log>
-    
+
     <!-- Reduce metric log verbosity -->
     <metric_log>
         <collect_interval_milliseconds>60000</collect_interval_milliseconds>
@@ -77,7 +131,7 @@
         <!-- Set TTL to 7 days -->
         <table_ttl>604800</table_ttl>
     </metric_log>
-    
+
     <!-- Configure asynchronous metric log (reduce storage) -->
     <asynchronous_metric_log>
         <collect_interval_milliseconds>60000</collect_interval_milliseconds>
@@ -85,7 +139,7 @@
         <!-- Set TTL to 7 days -->
         <table_ttl>604800</table_ttl>
     </asynchronous_metric_log>
-    
+
     <!-- Configure part log (reduce verbosity) -->
     <part_log>
         <level>warning</level>
@@ -93,11 +147,11 @@
         <!-- Set TTL to 7 days -->
         <table_ttl>604800</table_ttl>
     </part_log>
-    
+
     <!-- Configure latency log (reduce storage) -->
     <latency_log>
         <flush_interval_milliseconds>120000</flush_interval_milliseconds>
         <!-- Set TTL to 7 days -->
         <table_ttl>604800</table_ttl>
     </latency_log>
-</clickhouse> 
+</clickhouse>

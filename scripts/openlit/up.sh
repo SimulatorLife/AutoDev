@@ -43,6 +43,7 @@ fi
 # the affected container while leaving its durable volume untouched.
 AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH="$(fingerprint_files \
 	"$ASSET_DIR/clickhouse-config.xml" \
+	"$ASSET_DIR/clickhouse-users.xml" \
 	"$ASSET_DIR/clickhouse-init.sh")"
 export AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH
 AUTODEV_OPENLIT_OTEL_CONFIG_HASH="$(fingerprint_files \
@@ -256,6 +257,98 @@ ensure_otel_schema() {
 	return 0
 }
 
+# The retention window for ClickHouse's own diagnostic logs, in seconds.
+#
+# The configuration states it once and the migration below applies the same
+# window to the tables that already exist. Two different windows in the
+# configuration would mean two policies, and the migration could only apply
+# one of them, so the configuration has to name exactly one.
+system_log_retention_seconds() {
+	sed -n 's|.*<table_ttl>\([0-9][0-9]*\)</table_ttl>.*|\1|p' \
+		"$ASSET_DIR/clickhouse-config.xml" | sort -u
+}
+
+# How long the retention statements may take.
+#
+# Giving an existing table a TTL rewrites the metadata of every part it
+# holds, so the statement is not instant on a table that accumulated hundreds
+# of millions of rows: applying it to the query log of this store took
+# several minutes, past the client's own 300 second receive ceiling, which
+# turned a statement that was still working into a failure.
+SYSTEM_LOG_RETENTION_TIMEOUT_SECONDS=3600
+
+# The persistent diagnostic logs ClickHouse is keeping.
+#
+# Every MergeTree table in the system database is one of ClickHouse's own
+# diagnostic logs, and none of them is AutoDev telemetry: the Usage console
+# reads otel_traces and otel_metrics_sum. Listing them from the server
+# itself means a log ClickHouse only creates on demand is covered without
+# this script having to know the name.
+clickhouse_system_log_tables() {
+	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
+		clickhouse-client \
+		--user="${OPENLIT_DB_USER:-default}" \
+		--password="$OPENLIT_DB_PASSWORD" \
+		--query="SELECT name FROM system.tables WHERE database = 'system' AND engine = 'MergeTree' ORDER BY name" \
+		2>/dev/null | tr '\n' ' ' | tr -s '[:space:]' ' '
+}
+
+# Give ClickHouse's own diagnostic logs a bounded retention.
+#
+# A table_ttl in the server configuration is applied when ClickHouse creates
+# the table and is never revisited afterwards, so a deployment that predates
+# the configuration keeps growing those tables without bound. That is how
+# this store filled its disk: processors_profile_log reached 8.3 GiB / 350M
+# rows and query_log 5.5 GiB / 58M rows in two weeks, against 50 MiB of
+# actual telemetry. A full disk makes ClickHouse refuse every write, and the
+# Usage console then reports every widget as "query failed" on a store that
+# holds the very rows the widgets ask for.
+#
+# The statements re-assert the window the configuration gives a table
+# created after it, so running them on every startup is idempotent.
+ensure_system_log_retention() {
+	echo "==> Bounding ClickHouse's diagnostic log retention"
+	local windows
+	windows="$(system_log_retention_seconds)"
+	local window=""
+	local count=0
+	local candidate
+	while IFS= read -r candidate; do
+		[[ -z "$candidate" ]] && continue
+		count=$((count + 1))
+		window="$candidate"
+	done <<<"$windows"
+	if [[ "$count" -ne 1 ]]; then
+		echo "up.sh: the ClickHouse configuration must state exactly one retention window for the diagnostic logs." >&2
+		echo "up.sh: found ${count}: ${windows:-none}" >&2
+		return 1
+	fi
+	local tables
+	tables="$(clickhouse_system_log_tables)"
+	if [[ -z "${tables// /}" ]]; then
+		echo "up.sh: ClickHouse reported no diagnostic log tables to bound." >&2
+		return 1
+	fi
+	local statements="$WORK_DIR/system-log-retention.sql"
+	: >"$statements"
+	local table
+	for table in $tables; do
+		printf 'ALTER TABLE system.%s MODIFY TTL event_date + INTERVAL %s SECOND;\n' \
+			"$table" "$window" >>"$statements"
+	done
+	if ! "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
+		clickhouse-client \
+		--user="${OPENLIT_DB_USER:-default}" \
+		--password="$OPENLIT_DB_PASSWORD" \
+		--receive_timeout="$SYSTEM_LOG_RETENTION_TIMEOUT_SECONDS" \
+		--queries-file=/dev/stdin <"$statements"; then
+		echo "up.sh: the diagnostic log retention could not be applied in ClickHouse." >&2
+		echo "up.sh: those tables grow without bound, and a full disk takes the whole Usage console down with it." >&2
+		return 1
+	fi
+	return 0
+}
+
 # Print the last Compose output so a failure names its cause instead of
 # pointing at the runner.
 report_compose_output() {
@@ -329,6 +422,10 @@ fi
 
 if ! ensure_otel_schema; then
 	exit 7
+fi
+
+if ! ensure_system_log_retention; then
+	exit 8
 fi
 
 echo "==> Verifying the deployed AutoDev Usage response contract"

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- Default query settings for every user that connects to the store.
+
+         These two settings decide how much of ClickHouse's own diagnostic
+         logging the store keeps, and they are the levers that actually stop
+         the growth. Neither belongs in the system log sections of
+         clickhouse-config.xml: both are query settings, and a query setting
+         placed in a system log section is silently ignored.
+
+         * log_processors_profiles writes a row for every processor of every
+           query. The Usage console answers one range query with around
+           forty ClickHouse queries, so this table grew to 8.3 GiB / 350M
+           rows in two weeks and filled the disk. Nothing in AutoDev reads
+           it; it is pipeline profiling for debugging a query, not a metric.
+
+         * log_queries_min_query_duration_ms decides which queries reach
+           query_log. Recording all of them filled query_log to 5.5 GiB /
+           58M rows, almost all of them the console's own fast widget
+           queries. The slow ones are the ones worth keeping.
+
+         This file is mounted as a separate file in users.d on purpose: the
+         image's entrypoint writes default-user.xml into that same directory
+         with the generated password, and replacing that file would replace
+         the password with it. ClickHouse merges every file in users.d, so
+         this one only has to add the profiles it owns. -->
+    <profiles>
+        <default>
+            <log_processors_profiles>0</log_processors_profiles>
+            <log_queries_min_query_duration_ms>1000</log_queries_min_query_duration_ms>
+        </default>
+    </profiles>
+</clickhouse>

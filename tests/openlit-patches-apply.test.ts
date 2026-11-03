@@ -2313,7 +2313,11 @@ test(
       "the mounted Collector config must exactly match the auth-patched pinned source"
     );
 
-    for (const asset of ["clickhouse-init.sh", "clickhouse-config.xml"]) {
+    for (const asset of [
+      "clickhouse-init.sh",
+      "clickhouse-config.xml",
+      "clickhouse-users.xml"
+    ]) {
       assert.equal(
         readFileSync(
           join(repositoryRoot, "config/openlit/assets", asset),
