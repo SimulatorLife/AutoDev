@@ -376,8 +376,13 @@ test("the exposure and use the Runtime observed are reported per skill", async (
   try {
     const tracker = getDefaultUsageTracker();
     const bucket = tracker.workspaceBucket("ws-skill-scope");
+    // The exposure is written the way the bridges write it: the per-skill
+    // map of the exposures they reported. The usage tracker's own per-skill
+    // entry is written only by a confirmed use, so it carries no exposure,
+    // and reading the exposure from it reported zero for every skill that
+    // had never been used.
+    bucket.bridgeObservations.skills.set("release-checklist", 3);
     const skill = tracker.workspaceSkillBucket(bucket, "release-checklist");
-    skill.total += 3;
     skill.uses += 1;
 
     const response = await h.call("GET", "/control/skills");
@@ -391,6 +396,23 @@ test("the exposure and use the Runtime observed are reported per skill", async (
     // same as being observed and never happening.
     assert.equal(skillRow(response.body, "repo-only")?.observedExposure, null);
     assert.equal(skillRow(response.body, "repo-only")?.observedUse, null);
+  } finally {
+    h.restore();
+  }
+});
+
+test("a skill the Runtime exposed and never used reports a use of zero", async () => {
+  const h = harness();
+  try {
+    const tracker = getDefaultUsageTracker();
+    const bucket = tracker.workspaceBucket("ws-skill-scope");
+    bucket.bridgeObservations.skills.set("release-checklist", 2);
+
+    const response = await h.call("GET", "/control/skills");
+    const row = skillRow(response.body, "release-checklist");
+    assert.equal(row?.observedExposure, 2);
+    // The skill was observed, and this is how often it was used.
+    assert.equal(row?.observedUse, 0);
   } finally {
     h.restore();
   }

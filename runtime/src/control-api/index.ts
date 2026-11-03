@@ -1873,9 +1873,27 @@ function observedSkillUsage(): {
   const bySkill = new Map<string, { exposure: number; use: number }>();
   const telemetry = getDefaultUsageTracker().usageTelemetry;
   for (const bucket of Object.values(telemetry.byWorkspace)) {
+    // The exposures the bridges reported, per skill.
+    //
+    // This is a different counter from the usage tracker's per-skill entry,
+    // and reading the exposure from that entry reported zero for every skill
+    // that had never been used: the entry is written only by a confirmed use,
+    // so a skill that was exposed and never used was absent from it
+    // altogether. The map was then empty, which told the Console it had
+    // observed no skill telemetry at all while the Runtime held eighteen
+    // exposures across three skills.
+    const exposures = bucket.bridgeObservations?.skills;
+    if (exposures) {
+      for (const [skill, count] of exposures) {
+        const entry = bySkill.get(skill) ?? { exposure: 0, use: 0 };
+        entry.exposure += count;
+        bySkill.set(skill, entry);
+      }
+    }
+    // The confirmed uses. A skill the Runtime has seen but never used is
+    // reported with a use of zero: it was observed, and this is how often.
     for (const skill of bucket.skills.values()) {
       const entry = bySkill.get(skill.skill) ?? { exposure: 0, use: 0 };
-      entry.exposure += skill.total;
       entry.use += skill.uses;
       bySkill.set(skill.skill, entry);
     }
