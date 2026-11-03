@@ -1340,6 +1340,48 @@ test("the Antigravity bridge observes and reports tool requests, executions, and
   });
 });
 
+test("the Antigravity bridge reports a shim tool call against the server its arguments name", async () => {
+  const events: any[] = [];
+  const fakeReporter = {
+    reportToolRequested: async (e: any) =>
+      events.push({ type: "tool_requested", ...e }),
+    reportToolExecuted: async (e: any) =>
+      events.push({ type: "tool_executed", ...e }),
+    reportToolUnavailable: async (e: any) =>
+      events.push({ type: "tool_unavailable", ...e })
+  } as unknown as AgentEventReporter;
+
+  const { observeShimCall, observeShimOutput } =
+    createToolObserver(fakeReporter);
+
+  // A call Codex runs on agy's behalf goes through an MCP dispatcher, and the
+  // dispatcher names the server in its arguments. The router attributes a tool
+  // call to a server only when the event carries one: reported without its
+  // server, the call belongs to no server and the Console shows that MCP as
+  // never used.
+  const args = {
+    ServerName: "codex",
+    ToolName: "exec",
+    Arguments: { cmd: "ls" }
+  };
+  observeShimCall("call_mcp_tool", "c1", args);
+  observeShimOutput("call_mcp_tool", "c1", Date.now() - 40, false, args);
+  assert.deepEqual(events[0], {
+    type: "tool_requested",
+    tool: "call_mcp_tool",
+    callId: "c1",
+    server: "codex"
+  });
+  assert.equal(events[1]?.type, "tool_executed");
+  assert.equal(events[1]?.server, "codex");
+  assert.equal(events[1]?.status, "ok");
+
+  // A call with no server in its arguments belongs to no MCP server, and says
+  // so rather than borrowing one.
+  observeShimCall("exec", "c2", {});
+  assert.equal(events[2]?.server, null);
+});
+
 test("the Antigravity bridge reports skill exposure from actual role contract", () => {
   assert.equal(ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(ANTIGRAVITY_MCP_EXPOSURE_SOURCE, "role_contract");

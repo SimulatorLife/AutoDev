@@ -2190,8 +2190,14 @@ function isMcpRuntimeServer(value: unknown): boolean {
     isMcpHealthVerdict(value.health) &&
     (value.lastSeenAt === null || typeof value.lastSeenAt === "string") &&
     typeof value.lastStatus === "string" &&
-    isNumber(value.initAttempts) &&
-    isNumber(value.toolDiscoveryAttempts) &&
+    // The shared contract declares these two nullable, and the Runtime's own
+    // publisher leaves them null: the Runtime does not observe the MCP client's
+    // initialization, so a count would be a claim about a read that never
+    // happens. Rejecting the null here failed the whole response, which is how
+    // every MCP server on the page came to read "Not observed" while the
+    // Runtime held an observation of six of them.
+    isNullableNumber(value.initAttempts) &&
+    isNullableNumber(value.toolDiscoveryAttempts) &&
     isNumber(value.failures) &&
     isNumber(value.toolCalls) &&
     isNumber(value.averageDurationMs) &&

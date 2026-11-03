@@ -955,7 +955,8 @@ function toolOutputPresent(update: JsonValue): boolean {
 /** The MCP server an Antigravity tool belongs to, or null if builtin / unspecified. */
 function antigravityToolServer(
   update: JsonValue,
-  toolName: string
+  toolName: string,
+  args?: unknown
 ): string | null {
   const record = isStepUpdate(update) ? update : null;
   const toolInfo = isToolInfo(record?.tool_info) ? record?.tool_info : null;
@@ -967,7 +968,8 @@ function antigravityToolServer(
   if (serverFromName) return serverFromName;
   return (
     serverFromArguments(structured(toolInfo?.args)) ??
-    serverFromArguments(structured(record?.tool_input))
+    serverFromArguments(structured(record?.tool_input)) ??
+    serverFromArguments(structured(args))
   );
 }
 
@@ -1153,17 +1155,28 @@ function createToolObserver(agentEvents: AgentReporter | null) {
    * router events as the tools agy runs itself -- otherwise a turn whose work
    * all went through Codex would read as having taken no tool calls at all,
    * which is precisely what that path used to look like.
+   *
+   * The call's arguments name the MCP server it went through, and the router
+   * attributes a tool call to a server only when the event carries one: a
+   * call reported without its server belongs to no server, and the Console
+   * then shows that MCP as never used. The arguments are therefore read for
+   * the server the same way agy's own tool steps are.
    */
-  const observeShimCall = (tool: string, callId: string) => {
+  const observeShimCall = (tool: string, callId: string, args?: unknown) => {
     if (!agentEvents || !tool) return;
     requested.add(callId);
-    void agentEvents.reportToolRequested({ tool, callId, server: "" });
+    void agentEvents.reportToolRequested({
+      tool,
+      callId,
+      server: antigravityToolServer(null, tool, args)
+    });
   };
   const observeShimOutput = (
     tool: string,
     callId: string,
     emittedAt: number,
-    isError: boolean
+    isError: boolean,
+    args?: unknown
   ) => {
     if (!agentEvents || settled.has(callId)) return;
     settled.add(callId);
@@ -1172,7 +1185,7 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       callId,
       status: isError ? "error" : "ok",
       durationMs: Date.now() - emittedAt,
-      server: ""
+      server: antigravityToolServer(null, tool, args)
     });
   };
   // agy auto-denies a tool whose permission the run was not granted and says
@@ -4233,6 +4246,13 @@ interface QueuedCodexCall {
 /** A shim call handed to Codex, awaiting its output on the next request. */
 interface AwaitingCodexCall {
   tool: CodexTool;
+  /**
+   * The call's own arguments, kept because they name the MCP server the call
+   * went through. The router attributes a tool call to a server only when the
+   * event carries one, so dropping them here leaves the call belonging to no
+   * server and the Console shows that MCP as never used.
+   */
+  args: unknown;
   emittedAt: number;
   resolve: (result: ShimJson) => void;
 }
@@ -4462,12 +4482,20 @@ class StreamingTurn implements ParkableTurn {
       });
       this.awaiting.set(callId, {
         tool: call.tool,
+        // The arguments are kept because they name the MCP server the call
+        // went through, and the router attributes a tool call to a server
+        // only when the event carries one.
+        args: call.args,
         emittedAt: Date.now(),
         resolve: call.resolve
       });
       this.registry.bindCall(callId, this);
       this.stream.emitToolCall(item);
-      this.turn.toolObserver.observeShimCall(call.tool.name, callId);
+      this.turn.toolObserver.observeShimCall(
+        call.tool.name,
+        callId,
+        call.args
+      );
     }
     this.park();
     this.startParkTimer();
@@ -4490,7 +4518,8 @@ class StreamingTurn implements ParkableTurn {
         call.tool.name,
         callId,
         call.emittedAt,
-        result.isError === true
+        result.isError === true,
+        call.args
       );
     }
     for (const call of this.awaiting.values())
