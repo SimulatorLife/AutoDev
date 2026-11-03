@@ -29,6 +29,9 @@ import { fileURLToPath } from "node:url";
 import { auditClientDependencies } from "./openlit-client-dependencies.ts";
 import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
 import {
+  OPENLIT_QUERY_TIMEOUT_MS
+} from "@simulatorlife/autodev-data/usage";
+import {
   clientSourceModules,
   deadPathLiterals,
   pagesOutsideMiddleware
@@ -1656,6 +1659,41 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
  * against the patch's own diff, so a later patch that introduces an import
  * the lockfile does not install fails here as well.
  */
+/**
+ * The fork's ClickHouse client has to state its own request timeout.
+ *
+ * The library's default was 30 seconds, and it was the reason the widest
+ * Usage range reported no metrics: the queries at the back of the fan-out
+ * were still running when the default ceiling fired, and the client closed
+ * the socket on them. A ceiling the service inherits silently is a ceiling
+ * nobody chose, and the Console's own client is written against the number
+ * the service states -- so the two have to be the same number.
+ */
+function assertClickHouseRequestTimeoutStated(dir: string): void {
+  const client = readFileSync(
+    join(dir, "src/client/src/lib/platform/clickhouse/clickhouse-client.ts"),
+    "utf8"
+  );
+  assert.match(
+    client,
+    /request_timeout:\s*CLICKHOUSE_REQUEST_TIMEOUT_MS/u,
+    "the ClickHouse client must state its own request timeout instead of inheriting the library default"
+  );
+  assert.match(
+    client,
+    new RegExp(
+      `const CLICKHOUSE_REQUEST_TIMEOUT_MS = ${OPENLIT_QUERY_TIMEOUT_MS};`,
+      "u"
+    ),
+    "the service's stated ceiling must be the number the Console's client is written against"
+  );
+  assert.match(
+    client,
+    /send_progress_in_http_headers:\s*1/u,
+    "a ceiling above a minute needs the progress headers, or the connection is dropped while the query still works"
+  );
+}
+
 function assertDeadClientModulesRemoved(dir: string): void {
   assertPathsRemoved(
     dir,
@@ -2804,6 +2842,11 @@ test(
     // of the provider catalog, which was a second authority over rows the
     // Control API owns.
     assertProviderModelAdministrationRemoved(dir);
+
+    // 73-openlit-clickhouse-request-timeout states the ClickHouse client's
+    // own ceiling, so the widest Usage range stops being abandoned under
+    // load and the Console's client is written against a known number.
+    assertClickHouseRequestTimeoutStated(dir);
   }
 );
 

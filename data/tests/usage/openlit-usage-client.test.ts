@@ -1017,7 +1017,7 @@ test("the Usage client waits longer than the OpenLIT service does", () => {
     "the client must not give up at the same instant as the service, or a range the service is about to answer is reported as unreachable"
   );
   assert.ok(
-    REQUEST_TIMEOUT_MS >= OPENLIT_QUERY_TIMEOUT_MS * 2,
+    REQUEST_TIMEOUT_MS >= OPENLIT_QUERY_TIMEOUT_MS * 1.5,
     "the client must leave room for the API's own fan-out and for the answer to travel back"
   );
 });

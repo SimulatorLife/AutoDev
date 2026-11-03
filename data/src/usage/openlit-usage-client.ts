@@ -33,10 +33,11 @@ const NOT_APPLICABLE_KIND = "not-applicable" as const;
  * The Usage API answers with the whole dashboard for the requested window,
  * and it runs its widget, filter, trace and git queries in parallel, so its
  * own answer is bounded by its slowest single query -- and that query gives
- * up at this ceiling. The OpenLIT ClickHouse client states no timeout of
- * its own, so this is the library default it inherits.
+ * up at this ceiling. The OpenLIT ClickHouse client states this ceiling
+ * explicitly: its own library default was 30 seconds, which was short
+ * enough for the widest range to fail under load.
  */
-export const OPENLIT_QUERY_TIMEOUT_MS = 30_000;
+export const OPENLIT_QUERY_TIMEOUT_MS = 120_000;
 
 /**
  * The ceiling on a Usage API request.
@@ -45,11 +46,12 @@ export const OPENLIT_QUERY_TIMEOUT_MS = 30_000;
  * client that gave up at the same instant as the service would race the
  * service's own answer: the request would be reported as unreachable for a
  * range the service was about to answer, and whether the console showed the
- * range or an error would depend on which side gave up first. Twice the
+ * range or an error would depend on which side gave up first. Half again the
  * service's ceiling leaves room for the API's own fan-out and for the
  * answer to travel back.
  */
-export const REQUEST_TIMEOUT_MS = OPENLIT_QUERY_TIMEOUT_MS * 2;
+export const REQUEST_TIMEOUT_MS =
+  OPENLIT_QUERY_TIMEOUT_MS + OPENLIT_QUERY_TIMEOUT_MS / 2;
 const MAX_TRACE_SPANS = 200;
 const MAX_USAGE_TRACE_ATTEMPTS = 25;
 const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([

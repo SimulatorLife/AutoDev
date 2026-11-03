@@ -1,0 +1,48 @@
+diff --git a/src/client/src/lib/platform/clickhouse/clickhouse-client.ts b/src/client/src/lib/platform/clickhouse/clickhouse-client.ts
+index 077c9ea0..88a251fd 100644
+--- a/src/client/src/lib/platform/clickhouse/clickhouse-client.ts
++++ b/src/client/src/lib/platform/clickhouse/clickhouse-client.ts
+@@ -10,8 +10,31 @@ interface ClickHouseConnectionInfo {
+ 	url: string;
+ 	database: string;
+ 	http_headers: Record<string, string>;
++	request_timeout: number;
++	clickhouse_settings: Record<string, string | number>;
+ }
+ 
++/**
++ * The ceiling the client puts on one ClickHouse query.
++ *
++ * The client library's own default is 30 seconds, and it was the reason the
++ * widest Usage range reported no metrics at all: the Usage API answers a
++ * range with around forty ClickHouse queries, it runs them in parallel
++ * against a pool of twenty connections on a two-core container, and the
++ * queries at the back of that queue were still running when the default
++ * ceiling fired. The client closed the socket, the widget reported a failed
++ * query, and the console answered "not observed" for a range the store could
++ * answer -- a plain count over the same ninety days takes a fifth of a
++ * second. The ceiling has to cover the slowest query under load, not the
++ * fastest one on an idle machine.
++ *
++ * A ceiling above a minute needs the progress headers: without them a
++ * long-running query looks idle to whatever sits between the client and the
++ * server, and the connection is dropped while the query is still working.
++ */
++const CLICKHOUSE_REQUEST_TIMEOUT_MS = 120_000;
++const CLICKHOUSE_PROGRESS_INTERVAL_MS = 10_000;
++
+ const getClickHouseFactoryOptions = (
+ 	connectionObject: ClickHouseConnectionInfo
+ ) => ({
+@@ -44,6 +67,11 @@ export default function createClickhousePool(
+ 		url: constructURL(dbConfig.host, dbConfig.port),
+ 		database: dbConfig.database,
+ 		http_headers: parseQueryStringToObject(dbConfig.query || ""),
++		request_timeout: CLICKHOUSE_REQUEST_TIMEOUT_MS,
++		clickhouse_settings: {
++			send_progress_in_http_headers: 1,
++			http_headers_progress_interval_ms: CLICKHOUSE_PROGRESS_INTERVAL_MS,
++		},
+ 	};
+ 
+ 	return createPool(getClickHouseFactoryOptions(connectionObject), {
