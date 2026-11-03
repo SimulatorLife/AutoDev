@@ -430,6 +430,66 @@ function minimaxModelAdapter(
 }
 
 /**
+ * The Copilot bridge's model list.
+ *
+ * Copilot is the one provider whose model set the Runtime does not learn
+ * from the provider's own account API: the Copilot CLI chooses the model
+ * behind the scenes, so the bridge serves a single model id and routes every
+ * request through it. The bridge's own listing is therefore the authority on
+ * what the Runtime can route to Copilot, and asking it is the same shape as
+ * asking `agy models` for Antigravity.
+ *
+ * Without this the provider had no discovery at all, which is not a cosmetic
+ * gap: the Console offers a role the models the Runtime can route to that
+ * provider, so an unobserved provider offered none, and the single Copilot
+ * model in the catalogue could not be selected for any role.
+ */
+export async function discoverCopilotModels(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  parentSignal?: AbortSignal
+): Promise<readonly ProviderModelDiscoveryItem[]> {
+  const host = env.COPILOT_PROXY_HOST?.trim() || "127.0.0.1";
+  const port = env.COPILOT_PROXY_PORT?.trim() || "4003";
+  const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
+  const signal =
+    parentSignal === undefined
+      ? timeout
+      : AbortSignal.any([parentSignal, timeout]);
+  const response = await fetchImpl(`http://${host}:${port}/v1/models`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Copilot bridge model list returned HTTP ${response.status}.`
+    );
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(
+      await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
+    ) as unknown;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("size bound"))
+      throw error;
+    throw new Error("Copilot bridge model list returned invalid JSON.");
+  }
+  return parseOpenAiModelList(payload);
+}
+
+function copilotModelAdapter(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = globalThis.fetch
+): ProviderModelDiscoveryAdapter {
+  return {
+    source: "Copilot bridge GET /v1/models",
+    discover: (signal) => discoverCopilotModels(env, fetchImpl, signal)
+  };
+}
+
+/**
  * The Anthropic model list for the signed-in Claude account.
  *
  * The listing authenticates with the account's own OAuth token, so it reports
@@ -664,7 +724,8 @@ function defaultAdapters(): Readonly<
     antigravity: createAntigravityModelDiscoveryAdapter(),
     minimax: minimaxModelAdapter(),
     codex: codexModelAdapter(),
-    claude: claudeModelAdapter()
+    claude: claudeModelAdapter(),
+    copilot: copilotModelAdapter()
   };
 }
 

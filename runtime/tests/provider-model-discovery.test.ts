@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   createAntigravityModelDiscoveryAdapter,
   discoverCodexModels,
+  discoverCopilotModels,
   discoverMiniMaxModels,
   parseAntigravityModelList,
   parseCodexModelList,
@@ -177,6 +178,63 @@ test("MiniMax model discovery uses its authenticated read-only listing endpoint"
       authorization: "Bearer model-list-fixture-token"
     }
   ]);
+});
+
+test("Copilot model discovery asks the bridge for the models the Runtime can route", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const models = await discoverCopilotModels(
+    {} as NodeJS.ProcessEnv,
+    async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET" });
+      return Response.json({
+        object: "list",
+        data: [{ id: "copilot", object: "model", owned_by: "github" }]
+      });
+    }
+  );
+  assert.deepEqual(models, [{ id: "copilot", displayName: null }]);
+  assert.deepEqual(requests, [
+    { url: "http://127.0.0.1:4003/v1/models", method: "GET" }
+  ]);
+});
+
+test("Copilot model discovery honours the bridge's configured address", async () => {
+  const requests: string[] = [];
+  await discoverCopilotModels(
+    {
+      COPILOT_PROXY_HOST: "127.0.0.2",
+      COPILOT_PROXY_PORT: "4999"
+    } as NodeJS.ProcessEnv,
+    async (input) => {
+      requests.push(String(input));
+      return Response.json({ object: "list", data: [] });
+    }
+  );
+  assert.deepEqual(requests, ["http://127.0.0.2:4999/v1/models"]);
+});
+
+test("Copilot model discovery refuses a failed or malformed listing", async () => {
+  await assert.rejects(
+    discoverCopilotModels({} as NodeJS.ProcessEnv, async () =>
+      Response.json({ error: "nope" }, { status: 500 })
+    ),
+    /returned HTTP 500/u
+  );
+  await assert.rejects(
+    discoverCopilotModels({} as NodeJS.ProcessEnv, async () =>
+      Response.json({ object: "list", data: [{ id: "invalid/id" }] })
+    ),
+    /invalid or duplicate model ID/u
+  );
+  await assert.rejects(
+    discoverCopilotModels({} as NodeJS.ProcessEnv, async () =>
+      new Response("{not json", {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    ),
+    /invalid JSON/u
+  );
 });
 
 test("MiniMax model discovery refuses a missing credential before network access", async () => {
