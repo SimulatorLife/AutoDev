@@ -220,6 +220,10 @@ if (prompt.includes("CASE_LIMIT")) {
 } else if (prompt.includes("CASE_CRASH")) {
   process.stderr.write("agy crashed");
   process.exit(1);
+} else if (prompt.includes("CASE_GEMINI")) {
+  process.stdout.write(JSON.stringify({event:"step_update",step_update:{step_index:1,step_type:"agent_response",state:"DONE",text_delta:"gemini turn done",usage:{input_tokens:2325,output_tokens:99,thinking_tokens:40,cache_read_tokens:36926,total_tokens:2424}}}) + "\n");
+  process.stdout.write(JSON.stringify({event:"result",result:{status:"SUCCESS",response:"gemini turn done"}}) + "\n");
+  process.exit(0);
 } else {
   process.stdout.write(JSON.stringify({event:"result",result:{status:"SUCCESS",response:"turn done",usage:{input_tokens:7,output_tokens:5}}}) + "\n");
   process.exit(0);
@@ -259,7 +263,27 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     assert.deepEqual(okBody.usage, {
       input_tokens: 7,
       output_tokens: 5,
-      total_tokens: 12
+      total_tokens: 12,
+      input_tokens_details: { cached_tokens: 0 }
+    });
+
+    // agy reports what a response cost on the step that produced it, and the
+    // turn's own result event carries no usage at all. Reading only the
+    // result left every turn reporting no tokens. The prompt is the sum of
+    // the tokens agy read fresh and the tokens the cache served.
+    const gemini = await postTurn(port, {
+      cwd: workspace,
+      input: "CASE_GEMINI",
+      stream: false
+    });
+    const geminiBody = await gemini.json();
+    assert.equal(gemini.status, 200, JSON.stringify(geminiBody));
+    assert.equal(geminiBody.output_text, "gemini turn done");
+    assert.deepEqual(geminiBody.usage, {
+      input_tokens: 39_251,
+      output_tokens: 99,
+      total_tokens: 39_350,
+      input_tokens_details: { cached_tokens: 36_926 }
     });
 
     // A non-streamed failure is a 502 naming the router's request id.

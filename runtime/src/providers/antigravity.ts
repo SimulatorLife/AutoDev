@@ -320,6 +320,7 @@ interface AgyStepUpdate extends JsonRecord {
   result?: JsonValue;
   text_delta?: string;
   server?: string;
+  usage?: JsonValue;
 }
 
 /**
@@ -1847,7 +1848,66 @@ function agyFailureMessage({
 }
 
 /**
- * The Responses API payload this bridge returns. `output` holds JSON records
+ * The token counts one response consumed, in agy's own accounting.
+ *
+ * agy reports the prompt it did not read from the cache separately from the
+ * tokens the cache served, so the prompt is the sum of the two.
+ */
+interface BridgeUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+}
+
+/**
+ * The usage a step carries.
+ *
+ * agy reports what a response cost on the step that produced the response, so
+ * this is where the count lives: the turn's own result event carries no
+ * usage, and a response that ends at a tool call ends long before the turn
+ * does.
+ */
+function usageFromStep(update: AgyStepUpdate): BridgeUsage | null {
+  const usage = isJsonRecord(update.usage) ? update.usage : null;
+  if (!usage) return null;
+  const counts: BridgeUsage = {
+    input_tokens: Number(usage.input_tokens ?? 0),
+    output_tokens: Number(usage.output_tokens ?? 0),
+    cache_read_tokens: Number(usage.cache_read_tokens ?? 0)
+  };
+  if (
+    counts.input_tokens === 0 &&
+    counts.output_tokens === 0 &&
+    counts.cache_read_tokens === 0
+  )
+    return null;
+  return counts;
+}
+
+/**
+ * The usage a result carries, when the result reports one itself.
+ */
+function usageFromResult(result: JsonRecord | null): BridgeUsage | null {
+  const usage = isJsonRecord(result?.usage) ? result.usage : null;
+  if (!usage) return null;
+  const counts: BridgeUsage = {
+    input_tokens: Number(usage.input_tokens ?? 0),
+    output_tokens: Number(usage.output_tokens ?? 0),
+    cache_read_tokens: Number(
+      usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? 0
+    )
+  };
+  if (
+    counts.input_tokens === 0 &&
+    counts.output_tokens === 0 &&
+    counts.cache_read_tokens === 0
+  )
+    return null;
+  return counts;
+}
+
+/**
+ * The Responses payload this bridge returns. `output` holds JSON records
  * this module builds alongside typed items from sibling modules (the Codex
  * `exec` tool call), so it is typed at the serialization boundary.
  */
@@ -1859,7 +1919,12 @@ type ResponsePayload = {
   status: string;
   output: object[];
   output_text: string;
-  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    input_tokens_details: { cached_tokens: number };
+  };
 };
 
 function responsePayload(
@@ -1869,12 +1934,18 @@ function responsePayload(
   responseId: string = `resp_${randomBytes(12).toString("hex")}`,
   itemId: string = `msg_${randomBytes(10).toString("hex")}`,
   output: object[] | null = null,
-  status = "completed"
+  status = "completed",
+  usage: BridgeUsage | null = null
 ): ResponsePayload {
   const resultRecord = isJsonRecord(result) ? result : null;
-  const usage = isJsonRecord(resultRecord?.usage) ? resultRecord.usage : {};
-  const inputTokens = Number(usage.input_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? 0);
+  const counts = usage ?? usageFromResult(resultRecord);
+  // The Responses shape speaks one prompt total, and the cached tokens are the
+  // subset of it the cache served.
+  const inputTokens = counts
+    ? counts.input_tokens + counts.cache_read_tokens
+    : 0;
+  const outputTokens = counts ? counts.output_tokens : 0;
+  const cachedTokens = counts ? counts.cache_read_tokens : 0;
   const message = responseMessageItem(text, itemId);
   return {
     id: responseId,
@@ -1887,7 +1958,8 @@ function responsePayload(
     usage: {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens
+      total_tokens: inputTokens + outputTokens,
+      input_tokens_details: { cached_tokens: cachedTokens }
     }
   };
 }
@@ -3473,6 +3545,14 @@ function createTurnLog(
 interface ResponsesTurn {
   /** The model the client named, echoed back in every response body. */
   responseModel: JsonValue;
+  /**
+   * What the last response this turn carried cost.
+   *
+   * agy reports it on the step that produced the response, so this is the
+   * only place the count exists: the turn's own result event carries no
+   * usage, and a response that ends at a tool call ends before the turn does.
+   */
+  usage: BridgeUsage | null;
   model: string;
   effort: string;
   agentRole: string | null;
@@ -3610,6 +3690,7 @@ function prepareResponsesTurn(
     cwd,
     prompt,
     attachments: userMessageImages(payload.input),
+    usage: null,
     spawnTracker,
     toolObserver,
     codexTools,
@@ -3685,6 +3766,8 @@ async function runNonStreamingTurn(
         const update: JsonValue = isStepUpdate(event.step_update)
           ? event.step_update
           : {};
+        const usage = usageFromStep(update as AgyStepUpdate);
+        if (usage) turn.usage = usage;
         turn.spawnTracker.observeSpawnStep(update);
         turn.toolObserver.observeToolStep(update);
       });
@@ -3711,7 +3794,9 @@ async function runNonStreamingTurn(
         result.result,
         undefined,
         undefined,
-        output
+        output,
+        "completed",
+        turn.usage
       )
     );
   } catch (error) {
@@ -3999,7 +4084,8 @@ class ResponseEventStream {
   /** Closes both output items and returns the completed response payload. */
   emitCompletedItems(
     model: JsonValue,
-    result: { text: string; result: JsonValue }
+    result: { text: string; result: JsonValue },
+    usage: BridgeUsage | null = null
   ): ResponsePayload {
     const reasoningText = this.reasoningText;
     const completedReasoning = {
@@ -4040,7 +4126,9 @@ class ResponseEventStream {
       result.result,
       this.responseId,
       this.itemId,
-      this.output.filter(Boolean)
+      this.output.filter(Boolean),
+      "completed",
+      usage
     );
   }
 
@@ -4060,15 +4148,19 @@ class ResponseEventStream {
    * The turn itself is not settled: it resumes onto the next request, which
    * brings its own stream.
    */
-  completeParked(model: JsonValue): void {
+  completeParked(model: JsonValue, usage: BridgeUsage | null = null): void {
     this.start();
-    const completed = this.emitCompletedItems(model, {
-      text: this.sentText,
-      // agy has not finished, so there is no usage to report yet. Reporting
-      // zeros rather than inventing a number is what responsePayload does with
-      // a result it cannot read.
-      result: null
-    });
+    const completed = this.emitCompletedItems(
+      model,
+      {
+        text: this.sentText,
+        // agy has not finished, so the turn has no result to read a usage from.
+        // What the response this closes did cost is known: agy reported it on
+        // the step that produced the response.
+        result: null
+      },
+      usage
+    );
     this.emit(EVENT_RESPONSE_COMPLETED, {
       type: EVENT_RESPONSE_COMPLETED,
       response: completed
@@ -4270,7 +4362,7 @@ class StreamingTurn implements ParkableTurn {
     // Detached first, so closing the response here is not read as the client
     // going away. The completion is emitted afterwards, onto a socket nobody is
     // listening to for keep-alives any more.
-    this.stream.completeParked(this.turn.responseModel);
+    this.stream.completeParked(this.turn.responseModel, this.turn.usage);
   }
 
   /**
@@ -4493,7 +4585,8 @@ class StreamingTurn implements ParkableTurn {
     this.stream.start();
     const completed = this.stream.emitCompletedItems(
       this.turn.responseModel,
-      result
+      result,
+      this.turn.usage
     );
     const delegation = closeSpawnDelegation(
       this.turn.spawnSession,
@@ -4633,6 +4726,8 @@ class StreamingTurn implements ParkableTurn {
     trackActiveStep(this.activeWaits, isWaitStep(update), stepState, stepIndex);
     this.delegation.activeCommands = this.activeCommands.size;
     this.delegation.activeWaits = this.activeWaits.size;
+    const usage = usageFromStep(update);
+    if (usage) this.turn.usage = usage;
     this.turn.spawnTracker.observeSpawnStep(update);
     this.turn.toolObserver.observeToolStep(update);
     // Kept in sync on every step so a dispatch step's own DONE -- which
