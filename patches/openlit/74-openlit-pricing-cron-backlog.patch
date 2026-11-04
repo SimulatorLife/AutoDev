@@ -1,5 +1,5 @@
 diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
-index 55f42086..8de4df9b 100644
+index 55f42086..040c3a75 100644
 --- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
 +++ b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
 @@ -55,6 +55,7 @@ jest.mock('@/lib/platform/pricing/config', () => ({
@@ -19,7 +19,7 @@ index 55f42086..8de4df9b 100644
      (getPricingConfigById as jest.Mock).mockResolvedValue({
        id: 'pc-1',
        databaseConfigId: 'db-1',
-@@ -413,9 +414,13 @@ describe('autoUpdatePricing', () => {
+@@ -413,9 +414,19 @@ describe('autoUpdatePricing', () => {
  
      expect(result.success).toBe(true);
      const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
@@ -33,10 +33,16 @@ index 55f42086..8de4df9b 100644
 +    expect(query).not.toContain('parseDateTimeBestEffort');
 +    expect(query).toContain('ORDER BY Timestamp');
 +    expect(query).toContain('LIMIT 200');
++    // A span with no tokens has no cost to compute, so the run would read it
++    // and skip it. There are far more of those than there are priceable
++    // spans, and every one of them would spend a slot in a queue that has to
++    // reach the backlog it can actually price.
++    expect(query).toContain("toFloat64OrZero(SpanAttributes['gen_ai.usage.input_tokens']) != 0");
++    expect(query).toContain("toFloat64OrZero(SpanAttributes['gen_ai.usage.output_tokens']) != 0");
    });
  
    it('returns an empty trace list when the SELECT query resolves with no data and no error', async () => {
-@@ -522,7 +527,7 @@ describe('autoUpdatePricing', () => {
+@@ -522,7 +533,7 @@ describe('autoUpdatePricing', () => {
      );
    });
  
@@ -45,7 +51,7 @@ index 55f42086..8de4df9b 100644
      const listSpans = jest.fn().mockResolvedValue({ rows: [] });
      const { getTelemetryAdapterForDbConfig } = require('@/lib/telemetry-source');
      (getTelemetryAdapterForDbConfig as jest.Mock).mockResolvedValue({
-@@ -535,10 +540,10 @@ describe('autoUpdatePricing', () => {
+@@ -535,10 +546,10 @@ describe('autoUpdatePricing', () => {
        databaseConfigId: 'db-1',
      });
      (asaw as jest.Mock).mockResolvedValue([null, { id: 'db-1' }]);
@@ -60,7 +66,7 @@ index 55f42086..8de4df9b 100644
  
      const result = await autoUpdatePricing({
        pricingConfigId: 'pc-1',
-@@ -550,6 +555,33 @@ describe('autoUpdatePricing', () => {
+@@ -550,6 +561,33 @@ describe('autoUpdatePricing', () => {
      expect(timeRange.start).toEqual(new Date('2026-02-01T00:00:00.000Z'));
    });
  
@@ -141,7 +147,7 @@ index e8d8bcbd..84ba652c 100644
  	const safeSpanId = escapeClickHouseString(spanId);
  	const query = `
 diff --git a/src/client/src/lib/platform/pricing/index.ts b/src/client/src/lib/platform/pricing/index.ts
-index 487d1ea1..c7cd226a 100644
+index 487d1ea1..0af732fc 100644
 --- a/src/client/src/lib/platform/pricing/index.ts
 +++ b/src/client/src/lib/platform/pricing/index.ts
 @@ -8,7 +8,10 @@ import { SUPPORTED_EVALUATION_OPERATIONS } from "@/constants/traces";
@@ -196,10 +202,29 @@ index 487d1ea1..c7cd226a 100644
  				: new Date(end.getTime() - 24 * 60 * 60 * 1000);
  			const frame = await resolved.adapter.listSpans({
  				signal: "traces",
-@@ -288,17 +289,32 @@ async function fetchAutoPricingCandidateSpans({
+@@ -287,18 +288,51 @@ async function fetchAutoPricingCandidateSpans({
+ 	const operationList = SUPPORTED_EVALUATION_OPERATIONS.map(
  		(op) => `'${op}'`
  	).join(", ");
- 
+-
++	// The spans the run can actually price: those that carry tokens. A span
++	// with no tokens has no cost to compute, so the run would read it, skip
++	// it, and leave it behind -- but it would still have spent a slot on it,
++	// and there are far more of those than there are priceable spans: the
++	// queue would spend a hundred minutes walking past them before it
++	// reached the backlog it could actually price.
++	//
++	// The keys are the ones the cost computation reads, and the test is
++	// deliberately wider than that computation: a span whose first token key
++	// reads zero but whose second carries a count is read and then skipped,
++	// which wastes a slot, where narrowing the test would strand a span that
++	// could have been priced.
++	const tokenValues = [
++		...PROMPT_TOKENS_KEYS,
++		...COMPLETION_TOKENS_KEYS
++	].map((key) => `toFloat64OrZero(SpanAttributes['${key}'])`);
++	const hasTokens = tokenValues.map((value) => `${value} != 0`).join(" OR ");
++
 +	// The candidates are the spans that carry no cost, and the run takes the
 +	// oldest of them, so a backlog drains from its head and nothing is left
 +	// behind when a run cannot keep up.
@@ -224,6 +249,7 @@ index 487d1ea1..c7cd226a 100644
 -				? `AND Timestamp >= parseDateTimeBestEffort('${lastRunIso}')`
 -				: ""
 -		}
++			AND (${hasTokens})
 +			${
 +				watermark
 +					? `AND Timestamp >= parseDateTimeBestEffort('${watermark}')`
@@ -234,7 +260,7 @@ index 487d1ea1..c7cd226a 100644
  	`;
  
  	const { data, err } = await dataCollector(
-@@ -336,14 +352,23 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+@@ -336,14 +370,23 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
  		return { success: false, err: getMessage().DATABASE_CONFIG_NOT_FOUND };
  	}
  
@@ -260,7 +286,7 @@ index 487d1ea1..c7cd226a 100644
  	});
  
  	if (err) {
-@@ -421,6 +446,20 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+@@ -421,6 +464,20 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
  					? CronRunStatus.FAILURE
  					: CronRunStatus.PARTIAL_SUCCESS;
  
@@ -281,7 +307,7 @@ index 487d1ea1..c7cd226a 100644
  	const { err: cronLogErr } = await insertCronLog(
  		{
  			...cronLogObject,
-@@ -431,6 +470,7 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+@@ -431,6 +488,7 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
  				totalUpdated: updatedCount,
  				totalFailed: errorCount,
  				totalSkipped: traces.length - totalProcessed,
