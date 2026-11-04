@@ -67,7 +67,18 @@ fi
 # amd64. Select an explicit native target and pass it through to every stage
 # so an arm64 OpenLIT image cannot contain an x86_64 otelcol binary (or vice
 # versa).
-DOCKER_PLATFORM="$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null || true)"
+#
+# The probe is retried: a busy machine makes the Engine's API proxy answer
+# with a truncated value, and a build that dies on a transient probe leaves
+# the stack on the previous image for no reason.
+DOCKER_PLATFORM=""
+for _attempt in 1 2 3 4 5; do
+	DOCKER_PLATFORM="$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null || true)"
+	case "$DOCKER_PLATFORM" in
+	linux/arm64 | linux/aarch64 | linux/amd64 | linux/x86_64) break ;;
+	esac
+	sleep 3
+done
 case "$DOCKER_PLATFORM" in
 	linux/arm64 | linux/aarch64) TARGET_ARCH="arm64" ;;
 	linux/amd64 | linux/x86_64) TARGET_ARCH="amd64" ;;
