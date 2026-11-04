@@ -530,11 +530,19 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools", "reasoning"],
       isDefault: false
     },
-    {
+    // The alias a trace attributed to Google carries, so a Gemini turn
+    // recorded under Google's name is still priced. It is the same family as
+    // the antigravity rows above and carries the same prices, and it names
+    // every effort of it: an alias that covers one effort prices one effort
+    // and leaves the rest of the family unpriced, which reads as though that
+    // traffic cost nothing.
+    ...(["low", "medium", "high"] as const).map((effort) => ({
       provider: "google",
-      modelId: "gemini-3.8-flash-medium",
-      displayName: "Gemini 3.8 Flash Medium (AutoDev)",
-      modelType: "chat",
+      modelId: `gemini-3.8-flash-${effort}`,
+      displayName: `Gemini 3.8 Flash ${
+        effort[0]!.toUpperCase() + effort.slice(1)
+      } (AutoDev)`,
+      modelType: "chat" as const,
       contextWindow: 1_000_000,
       inputPricePerMToken: 0.5,
       outputPricePerMToken: 3,
@@ -542,7 +550,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       cacheCreationPricePerMToken: 0,
       capabilities: ["chat", "tools", "reasoning"],
       isDefault: false
-    },
+    })),
     // The agy bridge serves Claude under the `antigravity` provider, so the
     // Anthropic-side aliases are what let trace attribution still price those
     // turns as Claude rather than leaving them unattributed.
