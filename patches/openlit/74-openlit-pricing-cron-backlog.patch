@@ -1,8 +1,16 @@
 diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
-index 55f42086..f14d25c7 100644
+index 55f42086..8de4df9b 100644
 --- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
 +++ b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
-@@ -394,7 +394,7 @@ describe('autoUpdatePricing', () => {
+@@ -55,6 +55,7 @@ jest.mock('@/lib/platform/pricing/config', () => ({
+ }));
+ jest.mock('@/lib/platform/cron-log', () => ({
+   getLastRunCronLogByCronId: jest.fn().mockResolvedValue(null),
++  getLastRunCronLogMetaByCronId: jest.fn().mockResolvedValue(null),
+   insertCronLog: jest.fn().mockResolvedValue({ err: null }),
+ }));
+ jest.mock('@/lib/db-config', () => ({
+@@ -394,7 +395,7 @@ describe('autoUpdatePricing', () => {
      );
    });
  
@@ -11,7 +19,7 @@ index 55f42086..f14d25c7 100644
      (getPricingConfigById as jest.Mock).mockResolvedValue({
        id: 'pc-1',
        databaseConfigId: 'db-1',
-@@ -413,9 +413,13 @@ describe('autoUpdatePricing', () => {
+@@ -413,9 +414,13 @@ describe('autoUpdatePricing', () => {
  
      expect(result.success).toBe(true);
      const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
@@ -28,11 +36,127 @@ index 55f42086..f14d25c7 100644
    });
  
    it('returns an empty trace list when the SELECT query resolves with no data and no error', async () => {
+@@ -522,7 +527,7 @@ describe('autoUpdatePricing', () => {
+     );
+   });
+ 
+-  it('uses lastRunIso (not the 24h default) as the window start for the routed connector', async () => {
++  it('uses the watermark (not the 24h default) as the window start for the routed connector', async () => {
+     const listSpans = jest.fn().mockResolvedValue({ rows: [] });
+     const { getTelemetryAdapterForDbConfig } = require('@/lib/telemetry-source');
+     (getTelemetryAdapterForDbConfig as jest.Mock).mockResolvedValue({
+@@ -535,10 +540,10 @@ describe('autoUpdatePricing', () => {
+       databaseConfigId: 'db-1',
+     });
+     (asaw as jest.Mock).mockResolvedValue([null, { id: 'db-1' }]);
+-    const { getLastRunCronLogByCronId } = require('@/lib/platform/cron-log');
+-    (getLastRunCronLogByCronId as jest.Mock).mockResolvedValueOnce(
+-      '2026-02-01T00:00:00.000Z'
+-    );
++    const { getLastRunCronLogMetaByCronId } = require('@/lib/platform/cron-log');
++    (getLastRunCronLogMetaByCronId as jest.Mock).mockResolvedValueOnce({
++      watermark: '2026-02-01T00:00:00.000Z',
++    });
+ 
+     const result = await autoUpdatePricing({
+       pricingConfigId: 'pc-1',
+@@ -550,6 +555,33 @@ describe('autoUpdatePricing', () => {
+     expect(timeRange.start).toEqual(new Date('2026-02-01T00:00:00.000Z'));
+   });
+ 
++  it('records where it stopped looking, so the next run starts after the spans it examined', async () => {
++    (getPricingConfigById as jest.Mock).mockResolvedValue({
++      id: 'pc-1',
++      databaseConfigId: 'db-1',
++    });
++    (asaw as jest.Mock).mockResolvedValue([null, { id: 'db-1' }]);
++    (dataCollector as jest.Mock).mockResolvedValueOnce({
++      data: [
++        { SpanId: 's1', Timestamp: '2026-01-01T00:00:00.000Z', SpanAttributes: {} },
++        { SpanId: 's2', Timestamp: '2026-01-02T00:00:00.000Z', SpanAttributes: {} },
++      ],
++      err: null,
++    });
++
++    await autoUpdatePricing({ pricingConfigId: 'pc-1', cronId: 'cron-1' });
++
++    // A span the run examined and could not price has still been examined:
++    // the next run has to start after it, or it holds the queue behind it for
++    // ever and the backlog never drains.
++    expect(insertCronLog).toHaveBeenCalledWith(
++      expect.objectContaining({
++        meta: expect.objectContaining({ watermark: '2026-01-02T00:00:00.000Z' }),
++      }),
++      'db-1'
++    );
++  });
++
+   it('reads candidates from the routed traces connector and does not write otel_traces', async () => {
+     const listSpans = jest.fn().mockResolvedValue({
+       rows: [
+diff --git a/src/client/src/lib/platform/cron-log/index.ts b/src/client/src/lib/platform/cron-log/index.ts
+index e8d8bcbd..84ba652c 100644
+--- a/src/client/src/lib/platform/cron-log/index.ts
++++ b/src/client/src/lib/platform/cron-log/index.ts
+@@ -144,6 +144,41 @@ export async function getLastRunCronLogByCronId(
+ 	return lastRun?.startedAt ?? null;
+ }
+ 
++/**
++ * The metadata of the most recent successful run of a cron.
++ *
++ * A cron that resumes where it left off needs to know how far the previous
++ * run got, which is its own bookkeeping rather than the clock: the time a
++ * run started is not the point it reached. A run that examined a span it
++ * could not price still examined it, and the next run has to start after it.
++ */
++export async function getLastRunCronLogMetaByCronId(
++	cronId: string,
++	databaseConfigId?: string
++): Promise<Record<string, any> | null> {
++	const query = `
++		SELECT meta
++		FROM ${OPENLIT_CRON_LOG_TABLE_NAME}
++		WHERE cron_id = '${cronId}' AND run_status = '${CronRunStatus.SUCCESS}'
++		ORDER BY started_at DESC
++		LIMIT 1
++	`;
++
++	const { data, err } = await dataCollector(
++		{ query },
++		"query",
++		databaseConfigId
++	);
++
++	if (err || !Array.isArray(data)) {
++		return null;
++	}
++
++	const [lastRun] = data as CronLogData[];
++	const meta = lastRun?.meta;
++	return meta && typeof meta === "object" ? meta : null;
++}
++
+ export async function getLastFailureCronLogBySpanId(spanId: string) {
+ 	const safeSpanId = escapeClickHouseString(spanId);
+ 	const query = `
 diff --git a/src/client/src/lib/platform/pricing/index.ts b/src/client/src/lib/platform/pricing/index.ts
-index 487d1ea1..850e54c7 100644
+index 487d1ea1..c7cd226a 100644
 --- a/src/client/src/lib/platform/pricing/index.ts
 +++ b/src/client/src/lib/platform/pricing/index.ts
-@@ -20,6 +20,9 @@ import {
+@@ -8,7 +8,10 @@ import { SUPPORTED_EVALUATION_OPERATIONS } from "@/constants/traces";
+ import { getDBConfigByIdInternal } from "@/lib/db-config";
+ import { ProviderRegistry } from "@/lib/platform/providers/provider-registry";
+ import { getPricingConfigById } from "./config";
+-import { getLastRunCronLogByCronId, insertCronLog } from "@/lib/platform/cron-log";
++import {
++	getLastRunCronLogMetaByCronId,
++	insertCronLog
++} from "@/lib/platform/cron-log";
+ import { CronRunStatus, CronType } from "@/types/cron";
+ import { differenceInSeconds } from "date-fns";
+ import Sanitizer from "@/utils/sanitizer";
+@@ -20,6 +23,9 @@ import {
  
  const COST_KEY = getTraceMappingKeyFullPath("cost") as string; // gen_ai.usage.cost
  const AUTO_PRICING_MUTATION_BATCH_SIZE = 200;
@@ -42,7 +166,37 @@ index 487d1ea1..850e54c7 100644
  const MODEL_KEY = getTraceMappingKeyFullPath("model") as string; // gen_ai.request.model
  const PROVIDER_KEYS = getTraceMappingKeyFullPaths("provider") as string[]; // gen_ai.provider.name, gen_ai.system
  const TYPE_KEY = getTraceMappingKeyFullPath("type") as string; // gen_ai.operation.name
-@@ -288,17 +291,27 @@ async function fetchAutoPricingCandidateSpans({
+@@ -217,16 +223,11 @@ interface AutoPricingPayload {
+ 
+ async function fetchAutoPricingCandidateSpans({
+ 	databaseConfigId,
+-	lastRunTime,
++	watermark,
+ }: {
+ 	databaseConfigId: string;
+-	lastRunTime?: string | Date | null;
++	watermark?: string | null;
+ }): Promise<{ traces: TraceRow[]; err?: string; persistCosts: boolean }> {
+-	const lastRunIso =
+-		lastRunTime instanceof Date
+-			? lastRunTime.toISOString()
+-			: lastRunTime || null;
+-
+ 	try {
+ 		const { getTelemetryAdapterForDbConfig } = await import(
+ 			"@/lib/telemetry-source"
+@@ -240,8 +241,8 @@ async function fetchAutoPricingCandidateSpans({
+ 		);
+ 		if (!resolved.isBuiltIn && resolved.descriptor.type !== "clickhouse") {
+ 			const end = new Date();
+-			const start = lastRunIso
+-				? new Date(lastRunIso)
++			const start = watermark
++				? new Date(watermark)
+ 				: new Date(end.getTime() - 24 * 60 * 60 * 1000);
+ 			const frame = await resolved.adapter.listSpans({
+ 				signal: "traces",
+@@ -288,17 +289,32 @@ async function fetchAutoPricingCandidateSpans({
  		(op) => `'${op}'`
  	).join(", ");
  
@@ -50,16 +204,16 @@ index 487d1ea1..850e54c7 100644
 +	// oldest of them, so a backlog drains from its head and nothing is left
 +	// behind when a run cannot keep up.
 +	//
-+	// The window used to be "since the last run". A span that arrived in a
-+	// run that could not price everything was then older than the next
-+	// window and was never read again: the cron stranded it permanently, and
-+	// the traffic it covered read as though it cost nothing. The backlog came
-+	// from a day when the store's disk was full and the cron could not write
-+	// its costs at all.
++	// The window is where the previous run stopped looking, not when it
++	// started. A span the run examined and could not price -- one with no
++	// tokens, one whose model the catalogue does not price -- is examined
++	// once and left behind: it can never be priced, so re-reading it every
++	// minute would hold the queue behind it forever. The run advances past
++	// what it looked at, and the limit is what bounds the read.
 +	//
-+	// The limit is what bounds the read. The cost filter is what narrows it,
-+	// and it narrows the same rows whatever the window says, so the window
-+	// bought nothing and cost the spans it passed over.
++	// The cost filter is what narrows the read, and it narrows the same rows
++	// whatever the window says, so a window that only moved forward with the
++	// clock bought nothing and cost the spans it passed over.
  	const query = `
  		SELECT SpanId, Timestamp, SpanAttributes
  		FROM ${OTEL_TRACES_TABLE_NAME}
@@ -70,8 +224,68 @@ index 487d1ea1..850e54c7 100644
 -				? `AND Timestamp >= parseDateTimeBestEffort('${lastRunIso}')`
 -				: ""
 -		}
++			${
++				watermark
++					? `AND Timestamp >= parseDateTimeBestEffort('${watermark}')`
++					: ""
++			}
  		ORDER BY Timestamp
 +		LIMIT ${AUTO_PRICING_CANDIDATE_LIMIT}
  	`;
  
  	const { data, err } = await dataCollector(
+@@ -336,14 +352,23 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+ 		return { success: false, err: getMessage().DATABASE_CONFIG_NOT_FOUND };
+ 	}
+ 
+-	const lastRunTime = await getLastRunCronLogByCronId(
++	// Where the previous run stopped looking. A run that examined a span it
++	// could not price has still examined it, and the next run starts after
++	// it: a span that can never be priced would otherwise hold the queue
++	// behind it for ever.
++	const previousMeta = await getLastRunCronLogMetaByCronId(
+ 		payload.cronId,
+ 		dbConfig.id
+ 	);
++	const watermark =
++		typeof previousMeta?.watermark === "string" &&
++		previousMeta.watermark.length > 0
++			? previousMeta.watermark
++			: null;
+ 
+ 	const { traces, err, persistCosts } = await fetchAutoPricingCandidateSpans({
+ 		databaseConfigId: dbConfig.id,
+-		lastRunTime,
++		watermark,
+ 	});
+ 
+ 	if (err) {
+@@ -421,6 +446,20 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+ 					? CronRunStatus.FAILURE
+ 					: CronRunStatus.PARTIAL_SUCCESS;
+ 
++	// Where this run stopped looking, whether it priced the spans it read or
++	// found them unpriceable. The next run starts after them, so the spans
++	// that can never be priced are examined once and left behind instead of
++	// holding the queue behind them for ever.
++	const nextWatermark = traces.reduce<string | null>(
++		(latest, trace) => {
++			const stamp = trace.Timestamp ? String(trace.Timestamp) : "";
++			if (!stamp) return latest;
++			if (!latest) return stamp;
++			return Date.parse(stamp) > Date.parse(latest) ? stamp : latest;
++		},
++		null
++	);
++
+ 	const { err: cronLogErr } = await insertCronLog(
+ 		{
+ 			...cronLogObject,
+@@ -431,6 +470,7 @@ export async function autoUpdatePricing(payload: AutoPricingPayload) {
+ 				totalUpdated: updatedCount,
+ 				totalFailed: errorCount,
+ 				totalSkipped: traces.length - totalProcessed,
++				...(nextWatermark ? { watermark: nextWatermark } : {}),
+ 			},
+ 			finishedAt,
+ 			duration: differenceInSeconds(finishedAt, startedAt),
