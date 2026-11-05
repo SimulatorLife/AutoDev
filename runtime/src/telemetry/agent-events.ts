@@ -50,6 +50,21 @@ export const SESSION_ID_HEADER = "x-autodev-session-id";
 // without inflating or undercounting either.
 export const SKILL_READ_SOURCE = "skill_read";
 
+/**
+ * How a skill operation failed.
+ *
+ * `unavailable` is a read that never happened -- the call was denied or
+ * cancelled -- and `error` is a read that happened and failed. They are
+ * separate facts: the first says the skill was out of reach, the second says
+ * the skill was reached and did not deliver. The router publishes them as the
+ * `autodev.skill.event` values `unavailable` and `error`.
+ */
+export type SkillFailureOutcome = "unavailable" | "error";
+
+export const SKILL_FAILURE_OUTCOMES: ReadonlySet<string> = new Set<
+  SkillFailureOutcome
+>(["unavailable", "error"]);
+
 function trimmedStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -498,6 +513,47 @@ export class AgentEventReporter {
         typeof source === "string" && source.trim() ? source.trim() : null,
       pluginId:
         typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null
+    };
+    if (typeof eventId === "string" && eventId.trim())
+      (payload as Record<string, unknown>).eventId = eventId
+        .trim()
+        .slice(0, 128);
+    await this.post([payload]);
+  }
+
+  /**
+   * Post a single skill_failed observation. The bridge just watched a
+   * SKILL.md read that did not succeed -- the call was denied or cancelled, or
+   * the read itself failed.
+   *
+   * Without this report the router knows only that the skill was exposed and
+   * never used, which is a claim about a use that did not happen rather than
+   * about the failure that did: the Console's Skills surface reads "exposed,
+   * never used" for a skill whose every read failed.
+   */
+  async reportSkillFailed({
+    skill,
+    source = null,
+    pluginId = null,
+    eventId = null,
+    outcome = "error"
+  }: {
+    skill?: string;
+    source?: string | null;
+    pluginId?: string | null;
+    eventId?: string | null;
+    outcome?: SkillFailureOutcome;
+  } = {}) {
+    if (typeof skill !== "string" || !skill.trim()) return;
+    if (!SKILL_FAILURE_OUTCOMES.has(outcome)) return;
+    const payload = {
+      type: "skill_failed",
+      skill: skill.trim(),
+      source:
+        typeof source === "string" && source.trim() ? source.trim() : null,
+      pluginId:
+        typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
+      outcome
     };
     if (typeof eventId === "string" && eventId.trim())
       (payload as Record<string, unknown>).eventId = eventId

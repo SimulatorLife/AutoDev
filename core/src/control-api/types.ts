@@ -875,6 +875,16 @@ export interface ControlApiSkillsResponse {
     readonly observedExposure: number | null;
     /** Times the skill was used; `null` when nothing has been observed for it. */
     readonly observedUse: number | null;
+    /**
+     * Times a skill operation did not succeed; `null` when nothing has been
+     * observed for it.
+     *
+     * A skill whose every read failed was observed, and this is how often it
+     * failed. It is kept apart from the use count because "the skill was
+     * tried and did not work" and "the skill was never tried" are different
+     * facts, and a failure folded into a use would hide both.
+     */
+    readonly observedError: number | null;
   }[];
   /**
    * The skills the execution contract assigns that no canonical RuleSync

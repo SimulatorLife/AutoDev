@@ -88,6 +88,13 @@ export interface WorkspaceSkill {
   skill: string;
   total: number;
   uses: number;
+  /**
+   * How often a skill operation did not succeed: the read was refused or
+   * cancelled, or it ran and failed. It is counted beside the uses rather
+   * than folded into them, because "the skill was tried and failed" and
+   * "the skill was never tried" are different facts about the same skill.
+   */
+  errors: number;
   byStatus: Record<string, number>;
   byInvokeType: Record<string, number>;
   byAgentKind: Record<string, number>;
@@ -699,6 +706,7 @@ export function workspaceSkillBucket(
       skill: skillName,
       total: 0,
       uses: 0,
+      errors: 0,
       byStatus: {},
       byInvokeType: {},
       byAgentKind: {},
@@ -2012,6 +2020,10 @@ function restoreWorkspaceSkills(
       total:
         typeof skill.total === "number" && skill.total >= 0 ? skill.total : 0,
       uses: typeof skill.uses === "number" && skill.uses >= 0 ? skill.uses : 0,
+      errors:
+        typeof skill.errors === "number" && skill.errors >= 0
+          ? skill.errors
+          : 0,
       byStatus: {},
       byInvokeType: {},
       byAgentKind: {},

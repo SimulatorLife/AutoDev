@@ -203,7 +203,8 @@ test("the control API mapping carries the scope facts through", () => {
         scopeLocation: "/repo/.agents/skills/opentelemetry",
         workspace: "SimulatorLife/AutoDev",
         observedExposure: 3,
-        observedUse: 1
+        observedUse: 1,
+        observedError: 2
       },
       {
         name: "playtest-analysis",
@@ -214,7 +215,8 @@ test("the control API mapping carries the scope facts through", () => {
         scopeLocation: null,
         workspace: null,
         observedExposure: null,
-        observedUse: null
+        observedUse: null,
+        observedError: null
       }
     ],
     unresolvedAssignments: [],
@@ -242,9 +244,12 @@ test("the observed counts are reported, and an unobserved skill is not a zero", 
   const telemetry = {
     observed: true,
     bySkill: new Map([
-      ["opentelemetry", { observedExposure: 3, observedUse: 1 }],
-      ["code-review", { observedExposure: 0, observedUse: 0 }],
-      ["playtest-analysis", { observedExposure: null, observedUse: null }]
+      ["opentelemetry", { observedExposure: 3, observedUse: 1, observedError: 2 }],
+      ["code-review", { observedExposure: 0, observedUse: 0, observedError: 0 }],
+      [
+        "playtest-analysis",
+        { observedExposure: null, observedUse: null, observedError: null }
+      ]
     ])
   };
   const markup = renderSkills(
@@ -253,25 +258,32 @@ test("the observed counts are reported, and an unobserved skill is not a zero", 
   );
   assert.match(markup, /data-skill-runtime-observed="true"/);
   // "0 exposed" is an observation; "Not observed" is the absence of one.
-  assert.match(markup, /3 exposed · 1 used/);
-  assert.match(markup, /0 exposed · 0 used/);
+  assert.match(markup, /3 exposed · 1 used · 2 failed/);
+  assert.match(markup, /0 exposed · 0 used · 0 failed/);
   assert.match(markup, /Not observed/);
   // The cards sum what was observed, and they do not count a skill that was
   // never seen as a skill that was seen and never used.
   assert.match(markup, /Observed Exposure<\/dt>[\s\S]*?>3</u);
   assert.match(markup, /Usage Evidence<\/dt>[\s\S]*?>1</u);
+  // A skill whose reads failed is a fact of its own: it is not folded into
+  // the uses, so a broken skill cannot read as an unused one.
+  assert.match(markup, /Observed Failures<\/dt>[\s\S]*?>2</u);
 });
 
 test("the runtime telemetry is reported as observed only when it was", () => {
   const markup = renderSkills([REPO_SKILL], {
     observed: false,
     bySkill: new Map([
-      ["opentelemetry", { observedExposure: null, observedUse: null }]
+      [
+        "opentelemetry",
+        { observedExposure: null, observedUse: null, observedError: null }
+      ]
     ])
   });
   assert.match(markup, /data-skill-runtime-observed="false"/);
   assert.match(markup, /Observed Exposure<\/dt>[\s\S]*?>Not observed</u);
   assert.match(markup, /Usage Evidence<\/dt>[\s\S]*?>Not observed</u);
+  assert.match(markup, /Observed Failures<\/dt>[\s\S]*?>Not observed</u);
 });
 
 test("the telemetry mapping keeps a null apart from a zero", () => {
@@ -294,7 +306,8 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
         scopeLocation: "/home/operator/.agents/skills/seen-never-used",
         workspace: null,
         observedExposure: 4,
-        observedUse: 0
+        observedUse: 0,
+        observedError: 0
       },
       {
         name: "never-seen",
@@ -305,7 +318,8 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
         scopeLocation: "/home/operator/.agents/skills/never-seen",
         workspace: null,
         observedExposure: null,
-        observedUse: null
+        observedUse: null,
+        observedError: null
       }
     ],
     unresolvedAssignments: [],
@@ -314,11 +328,13 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
   assert.equal(telemetry.observed, true);
   assert.deepEqual(telemetry.bySkill.get("seen-never-used"), {
     observedExposure: 4,
-    observedUse: 0
+    observedUse: 0,
+    observedError: 0
   });
   assert.deepEqual(telemetry.bySkill.get("never-seen"), {
     observedExposure: null,
-    observedUse: null
+    observedUse: null,
+    observedError: null
   });
 });
 

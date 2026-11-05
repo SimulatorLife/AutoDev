@@ -58,7 +58,8 @@ import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
   resolveAgentEventReporter,
-  SKILL_READ_SOURCE
+  SKILL_READ_SOURCE,
+  type SkillFailureOutcome
 } from "@simulatorlife/autodev-runtime/telemetry";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
@@ -385,6 +386,38 @@ function skillReadEvent({
   };
 }
 
+/**
+ * The `skill_failed` event for a canonical `SKILL.md` read that did not
+ * succeed, or null.
+ *
+ * The call was refused or cancelled, or it ran and failed: either way the
+ * agent did not get the skill, and the failure is a fact about the skill
+ * rather than about the tool that read it.
+ */
+function skillFailureEvent({
+  toolName,
+  args,
+  callId,
+  outcome
+}: {
+  toolName: unknown;
+  args: unknown;
+  callId: string | null;
+  outcome: SkillFailureOutcome;
+}): Extract<CopilotRunEvent, { type: "skill_failed" }> | null {
+  const candidate = extractSkillReadPath(toolName, args);
+  if (!candidate) return null;
+  const normalised = normaliseSkillReadPath(candidate);
+  const skill = matchSkillReadPath(normalised);
+  if (!skill) return null;
+  return {
+    type: "skill_failed",
+    skill,
+    eventId: `skill_read:${callId ?? "no-call-id"}:${skill}`,
+    outcome
+  };
+}
+
 // What the bridge posts back to the router about one tool call. The CLI's
 // JSONL stream is the only place a Copilot tool call is visible at all: the
 // model router never sees a request for it, and an OTLP datapoint only
@@ -537,6 +570,16 @@ function reportToolObservation(
       skill: event.skill,
       source: SKILL_READ_SOURCE,
       eventId: event.eventId
+    });
+  } else if (
+    event.type === "skill_failed" &&
+    typeof agentEvents.reportSkillFailed === "function"
+  ) {
+    void agentEvents.reportSkillFailed({
+      skill: event.skill,
+      source: SKILL_READ_SOURCE,
+      eventId: event.eventId,
+      outcome: event.outcome
     });
   }
 }
@@ -841,7 +884,13 @@ type CopilotRunEvent =
       reason: string;
       server: string | null;
     }
-  | { type: "skill_used"; skill: string; eventId: string };
+  | { type: "skill_used"; skill: string; eventId: string }
+  | {
+      type: "skill_failed";
+      skill: string;
+      eventId: string;
+      outcome: SkillFailureOutcome;
+    };
 
 type OnRunCopilotEvent = (event: CopilotRunEvent) => void;
 
@@ -983,6 +1032,7 @@ function reportCopilotToolOutcome(
   }
 ): void {
   const { callId, data, onEvent, open, seenSkills, server, toolName } = options;
+  const args = open?.args ?? data.arguments;
   if (outcome.kind === "unavailable") {
     onEvent?.({
       type: "tool_unavailable",
@@ -991,6 +1041,13 @@ function reportCopilotToolOutcome(
       reason: outcome.reason,
       server
     });
+    const skillFailure = skillFailureEvent({
+      toolName,
+      args,
+      callId,
+      outcome: "unavailable"
+    });
+    if (skillFailure) onEvent?.(skillFailure);
     return;
   }
   onEvent?.({
@@ -1001,11 +1058,20 @@ function reportCopilotToolOutcome(
     durationMs: open ? Date.now() - open.startedAt : null,
     server
   });
-  if (outcome.status !== "ok") return;
+  if (outcome.status !== "ok") {
+    const skillFailure = skillFailureEvent({
+      toolName,
+      args,
+      callId,
+      outcome: "error"
+    });
+    if (skillFailure) onEvent?.(skillFailure);
+    return;
+  }
   const skillEvent = skillReadEvent({
     seenSkills,
     toolName,
-    args: open?.args ?? data.arguments,
+    args,
     callId
   });
   if (skillEvent) onEvent?.(skillEvent);

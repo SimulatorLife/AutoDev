@@ -190,19 +190,26 @@ function observedCountLabel(count: number | null, noun: string): string {
 /**
  * What the Runtime has observed about one skill.
  *
- * A skill with no observation says so once, rather than twice: "Not observed ·
- * Not observed" reads like two facts where there is one.
+ * A skill with no observation says so once, rather than three times: "Not
+ * observed · Not observed · Not observed" reads like three facts where there
+ * is one.
+ *
+ * The failure count is stated beside the uses because they are different
+ * facts: a skill whose reads all failed was tried and did not work, which is
+ * not the same as a skill nobody tried.
  */
 function skillObservationLine(
   observation: SkillObservation | undefined
 ): string {
   const exposure = observation?.observedExposure ?? null;
   const use = observation?.observedUse ?? null;
-  if (exposure === null && use === null) return NOT_OBSERVED_LABEL;
+  const error = observation?.observedError ?? null;
+  if (exposure === null && use === null && error === null)
+    return NOT_OBSERVED_LABEL;
   return `${observedCountLabel(exposure, "exposed")} · ${observedCountLabel(
     use,
     "used"
-  )}`;
+  )} · ${observedCountLabel(error, "failed")}`;
 }
 
 /**
@@ -342,6 +349,11 @@ export function SkillsView({
   const observedUseTotal = skills.reduce(
     (total, skill) =>
       total + (telemetry.bySkill.get(skill.name)?.observedUse ?? 0),
+    0
+  );
+  const observedErrorTotal = skills.reduce(
+    (total, skill) =>
+      total + (telemetry.bySkill.get(skill.name)?.observedError ?? 0),
     0
   );
 
@@ -556,6 +568,13 @@ export function SkillsView({
         value: telemetry.observed ? observedUseTotal : NOT_OBSERVED_LABEL,
         subtitle: telemetry.observed
           ? "times a skill was used"
+          : "Awaiting OTel evidence"
+      }),
+      React.createElement(StatCard, {
+        title: "Observed Failures",
+        value: telemetry.observed ? observedErrorTotal : NOT_OBSERVED_LABEL,
+        subtitle: telemetry.observed
+          ? "times a skill operation failed"
           : "Awaiting OTel evidence"
       })
     ),

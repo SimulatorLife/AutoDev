@@ -12490,7 +12490,8 @@ test("View adapters translate Control API responses without inventing data", () 
         scopeLocation: null,
         workspace: null,
         observedExposure: 3,
-        observedUse: 1
+        observedUse: 1,
+        observedError: 0
       },
       {
         name: "audit",
@@ -12501,7 +12502,8 @@ test("View adapters translate Control API responses without inventing data", () 
         scopeLocation: "/repo/.agents/skills/audit",
         workspace: "SimulatorLife/AutoDev",
         observedExposure: null,
-        observedUse: null
+        observedUse: null,
+        observedError: null
       }
     ],
     unresolvedAssignments: [{ name: "missing", roles: ["worker"] }],

@@ -103,6 +103,7 @@ import {
   mcpServerObservations,
   recordBridgeMcpExposure,
   recordBridgeSkillExposure,
+  recordBridgeSkillFailed,
   recordBridgeSkillUsed,
   recordBridgeToolObservation,
   restoreCorrelation,
@@ -838,6 +839,7 @@ export const INGESTED_AGENT_EVENTS = Object.freeze(
     "tool_unavailable",
     "skill_exposed",
     "skill_used",
+    "skill_failed",
     "mcp_exposed",
     "activity",
     "heartbeat"
@@ -1126,6 +1128,10 @@ function applyAgentEvent(
   }
   if (type === "skill_used") {
     if (recordBridgeSkillUsed({ event, context })) counters.accepted += 1;
+    return;
+  }
+  if (type === "skill_failed") {
+    if (recordBridgeSkillFailed({ event, context })) counters.accepted += 1;
     return;
   }
   if (type === "mcp_exposed") {

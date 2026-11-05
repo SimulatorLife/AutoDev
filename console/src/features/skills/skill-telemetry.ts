@@ -10,7 +10,7 @@ import type { ControlApiSkillsResponse } from "@simulatorlife/autodev-core";
  */
 export type SkillObservation = Pick<
   ControlApiSkillsResponse["skills"][number],
-  "observedExposure" | "observedUse"
+  "observedExposure" | "observedUse" | "observedError"
 >;
 
 /**

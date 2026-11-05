@@ -256,6 +256,11 @@ export interface BridgeObservationEventInput {
   turnId?: unknown;
   turn_id?: unknown;
   call_id?: unknown;
+  /**
+   * How a skill operation failed: `unavailable` for a read that never
+   * happened (denied or cancelled) and `error` for one that ran and failed.
+   */
+  outcome?: unknown;
   /** How long the call took, when the bridge measured it. */
   durationMs?: unknown;
 }
@@ -263,6 +268,22 @@ export interface BridgeObservationEventInput {
 export interface BridgeObservationContextInput {
   workspace?: unknown;
   [key: string]: unknown;
+}
+
+/**
+ * The outcome of a failed skill operation, or null when the report does not
+ * name one.
+ *
+ * The vocabulary is closed: `unavailable` is a read that never happened and
+ * `error` is one that ran and failed. A report naming anything else is not a
+ * failure the router can name, so it is refused rather than rounded to one of
+ * them.
+ */
+function skillFailureOutcome(value: unknown): "unavailable" | "error" | null {
+  if (typeof value !== "string") return null;
+  const outcome = value.trim();
+  if (outcome === "unavailable" || outcome === "error") return outcome;
+  return null;
 }
 
 export interface ResolveCorrelationContextOptions {
@@ -725,6 +746,14 @@ export class CorrelationTracker {
   onSchedulePersist?: (() => void) | undefined;
 
   readonly telemetry: CorrelationState;
+
+  /**
+   * The dedupe keys of the skill failures this tracker has already counted.
+   *
+   * A bridge reports a step's outcome as it settles, so the same call is
+   * reported once; a retry is a different call and is a different key.
+   */
+  private readonly skillFailureKeys = new Set<string>();
 
   constructor(options: CorrelationTrackerOptions = {}) {
     this.healthTtlMs = options.healthTtlMs ?? MCP_OBSERVATION_TTL_MS;
@@ -1780,7 +1809,92 @@ export class CorrelationTracker {
     return true;
   }
 
+  /**
+   * Record a skill operation that did not succeed.
+   *
+   * The bridge saw the read itself: it was refused or cancelled, or it ran and
+   * failed. Both are facts about the skill, and neither is a use -- which is
+   * why they are counted beside the uses instead of becoming one.
+   *
+   * Without this the skill's row says it was exposed and never used, which is
+   * a claim about a use that did not happen rather than about the failure that
+   * did, and the Console renders a broken skill as an unused one.
+   */
+  recordBridgeSkillFailed({
+    event,
+    context
+  }: {
+    event: BridgeObservationEventInput;
+    context: BridgeObservationContextInput;
+  }): boolean {
+    const eventMap = event as unknown as AttributeMap;
+    const skill =
+      typeof event.skill === "string" && event.skill.trim()
+        ? safeMetricLabel(event.skill)
+        : null;
+    if (!skill) return false;
+    const outcome = skillFailureOutcome(event.outcome);
+    if (!outcome) return false;
+    const source =
+      typeof event.source === "string" && event.source.trim()
+        ? safeMetricLabel(event.source)
+        : "";
+    const pluginId =
+      typeof event.pluginId === "string" && event.pluginId.trim()
+        ? safeMetricLabel(event.pluginId)
+        : "";
+    const workspace =
+      typeof context.workspace === "string" && context.workspace.trim()
+        ? context.workspace
+        : UNATTRIBUTED_DIMENSION;
+    const eventId =
+      event.eventId ??
+      event.event_id ??
+      event.turnId ??
+      event.turn_id ??
+      event.callId ??
+      event.call_id ??
+      "";
+    const key = [
+      eventId || "no-id",
+      skill,
+      source,
+      pluginId,
+      workspace,
+      outcome
+    ].join("\0");
+    if (this.skillFailureKeys.has(key)) return false;
+    this.skillFailureKeys.add(key);
+    while (this.skillFailureKeys.size > 5000) {
+      const first = this.skillFailureKeys.values().next().value;
+      if (first !== undefined) this.skillFailureKeys.delete(first);
+    }
+    const ctx = this.resolveCorrelationContext(eventMap, {}, { context });
+    if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+      const workspaceBucket = this.usageTracker.workspaceBucket(
+        this.usageTracker.usageTelemetry.byWorkspace,
+        ctx.workspace
+      );
+      workspaceBucket.skillsCapable = true;
+      const wsSkill = this.usageTracker.workspaceSkillBucket(
+        workspaceBucket,
+        skill
+      );
+      wsSkill.errors = (wsSkill.errors ?? 0) + 1;
+    }
+    recordSkillObservation({
+      event: outcome,
+      skill,
+      source,
+      role: typeof context.role === "string" ? context.role : null,
+      workspace:
+        ctx.workspace === UNATTRIBUTED_DIMENSION ? null : { key: ctx.workspace }
+    });
+    return true;
+  }
+
   resetCorrelation(): void {
+    this.skillFailureKeys.clear();
     this.telemetry.mcpServers.clear();
     this.telemetry.dimensions = {
       bridge: {
@@ -2359,6 +2473,19 @@ export function recordBridgeSkillExposure({
   context: BridgeObservationContextInput;
 }): boolean {
   return defaultCorrelationTracker.recordBridgeSkillExposure({
+    event,
+    context
+  });
+}
+
+export function recordBridgeSkillFailed({
+  event,
+  context
+}: {
+  event: BridgeObservationEventInput;
+  context: BridgeObservationContextInput;
+}): boolean {
+  return defaultCorrelationTracker.recordBridgeSkillFailed({
     event,
     context
   });

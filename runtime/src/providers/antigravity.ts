@@ -95,7 +95,8 @@ import {
   gitCommitIdentityEnv,
   REQUEST_ID_HEADER,
   resolveAgentEventReporter,
-  SKILL_READ_SOURCE
+  SKILL_READ_SOURCE,
+  type SkillFailureOutcome
 } from "@simulatorlife/autodev-runtime/telemetry";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
@@ -915,6 +916,60 @@ function reportSkillReadIfMatched({
   });
 }
 
+/**
+ * Report a `SKILL.md` read that did not succeed.
+ *
+ * The call was refused or cancelled, or it ran and failed. Either way the
+ * agent did not get the skill, and saying so is what keeps a broken skill
+ * from reading as a skill nobody used.
+ */
+function reportSkillFailureIfMatched({
+  agentEvents,
+  toolName,
+  args,
+  callId,
+  outcome
+}: {
+  agentEvents: AgentReporter | null;
+  toolName: string;
+  args: unknown;
+  callId: string | null;
+  outcome: SkillFailureOutcome;
+}): void {
+  if (!agentEvents || typeof agentEvents.reportSkillFailed !== "function")
+    return;
+  const candidate = extractSkillReadPath(toolName, args);
+  if (!candidate) return;
+  const normalised = normaliseSkillReadPath(candidate);
+  const skill = matchSkillReadPath(normalised);
+  if (!skill) return;
+  void agentEvents.reportSkillFailed({
+    skill,
+    source: SKILL_READ_SOURCE,
+    outcome,
+    eventId: `skill_read:${callId ?? "no-call-id"}:${skill}`
+  });
+}
+
+/**
+ * The arguments a tool step carried.
+ *
+ * agy's changelog describes `tool_info` as carrying "canonical tool name,
+ * parameters, and output", and which key holds the parameters has moved
+ * between CLI versions, so both places are read.
+ */
+function toolStepArguments(update: AgyStepUpdate, toolInfo: AgyToolInfo | null) {
+  const toolInfoArgs = structured(toolInfo?.args);
+  const toolInputArgs = structured(update.tool_input);
+  return (
+    (toolInfoArgs !== null && !Array.isArray(toolInfoArgs) ? toolInfoArgs : null) ??
+    (toolInputArgs !== null && !Array.isArray(toolInputArgs)
+      ? toolInputArgs
+      : null) ??
+    {}
+  );
+}
+
 // Where agy puts a tool call's output. Its own changelog describes `tool_info`
 // as carrying "canonical tool name, parameters, and output", and which key
 // holds the payload has moved between CLI versions, so any of these counts as
@@ -1115,6 +1170,14 @@ function createToolObserver(agentEvents: AgentReporter | null) {
         reason: evidence.reason,
         server
       });
+      // The call never ran, so the skill was in reach but never delivered.
+      reportSkillFailureIfMatched({
+        agentEvents,
+        toolName: tool,
+        args: toolStepArguments(update, toolInfo),
+        callId,
+        outcome: "unavailable"
+      });
       return;
     }
     if (evidence.kind !== "executed" || settled.has(key)) return;
@@ -1126,27 +1189,27 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       durationMs: evidence.durationMs,
       server
     });
-    // A denied or failed call proves nothing was actually read, so only a
-    // call agy itself reports as `ok` can ever surface a skill_used event.
-    if (evidence.status === "ok") {
-      const toolInfoArgs = structured(toolInfo?.args);
-      const toolInputArgs = structured(update.tool_input);
-      const args: JsonObject =
-        (toolInfoArgs !== null && !Array.isArray(toolInfoArgs)
-          ? toolInfoArgs
-          : null) ??
-        (toolInputArgs !== null && !Array.isArray(toolInputArgs)
-          ? toolInputArgs
-          : null) ??
-        {};
-      reportSkillReadIfMatched({
+    const args = toolStepArguments(update, toolInfo);
+    if (evidence.status !== "ok") {
+      // A denied or failed call proves nothing was actually read, so only a
+      // call agy itself reports as `ok` can ever surface a skill_used event --
+      // and the ones that did not succeed are a skill failure of their own.
+      reportSkillFailureIfMatched({
         agentEvents,
-        seenSkills,
         toolName: tool,
         args,
-        callId
+        callId,
+        outcome: "error"
       });
+      return;
     }
+    reportSkillReadIfMatched({
+      agentEvents,
+      seenSkills,
+      toolName: tool,
+      args,
+      callId
+    });
   };
   /**
    * A tool agy called through the Codex shim rather than natively.

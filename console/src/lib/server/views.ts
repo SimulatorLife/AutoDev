@@ -120,7 +120,7 @@ export function skillsFromControlApi(
 }
 
 /**
- * The skill exposure and use the Runtime has observed.
+ * The skill exposure, use and failure the Runtime has observed.
  *
  * `null` is kept apart from `0` on the way through: nothing observed for a
  * skill is not the same as observed and never used.
@@ -133,7 +133,7 @@ export function skillTelemetryFromControlApi(
     string,
     Pick<
       ControlApiSkillsResponse["skills"][number],
-      "observedExposure" | "observedUse"
+      "observedExposure" | "observedUse" | "observedError"
     >
   >;
 } {
@@ -144,7 +144,8 @@ export function skillTelemetryFromControlApi(
         skill.name,
         {
           observedExposure: skill.observedExposure,
-          observedUse: skill.observedUse
+          observedUse: skill.observedUse,
+          observedError: skill.observedError
         }
       ])
     )

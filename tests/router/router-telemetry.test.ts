@@ -13,6 +13,7 @@ import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   recordBridgeSkillExposure,
+  recordBridgeSkillFailed,
   recordBridgeSkillUsed
 } from "@simulatorlife/autodev-runtime/router/correlation";
 import {
@@ -334,6 +335,107 @@ test(
 
     await flushTelemetryMetrics();
     const skillPoints = findMetricPoints("autodev.skill.events");
+    assert.equal(skillPoints.length, 2);
+    for (const point of skillPoints) {
+      assert.equal(point.value, 1);
+      assert.equal(point.attributes["autodev.workspace"], context.workspace);
+      assert.equal(point.attributes["autodev.agent.role"], context.role);
+      assert.equal(
+        Object.hasOwn(point.attributes, "autodev.skill.name"),
+        false
+      );
+    }
+  }
+);
+
+test(
+  "a skill operation that did not succeed is its own observation, not a use",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const context = {
+      workspace: "skill-failure-workspace",
+      role: "worker"
+    };
+    assert.equal(
+      recordBridgeSkillFailed({
+        event: {
+          type: "skill_failed",
+          skill: "workspace-audit",
+          source: "skill_read",
+          eventId: "failed-read-1",
+          outcome: "error"
+        },
+        context
+      }),
+      true
+    );
+    assert.equal(
+      recordBridgeSkillFailed({
+        event: {
+          type: "skill_failed",
+          skill: "workspace-audit",
+          source: "skill_read",
+          eventId: "failed-read-1",
+          outcome: "error"
+        },
+        context
+      }),
+      false,
+      "deduplicated bridge failure must not double-count the OTel observation"
+    );
+    assert.equal(
+      recordBridgeSkillFailed({
+        event: {
+          type: "skill_failed",
+          skill: "workspace-audit",
+          source: "skill_read",
+          eventId: "failed-read-2",
+          outcome: "unavailable"
+        },
+        context
+      }),
+      true
+    );
+    assert.equal(
+      recordBridgeSkillFailed({
+        event: {
+          type: "skill_failed",
+          skill: "workspace-audit",
+          source: "skill_read",
+          eventId: "failed-read-3",
+          outcome: "something-else"
+        },
+        context
+      }),
+      false,
+      "an outcome the router cannot name must not be rounded to one it can"
+    );
+
+    const skillSpans = snapshotSpans().filter(
+      (span) => span.name === "autodev.skill"
+    );
+    assert.deepEqual(
+      skillSpans.map((span) => span.attributes["autodev.skill.event"]),
+      ["error", "unavailable"]
+    );
+    for (const span of skillSpans) {
+      assert.equal(span.attributes["autodev.skill.name"], "workspace-audit");
+      assert.equal(span.attributes["autodev.workspace"], context.workspace);
+      assert.equal(span.attributes["autodev.agent.role"], context.role);
+    }
+    // The failed operation is an errored span; the refused one is not.
+    assert.equal(skillSpans[0].status.code, 2);
+    assert.equal(skillSpans[1].status.code, 1);
+
+    await flushTelemetryMetrics();
+    // The counter is cumulative, so the points this test added are told apart
+    // from the ones earlier tests left behind by their event value.
+    const skillPoints = findMetricPoints("autodev.skill.events").filter(
+      (point) =>
+        point.attributes["autodev.skill.event"] === "error" ||
+        point.attributes["autodev.skill.event"] === "unavailable"
+    );
     assert.equal(skillPoints.length, 2);
     for (const point of skillPoints) {
       assert.equal(point.value, 1);

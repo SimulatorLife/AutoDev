@@ -1868,9 +1868,12 @@ function assignedSkillRoles(skill: string, workspace: string | null): string[] {
  */
 function observedSkillUsage(): {
   readonly observed: boolean;
-  readonly bySkill: ReadonlyMap<string, { exposure: number; use: number }>;
+  readonly bySkill: ReadonlyMap<
+    string,
+    { exposure: number; use: number; error: number }
+  >;
 } {
-  const bySkill = new Map<string, { exposure: number; use: number }>();
+  const bySkill = new Map<string, { exposure: number; use: number; error: number }>();
   const telemetry = getDefaultUsageTracker().usageTelemetry;
   for (const bucket of Object.values(telemetry.byWorkspace)) {
     // The exposures the bridges reported, per skill.
@@ -1885,16 +1888,21 @@ function observedSkillUsage(): {
     const exposures = bucket.bridgeObservations?.skills;
     if (exposures) {
       for (const [skill, count] of exposures) {
-        const entry = bySkill.get(skill) ?? { exposure: 0, use: 0 };
+        const entry = bySkill.get(skill) ?? { exposure: 0, use: 0, error: 0 };
         entry.exposure += count;
         bySkill.set(skill, entry);
       }
     }
     // The confirmed uses. A skill the Runtime has seen but never used is
     // reported with a use of zero: it was observed, and this is how often.
+    // The failures are counted beside them for the same reason: a skill whose
+    // reads all failed was observed, and saying it was "never used" would be
+    // a claim about a use that did not happen rather than about the failure
+    // that did.
     for (const skill of bucket.skills.values()) {
-      const entry = bySkill.get(skill.skill) ?? { exposure: 0, use: 0 };
+      const entry = bySkill.get(skill.skill) ?? { exposure: 0, use: 0, error: 0 };
       entry.use += skill.uses;
+      entry.error += skill.errors ?? 0;
       bySkill.set(skill.skill, entry);
     }
   }
@@ -1962,7 +1970,8 @@ function skillsView(
             ? (rolesBySkill.get(skill.name) ?? [])
             : assignedSkillRoles(skill.name, workspace),
         observedExposure: observed?.exposure ?? null,
-        observedUse: observed?.use ?? null
+        observedUse: observed?.use ?? null,
+        observedError: observed?.error ?? null
       };
     }),
     // The unresolved assignments are a join between the contract's assignments
