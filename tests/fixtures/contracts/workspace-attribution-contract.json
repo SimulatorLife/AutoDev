@@ -192,6 +192,7 @@
               "skill": "ccc",
               "total": 0,
               "uses": 1,
+              "errors": 0,
               "byStatus": {},
               "byInvokeType": {},
               "byAgentKind": {},

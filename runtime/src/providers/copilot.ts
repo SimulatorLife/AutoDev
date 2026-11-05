@@ -28,6 +28,7 @@ import {
   spawnShimMcpServer,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
+import { resolveCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   type RoleContract,
   roleContract,
@@ -1019,7 +1020,7 @@ function handleToolExecutionEnd(
   });
 }
 
-function reportCopilotToolOutcome(
+export function reportCopilotToolOutcome(
   outcome: Exclude<CopilotToolOutcome, { kind: "none" }>,
   options: {
     callId: string | null;
@@ -1119,6 +1120,26 @@ function mcpServerFromToolName(toolName: string): string | null {
 }
 
 /**
+ * The PATH the Copilot CLI is started with.
+ *
+ * The CLI is an npm launcher whose shebang is `#!/usr/bin/env node`, so the
+ * Node that runs it is whichever `node` its PATH names first. Under launchd
+ * that PATH is the launchd default, whose `node` is an Intel build on Apple
+ * Silicon and runs the whole CLI through Rosetta. The bridge already runs
+ * under the native Node the installer resolved, so that Node's directory goes
+ * first and the CLI runs natively.
+ */
+function copilotChildPath(): string {
+  const nodeDirectory = pathApi.dirname(process.execPath);
+  const current = process.env.PATH ?? "";
+  const directories = current.split(pathApi.delimiter);
+  if (directories.includes(nodeDirectory)) return current;
+  return current
+    ? `${nodeDirectory}${pathApi.delimiter}${current}`
+    : nodeDirectory;
+}
+
+/**
  * Run one Copilot turn, reporting the CLI's JSONL events as they arrive.
  * `onEvent` receives `{ type: "text_delta" | "activity", text }` for the
  * final answer and for the commentary/tool narration around it, so the parent
@@ -1173,14 +1194,19 @@ function runCopilot(
       );
     if (model && model !== "copilot" && model !== "auto")
       args.push("--model", String(model));
-    const childEnvironment = {
+    const childEnvironment: NodeJS.ProcessEnv = {
       ...process.env,
       // The local Router credential belongs to this bridge, not the model CLI.
       // Its orchestrator-only spawn shim receives the credential separately.
-      ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
+      ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" }),
+      PATH: copilotChildPath()
     };
     delete childEnvironment.CODEX_ROUTER_COPILOT_API_KEY;
-    const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, {
+    // The CLI is resolved the way the Codex CLI is: an explicit setting, then
+    // PATH, then the newest version-managed install. Resolving it by bare
+    // name alone finds nothing under the launchd PATH the bridge runs with,
+    // and the turn then fails with `spawn copilot ENOENT`.
+    const child = spawn(resolveCopilotBinary(), args, {
       cwd,
       env: withAutoDevOtelResourceContext(
         childEnvironment,

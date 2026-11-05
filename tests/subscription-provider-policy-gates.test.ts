@@ -140,9 +140,21 @@ test("CI runs the pinned official Claude Code package", () => {
 });
 
 test("Copilot and Antigravity bridges run their official CLIs", () => {
+  // The Copilot CLI is the official one, found the way the Codex CLI is
+  // found: an explicit setting, then PATH, then the newest version-managed
+  // install. A PATH lookup alone misses a CLI installed under nvm, and the
+  // bridge runs under a PATH that names no version manager.
   assert.match(
     texts["runtime/src/providers/copilot.ts"]!,
-    /spawn\(process\.env\.COPILOT_BIN \?\? "copilot", args/
+    /spawn\(resolveCopilotBinary\(\), args/
+  );
+  assert.match(
+    texts["runtime/src/shared/executables.ts"]!,
+    /export function resolveCopilotBinary/
+  );
+  assert.match(
+    texts["runtime/src/shared/executables.ts"]!,
+    /findExecutable\("copilot", env\.PATH/
   );
   assert.match(
     texts["runtime/src/providers/antigravity.ts"]!,

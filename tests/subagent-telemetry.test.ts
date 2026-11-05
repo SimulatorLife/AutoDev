@@ -31,6 +31,7 @@ import {
   extractSkillReadPath as copilotSkillReadPath,
   matchSkillReadPath as copilotMatchSkillReadPath,
   MCP_EXPOSURE_SOURCE as COPILOT_MCP_EXPOSURE_SOURCE,
+  reportCopilotToolOutcome,
   reportToolObservation,
   SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
   skillReadEvent
@@ -2195,11 +2196,75 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
     { skill: "ccc", source: "skill_read", eventId: "skill_read:call_1:ccc" }
   ]);
 
-  const source = read("runtime/src/providers/copilot.ts");
-  assert.match(source, /if \(outcome\.status !== "ok"\) return;/);
-  assert.match(
-    source,
-    /const skillEvent = skillReadEvent\(\{[\s\S]*?args: open\?\.args \?\? data\.arguments,[\s\S]*?\}\);/
+  // The bridge reports a skill read only when the read succeeded: a refused
+  // or failed call reports the failure instead, and neither of them is a use.
+  const reported: any[] = [];
+  const outcomeOptions = {
+    callId: "call_2",
+    data: {
+      toolName: "read_file",
+      arguments: { file_path: CANONICAL_SKILL_PATH }
+    },
+    onEvent: (event: any) => reported.push(event),
+    open: null as any,
+    seenSkills: new Set<string>(),
+    server: null,
+    toolName: "read_file"
+  };
+  reportCopilotToolOutcome(
+    { kind: "unavailable", reason: "denied" },
+    { ...outcomeOptions }
+  );
+  assert.equal(
+    reported.some((event) => event.type === "skill_used"),
+    false,
+    "a refused read is not a use"
+  );
+  assert.equal(
+    reported.some((event) => event.type === "skill_failed"),
+    true,
+    "a refused read is a failure"
+  );
+
+  reported.length = 0;
+  reportCopilotToolOutcome(
+    { kind: "executed", status: "error" },
+    { ...outcomeOptions }
+  );
+  assert.equal(
+    reported.some((event) => event.type === "skill_used"),
+    false,
+    "a failed read is not a use"
+  );
+  assert.equal(
+    reported.some((event) => event.type === "skill_failed"),
+    true,
+    "a failed read is a failure"
+  );
+
+  reported.length = 0;
+  reportCopilotToolOutcome(
+    { kind: "executed", status: "ok" },
+    {
+      ...outcomeOptions,
+      open: {
+        tool: "read_file",
+        startedAt: Date.now(),
+        server: null,
+        args: { file_path: CANONICAL_SKILL_PATH }
+      }
+    }
+  );
+  assert.ok(
+    reported.some(
+      (event) => event.type === "skill_used" && event.skill === "ccc"
+    ),
+    "a successful read is a use"
+  );
+  assert.equal(
+    reported.some((event) => event.type === "skill_failed"),
+    false,
+    "a successful read is not a failure"
   );
 });
 

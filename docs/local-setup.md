@@ -724,7 +724,7 @@ Repository agent instructions do not go through Rulesync. `AGENTS.md` is their o
 
 `.rulesync/mcp.jsonc` is the only static MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `16.30.2`. The `autodev_spawn` entry used by orchestrator bridges is the exception at runtime: Claude and Copilot receive it as a per-session MCP definition with a request-scoped session key, loopback URL, and token; Antigravity adds the equivalent server only to the isolated temporary home for an authorized root turn. Leaf Antigravity invocations do not receive the spawn server, and no global MCP registration grants unrelated turns a delegation path:
 
-- **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` found on `PATH`, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
+- **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` that is installed, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. `claude` and `agy` are looked for on `PATH`; `copilot` is looked for the way its bridge looks for it, so a CLI installed under a version manager counts as installed. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
 - **Codex:** Rulesync's global output ignores `CODEX_HOME`. The installer therefore generates the Codex projection into a temporary root, and the composer merges its servers into `$CODEX_HOME/config.toml`, keeping any server you added there. The role renderer and execution-contract builder read the same projection.
 - MCP generation passes its settings as flags, because a Rulesync config file with `global: true` generates nothing.
 
@@ -756,6 +756,19 @@ load the same value; the Copilot CLI subprocess does not inherit it. A
 materialize-only install stages a newly generated key without restarting the
 Router or Copilot proxy, so both services must be reloaded before Copilot can
 serve routed tasks with that key.
+
+The Copilot CLI itself is found the way the Codex CLI is found, by one lookup
+in `runtime/src/shared/executables.ts`: `COPILOT_BIN` when it is set, then the
+first `copilot` on `PATH`, then the newest version-managed install under
+`~/.nvm/versions/node/*/bin`, then `~/.local/bin/copilot`. The bridge, the
+installer's dependency check, and the Router's ensure hook all use that one
+lookup, so they cannot disagree about whether Copilot is installed. It matters
+because the bridge runs under launchd, whose `PATH` names no version manager's
+bin directory: a CLI installed by npm under nvm is invisible to a `PATH` lookup
+there, and the provider then fails every turn with `spawn copilot ENOENT` while
+its own health endpoint still reports it ready. The Copilot CLI's launcher is a
+`#!/usr/bin/env node` script, so the bridge puts its own Node first on the
+CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 
 To enable the router authentication boundary during a planned restart, run:
 

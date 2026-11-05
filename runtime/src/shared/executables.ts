@@ -60,6 +60,68 @@ export function resolveCodexBinary(
 }
 
 /**
+ * The Copilot CLI: `COPILOT_BIN` as given, else the first executable on PATH,
+ * else the newest version-managed install.
+ *
+ * The bridge that runs the Copilot CLI is supervised by launchd, whose PATH
+ * is the launchd default and names no version manager's bin directory. A CLI
+ * installed by npm under nvm is therefore invisible to a PATH lookup there:
+ * the bridge resolves nothing to spawn, and every turn fails with `spawn
+ * copilot ENOENT` while its own health endpoint still reports it ready. The
+ * Codex CLI is looked for the same way, for the same reason.
+ */
+export function resolveCopilotBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): string {
+  const configured = env.COPILOT_BIN?.trim();
+  if (configured) {
+    // `COPILOT_BIN` named a command, not only a path, so a bare name is
+    // still resolved against PATH before it is called missing.
+    const resolved = configured.includes(path.sep)
+      ? configured
+      : findExecutable(configured, env.PATH ?? "");
+    if (resolved && isExecutable(resolved)) return resolved;
+    throw new Error(`Copilot CLI is not executable: ${configured}`);
+  }
+  const fromPath = findExecutable("copilot", env.PATH ?? "");
+  if (fromPath) return fromPath;
+
+  const nvmRoot = path.join(home, ".nvm", "versions", "node");
+  if (existsSync(nvmRoot)) {
+    const versions = readdirSync(nvmRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
+    for (const version of versions) {
+      const candidate = path.join(nvmRoot, version, "bin", "copilot");
+      if (isExecutable(candidate)) return candidate;
+    }
+  }
+  const local = path.join(home, ".local", "bin", "copilot");
+  if (isExecutable(local)) return local;
+  throw new Error(
+    "Copilot CLI not found; set COPILOT_BIN to the current copilot executable."
+  );
+}
+
+/**
+ * The same lookup without the failure: where the Copilot CLI is, or null when
+ * it is not installed. The callers that only need to know whether it exists
+ * ask this, so "is the Copilot CLI installed" has one answer everywhere.
+ */
+export function findCopilotBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): string | null {
+  try {
+    return resolveCopilotBinary(env, home);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The CodeGraphContext CLI: `AUTODEV_CODEGRAPHCONTEXT_BIN` as given, else the
  * first executable on PATH, else pipx's `~/.local/bin` install.
  */

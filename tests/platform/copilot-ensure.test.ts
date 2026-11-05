@@ -29,7 +29,7 @@ function options(
     domain: "gui/501",
     plist: "/tmp/copilot.plist",
     launcher: "/tmp/copilot.sh",
-    copilotBin: "copilot",
+    copilotBin: "/opt/homebrew/bin/copilot",
     readyTimeoutMs: 20,
     logPath: "/tmp/copilot.log",
     ...overrides
@@ -50,17 +50,21 @@ function deps(overrides: Partial<CopilotEnsureDeps> = {}): CopilotEnsureDeps {
     },
     probe: async () => false,
     sleep: async () => {},
-    commandAvailable: () => true,
     startFallback: () => {},
     ...overrides
   };
 }
 
-test("resolver derives the Copilot launchd and typed-runtime paths", () => {
+test("resolver derives the Copilot launchd and typed-runtime paths", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-copilot-ensure-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const binary = join(root, "copilot");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  chmodSync(binary, 0o755);
   const result = resolveCopilotEnsureOptions({
     HOME: "/home/test",
     CODEX_HOME: "/home/test/.codex",
-    COPILOT_BIN: "/bin/copilot",
+    COPILOT_BIN: binary,
     TMPDIR: "/tmp"
   });
   assert.equal(
@@ -71,7 +75,33 @@ test("resolver derives the Copilot launchd and typed-runtime paths", () => {
     result.plist,
     "/home/test/Library/LaunchAgents/com.codex.copilot-proxy.plist"
   );
-  assert.equal(result.copilotBin, "/bin/copilot");
+  assert.equal(result.copilotBin, binary);
+});
+
+test("the Copilot CLI is found when only a version-managed install has it", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-copilot-nvm-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binary = join(
+    home,
+    ".nvm",
+    "versions",
+    "node",
+    "v25.0.0",
+    "bin",
+    "copilot"
+  );
+  mkdirSync(join(home, ".nvm", "versions", "node", "v25.0.0", "bin"), {
+    recursive: true
+  });
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  chmodSync(binary, 0o755);
+  // The launchd PATH the router and the bridge run with: it names no version
+  // manager's bin directory, so a PATH lookup alone finds nothing to start.
+  const result = resolveCopilotEnsureOptions({
+    HOME: home,
+    PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  });
+  assert.equal(result.copilotBin, binary);
 });
 
 test("Copilot launcher loads the Router bridge key from the private CODEX_HOME env file", () => {
@@ -135,8 +165,8 @@ test("healthy Copilot proxy is left untouched", async () => {
 
 test("missing Copilot CLI is an optional no-op", async () => {
   const result = await ensureCopilotProxy(
-    options(),
-    deps({ commandAvailable: () => false })
+    options({ copilotBin: null }),
+    deps()
   );
   assert.equal(result, true);
 });

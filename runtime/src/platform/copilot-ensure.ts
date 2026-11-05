@@ -1,9 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
+import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { httpHealthProbe } from "./health-probe.ts";
@@ -18,7 +19,12 @@ export interface CopilotEnsureOptions {
   readonly domain: string;
   readonly plist: string;
   readonly launcher: string;
-  readonly copilotBin: string;
+  /**
+   * Where the Copilot CLI is, or null when it is not installed. Resolved by
+   * the same lookup the bridge spawns through, so this hook and the bridge
+   * cannot disagree about whether a Copilot provider is available.
+   */
+  readonly copilotBin: string | null;
   readonly readyTimeoutMs: number;
   readonly logPath: string;
 }
@@ -27,7 +33,6 @@ export interface CopilotEnsureDeps {
   readonly launchd: Pick<LaunchdClient, "isLoaded" | "kickstart" | "bootstrap">;
   readonly probe: () => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
-  readonly commandAvailable: (command: string) => boolean;
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
@@ -53,7 +58,7 @@ export function resolveCopilotEnsureOptions(
       "hooks",
       "run-codex-copilot-cli-responses-proxy.sh"
     ),
-    copilotBin: env.COPILOT_BIN?.trim() || "copilot",
+    copilotBin: findCopilotBinary(env, home),
     readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_COPILOT_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
@@ -68,14 +73,6 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
     launchd: new LaunchdClient(),
     probe: httpHealthProbe(endpoint),
     sleep,
-    commandAvailable: (command) => {
-      try {
-        execFileSync("which", [command], { stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
-      }
-    },
     startFallback: (launcher, logPath) => {
       const runDir = path.dirname(logPath);
       mkdirSync(runDir, { recursive: true, mode: 0o700 });
@@ -101,7 +98,7 @@ export async function ensureCopilotProxy(
   deps: CopilotEnsureDeps = defaultDeps(options)
 ): Promise<boolean> {
   if (await deps.probe()) return true;
-  if (!deps.commandAvailable(options.copilotBin)) return true;
+  if (!options.copilotBin) return true;
 
   if (deps.launchd.isLoaded(options.label)) {
     try {

@@ -425,8 +425,8 @@ test(
       assert.equal(span.attributes["autodev.agent.role"], context.role);
     }
     // The failed operation is an errored span; the refused one is not.
-    assert.equal(skillSpans[0].status.code, 2);
-    assert.equal(skillSpans[1].status.code, 1);
+    assert.equal(skillSpans[0]?.status.code, 2);
+    assert.equal(skillSpans[1]?.status.code, 1);
 
     await flushTelemetryMetrics();
     // The counter is cumulative, so the points this test added are told apart

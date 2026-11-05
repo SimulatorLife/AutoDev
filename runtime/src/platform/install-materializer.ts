@@ -27,6 +27,7 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
+import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   writeErrorLine,
   writeLine
@@ -464,6 +465,19 @@ interface MaterializeOptions {
 
 function commandAvailable(command: string): boolean {
   return resolveCommandOnPath(command) !== null;
+}
+
+/**
+ * Whether a provider's CLI is installed, asked the way that provider's bridge
+ * asks it. The Copilot CLI is found by the shared lookup -- an explicit
+ * setting, then PATH, then the newest version-managed install -- because a
+ * PATH lookup alone misses a CLI installed under nvm, and the user-level MCP
+ * config written for a provider whose bridge cannot start is a config for
+ * nothing.
+ */
+function providerCliInstalled(command: string): boolean {
+  if (command === "copilot") return findCopilotBinary() !== null;
+  return commandAvailable(command);
 }
 
 /**
@@ -1447,7 +1461,7 @@ function renderGlobalMcpIfNeeded(options: MaterializeOptions): void {
       ["agy", "antigravity-cli"]
     ] as const
   )
-    .filter(([command]) => commandAvailable(command))
+    .filter(([command]) => providerCliInstalled(command))
     .map(([, targetName]) => targetName);
   if (targets.length > 0)
     runRulesyncGenerate(
