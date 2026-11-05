@@ -12,6 +12,7 @@ import {
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
+import { findCodexAppMcpServer } from "@simulatorlife/autodev-runtime/shared/executables";
 
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
@@ -92,7 +93,13 @@ test("every Copilot turn sees exactly its role contract's MCP servers", () => {
     );
     assert.deepEqual(
       Object.keys(additional).sort(),
-      granted.filter((name) => !userServers.includes(name)).sort(),
+      granted
+        .filter(
+          (name) =>
+            !userServers.includes(name) &&
+            (name !== "codex_app" || findCodexAppMcpServer() !== null)
+        )
+        .sort(),
       `${role}: added servers`
     );
     assert.deepEqual(allowed, granted, `${role}: approved servers`);

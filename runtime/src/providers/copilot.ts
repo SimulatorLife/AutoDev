@@ -28,7 +28,10 @@ import {
   spawnShimMcpServer,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
-import { resolveCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
+import {
+  findCodexAppMcpServer,
+  resolveCopilotBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   type RoleContract,
   roleContract,
@@ -77,6 +80,9 @@ const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003");
 const TIMEOUT_MS = Number.parseInt(
   process.env.COPILOT_PROXY_TIMEOUT_MS ?? "7200000"
+);
+const STARTUP_TIMEOUT_MS = Number.parseInt(
+  process.env.COPILOT_PROXY_STARTUP_TIMEOUT_MS ?? "60000"
 );
 const PROJECT_ROOT =
   process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
@@ -806,9 +812,17 @@ function copilotMcpArgs(
         );
       continue;
     }
+    const resolvedServer =
+      name === "codex_app" ? findCodexAppMcpServer() : null;
+    if (name === "codex_app" && !resolvedServer) {
+      writeErrorLine(
+        "copilot MCP server codex_app is unavailable; omitting optional request_user_input"
+      );
+      continue;
+    }
     additional[name] = copilotAdditionalServer(
       name,
-      server,
+      resolvedServer ? { ...server, ...resolvedServer } : server,
       tools,
       copilotRoleMcpEnvironment(agentRole, name, roleMcpContext)
     );
@@ -1224,24 +1238,34 @@ function runCopilot(
     };
     let stderr = "";
     let settled = false;
+    let sawOutput = false;
     const timer =
       TIMEOUT_MS > 0
         ? setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS)
+        : null;
+    const startupTimer =
+      STARTUP_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            if (!sawOutput) child.kill("SIGTERM");
+          }, STARTUP_TIMEOUT_MS)
         : null;
     const finishResolve = (value: RunCopilotResult): void => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (startupTimer) clearTimeout(startupTimer);
       resolve(value);
     };
     const finishReject = (error: unknown): void => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (startupTimer) clearTimeout(startupTimer);
       reject(error);
     };
     const lines = createInterface({ input: child.stdout! });
     lines.on("line", (line) => {
+      sawOutput = true;
       const event = parseCopilotCliEvent(line);
       if (event) dispatchCopilotCliEvent(event, state, onEvent);
     });

@@ -18,6 +18,7 @@ import {
   ensureCopilotProxy,
   resolveCopilotEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/copilot-ensure";
+import { findCodexAppMcpServer } from "@simulatorlife/autodev-runtime/shared/executables";
 
 function options(
   overrides: Partial<CopilotEnsureOptions> = {}
@@ -146,6 +147,33 @@ test("Copilot launcher loads the Router bridge key from the private CODEX_HOME e
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("resolver finds the newest installed Codex app MCP plugin", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-codex-app-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const root = join(
+    home,
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "codex-app-tools"
+  );
+  const old = join(root, "0.1.4");
+  const current = join(root, "26.1029.61003");
+  for (const version of [old, current]) {
+    mkdirSync(join(version, "scripts"), { recursive: true });
+    writeFileSync(join(version, "server.mjs"), "", "utf8");
+    const launcher = join(version, "scripts", "launch_codex_app_tools_mcp");
+    writeFileSync(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    chmodSync(launcher, 0o755);
+  }
+  assert.deepEqual(findCodexAppMcpServer({ HOME: home }, home), {
+    command: join(current, "scripts", "launch_codex_app_tools_mcp"),
+    args: ["./server.mjs"],
+    cwd: current
+  });
 });
 
 test("healthy Copilot proxy is left untouched", async () => {

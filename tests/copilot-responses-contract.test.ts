@@ -536,6 +536,50 @@ if (fixture.marker) writeFileSync(fixture.marker, "started");
   }
 }
 
+test("a silent Copilot CLI is bounded by the startup timeout", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-startup-timeout-"));
+  const fakeCli = join(temp, "fake-copilot.mjs");
+  const proxyPort = await freePort();
+  await writeFile(
+    fakeCli,
+    "#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n",
+    "utf8"
+  );
+  await chmod(fakeCli, 0o755);
+  const child = spawn(process.execPath, [PROXY], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      AUTODEV_REPO_ROOT: REPO_ROOT,
+      CODEX_PROJECT_ROOT: REPO_ROOT,
+      COPILOT_BIN: fakeCli,
+      COPILOT_PROXY_HOST: "127.0.0.1",
+      COPILOT_PROXY_PORT: String(proxyPort),
+      COPILOT_PROXY_STARTUP_TIMEOUT_MS: "100",
+      COPILOT_PROXY_TIMEOUT_MS: "5000"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  try {
+    await waitForListening(child);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "copilot",
+        input: [{ role: "user", content: "silent task" }],
+        cwd: REPO_ROOT
+      })
+    });
+    assert.equal(response.status, 503);
+    assert.match(await response.text(), /Copilot exited with SIGTERM/);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Copilot Responses contract fixture is exercised through the offline proxy boundary", async () => {
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();

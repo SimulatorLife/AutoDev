@@ -121,6 +121,43 @@ export function findCopilotBinary(
   }
 }
 
+export interface CodexAppMcpServer {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+}
+
+/**
+ * Find the currently installed Codex App tools plugin without depending on a
+ * version that Codex Desktop may replace on its next startup.
+ */
+export function findCodexAppMcpServer(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): CodexAppMcpServer | null {
+  const codeHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const cacheRoot = path.join(
+    codeHome,
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "codex-app-tools"
+  );
+  if (!existsSync(cacheRoot)) return null;
+  const versions = readdirSync(cacheRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
+  for (const version of versions) {
+    const cwd = path.join(cacheRoot, version);
+    const command = path.join(cwd, "scripts", "launch_codex_app_tools_mcp");
+    if (isExecutable(command) && existsSync(path.join(cwd, "server.mjs"))) {
+      return { command, args: ["./server.mjs"], cwd };
+    }
+  }
+  return null;
+}
+
 /**
  * The CodeGraphContext CLI: `AUTODEV_CODEGRAPHCONTEXT_BIN` as given, else the
  * first executable on PATH, else pipx's `~/.local/bin` install.

@@ -157,6 +157,14 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /findExecutable\("copilot", env\.PATH/
   );
   assert.match(
+    texts["runtime/src/shared/executables.ts"]!,
+    /export function findCodexAppMcpServer/
+  );
+  assert.match(
+    texts["runtime/src/providers/copilot.ts"]!,
+    /COPILOT_PROXY_STARTUP_TIMEOUT_MS/
+  );
+  assert.match(
     texts["runtime/src/providers/antigravity.ts"]!,
     /const CLI = process\.env\.AGY_CLI_PATH/
   );
