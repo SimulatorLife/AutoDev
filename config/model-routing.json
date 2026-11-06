@@ -77,8 +77,14 @@
       "healthUrl": "http://127.0.0.1:4003/health/liveliness",
       "envKey": "CODEX_ROUTER_COPILOT_API_KEY"
     },
-    "opencli": {
-      "pattern": "^opencli-(?:chatgpt|gemini)$",
+    "opencli-chatgpt": {
+      "pattern": "^opencli-chatgpt-[a-z0-9][a-z0-9.-]*$",
+      "baseUrl": "http://127.0.0.1:4004/v1",
+      "healthUrl": "http://127.0.0.1:4004/health/liveliness",
+      "envKey": "CODEX_ROUTER_OPENCLI_API_KEY"
+    },
+    "opencli-gemini": {
+      "pattern": "^opencli-gemini-[a-z0-9][a-z0-9.-]*$",
       "baseUrl": "http://127.0.0.1:4004/v1",
       "healthUrl": "http://127.0.0.1:4004/health/liveliness",
       "envKey": "CODEX_ROUTER_OPENCLI_API_KEY"
@@ -129,13 +135,25 @@
         "documentation": "https://docs.github.com/en/copilot"
       }
     },
-    "opencli": {
+    "opencli-chatgpt": {
       "models": {
-        "default": "opencli-chatgpt",
-        "gemini": "opencli-gemini"
+        "default": "opencli-chatgpt-balanced",
+        "smart": "opencli-chatgpt-advanced",
+        "orchestrator": "opencli-chatgpt-advanced"
       },
       "links": {
         "usage": "https://chatgpt.com/#settings",
+        "documentation": "https://github.com/jackwener/opencli"
+      }
+    },
+    "opencli-gemini": {
+      "models": {
+        "default": "opencli-gemini-3.8-flash",
+        "smart": "opencli-gemini-4-argon-complex-tasks",
+        "orchestrator": "opencli-gemini-4-argon-complex-tasks"
+      },
+      "links": {
+        "usage": "https://gemini.google.com/u/1/usage?pli=1",
         "documentation": "https://github.com/jackwener/opencli"
       }
     },

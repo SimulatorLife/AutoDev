@@ -453,7 +453,12 @@
       "permissionMode": "upstream",
       "delegation": "native"
     },
-    "opencli": {
+    "opencli-chatgpt": {
+      "spawnTools": [],
+      "permissionMode": "upstream",
+      "delegation": "native"
+    },
+    "opencli-gemini": {
       "spawnTools": [],
       "permissionMode": "upstream",
       "delegation": "native"

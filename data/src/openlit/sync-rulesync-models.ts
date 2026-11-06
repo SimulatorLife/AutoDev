@@ -105,10 +105,19 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
       isDefault: true
     },
     {
-      providerId: "opencli",
-      displayName: "opencli Web Chat",
+      providerId: "opencli-chatgpt",
+      displayName: "ChatGPT (opencli)",
       description:
-        "ChatGPT and Gemini web chat sites driven through opencli and the signed-in browser",
+        "ChatGPT web chat driven through opencli and the signed-in browser",
+      requiresVault: false,
+      configSchema: DEFAULT_CONFIG_SCHEMA,
+      isDefault: true
+    },
+    {
+      providerId: "opencli-gemini",
+      displayName: "Gemini (opencli)",
+      description:
+        "Gemini web chat driven through opencli and the signed-in browser",
       requiresVault: false,
       configSchema: DEFAULT_CONFIG_SCHEMA,
       isDefault: true
@@ -357,9 +366,9 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     // opencli web chat sites: the user's own signed-in subscription, which
     // reports no tokens and bills nothing per token.
     {
-      provider: "opencli",
-      modelId: "opencli-chatgpt",
-      displayName: "ChatGPT (opencli)",
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-fast",
+      displayName: "ChatGPT Fast (opencli)",
       modelType: "chat",
       contextWindow: 128_000,
       inputPricePerMToken: 0,
@@ -370,9 +379,113 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli",
-      modelId: "opencli-gemini",
-      displayName: "Gemini (opencli)",
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-balanced",
+      displayName: "ChatGPT Balanced (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-advanced",
+      displayName: "ChatGPT Advanced (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-xhigh",
+      displayName: "ChatGPT Very High (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-pro",
+      displayName: "ChatGPT Pro (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-chatgpt",
+      modelId: "opencli-chatgpt-gpt-5.6-pro",
+      displayName: "ChatGPT GPT-5.6 Pro (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-gemini",
+      modelId: "opencli-gemini-3.5-flash-lite",
+      displayName: "Gemini 3.5 Flash Lite (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-gemini",
+      modelId: "opencli-gemini-3.8-flash",
+      displayName: "Gemini 3.8 Flash (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-gemini",
+      modelId: "opencli-gemini-3.1-pro",
+      displayName: "Gemini 3.1 Pro (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-gemini",
+      modelId: "opencli-gemini-4-argon-complex-tasks",
+      displayName: "Gemini 4 Argon (complex tasks) (opencli)",
       modelType: "chat",
       contextWindow: 128_000,
       inputPricePerMToken: 0,

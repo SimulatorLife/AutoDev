@@ -2057,14 +2057,14 @@ intended repository, and inspect the app task/log event for those failures.
 
 ## Provider paths and constraints
 
-| Provider       | Local path                                                                             | Important constraint                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI                     | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                                               |
-| MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
-| Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
-| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
-| opencli        | Codex -> opencli Responses bridge `:4004` -> `opencli <site>` -> signed-in browser tab | One model per web chat site: `opencli-chatgpt` (chatgpt.com) and `opencli-gemini` (gemini.google.com). Requires opencli's Browser Bridge Chrome extension and a signed-in site session. Turns for one site run one at a time (one browser tab). Opt-in: not in any `providerGroups` tier by default.                                                                                                                      |
-| Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
+| Provider                        | Local path                                                                             | Important constraint                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                          | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI                     | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                                               |
+| MiniMax                         | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
+| Antigravity                     | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
+| GitHub Copilot                  | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
+| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge `:4004` -> `opencli <site>` -> signed-in browser tab | One provider per web chat site, each with the site's own models (`opencli-chatgpt-advanced`, `opencli-gemini-3.1-pro`). Requires opencli's Browser Bridge Chrome extension and a signed-in site session. Turns for one site run one at a time (one browser tab). Opt-in: in no `providerGroups` tier by default.                                                                                                          |
+| Local router                    | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
 OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local
@@ -2144,11 +2144,37 @@ the workspace (observed 2026-09-18, worker thread
 
 [opencli](https://github.com/jackwener/opencli) (`@jackwener/opencli`, pinned
 in `runtime/package.json`) drives a chat site's own web UI through the user's
-signed-in browser and returns the reply as JSON. AutoDev serves each site as
-one model on the `opencli` route: `opencli-chatgpt` and `opencli-gemini`.
-`OPENCLI_SITES` in `runtime/src/shared/provider-model-ids.ts` is the single
-list of served sites; the route `pattern`, the bridge's model list, and the
-site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
+signed-in browser and returns the reply as JSON. Each site is its own
+provider -- `opencli-chatgpt` and `opencli-gemini` -- with its own route,
+catalog (`config/catalogs/<provider>-model-catalog.json`), discovery, and the
+models that site offers, so the Console assigns a site model per role as for
+any other provider. Both providers are served by the one bridge on `:4004`.
+`OPENCLI_PROVIDER_SITES` in `runtime/src/shared/provider-model-ids.ts` is the
+single list; the route patterns and the site registry in
+`runtime/src/providers/opencli-turn.ts` derive from it.
+
+- **Models.** A model id is `<provider>-<site model>`; the prefix keeps every
+  id distinct from the other providers' (Antigravity's are `gemini-...`).
+  - `opencli-chatgpt-<level>`: `fast`, `balanced`, `advanced`, `xhigh`,
+    `pro`, `gpt-5.6-pro` -- the targets of opencli's `chatgpt model`
+    (`CHATGPT_MODELS`; ChatGPT has no model-list command). Very High is
+    `xhigh`, opencli's alias for it, because an id ending `-high` reads as an
+    effort variant under Antigravity's id convention. The model is an account
+    setting: the bridge runs `chatgpt model <level>` before a turn only when
+    the turn asks for a different level than it last selected. Switching
+    drives the composer's picker with native input, which needs the
+    browser's opencli window visible and uncovered ("Native input requires a
+    visible browser page").
+  - `opencli-gemini-<model>`: whatever `opencli gemini models` lists for the
+    account (`3.8-flash`, `3.1-pro`, `4-argon-complex-tasks`, ...), read from
+    the site by the bridge's `GET /v1/models` and kept five minutes; each
+    turn passes `--model`. opencli 2.0.2 is patched
+    (`patches/@jackwener__opencli@2.0.2.patch`) so `--model` accepts every
+    id its own `models` lists (it rejected `4-argon-complex-tasks`) and so a
+    selection whose read-back is empty is not reported as failed: the picker
+    now shows only the variant ("Flash"), never the version.
+  - The bridge serves both providers' models from one `GET /v1/models`; each
+    provider's discovery keeps the ids under its own prefix.
 
 - **No tool API, so a text protocol.** A site has no function calling. The
   bridge renders the turn into one prompt -- response rules, Codex's
@@ -2228,17 +2254,19 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   child served by the same site does not deadlock behind its parent. Usage
   reports zero tokens and the models are priced at zero, as the user's own
   subscription.
-- **Opt-in routing.** opencli is in no `providerGroups` tier, so no role
-  reaches a browser tab until the operator gives it a priority in the Console
-  (for example `Default: P3` with model `opencli-gemini`), exactly as for any
-  other provider (see "Operator priorities decide tier membership and order"),
-  or a request names `opencli-chatgpt`/`opencli-gemini` directly.
+- **Opt-in routing.** Neither opencli provider is in a `providerGroups` tier,
+  so no role reaches a browser tab until the operator gives one a priority in
+  the Console (for example `opencli-gemini`, `Default: P3`, model
+  `opencli-gemini-3.1-pro`), exactly as for any other provider (see
+  "Operator priorities decide tier membership and order"), or a request names
+  an `opencli-*` model directly.
 - **Reply normalisation.** Each site spec's `reply` strips what the adapter
   adds around the model's text (opencli's `gemini ask` prefixes every reply
   with `💬 `), so the decoration never reaches Codex.
 - **Sites.** MiniMax is not served: opencli 2.0.2's `minimax` adapter has only
-  a `music` command, no chat. Adding a site is one `OPENCLI_SITES` entry plus
-  its `OPENCLI_SITE_SPECS` command line; the load-time check refuses a site
+  a `music` command, no chat. Adding a site is one `OPENCLI_PROVIDER_SITES`
+  entry plus its `OPENCLI_SITE_SPECS` entry (turn commands and model list),
+  route, catalog, and contract entry; the load-time check refuses a site
   without a spec.
 - **Prerequisites.** opencli's daemon starts on demand, but its Browser Bridge
   Chrome extension and each site's sign-in are the user's. Check them with

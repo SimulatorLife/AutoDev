@@ -566,7 +566,7 @@ function assignmentTestPolicy(): RoutingPolicy {
         },
         copilot: { models: { default: "copilot" } },
         minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } },
-        opencli: { models: { default: "opencli-chatgpt" } }
+        "opencli-gemini": { models: { default: "opencli-gemini-3.8-flash" } }
       },
       roles: {
         default: { tier: "default" },
@@ -615,31 +615,31 @@ test("an unlisted provider enters a tier only when the operator assigns it a pri
   const policy = assignmentTestPolicy();
   const providers = (tier: string) =>
     policy.effectiveProviderGroups(tier, "subagent").flat();
-  // opencli is configured but in no group: opt-in.
-  assert.equal(providers("default").includes("opencli"), false);
-  policy.setProviderAssignment("opencli", "default", {
+  // opencli-gemini is configured but in no group: opt-in.
+  assert.equal(providers("default").includes("opencli-gemini"), false);
+  policy.setProviderAssignment("opencli-gemini", "default", {
     priority: 2,
-    model: "opencli-gemini"
+    model: "opencli-gemini-3.1-pro"
   });
   assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
     ["claude"],
-    ["copilot", "opencli"]
+    ["copilot", "opencli-gemini"]
   ]);
   const candidate = policy
     .roleCandidates("default", seeded(1))
-    .find(({ provider }) => provider === "opencli");
-  assert.equal(candidate?.model, "opencli-gemini");
+    .find(({ provider }) => provider === "opencli-gemini");
+  assert.equal(candidate?.model, "opencli-gemini-3.1-pro");
   // The `default` assignment governs only the default tier.
-  assert.equal(providers("smart").includes("opencli"), false);
-  assert.equal(providers("browser-tester").includes("opencli"), false);
+  assert.equal(providers("smart").includes("opencli-gemini"), false);
+  assert.equal(providers("browser-tester").includes("opencli-gemini"), false);
   // `subagent` governs the other subagent tiers.
-  policy.setProviderAssignment("opencli", "subagent", {
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
     priority: 1,
     model: null
   });
   assert.deepEqual(
     policy.effectiveProviderGroups("browser-tester", "subagent"),
-    [["claude", "opencli"]]
+    [["claude", "opencli-gemini"]]
   );
 });
 
@@ -679,12 +679,12 @@ test("the orchestrator tier admits only providers that can delegate, however the
     ["claude", "copilot"]
   );
   // opencli delegates through Codex's own exec tool, so it may orchestrate.
-  policy.setProviderAssignment("opencli", "orchestrator", {
+  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
     priority: 3,
-    model: "opencli-chatgpt"
+    model: "opencli-gemini-3.1-pro"
   });
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
-    ["claude", "copilot", "opencli"]
+    ["claude", "copilot", "opencli-gemini"]
   );
 });

@@ -294,7 +294,8 @@ export const CATALOGS = [
   "claude",
   "minimax",
   "antigravity",
-  "opencli",
+  "opencli-chatgpt",
+  "opencli-gemini",
   "codex"
 ] as const;
 export const ROLES = [

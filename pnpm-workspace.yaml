@@ -6,3 +6,5 @@ packages:
 
 allowBuilds:
   tldjs: true
+patchedDependencies:
+  '@jackwener/opencli@2.0.2': patches/@jackwener__opencli@2.0.2.patch

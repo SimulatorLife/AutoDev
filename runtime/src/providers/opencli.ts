@@ -49,9 +49,12 @@ import {
   retryAfterSecondsFromLimit
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
+  OPENCLI_PROVIDER_SITES,
+  OPENCLI_PROVIDERS,
   OPENCLI_SITES,
-  type OpencliSite,
-  opencliSiteForModel
+  opencliModel,
+  opencliModelId,
+  type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
 
@@ -59,6 +62,7 @@ import { codexToolCallEvents, codexToolSurface } from "./claude-codex-tools.ts";
 import { turnId } from "./codex-tool-turns.ts";
 import {
   attachedPromptFileName,
+  CHATGPT_MODELS,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
   OpencliConversationLedger,
@@ -104,10 +108,10 @@ export interface OpencliRunRequest {
   readonly signal: AbortSignal;
 }
 
-/** Runs one opencli command to completion and returns its first result row. */
+/** Runs one opencli command to completion and returns its result rows. */
 export type OpencliRunner = (
   request: OpencliRunRequest
-) => Promise<Record<string, unknown>>;
+) => Promise<Record<string, unknown>[]>;
 
 export interface OpencliBridgeOptions {
   readonly run: OpencliRunner;
@@ -123,6 +127,8 @@ export interface OpencliBridgeOptions {
 /** opencli's code for a site session another command still holds. */
 const SESSION_BUSY = "SESSION_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
+const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
+const MODEL_LIST_TIMEOUT_MS = 60_000;
 
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
@@ -397,6 +403,7 @@ function sendFailure(response: ServerResponse, error: unknown): void {
 
 interface PreparedTurn {
   readonly site: OpencliSite;
+  readonly siteModel: string;
   readonly spec: OpencliSiteSpec;
   readonly model: string;
   readonly stream: boolean;
@@ -416,6 +423,45 @@ export function createOpencliBridge(
 ): OpencliBridge {
   const ledger = options.ledger ?? new OpencliConversationLedger();
   const queues = new SiteQueues();
+  // The site model each tab was last switched to by this bridge. A site whose
+  // model is an account setting is switched only when a turn asks for another.
+  const selectedModels = new Map<OpencliSite, string>();
+  const modelLists = new Map<OpencliSite, { at: number; models: string[] }>();
+
+  /**
+   * Every model each opencli provider serves, for discovery. A site's list is
+   * read from the site (Gemini's `models`) inside that site's queue, and kept
+   * for a few minutes so the Console's refreshes do not drive the browser.
+   */
+  async function listModels(): Promise<JsonRecord[]> {
+    const entries = await Promise.all(
+      OPENCLI_PROVIDERS.map(async (provider) => {
+        const site = OPENCLI_PROVIDER_SITES[provider];
+        const cached = modelLists.get(site);
+        let models = cached?.models ?? [];
+        if (!cached || Date.now() - cached.at > MODEL_LIST_TTL_MS) {
+          try {
+            models = await queues.run(site, () =>
+              OPENCLI_SITE_SPECS[site].models(
+                execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS))
+              )
+            );
+            modelLists.set(site, { at: Date.now(), models });
+          } catch (error) {
+            writeErrorLine(
+              `opencli ${site} model list failed: ${errorMessage(error)}`
+            );
+          }
+        }
+        return models.map((siteModel) => ({
+          id: opencliModelId(provider, siteModel),
+          object: "model",
+          owned_by: provider
+        }));
+      })
+    );
+    return entries.flat();
+  }
 
   function prepare(
     payload: JsonRecord,
@@ -423,13 +469,18 @@ export function createOpencliBridge(
     response: ServerResponse
   ): PreparedTurn | null {
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
-    const site = opencliSiteForModel(model);
-    if (!site) {
+    const named = opencliModel(model);
+    const site = named?.site;
+    if (
+      !named ||
+      !site ||
+      (site === "chatgpt" && !CHATGPT_MODELS.includes(named.siteModel))
+    ) {
       sendJson(response, 400, {
         error: {
           type: "invalid_request_error",
           code: "invalid_model",
-          message: `opencli serves ${OPENCLI_SITES.map((name) => `opencli-${name}`).join(", ")}; got ${model || "no model"}`
+          message: `opencli serves ${OPENCLI_PROVIDERS.map((provider) => `${provider}-<model>`).join(" and ")} (ChatGPT: ${CHATGPT_MODELS.join(", ")}); got ${model || "no model"}`
         }
       });
       return null;
@@ -478,6 +529,7 @@ export function createOpencliBridge(
     }
     return {
       site,
+      siteModel: named.siteModel,
       spec,
       model,
       stream: payload.stream === true,
@@ -501,7 +553,7 @@ export function createOpencliBridge(
   function execFor(signal: AbortSignal): OpencliExec {
     const deadline = Date.now() + options.turnTimeoutSeconds * 1000;
     const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
-    const attempt = async (args: readonly string[]): Promise<JsonRecord> => {
+    const attempt = async (args: readonly string[]): Promise<JsonRecord[]> => {
       if (signal.aborted)
         throw new OpencliCommandError("turn cancelled", "CANCELLED", null);
       try {
@@ -532,15 +584,23 @@ export function createOpencliBridge(
       const promptFile = path.join(directory, attachedPromptFileName());
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, turn.prompt, { mode: 0o600 });
-      const invocation = {
-        prompt: turn.prompt,
-        promptFile,
-        conversationId: turn.conversationId,
-        timeoutSeconds: options.turnTimeoutSeconds
-      };
-      return await queues.run(turn.site, () =>
-        turn.spec.turn(invocation, execFor(signal))
-      );
+      return await queues.run(turn.site, async () => {
+        // Decided inside the site's queue: the model a site last answered
+        // with is what its tab shows now.
+        const reply = await turn.spec.turn(
+          {
+            prompt: turn.prompt,
+            promptFile,
+            conversationId: turn.conversationId,
+            siteModel: turn.siteModel,
+            selectModel: selectedModels.get(turn.site) !== turn.siteModel,
+            timeoutSeconds: options.turnTimeoutSeconds
+          },
+          execFor(signal)
+        );
+        selectedModels.set(turn.site, turn.siteModel);
+        return reply;
+      });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -611,7 +671,7 @@ export function createOpencliBridge(
       if (last) ledger.record(turn.site, last, reply.conversationId);
     }
     writeErrorLine(
-      `opencli ${turn.site} turn: ${parsed.calls.length} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
+      `opencli ${turn.site}/${turn.siteModel} turn: ${parsed.calls.length} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
     );
     const responseId = `resp_${turnId(12)}`;
     if (turn.stream) sendStream(response, responseId, turn.model, output);
@@ -638,14 +698,7 @@ export function createOpencliBridge(
       return;
     }
     if (pathname === "/v1/models" && request.method === "GET") {
-      sendJson(response, 200, {
-        object: "list",
-        data: OPENCLI_SITES.map((site) => ({
-          id: `opencli-${site}`,
-          object: "model",
-          owned_by: "opencli"
-        }))
-      });
+      sendJson(response, 200, { object: "list", data: await listModels() });
       return;
     }
     if (pathname !== "/v1/responses" || request.method !== "POST") {

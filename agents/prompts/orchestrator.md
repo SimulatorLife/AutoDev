@@ -14,7 +14,7 @@ workflow.
 Delegate substantive work to child agents rather than doing all of it
 yourself. The delegation surface is the one your provider actually offers.
 
-On Codex -- Codex-native GPT, MiniMax, and the opencli web-chat models
+On Codex -- Codex-native GPT, MiniMax, and the opencli web-chat providers
 (`opencli-chatgpt`, `opencli-gemini`) -- that surface is
 `multi_agent_v1__spawn_agent` with
 `{ agent_type: "<role>", message: "<full task>" }`, and the "Code-mode

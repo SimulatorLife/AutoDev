@@ -244,32 +244,46 @@ test("Copilot model discovery refuses a failed or malformed listing", async () =
   );
 });
 
-test("opencli model discovery lists one model per web chat site from its bridge", async () => {
+test("each opencli provider discovers its own site's models from the shared bridge", async () => {
   const requests: string[] = [];
-  const models = await discoverBridgeModels(
-    opencliModelSource({} as NodeJS.ProcessEnv),
-    async (input) => {
-      requests.push(String(input));
-      return Response.json({
-        object: "list",
-        data: [
-          { id: "opencli-chatgpt", object: "model", owned_by: "opencli" },
-          { id: "opencli-gemini", object: "model", owned_by: "opencli" }
-        ]
-      });
-    }
+  const listing = async (input: string | URL | Request) => {
+    requests.push(String(input));
+    return Response.json({
+      object: "list",
+      data: [
+        { id: "opencli-chatgpt-advanced", object: "model" },
+        { id: "opencli-gemini-3.1-pro", object: "model" },
+        { id: "opencli-gemini-3.8-flash", object: "model" }
+      ]
+    });
+  };
+  assert.deepEqual(
+    await discoverBridgeModels(
+      opencliModelSource("opencli-gemini", {} as NodeJS.ProcessEnv),
+      listing
+    ),
+    [
+      { id: "opencli-gemini-3.1-pro", displayName: null },
+      { id: "opencli-gemini-3.8-flash", displayName: null }
+    ]
   );
-  assert.deepEqual(models, [
-    { id: "opencli-chatgpt", displayName: null },
-    { id: "opencli-gemini", displayName: null }
+  assert.deepEqual(
+    await discoverBridgeModels(
+      opencliModelSource("opencli-chatgpt", {} as NodeJS.ProcessEnv),
+      listing
+    ),
+    [{ id: "opencli-chatgpt-advanced", displayName: null }]
+  );
+  assert.deepEqual(requests, [
+    "http://127.0.0.1:4004/v1/models",
+    "http://127.0.0.1:4004/v1/models"
   ]);
-  assert.deepEqual(requests, ["http://127.0.0.1:4004/v1/models"]);
   await assert.rejects(
     discoverBridgeModels(
-      opencliModelSource({} as NodeJS.ProcessEnv),
+      opencliModelSource("opencli-gemini", {} as NodeJS.ProcessEnv),
       async () => Response.json({ error: "nope" }, { status: 503 })
     ),
-    /opencli bridge model list returned HTTP 503/u
+    /opencli-gemini bridge model list returned HTTP 503/u
   );
 });
 

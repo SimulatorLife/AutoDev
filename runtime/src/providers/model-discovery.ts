@@ -8,7 +8,11 @@ import type {
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
-import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  OPENCLI_PROVIDERS,
+  type OpencliProvider,
+  providerQuotaPool
+} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
@@ -451,6 +455,8 @@ export interface BridgeModelListSource {
   readonly label: string;
   readonly host: string;
   readonly port: string;
+  /** Keep only the ids that start with this, for a bridge serving several providers. */
+  readonly modelPrefix?: string;
 }
 
 export async function discoverBridgeModels(
@@ -486,7 +492,11 @@ export async function discoverBridgeModels(
       throw error;
     throw new Error(`${source.label} bridge model list returned invalid JSON.`);
   }
-  return parseOpenAiModelList(payload);
+  const models = parseOpenAiModelList(payload);
+  const prefix = source.modelPrefix;
+  return prefix === undefined
+    ? models
+    : models.filter((model) => model.id.startsWith(prefix));
 }
 
 export function copilotModelSource(
@@ -499,13 +509,19 @@ export function copilotModelSource(
   };
 }
 
+/**
+ * One opencli provider's models: the opencli bridge lists every site's models
+ * (Gemini's read from the site itself), and each provider keeps its own.
+ */
 export function opencliModelSource(
+  provider: OpencliProvider,
   env: NodeJS.ProcessEnv = process.env
 ): BridgeModelListSource {
   return {
-    label: "opencli",
+    label: provider,
     host: env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
-    port: env.OPENCLI_PROXY_PORT?.trim() || "4004"
+    port: env.OPENCLI_PROXY_PORT?.trim() || "4004",
+    modelPrefix: `${provider}-`
   };
 }
 
@@ -756,7 +772,12 @@ function defaultAdapters(): Readonly<
     codex: codexModelAdapter(),
     claude: claudeModelAdapter(),
     copilot: bridgeModelAdapter(copilotModelSource()),
-    opencli: bridgeModelAdapter(opencliModelSource())
+    ...Object.fromEntries(
+      OPENCLI_PROVIDERS.map((provider) => [
+        provider,
+        bridgeModelAdapter(opencliModelSource(provider))
+      ])
+    )
   };
 }
 

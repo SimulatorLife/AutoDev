@@ -1,0 +1,43 @@
+diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..078bb08ba62ec3c1d2f42ed0b10f012632133875 100644
+--- a/clis/gemini/ask.js
++++ b/clis/gemini/ask.js
+@@ -53,7 +53,7 @@ function validateAskModelValue(value) {
+         );
+     }
+     // Reject short aliases like "pro", "flash", "flash-lite" that lack a version number.
+-    if (!/\d+\.\d+/.test(value)) {
++    if (!/^\d/.test(value)) {
+         throw new ArgumentError(
+             '--model "' + value + '" is not accepted. ' +
+             'Short aliases like "pro", "flash", or "flash-lite" are not supported. ' +
+@@ -61,8 +61,10 @@ function validateAskModelValue(value) {
+             'Use "opencli gemini models" to list available values.'
+         );
+     }
+-    // Must match canonical format: X.Y-variant
+-    if (!/^\d+\.\d+-[a-z][a-z-]*$/.test(value)) {
++    // Must match a canonical id as `gemini models` produces it: a version
++    // ("3.1", or a whole number such as "4") then a variant, which may carry
++    // digits ("4-argon-complex-tasks").
++    if (!/^\d+(?:\.\d+)?-[a-z][a-z0-9-]*$/.test(value)) {
+         throw new ArgumentError(
+             '--model "' + value + '" is not a valid canonical model id. ' +
+             'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
+diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
+index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..fb8123542c4af3b2d849dcec4f4df91f78aa0e10 100644
+--- a/clis/gemini/utils.js
++++ b/clis/gemini/utils.js
+@@ -2770,7 +2770,11 @@ export async function selectGeminiModel(page, modelId) {
+ 
+     await page.wait(0.5);
+     const selectedModelId = await getCurrentGeminiModel(page);
+-    if (selectedModelId !== modelId) {
++    // The picker button now shows only the variant ("Flash"), not the
++    // version, so it often reads back as no id at all. The matching menu
++    // item was found and clicked above; only a read-back naming a different
++    // model is evidence the selection failed.
++    if (selectedModelId && selectedModelId !== modelId) {
+         throw new CommandExecutionError(
+             selectedModelId
+                 ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`

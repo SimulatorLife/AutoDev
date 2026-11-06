@@ -17,7 +17,8 @@ const PROVIDER_CATALOGUES = {
   antigravity: "config/catalogs/antigravity-model-catalog.json",
   claude: "config/catalogs/claude-model-catalog.json",
   minimax: "config/catalogs/minimax-model-catalog.json",
-  opencli: "config/catalogs/opencli-model-catalog.json"
+  "opencli-chatgpt": "config/catalogs/opencli-chatgpt-model-catalog.json",
+  "opencli-gemini": "config/catalogs/opencli-gemini-model-catalog.json"
 } as const;
 
 /**

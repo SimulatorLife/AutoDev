@@ -47,26 +47,76 @@ export const CLAUDE_MODEL_PATTERN =
 export const MINIMAX_MODEL_PATTERN = /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/;
 
 /**
- * The chat sites the opencli bridge serves, each as one model.
+ * The web chat sites the opencli bridge serves, each as its own provider.
  *
- * opencli drives a site's own web chat through the user's signed-in browser,
- * so a "model" here is a site, not a weights version: `opencli-chatgpt` is
- * whatever model chatgpt.com answers with for that account. The list is the
- * single definition of which sites AutoDev routes to; the bridge's site
- * registry (`runtime/src/providers/opencli-turn.ts`) must cover each one.
+ * opencli drives a site's own web chat through the user's signed-in browser.
+ * Each site is a provider (`opencli-chatgpt`, `opencli-gemini`) with the
+ * models that site offers, so the Console assigns a site model per role like
+ * any other provider's. A model id is `<provider>-<site model>`:
+ * `opencli-chatgpt-advanced` asks ChatGPT at its Advanced level and
+ * `opencli-gemini-3.1-pro` asks Gemini's 3.1 Pro. The prefix keeps every id
+ * distinct from the other providers' (an Antigravity id is `gemini-...`).
+ * Both providers are served by the one bridge (`runtime/src/providers/
+ * opencli.ts`), whose site registry must cover each site.
  */
-export const OPENCLI_SITES = ["chatgpt", "gemini"] as const;
+export const OPENCLI_PROVIDER_SITES = Object.freeze({
+  "opencli-chatgpt": "chatgpt",
+  "opencli-gemini": "gemini"
+} as const);
 
-export type OpencliSite = (typeof OPENCLI_SITES)[number];
+export type OpencliProvider = keyof typeof OPENCLI_PROVIDER_SITES;
+export type OpencliSite = (typeof OPENCLI_PROVIDER_SITES)[OpencliProvider];
 
-/** `opencli-<site>` for every served site, and nothing else. */
-export const OPENCLI_MODEL_PATTERN = new RegExp(
-  `^opencli-(?:${OPENCLI_SITES.join("|")})$`
+export const OPENCLI_PROVIDERS = Object.keys(
+  OPENCLI_PROVIDER_SITES
+) as OpencliProvider[];
+
+export const OPENCLI_SITES = Object.values(
+  OPENCLI_PROVIDER_SITES
+) as OpencliSite[];
+
+/** An opencli site's own model name: lowercase, digits, dots and dashes. */
+const SITE_MODEL = String.raw`[a-z0-9][a-z0-9.-]*`;
+
+/** `opencli-chatgpt-<level>`: a ChatGPT model or intelligence level. */
+export const OPENCLI_CHATGPT_MODEL_PATTERN = new RegExp(
+  `^opencli-chatgpt-${SITE_MODEL}$`
 );
 
-/** The site an `opencli-<site>` model id names, or null for any other id. */
-export function opencliSiteForModel(model: unknown): OpencliSite | null {
-  if (typeof model !== "string" || !OPENCLI_MODEL_PATTERN.test(model))
-    return null;
-  return model.slice("opencli-".length) as OpencliSite;
+/** `opencli-gemini-<model>`: a model `opencli gemini models` lists. */
+export const OPENCLI_GEMINI_MODEL_PATTERN = new RegExp(
+  `^opencli-gemini-${SITE_MODEL}$`
+);
+
+export interface OpencliModel {
+  readonly provider: OpencliProvider;
+  readonly site: OpencliSite;
+  /** The site's own model name, as opencli takes it (`3.1-pro`, `advanced`). */
+  readonly siteModel: string;
+}
+
+/** The provider, site and site model an opencli model id names, or null. */
+export function opencliModel(model: unknown): OpencliModel | null {
+  if (typeof model !== "string") return null;
+  for (const provider of OPENCLI_PROVIDERS) {
+    const prefix = `${provider}-`;
+    if (
+      model.startsWith(prefix) &&
+      new RegExp(`^${SITE_MODEL}$`).test(model.slice(prefix.length))
+    )
+      return {
+        provider,
+        site: OPENCLI_PROVIDER_SITES[provider],
+        siteModel: model.slice(prefix.length)
+      };
+  }
+  return null;
+}
+
+/** The model id for a site model of an opencli provider. */
+export function opencliModelId(
+  provider: OpencliProvider,
+  siteModel: string
+): string {
+  return `${provider}-${siteModel}`;
 }

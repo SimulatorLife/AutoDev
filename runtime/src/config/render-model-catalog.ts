@@ -203,7 +203,8 @@ const PROVIDER_CATALOG_FILES = [
   "claude-model-catalog.json",
   "minimax-model-catalog.json",
   "antigravity-model-catalog.json",
-  "opencli-model-catalog.json"
+  "opencli-chatgpt-model-catalog.json",
+  "opencli-gemini-model-catalog.json"
 ] as const;
 
 const ROLE_ALIAS_NAMES = [

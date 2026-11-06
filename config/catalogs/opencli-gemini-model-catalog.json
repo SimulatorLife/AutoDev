@@ -1,0 +1,152 @@
+{
+  "models": [
+    {
+      "slug": "opencli-gemini-3.5-flash-lite",
+      "display_name": "Gemini 3.5 Flash Lite (opencli)",
+      "description": "Gemini web's 3.5 Flash Lite model, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-gemini-3.8-flash",
+      "display_name": "Gemini 3.8 Flash (opencli)",
+      "description": "Gemini web's 3.8 Flash model, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-gemini-3.1-pro",
+      "display_name": "Gemini 3.1 Pro (opencli)",
+      "description": "Gemini web's 3.1 Pro model, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-gemini-4-argon-complex-tasks",
+      "display_name": "Gemini 4 Argon (complex tasks) (opencli)",
+      "description": "Gemini web's 4 Argon (complex tasks) model, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    }
+  ]
+}

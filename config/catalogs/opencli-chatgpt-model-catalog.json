@@ -1,0 +1,226 @@
+{
+  "models": [
+    {
+      "slug": "opencli-chatgpt-fast",
+      "display_name": "ChatGPT Fast (opencli)",
+      "description": "ChatGPT web at its Fast setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-chatgpt-balanced",
+      "display_name": "ChatGPT Balanced (opencli)",
+      "description": "ChatGPT web at its Balanced setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-chatgpt-advanced",
+      "display_name": "ChatGPT Advanced (opencli)",
+      "description": "ChatGPT web at its Advanced setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-chatgpt-xhigh",
+      "display_name": "ChatGPT Very High (opencli)",
+      "description": "ChatGPT web at its Very High setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-chatgpt-pro",
+      "display_name": "ChatGPT Pro (opencli)",
+      "description": "ChatGPT web at its Pro setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-chatgpt-gpt-5.6-pro",
+      "display_name": "ChatGPT GPT-5.6 Pro (opencli)",
+      "description": "ChatGPT web at its GPT-5.6 Pro setting, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "The site's own default"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    }
+  ]
+}

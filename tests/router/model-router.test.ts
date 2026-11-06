@@ -1492,7 +1492,8 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
       "claude",
       "minimax",
       "copilot",
-      "opencli",
+      "opencli-chatgpt",
+      "opencli-gemini",
       "codex"
     ]);
     assert.equal(
@@ -8140,7 +8141,8 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     "antigravity",
     "minimax",
     "copilot",
-    "opencli",
+    "opencli-chatgpt",
+    "opencli-gemini",
     "codex"
   ];
   for (const provider of allProviders) {

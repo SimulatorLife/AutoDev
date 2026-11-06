@@ -22,6 +22,7 @@ import {
 import {
   attachedPromptFileName,
   attachedPromptMessage,
+  CHATGPT_MODELS,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -34,9 +35,10 @@ import {
   transcriptSegments
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 import {
-  OPENCLI_MODEL_PATTERN,
-  OPENCLI_SITES,
-  opencliSiteForModel
+  OPENCLI_CHATGPT_MODEL_PATTERN,
+  OPENCLI_GEMINI_MODEL_PATTERN,
+  OPENCLI_PROVIDERS,
+  opencliModel
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 type JsonRecord = Record<string, unknown>;
@@ -65,15 +67,31 @@ function userMessage(text: string): JsonRecord {
   };
 }
 
-test("opencli model ids name exactly the served sites", () => {
-  assert.equal(opencliSiteForModel("opencli-chatgpt"), "chatgpt");
-  assert.equal(opencliSiteForModel("opencli-gemini"), "gemini");
-  assert.equal(opencliSiteForModel("opencli-minimax"), null);
-  assert.equal(opencliSiteForModel("gpt-6-luna"), null);
-  assert.equal(OPENCLI_MODEL_PATTERN.test("opencli-chatgpt-x"), false);
+test("opencli model ids name a provider and the site's own model", () => {
+  assert.deepEqual(opencliModel("opencli-chatgpt-advanced"), {
+    provider: "opencli-chatgpt",
+    site: "chatgpt",
+    siteModel: "advanced"
+  });
+  assert.deepEqual(opencliModel("opencli-gemini-3.1-pro"), {
+    provider: "opencli-gemini",
+    site: "gemini",
+    siteModel: "3.1-pro"
+  });
+  assert.equal(opencliModel("opencli-chatgpt"), null);
+  assert.equal(opencliModel("opencli-minimax-m3"), null);
+  assert.equal(opencliModel("gemini-3.8-flash"), null);
+  assert.equal(
+    OPENCLI_GEMINI_MODEL_PATTERN.test("opencli-gemini-3.8-flash"),
+    true
+  );
+  assert.equal(
+    OPENCLI_CHATGPT_MODEL_PATTERN.test("opencli-gemini-3.8-flash"),
+    false
+  );
 });
 
-test("the shipped routing config routes exactly the served sites", () => {
+test("the shipped routing config gives each opencli provider its own route and catalog models", () => {
   const routing = JSON.parse(
     readFileSync(
       resolvePath(import.meta.dirname, "../../config/model-routing.json"),
@@ -84,21 +102,46 @@ test("the shipped routing config routes exactly the served sites", () => {
     providers: Record<string, { models: Record<string, string> }>;
     providerGroups: Record<string, string[][]>;
   };
-  // The config's pattern is the one the router loads, so it must be the
-  // shared definition, not a second spelling of it.
-  assert.equal(routing.routes.opencli?.pattern, OPENCLI_MODEL_PATTERN.source);
-  assert.equal(routing.routes.opencli?.baseUrl, "http://127.0.0.1:4004/v1");
+  const patterns = {
+    "opencli-chatgpt": OPENCLI_CHATGPT_MODEL_PATTERN,
+    "opencli-gemini": OPENCLI_GEMINI_MODEL_PATTERN
+  } as const;
+  const catalogSlugs = (provider: string): string[] =>
+    (
+      JSON.parse(
+        readFileSync(
+          resolvePath(
+            import.meta.dirname,
+            `../../config/catalogs/${provider}-model-catalog.json`
+          ),
+          "utf8"
+        )
+      ) as { models: Array<{ slug: string }> }
+    ).models.map((model) => model.slug);
+  for (const provider of OPENCLI_PROVIDERS) {
+    // The config's pattern is the one the router loads, so it must be the
+    // shared definition, not a second spelling of it.
+    assert.equal(routing.routes[provider]?.pattern, patterns[provider].source);
+    // One bridge serves both.
+    assert.equal(routing.routes[provider]?.baseUrl, "http://127.0.0.1:4004/v1");
+    const slugs = new Set(catalogSlugs(provider));
+    for (const model of Object.values(
+      routing.providers[provider]?.models ?? {}
+    ))
+      assert.ok(slugs.has(model), `${model} has a ${provider} catalog entry`);
+    // Opt-in: no tier sends role traffic to a browser tab by default.
+    for (const groups of Object.values(routing.providerGroups))
+      assert.equal(groups.flat().includes(provider), false);
+  }
+  // Every ChatGPT level opencli can switch to is a catalog model.
   assert.deepEqual(
-    Object.values(routing.providers.opencli?.models ?? {}).sort(),
-    OPENCLI_SITES.map((site) => `opencli-${site}`).sort()
+    CHATGPT_MODELS.map((level) => `opencli-chatgpt-${level}`),
+    catalogSlugs("opencli-chatgpt")
   );
-  // Opt-in: no tier sends role traffic to a browser tab by default.
-  for (const groups of Object.values(routing.providerGroups))
-    assert.equal(groups.flat().includes("opencli"), false);
 });
 
 function recordingExec(rows: JsonRecord[]): {
-  exec: (args: readonly string[]) => Promise<JsonRecord>;
+  exec: (args: readonly string[]) => Promise<JsonRecord[]>;
   calls: string[][];
 } {
   const calls: string[][] = [];
@@ -108,7 +151,7 @@ function recordingExec(rows: JsonRecord[]): {
       calls.push([...args]);
       const row = rows.shift();
       if (!row) throw new Error("no fake row left");
-      return row;
+      return [row];
     }
   };
 }
@@ -121,6 +164,8 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
         prompt: "ignored",
         promptFile: "/tmp/x/turn.md",
         conversationId: null,
+        siteModel: "advanced",
+        selectModel: false,
         timeoutSeconds: 300
       },
       fresh.exec
@@ -150,12 +195,37 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
       prompt: "ignored",
       promptFile: "/tmp/x/turn.md",
       conversationId: "abc",
+      siteModel: "advanced",
+      selectModel: false,
       timeoutSeconds: 300
     },
     continued.exec
   );
   assert.deepEqual(continued.calls[0]!.slice(5, 7), ["--conversation", "abc"]);
   assert.equal(continued.calls[0]!.includes("--new"), false);
+  // ChatGPT's model is an account setting: switched first when it changes.
+  const switched = recordingExec([
+    { Status: "ok", Model: "Very High" },
+    { response: "Hi", conversation_id: "c1" }
+  ]);
+  await OPENCLI_SITE_SPECS.chatgpt.turn(
+    {
+      prompt: "ignored",
+      promptFile: "/tmp/x/turn.md",
+      conversationId: null,
+      siteModel: "xhigh",
+      selectModel: true,
+      timeoutSeconds: 300
+    },
+    switched.exec
+  );
+  assert.deepEqual(switched.calls[0], [
+    "chatgpt",
+    "model",
+    "xhigh",
+    "-f",
+    "json"
+  ]);
 });
 
 test("every turn attaches its prompt under a fresh name the message names", () => {
@@ -183,6 +253,8 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
         prompt: "the prompt",
         promptFile: "/unused",
         conversationId: null,
+        siteModel: "3.1-pro",
+        selectModel: true,
         timeoutSeconds: 60
       },
       fresh.exec
@@ -195,6 +267,8 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
       "gemini",
       "ask",
       "the prompt",
+      "--model",
+      "3.1-pro",
       "--new",
       "true",
       "--timeout",
@@ -214,13 +288,25 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
       prompt: "only the delta",
       promptFile: "/unused",
       conversationId: "0c7fc86c8c985ae2",
+      siteModel: "3.1-pro",
+      selectModel: false,
       timeoutSeconds: 60
     },
     continued.exec
   );
   assert.deepEqual(continued.calls, [
     ["gemini", "detail", "0c7fc86c8c985ae2", "-f", "json"],
-    ["gemini", "ask", "only the delta", "--timeout", "60", "-f", "json"],
+    [
+      "gemini",
+      "ask",
+      "only the delta",
+      "--model",
+      "3.1-pro",
+      "--timeout",
+      "60",
+      "-f",
+      "json"
+    ],
     ["gemini", "status", "-f", "json"]
   ]);
   assert.equal(geminiConversationId("https://gemini.google.com/app"), null);
@@ -232,7 +318,7 @@ test("the opencli JSON envelope yields the reply or a typed failure", () => {
       parseOpencliOutput(
         '{"ok":true,"data":[{"conversationId":"c1","conversationUrl":"u","tool":"","response":"Hi"}]}',
         0
-      )
+      )[0]!
     ),
     { response: "Hi", conversationId: "c1" }
   );
@@ -242,7 +328,7 @@ test("the opencli JSON envelope yields the reply or a typed failure", () => {
       parseOpencliOutput(
         '{"ok":true,"data":[{"conversation_id":"c2","attachments":1,"response":"Yo"}]}',
         0
-      )
+      )[0]!
     ),
     { response: "Yo", conversationId: "c2" }
   );
@@ -368,6 +454,11 @@ async function withBridge(
     tempRoot,
     sessionBusyRetryMs: 1,
     run: async (request) => {
+      // Model switches and listings are answered here, not from `replies`.
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      if (request.args[1] === "models")
+        return [{ model: "3.8-flash" }, { model: "3.1-pro" }];
       runs.requests.push(request);
       const fileIndex = request.args.indexOf("--file");
       if (request.args[1] === "ask" || request.args[1] === "ask-file")
@@ -379,7 +470,7 @@ async function withBridge(
       const reply = replies.shift();
       if (!reply) throw new Error("no fake reply left");
       if (reply instanceof Error) throw reply;
-      return reply;
+      return [reply];
     }
   });
   const server: Server = createServer((request, response) => {
@@ -420,7 +511,7 @@ test("a tool call goes to Codex and its output continues the same site conversat
     async (baseUrl, runs) => {
       const input: JsonRecord[] = [userMessage("Which directory is this?")];
       const first = await post(baseUrl, {
-        model: "opencli-chatgpt",
+        model: "opencli-chatgpt-balanced",
         instructions: "Be brief.",
         tools: [EXEC_TOOL, WAIT_TOOL],
         input
@@ -443,7 +534,7 @@ test("a tool call goes to Codex and its output continues the same site conversat
       assert.ok(runs.requests[0]!.args.includes("--new"));
 
       const second = await post(baseUrl, {
-        model: "opencli-chatgpt",
+        model: "opencli-chatgpt-balanced",
         instructions: "Be brief.",
         tools: [EXEC_TOOL, WAIT_TOOL],
         stream: true,
@@ -501,7 +592,7 @@ test("a site limit is a 429 with limit headers and a timeout is a non-retried 40
       )
     ],
     async (baseUrl) => {
-      const payload = { model: "opencli-chatgpt", input: "hi" };
+      const payload = { model: "opencli-chatgpt-balanced", input: "hi" };
       const limited = await post(baseUrl, payload);
       assert.equal(limited.status, 429);
       assert.equal(
@@ -511,7 +602,7 @@ test("a site limit is a 429 with limit headers and a timeout is a non-retried 40
       const timedOut = await post(baseUrl, payload);
       assert.equal(timedOut.status, 408);
       const broken = await post(baseUrl, {
-        model: "opencli-gemini",
+        model: "opencli-gemini-3.8-flash",
         input: "hi"
       });
       assert.equal(broken.status, 503);
@@ -528,21 +619,21 @@ test("the bridge refuses requests it cannot serve before running opencli", async
     [],
     async (baseUrl, runs) => {
       const unauthorized = await post(baseUrl, {
-        model: "opencli-chatgpt",
+        model: "opencli-chatgpt-balanced",
         input: "hi"
       });
       assert.equal(unauthorized.status, 401);
       const auth = { authorization: "Bearer secret" };
       const unknown = await post(
         baseUrl,
-        { model: "opencli-minimax", input: "hi" },
+        { model: "opencli-minimax-m3", input: "hi" },
         auth
       );
       assert.equal(unknown.status, 400);
       const image = await post(
         baseUrl,
         {
-          model: "opencli-chatgpt",
+          model: "opencli-chatgpt-balanced",
           input: [
             {
               type: "message",
@@ -569,7 +660,11 @@ test("the bridge refuses requests it cannot serve before running opencli", async
       };
       assert.deepEqual(
         models.data.map((model) => model.id),
-        ["opencli-chatgpt", "opencli-gemini"]
+        [
+          ...CHATGPT_MODELS.map((level) => `opencli-chatgpt-${level}`),
+          "opencli-gemini-3.8-flash",
+          "opencli-gemini-3.1-pro"
+        ]
       );
     },
     "secret"
@@ -588,14 +683,14 @@ test("an orchestrator turn carries the full orchestrator role prompt, a leaf tur
       const input: JsonRecord[] = [userMessage("Fix the bug.")];
       const first = await post(
         baseUrl,
-        { model: "opencli-chatgpt", tools: [EXEC_TOOL], input },
+        { model: "opencli-chatgpt-balanced", tools: [EXEC_TOOL], input },
         orchestrator
       );
       const firstBody = (await first.json()) as { output: JsonRecord[] };
       await post(
         baseUrl,
         {
-          model: "opencli-chatgpt",
+          model: "opencli-chatgpt-balanced",
           tools: [EXEC_TOOL],
           input: [...input, ...firstBody.output, userMessage("Continue.")]
         },
@@ -609,7 +704,7 @@ test("an orchestrator turn carries the full orchestrator role prompt, a leaf tur
         assert.match(prompt, /Canonical orchestration skill/u);
       }
       await post(baseUrl, {
-        model: "opencli-chatgpt",
+        model: "opencli-chatgpt-balanced",
         tools: [EXEC_TOOL],
         input: [userMessage("Read a file.")]
       });
@@ -630,7 +725,7 @@ test("a busy site session is waited out instead of failing the turn", async () =
     ],
     async (baseUrl, runs) => {
       const reply = await post(baseUrl, {
-        model: "opencli-chatgpt",
+        model: "opencli-chatgpt-balanced",
         input: "hi"
       });
       assert.equal(reply.status, 200);
@@ -654,7 +749,7 @@ test("a Gemini worker turn continues its web conversation with only the new item
     async (baseUrl, runs) => {
       const input: JsonRecord[] = [userMessage("List the files.")];
       const first = await post(baseUrl, {
-        model: "opencli-gemini",
+        model: "opencli-gemini-3.8-flash",
         tools: [EXEC_TOOL],
         input
       });
@@ -663,7 +758,7 @@ test("a Gemini worker turn continues its web conversation with only the new item
         (item) => item.type === "custom_tool_call"
       )!;
       const second = await post(baseUrl, {
-        model: "opencli-gemini",
+        model: "opencli-gemini-3.8-flash",
         tools: [EXEC_TOOL],
         input: [
           ...input,
