@@ -2173,8 +2173,14 @@ single list; the route patterns and the site registry in
     id its own `models` lists (it rejected `4-argon-complex-tasks`) and so a
     selection whose read-back is empty is not reported as failed: the picker
     now shows only the variant ("Flash"), never the version.
-  - The bridge serves both providers' models from one `GET /v1/models`; each
-    provider's discovery keeps the ids under its own prefix.
+  - Each provider's discovery asks the bridge for its own list
+    (`GET /v1/models?provider=<provider>`). Reading Gemini's list drives the
+    browser and waits behind any turn using that tab, which outlasts the
+    Runtime's 8 s discovery timeout, so the bridge answers from its cache at
+    once and refreshes in the background; only the very first read waits,
+    briefly, and answers `503` if no list has been read yet. An empty read
+    (the picker did not render) keeps the last list, in the bridge and in the
+    Runtime's discovery alike (see `docs/autodev-console-target-state.md`).
 
 - **No tool API, so a text protocol.** A site has no function calling. The
   bridge renders the turn into one prompt -- response rules, Codex's

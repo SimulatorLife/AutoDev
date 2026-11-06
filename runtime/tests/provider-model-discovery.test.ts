@@ -274,9 +274,11 @@ test("each opencli provider discovers its own site's models from the shared brid
     ),
     [{ id: "opencli-chatgpt-advanced", displayName: null }]
   );
+  // Each provider asks for its own list, so one slow site does not hold
+  // the other's listing.
   assert.deepEqual(requests, [
-    "http://127.0.0.1:4004/v1/models",
-    "http://127.0.0.1:4004/v1/models"
+    "http://127.0.0.1:4004/v1/models?provider=opencli-gemini",
+    "http://127.0.0.1:4004/v1/models?provider=opencli-chatgpt"
   ]);
   await assert.rejects(
     discoverBridgeModels(
@@ -571,6 +573,64 @@ test("a failed refresh retains the last observed list as stale, not as current",
   assert.equal(discovery.lastAttemptAt, "2026-10-14T12:00:02.000Z");
   assert.match(discovery.reason, /fixture failure/u);
   assert.equal(discovery.models.length, 2);
+  service.stop();
+  restoreProviderModelDiscoveryPersistence(null);
+});
+
+test("an empty listing keeps the provider's last non-empty models", async () => {
+  restoreProviderModelDiscoveryPersistence(null);
+  let empty = false;
+  const service = new ProviderModelDiscoveryService({
+    providerIds: () => ["antigravity"],
+    adapters: {
+      antigravity: {
+        source: "fixture provider list",
+        discover: async () =>
+          empty ? [] : parseAntigravityModelList(AGY_MODELS)
+      }
+    },
+    retryBaseMs: 60_000
+  });
+  await service.refresh();
+  empty = true;
+  await service.refresh();
+  const discovery = service.snapshot().providers[0]?.discovery;
+  assert.equal(discovery?.status, "stale");
+  if (discovery?.status !== "stale") assert.fail("the last listing is kept");
+  assert.equal(discovery.models.length, 2);
+  assert.match(discovery.reason, /listed no models/u);
+  service.stop();
+  restoreProviderModelDiscoveryPersistence(null);
+});
+
+test("a failed listing is retried soon rather than at the next refresh interval", async () => {
+  restoreProviderModelDiscoveryPersistence(null);
+  let attempts = 0;
+  const service = new ProviderModelDiscoveryService({
+    providerIds: () => ["antigravity"],
+    adapters: {
+      antigravity: {
+        source: "fixture provider list",
+        discover: async () => {
+          attempts += 1;
+          // The bridge was not up yet on the first attempt.
+          if (attempts === 1) throw new Error("fetch failed");
+          return parseAntigravityModelList(AGY_MODELS);
+        }
+      }
+    },
+    refreshIntervalMs: 60 * 60_000,
+    retryBaseMs: 10
+  });
+  service.start();
+  const deadline = Date.now() + 2000;
+  while (
+    service.snapshot().providers[0]?.discovery.status !== "observed" &&
+    Date.now() < deadline
+  )
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(service.snapshot().providers[0]?.discovery.status, "observed");
+  assert.equal(attempts, 2);
   service.stop();
   restoreProviderModelDiscoveryPersistence(null);
 });

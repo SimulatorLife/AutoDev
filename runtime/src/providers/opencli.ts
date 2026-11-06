@@ -54,6 +54,7 @@ import {
   OPENCLI_SITES,
   opencliModel,
   opencliModelId,
+  type OpencliProvider,
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
@@ -129,6 +130,8 @@ const SESSION_BUSY = "SESSION_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
 const MODEL_LIST_TIMEOUT_MS = 60_000;
+/** How long a first listing waits for the site before answering unavailable. */
+const FIRST_MODEL_LIST_WAIT_MS = 5000;
 
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
@@ -428,44 +431,60 @@ export function createOpencliBridge(
   const selectedModels = new Map<OpencliSite, string>();
   const modelLists = new Map<OpencliSite, { at: number; models: string[] }>();
 
-  /**
-   * Every model each opencli provider serves, for discovery. A site's list is
-   * read from the site (Gemini's `models`) inside that site's queue, and kept
-   * for a few minutes so the Console's refreshes do not drive the browser.
-   */
-  async function listModels(): Promise<JsonRecord[]> {
-    const entries = await Promise.all(
-      OPENCLI_PROVIDERS.map(async (provider) => {
-        const site = OPENCLI_PROVIDER_SITES[provider];
-        const cached = modelLists.get(site);
-        let models = cached?.models ?? [];
-        if (!cached || Date.now() - cached.at > MODEL_LIST_TTL_MS) {
-          try {
-            models = await queues.run(site, () =>
-              OPENCLI_SITE_SPECS[site].models(
-                execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS))
-              )
-            );
-            // An empty list is the site's picker failing to render (a hidden
-            // or covered window), not an account with no models: keep the
-            // last good list and ask again next time.
-            if (models.length > 0)
-              modelLists.set(site, { at: Date.now(), models });
-            else models = cached?.models ?? [];
-          } catch (error) {
-            writeErrorLine(
-              `opencli ${site} model list failed: ${errorMessage(error)}`
-            );
-          }
-        }
-        return models.map((siteModel) => ({
-          id: opencliModelId(provider, siteModel),
-          object: "model",
-          owned_by: provider
-        }));
+  const modelRefreshes = new Map<OpencliSite, Promise<void>>();
+
+  /** Read a site's model list into the cache; an empty read keeps the last list. */
+  function refreshSiteModels(site: OpencliSite): Promise<void> {
+    const inFlight = modelRefreshes.get(site);
+    if (inFlight) return inFlight;
+    const refresh = queues
+      .run(site, () =>
+        OPENCLI_SITE_SPECS[site].models(
+          execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS))
+        )
+      )
+      .then((models) => {
+        // An empty list is the site's picker failing to render (a hidden or
+        // covered window), not an account with no models: the last good
+        // list stays, and the next listing asks again.
+        if (models.length > 0) modelLists.set(site, { at: Date.now(), models });
+        else
+          writeErrorLine(
+            `opencli ${site} listed no models; keeping the last list`
+          );
+        return undefined;
       })
+      .catch((error: unknown) => {
+        writeErrorLine(
+          `opencli ${site} model list failed: ${errorMessage(error)}`
+        );
+      })
+      .finally(() => modelRefreshes.delete(site));
+    modelRefreshes.set(site, refresh);
+    return refresh;
+  }
+
+  /**
+   * One provider's models, for discovery: the cached list at once, refreshed
+   * in the background when it is old. Reading a site's list drives the
+   * browser and waits behind any turn already using that tab, which outlasts
+   * the Runtime's discovery timeout, so a listing never waits for it once a
+   * list is known. Only the first listing waits, briefly.
+   */
+  async function listModels(provider: OpencliProvider): Promise<string[]> {
+    const site = OPENCLI_PROVIDER_SITES[provider];
+    const cached = modelLists.get(site);
+    if (!cached) {
+      await Promise.race([
+        refreshSiteModels(site),
+        sleep(FIRST_MODEL_LIST_WAIT_MS)
+      ]);
+    } else if (Date.now() - cached.at > MODEL_LIST_TTL_MS) {
+      void refreshSiteModels(site);
+    }
+    return (modelLists.get(site)?.models ?? []).map((siteModel) =>
+      opencliModelId(provider, siteModel)
     );
-    return entries.flat();
   }
 
   function prepare(
@@ -703,7 +722,34 @@ export function createOpencliBridge(
       return;
     }
     if (pathname === "/v1/models" && request.method === "GET") {
-      sendJson(response, 200, { object: "list", data: await listModels() });
+      const requested = new URL(
+        request.url ?? "/",
+        "http://127.0.0.1"
+      ).searchParams.get("provider");
+      const providers = OPENCLI_PROVIDERS.filter(
+        (provider) => requested === null || provider === requested
+      );
+      const lists = await Promise.all(providers.map(listModels));
+      const ids = lists.flat();
+      // No list observed yet is not "this provider has no models": answer
+      // unavailable so discovery keeps what it had and asks again.
+      if (ids.length === 0) {
+        sendJson(response, 503, {
+          error: {
+            type: "opencli_proxy_error",
+            message: `no ${requested ?? "opencli"} model list has been read from the site yet`
+          }
+        });
+        return;
+      }
+      sendJson(response, 200, {
+        object: "list",
+        data: ids.map((id) => ({
+          id,
+          object: "model",
+          owned_by: opencliModel(id)?.provider ?? PROVIDER
+        }))
+      });
       return;
     }
     if (pathname !== "/v1/responses" || request.method !== "POST") {

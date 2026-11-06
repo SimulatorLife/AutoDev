@@ -21,6 +21,7 @@ import { readClaudeOAuthToken } from "./claude-credential.ts";
 /** The marker `boundedResponseText` puts in an oversized-body error. */
 const SIZE_BOUND_MESSAGE = "size bound";
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
+const DEFAULT_RETRY_BASE_MS = 30_000;
 // `agy models` performs its own remote listing and runs off the request/routing
 // path, so give this CLI source an independent, still-bounded deadline. The
 // listing is a provider-side remote call: it measured 3.0-9.0 seconds on an
@@ -96,6 +97,8 @@ export interface ProviderModelDiscoveryOptions {
   readonly adapters?: Readonly<Record<string, ProviderModelDiscoveryAdapter>>;
   readonly now?: () => Date;
   readonly refreshIntervalMs?: number;
+  /** First retry delay after a failed or empty listing; doubles to the refresh interval. */
+  readonly retryBaseMs?: number;
   readonly onSnapshotChanged?: (() => void) | undefined;
 }
 
@@ -455,6 +458,8 @@ export interface BridgeModelListSource {
   readonly label: string;
   readonly host: string;
   readonly port: string;
+  /** A query naming the provider, for a bridge serving several. */
+  readonly query?: string;
   /** Keep only the ids that start with this, for a bridge serving several providers. */
   readonly modelPrefix?: string;
 }
@@ -470,7 +475,7 @@ export async function discoverBridgeModels(
       ? timeout
       : AbortSignal.any([parentSignal, timeout]);
   const response = await fetchImpl(
-    `http://${source.host}:${source.port}/v1/models`,
+    `http://${source.host}:${source.port}/v1/models${source.query ? `?${source.query}` : ""}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -521,6 +526,7 @@ export function opencliModelSource(
     label: provider,
     host: env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
     port: env.OPENCLI_PROXY_PORT?.trim() || "4004",
+    query: `provider=${provider}`,
     modelPrefix: `${provider}-`
   };
 }
@@ -818,6 +824,9 @@ export class ProviderModelDiscoveryService {
   private readonly onSnapshotChanged: (() => void) | undefined;
   private readonly states = new Map<string, ControlApiProviderModelDiscovery>();
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly retryBaseMs: number;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
   private refreshInFlight: Promise<void> | null = null;
   private abortController: AbortController | null = null;
   private stopped = false;
@@ -829,6 +838,7 @@ export class ProviderModelDiscoveryService {
     this.now = options.now ?? (() => new Date());
     this.refreshIntervalMs =
       options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+    this.retryBaseMs = options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
     this.onSnapshotChanged = options.onSnapshotChanged;
     for (const provider of this.providerIds()) {
       const persisted = persistedProviderModels.get(provider);
@@ -903,6 +913,8 @@ export class ProviderModelDiscoveryService {
     this.stopped = true;
     if (this.refreshTimer !== null) clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.abortController?.abort();
     for (const provider of this.providerIds()) {
       ROUTING_POLICY.setDiscoveredProviderModels(provider, []);
@@ -914,16 +926,48 @@ export class ProviderModelDiscoveryService {
     if (this.refreshInFlight) return this.refreshInFlight;
     const abortController = new AbortController();
     this.abortController = abortController;
-    this.refreshInFlight = this.refreshProviders(
-      abortController.signal
-    ).finally(() => {
-      this.refreshInFlight = null;
-      if (this.abortController === abortController) this.abortController = null;
-    });
+    this.refreshInFlight = this.refreshProviders(abortController.signal)
+      .then((unconfirmed) => this.scheduleRetry(unconfirmed))
+      .finally(() => {
+        this.refreshInFlight = null;
+        if (this.abortController === abortController)
+          this.abortController = null;
+      });
     return this.refreshInFlight;
   }
 
-  private async refreshProviders(signal: AbortSignal): Promise<void> {
+  /**
+   * Retry soon after a listing that did not confirm a provider's models.
+   *
+   * The periodic refresh is every 15 minutes, so one failed listing -- the
+   * Runtime starting before a bridge it lists from, a provider's API blip, a
+   * browser-driven site that rendered no picker -- left that provider with no
+   * fresh models for the whole interval, and with none at all when it had
+   * never been observed. A failed or empty listing is retried at 30 s,
+   * doubling to the refresh interval, until every provider confirms.
+   */
+  private scheduleRetry(unconfirmed: number): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (this.stopped || unconfirmed === 0) {
+      this.retryAttempt = 0;
+      return;
+    }
+    const delay = Math.min(
+      this.retryBaseMs * 2 ** this.retryAttempt,
+      this.refreshIntervalMs
+    );
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
+    this.retryTimer.unref();
+  }
+
+  /** Refresh every provider; resolves to how many did not confirm their models. */
+  private async refreshProviders(signal: AbortSignal): Promise<number> {
+    let unconfirmed = 0;
     await Promise.all(
       this.providerIds().map(async (provider) => {
         const adapter = this.adapters[provider];
@@ -952,6 +996,34 @@ export class ProviderModelDiscoveryService {
               "Provider model source exceeded the model-count bound."
             );
           }
+          // A listing with no models says nothing the last listing did not:
+          // a provider that listed models has not lost all of them between
+          // two reads. Keep the last non-empty listing and ask again.
+          const previousModels =
+            previous &&
+            (previous.status === "observed" || previous.status === "stale")
+              ? previous.models
+              : [];
+          if (models.length === 0 && previousModels.length > 0 && previous) {
+            unconfirmed += 1;
+            this.states.set(provider, {
+              status: "stale",
+              source: adapter.source,
+              observedAt:
+                "observedAt" in previous ? previous.observedAt : attemptedAt,
+              lastAttemptAt: attemptedAt,
+              reason:
+                "The provider listed no models; keeping the last non-empty listing until it lists models again.",
+              models: previousModels
+            });
+            ROUTING_POLICY.setDiscoveredProviderModels(
+              provider,
+              previousModels
+            );
+            this.persistCurrentState(provider);
+            return;
+          }
+          if (models.length === 0) unconfirmed += 1;
           const observedAt = this.now().toISOString();
           this.states.set(provider, {
             status: "observed",
@@ -964,6 +1036,7 @@ export class ProviderModelDiscoveryService {
           this.persistCurrentState(provider);
         } catch (error) {
           if (this.stopped || signal.aborted) return;
+          unconfirmed += 1;
           const reason =
             error instanceof Error
               ? error.message
@@ -995,6 +1068,7 @@ export class ProviderModelDiscoveryService {
         }
       })
     );
+    return unconfirmed;
   }
 
   private persistCurrentState(provider: string): void {

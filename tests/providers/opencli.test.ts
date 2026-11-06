@@ -748,6 +748,56 @@ test("an empty site model list is not cached", async () => {
   }
 });
 
+test("a provider's model listing answers from cache and 503s before any list is read", async () => {
+  let listings = 0;
+  let release: () => void = () => {};
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] !== "models") throw new Error("unexpected command");
+      listings += 1;
+      // The site reads slowly, as a browser picker does.
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [{ model: "3.1-pro" }];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const list = (provider: string) =>
+    fetch(`http://127.0.0.1:${port}/v1/models?provider=${provider}`);
+  try {
+    // ChatGPT's list is static: no site read, and no wait behind Gemini's.
+    const chatgpt = (await (await list("opencli-chatgpt")).json()) as {
+      data: Array<{ id: string }>;
+    };
+    assert.ok(
+      chatgpt.data.every(({ id }) => id.startsWith("opencli-chatgpt-"))
+    );
+    // Gemini has no list yet and its read outlasts the first wait.
+    const pending = await list("opencli-gemini");
+    assert.equal(pending.status, 503);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const gemini = (await (await list("opencli-gemini")).json()) as {
+      data: Array<{ id: string }>;
+    };
+    assert.deepEqual(
+      gemini.data.map(({ id }) => id),
+      ["opencli-gemini-3.1-pro"]
+    );
+    assert.equal(listings, 1);
+  } finally {
+    release();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("a busy site session is waited out instead of failing the turn", async () => {
   await withBridge(
     [
