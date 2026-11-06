@@ -283,13 +283,25 @@ function RoleRow({
   const blockedReason = assignment.mutable
     ? undefined
     : "This provider is disabled. Enable it to change its roles.";
+  // A provider with no delegation path cannot serve the orchestrator at all:
+  // the orchestrator creates child agents, and the router refuses that traffic
+  // to a provider that cannot. Enabling the role here would change nothing,
+  // so the control says why instead of offering a priority the router never
+  // routes to -- which is how a provider came to be reported as the
+  // orchestrator's provider while every orchestrator request failed.
+  const cannotServeReason = assignment.canServe
+    ? undefined
+    : (assignment.cannotServeReason ??
+      "This provider cannot serve this role.");
   const modelReason =
     blockedReason ??
+    cannotServeReason ??
     (roleDisabled
       ? "This role is set to Disabled. Choose a priority to change its model."
       : (modelDiscoveryDisabledReason(discovery, provider) ?? undefined));
   const effortReason =
     blockedReason ??
+    cannotServeReason ??
     (roleDisabled
       ? "This role is set to Disabled. Choose a priority to change its reasoning effort."
       : undefined);
@@ -378,12 +390,14 @@ function RoleRow({
       hideLabel: true,
       className: "min-w-0 w-20",
       testId: `role-priority-${provider}-${role}`,
-      tone: roleDisabled ? "warning" : undefined,
+      tone: roleDisabled || cannotServeReason !== undefined ? "warning" : undefined,
       dataAttributes: { "data-role-priority": role },
       defaultValue: priorityOptionSelected(assignment),
-      ...(blockedReason === undefined
-        ? {}
-        : { disabled: true, disabledReason: blockedReason }),
+      ...(blockedReason !== undefined
+        ? { disabled: true, disabledReason: blockedReason }
+        : cannotServeReason !== undefined
+          ? { disabled: true, disabledReason: cannotServeReason }
+          : {}),
       options: [
         { value: "1", label: "P1" },
         { value: "2", label: "P2" },

@@ -233,6 +233,19 @@ export interface ControlApiProviderRoleAssignment {
   readonly mutable: boolean;
   /** Convergence for this single role; `not-observed` until a write occurs. */
   readonly convergence: ReconciliationStatus;
+  /**
+   * Whether the provider can serve this role at all.
+   *
+   * `priority` is the operator's switch; this is the provider's capability, and
+   * the two are independent. A provider can be enabled and ranked for the
+   * orchestrator and still be unable to serve it, because an orchestrator
+   * creates child agents and a provider with no delegation path cannot. The
+   * Runtime refuses such an assignment rather than persisting one no request
+   * would ever route to.
+   */
+  readonly canServe: boolean;
+  /** Why the provider cannot serve this role, or null when it can. */
+  readonly cannotServeReason: string | null;
 }
 
 /** Provider-wide concurrent-agent limits; `null` is the explicit Unlimited choice. */

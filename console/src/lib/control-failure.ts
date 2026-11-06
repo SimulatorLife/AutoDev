@@ -49,6 +49,10 @@ export const CONTROL_REFUSAL_REASONS = [
   // body was assembled by the route rather than typed into the form.
   "request_invalid",
   "runtime_refused",
+  // The Runtime refused because the provider cannot serve that role at all --
+  // an orchestrator needs a provider that can create child agents. Retrying
+  // changes nothing, and the next move is a different provider.
+  "provider_cannot_delegate",
   // What the Runtime itself said, by code. Each asks for a different next move,
   // so one sentence cannot cover them.
   "still_cited",

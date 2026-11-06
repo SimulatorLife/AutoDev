@@ -1072,6 +1072,16 @@ function providersView(now: number): Record<string, unknown> {
           // A globally disabled provider's roles cannot be edited until it
           // is enabled again, but their values are preserved.
           mutable: !disabled,
+          // The provider's capability for this role, which the priority alone
+          // does not show: a provider with no delegation path is enabled and
+          // ranked for the orchestrator and still cannot serve it. Reporting
+          // the priority without this is what let an operator disable every
+          // other provider on the strength of a promise the router never kept.
+          canServe:
+            ROUTING_POLICY.providerRoleCapabilityReason(provider, role) ===
+            null,
+          cannotServeReason:
+            ROUTING_POLICY.providerRoleCapabilityExplanation(provider, role),
           convergence: providerRoleConvergence(provider, role)
         };
       }),
@@ -2881,7 +2891,7 @@ function agentsView(
       const skills = Array.isArray(raw?.skills) ? raw.skills : [];
       const roleType = isOrchestrator ? "orchestrator" : "subagent";
       const allowedProviders = ROUTING_POLICY.providerIds().filter((provider) =>
-        ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
+        ROUTING_POLICY.canProviderServeRole(provider, roleType)
       );
       const promptPath = path.join(
         repositoryRoot,
@@ -3029,7 +3039,7 @@ function agentDetailView(
   const rolePrompt = readRolePrompt(promptPath);
   const roleType = isOrchestrator ? "orchestrator" : "subagent";
   const allowedProviders = ROUTING_POLICY.providerIds().filter((provider) =>
-    ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
+    ROUTING_POLICY.canProviderServeRole(provider, roleType)
   );
 
   const hasPrompt = rolePrompt.present;
@@ -5157,6 +5167,34 @@ async function patchProviderRole(
         409,
         "autodev_control_api_provider_disabled",
         "This provider is disabled. Enable it before changing its roles."
+      );
+      return;
+    }
+
+    // A provider with no delegation path cannot serve the orchestrator tier,
+    // whatever the operator switches on: an orchestrator creates child agents,
+    // and the router refuses that traffic to a provider that cannot. Accepting
+    // the assignment would persist a setting no request would ever route to,
+    // and the Console would report it as the orchestrator's provider.
+    const capabilityReason = ROUTING_POLICY.providerRoleCapabilityExplanation(
+      provider,
+      role
+    );
+    if (capabilityReason !== null && priority !== "disabled") {
+      audit(
+        "denied",
+        {
+          priority,
+          model,
+          ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
+        },
+        "provider_cannot_delegate"
+      );
+      sendControlError(
+        response,
+        409,
+        "autodev_control_api_provider_cannot_delegate",
+        `${capabilityReason} Enable a provider with a delegation path for the ${role} role instead.`
       );
       return;
     }

@@ -48,6 +48,8 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "A revision has to name the experiences it derives from, and this record cites none. Nothing was sent to the Runtime.",
   runtime_refused:
     "The Runtime did not accept this change, and did not say why. Nothing was changed.",
+  provider_cannot_delegate:
+    "This provider cannot serve that role at all: the orchestrator needs a provider that can create child agents. Nothing was changed -- assign a provider with a delegation path instead.",
   request_invalid:
     "The Runtime rejected this request as invalid before doing any work, so nothing was changed. Sending the same thing again will be refused the same way.",
   still_cited:

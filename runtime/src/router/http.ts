@@ -697,11 +697,24 @@ export function routingStatus(): Record<string, unknown> {
       ])
     ),
     configuredProviders: Object.keys(ROUTING.providers),
+    // The providers that can serve the orchestrator right now: enabled for it,
+    // and able to. A provider with no delegation path is enabled and ranked
+    // for the role, and the router still refuses it -- so listing it here as
+    // an orchestrator provider is the report that started this: an operator
+    // disabled every other provider on the strength of it and was then told
+    // that no provider was enabled.
     enabledOrchestratorProviders: Object.keys(ROUTING.providers).filter((p) =>
-      ROUTING_POLICY.isProviderEnabledForRole(p, "orchestrator")
+      ROUTING_POLICY.canProviderServeRole(p, "orchestrator")
+    ),
+    // Enabled for the orchestrator and unable to serve it. Named separately
+    // because the fix is not an enable switch.
+    incapableOrchestratorProviders: Object.keys(ROUTING.providers).filter(
+      (p) =>
+        ROUTING_POLICY.isProviderEnabledForRole(p, "orchestrator") &&
+        ROUTING_POLICY.providerRoleCapabilityReason(p, "orchestrator") !== null
     ),
     enabledSubagentProviders: Object.keys(ROUTING.providers).filter((p) =>
-      ROUTING_POLICY.isProviderEnabledForRole(p, "subagent")
+      ROUTING_POLICY.canProviderServeRole(p, "subagent")
     ),
     routes: Object.fromEntries(
       ROUTES.map((route) => [
@@ -1234,6 +1247,11 @@ function routerProviderStatus(
     route.provider,
     "orchestrator"
   );
+  const orchestratorCapable =
+    ROUTING_POLICY.providerRoleCapabilityReason(
+      route.provider,
+      "orchestrator"
+    ) === null;
   const subagentEnabled = ROUTING_POLICY.isProviderEnabledForRole(
     route.provider,
     "subagent"
@@ -1243,15 +1261,18 @@ function routerProviderStatus(
     route.provider,
     {
       orchestratorEnabled,
+      orchestratorCapable,
       subagentEnabled,
       status: coolingDown
         ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
         : "ready",
-      orchestratorStatus: orchestratorEnabled
-        ? coolingDown
-          ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
-          : "ready"
-        : "disabled",
+      orchestratorStatus: !orchestratorEnabled
+        ? "disabled"
+        : !orchestratorCapable
+          ? "cannot_delegate"
+          : coolingDown
+            ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
+            : "ready",
       subagentStatus: subagentEnabled
         ? coolingDown
           ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")

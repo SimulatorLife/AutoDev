@@ -779,6 +779,90 @@ test("operator PATCH validates fields, persists provider state, and audits the a
   }
 });
 
+test("a provider with no delegation path cannot be assigned the orchestrator role, and the view says why", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  let persistCalls = 0;
+  const previous =
+    ROUTING_POLICY.assignmentFor("opencli", "orchestrator") ?? null;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    // opencli drives a web chat site and declares no delegation path, so it
+    // cannot create the child agents an orchestrator needs. The Console used
+    // to accept an orchestrator assignment for it and report the role as
+    // enabled, and the router then refused every orchestrator request with a
+    // message blaming the enable switches.
+    assert.equal(
+      ROUTING_POLICY.providerRoleCapabilityReason("opencli", "orchestrator"),
+      "provider_cannot_delegate"
+    );
+
+    const path = CONTROL_API_PATHS.providers + "/opencli/roles/orchestrator";
+    const refused = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { priority: 1, model: null }
+    });
+    assert.equal(refused.response.statusCode, 409);
+    assert.equal(
+      refused.body.error.code,
+      "autodev_control_api_provider_cannot_delegate"
+    );
+    assert.match(
+      refused.body.error.message,
+      /opencli cannot serve the orchestrator role/u
+    );
+    assert.equal(persistCalls, 0, "a refused assignment is not persisted");
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("opencli", "orchestrator") ?? null,
+      previous,
+      "and the refused assignment leaves no trace"
+    );
+
+    // Switching the role off is still allowed: an operator may turn a role
+    // off for a provider that cannot serve it.
+    const disabled = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { priority: "disabled", model: null }
+    });
+    assert.equal(disabled.response.statusCode, 200);
+
+    // The view reports the capability beside the priority, so the Console
+    // never shows a priority the router will not route to.
+    const view = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
+    assert.equal(view.response.statusCode, 200);
+    const opencli = view.body.providers.find(
+      (provider: { id: string }) => provider.id === "opencli"
+    );
+    assert.ok(opencli);
+    assert.equal(opencli.roles.orchestrator.canServe, false);
+    assert.match(
+      opencli.roles.orchestrator.cannotServeReason,
+      /no delegation path/u
+    );
+    // The other roles need no delegation path, so they are unaffected.
+    assert.equal(opencli.roles.subagent.canServe, true);
+    assert.equal(opencli.roles.subagent.cannotServeReason, null);
+  } finally {
+    if (previous)
+      ROUTING_POLICY.setProviderAssignment(
+        "opencli",
+        "orchestrator",
+        previous
+      );
+    else ROUTING_POLICY.clearProviderAssignment("opencli", "orchestrator");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
 test("operator role PATCH configures and validates reasoning effort, respecting model catalogs and Antigravity fixed suffixes", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
@@ -1585,6 +1669,11 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
       reasoningEffortInForce: true,
       supportedReasoningLevels: [],
       mutable: true,
+      // The capability is a fact about the provider, separate from the
+      // operator's switch: Claude can create child agents, so it can serve the
+      // orchestrator whatever the switch says.
+      canServe: true,
+      cannotServeReason: null,
       // The GET surface reports desired/observed generations but has no
       // runtime observation for this resource, so convergence stays
       // not-observed rather than inferring convergence from equal strings.

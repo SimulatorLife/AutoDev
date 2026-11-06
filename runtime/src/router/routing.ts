@@ -112,8 +112,17 @@ function normaliseLimit(value: unknown): number | null {
   return value;
 }
 
-/** Why a provider/model route may not serve a role right now. */
-export type RouteDisabledReason = "provider_disabled" | "model_disabled";
+/**
+ * Why a provider/model route may not serve a role right now.
+ *
+ * `provider_cannot_delegate` is a capability, not a switch: the provider is
+ * enabled and ranked for the role, and no operator action can make it serve
+ * that tier, because the orchestrator's whole job is delegating.
+ */
+export type RouteDisabledReason =
+  | "provider_disabled"
+  | "model_disabled"
+  | "provider_cannot_delegate";
 
 export interface ConfiguredModel {
   model: string;
@@ -583,6 +592,62 @@ export class RoutingPolicy {
     return assignment?.priority !== "disabled";
   }
 
+  /**
+   * The capability a provider needs to serve a role at all.
+   *
+   * The orchestrator's job is delegating, so a provider that cannot create
+   * Codex children cannot serve the orchestrator tier however it is enabled and
+   * ranked. This is deliberately a separate fact from enablement: the Console
+   * and the router status used to report a provider as enabled for the
+   * orchestrator while the router refused to route to it, so an operator
+   * disabled every other provider on the strength of that report and was then
+   * told no provider was enabled -- when the one that was enabled could never
+   * have served the role. Enablement answers "did the operator switch this
+   * on?"; this answers "can it serve at all?".
+   */
+  providerRoleCapabilityReason(
+    provider: unknown,
+    role: ProviderRole
+  ): "provider_cannot_delegate" | null {
+    if (role !== "orchestrator") return null;
+    if (typeof provider !== "string" || provider.trim().length === 0)
+      return "provider_cannot_delegate";
+    return providerDelegates(provider) ? null : "provider_cannot_delegate";
+  }
+
+  /**
+   * Whether a provider can serve a role right now: enabled for it, and able to.
+   *
+   * The router's own filter and every surface that reports a provider's role
+   * participation read this one predicate, so "the Console shows it as
+   * enabled" and "the router will route to it" cannot drift apart.
+   */
+  canProviderServeRole(provider: unknown, role: ProviderRole): boolean {
+    return (
+      this.isProviderEnabledForRole(provider, role) &&
+      this.providerRoleCapabilityReason(provider, role) === null
+    );
+  }
+
+  /**
+   * Why a provider cannot serve a role, as one sentence, or null when it can.
+   *
+   * One source for the wording: the Console's refusal and the router's
+   * rejection both name the same cause, so an operator who reads one of them
+   * is not sent to a different explanation by the other.
+   */
+  providerRoleCapabilityExplanation(
+    provider: unknown,
+    role: ProviderRole
+  ): string | null {
+    if (this.providerRoleCapabilityReason(provider, role) === null) return null;
+    const name =
+      typeof provider === "string" && provider.trim().length > 0
+        ? provider.trim()
+        : "This provider";
+    return `${name} cannot serve the ${role} role: it has no delegation path, so it cannot create the child agents an orchestrator needs.`;
+  }
+
   /** The provider's assignment for a role, or `undefined` when unobserved. */
   assignmentFor(
     provider: unknown,
@@ -844,8 +909,8 @@ export class RoutingPolicy {
 
   /**
    * The single enablement check for a provider/model route: the provider must
-   * be enabled for the role and, when the route names a model, that model must
-   * be enabled too.
+   * be enabled for the role, must be able to serve it, and, when the route
+   * names a model, that model must be enabled too.
    */
   routeDisabledReason(
     route: { provider: string; model?: string | null | undefined },
@@ -853,6 +918,8 @@ export class RoutingPolicy {
   ): RouteDisabledReason | null {
     if (!this.isProviderEnabledForRole(route.provider, role))
       return "provider_disabled";
+    const capability = this.providerRoleCapabilityReason(route.provider, role);
+    if (capability !== null) return capability;
     if (
       typeof route.model === "string" &&
       route.model.trim().length > 0 &&
@@ -1086,12 +1153,38 @@ export class RoutingPolicy {
     const providers: string[] = [];
     for (const group of this.effectiveProviderGroups(tier, role)) {
       for (const provider of this.shuffleGroup(group, random)) {
-        if (!this.isProviderEnabledForRole(provider, role)) continue;
-        if (role === "orchestrator" && !providerDelegates(provider)) continue;
+        if (!this.canProviderServeRole(provider, role)) continue;
         providers.push(provider);
       }
     }
     return providers;
+  }
+
+  /**
+   * Why a tier has no provider to serve it, split by cause.
+   *
+   * An empty candidate list has two very different reasons, and the operator
+   * can only act on one of them: every provider is switched off (the enable
+   * switches are the fix), or the only enabled provider cannot serve the tier
+   * at all (no switch will make it serve). The router used to report the first
+   * cause for both, which sent the operator to a control surface that could
+   * not fix anything.
+   */
+  tierServingBlockers(tier: string, role: ProviderRole): {
+    readonly disabled: string[];
+    readonly cannotDelegate: string[];
+    readonly servable: string[];
+  } {
+    const disabled: string[] = [];
+    const cannotDelegate: string[] = [];
+    const servable: string[] = [];
+    for (const provider of this.effectiveProviderGroups(tier, role).flat()) {
+      if (!this.isProviderEnabledForRole(provider, role)) disabled.push(provider);
+      else if (this.providerRoleCapabilityReason(provider, role) !== null)
+        cannotDelegate.push(provider);
+      else servable.push(provider);
+    }
+    return { disabled, cannotDelegate, servable };
   }
 
   roleForModel(model: unknown): string | null {
@@ -1100,6 +1193,20 @@ export class RoutingPolicy {
     return match && this.config.roles[match[1]!.toLowerCase()]
       ? match[1]!.toLowerCase()
       : null;
+  }
+
+  /** The capability tier one role is served by, or null when it names none. */
+  tierForRole(role: unknown): string | null {
+    if (typeof role !== "string" || role.trim().length === 0) return null;
+    return this.config.roles[role.trim().toLowerCase()]?.tier ?? null;
+  }
+
+  /** The providers that can serve the orchestrator tier at all. */
+  orchestratorCapableProviders(): string[] {
+    return this.providerIds().filter(
+      (provider) =>
+        this.providerRoleCapabilityReason(provider, "orchestrator") === null
+    );
   }
 
   /**

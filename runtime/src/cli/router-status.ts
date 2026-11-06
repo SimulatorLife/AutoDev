@@ -61,6 +61,15 @@ writeLine("");
 writeLine(
   `Orchestrators: ${enabledOrchestratorProviders.length} enabled (${enabledOrchestratorProviders.join(", ") || "-"}), ${disabledOrchestratorProviders.length} disabled (${disabledOrchestratorProviders.join(", ") || "none"})`
 );
+// A provider that is enabled for the orchestrator and cannot serve it is a
+// different fault from one that is switched off: no enable switch will make it
+// delegate, so the operator needs a provider with a delegation path instead.
+const incapableOrchestratorProviders = routing.incapableOrchestratorProviders ?? [];
+if (incapableOrchestratorProviders.length > 0) {
+  writeLine(
+    `Cannot delegate (enabled for the orchestrator, but no delegation path): ${incapableOrchestratorProviders.join(", ")}`
+  );
+}
 writeLine(
   `Subagents: ${enabledSubagentProviders.length} enabled (${enabledSubagentProviders.join(", ") || "-"}), ${disabledSubagentProviders.length} disabled (${disabledSubagentProviders.join(", ") || "none"})`
 );

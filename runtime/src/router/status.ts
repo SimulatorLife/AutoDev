@@ -1,5 +1,7 @@
 export interface RouterProviderRuntimeStatus {
   orchestratorEnabled?: boolean;
+  /** Whether the provider can serve the orchestrator tier at all. */
+  orchestratorCapable?: boolean;
   subagentEnabled?: boolean;
   status?: string;
   orchestratorStatus?: string;
@@ -38,6 +40,8 @@ export interface RouterRuntimeStatus {
     enabledSubagentProviders?: string[];
     disabledOrchestratorProviders?: string[];
     disabledSubagentProviders?: string[];
+    /** Enabled for the orchestrator but unable to serve it. */
+    incapableOrchestratorProviders?: string[];
     disabledModels?: string[];
     providerGroups?: Record<string, unknown[]>;
     priorities?: Record<string, Record<string, unknown>>;
@@ -64,6 +68,7 @@ const ROUTING_KEYS = [
   "enabledSubagentProviders",
   "disabledOrchestratorProviders",
   "disabledSubagentProviders",
+  "incapableOrchestratorProviders",
   "disabledModels",
   "providerGroups",
   "priorities"
@@ -71,6 +76,7 @@ const ROUTING_KEYS = [
 
 const PROVIDER_RUNTIME_KEYS = [
   "orchestratorEnabled",
+  "orchestratorCapable",
   "subagentEnabled",
   "status",
   "orchestratorStatus",

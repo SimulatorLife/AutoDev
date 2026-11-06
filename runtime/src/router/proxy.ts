@@ -21,6 +21,7 @@ import {
   type Candidate,
   type OrchestratorCandidate,
   type ProviderRoute,
+  ROUTING_CONFIG,
   type RouteDisabledReason,
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
@@ -2957,6 +2958,7 @@ export async function proxyFallbackChain(
       : {})
   });
   if (!candidates || candidates.length === 0) {
+    const rejection = routingRejection(providerRole, role, subject);
     rejectFallbackChain(
       response,
       requestId,
@@ -2965,11 +2967,12 @@ export async function proxyFallbackChain(
       modelName,
       subject,
       workspace,
-      isOrchestratorTurn
+      isOrchestratorTurn,
+      rejection
     );
     endLogicalRequestSpan(logicalSpan, {
       status: "error",
-      errorMessage: "no provider candidates configured"
+      errorMessage: rejection.reason
     });
     return;
   }
@@ -3121,6 +3124,59 @@ export async function proxyFallbackChain(
   }
 }
 
+/**
+ * Why a tier had no candidate to serve a request.
+ *
+ * An empty candidate list is two different faults. "Every provider is
+ * disabled" is fixed by the enable switches. "The enabled provider cannot
+ * serve this role" is fixed by nothing the operator can switch: the
+ * orchestrator tier admits only providers with a delegation path, because an
+ * orchestrator's job is creating child agents. Reporting the first cause for
+ * both sent the operator to the enable switches with the provider already
+ * enabled -- which is how a session ended with "no enabled providers" while
+ * the one provider that was enabled could never have served the role.
+ */
+interface RoutingRejection {
+  readonly failureClass: "provider_disabled" | "provider_cannot_delegate";
+  readonly message: string;
+  readonly reason: string;
+}
+
+function routingRejection(
+  providerRole: "orchestrator" | "subagent",
+  role: string | null,
+  subject: string
+): RoutingRejection {
+  const tier =
+    providerRole === "orchestrator"
+      ? ROUTING_CONFIG.orchestrator.tier
+      : ROUTING_POLICY.tierForRole(role);
+  const blockers = tier
+    ? ROUTING_POLICY.tierServingBlockers(tier, providerRole)
+    : null;
+  const cannotDelegate = blockers?.cannotDelegate ?? [];
+  if (cannotDelegate.length > 0) {
+    const capable = ROUTING_POLICY.orchestratorCapableProviders();
+    const explanations = cannotDelegate
+      .map((provider) =>
+        ROUTING_POLICY.providerRoleCapabilityExplanation(provider, providerRole)
+      )
+      .filter((explanation): explanation is string => explanation !== null);
+    return {
+      failureClass: "provider_cannot_delegate",
+      message: `No provider can serve ${subject}: ${explanations.join(" ")} Enable a provider with a delegation path for it${
+        capable.length > 0 ? ` (${capable.join(", ")})` : ""
+      }.`,
+      reason: `no provider with a delegation path can serve ${subject}`
+    };
+  }
+  return {
+    failureClass: "provider_disabled",
+    message: `No enabled providers or models available for ${subject}.`,
+    reason: `no enabled provider can serve ${subject}`
+  };
+}
+
 function rejectFallbackChain(
   response: ServerResponse,
   requestId: string,
@@ -3129,7 +3185,8 @@ function rejectFallbackChain(
   modelName: string,
   subject: string,
   workspace: { key: string; cwd?: string | null } | null,
-  isOrchestratorTurn: boolean
+  isOrchestratorTurn: boolean,
+  rejection: RoutingRejection
 ): void {
   // A root orchestrator turn spawns nothing; only a child request is a spawn.
   if (!isOrchestratorTurn)
@@ -3151,18 +3208,18 @@ function rejectFallbackChain(
     workspace,
     outcome: "failure",
     status: 400,
-    failureClass: "provider_disabled"
+    failureClass: rejection.failureClass
   });
   sendJson(
     response,
     400,
     errorBody(
-      `No enabled providers or models available for ${subject}.`,
+      rejection.message,
       "router_provider_exhausted",
       {
         code: "router_provider_exhausted",
         retryable: false,
-        failureClass: "provider_disabled",
+        failureClass: rejection.failureClass,
         model: modelName,
         requestId
       }

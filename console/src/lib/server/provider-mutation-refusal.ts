@@ -20,7 +20,12 @@ const REFUSAL_BY_CODE: Readonly<Record<string, ControlRefusalReason>> = {
   autodev_control_api_invalid_body: "request_invalid",
   autodev_control_api_unknown_provider: "not_found",
   autodev_control_api_viewer_forbidden: "forbidden",
-  autodev_control_api_persistence_failed: "operation_failed"
+  autodev_control_api_persistence_failed: "operation_failed",
+  // The provider cannot serve that role at all. A different reason from
+  // `runtime_refused`, and it asks for a different next move: the change was
+  // well formed and the Runtime declined it on the provider's capability, so
+  // the operator picks another provider rather than editing the request.
+  autodev_control_api_provider_cannot_delegate: "provider_cannot_delegate"
 };
 
 export function providerMutationRefusalFor(
