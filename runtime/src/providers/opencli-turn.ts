@@ -65,75 +65,108 @@ export interface OpencliInvocation {
   readonly timeoutSeconds: number;
 }
 
+/**
+ * Runs one opencli command and returns the first row of its JSON result.
+ * The bridge supplies it: it owns the process, the cancellation, and waiting
+ * out a site session the daemon is still releasing.
+ */
+export type OpencliExec = (args: readonly string[]) => Promise<JsonRecord>;
+
 export interface OpencliSiteSpec {
   readonly site: OpencliSite;
-  /** Whether the site's adapter can continue a conversation by its id. */
-  readonly continues: boolean;
   /** Whether the prompt travels as an attached file rather than as argv. */
   readonly attachesPrompt: boolean;
-  /** The opencli arguments for one turn. */
-  args(invocation: OpencliInvocation): string[];
-  /** The model's reply, without what the adapter adds around it. */
-  reply(response: string): string;
+  /**
+   * One turn: the commands that deliver the prompt into the right site
+   * conversation and read back the reply, and the conversation it is in.
+   */
+  turn(invocation: OpencliInvocation, exec: OpencliExec): Promise<OpencliReply>;
 }
 
 const GEMINI_REPLY_PREFIX = "💬 ";
-
+const GEMINI_CONVERSATION_PATTERN = /\/app\/([\w-]+)/u;
 const JSON_FORMAT = ["-f", "json"] as const;
 
+/** The conversation a Gemini `/app/<id>` URL names, or null for any other page. */
+export function geminiConversationId(url: unknown): string | null {
+  return typeof url === "string"
+    ? (GEMINI_CONVERSATION_PATTERN.exec(url)?.[1] ?? null)
+    : null;
+}
+
 /**
- * Every served site's adapter contract, checked against opencli 2.0.2's
- * `--help -f json`.
+ * Every served site's adapter contract, checked against opencli 2.0.2.
+ *
+ * Both sites continue a conversation, so a turn after the first sends only
+ * what the site has not seen. Without that, every request re-sends the whole
+ * transcript, which grows with every tool output until it no longer fits:
+ * a Gemini worker turn was refused after ~25 tool calls once its prompt
+ * passed the command-line limit.
  *
  * - ChatGPT takes the prompt as an attachment (`ask-file`), which keeps the
- *   reply detection reliable and whitespace exact, and continues a
- *   conversation with `--conversation`.
- * - Gemini's `ask` takes the prompt on the command line and offers no way to
- *   name a conversation, so every turn starts a new chat with the whole
- *   transcript.
+ *   reply detection reliable and whitespace exact, and names the conversation
+ *   to continue with `--conversation`; the reply row carries its id.
+ * - Gemini's `ask` takes the prompt on the command line and continues
+ *   whichever conversation its tab shows. A continued turn therefore opens the
+ *   conversation first (`detail <id>`), and every turn reads the conversation
+ *   id back from the tab (`status`), since `ask` does not report it. The bridge
+ *   runs a site's turns one at a time, so nothing moves the tab in between.
+ *   `ask` also decorates every reply with a speech bubble, which is the
+ *   adapter's, not the model's, and is removed.
  */
 export const OPENCLI_SITE_SPECS: Readonly<
   Record<OpencliSite, OpencliSiteSpec>
 > = {
   chatgpt: {
     site: "chatgpt",
-    continues: true,
     attachesPrompt: true,
-    args: (invocation) => [
-      "chatgpt",
-      "ask-file",
-      ATTACHED_PROMPT_MESSAGE,
-      "--file",
-      invocation.promptFile,
-      ...(invocation.conversationId
-        ? ["--conversation", invocation.conversationId]
-        : ["--new", "true"]),
-      "--timeout",
-      String(invocation.timeoutSeconds),
-      ...JSON_FORMAT
-    ],
-    reply: (response) => response
+    turn: async (invocation, exec) =>
+      replyFromRow(
+        await exec([
+          "chatgpt",
+          "ask-file",
+          ATTACHED_PROMPT_MESSAGE,
+          "--file",
+          invocation.promptFile,
+          ...(invocation.conversationId
+            ? ["--conversation", invocation.conversationId]
+            : ["--new", "true"]),
+          "--timeout",
+          String(invocation.timeoutSeconds),
+          ...JSON_FORMAT
+        ])
+      )
   },
   gemini: {
     site: "gemini",
-    continues: false,
     attachesPrompt: false,
-    args: (invocation) => [
-      "gemini",
-      "ask",
-      invocation.prompt,
-      "--new",
-      "true",
-      "--timeout",
-      String(invocation.timeoutSeconds),
-      ...JSON_FORMAT
-    ],
-    // opencli 2.0.2's `gemini ask` decorates every reply with a speech
-    // bubble; it is the adapter's, not the model's.
-    reply: (response) =>
-      response.startsWith(GEMINI_REPLY_PREFIX)
-        ? response.slice(GEMINI_REPLY_PREFIX.length)
-        : response
+    turn: async (invocation, exec) => {
+      if (invocation.conversationId)
+        await exec([
+          "gemini",
+          "detail",
+          invocation.conversationId,
+          ...JSON_FORMAT
+        ]);
+      const { response } = replyFromRow(
+        await exec([
+          "gemini",
+          "ask",
+          invocation.prompt,
+          ...(invocation.conversationId ? [] : ["--new", "true"]),
+          "--timeout",
+          String(invocation.timeoutSeconds),
+          ...JSON_FORMAT
+        ])
+      );
+      const status = await exec(["gemini", "status", ...JSON_FORMAT]);
+      return {
+        response: response.startsWith(GEMINI_REPLY_PREFIX)
+          ? response.slice(GEMINI_REPLY_PREFIX.length)
+          : response,
+        conversationId: geminiConversationId(status.Url)
+      };
+    }
   }
 };
 
@@ -302,16 +335,13 @@ function stringField(record: JsonRecord, ...keys: string[]): string | null {
 }
 
 /**
- * The reply in opencli's JSON envelope: `{ ok: true, data: [row] }` or
- * `{ ok: false, error: { code, message, exitCode, hint } }`.
- *
- * `ask` names the conversation `conversationId`, `ask-file` names it
- * `conversation_id`; both are read.
+ * The first row of opencli's JSON envelope: `{ ok: true, data: [row] }`, or
+ * the typed failure in `{ ok: false, error: { code, message, exitCode, hint } }`.
  */
 export function parseOpencliOutput(
   stdout: string,
   exitCode: number | null
-): OpencliReply {
+): JsonRecord {
   const trimmed = stdout.trim();
   let envelope: unknown;
   try {
@@ -342,16 +372,24 @@ export function parseOpencliOutput(
   const row = Array.isArray(envelope.data) ? envelope.data[0] : envelope.data;
   if (!isRecord(row))
     throw new OpencliCommandError(
-      "opencli returned no reply row",
+      "opencli returned no result row",
       "INVALID_OUTPUT",
       exitCode
     );
+  return row;
+}
+
+/**
+ * The reply an `ask` row carries. `ask` names the conversation
+ * `conversationId`, `ask-file` names it `conversation_id`; both are read.
+ */
+export function replyFromRow(row: JsonRecord): OpencliReply {
   const response = stringField(row, "response");
   if (response === null)
     throw new OpencliCommandError(
       "opencli returned an empty reply",
       "EMPTY_RESPONSE",
-      exitCode
+      null
     );
   return {
     response,

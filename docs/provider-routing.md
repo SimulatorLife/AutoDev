@@ -2155,26 +2155,38 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   sandbox with its approvals and hooks; prose becomes a message item. A call
   to an unknown tool or with non-JSON arguments is passed through as written
   so Codex's own error output tells the model what it got wrong.
-- **One command per turn.** ChatGPT runs `opencli chatgpt ask-file` with the
-  prompt attached as `turn.md` and a constant short message. A prompt typed
-  into the composer is rendered as Markdown in the user bubble, which no
-  longer equals the prompt opencli pairs replies against, and opencli then
-  waits out its timeout on a reply that already arrived; an attachment also
-  keeps indentation exact. Gemini runs `opencli gemini ask` with the prompt on
-  the command line in a new chat (its adapter can neither attach nor name a
-  conversation); a prompt over 200 KB is refused as
-  `provider_request_unsupported`.
+- **ChatGPT.** A turn runs `opencli chatgpt ask-file` with the prompt
+  attached as `turn.md` and a constant short message, and names the
+  conversation to continue with `--conversation <id>`; the reply row carries
+  the id. A prompt typed into the composer is rendered as Markdown in the user
+  bubble, which no longer equals the prompt opencli pairs replies against, and
+  opencli then waits out its timeout on a reply that already arrived; an
+  attachment also keeps indentation exact.
+- **Gemini.** `opencli gemini ask` takes the prompt on the command line and
+  continues whichever conversation its tab shows, and does not report which.
+  A continued turn therefore first reopens the conversation
+  (`gemini detail <id>`), and every turn reads the id back from the tab
+  (`gemini status`, `/app/<id>`). `ask` also prefixes every reply with `💬 `,
+  which the spec strips. A prompt over 200 KB is refused as
+  `provider_request_unsupported`; with continuation only a first turn or one
+  enormous tool output can reach that.
 - **Conversation continuity.** Codex re-sends the whole conversation each
-  request. For a site that can continue a conversation (ChatGPT,
-  `--conversation <id>`), the bridge records, after each reply, a rolling
-  digest of the transcript that reply ends; a request whose transcript starts
-  with a recorded prefix sends only what follows (the tool outputs and new
-  messages) into the same web conversation. Entries are single-use, so a
-  retry or fork starts a fresh conversation rather than appending to one
-  whose history no longer matches. Tool-result affinity routes a call's
-  output back to opencli, so the continuation normally lands here.
+  request. Without continuation the prompt grows with every tool output: a
+  Gemini worker turn was refused after ~25 tool calls once its prompt passed
+  the command-line limit (session `01a1b1d9-7a1e-73c3-947b-1a953fb708eb`).
+  After each reply the bridge records a rolling digest of the transcript that
+  reply ends; a request whose transcript starts with a recorded prefix sends
+  only what follows (the tool outputs and new messages) into the same web
+  conversation. Entries are single-use, so a retry or fork starts a fresh
+  conversation rather than appending to one whose history no longer matches.
+  Tool-result affinity routes a call's output back to opencli, so the
+  continuation normally lands here.
 - **Serialisation.** A site is one browser tab: turns for the same site queue
-  in the bridge; different sites run in parallel.
+  in the bridge; different sites run in parallel. A command the bridge
+  cancels ends at once, but opencli's daemon keeps the site session until
+  that command's browser step finishes, so the next command can be refused
+  with `SESSION_BUSY`; the bridge waits that out (retrying every 5 s) until
+  the turn's own timeout instead of failing the turn.
 - **Failures.** opencli's error envelope is classified before any output, so
   the router can fall back: a site usage limit is a `429` with the limit
   headers, opencli's `TIMEOUT` (exit 75) a `408` -- fallbackable but, unlike

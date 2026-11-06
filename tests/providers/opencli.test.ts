@@ -21,14 +21,15 @@ import {
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
   ATTACHED_PROMPT_MESSAGE,
+  geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
   OpencliConversationLedger,
-  type OpencliReply,
   opencliToolCallItem,
   parseOpencliOutput,
   parseOpencliReply,
   prefixDigests,
+  replyFromRow,
   transcriptSegments
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 import {
@@ -95,75 +96,145 @@ test("the shipped routing config routes exactly the served sites", () => {
     assert.equal(groups.flat().includes("opencli"), false);
 });
 
-test("ChatGPT turns attach the prompt and continue by conversation id", () => {
-  const fresh = OPENCLI_SITE_SPECS.chatgpt.args({
-    prompt: "ignored",
-    promptFile: "/tmp/x/turn.md",
-    conversationId: null,
-    timeoutSeconds: 300
-  });
-  assert.deepEqual(fresh, [
-    "chatgpt",
-    "ask-file",
-    ATTACHED_PROMPT_MESSAGE,
-    "--file",
-    "/tmp/x/turn.md",
-    "--new",
-    "true",
-    "--timeout",
-    "300",
-    "-f",
-    "json"
+function recordingExec(rows: JsonRecord[]): {
+  exec: (args: readonly string[]) => Promise<JsonRecord>;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  return {
+    calls,
+    exec: async (args) => {
+      calls.push([...args]);
+      const row = rows.shift();
+      if (!row) throw new Error("no fake row left");
+      return row;
+    }
+  };
+}
+
+test("ChatGPT turns attach the prompt and continue by conversation id", async () => {
+  const fresh = recordingExec([{ response: "Hi", conversation_id: "c1" }]);
+  assert.deepEqual(
+    await OPENCLI_SITE_SPECS.chatgpt.turn(
+      {
+        prompt: "ignored",
+        promptFile: "/tmp/x/turn.md",
+        conversationId: null,
+        timeoutSeconds: 300
+      },
+      fresh.exec
+    ),
+    { response: "Hi", conversationId: "c1" }
+  );
+  assert.deepEqual(fresh.calls, [
+    [
+      "chatgpt",
+      "ask-file",
+      ATTACHED_PROMPT_MESSAGE,
+      "--file",
+      "/tmp/x/turn.md",
+      "--new",
+      "true",
+      "--timeout",
+      "300",
+      "-f",
+      "json"
+    ]
   ]);
-  const continued = OPENCLI_SITE_SPECS.chatgpt.args({
-    prompt: "ignored",
-    promptFile: "/tmp/x/turn.md",
-    conversationId: "abc",
-    timeoutSeconds: 300
-  });
-  assert.deepEqual(continued.slice(5, 7), ["--conversation", "abc"]);
-  assert.equal(continued.includes("--new"), false);
+  const continued = recordingExec([
+    { response: "Again", conversation_id: "c1" }
+  ]);
+  await OPENCLI_SITE_SPECS.chatgpt.turn(
+    {
+      prompt: "ignored",
+      promptFile: "/tmp/x/turn.md",
+      conversationId: "abc",
+      timeoutSeconds: 300
+    },
+    continued.exec
+  );
+  assert.deepEqual(continued.calls[0]!.slice(5, 7), ["--conversation", "abc"]);
+  assert.equal(continued.calls[0]!.includes("--new"), false);
 });
 
-test("Gemini turns pass the prompt on the command line in a new chat", () => {
-  const args = OPENCLI_SITE_SPECS.gemini.args({
-    prompt: "the prompt",
-    promptFile: "/unused",
-    conversationId: null,
-    timeoutSeconds: 60
-  });
-  assert.deepEqual(args, [
-    "gemini",
-    "ask",
-    "the prompt",
-    "--new",
-    "true",
-    "--timeout",
-    "60",
-    "-f",
-    "json"
+test("Gemini turns read the conversation id back and reopen it to continue", async () => {
+  const fresh = recordingExec([
+    { response: "💬 PONG" },
+    {
+      Status: "Connected",
+      Url: "https://gemini.google.com/app/0c7fc86c8c985ae2"
+    }
   ]);
-  assert.equal(OPENCLI_SITE_SPECS.gemini.continues, false);
-  assert.equal(OPENCLI_SITE_SPECS.gemini.reply("💬 PONG"), "PONG");
-  assert.equal(OPENCLI_SITE_SPECS.chatgpt.reply("💬 kept"), "💬 kept");
+  assert.deepEqual(
+    await OPENCLI_SITE_SPECS.gemini.turn(
+      {
+        prompt: "the prompt",
+        promptFile: "/unused",
+        conversationId: null,
+        timeoutSeconds: 60
+      },
+      fresh.exec
+    ),
+    // The adapter's speech-bubble decoration is not the model's.
+    { response: "PONG", conversationId: "0c7fc86c8c985ae2" }
+  );
+  assert.deepEqual(fresh.calls, [
+    [
+      "gemini",
+      "ask",
+      "the prompt",
+      "--new",
+      "true",
+      "--timeout",
+      "60",
+      "-f",
+      "json"
+    ],
+    ["gemini", "status", "-f", "json"]
+  ]);
+  const continued = recordingExec([
+    { Index: 1 },
+    { response: "next" },
+    { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
+  ]);
+  await OPENCLI_SITE_SPECS.gemini.turn(
+    {
+      prompt: "only the delta",
+      promptFile: "/unused",
+      conversationId: "0c7fc86c8c985ae2",
+      timeoutSeconds: 60
+    },
+    continued.exec
+  );
+  assert.deepEqual(continued.calls, [
+    ["gemini", "detail", "0c7fc86c8c985ae2", "-f", "json"],
+    ["gemini", "ask", "only the delta", "--timeout", "60", "-f", "json"],
+    ["gemini", "status", "-f", "json"]
+  ]);
+  assert.equal(geminiConversationId("https://gemini.google.com/app"), null);
 });
 
 test("the opencli JSON envelope yields the reply or a typed failure", () => {
   assert.deepEqual(
-    parseOpencliOutput(
-      '{"ok":true,"data":[{"conversationId":"c1","conversationUrl":"u","tool":"","response":"Hi"}]}',
-      0
+    replyFromRow(
+      parseOpencliOutput(
+        '{"ok":true,"data":[{"conversationId":"c1","conversationUrl":"u","tool":"","response":"Hi"}]}',
+        0
+      )
     ),
     { response: "Hi", conversationId: "c1" }
   );
   // `ask-file` spells the id in snake_case.
   assert.deepEqual(
-    parseOpencliOutput(
-      '{"ok":true,"data":[{"conversation_id":"c2","attachments":1,"response":"Yo"}]}',
-      0
+    replyFromRow(
+      parseOpencliOutput(
+        '{"ok":true,"data":[{"conversation_id":"c2","attachments":1,"response":"Yo"}]}',
+        0
+      )
     ),
     { response: "Yo", conversationId: "c2" }
   );
+  assert.throws(() => replyFromRow({ attachments: 1 }), /empty reply/u);
   assert.throws(
     () =>
       parseOpencliOutput(
@@ -273,7 +344,7 @@ interface FakeRun {
 }
 
 async function withBridge(
-  replies: Array<OpencliReply | Error>,
+  replies: Array<JsonRecord | Error>,
   body: (baseUrl: string, runs: FakeRun) => Promise<void>,
   authToken = ""
 ): Promise<void> {
@@ -283,14 +354,16 @@ async function withBridge(
     authToken,
     turnTimeoutSeconds: 30,
     tempRoot,
+    sessionBusyRetryMs: 1,
     run: async (request) => {
       runs.requests.push(request);
       const fileIndex = request.args.indexOf("--file");
-      runs.prompts.push(
-        fileIndex === -1
-          ? String(request.args[2])
-          : readFileSync(String(request.args[fileIndex + 1]), "utf8")
-      );
+      if (request.args[1] === "ask" || request.args[1] === "ask-file")
+        runs.prompts.push(
+          fileIndex === -1
+            ? String(request.args[2])
+            : readFileSync(String(request.args[fileIndex + 1]), "utf8")
+        );
       const reply = replies.shift();
       if (!reply) throw new Error("no fake reply left");
       if (reply instanceof Error) throw reply;
@@ -484,6 +557,77 @@ test("the bridge refuses requests it cannot serve before running opencli", async
       );
     },
     "secret"
+  );
+});
+
+test("a busy site session is waited out instead of failing the turn", async () => {
+  await withBridge(
+    [
+      new OpencliCommandError(
+        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
+        "SESSION_BUSY",
+        1
+      ),
+      { response: "done", conversation_id: "c1" }
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt",
+        input: "hi"
+      });
+      assert.equal(reply.status, 200);
+      assert.equal(runs.requests.length, 2);
+    }
+  );
+});
+
+test("a Gemini worker turn continues its web conversation with only the new items", async () => {
+  await withBridge(
+    [
+      {
+        response:
+          '💬 <tool_call name="exec">\ntext(await tools.exec_command({cmd: "ls"}));\n</tool_call>'
+      },
+      { Url: "https://gemini.google.com/app/abc123" },
+      { Index: 1 },
+      { response: "💬 Listed." },
+      { Url: "https://gemini.google.com/app/abc123" }
+    ],
+    async (baseUrl, runs) => {
+      const input: JsonRecord[] = [userMessage("List the files.")];
+      const first = await post(baseUrl, {
+        model: "opencli-gemini",
+        tools: [EXEC_TOOL],
+        input
+      });
+      const firstBody = (await first.json()) as { output: JsonRecord[] };
+      const call = firstBody.output.find(
+        (item) => item.type === "custom_tool_call"
+      )!;
+      const second = await post(baseUrl, {
+        model: "opencli-gemini",
+        tools: [EXEC_TOOL],
+        input: [
+          ...input,
+          ...firstBody.output,
+          {
+            type: "custom_tool_call_output",
+            call_id: call.call_id,
+            output: "a.txt\nb.txt\n"
+          }
+        ]
+      });
+      assert.equal(second.status, 200);
+      assert.deepEqual(runs.requests[2]!.args, [
+        "gemini",
+        "detail",
+        "abc123",
+        "-f",
+        "json"
+      ]);
+      assert.match(runs.prompts[1]!, /a\.txt/u);
+      assert.doesNotMatch(runs.prompts[1]!, /List the files\./u);
+    }
   );
 });
 

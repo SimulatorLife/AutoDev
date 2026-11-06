@@ -23,6 +23,7 @@ import {
 } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
@@ -56,6 +57,7 @@ import {
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
   OpencliConversationLedger,
+  type OpencliExec,
   type OpencliReply,
   type OpencliSiteSpec,
   opencliToolCallItem,
@@ -93,15 +95,14 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 export interface OpencliRunRequest {
-  readonly spec: OpencliSiteSpec;
   readonly args: readonly string[];
   readonly signal: AbortSignal;
 }
 
-/** Runs one opencli command to completion and returns its parsed reply. */
+/** Runs one opencli command to completion and returns its first result row. */
 export type OpencliRunner = (
   request: OpencliRunRequest
-) => Promise<OpencliReply>;
+) => Promise<Record<string, unknown>>;
 
 export interface OpencliBridgeOptions {
   readonly run: OpencliRunner;
@@ -110,7 +111,13 @@ export interface OpencliBridgeOptions {
   readonly ledger?: OpencliConversationLedger;
   /** Where per-turn prompt files are written; the OS temp dir by default. */
   readonly tempRoot?: string;
+  /** How long to wait before re-trying a site session opencli reports busy. */
+  readonly sessionBusyRetryMs?: number;
 }
+
+/** opencli's code for a site session another command still holds. */
+const SESSION_BUSY = "SESSION_BUSY";
+const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
@@ -432,9 +439,7 @@ export function createOpencliBridge(
     const spec = OPENCLI_SITE_SPECS[site];
     const tools = codexToolSurface(payload).tools;
     const segments = transcriptSegments(payload.input);
-    const resume = spec.continues
-      ? ledger.take(site, prefixDigests(segments))
-      : null;
+    const resume = ledger.take(site, prefixDigests(segments));
     const prompt = resume
       ? renderOpencliContinuation(segments.slice(resume.seen).join("\n\n"))
       : renderOpencliPrompt(
@@ -465,6 +470,39 @@ export function createOpencliBridge(
     };
   }
 
+  /**
+   * One opencli command for a turn, waiting out a busy site session.
+   *
+   * A command the bridge cancelled (its client went away) ends here at once,
+   * but opencli's daemon keeps driving the browser until that command's own
+   * step finishes, and holds the site session meanwhile. The next turn's
+   * command is then refused with `SESSION_BUSY` although nothing else wants
+   * the tab -- a worker turn failed that way. The session frees itself, so a
+   * busy refusal is retried until the turn's own timeout.
+   */
+  function execFor(signal: AbortSignal): OpencliExec {
+    const deadline = Date.now() + options.turnTimeoutSeconds * 1000;
+    const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
+    const attempt = async (args: readonly string[]): Promise<JsonRecord> => {
+      if (signal.aborted)
+        throw new OpencliCommandError("turn cancelled", "CANCELLED", null);
+      try {
+        return await options.run({ args, signal });
+      } catch (error) {
+        if (
+          !(error instanceof OpencliCommandError) ||
+          error.code !== SESSION_BUSY ||
+          Date.now() + retryMs > deadline
+        )
+          throw error;
+        writeErrorLine(`opencli site session busy; retrying in ${retryMs}ms`);
+        await sleep(retryMs);
+        return attempt(args);
+      }
+    };
+    return attempt;
+  }
+
   async function runTurn(
     turn: PreparedTurn,
     signal: AbortSignal
@@ -476,18 +514,14 @@ export function createOpencliBridge(
       const promptFile = path.join(directory, ATTACHED_PROMPT_FILE);
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, turn.prompt, { mode: 0o600 });
-      const args = turn.spec.args({
+      const invocation = {
         prompt: turn.prompt,
         promptFile,
         conversationId: turn.conversationId,
         timeoutSeconds: options.turnTimeoutSeconds
-      });
+      };
       return await queues.run(turn.site, () =>
-        signal.aborted
-          ? Promise.reject(
-              new OpencliCommandError("turn cancelled", "CANCELLED", null)
-            )
-          : options.run({ spec: turn.spec, args, signal })
+        turn.spec.turn(invocation, execFor(signal))
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -539,7 +573,7 @@ export function createOpencliBridge(
       response.removeListener("close", onClose);
     }
 
-    const parsed = parseOpencliReply(turn.spec.reply(reply.response));
+    const parsed = parseOpencliReply(reply.response);
     const output: JsonRecord[] = [];
     if (parsed.text || parsed.calls.length === 0)
       output.push(messageItem(parsed.text, `msg_${turnId(10)}`));
@@ -550,7 +584,7 @@ export function createOpencliBridge(
           callId: `call_${turnId(12)}`
         })
       );
-    if (turn.spec.continues && reply.conversationId) {
+    if (reply.conversationId) {
       const digests = prefixDigests([
         ...turn.segments,
         ...transcriptSegments(output)
