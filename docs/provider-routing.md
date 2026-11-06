@@ -2165,6 +2165,9 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   reaches a browser tab unless the operator adds `"opencli"` to a tier's
   group (for example a last group in `default`) or a request names
   `opencli-chatgpt`/`opencli-gemini` directly.
+- **Reply normalisation.** Each site spec's `reply` strips what the adapter
+  adds around the model's text (opencli's `gemini ask` prefixes every reply
+  with `💬 `), so the decoration never reaches Codex.
 - **Sites.** MiniMax is not served: opencli 2.0.2's `minimax` adapter has only
   a `music` command, no chat. Adding a site is one `OPENCLI_SITES` entry plus
   its `OPENCLI_SITE_SPECS` command line; the load-time check refuses a site

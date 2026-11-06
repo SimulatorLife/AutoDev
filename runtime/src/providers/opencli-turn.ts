@@ -73,7 +73,11 @@ export interface OpencliSiteSpec {
   readonly attachesPrompt: boolean;
   /** The opencli arguments for one turn. */
   args(invocation: OpencliInvocation): string[];
+  /** The model's reply, without what the adapter adds around it. */
+  reply(response: string): string;
 }
+
+const GEMINI_REPLY_PREFIX = "💬 ";
 
 const JSON_FORMAT = ["-f", "json"] as const;
 
@@ -107,7 +111,8 @@ export const OPENCLI_SITE_SPECS: Readonly<
       "--timeout",
       String(invocation.timeoutSeconds),
       ...JSON_FORMAT
-    ]
+    ],
+    reply: (response) => response
   },
   gemini: {
     site: "gemini",
@@ -122,7 +127,13 @@ export const OPENCLI_SITE_SPECS: Readonly<
       "--timeout",
       String(invocation.timeoutSeconds),
       ...JSON_FORMAT
-    ]
+    ],
+    // opencli 2.0.2's `gemini ask` decorates every reply with a speech
+    // bubble; it is the adapter's, not the model's.
+    reply: (response) =>
+      response.startsWith(GEMINI_REPLY_PREFIX)
+        ? response.slice(GEMINI_REPLY_PREFIX.length)
+        : response
   }
 };
 

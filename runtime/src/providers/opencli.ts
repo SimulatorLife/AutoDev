@@ -539,7 +539,7 @@ export function createOpencliBridge(
       response.removeListener("close", onClose);
     }
 
-    const parsed = parseOpencliReply(reply.response);
+    const parsed = parseOpencliReply(turn.spec.reply(reply.response));
     const output: JsonRecord[] = [];
     if (parsed.text || parsed.calls.length === 0)
       output.push(messageItem(parsed.text, `msg_${turnId(10)}`));

@@ -144,6 +144,8 @@ test("Gemini turns pass the prompt on the command line in a new chat", () => {
     "json"
   ]);
   assert.equal(OPENCLI_SITE_SPECS.gemini.continues, false);
+  assert.equal(OPENCLI_SITE_SPECS.gemini.reply("💬 PONG"), "PONG");
+  assert.equal(OPENCLI_SITE_SPECS.chatgpt.reply("💬 kept"), "💬 kept");
 });
 
 test("the opencli JSON envelope yields the reply or a typed failure", () => {
