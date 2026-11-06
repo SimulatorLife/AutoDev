@@ -76,6 +76,12 @@
       "baseUrl": "http://127.0.0.1:4003/v1",
       "healthUrl": "http://127.0.0.1:4003/health/liveliness",
       "envKey": "CODEX_ROUTER_COPILOT_API_KEY"
+    },
+    "opencli": {
+      "pattern": "^opencli-(?:chatgpt|gemini)$",
+      "baseUrl": "http://127.0.0.1:4004/v1",
+      "healthUrl": "http://127.0.0.1:4004/health/liveliness",
+      "envKey": "CODEX_ROUTER_OPENCLI_API_KEY"
     }
   },
   "providers": {
@@ -121,6 +127,16 @@
       "links": {
         "usage": "https://github.com/settings/billing/ai_usage",
         "documentation": "https://docs.github.com/en/copilot"
+      }
+    },
+    "opencli": {
+      "models": {
+        "default": "opencli-chatgpt",
+        "gemini": "opencli-gemini"
+      },
+      "links": {
+        "usage": "https://chatgpt.com/#settings",
+        "documentation": "https://github.com/jackwener/opencli"
       }
     },
     "codex": {

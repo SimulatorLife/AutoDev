@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -7,33 +5,23 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { httpHealthProbe } from "./health-probe.ts";
-import { LaunchdClient } from "./macos/launchd.ts";
-import { sleep } from "./sleep.ts";
-import { waitForProbe } from "./wait-for-probe.ts";
+import {
+  defaultOptionalBridgeDeps,
+  ensureOptionalBridge,
+  type OptionalBridgeDeps,
+  type OptionalBridgeOptions
+} from "./optional-bridge-ensure.ts";
 
-export interface CopilotEnsureOptions {
-  readonly host: string;
-  readonly port: number;
-  readonly label: string;
-  readonly domain: string;
-  readonly plist: string;
-  readonly launcher: string;
+export interface CopilotEnsureOptions extends Omit<
+  OptionalBridgeOptions,
+  "available"
+> {
   /**
    * Where the Copilot CLI is, or null when it is not installed. Resolved by
    * the same lookup the bridge spawns through, so this hook and the bridge
    * cannot disagree about whether a Copilot provider is available.
    */
   readonly copilotBin: string | null;
-  readonly readyTimeoutMs: number;
-  readonly logPath: string;
-}
-
-export interface CopilotEnsureDeps {
-  readonly launchd: Pick<LaunchdClient, "isLoaded" | "kickstart" | "bootstrap">;
-  readonly probe: () => Promise<boolean>;
-  readonly sleep: (ms: number) => Promise<void>;
-  readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -67,62 +55,19 @@ export function resolveCopilotEnsureOptions(
   };
 }
 
-function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
-  const endpoint = `http://${options.host}:${options.port}/health/liveliness`;
-  return {
-    launchd: new LaunchdClient(),
-    probe: httpHealthProbe(endpoint),
-    sleep,
-    startFallback: (launcher, logPath) => {
-      const runDir = path.dirname(logPath);
-      mkdirSync(runDir, { recursive: true, mode: 0o700 });
-      chmodSync(runDir, 0o700);
-      const fd = openSync(logPath, "a", 0o600);
-      chmodSync(logPath, 0o600);
-      const child = spawn("/bin/bash", [launcher], {
-        detached: true,
-        stdio: ["ignore", fd, fd]
-      });
-      child.unref();
-    }
-  };
-}
-
 /**
  * Preserve the router ensure hook's historical best-effort Copilot side effect
  * without reintroducing shell-owned decision logic. Copilot is optional: a
  * missing CLI or failed proxy never changes the router's successful result.
  */
-export async function ensureCopilotProxy(
+export function ensureCopilotProxy(
   options: CopilotEnsureOptions = resolveCopilotEnsureOptions(),
-  deps: CopilotEnsureDeps = defaultDeps(options)
+  deps: OptionalBridgeDeps = defaultOptionalBridgeDeps(options)
 ): Promise<boolean> {
-  if (await deps.probe()) return true;
-  if (!options.copilotBin) return true;
-
-  if (deps.launchd.isLoaded(options.label)) {
-    try {
-      deps.launchd.kickstart(options.label);
-    } catch {
-      /* best effort */
-    }
-    return waitForProbe(deps, options.readyTimeoutMs);
-  }
-
-  if (existsSync(options.plist)) {
-    try {
-      deps.launchd.bootstrap(options.plist);
-      if (await waitForProbe(deps, options.readyTimeoutMs)) return true;
-    } catch {
-      /* fall through to the sandbox fallback */
-    }
-  }
-
-  if (existsSync(options.launcher)) {
-    deps.startFallback(options.launcher, options.logPath);
-    return waitForProbe(deps, options.readyTimeoutMs);
-  }
-  return false;
+  return ensureOptionalBridge(
+    { ...options, available: options.copilotBin !== null },
+    deps
+  );
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

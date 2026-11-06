@@ -14,6 +14,8 @@ export * from "./install-state.ts";
 export * from "./macos/launchagent.ts";
 export * from "./macos/launchd.ts";
 export * from "./minimax-ensure.ts";
+export * from "./opencli-ensure.ts";
+export * from "./optional-bridge-ensure.ts";
 export * from "./router-ensure.ts";
 export * from "./runtime-files.ts";
 export * from "./runtime-reconciliation.ts";

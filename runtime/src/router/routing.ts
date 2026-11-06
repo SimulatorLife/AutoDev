@@ -16,7 +16,8 @@ import {
 import {
   ANTIGRAVITY_MODEL_PATTERN,
   CLAUDE_MODEL_PATTERN,
-  MINIMAX_MODEL_PATTERN
+  MINIMAX_MODEL_PATTERN,
+  OPENCLI_MODEL_PATTERN
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
@@ -170,6 +171,15 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     baseUrl: "http://127.0.0.1:4003/v1",
     healthUrl: "http://127.0.0.1:4003/health/liveliness",
     envKey: "CODEX_ROUTER_COPILOT_API_KEY"
+  },
+  {
+    provider: "opencli",
+    // One model per web chat site (`opencli-chatgpt`), served through the
+    // user's signed-in browser.
+    pattern: OPENCLI_MODEL_PATTERN,
+    baseUrl: "http://127.0.0.1:4004/v1",
+    healthUrl: "http://127.0.0.1:4004/health/liveliness",
+    envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
   }
 ];
 

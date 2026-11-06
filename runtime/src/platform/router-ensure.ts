@@ -19,6 +19,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { ensureOpencliProxy } from "./opencli-ensure.ts";
 import { sleep } from "./sleep.ts";
 
 export interface RouterEnsurePaths {
@@ -82,8 +83,13 @@ export interface RouterEnsureDeps {
   readonly rename: (from: string, to: string) => Promise<void>;
   readonly stat: (filePath: string) => Promise<{ size: number } | null>;
   readonly setExitHandler: (handler: () => void) => () => void;
-  /** Best-effort legacy side effect retained by the router ensure hook. */
-  readonly ensureCopilot?: () => Promise<boolean>;
+  /**
+   * The optional provider bridges (Copilot, opencli) the router ensure hook
+   * starts once the router itself is healthy. Each is best effort: an optional
+   * provider that is missing or fails to start never changes the router's
+   * result.
+   */
+  readonly ensureOptionalBridges?: readonly (() => Promise<boolean>)[];
 }
 
 export type RouterEnsureStatus =
@@ -294,7 +300,7 @@ export function createDefaultRouterEnsureDeps(
       }
     },
     setExitHandler: defaultSetExitHandler,
-    ensureCopilot: ensureCopilotProxy
+    ensureOptionalBridges: [ensureCopilotProxy, ensureOpencliProxy]
   };
 }
 
@@ -583,13 +589,18 @@ function lockDirCleanup(lockDir: string, owned: boolean): void {
   }
 }
 
-async function bestEffortCopilot(deps: RouterEnsureDeps): Promise<void> {
-  if (!deps.ensureCopilot) return;
-  try {
-    await deps.ensureCopilot();
-  } catch {
-    /* Copilot is an optional fallback. */
-  }
+async function bestEffortOptionalBridges(
+  deps: RouterEnsureDeps
+): Promise<void> {
+  await Promise.all(
+    (deps.ensureOptionalBridges ?? []).map(async (ensure) => {
+      try {
+        await ensure();
+      } catch {
+        /* Optional bridges are fallbacks; the router serves without them. */
+      }
+    })
+  );
 }
 
 export async function runRouterEnsure(
@@ -612,7 +623,7 @@ export async function runRouterEnsure(
 
     const launchdResult = await ensureViaLaunchd(deps, options);
     if (launchdResult === 0) {
-      await bestEffortCopilot(deps);
+      await bestEffortOptionalBridges(deps);
       return { status: "healthy-launchd", exitCode: 0 };
     }
     if (launchdResult === 1) {
@@ -626,7 +637,7 @@ export async function runRouterEnsure(
 
     const fallbackResult = await ensureViaFallback(deps, options);
     if (fallbackResult === 0) {
-      await bestEffortCopilot(deps);
+      await bestEffortOptionalBridges(deps);
       return { status: "healthy-fallback", exitCode: 0 };
     }
     if (fallbackResult === 3) {

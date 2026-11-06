@@ -91,6 +91,9 @@ test("root delegation suppresses policy for leaf models", () => {
   assert.equal(runHook("autodev/explorer"), "");
   assert.equal(runHook("autodev/worker"), "");
   assert.equal(runHook("sonnet"), "");
+  // A web chat site served through opencli is a leaf too.
+  assert.equal(runHook("opencli-chatgpt"), "");
+  assert.equal(runHook("opencli-gemini"), "");
 });
 
 test("root delegation logs hook input without putting it in the injected policy", () => {

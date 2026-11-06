@@ -16,7 +16,8 @@ const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 const PROVIDER_CATALOGUES = {
   antigravity: "config/catalogs/antigravity-model-catalog.json",
   claude: "config/catalogs/claude-model-catalog.json",
-  minimax: "config/catalogs/minimax-model-catalog.json"
+  minimax: "config/catalogs/minimax-model-catalog.json",
+  opencli: "config/catalogs/opencli-model-catalog.json"
 } as const;
 
 /**
@@ -42,9 +43,7 @@ function pricedModelIds(provider: string): Set<string> {
 }
 
 test("every model a provider's catalogue names has a price row", () => {
-  for (const [provider, cataloguePath] of Object.entries(
-    PROVIDER_CATALOGUES
-  )) {
+  for (const [provider, cataloguePath] of Object.entries(PROVIDER_CATALOGUES)) {
     const priced = pricedModelIds(provider);
     const catalogue = JSON.parse(
       readFileSync(join(REPO_ROOT, cataloguePath), "utf8")

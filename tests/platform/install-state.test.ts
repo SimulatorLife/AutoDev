@@ -11,7 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  ensureCopilotRouterAuth,
+  ensureBridgeRouterAuth,
   ensureRouterAuth
 } from "@simulatorlife/autodev-runtime/platform/install-state";
 
@@ -43,18 +43,21 @@ test("router auth creates a private token, preserves existing env content, and i
     );
   }));
 
-test("Copilot bridge auth is separate, private, and stable across installs", () =>
+test("bridge auth tokens are separate, private, and stable across installs", () =>
   withTempDir((directory) => {
     const path = join(directory, ".env");
     writeFileSync(path, "OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=router-token\n");
-    const token = ensureCopilotRouterAuth(path);
-    assert.match(token, /^[0-9a-f]{64}$/u);
+    const tokens = ensureBridgeRouterAuth(path);
+    assert.match(tokens.Copilot, /^[0-9a-f]{64}$/u);
+    assert.match(tokens.opencli, /^[0-9a-f]{64}$/u);
+    assert.notEqual(tokens.Copilot, tokens.opencli);
     const contents =
       `OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=router-token\n` +
-      `CODEX_ROUTER_COPILOT_API_KEY=${token}\n`;
+      `CODEX_ROUTER_COPILOT_API_KEY=${tokens.Copilot}\n` +
+      `CODEX_ROUTER_OPENCLI_API_KEY=${tokens.opencli}\n`;
     assert.equal(readFileSync(path, "utf8"), contents);
     assert.equal(lstatSync(path).mode & 0o777, 0o600);
-    assert.equal(ensureCopilotRouterAuth(path), token);
+    assert.deepEqual(ensureBridgeRouterAuth(path), tokens);
     assert.equal(readFileSync(path, "utf8"), contents);
   }));
 

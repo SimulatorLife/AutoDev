@@ -14,6 +14,8 @@ import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
 import { readClaudeOAuthToken } from "./claude-credential.ts";
 
+/** The marker `boundedResponseText` puts in an oversized-body error. */
+const SIZE_BOUND_MESSAGE = "size bound";
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
 // `agy models` performs its own remote listing and runs off the request/routing
 // path, so give this CLI source an independent, still-bounded deadline. The
@@ -412,7 +414,7 @@ export async function discoverMiniMaxModels(
       await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
     ) as unknown;
   } catch (error) {
-    if (error instanceof Error && error.message.includes("size bound"))
+    if (error instanceof Error && error.message.includes(SIZE_BOUND_MESSAGE))
       throw error;
     throw new Error("MiniMax model-list API returned invalid JSON.");
   }
@@ -430,40 +432,48 @@ function minimaxModelAdapter(
 }
 
 /**
- * The Copilot bridge's model list.
+ * A local bridge's own model list (`GET /v1/models`).
  *
- * Copilot is the one provider whose model set the Runtime does not learn
- * from the provider's own account API: the Copilot CLI chooses the model
- * behind the scenes, so the bridge serves a single model id and routes every
- * request through it. The bridge's own listing is therefore the authority on
- * what the Runtime can route to Copilot, and asking it is the same shape as
- * asking `agy models` for Antigravity.
+ * Copilot and opencli are the providers whose model set the Runtime does not
+ * learn from an account API. The Copilot CLI chooses its model behind the
+ * scenes, so its bridge serves a single id; opencli serves one id per web chat
+ * site it drives. Each bridge's listing is therefore the authority on what the
+ * Runtime can route to it, the same shape as asking `agy models` for
+ * Antigravity.
  *
- * Without this the provider had no discovery at all, which is not a cosmetic
- * gap: the Console offers a role the models the Runtime can route to that
- * provider, so an unobserved provider offered none, and the single Copilot
- * model in the catalogue could not be selected for any role.
+ * Without this such a provider had no discovery at all, which is not a
+ * cosmetic gap: the Console offers a role the models the Runtime can route to
+ * that provider, so an unobserved provider offered none, and its models in the
+ * catalogue could not be selected for any role.
  */
-export async function discoverCopilotModels(
-  env: NodeJS.ProcessEnv = process.env,
+export interface BridgeModelListSource {
+  /** The name the provider is reported under in errors. */
+  readonly label: string;
+  readonly host: string;
+  readonly port: string;
+}
+
+export async function discoverBridgeModels(
+  source: BridgeModelListSource,
   fetchImpl: typeof fetch = globalThis.fetch,
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
-  const host = env.COPILOT_PROXY_HOST?.trim() || "127.0.0.1";
-  const port = env.COPILOT_PROXY_PORT?.trim() || "4003";
   const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
   const signal =
     parentSignal === undefined
       ? timeout
       : AbortSignal.any([parentSignal, timeout]);
-  const response = await fetchImpl(`http://${host}:${port}/v1/models`, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    signal
-  });
+  const response = await fetchImpl(
+    `http://${source.host}:${source.port}/v1/models`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal
+    }
+  );
   if (!response.ok) {
     throw new Error(
-      `Copilot bridge model list returned HTTP ${response.status}.`
+      `${source.label} bridge model list returned HTTP ${response.status}.`
     );
   }
   let payload: unknown;
@@ -472,20 +482,40 @@ export async function discoverCopilotModels(
       await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
     ) as unknown;
   } catch (error) {
-    if (error instanceof Error && error.message.includes("size bound"))
+    if (error instanceof Error && error.message.includes(SIZE_BOUND_MESSAGE))
       throw error;
-    throw new Error("Copilot bridge model list returned invalid JSON.");
+    throw new Error(`${source.label} bridge model list returned invalid JSON.`);
   }
   return parseOpenAiModelList(payload);
 }
 
-function copilotModelAdapter(
-  env: NodeJS.ProcessEnv = process.env,
+export function copilotModelSource(
+  env: NodeJS.ProcessEnv = process.env
+): BridgeModelListSource {
+  return {
+    label: "Copilot",
+    host: env.COPILOT_PROXY_HOST?.trim() || "127.0.0.1",
+    port: env.COPILOT_PROXY_PORT?.trim() || "4003"
+  };
+}
+
+export function opencliModelSource(
+  env: NodeJS.ProcessEnv = process.env
+): BridgeModelListSource {
+  return {
+    label: "opencli",
+    host: env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
+    port: env.OPENCLI_PROXY_PORT?.trim() || "4004"
+  };
+}
+
+function bridgeModelAdapter(
+  source: BridgeModelListSource,
   fetchImpl: typeof fetch = globalThis.fetch
 ): ProviderModelDiscoveryAdapter {
   return {
-    source: "Copilot bridge GET /v1/models",
-    discover: (signal) => discoverCopilotModels(env, fetchImpl, signal)
+    source: `${source.label} bridge GET /v1/models`,
+    discover: (signal) => discoverBridgeModels(source, fetchImpl, signal)
   };
 }
 
@@ -572,7 +602,7 @@ export async function discoverClaudeModels(
       await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
     ) as unknown;
   } catch (error) {
-    if (error instanceof Error && error.message.includes("size bound"))
+    if (error instanceof Error && error.message.includes(SIZE_BOUND_MESSAGE))
       throw error;
     throw new Error("Claude model-list API returned invalid JSON.");
   }
@@ -700,7 +730,7 @@ export async function discoverCodexModels(
       await boundedResponseText(response, MAX_CODEX_MODEL_LIST_BYTES)
     ) as unknown;
   } catch (error) {
-    if (error instanceof Error && error.message.includes("size bound")) {
+    if (error instanceof Error && error.message.includes(SIZE_BOUND_MESSAGE)) {
       throw error;
     }
     throw new Error("Codex model-list API returned invalid JSON.");
@@ -725,7 +755,8 @@ function defaultAdapters(): Readonly<
     minimax: minimaxModelAdapter(),
     codex: codexModelAdapter(),
     claude: claudeModelAdapter(),
-    copilot: copilotModelAdapter()
+    copilot: bridgeModelAdapter(copilotModelSource()),
+    opencli: bridgeModelAdapter(opencliModelSource())
   };
 }
 

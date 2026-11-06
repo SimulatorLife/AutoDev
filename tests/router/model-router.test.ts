@@ -425,7 +425,12 @@ test("provider capabilities expose only providers with a real delegation path", 
 test("router status reports only providers with a delegation path", () => {
   const providers = getRouterStatus().providers;
   for (const [name, provider] of Object.entries(providers) as [string, any][]) {
-    assert.equal(provider.capabilities.subagentSpawn, name !== "minimax");
+    // MiniMax is a plain API and opencli a web chat: neither has a path that
+    // creates Codex children.
+    assert.equal(
+      provider.capabilities.subagentSpawn,
+      name !== "minimax" && name !== "opencli"
+    );
     assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
     assert.equal("mcp" in provider.capabilities, false);
     assert.equal("skills" in provider.capabilities, false);
@@ -8127,7 +8132,14 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   resetRouterTelemetry();
   routing.resetRoleAssignment("subagent");
   routing.resetRoleAssignment("orchestrator");
-  const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
+  const allProviders = [
+    "claude",
+    "antigravity",
+    "minimax",
+    "copilot",
+    "opencli",
+    "codex"
+  ];
   for (const provider of allProviders) {
     routing.setProviderAssignment(provider, "subagent", DISABLED_ASSIGNMENT);
     routing.setProviderAssignment(

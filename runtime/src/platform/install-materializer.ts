@@ -191,6 +191,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/claude-credential.ts",
   "runtime/src/providers/copilot.ts",
+  "runtime/src/providers/opencli.ts",
+  "runtime/src/providers/opencli-turn.ts",
   "runtime/src/providers/antigravity.ts",
   "runtime/src/providers/claude.ts",
   "runtime/src/providers/claude-codex-tools.ts",
@@ -220,6 +222,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/macos/launchagent.ts",
   "runtime/src/platform/router-ensure.ts",
   "runtime/src/platform/copilot-ensure.ts",
+  "runtime/src/platform/opencli-ensure.ts",
+  "runtime/src/platform/optional-bridge-ensure.ts",
   "runtime/src/platform/code-graph-ensure.ts",
   "runtime/src/platform/antigravity-ensure.ts",
   "runtime/src/platform/claude-ensure.ts",
@@ -274,17 +278,25 @@ export const HOOKS = [
   "ensure-codex-antigravity-proxy.sh",
   "ensure-codex-claude-bridge.sh",
   "ensure-codex-copilot-proxy.sh",
+  "ensure-codex-opencli-proxy.sh",
   "ensure-codex-model-router.sh",
   "ensure-codex-minimax-proxy.sh",
   "run-codex-antigravity-proxy.sh",
   "run-codex-claude-bridge.sh",
   "run-codex-copilot-cli-responses-proxy.sh",
+  "run-codex-opencli-proxy.sh",
   "run-codex-model-router.sh",
   "run-codex-console.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
 export const PROFILES = ["claude", "minimax", "antigravity"] as const;
-export const CATALOGS = ["claude", "minimax", "antigravity", "codex"] as const;
+export const CATALOGS = [
+  "claude",
+  "minimax",
+  "antigravity",
+  "opencli",
+  "codex"
+] as const;
 export const ROLES = [
   "browser-tester",
   "default",
@@ -323,7 +335,8 @@ export const LAUNCH_LABELS = [
   "com.codex.claude-bridge",
   "com.codex.minimax-proxy",
   "com.codex.antigravity-proxy",
-  "com.codex.copilot-proxy"
+  "com.codex.copilot-proxy",
+  "com.codex.opencli-proxy"
 ] as const;
 export const OBSOLETE_LAUNCH = [
   "com.codex.antigravity-litellm",

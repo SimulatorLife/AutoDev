@@ -19,7 +19,7 @@ import {
   resolveDependencyOptions
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
-import { ensureCopilotRouterAuth, ensureRouterAuth } from "./install-state.ts";
+import { ensureBridgeRouterAuth, ensureRouterAuth } from "./install-state.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -91,7 +91,7 @@ export function runInstallCommand(
     HOME: home
   };
   try {
-    ensureCopilotRouterAuth(path.join(codexHome, ".env"));
+    ensureBridgeRouterAuth(path.join(codexHome, ".env"));
     if (flags.routerAuth)
       ensureRouterAuth(
         process.env.CODEX_ENV_FILE ?? path.join(codexHome, ".env"),

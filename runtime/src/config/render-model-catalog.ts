@@ -202,7 +202,8 @@ const CODEX_ROLE_MODELS = [
 const PROVIDER_CATALOG_FILES = [
   "claude-model-catalog.json",
   "minimax-model-catalog.json",
-  "antigravity-model-catalog.json"
+  "antigravity-model-catalog.json",
+  "opencli-model-catalog.json"
 ] as const;
 
 const ROLE_ALIAS_NAMES = [

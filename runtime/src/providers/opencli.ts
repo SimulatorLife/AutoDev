@@ -1,0 +1,650 @@
+/**
+ * The opencli Responses bridge: Codex turns served by web chat sites.
+ *
+ * Codex -> Router -> this bridge (`127.0.0.1:4004`) -> `opencli <site> ...` ->
+ * the user's signed-in browser tab on chatgpt.com or gemini.google.com.
+ *
+ * Each `opencli-<site>` model is one site. A turn is one opencli command: the
+ * bridge renders the Codex conversation into a prompt (see `opencli-turn.ts`),
+ * waits for the site's reply, and returns it as Responses output items. Tool
+ * calls in the reply become `custom_tool_call`/`function_call` items that
+ * Codex executes; nothing runs inside the site or this bridge.
+ *
+ * A site is one browser tab, so turns for the same site run one at a time.
+ * Different sites run in parallel.
+ */
+
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import {
+  type OpencliCommand,
+  resolveOpencliCommand
+} from "@simulatorlife/autodev-runtime/shared/executables";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  sendJson,
+  sendUnsupportedRequestFailure
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
+  classifyCliLimit,
+  limitPayload,
+  limitResponseHeaders,
+  retryAfterSecondsFromLimit
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import {
+  OPENCLI_SITES,
+  type OpencliSite,
+  opencliSiteForModel
+} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
+
+import { codexToolCallEvents, codexToolSurface } from "./claude-codex-tools.ts";
+import { turnId } from "./codex-tool-turns.ts";
+import {
+  ATTACHED_PROMPT_FILE,
+  OPENCLI_SITE_SPECS,
+  OpencliCommandError,
+  OpencliConversationLedger,
+  type OpencliReply,
+  type OpencliSiteSpec,
+  opencliToolCallItem,
+  parseOpencliOutput,
+  parseOpencliReply,
+  prefixDigests,
+  renderOpencliContinuation,
+  renderOpencliPrompt,
+  transcriptSegments
+} from "./opencli-turn.ts";
+
+type JsonRecord = Record<string, unknown>;
+
+export const PROVIDER = "opencli";
+export const OPENCLI_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_OPENCLI_API_KEY";
+const DEFAULT_PORT = 4004;
+const DEFAULT_TURN_TIMEOUT_SECONDS = 600;
+/**
+ * The largest prompt passed on the command line. A site that takes its prompt
+ * as argv cannot carry a transcript past the platform's argument limit, and a
+ * prompt this long would also take minutes to type into a composer; such a
+ * request is refused so the router moves on to a route that can serve it.
+ */
+const MAX_ARGV_PROMPT_BYTES = 200_000;
+/** opencli's own exit code for a timed-out command. */
+const OPENCLI_TIMEOUT_EXIT_CODE = 75;
+const LIMIT_STATUS_CLASSES = new Set([
+  "throttled",
+  "session_limit",
+  "quota_exhausted"
+]);
+
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export interface OpencliRunRequest {
+  readonly spec: OpencliSiteSpec;
+  readonly args: readonly string[];
+  readonly signal: AbortSignal;
+}
+
+/** Runs one opencli command to completion and returns its parsed reply. */
+export type OpencliRunner = (
+  request: OpencliRunRequest
+) => Promise<OpencliReply>;
+
+export interface OpencliBridgeOptions {
+  readonly run: OpencliRunner;
+  readonly authToken: string;
+  readonly turnTimeoutSeconds: number;
+  readonly ledger?: OpencliConversationLedger;
+  /** Where per-turn prompt files are written; the OS temp dir by default. */
+  readonly tempRoot?: string;
+}
+
+/**
+ * Spawns opencli and collects its JSON result; aborting kills the process.
+ *
+ * opencli is resolved per turn rather than once at startup: a checkout whose
+ * dependencies are missing then fails each turn with a 503 the router routes
+ * around, instead of a bridge that crash-loops under launchd's KeepAlive.
+ */
+export function processRunner(
+  resolveCommand: () => OpencliCommand,
+  live: Set<ChildProcess> = new Set()
+): OpencliRunner {
+  return ({ args, signal }) =>
+    new Promise((resolve, reject) => {
+      const command = resolveCommand();
+      const child = spawn(command.command, [...command.args, ...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env
+      });
+      live.add(child);
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk: string) => {
+        stderr = (stderr + chunk).slice(-4000);
+      });
+      const onAbort = () => child.kill("SIGTERM");
+      signal.addEventListener("abort", onAbort, { once: true });
+      child.once("error", (error) => {
+        live.delete(child);
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      });
+      child.once("close", (code) => {
+        live.delete(child);
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
+          return;
+        }
+        try {
+          resolve(parseOpencliOutput(stdout, code));
+        } catch (error) {
+          if (error instanceof OpencliCommandError && stderr.trim())
+            error.message = `${error.message}; stderr: ${stderr.trim().slice(-800)}`;
+          reject(error);
+        }
+      });
+    });
+}
+
+/**
+ * One queue per site. A site is one browser tab: two commands on it at once
+ * would type into the same composer and read each other's replies.
+ */
+class SiteQueues {
+  private readonly tails = new Map<OpencliSite, Promise<unknown>>();
+  private readonly depth = new Map<OpencliSite, number>();
+
+  run<T>(site: OpencliSite, task: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(site) ?? Promise.resolve();
+    this.depth.set(site, (this.depth.get(site) ?? 0) + 1);
+    const next = previous
+      .catch(() => {})
+      .then(task)
+      .finally(() => this.depth.set(site, (this.depth.get(site) ?? 1) - 1));
+    this.tails.set(site, next);
+    return next;
+  }
+
+  status(): Record<string, number> {
+    return Object.fromEntries(
+      OPENCLI_SITES.map((site) => [site, this.depth.get(site) ?? 0])
+    );
+  }
+}
+
+async function bodyOf(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function messageItem(text: string, itemId: string): JsonRecord {
+  return {
+    id: itemId,
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text, annotations: [] }]
+  };
+}
+
+function messageEvents(
+  item: JsonRecord,
+  outputIndex: number
+): Array<[string, JsonRecord]> {
+  const itemId = String(item.id);
+  const content = (item.content as JsonRecord[])[0] ?? {
+    type: "output_text",
+    text: "",
+    annotations: []
+  };
+  const text = String(content.text ?? "");
+  const part = { type: "output_text", text: "", annotations: [] };
+  return [
+    [
+      "response.output_item.added",
+      {
+        type: "response.output_item.added",
+        output_index: outputIndex,
+        item: { ...item, status: "in_progress", content: [] }
+      }
+    ],
+    [
+      "response.content_part.added",
+      {
+        type: "response.content_part.added",
+        item_id: itemId,
+        output_index: outputIndex,
+        content_index: 0,
+        part
+      }
+    ],
+    [
+      "response.output_text.delta",
+      {
+        type: "response.output_text.delta",
+        item_id: itemId,
+        output_index: outputIndex,
+        content_index: 0,
+        delta: text
+      }
+    ],
+    [
+      "response.output_text.done",
+      {
+        type: "response.output_text.done",
+        item_id: itemId,
+        output_index: outputIndex,
+        content_index: 0,
+        text
+      }
+    ],
+    [
+      "response.content_part.done",
+      {
+        type: "response.content_part.done",
+        item_id: itemId,
+        output_index: outputIndex,
+        content_index: 0,
+        part: content
+      }
+    ],
+    [
+      "response.output_item.done",
+      {
+        type: "response.output_item.done",
+        output_index: outputIndex,
+        item
+      }
+    ]
+  ];
+}
+
+function responseObject(
+  id: string,
+  model: string,
+  status: string,
+  output: JsonRecord[]
+): JsonRecord {
+  const text = output
+    .filter((item) => item.type === "message")
+    .map((item) => String((item.content as JsonRecord[])[0]?.text ?? ""))
+    .join("");
+  return {
+    id,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    model,
+    status,
+    output,
+    output_text: text,
+    // A web chat reports no token counts.
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
+  };
+}
+
+function sendStream(
+  response: ServerResponse,
+  responseId: string,
+  model: string,
+  output: JsonRecord[]
+): void {
+  let sequence = 0;
+  const lines: string[] = [];
+  const emit = (event: string, body: JsonRecord) => {
+    lines.push(
+      `event: ${event}\ndata: ${JSON.stringify({ ...body, sequence_number: ++sequence })}\n\n`
+    );
+  };
+  emit("response.created", {
+    type: "response.created",
+    response: responseObject(responseId, model, "in_progress", [])
+  });
+  output.forEach((item, index) => {
+    const events =
+      item.type === "message"
+        ? messageEvents(item, index)
+        : codexToolCallEvents(item, index);
+    for (const [event, body] of events) emit(event, body);
+  });
+  emit("response.completed", {
+    type: "response.completed",
+    response: responseObject(responseId, model, "completed", output)
+  });
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "close"
+  });
+  response.end(lines.join(""));
+}
+
+/**
+ * Answer a failed turn before any output, so the router can fall back.
+ *
+ * A limit the site reported ("You've reached the limit...") is a 429 carrying
+ * the limit headers. A timeout is a 408: the router falls back on it but,
+ * unlike a 5xx, does not re-send the turn to this route, which would hold the
+ * caller through a second full `--timeout` on a site that just failed to
+ * answer. Any other failure -- a signed-out browser, a site whose page changed
+ * under its adapter, a missing opencli -- is a 503, which the router treats as
+ * this provider being unavailable for the turn.
+ */
+function sendFailure(response: ServerResponse, error: unknown): void {
+  const message = errorMessage(error);
+  const exitCode = error instanceof OpencliCommandError ? error.exitCode : null;
+  const code = error instanceof OpencliCommandError ? error.code : null;
+  writeErrorLine(`opencli turn failed${code ? ` (${code})` : ""}: ${message}`);
+  if (response.headersSent || response.destroyed) return;
+  const limit = classifyCliLimit(message, exitCode);
+  const timedOut = code === "TIMEOUT" || exitCode === OPENCLI_TIMEOUT_EXIT_CODE;
+  const status =
+    limit && LIMIT_STATUS_CLASSES.has(limit.limitClass)
+      ? 429
+      : timedOut
+        ? 408
+        : 503;
+  const headers = limitResponseHeaders(limit);
+  const retryAfter = retryAfterSecondsFromLimit(limit);
+  if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
+  const declared = limitPayload(limit);
+  sendJson(
+    response,
+    status,
+    {
+      error: {
+        type: timedOut ? "timeout_error" : "opencli_proxy_error",
+        ...(code ? { code } : {}),
+        message,
+        ...(declared ? { limit: declared } : {})
+      }
+    },
+    headers
+  );
+}
+
+interface PreparedTurn {
+  readonly site: OpencliSite;
+  readonly spec: OpencliSiteSpec;
+  readonly model: string;
+  readonly stream: boolean;
+  readonly prompt: string;
+  readonly conversationId: string | null;
+  readonly segments: string[];
+  readonly tools: ReturnType<typeof codexToolSurface>["tools"];
+}
+
+export interface OpencliBridge {
+  handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
+  readonly ledger: OpencliConversationLedger;
+}
+
+export function createOpencliBridge(
+  options: OpencliBridgeOptions
+): OpencliBridge {
+  const ledger = options.ledger ?? new OpencliConversationLedger();
+  const queues = new SiteQueues();
+
+  function prepare(
+    payload: JsonRecord,
+    response: ServerResponse
+  ): PreparedTurn | null {
+    const model = typeof payload.model === "string" ? payload.model.trim() : "";
+    const site = opencliSiteForModel(model);
+    if (!site) {
+      sendJson(response, 400, {
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_model",
+          message: `opencli serves ${OPENCLI_SITES.map((name) => `opencli-${name}`).join(", ")}; got ${model || "no model"}`
+        }
+      });
+      return null;
+    }
+    if (requestCarriesImageContent(payload.input)) {
+      sendUnsupportedRequestFailure(
+        response,
+        PROVIDER,
+        "the opencli bridge sends a text prompt and cannot show the site an image"
+      );
+      return null;
+    }
+    const spec = OPENCLI_SITE_SPECS[site];
+    const tools = codexToolSurface(payload).tools;
+    const segments = transcriptSegments(payload.input);
+    const resume = spec.continues
+      ? ledger.take(site, prefixDigests(segments))
+      : null;
+    const prompt = resume
+      ? renderOpencliContinuation(segments.slice(resume.seen).join("\n\n"))
+      : renderOpencliPrompt(
+          typeof payload.instructions === "string" ? payload.instructions : "",
+          tools,
+          segments.join("\n\n")
+        );
+    if (
+      !spec.attachesPrompt &&
+      Buffer.byteLength(prompt) > MAX_ARGV_PROMPT_BYTES
+    ) {
+      sendUnsupportedRequestFailure(
+        response,
+        PROVIDER,
+        `the ${site} prompt is ${Buffer.byteLength(prompt)} bytes; opencli ${site} takes at most ${MAX_ARGV_PROMPT_BYTES} on its command line`
+      );
+      return null;
+    }
+    return {
+      site,
+      spec,
+      model,
+      stream: payload.stream === true,
+      prompt,
+      conversationId: resume?.conversationId ?? null,
+      segments,
+      tools
+    };
+  }
+
+  async function runTurn(
+    turn: PreparedTurn,
+    signal: AbortSignal
+  ): Promise<OpencliReply> {
+    const directory = mkdtempSync(
+      path.join(options.tempRoot ?? tmpdir(), "autodev-opencli-")
+    );
+    try {
+      const promptFile = path.join(directory, ATTACHED_PROMPT_FILE);
+      if (turn.spec.attachesPrompt)
+        writeFileSync(promptFile, turn.prompt, { mode: 0o600 });
+      const args = turn.spec.args({
+        prompt: turn.prompt,
+        promptFile,
+        conversationId: turn.conversationId,
+        timeoutSeconds: options.turnTimeoutSeconds
+      });
+      return await queues.run(turn.site, () =>
+        signal.aborted
+          ? Promise.reject(
+              new OpencliCommandError("turn cancelled", "CANCELLED", null)
+            )
+          : options.run({ spec: turn.spec, args, signal })
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  async function handleResponses(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    if (
+      options.authToken &&
+      request.headers.authorization !== `Bearer ${options.authToken}`
+    ) {
+      sendJson(response, 401, {
+        error: { type: "authentication_error", message: "unauthorized" }
+      });
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await bodyOf(request));
+    } catch {
+      payload = null;
+    }
+    if (!isRecord(payload)) {
+      sendJson(response, 400, {
+        error: { type: "invalid_request_error", message: "invalid JSON body" }
+      });
+      return;
+    }
+    const turn = prepare(payload, response);
+    if (!turn) return;
+
+    // A client that goes away cancels its turn: nothing keeps typing into the
+    // site for a caller that is no longer listening.
+    const controller = new AbortController();
+    const onClose = () => {
+      if (!response.writableEnded) controller.abort();
+    };
+    response.once("close", onClose);
+    let reply: OpencliReply;
+    try {
+      reply = await runTurn(turn, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) sendFailure(response, error);
+      return;
+    } finally {
+      response.removeListener("close", onClose);
+    }
+
+    const parsed = parseOpencliReply(reply.response);
+    const output: JsonRecord[] = [];
+    if (parsed.text || parsed.calls.length === 0)
+      output.push(messageItem(parsed.text, `msg_${turnId(10)}`));
+    for (const call of parsed.calls)
+      output.push(
+        opencliToolCallItem(call, turn.tools, {
+          itemId: `fc_${turnId(10)}`,
+          callId: `call_${turnId(12)}`
+        })
+      );
+    if (turn.spec.continues && reply.conversationId) {
+      const digests = prefixDigests([
+        ...turn.segments,
+        ...transcriptSegments(output)
+      ]);
+      const last = digests.at(-1);
+      if (last) ledger.record(turn.site, last, reply.conversationId);
+    }
+    writeErrorLine(
+      `opencli ${turn.site} turn: ${parsed.calls.length} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
+    );
+    const responseId = `resp_${turnId(12)}`;
+    if (turn.stream) sendStream(response, responseId, turn.model, output);
+    else
+      sendJson(
+        response,
+        200,
+        responseObject(responseId, turn.model, "completed", output)
+      );
+  }
+
+  async function handle(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname === "/health" || pathname === "/health/liveliness") {
+      sendJson(response, 200, {
+        status: "ok",
+        provider: PROVIDER,
+        queued: queues.status(),
+        conversations: ledger.size
+      });
+      return;
+    }
+    if (pathname === "/v1/models" && request.method === "GET") {
+      sendJson(response, 200, {
+        object: "list",
+        data: OPENCLI_SITES.map((site) => ({
+          id: `opencli-${site}`,
+          object: "model",
+          owned_by: "opencli"
+        }))
+      });
+      return;
+    }
+    if (pathname !== "/v1/responses" || request.method !== "POST") {
+      sendJson(response, 404, {
+        error: { message: "not found", type: "invalid_request_error" }
+      });
+      return;
+    }
+    try {
+      await handleResponses(request, response);
+    } catch (error) {
+      sendFailure(response, error);
+    }
+  }
+
+  return { handle, ledger };
+}
+
+const IS_MAIN =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (IS_MAIN) {
+  const host = process.env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1";
+  const port = parseNonNegativeInteger(
+    process.env.OPENCLI_PROXY_PORT,
+    DEFAULT_PORT
+  );
+  const live = new Set<ChildProcess>();
+  const bridge = createOpencliBridge({
+    run: processRunner(() => resolveOpencliCommand(), live),
+    authToken: process.env[OPENCLI_ROUTER_AUTH_VARIABLE] ?? "",
+    turnTimeoutSeconds: parseNonNegativeInteger(
+      process.env.OPENCLI_TURN_TIMEOUT_SECONDS,
+      DEFAULT_TURN_TIMEOUT_SECONDS
+    )
+  });
+  const server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  }).listen(port, host, () => {
+    writeErrorLine(
+      `opencli Responses proxy listening at http://${host}:${port}`
+    );
+  });
+  // A turn's opencli command is this process's child; stop it with the bridge
+  // so a restart leaves nothing typing into a site.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      for (const child of live) child.kill("SIGTERM");
+      server.close();
+      process.exit(0);
+    });
+  }
+}

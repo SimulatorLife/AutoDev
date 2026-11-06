@@ -30,6 +30,8 @@
     "./platform/code-graph-ensure": "./src/platform/code-graph-ensure.ts",
     "./platform/console-ensure": "./src/platform/console-ensure.ts",
     "./platform/copilot-ensure": "./src/platform/copilot-ensure.ts",
+    "./platform/opencli-ensure": "./src/platform/opencli-ensure.ts",
+    "./platform/optional-bridge-ensure": "./src/platform/optional-bridge-ensure.ts",
     "./platform/dependencies": "./src/platform/dependencies.ts",
     "./platform/health-probe": "./src/platform/health-probe.ts",
     "./platform/host-arch": "./src/platform/host-arch.ts",
@@ -56,6 +58,8 @@
     "./providers/copilot": "./src/providers/copilot.ts",
     "./providers/minimax": "./src/providers/minimax.ts",
     "./providers/model-discovery": "./src/providers/model-discovery.ts",
+    "./providers/opencli": "./src/providers/opencli.ts",
+    "./providers/opencli-turn": "./src/providers/opencli-turn.ts",
     "./router": "./src/router/index.ts",
     "./router/auth": "./src/router/auth.ts",
     "./router/concurrency": "./src/router/concurrency/index.ts",
@@ -110,6 +114,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@jackwener/opencli": "2.0.2",
     "@letta-ai/trajectory": "^0.4.3",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",

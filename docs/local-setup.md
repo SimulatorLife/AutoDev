@@ -770,6 +770,25 @@ its own health endpoint still reports it ready. The Copilot CLI's launcher is a
 `#!/usr/bin/env node` script, so the bridge puts its own Node first on the
 CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 
+The installer provisions `CODEX_ROUTER_OPENCLI_API_KEY` the same way for the
+opencli bridge (`com.codex.opencli-proxy`, `127.0.0.1:4004`), which the Router
+and `run-codex-opencli-proxy.sh` both load. opencli itself is not a global
+install: it is the Runtime's pinned `@jackwener/opencli` dependency, installed
+by `pnpm install --frozen-lockfile` and reached from the installed tree through
+its `node_modules` link, so launchd's `PATH` never decides which opencli runs
+(`OPENCLI_BIN` overrides it). Its pnpm `postinstall` (shell completions only)
+is not needed. What the installer cannot do is the browser side: install
+opencli's Browser Bridge Chrome extension and sign in to each site once, then
+confirm with:
+
+```bash
+node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor
+```
+
+```bash
+node runtime/node_modules/@jackwener/opencli/dist/src/main.js chatgpt status
+```
+
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash
@@ -811,7 +830,7 @@ Before launching the Next.js dev server (on port 3300 by default), `pnpm run dev
 
 - **Secret synchronization:** Ensures `console/.env.local` is materialized from the canonical secrets in `$CODEX_HOME/openlit-secrets.env`, updating it only when missing or out of sync.
 - **Backend reconciliation:** Checks Docker Engine, then invokes the canonical `scripts/openlit/up.sh` on every `pnpm run dev`. The locked image is reused when its pinned source/patch hash is unchanged, and Compose idempotently recreates only services whose image, environment, or bind-mounted config fingerprint changed. ClickHouse and OpenLIT readiness are checked after reconciliation; unchanged services and persistent volumes are preserved.
-- **The install reconciles the same stack:** `autodev install` restarts the supervised Console, whose launcher verifies the Runtime and Usage contracts before it serves a page — so the install brings the Usage stack up *before* it bootstraps the Console's job, through the same typed owner the development server uses (`runtime/src/platform/usage-stack.ts`). A stack that is not serving leaves the Console unbootstrapped, and the install says which service was missing rather than reporting the Console as broken.
+- **The install reconciles the same stack:** `autodev install` restarts the supervised Console, whose launcher verifies the Runtime and Usage contracts before it serves a page — so the install brings the Usage stack up _before_ it bootstraps the Console's job, through the same typed owner the development server uses (`runtime/src/platform/usage-stack.ts`). A stack that is not serving leaves the Console unbootstrapped, and the install says which service was missing rather than reporting the Console as broken.
 - **A backend that has not come up yet is not a broken service:** the Control API and Usage verifiers exit with the temporary-failure status (`EX_TEMPFAIL`, 75) when a backend did not answer, and with a failure status when a backend answered with a stale contract or a rejected credential. The Console's launcher passes that status through, and the installer treats it as a job that is still coming up: it keeps waiting for readiness instead of declaring a crash loop on a service that was about to serve.
 - **Convergence on an unresponsive Docker Engine:** Docker Desktop's API proxy aborts any Docker Engine call that misses its fixed 10-second deadline and reports it as `500 Internal Server Error`, which Compose prints as `dependency clickhouse failed to start: … check if the server supports the requested API version`. That message names an API version mismatch it did not find: the Engine simply did not answer in time, which happens when the host is loaded enough to starve the Docker VM. The same starved Engine also makes a health check fail to start inside the container, which Compose reports as `container openlit-clickhouse is unhealthy`. The runner retries `compose up -d` for those two failures alone — waiting for `docker info` to answer again and letting the stack settle between attempts — fails immediately on a Compose failure no retry can fix, and decides success on the stack's readiness (ClickHouse accepts an authenticated query, OpenLIT answers HTTP) rather than on Compose's exit code.
 - **Docker Engine prerequisite and automatic macOS launch:** Docker Engine is required for the local OpenLIT and ClickHouse Usage telemetry stack. On macOS (`darwin`), if the Docker daemon is not running, `pnpm run dev` automatically launches Docker Desktop (`open -a Docker`) and polls boundedly (up to 120 seconds) for Docker Engine to become responsive. On other platforms, Docker Engine must be running beforehand; if it is unavailable, startup fails immediately with a clear prerequisite error before attempting to start services.

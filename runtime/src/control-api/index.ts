@@ -1873,7 +1873,10 @@ function observedSkillUsage(): {
     { exposure: number; use: number; error: number }
   >;
 } {
-  const bySkill = new Map<string, { exposure: number; use: number; error: number }>();
+  const bySkill = new Map<
+    string,
+    { exposure: number; use: number; error: number }
+  >();
   const telemetry = getDefaultUsageTracker().usageTelemetry;
   for (const bucket of Object.values(telemetry.byWorkspace)) {
     // The exposures the bridges reported, per skill.
@@ -1900,7 +1903,11 @@ function observedSkillUsage(): {
     // a claim about a use that did not happen rather than about the failure
     // that did.
     for (const skill of bucket.skills.values()) {
-      const entry = bySkill.get(skill.skill) ?? { exposure: 0, use: 0, error: 0 };
+      const entry = bySkill.get(skill.skill) ?? {
+        exposure: 0,
+        use: 0,
+        error: 0
+      };
       entry.use += skill.uses;
       entry.error += skill.errors ?? 0;
       bySkill.set(skill.skill, entry);
@@ -2875,13 +2882,7 @@ function agentsView(
       const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
       const skills = Array.isArray(raw?.skills) ? raw.skills : [];
       const roleType = isOrchestrator ? "orchestrator" : "subagent";
-      const allowedProviders = [
-        "codex",
-        "claude",
-        "antigravity",
-        "copilot",
-        "minimax"
-      ].filter((provider) =>
+      const allowedProviders = ROUTING_POLICY.providerIds().filter((provider) =>
         ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
       );
       const promptPath = path.join(
@@ -3029,13 +3030,7 @@ function agentDetailView(
   // also give the reconciliation a digest of nothing to compare against.
   const rolePrompt = readRolePrompt(promptPath);
   const roleType = isOrchestrator ? "orchestrator" : "subagent";
-  const allowedProviders = [
-    "codex",
-    "claude",
-    "antigravity",
-    "copilot",
-    "minimax"
-  ].filter((provider) =>
+  const allowedProviders = ROUTING_POLICY.providerIds().filter((provider) =>
     ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
   );
 

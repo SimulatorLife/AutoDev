@@ -45,3 +45,28 @@ export const CLAUDE_MODEL_PATTERN =
 
 /** Every MiniMax model id, in MiniMax's own casing (`MiniMax-M3`, `MiniMax-M3.1-Flash-Preview`). */
 export const MINIMAX_MODEL_PATTERN = /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/;
+
+/**
+ * The chat sites the opencli bridge serves, each as one model.
+ *
+ * opencli drives a site's own web chat through the user's signed-in browser,
+ * so a "model" here is a site, not a weights version: `opencli-chatgpt` is
+ * whatever model chatgpt.com answers with for that account. The list is the
+ * single definition of which sites AutoDev routes to; the bridge's site
+ * registry (`runtime/src/providers/opencli-turn.ts`) must cover each one.
+ */
+export const OPENCLI_SITES = ["chatgpt", "gemini"] as const;
+
+export type OpencliSite = (typeof OPENCLI_SITES)[number];
+
+/** `opencli-<site>` for every served site, and nothing else. */
+export const OPENCLI_MODEL_PATTERN = new RegExp(
+  `^opencli-(?:${OPENCLI_SITES.join("|")})$`
+);
+
+/** The site an `opencli-<site>` model id names, or null for any other id. */
+export function opencliSiteForModel(model: unknown): OpencliSite | null {
+  if (typeof model !== "string" || !OPENCLI_MODEL_PATTERN.test(model))
+    return null;
+  return model.slice("opencli-".length) as OpencliSite;
+}

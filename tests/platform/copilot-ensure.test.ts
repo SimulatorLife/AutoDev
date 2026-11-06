@@ -13,11 +13,11 @@ import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
 import {
-  type CopilotEnsureDeps,
   type CopilotEnsureOptions,
   ensureCopilotProxy,
   resolveCopilotEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/copilot-ensure";
+import type { OptionalBridgeDeps } from "@simulatorlife/autodev-runtime/platform/optional-bridge-ensure";
 import { findCodexAppMcpServer } from "@simulatorlife/autodev-runtime/shared/executables";
 
 function options(
@@ -37,7 +37,7 @@ function options(
   };
 }
 
-function deps(overrides: Partial<CopilotEnsureDeps> = {}): CopilotEnsureDeps {
+function deps(overrides: Partial<OptionalBridgeDeps> = {}): OptionalBridgeDeps {
   let loaded = false;
   return {
     launchd: {

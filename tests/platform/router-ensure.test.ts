@@ -738,13 +738,19 @@ test("runRouterEnsure returns healthy-launchd when the loaded job owns the liste
       probeResult: true,
       listenerPid: () => 4242
     });
-    let copilotEnsures = 0;
+    const bridgeEnsures: string[] = [];
     const ensureDeps: RouterEnsureDeps = {
       ...deps,
-      ensureCopilot: async () => {
-        copilotEnsures += 1;
-        return true;
-      }
+      ensureOptionalBridges: [
+        async () => {
+          bridgeEnsures.push("copilot");
+          return true;
+        },
+        async () => {
+          bridgeEnsures.push("opencli");
+          throw new Error("an optional bridge failing changes nothing");
+        }
+      ]
     };
     const result: RouterEnsureResult = await runRouterEnsure(
       ensureDeps,
@@ -752,7 +758,7 @@ test("runRouterEnsure returns healthy-launchd when the loaded job owns the liste
     );
     assert.equal(result.status, "healthy-launchd");
     assert.equal(result.exitCode, 0);
-    assert.equal(copilotEnsures, 1);
+    assert.deepEqual(bridgeEnsures.sort(), ["copilot", "opencli"]);
   });
 });
 

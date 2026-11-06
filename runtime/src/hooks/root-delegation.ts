@@ -15,7 +15,7 @@ type HookInput = {
   turn_id?: unknown;
 };
 const NON_ROOT_MODEL =
-  /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot)/;
+  /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/;
 
 function parseInput(raw: string): HookInput {
   try {

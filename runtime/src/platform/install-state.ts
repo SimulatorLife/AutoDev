@@ -12,7 +12,15 @@ import path from "node:path";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
-export const COPILOT_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_COPILOT_API_KEY";
+/**
+ * The private Router-to-bridge credentials, one per bridge that authenticates
+ * the router. Each is loaded by both the router's and that bridge's launcher,
+ * and never forwarded into the provider process the bridge runs.
+ */
+export const BRIDGE_ROUTER_AUTH_VARIABLES = {
+  Copilot: "CODEX_ROUTER_COPILOT_API_KEY",
+  opencli: "CODEX_ROUTER_OPENCLI_API_KEY"
+} as const;
 
 function existingToken(filePath: string, variable: string): string | null {
   if (!existsSync(filePath)) return null;
@@ -78,15 +86,26 @@ export function ensureRouterAuth(
   return result.token;
 }
 
-/** The private Router-to-Copilot bridge credential is loaded by both launchers. */
-export function ensureCopilotRouterAuth(filePath: string): string {
-  const result = ensurePrivateToken(filePath, COPILOT_ROUTER_AUTH_VARIABLE);
-  writeErrorLine(
-    result.created
-      ? `created Copilot bridge auth token in ${filePath}`
-      : `ok Copilot bridge auth token already exists in ${filePath}`
-  );
-  return result.token;
+/** Ensure every bridge's Router credential exists; returns each token by bridge. */
+export function ensureBridgeRouterAuth(
+  filePath: string
+): Record<keyof typeof BRIDGE_ROUTER_AUTH_VARIABLES, string> {
+  const tokens = {} as Record<
+    keyof typeof BRIDGE_ROUTER_AUTH_VARIABLES,
+    string
+  >;
+  for (const [bridge, variable] of Object.entries(
+    BRIDGE_ROUTER_AUTH_VARIABLES
+  ) as [keyof typeof BRIDGE_ROUTER_AUTH_VARIABLES, string][]) {
+    const result = ensurePrivateToken(filePath, variable);
+    writeErrorLine(
+      result.created
+        ? `created ${bridge} bridge auth token in ${filePath}`
+        : `ok ${bridge} bridge auth token already exists in ${filePath}`
+    );
+    tokens[bridge] = result.token;
+  }
+  return tokens;
 }
 
 function cli(argv: string[]): number {

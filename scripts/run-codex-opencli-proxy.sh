@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+codex_home="${CODEX_HOME:-$(dirname -- "$hook_dir")}"
+if [[ -z "${CODEX_ROUTER_OPENCLI_API_KEY:-}" && -f "$codex_home/.env" ]]; then
+  CODEX_ROUTER_OPENCLI_API_KEY="$(awk -F= '$1 == "CODEX_ROUTER_OPENCLI_API_KEY" { value = substr($0, index($0, "=") + 1) } END { print value }' "$codex_home/.env")"
+  if [[ -n "$CODEX_ROUTER_OPENCLI_API_KEY" ]]; then
+    export CODEX_ROUTER_OPENCLI_API_KEY
+  fi
+fi
+if [[ -z "${CODEX_ROUTER_OPENCLI_API_KEY:-}" ]]; then
+  echo "opencli bridge auth key is missing from $codex_home/.env; rerun the AutoDev installer." >&2
+  exit 78
+fi
+resolve_node() {
+  # launchd passes the native Node the installer resolved; PATH order alone
+  # can pick an Intel build that Rosetta translates on every cold start.
+  if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then printf '%s\n' "$AUTODEV_NODE_BIN"; return 0; fi
+  if command -v node >/dev/null 2>&1; then command -v node; return 0; fi
+  local candidate
+  for candidate in "$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" /opt/homebrew/bin/node /usr/local/bin/node; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+node_bin="$(resolve_node)" || { echo "run-codex-opencli-proxy: node not found" >&2; exit 127; }
+# The bridge is a typed AutoDev runtime module installed under CODEX_HOME. It
+# runs opencli from the Runtime's own @jackwener/opencli dependency, which the
+# installed tree reaches through its node_modules link.
+proxy_script="$codex_home/src/providers/opencli.ts"
+if [[ ! -f "$proxy_script" ]]; then
+  echo "opencli proxy source is missing: $proxy_script" >&2
+  echo "Run scripts/install.sh to deploy it." >&2
+  exit 1
+fi
+exec env OPENCLI_PROXY_HOST="${CODEX_OPENCLI_PROXY_HOST:-127.0.0.1}" OPENCLI_PROXY_PORT="${CODEX_OPENCLI_PROXY_PORT:-4004}" \
+  "$node_bin" "$proxy_script"

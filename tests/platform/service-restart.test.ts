@@ -9,6 +9,7 @@ import {
   LABEL_COPILOT_PROXY,
   LABEL_MINIMAX_PROXY,
   LABEL_MODEL_ROUTER,
+  LABEL_OPENCLI_PROXY,
   MANAGED_SERVICE_LABELS,
   type ManagedServiceLabel,
   restartServices,
@@ -22,7 +23,8 @@ const PORTS: Record<ManagedServiceLabel, number> = {
   [LABEL_CLAUDE_BRIDGE]: 4000,
   [LABEL_MINIMAX_PROXY]: 18_765,
   [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003
+  [LABEL_COPILOT_PROXY]: 4003,
+  [LABEL_OPENCLI_PROXY]: 4004
 };
 const JOB_PIDS: Record<ManagedServiceLabel, number> = {
   [LABEL_AUTODEV_CONSOLE]: 600,
@@ -30,7 +32,8 @@ const JOB_PIDS: Record<ManagedServiceLabel, number> = {
   [LABEL_CLAUDE_BRIDGE]: 200,
   [LABEL_MINIMAX_PROXY]: 300,
   [LABEL_ANTIGRAVITY_PROXY]: 400,
-  [LABEL_COPILOT_PROXY]: 500
+  [LABEL_COPILOT_PROXY]: 500,
+  [LABEL_OPENCLI_PROXY]: 700
 };
 
 function options(
@@ -787,7 +790,7 @@ test("a port held by a process this installer does not own is left alone and fal
   assert.match(stderr, /launchd could not load com\.codex\.copilot-proxy/u);
   assert.equal(
     fake.runs.length,
-    5,
+    6,
     "the direct ensure hooks start what launchd could not"
   );
 });

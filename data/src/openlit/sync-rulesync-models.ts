@@ -105,6 +105,15 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
       isDefault: true
     },
     {
+      providerId: "opencli",
+      displayName: "opencli Web Chat",
+      description:
+        "ChatGPT and Gemini web chat sites driven through opencli and the signed-in browser",
+      requiresVault: false,
+      configSchema: DEFAULT_CONFIG_SCHEMA,
+      isDefault: true
+    },
+    {
       providerId: "codex",
       displayName: "OpenAI Codex",
       description: "OpenAI Codex models managed by AutoDev router",
@@ -206,15 +215,17 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     // variant that can be left out, and a model the provider serves with no
     // price row is a model whose attempts the pricing cron skips, so its
     // traffic reads as though it cost nothing.
-    ...([
-      {
-        family: "gemini-3.8-flash",
-        name: "Gemini 3.8 Flash",
-        input: 0.5,
-        output: 3,
-        cacheRead: 0.05
-      }
-    ] as const).flatMap((entry) =>
+    ...(
+      [
+        {
+          family: "gemini-3.8-flash",
+          name: "Gemini 3.8 Flash",
+          input: 0.5,
+          output: 3,
+          cacheRead: 0.05
+        }
+      ] as const
+    ).flatMap((entry) =>
       (["low", "medium", "high"] as const).map((effort) => ({
         provider: "antigravity",
         modelId: `${entry.family}-${effort}`,
@@ -341,6 +352,35 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       cacheCreationPricePerMToken: 0,
       capabilities: ["chat", "tools"],
       isDefault: true
+    },
+
+    // opencli web chat sites: the user's own signed-in subscription, which
+    // reports no tokens and bills nothing per token.
+    {
+      provider: "opencli",
+      modelId: "opencli-chatgpt",
+      displayName: "ChatGPT (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli",
+      modelId: "opencli-gemini",
+      displayName: "Gemini (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
     },
 
     // Codex (OpenAI)

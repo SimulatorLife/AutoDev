@@ -6,6 +6,7 @@
 import { accessSync, constants, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
@@ -116,6 +117,59 @@ export function findCopilotBinary(
 ): string | null {
   try {
     return resolveCopilotBinary(env, home);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How to run opencli: `OPENCLI_BIN` as given, else the `@jackwener/opencli`
+ * entry point this Runtime depends on, run with the current Node.
+ *
+ * opencli is a package dependency of the Runtime rather than a global install,
+ * so the bridge and the installer resolve the exact version the lockfile pins.
+ * Its daemon is shared machine-wide on one port, and a second opencli version
+ * started beside it reports the daemon as stale; pinning one version keeps the
+ * bridge's CLI and the daemon it talks to in step. The launchd PATH names no
+ * version manager's bin directory, so resolving through the module graph is
+ * also what keeps the supervised bridge from depending on the login shell.
+ */
+export interface OpencliCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export function resolveOpencliCommand(
+  env: NodeJS.ProcessEnv = process.env
+): OpencliCommand {
+  const configured = env.OPENCLI_BIN?.trim();
+  if (configured) {
+    const resolved = configured.includes(path.sep)
+      ? configured
+      : findExecutable(configured, env.PATH ?? "");
+    if (resolved && isExecutable(resolved))
+      return { command: resolved, args: [] };
+    throw new Error(`opencli is not executable: ${configured}`);
+  }
+  let entry: string;
+  try {
+    entry = fileURLToPath(import.meta.resolve("@jackwener/opencli"));
+  } catch {
+    throw new Error(
+      "opencli is not installed; run pnpm install --frozen-lockfile in the AutoDev checkout."
+    );
+  }
+  if (!existsSync(entry))
+    throw new Error(`opencli entry point is missing: ${entry}`);
+  return { command: process.execPath, args: [entry] };
+}
+
+/** The same lookup without the failure, for callers that only ask whether it exists. */
+export function findOpencliCommand(
+  env: NodeJS.ProcessEnv = process.env
+): OpencliCommand | null {
+  try {
+    return resolveOpencliCommand(env);
   } catch {
     return null;
   }

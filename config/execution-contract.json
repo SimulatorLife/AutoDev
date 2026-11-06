@@ -453,6 +453,11 @@
       "permissionMode": "upstream",
       "delegation": "none"
     },
+    "opencli": {
+      "spawnTools": [],
+      "permissionMode": "upstream",
+      "delegation": "none"
+    },
     "copilot": {
       "spawnTools": [],
       "permissionMode": "configured",

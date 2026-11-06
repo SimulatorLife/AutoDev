@@ -40,12 +40,14 @@ export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
 export const LABEL_MINIMAX_PROXY = "com.codex.minimax-proxy";
 export const LABEL_ANTIGRAVITY_PROXY = "com.codex.antigravity-proxy";
 export const LABEL_COPILOT_PROXY = "com.codex.copilot-proxy";
+export const LABEL_OPENCLI_PROXY = "com.codex.opencli-proxy";
 export const MANAGED_SERVICE_LABELS = [
   LABEL_MODEL_ROUTER,
   LABEL_CLAUDE_BRIDGE,
   LABEL_MINIMAX_PROXY,
   LABEL_ANTIGRAVITY_PROXY,
   LABEL_COPILOT_PROXY,
+  LABEL_OPENCLI_PROXY,
   CONSOLE_SERVICE_LABEL
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
@@ -128,7 +130,8 @@ const SERVICE_PORTS = {
   [LABEL_CLAUDE_BRIDGE]: 4000,
   [LABEL_MINIMAX_PROXY]: 18_765,
   [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003
+  [LABEL_COPILOT_PROXY]: 4003,
+  [LABEL_OPENCLI_PROXY]: 4004
 } as const satisfies Record<
   Exclude<ManagedServiceLabel, typeof CONSOLE_SERVICE_LABEL>,
   number
@@ -179,6 +182,12 @@ function serviceSpecs(options: ServiceRestartOptions): readonly ServiceSpec[] {
       label: LABEL_COPILOT_PROXY,
       probe: "http://127.0.0.1:4003/health/liveliness",
       ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
+      required: false
+    },
+    {
+      label: LABEL_OPENCLI_PROXY,
+      probe: "http://127.0.0.1:4004/health/liveliness",
+      ownedPort: SERVICE_PORTS[LABEL_OPENCLI_PROXY],
       required: false
     }
   ];
@@ -391,6 +400,9 @@ function serviceLauncher(
     case LABEL_COPILOT_PROXY: {
       return path.join(hooks, "run-codex-copilot-cli-responses-proxy.sh");
     }
+    case LABEL_OPENCLI_PROXY: {
+      return path.join(hooks, "run-codex-opencli-proxy.sh");
+    }
     case LABEL_MINIMAX_PROXY: {
       return path.join(hooks, "ensure-codex-minimax-proxy.sh");
     }
@@ -427,6 +439,9 @@ function serviceHook(
     }
     case LABEL_COPILOT_PROXY: {
       return path.join(options.codexHome, "src", "providers", "copilot.ts");
+    }
+    case LABEL_OPENCLI_PROXY: {
+      return path.join(options.codexHome, "src", "providers", "opencli.ts");
     }
     case LABEL_MINIMAX_PROXY: {
       return path.join(options.codexHome, "src", "providers", "minimax.ts");
@@ -596,18 +611,15 @@ async function runDirectEnsures(
         `bridge start failed: ${script} (router will route around it)`
       );
   }
-  if (
-    run(
-      path.join(
-        options.repositoryRoot,
-        "scripts",
-        "ensure-codex-copilot-proxy.sh"
-      )
-    ) !== 0
-  )
-    writeErrorLine(
-      "bridge start failed: ensure-codex-copilot-proxy.sh (router will route around it)"
-    );
+  for (const script of [
+    "ensure-codex-copilot-proxy.sh",
+    "ensure-codex-opencli-proxy.sh"
+  ] as const) {
+    if (run(path.join(options.repositoryRoot, "scripts", script)) !== 0)
+      writeErrorLine(
+        `bridge start failed: ${script} (router will route around it)`
+      );
+  }
   return 0;
 }
 
