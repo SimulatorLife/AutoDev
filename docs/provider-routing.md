@@ -404,8 +404,13 @@ delegation paths:
   permitted (`spawnAllowed: true`, with `mcp(autodev_spawn)` already allowed)
   had no usable name.
 
-- MiniMax remains a leaf/default-tier provider. It has no supported
-  orchestration path and is therefore not a root-orchestrator fallback.
+- MiniMax delegates natively (`delegation: "native"`). It was marked `none`
+  on 2026-09-17 ("no supported orchestration path"), before code mode moved
+  every tool -- `multi_agent_v1__*` included -- into Codex's `exec` tool. The
+  MiniMax proxy is a pass-through Responses adapter, so a MiniMax model gets
+  the same `exec` surface a Codex-native model does and Codex runs its spawn
+  calls; the `none` marking was stale. It serves the orchestrator tier once
+  the operator gives it an Orchestrator priority.
 - Codex CLI defines subagent tools in a `type: "namespace"` structure (`multi_agent_v1`). The
   router flattens namespaced tools into standard `type: "function"` definitions
   (e.g., `multi_agent_v1__spawn_agent`) on every non-Codex route and re-expands
@@ -2161,7 +2166,11 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   the id. A prompt typed into the composer is rendered as Markdown in the user
   bubble, which no longer equals the prompt opencli pairs replies against, and
   opencli then waits out its timeout on a reply that already arrived; an
-  attachment also keeps indentation exact.
+  attachment also keeps indentation exact. Each turn attaches under a fresh
+  name (`turn-<random>.md`): ChatGPT renames an upload whose name it has seen
+  (`turn(20261106-183651).md`), and opencli matches its attachment chip only
+  by the uploaded name, so a reused name failed every later turn with "new
+  ready attachment chips did not appear".
 - **Gemini.** `opencli gemini ask` takes the prompt on the command line and
   continues whichever conversation its tab shows, and does not report which.
   A continued turn therefore first reopens the conversation
@@ -2197,10 +2206,17 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   crash-looping the launchd agent. Images are refused as
   `provider_request_unsupported`. A client that disconnects kills the opencli
   command.
-- **Capabilities.** The execution contract declares `delegation: "none"`: a
-  web chat cannot create Codex children, so opencli never enters the
-  orchestrator tier. Usage reports zero tokens and the models are priced at
-  zero, as the user's own subscription.
+- **Delegation.** The execution contract declares `delegation: "native"`:
+  the bridge relays Codex's own `exec` tool, whose `tools` global carries the
+  `multi_agent_v1__*` spawn and lifecycle functions on an orchestrator turn,
+  and Codex runs the calls the model writes in it -- the same path a
+  Codex-native model takes, with no shim. A child is therefore a real Codex
+  thread, routed through its own `autodev/<role>` alias, and opencli may serve
+  the orchestrator tier once the operator gives it an Orchestrator priority.
+  A parent's `wait_agent` is a Codex tool call, not a held site tab, so a
+  child served by the same site does not deadlock behind its parent. Usage
+  reports zero tokens and the models are priced at zero, as the user's own
+  subscription.
 - **Opt-in routing.** opencli is in no `providerGroups` tier, so no role
   reaches a browser tab until the operator gives it a priority in the Console
   (for example `Default: P3` with model `opencli-gemini`), exactly as for any

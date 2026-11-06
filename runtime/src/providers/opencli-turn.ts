@@ -20,7 +20,8 @@
  * process and the HTTP surface.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import path from "node:path";
 
 import {
   OPENCLI_SITES,
@@ -41,19 +42,32 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * The file name a turn's prompt is attached under: unique per turn.
+ *
+ * ChatGPT renames an upload whose name it has seen before
+ * (`turn(20261106-183651).md`), and opencli recognises its own attachment
+ * chip only by the name it uploaded (or a `name (N).ext` copy suffix), so a
+ * reused name left `ask-file` waiting for a chip it never matched -- every
+ * turn after the first few failed with "new ready attachment chips did not
+ * appear". A fresh name per turn is never renamed.
+ */
+export function attachedPromptFileName(): string {
+  return `turn-${randomBytes(6).toString("hex")}.md`;
+}
+
+/**
  * The short message sent alongside an attached prompt file.
  *
- * It never changes, so the site's reply detection -- which pairs the visible
- * user bubble with the prompt it was given -- always matches. A transcript
- * typed into the composer does not: the site renders its Markdown (fences
- * become labelled code blocks), the bubble no longer equals the prompt, and
- * opencli waits out its timeout on a reply that has already arrived.
+ * It is plain text with no Markdown, so the site's reply detection -- which
+ * pairs the visible user bubble with the prompt it was given -- always
+ * matches. A transcript typed into the composer does not: the site renders its
+ * Markdown (fences become labelled code blocks), the bubble no longer equals
+ * the prompt, and opencli waits out its timeout on a reply that already
+ * arrived.
  */
-export const ATTACHED_PROMPT_MESSAGE =
-  "Read the attached file turn.md and respond exactly as it instructs.";
-
-/** The file name the prompt is attached under; the message above names it. */
-export const ATTACHED_PROMPT_FILE = "turn.md";
+export function attachedPromptMessage(fileName: string): string {
+  return `Read the attached file ${fileName} and respond exactly as it instructs.`;
+}
 
 export interface OpencliInvocation {
   /** The prompt as text, for a site that takes it on the command line. */
@@ -125,7 +139,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
         await exec([
           "chatgpt",
           "ask-file",
-          ATTACHED_PROMPT_MESSAGE,
+          attachedPromptMessage(path.basename(invocation.promptFile)),
           "--file",
           invocation.promptFile,
           ...(invocation.conversationId
@@ -186,8 +200,17 @@ const RESPONSE_RULES = [
   "Never write a <tool_output> block yourself; only the agent produces those."
 ].join("\n\n");
 
-const CONTINUATION_RULES =
-  "The results of your tool calls, and any new messages, follow. Continue under the same rules: tool_call tags to act, plain text with no tags when you are done.";
+const CONTINUATION_HEADER =
+  "The conversation so far is in this chat's earlier messages. What follows is everything new since your last reply: the results of your tool calls and any new messages.";
+
+function toolsSection(tools: readonly CodexTool[]): string {
+  return tools.length > 0
+    ? `## Tools\n\n${codexToolReference(tools)}`
+    : "## Tools\n\nNo tools are available on this turn: answer in plain text.";
+}
+
+const NEXT_REPLY =
+  'Write the agent\'s next reply to the conversation above, following the rules under "How to respond".';
 
 /** The first prompt of a site conversation: everything the model needs. */
 export function renderOpencliPrompt(
@@ -201,17 +224,33 @@ export function renderOpencliPrompt(
     ...(instructions.trim()
       ? [`## Instructions\n\n${instructions.trim()}`]
       : []),
-    tools.length > 0
-      ? `## Tools\n\n${codexToolReference(tools)}`
-      : "## Tools\n\nNo tools are available on this turn: answer in plain text.",
+    toolsSection(tools),
     `## Conversation\n\n${transcript}`,
-    'Write the agent\'s next reply to the conversation above, following the rules under "How to respond".'
+    NEXT_REPLY
   ].join("\n\n");
 }
 
-/** A follow-up prompt inside a continued site conversation: only what is new. */
-export function renderOpencliContinuation(delta: string): string {
-  return `${CONTINUATION_RULES}\n\n${delta}`;
+/**
+ * A follow-up prompt inside a continued site conversation.
+ *
+ * The transcript is not repeated -- only what the site has not seen -- but the
+ * response rules and the tool reference are. A chat site does not keep an
+ * earlier attachment's text in the model's context: given only a tool output,
+ * ChatGPT read it as a document ("The attachment reports that subagent ... was
+ * spawned") and said it could not wait for the child, when the next step was a
+ * `wait_agent` call it no longer knew it had.
+ */
+export function renderOpencliContinuation(
+  tools: readonly CodexTool[],
+  delta: string
+): string {
+  return [
+    "# Codex agent turn (continued)",
+    RESPONSE_RULES,
+    toolsSection(tools),
+    `## New in the conversation\n\n${CONTINUATION_HEADER}\n\n${delta}`,
+    NEXT_REPLY
+  ].join("\n\n");
 }
 
 /**

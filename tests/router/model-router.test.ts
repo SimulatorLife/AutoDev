@@ -403,8 +403,10 @@ test("provider capabilities expose only providers with a real delegation path", 
       `${provider} must not declare capabilities in routing config`
     );
   }
-  assert.equal(providerCapabilities("minimax").subagentSpawn, false);
-  for (const provider of ["codex", "claude", "antigravity", "copilot"]) {
+  // Every shipped provider has a path: Codex, MiniMax and opencli call
+  // Codex's own `multi_agent_v1__*` functions through its `exec` tool, and the
+  // CLI bridges reach them through their spawn shims.
+  for (const provider of Object.keys(config.providers)) {
     assert.equal(
       providerCapabilities(provider).subagentSpawn,
       true,
@@ -425,11 +427,10 @@ test("provider capabilities expose only providers with a real delegation path", 
 test("router status reports only providers with a delegation path", () => {
   const providers = getRouterStatus().providers;
   for (const [name, provider] of Object.entries(providers) as [string, any][]) {
-    // MiniMax is a plain API and opencli a web chat: neither has a path that
-    // creates Codex children.
     assert.equal(
       provider.capabilities.subagentSpawn,
-      name !== "minimax" && name !== "opencli"
+      true,
+      `${name} has a delegation path`
     );
     assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
     assert.equal("mcp" in provider.capabilities, false);
@@ -1489,7 +1490,9 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     assert.deepEqual(status.spawnCapableProviders, [
       "antigravity",
       "claude",
+      "minimax",
       "copilot",
+      "opencli",
       "codex"
     ]);
     assert.equal(

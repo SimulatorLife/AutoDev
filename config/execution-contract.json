@@ -451,12 +451,12 @@
     "minimax": {
       "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "none"
+      "delegation": "native"
     },
     "opencli": {
       "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "none"
+      "delegation": "native"
     },
     "copilot": {
       "spawnTools": [],

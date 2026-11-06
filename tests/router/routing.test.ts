@@ -9,6 +9,8 @@ import {
   validateRoutingConfig
 } from "@simulatorlife/autodev-runtime/router/routing";
 
+import { useNonDelegatingContract } from "./non-delegating-contract.ts";
+
 const DISABLED_ASSIGNMENT = { priority: "disabled" as const, model: null };
 const MINIMAX_TEST_MODEL = "MiniMax-test-model";
 const CLAUDE_DEFAULT_TEST_MODEL = "claude-default-test-model";
@@ -660,7 +662,9 @@ test("a disabled tier assignment removes the provider from that tier only", () =
   );
 });
 
-test("the orchestrator tier admits only providers that can delegate, however they are ranked", () => {
+test("the orchestrator tier admits only providers that can delegate, however they are ranked", (t) => {
+  // Every shipped provider can delegate; this contract says MiniMax cannot.
+  t.after(useNonDelegatingContract("minimax"));
   const policy = assignmentTestPolicy();
   policy.setProviderAssignment("minimax", "orchestrator", {
     priority: 1,
@@ -673,5 +677,14 @@ test("the orchestrator tier admits only providers that can delegate, however the
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
     ["claude", "copilot"]
+  );
+  // opencli delegates through Codex's own exec tool, so it may orchestrate.
+  policy.setProviderAssignment("opencli", "orchestrator", {
+    priority: 3,
+    model: "opencli-chatgpt"
+  });
+  assert.deepEqual(
+    policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
+    ["claude", "copilot", "opencli"]
   );
 });

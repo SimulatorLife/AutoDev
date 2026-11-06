@@ -153,17 +153,17 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
   const providers = asObject(contract.providers);
   assert.deepEqual(
     Object.fromEntries(
-      ["codex", "claude", "antigravity", "copilot", "minimax"].map((name) => [
-        name,
-        asObject(providers[name]).delegation
-      ])
+      ["codex", "claude", "antigravity", "copilot", "minimax", "opencli"].map(
+        (name) => [name, asObject(providers[name]).delegation]
+      )
     ),
     {
       codex: "native",
       claude: "codex-shim",
       antigravity: "codex-shim",
       copilot: "codex-shim",
-      minimax: "none"
+      minimax: "native",
+      opencli: "native"
     }
   );
   const mcpTargets = asObject(rulesyncMcp);

@@ -11,6 +11,8 @@ import {
 } from "@simulatorlife/autodev-runtime/router/http";
 import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
 
+import { useNonDelegatingContract } from "./non-delegating-contract.ts";
+
 /**
  * A provider that cannot delegate is not an orchestrator provider.
  *
@@ -26,7 +28,11 @@ import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router
  * router about whether it can serve that role at all.
  */
 
-const OPENCLI = "opencli";
+// Every shipped provider can delegate, so this file runs against a contract
+// in which MiniMax declares no delegation path.
+const NON_DELEGATING = "minimax";
+const restoreContract = useNonDelegatingContract(NON_DELEGATING);
+test.after(restoreContract);
 const NON_DELEGATING_ROLES = ["default", "smart", "subagent"] as const;
 
 // The launcher publishes CODEX_ROUTER_AUTH_TOKEN into the launchd user
@@ -49,11 +55,11 @@ function closeServer(server: Server): Promise<void> {
 
 test("a provider with no delegation path is reported as unable to serve the orchestrator", () => {
   assert.equal(
-    routing.providerRoleCapabilityReason(OPENCLI, "orchestrator"),
+    routing.providerRoleCapabilityReason(NON_DELEGATING, "orchestrator"),
     "provider_cannot_delegate"
   );
   assert.equal(
-    routing.providerRoleCapabilityReason(OPENCLI, "subagent"),
+    routing.providerRoleCapabilityReason(NON_DELEGATING, "subagent"),
     null,
     "only the orchestrator needs a delegation path"
   );
@@ -66,11 +72,11 @@ test("a provider with no delegation path is reported as unable to serve the orch
   // The explanation names the provider and the cause, because it is the text
   // the operator reads on the Console and in the router's refusal.
   const explanation = routing.providerRoleCapabilityExplanation(
-    OPENCLI,
+    NON_DELEGATING,
     "orchestrator"
   );
   assert.ok(explanation);
-  assert.match(explanation, /opencli cannot serve the orchestrator role/u);
+  assert.match(explanation, /minimax cannot serve the orchestrator role/u);
   assert.match(explanation, /no delegation path/u);
   assert.equal(
     routing.providerRoleCapabilityExplanation("claude", "orchestrator"),
@@ -79,22 +85,29 @@ test("a provider with no delegation path is reported as unable to serve the orch
 });
 
 test("enablement and the ability to serve are separate facts", () => {
-  const previous = routing.assignmentFor(OPENCLI, "orchestrator") ?? null;
+  const previous =
+    routing.assignmentFor(NON_DELEGATING, "orchestrator") ?? null;
   try {
-    routing.setProviderAssignment(OPENCLI, "orchestrator", {
+    routing.setProviderAssignment(NON_DELEGATING, "orchestrator", {
       priority: 1,
-      model: "opencli-gemini"
+      model: "MiniMax-M3"
     });
 
     // Enabled for the role: the operator's switch, and the answer the Console
     // used to give on its own.
-    assert.equal(routing.isProviderEnabledForRole(OPENCLI, "orchestrator"), true);
+    assert.equal(
+      routing.isProviderEnabledForRole(NON_DELEGATING, "orchestrator"),
+      true
+    );
     // Cannot serve it: the router's own filter, which the surface above has to
     // agree with.
-    assert.equal(routing.canProviderServeRole(OPENCLI, "orchestrator"), false);
+    assert.equal(
+      routing.canProviderServeRole(NON_DELEGATING, "orchestrator"),
+      false
+    );
     assert.equal(
       routing.routeDisabledReason(
-        { provider: OPENCLI, model: "opencli-gemini" },
+        { provider: NON_DELEGATING, model: "MiniMax-M3" },
         "orchestrator"
       ),
       "provider_cannot_delegate"
@@ -103,24 +116,25 @@ test("enablement and the ability to serve are separate facts", () => {
     // A role with no delegation requirement is unaffected.
     for (const role of NON_DELEGATING_ROLES) {
       assert.equal(
-        routing.providerRoleCapabilityReason(OPENCLI, role),
+        routing.providerRoleCapabilityReason(NON_DELEGATING, role),
         null,
         `${role} needs no delegation path`
       );
     }
   } finally {
     if (previous)
-      routing.setProviderAssignment(OPENCLI, "orchestrator", previous);
-    else routing.clearProviderAssignment(OPENCLI, "orchestrator");
+      routing.setProviderAssignment(NON_DELEGATING, "orchestrator", previous);
+    else routing.clearProviderAssignment(NON_DELEGATING, "orchestrator");
   }
 });
 
 test("an empty tier says which cause emptied it: switched off, or unable to delegate", () => {
-  const previous = routing.assignmentFor(OPENCLI, "orchestrator") ?? null;
+  const previous =
+    routing.assignmentFor(NON_DELEGATING, "orchestrator") ?? null;
   try {
-    routing.setProviderAssignment(OPENCLI, "orchestrator", {
+    routing.setProviderAssignment(NON_DELEGATING, "orchestrator", {
       priority: 1,
-      model: "opencli-gemini"
+      model: "MiniMax-M3"
     });
 
     const blockers = routing.tierServingBlockers(
@@ -128,20 +142,20 @@ test("an empty tier says which cause emptied it: switched off, or unable to dele
       "orchestrator"
     );
     assert.ok(
-      blockers.cannotDelegate.includes(OPENCLI),
+      blockers.cannotDelegate.includes(NON_DELEGATING),
       "an enabled provider with no delegation path is named as the blocker"
     );
     assert.ok(
-      !blockers.servable.includes(OPENCLI),
+      !blockers.servable.includes(NON_DELEGATING),
       "and it is not counted as able to serve"
     );
     for (const provider of blockers.disabled) {
-      assert.notEqual(provider, OPENCLI);
+      assert.notEqual(provider, NON_DELEGATING);
     }
   } finally {
     if (previous)
-      routing.setProviderAssignment(OPENCLI, "orchestrator", previous);
-    else routing.clearProviderAssignment(OPENCLI, "orchestrator");
+      routing.setProviderAssignment(NON_DELEGATING, "orchestrator", previous);
+    else routing.clearProviderAssignment(NON_DELEGATING, "orchestrator");
   }
 });
 
@@ -159,15 +173,15 @@ test("an orchestrator request with only a non-delegating provider names the caus
     enabled: routing.isProviderEnabled(provider)
   }));
   try {
-    // Only opencli is enabled, and it is enabled for every role: the state the
+    // Only MiniMax is enabled, and it is enabled for every role: the state the
     // Console produced and the operator believed.
     for (const provider of providers) {
-      routing.setProviderEnabled(provider, provider === OPENCLI);
+      routing.setProviderEnabled(provider, provider === NON_DELEGATING);
     }
     for (const provider of providers) {
       routing.setProviderAssignment(provider, "orchestrator", {
-        priority: provider === OPENCLI ? 1 : ("disabled" as const),
-        model: provider === OPENCLI ? "opencli-gemini" : null
+        priority: provider === NON_DELEGATING ? 1 : ("disabled" as const),
+        model: provider === NON_DELEGATING ? "MiniMax-M3" : null
       });
     }
 
@@ -190,32 +204,35 @@ test("an orchestrator request with only a non-delegating provider names the caus
       // The cause is the provider's capability, not an enable switch: the
       // provider was enabled, and no switch would have served the request.
       assert.equal(body.error?.failureClass, "provider_cannot_delegate");
-      assert.match(body.error?.message, /opencli cannot serve the orchestrator/u);
+      assert.match(
+        body.error?.message,
+        /minimax cannot serve the orchestrator/u
+      );
       assert.doesNotMatch(
         body.error?.message,
         /No enabled providers/u,
         "the old message blamed the enable switches for a capability gap"
       );
 
-      // The router status agrees with the router: opencli is enabled for the
+      // The router status agrees with the router: MiniMax is enabled for the
       // orchestrator and cannot serve it.
       const status = getRouterStatus();
       assert.equal(status.routing.enabledOrchestratorProviders.length, 0);
       assert.deepEqual(status.routing.incapableOrchestratorProviders, [
-        OPENCLI
+        NON_DELEGATING
       ]);
       assert.equal(
-        status.providers[OPENCLI]?.orchestratorEnabled,
+        status.providers[NON_DELEGATING]?.orchestratorEnabled,
         true,
         "the operator's switch is still reported as it is"
       );
       assert.equal(
-        status.providers[OPENCLI]?.orchestratorCapable,
+        status.providers[NON_DELEGATING]?.orchestratorCapable,
         false,
         "and the capability is reported next to it"
       );
       assert.equal(
-        status.providers[OPENCLI]?.orchestratorStatus,
+        status.providers[NON_DELEGATING]?.orchestratorStatus,
         "cannot_delegate"
       );
     } finally {

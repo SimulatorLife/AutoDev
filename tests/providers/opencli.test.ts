@@ -20,7 +20,8 @@ import {
   type OpencliRunRequest
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
-  ATTACHED_PROMPT_MESSAGE,
+  attachedPromptFileName,
+  attachedPromptMessage,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -130,7 +131,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
     [
       "chatgpt",
       "ask-file",
-      ATTACHED_PROMPT_MESSAGE,
+      attachedPromptMessage("turn.md"),
       "--file",
       "/tmp/x/turn.md",
       "--new",
@@ -155,6 +156,17 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
   );
   assert.deepEqual(continued.calls[0]!.slice(5, 7), ["--conversation", "abc"]);
   assert.equal(continued.calls[0]!.includes("--new"), false);
+});
+
+test("every turn attaches its prompt under a fresh name the message names", () => {
+  // ChatGPT renames a repeated upload, which opencli then cannot match.
+  const first = attachedPromptFileName();
+  assert.match(first, /^turn-[0-9a-f]{12}\.md$/u);
+  assert.notEqual(first, attachedPromptFileName());
+  assert.equal(
+    attachedPromptMessage(first),
+    `Read the attached file ${first} and respond exactly as it instructs.`
+  );
 });
 
 test("Gemini turns read the conversation id back and reopen it to continue", async () => {
@@ -464,6 +476,10 @@ test("a tool call goes to Codex and its output continues the same site conversat
         ["--conversation", "conv-9"]
       );
       assert.match(runs.prompts[1]!, /\/Users\/me\/AutoDev/u);
+      // The rules and tools travel with every turn: the site does not keep an
+      // earlier attachment in the model's context.
+      assert.match(runs.prompts[1]!, /## How to respond/u);
+      assert.match(runs.prompts[1]!, /### `exec`/u);
       assert.doesNotMatch(runs.prompts[1]!, /Which directory is this\?/u);
     }
   );

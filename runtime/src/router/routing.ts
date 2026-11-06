@@ -10,7 +10,6 @@ import {
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import {
-  providerDelegates,
   providerInjectsRoleMcp,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -21,6 +20,8 @@ import {
   OPENCLI_MODEL_PATTERN
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+
+import { providerCapabilities } from "./subagents.ts";
 
 export const ROLE_NAMES = [
   "default",
@@ -120,9 +121,7 @@ function normaliseLimit(value: unknown): number | null {
  * that tier, because the orchestrator's whole job is delegating.
  */
 export type RouteDisabledReason =
-  | "provider_disabled"
-  | "model_disabled"
-  | "provider_cannot_delegate";
+  "provider_disabled" | "model_disabled" | "provider_cannot_delegate";
 
 export interface ConfiguredModel {
   model: string;
@@ -612,7 +611,11 @@ export class RoutingPolicy {
     if (role !== "orchestrator") return null;
     if (typeof provider !== "string" || provider.trim().length === 0)
       return "provider_cannot_delegate";
-    return providerDelegates(provider) ? null : "provider_cannot_delegate";
+    // The same contract reading the router status reports, so the two cannot
+    // disagree, and one that honours CODEX_EXECUTION_CONTRACT_FILE and reloads.
+    return providerCapabilities(provider).subagentSpawn
+      ? null
+      : "provider_cannot_delegate";
   }
 
   /**
@@ -1170,7 +1173,10 @@ export class RoutingPolicy {
    * cause for both, which sent the operator to a control surface that could
    * not fix anything.
    */
-  tierServingBlockers(tier: string, role: ProviderRole): {
+  tierServingBlockers(
+    tier: string,
+    role: ProviderRole
+  ): {
     readonly disabled: string[];
     readonly cannotDelegate: string[];
     readonly servable: string[];
@@ -1179,10 +1185,13 @@ export class RoutingPolicy {
     const cannotDelegate: string[] = [];
     const servable: string[] = [];
     for (const provider of this.effectiveProviderGroups(tier, role).flat()) {
-      if (!this.isProviderEnabledForRole(provider, role)) disabled.push(provider);
-      else if (this.providerRoleCapabilityReason(provider, role) !== null)
+      if (!this.isProviderEnabledForRole(provider, role))
+        disabled.push(provider);
+      else if (this.providerRoleCapabilityReason(provider, role) === null) {
+        servable.push(provider);
+      } else {
         cannotDelegate.push(provider);
-      else servable.push(provider);
+      }
     }
     return { disabled, cannotDelegate, servable };
   }

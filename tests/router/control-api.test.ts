@@ -59,6 +59,8 @@ import {
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { parse } from "smol-toml";
 
+import { useNonDelegatingContract } from "./non-delegating-contract.ts";
+
 // Disabling a role is a priority, not a boolean: `disabled` is a member of
 // the priority enum so a role cannot hold a priority and be disabled at once.
 const DISABLE_SUBAGENT_BODY = { priority: "disabled", model: null } as const;
@@ -781,10 +783,12 @@ test("operator PATCH validates fields, persists provider state, and audits the a
 
 test("a provider with no delegation path cannot be assigned the orchestrator role, and the view says why", async () => {
   const saved = saveEnv();
+  // Every shipped provider can delegate; this contract says MiniMax cannot.
+  const restoreContract = useNonDelegatingContract("minimax");
   const originalPersistence = getDefaultPersistenceManager();
   let persistCalls = 0;
   const previous =
-    ROUTING_POLICY.assignmentFor("opencli", "orchestrator") ?? null;
+    ROUTING_POLICY.assignmentFor("minimax", "orchestrator") ?? null;
   setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
@@ -793,17 +797,17 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
   } as unknown as RouterPersistence);
   try {
     configure();
-    // opencli drives a web chat site and declares no delegation path, so it
-    // cannot create the child agents an orchestrator needs. The Console used
+    // A provider that declares no delegation path cannot create the child
+    // agents an orchestrator needs. The Console used
     // to accept an orchestrator assignment for it and report the role as
     // enabled, and the router then refused every orchestrator request with a
     // message blaming the enable switches.
     assert.equal(
-      ROUTING_POLICY.providerRoleCapabilityReason("opencli", "orchestrator"),
+      ROUTING_POLICY.providerRoleCapabilityReason("minimax", "orchestrator"),
       "provider_cannot_delegate"
     );
 
-    const path = CONTROL_API_PATHS.providers + "/opencli/roles/orchestrator";
+    const path = CONTROL_API_PATHS.providers + "/minimax/roles/orchestrator";
     const refused = await call("PATCH", path, {
       actor: "operator-a",
       body: { priority: 1, model: null }
@@ -815,11 +819,11 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
     );
     assert.match(
       refused.body.error.message,
-      /opencli cannot serve the orchestrator role/u
+      /minimax cannot serve the orchestrator role/u
     );
     assert.equal(persistCalls, 0, "a refused assignment is not persisted");
     assert.equal(
-      ROUTING_POLICY.assignmentFor("opencli", "orchestrator") ?? null,
+      ROUTING_POLICY.assignmentFor("minimax", "orchestrator") ?? null,
       previous,
       "and the refused assignment leaves no trace"
     );
@@ -838,28 +842,25 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
       actor: "viewer-a"
     });
     assert.equal(view.response.statusCode, 200);
-    const opencli = view.body.providers.find(
-      (provider: { id: string }) => provider.id === "opencli"
+    const minimax = view.body.providers.find(
+      (provider: { id: string }) => provider.id === "minimax"
     );
-    assert.ok(opencli);
-    assert.equal(opencli.roles.orchestrator.canServe, false);
+    assert.ok(minimax);
+    assert.equal(minimax.roles.orchestrator.canServe, false);
     assert.match(
-      opencli.roles.orchestrator.cannotServeReason,
+      minimax.roles.orchestrator.cannotServeReason,
       /no delegation path/u
     );
     // The other roles need no delegation path, so they are unaffected.
-    assert.equal(opencli.roles.subagent.canServe, true);
-    assert.equal(opencli.roles.subagent.cannotServeReason, null);
+    assert.equal(minimax.roles.subagent.canServe, true);
+    assert.equal(minimax.roles.subagent.cannotServeReason, null);
   } finally {
     if (previous)
-      ROUTING_POLICY.setProviderAssignment(
-        "opencli",
-        "orchestrator",
-        previous
-      );
-    else ROUTING_POLICY.clearProviderAssignment("opencli", "orchestrator");
+      ROUTING_POLICY.setProviderAssignment("minimax", "orchestrator", previous);
+    else ROUTING_POLICY.clearProviderAssignment("minimax", "orchestrator");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
+    restoreContract();
   }
 });
 

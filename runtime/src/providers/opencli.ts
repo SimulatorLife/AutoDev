@@ -53,7 +53,7 @@ import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/share
 import { codexToolCallEvents, codexToolSurface } from "./claude-codex-tools.ts";
 import { turnId } from "./codex-tool-turns.ts";
 import {
-  ATTACHED_PROMPT_FILE,
+  attachedPromptFileName,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
   OpencliConversationLedger,
@@ -441,7 +441,10 @@ export function createOpencliBridge(
     const segments = transcriptSegments(payload.input);
     const resume = ledger.take(site, prefixDigests(segments));
     const prompt = resume
-      ? renderOpencliContinuation(segments.slice(resume.seen).join("\n\n"))
+      ? renderOpencliContinuation(
+          tools,
+          segments.slice(resume.seen).join("\n\n")
+        )
       : renderOpencliPrompt(
           typeof payload.instructions === "string" ? payload.instructions : "",
           tools,
@@ -511,7 +514,7 @@ export function createOpencliBridge(
       path.join(options.tempRoot ?? tmpdir(), "autodev-opencli-")
     );
     try {
-      const promptFile = path.join(directory, ATTACHED_PROMPT_FILE);
+      const promptFile = path.join(directory, attachedPromptFileName());
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, turn.prompt, { mode: 0o600 });
       const invocation = {
