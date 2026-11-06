@@ -256,6 +256,7 @@ const RESPONSE_RULES = [
   "## How to respond",
   "You are the model behind a Codex coding agent working on the user's machine. You cannot see that machine and cannot run anything yourself: you act only by requesting tool calls, which the agent executes in its own sandbox. Their results arrive in the next message.",
   "You know nothing about the machine's files, directories, commands, or state except what tool results in the conversation show. Never guess or assume them: when the task needs such a fact and no tool result states it yet, your reply must be the tool calls that find it out.",
+  "Your own chat tools -- this site's Python or code sandbox, file search, browsing -- run somewhere else, not on the agent's machine. They cannot see its repository, its files, or its tools, so never use them to check whether a path, a file, or a tool exists. A repository path or a function on `tools` (such as the `multi_agent_v1__*` delegation functions) is checked only through a tool call to the agent, for example `exec` running `text(typeof tools.multi_agent_v1__spawn_agent)`. Never report a capability or path as unavailable unless a tool result in this conversation shows it.",
   "Reply in exactly one of two ways:",
   '1. To act, write one or more tool calls, each in exactly this form, with only the tool\'s input between the tags:\n\n<tool_call name="TOOL_NAME">\nINPUT\n</tool_call>\n\nFor a tool that takes raw text (such as `exec`, whose input is JavaScript source), INPUT is that text, with no Markdown fences. For a tool that takes JSON arguments, INPUT is one JSON object matching its schema. You may write a short note before the calls. Stop after the last call: do not invent its result.',
   "2. When the task is done, or you need nothing more from the tools, reply with your final answer as plain text and no tool_call tags.",
@@ -311,7 +312,7 @@ export function renderOpencliPrompt(
 }
 
 const CONTINUATION_RULES =
-  'Same rules as this chat\'s first message: to act, reply with <tool_call name="TOOL_NAME">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. Nothing about the machine is known except what tool results show.';
+  'Same rules as this chat\'s first message: to act, reply with <tool_call name="TOOL_NAME">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. Nothing about the machine is known except what tool results show, and your own chat tools (Python, file search) cannot see it.';
 
 const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\`, and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
 

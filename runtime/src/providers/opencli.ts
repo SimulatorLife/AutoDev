@@ -820,7 +820,7 @@ export function createOpencliBridge(
 
     const { output, calls } = finishTurn(turn, reply);
     writeErrorLine(
-      `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
+      `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s), ${turn.tools.length} tool(s) offered, ${Buffer.byteLength(turn.prompt)}-byte prompt${turn.conversationId ? ", continued conversation" : ""}`
     );
     if (stream) stream.complete(output);
     else

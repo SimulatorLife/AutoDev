@@ -2182,6 +2182,15 @@ single list; the route patterns and the site registry in
     (the picker did not render) keeps the last list, in the bridge and in the
     Runtime's discovery alike (see `docs/autodev-console-target-state.md`).
 
+- **The site's own tools are not the agent's.** A ChatGPT `advanced`
+  orchestrator turn (session `01a1b319-fa94-7ff2-875f-7dd06e895984`) made no
+  tool call and reported that `multi_agent_v1__spawn_agent` was unavailable
+  and the repository inaccessible -- the conclusion of a check run in the
+  site's own sandbox, where neither exists. The response rules say so: a chat
+  site's Python, file search and browsing run elsewhere; a path or a `tools`
+  function is checked only through a tool call to the agent, and nothing is
+  reported unavailable unless a tool result shows it. The bridge logs each
+  turn's offered tool count and prompt size.
 - **No tool API, so a text protocol.** A site has no function calling. The
   bridge renders the turn into one prompt -- response rules, Codex's
   `instructions`, the full reference for every tool Codex offered
