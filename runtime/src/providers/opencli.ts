@@ -446,7 +446,12 @@ export function createOpencliBridge(
                 execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS))
               )
             );
-            modelLists.set(site, { at: Date.now(), models });
+            // An empty list is the site's picker failing to render (a hidden
+            // or covered window), not an account with no models: keep the
+            // last good list and ask again next time.
+            if (models.length > 0)
+              modelLists.set(site, { at: Date.now(), models });
+            else models = cached?.models ?? [];
           } catch (error) {
             writeErrorLine(
               `opencli ${site} model list failed: ${errorMessage(error)}`

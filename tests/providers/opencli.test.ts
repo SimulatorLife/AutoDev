@@ -713,6 +713,41 @@ test("an orchestrator turn carries the full orchestrator role prompt, a leaf tur
   );
 });
 
+test("an empty site model list is not cached", async () => {
+  let listings = 0;
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] !== "models") throw new Error("unexpected command");
+      listings += 1;
+      return listings === 1 ? [] : [{ model: "3.1-pro" }];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const ids = async () =>
+      (
+        (await (await fetch(`http://127.0.0.1:${port}/v1/models`)).json()) as {
+          data: Array<{ id: string }>;
+        }
+      ).data
+        .map((model) => model.id)
+        .filter((id) => id.startsWith("opencli-gemini-"));
+    assert.deepEqual(await ids(), []);
+    // The empty read was retried rather than kept for five minutes.
+    assert.deepEqual(await ids(), ["opencli-gemini-3.1-pro"]);
+    assert.deepEqual(await ids(), ["opencli-gemini-3.1-pro"]);
+    assert.equal(listings, 2);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("a busy site session is waited out instead of failing the turn", async () => {
   await withBridge(
     [
