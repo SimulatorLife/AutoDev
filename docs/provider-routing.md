@@ -2206,6 +2206,17 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   crash-looping the launchd agent. Images are refused as
   `provider_request_unsupported`. A client that disconnects kills the opencli
   command.
+- **Orchestrator role prompt.** A root orchestrator's policy reaches Codex as
+  the root-delegation hook's additional context, and Codex truncates it: an
+  `opencli-gemini` root turn received only its first ~10 KB ("Warning:
+  truncated output (original token count: 6282)"), without the delegation
+  sections, and did every step itself instead of spawning. The CLI bridges
+  add the full role prompt from the router's `x-autodev-agent-role` header
+  (`composeProviderPrompt`); opencli does the same for the orchestrator role
+  (`roleInstructions`: bootstrap, canonical orchestration skill, and role
+  contract) as a `## Your role` section on every turn, continued ones
+  included. A leaf's instructions arrive whole in Codex's input (its role
+  TOML's developer instructions), so leaf turns get no extra section.
 - **Delegation.** The execution contract declares `delegation: "native"`:
   the bridge relays Codex's own `exec` tool, whose `tools` global carries the
   `multi_agent_v1__*` spawn and lifecycle functions on an orchestrator turn,

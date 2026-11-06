@@ -576,6 +576,48 @@ test("the bridge refuses requests it cannot serve before running opencli", async
   );
 });
 
+test("an orchestrator turn carries the full orchestrator role prompt, a leaf turn none", async () => {
+  await withBridge(
+    [
+      { response: "Delegating.", conversation_id: "c1" },
+      { response: "Done.", conversation_id: "c1" },
+      { response: "Leaf answer.", conversation_id: "c2" }
+    ],
+    async (baseUrl, runs) => {
+      const orchestrator = { "x-autodev-agent-role": "orchestrator" };
+      const input: JsonRecord[] = [userMessage("Fix the bug.")];
+      const first = await post(
+        baseUrl,
+        { model: "opencli-chatgpt", tools: [EXEC_TOOL], input },
+        orchestrator
+      );
+      const firstBody = (await first.json()) as { output: JsonRecord[] };
+      await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt",
+          tools: [EXEC_TOOL],
+          input: [...input, ...firstBody.output, userMessage("Continue.")]
+        },
+        orchestrator
+      );
+      // Codex truncates the hook-injected root policy, so the bridge adds the
+      // whole role prompt -- on the continued turn too.
+      for (const prompt of runs.prompts.slice(0, 2)) {
+        assert.match(prompt, /## Your role/u);
+        assert.match(prompt, /Root orchestrator bootstrap/u);
+        assert.match(prompt, /Canonical orchestration skill/u);
+      }
+      await post(baseUrl, {
+        model: "opencli-chatgpt",
+        tools: [EXEC_TOOL],
+        input: [userMessage("Read a file.")]
+      });
+      assert.doesNotMatch(runs.prompts[2]!, /## Your role/u);
+    }
+  );
+});
+
 test("a busy site session is waited out instead of failing the turn", async () => {
   await withBridge(
     [

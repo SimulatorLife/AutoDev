@@ -26,6 +26,11 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
+import {
+  isOrchestratorRole,
+  resolveAgentRole,
+  roleInstructions
+} from "@simulatorlife/autodev-runtime/agents";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -414,6 +419,7 @@ export function createOpencliBridge(
 
   function prepare(
     payload: JsonRecord,
+    request: IncomingMessage,
     response: ServerResponse
   ): PreparedTurn | null {
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
@@ -440,15 +446,24 @@ export function createOpencliBridge(
     const tools = codexToolSurface(payload).tools;
     const segments = transcriptSegments(payload.input);
     const resume = ledger.take(site, prefixDigests(segments));
+    // A root orchestrator's policy is the one role Codex does not carry whole
+    // (see roleSection), so it is added from the router's role header, as the
+    // CLI bridges do. A leaf's role instructions arrive intact in the input.
+    const agentRole = resolveAgentRole(request.headers);
+    const role = isOrchestratorRole(agentRole)
+      ? roleInstructions(agentRole)
+      : null;
     const prompt = resume
       ? renderOpencliContinuation(
           tools,
-          segments.slice(resume.seen).join("\n\n")
+          segments.slice(resume.seen).join("\n\n"),
+          role
         )
       : renderOpencliPrompt(
           typeof payload.instructions === "string" ? payload.instructions : "",
           tools,
-          segments.join("\n\n")
+          segments.join("\n\n"),
+          role
         );
     if (
       !spec.attachesPrompt &&
@@ -556,7 +571,7 @@ export function createOpencliBridge(
       });
       return;
     }
-    const turn = prepare(payload, response);
+    const turn = prepare(payload, request, response);
     if (!turn) return;
 
     // A client that goes away cancels its turn: nothing keeps typing into the

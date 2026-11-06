@@ -209,6 +209,22 @@ function toolsSection(tools: readonly CodexTool[]): string {
     : "## Tools\n\nNo tools are available on this turn: answer in plain text.";
 }
 
+/**
+ * The role prompt the bridge adds for a role whose instructions Codex does not
+ * carry whole.
+ *
+ * A root orchestrator's policy reaches Codex as the root-delegation hook's
+ * additional context, and Codex truncates it (an opencli-gemini root turn
+ * received "Warning: truncated output (original token count: 6282)" and only
+ * the first ~10 KB) -- the delegation half did not survive, and the model did
+ * every step itself. The CLI bridges add the full role prompt from the router's
+ * role header; this is the same for opencli, and it travels with every turn
+ * because a site does not keep an earlier attachment in context.
+ */
+function roleSection(role: string | null): string[] {
+  return role ? [`## Your role\n\n${role}`] : [];
+}
+
 const NEXT_REPLY =
   'Write the agent\'s next reply to the conversation above, following the rules under "How to respond".';
 
@@ -216,7 +232,8 @@ const NEXT_REPLY =
 export function renderOpencliPrompt(
   instructions: string,
   tools: readonly CodexTool[],
-  transcript: string
+  transcript: string,
+  role: string | null = null
 ): string {
   return [
     "# Codex agent turn",
@@ -224,6 +241,7 @@ export function renderOpencliPrompt(
     ...(instructions.trim()
       ? [`## Instructions\n\n${instructions.trim()}`]
       : []),
+    ...roleSection(role),
     toolsSection(tools),
     `## Conversation\n\n${transcript}`,
     NEXT_REPLY
@@ -242,11 +260,13 @@ export function renderOpencliPrompt(
  */
 export function renderOpencliContinuation(
   tools: readonly CodexTool[],
-  delta: string
+  delta: string,
+  role: string | null = null
 ): string {
   return [
     "# Codex agent turn (continued)",
     RESPONSE_RULES,
+    ...roleSection(role),
     toolsSection(tools),
     `## New in the conversation\n\n${CONTINUATION_HEADER}\n\n${delta}`,
     NEXT_REPLY

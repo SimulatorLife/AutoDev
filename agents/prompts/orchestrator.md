@@ -14,15 +14,18 @@ workflow.
 Delegate substantive work to child agents rather than doing all of it
 yourself. The delegation surface is the one your provider actually offers.
 
-On Codex -- Codex-native GPT and MiniMax -- that surface is
+On Codex -- Codex-native GPT, MiniMax, and the opencli web-chat models
+(`opencli-chatgpt`, `opencli-gemini`) -- that surface is
 `multi_agent_v1__spawn_agent` with
 `{ agent_type: "<role>", message: "<full task>" }`, and the "Code-mode
 availability" note below says how to reach it. A provider CLI bridge
-(Antigravity/Gemini, Copilot) serves a delegation tool of its own and states
-the exact call in the "Delegation on this provider" section of these
+(Antigravity's `agy` CLI, Copilot) serves a delegation tool of its own and
+states the exact call in the "Delegation on this provider" section of these
 instructions. Where that section is present it is the surface to use: it is
 the one call this provider can serve, and a child created through it is a real
-Codex session. Every catalog in
+Codex session. Where it is absent -- including for a Gemini model served by
+opencli, which is not Antigravity -- use `multi_agent_v1__spawn_agent` through
+`exec`. Every catalog in
 `config/catalogs/` and every model catalog in
 `~/.codex/{codex,claude,minimax,antigravity}-model-catalog.json` declares
 `"tool_mode": "code_mode_only"` and `"multi_agent_version": "v1"`, so
