@@ -410,6 +410,8 @@ export function prefixDigests(segments: readonly string[]): string[] {
 
 export interface ConversationResume {
   readonly conversationId: string;
+  /** The recorded prefix this resumes from, to spend once the turn succeeds. */
+  readonly digest: string;
   /** How many leading segments that conversation has already seen. */
   readonly seen: number;
 }
@@ -424,10 +426,12 @@ export interface ConversationResume {
  * after each reply, the digest of the transcript that reply ends; a later
  * request whose transcript starts with that prefix continues the conversation.
  *
- * An entry is consumed when it is used. Two requests that share a prefix --
- * a retry of the same turn, or a fork -- would otherwise both append to one web
- * conversation and the site's history would no longer match either
- * transcript; the second request starts a fresh conversation instead.
+ * An entry is spent when the turn that continued from it succeeds, not when
+ * the turn starts. A retry of a failed turn therefore continues the same web
+ * conversation -- at worst re-sending the new items the site already saw --
+ * instead of starting a fresh chat with the whole transcript in one huge
+ * attachment, which is what a router retry after a headers timeout did: the
+ * model, handed that attachment, said its delegation tools did not exist.
  */
 export class OpencliConversationLedger {
   private readonly entries = new Map<string, string>();
@@ -442,20 +446,24 @@ export class OpencliConversationLedger {
   }
 
   /** The longest recorded prefix of `digests` for this site, consuming it. */
-  take(
+  /** The longest recorded prefix of `digests` for this site. */
+  find(
     site: OpencliSite,
     digests: readonly string[]
   ): ConversationResume | null {
     for (let index = digests.length - 1; index >= 0; index -= 1) {
       const digest = digests[index];
       if (digest === undefined) continue;
-      const key = this.key(site, digest);
-      const conversationId = this.entries.get(key);
+      const conversationId = this.entries.get(this.key(site, digest));
       if (conversationId === undefined) continue;
-      this.entries.delete(key);
-      return { conversationId, seen: index + 1 };
+      return { conversationId, seen: index + 1, digest };
     }
     return null;
+  }
+
+  /** Spend an entry once the turn that continued from it has succeeded. */
+  consume(site: OpencliSite, digest: string): void {
+    this.entries.delete(this.key(site, digest));
   }
 
   record(site: OpencliSite, digest: string, conversationId: string): void {

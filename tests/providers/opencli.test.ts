@@ -416,7 +416,7 @@ test("parsed calls become the Responses item for the tool Codex offered", () => 
   );
 });
 
-test("the conversation ledger resumes the longest recorded prefix once", () => {
+test("the conversation ledger resumes the longest recorded prefix until the turn succeeds", () => {
   const ledger = new OpencliConversationLedger();
   const segments = transcriptSegments([
     userMessage("first"),
@@ -428,13 +428,63 @@ test("the conversation ledger resumes the longest recorded prefix once", () => {
   const digests = prefixDigests(segments);
   ledger.record("chatgpt", digests[1]!, "conv-1");
   const extended = prefixDigests([...segments, "<tool_output>y</tool_output>"]);
-  assert.equal(ledger.take("gemini", extended), null);
-  assert.deepEqual(ledger.take("chatgpt", extended), {
+  assert.equal(ledger.find("gemini", extended), null);
+  const resume = ledger.find("chatgpt", extended);
+  assert.deepEqual(resume, {
     conversationId: "conv-1",
-    seen: 2
+    seen: 2,
+    digest: digests[1]
   });
-  // Consumed: a retry of the same request starts a fresh conversation.
-  assert.equal(ledger.take("chatgpt", extended), null);
+  // A retry of a turn that failed continues the same conversation...
+  assert.deepEqual(ledger.find("chatgpt", extended), resume);
+  // ...and the entry is spent only once a turn continuing from it succeeds.
+  ledger.consume("chatgpt", resume!.digest);
+  assert.equal(ledger.find("chatgpt", extended), null);
+});
+
+test("a streamed turn opens at once, keeps alive, and reports a failure in the stream", async () => {
+  let release: (row: JsonRecord | Error) => void = () => {};
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    sessionBusyRetryMs: 1,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      const row = await new Promise<JsonRecord | Error>((resolve) => {
+        release = resolve;
+      });
+      if (row instanceof Error) throw row;
+      return [row];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const response = await post(`http://127.0.0.1:${port}`, {
+      model: "opencli-chatgpt-balanced",
+      stream: true,
+      input: "hi"
+    });
+    // Headers arrive before the site has answered: no client headers timeout.
+    assert.equal(response.status, 200);
+    release(
+      new OpencliCommandError(
+        "Could not find ChatGPT composer",
+        "COMMAND_EXEC",
+        1
+      )
+    );
+    const events = await response.text();
+    assert.match(events, /event: response\.created/u);
+    assert.match(events, /event: response\.failed/u);
+    assert.match(events, /Could not find ChatGPT composer/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 interface FakeRun {

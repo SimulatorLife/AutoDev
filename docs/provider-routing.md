@@ -2235,14 +2235,21 @@ single list; the route patterns and the site registry in
   that command's browser step finishes, so the next command can be refused
   with `SESSION_BUSY`; the bridge waits that out (retrying every 5 s) until
   the turn's own timeout instead of failing the turn.
-- **Failures.** opencli's error envelope is classified before any output, so
-  the router can fall back: a site usage limit is a `429` with the limit
-  headers, opencli's `TIMEOUT` (exit 75) a `408` -- fallbackable but, unlike
-  a 5xx, never re-sent to the same route, so one stuck site cannot hold a turn
-  through two full timeouts -- and anything else (signed out, a site whose
-  page changed under its adapter, opencli missing from the checkout) a `503`.
-  opencli is resolved per turn, so a missing install fails turns rather than
-  crash-looping the launchd agent. Images are refused as
+- **Streaming and failures.** A streamed turn (Codex always streams) opens at
+  once: headers and `response.created` go out before the site is asked, and a
+  keep-alive comment follows every 15 s. A site turn can outlast five
+  minutes -- a slow model, or a queue behind other turns on the same tab --
+  and the router's HTTP client abandons a response whose headers have not
+  arrived by then (`UND_ERR_HEADERS_TIMEOUT`); the router's retry of such a
+  turn once handed a ChatGPT root the whole transcript in a new chat, and it
+  answered that `wait_agent`/`close_agent` did not exist (session
+  `01a1b2dc-a3fa-7191-ad54-1f090091b088`). A failure then ends the stream: a
+  site usage limit as an `incomplete` response carrying the declared limit
+  (which the router cools the provider down on), anything else as
+  `response.failed`, which Codex retries. Requests refused before the turn
+  starts -- an unknown model, an image, an oversized Gemini prompt -- are still
+  plain HTTP errors (`400`, `provider_request_unsupported`), and a
+  non-streamed request still answers `429`/`408`/`503`. Images are refused as
   `provider_request_unsupported`. A client that disconnects kills the opencli
   command.
 - **Orchestrator role prompt.** A root orchestrator's policy reaches Codex as

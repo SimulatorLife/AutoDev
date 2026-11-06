@@ -46,7 +46,8 @@ import {
   classifyCliLimit,
   limitPayload,
   limitResponseHeaders,
-  retryAfterSecondsFromLimit
+  retryAfterSecondsFromLimit,
+  terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
   OPENCLI_PROVIDER_SITES,
@@ -128,7 +129,10 @@ export interface OpencliBridgeOptions {
 /** opencli's code for a site session another command still holds. */
 const SESSION_BUSY = "SESSION_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
+const OUTPUT_ITEM_ADDED = "response.output_item.added";
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
+/** Keep-alive cadence on a streamed turn, well inside every idle timeout. */
+const KEEP_ALIVE_MS = 15_000;
 const MODEL_LIST_TIMEOUT_MS = 60_000;
 /** How long a first listing waits for the site before answering unavailable. */
 const FIRST_MODEL_LIST_WAIT_MS = 5000;
@@ -243,9 +247,9 @@ function messageEvents(
   const part = { type: "output_text", text: "", annotations: [] };
   return [
     [
-      "response.output_item.added",
+      OUTPUT_ITEM_ADDED,
       {
-        type: "response.output_item.added",
+        type: OUTPUT_ITEM_ADDED,
         output_index: outputIndex,
         item: { ...item, status: "in_progress", content: [] }
       }
@@ -324,40 +328,136 @@ function responseObject(
   };
 }
 
-function sendStream(
-  response: ServerResponse,
-  responseId: string,
-  model: string,
-  output: JsonRecord[]
-): void {
-  let sequence = 0;
-  const lines: string[] = [];
-  const emit = (event: string, body: JsonRecord) => {
-    lines.push(
-      `event: ${event}\ndata: ${JSON.stringify({ ...body, sequence_number: ++sequence })}\n\n`
-    );
-  };
-  emit("response.created", {
-    type: "response.created",
-    response: responseObject(responseId, model, "in_progress", [])
-  });
-  output.forEach((item, index) => {
-    const events =
-      item.type === "message"
-        ? messageEvents(item, index)
-        : codexToolCallEvents(item, index);
-    for (const [event, body] of events) emit(event, body);
-  });
-  emit("response.completed", {
-    type: "response.completed",
-    response: responseObject(responseId, model, "completed", output)
-  });
-  response.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "close"
-  });
-  response.end(lines.join(""));
+function sseEvent(event: string, body: JsonRecord, sequence: number): string {
+  return `event: ${event}\ndata: ${JSON.stringify({ ...body, sequence_number: sequence })}\n\n`;
+}
+
+/**
+ * A streamed turn: headers and `response.created` at once, keep-alives while
+ * the site answers, then the output -- or the failure -- in the stream.
+ *
+ * A site turn can take longer than five minutes (a slow model, or a queue
+ * behind other turns on the same tab), and the router's HTTP client gives up
+ * on a response whose headers have not arrived by then
+ * (`UND_ERR_HEADERS_TIMEOUT`). The router retried such a turn, the retry
+ * started a fresh chat with the whole transcript, and the model -- handed one
+ * huge attachment -- told the user its delegation tools did not exist. A
+ * response whose headers went out at once never hits that timeout.
+ */
+class TurnStream {
+  private sequence = 0;
+  private readonly keepAlive: NodeJS.Timeout;
+
+  private readonly response: ServerResponse;
+  private readonly responseId: string;
+  private readonly model: string;
+
+  constructor(response: ServerResponse, responseId: string, model: string) {
+    this.response = response;
+    this.responseId = responseId;
+    this.model = model;
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "close"
+    });
+    this.emit("response.created", {
+      type: "response.created",
+      response: responseObject(responseId, model, "in_progress", [])
+    });
+    this.keepAlive = setInterval(() => {
+      if (this.writable()) this.response.write(": opencli keep-alive\n\n");
+    }, KEEP_ALIVE_MS);
+  }
+
+  complete(output: JsonRecord[]): void {
+    output.forEach((item, index) => {
+      const events =
+        item.type === "message"
+          ? messageEvents(item, index)
+          : codexToolCallEvents(item, index);
+      for (const [event, body] of events) this.emit(event, body);
+    });
+    this.emit("response.completed", {
+      type: "response.completed",
+      response: responseObject(this.responseId, this.model, "completed", output)
+    });
+    this.end();
+  }
+
+  /**
+   * A site limit ends the response incomplete with the declared limit, which
+   * the router reads to cool the provider down; any other failure is a
+   * `response.failed`, which Codex retries.
+   */
+  fail(error: unknown): void {
+    const message = errorMessage(error);
+    const exitCode =
+      error instanceof OpencliCommandError ? error.exitCode : null;
+    const limit = classifyCliLimit(message, exitCode);
+    if (limit && LIMIT_STATUS_CLASSES.has(limit.limitClass)) {
+      const reasoningId = `rs_${turnId(10)}`;
+      const itemId = `msg_${turnId(10)}`;
+      this.emit(OUTPUT_ITEM_ADDED, {
+        type: OUTPUT_ITEM_ADDED,
+        output_index: 0,
+        item: { id: reasoningId, type: "reasoning", summary: [], content: [] }
+      });
+      this.emit(OUTPUT_ITEM_ADDED, {
+        type: OUTPUT_ITEM_ADDED,
+        output_index: 1,
+        item: {
+          id: itemId,
+          type: "message",
+          role: "assistant",
+          status: "in_progress",
+          content: []
+        }
+      });
+      for (const [event, body] of terminalIncompleteEvents({
+        responseId: this.responseId,
+        itemId,
+        reasoningId,
+        limit,
+        provider: PROVIDER
+      }))
+        this.emit(event, body);
+    } else {
+      this.emit("response.failed", {
+        type: "response.failed",
+        response: {
+          ...responseObject(this.responseId, this.model, "failed", []),
+          error: {
+            type: "opencli_proxy_error",
+            ...(error instanceof OpencliCommandError
+              ? { code: error.code }
+              : {}),
+            message
+          }
+        }
+      });
+    }
+    this.end();
+  }
+
+  /** Stop writing; the client went away. */
+  dispose(): void {
+    clearInterval(this.keepAlive);
+  }
+
+  private writable(): boolean {
+    return !this.response.writableEnded && !this.response.destroyed;
+  }
+
+  private emit(event: string, body: JsonRecord): void {
+    if (this.writable())
+      this.response.write(sseEvent(event, body, ++this.sequence));
+  }
+
+  private end(): void {
+    clearInterval(this.keepAlive);
+    if (this.writable()) this.response.end();
+  }
 }
 
 /**
@@ -412,6 +512,8 @@ interface PreparedTurn {
   readonly stream: boolean;
   readonly prompt: string;
   readonly conversationId: string | null;
+  /** The ledger entry this turn continues, spent once the turn succeeds. */
+  readonly resumedFrom: string | null;
   readonly segments: string[];
   readonly tools: ReturnType<typeof codexToolSurface>["tools"];
 }
@@ -520,7 +622,7 @@ export function createOpencliBridge(
     const spec = OPENCLI_SITE_SPECS[site];
     const tools = codexToolSurface(payload).tools;
     const segments = transcriptSegments(payload.input);
-    const resume = ledger.take(site, prefixDigests(segments));
+    const resume = ledger.find(site, prefixDigests(segments));
     // A root orchestrator's policy is the one role Codex does not carry whole
     // (see roleSection), so it is added from the router's role header, as the
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
@@ -557,6 +659,7 @@ export function createOpencliBridge(
       stream: payload.stream === true,
       prompt,
       conversationId: resume?.conversationId ?? null,
+      resumedFrom: resume?.digest ?? null,
       segments,
       tools
     };
@@ -628,6 +731,37 @@ export function createOpencliBridge(
     }
   }
 
+  /**
+   * The reply as Responses output items, and the ledger moved on: the entry
+   * the turn continued from is spent, and the one this reply ends is what the
+   * next request resumes.
+   */
+  function finishTurn(
+    turn: PreparedTurn,
+    reply: OpencliReply
+  ): { output: JsonRecord[]; calls: number } {
+    const parsed = parseOpencliReply(reply.response);
+    const output: JsonRecord[] = [];
+    if (parsed.text || parsed.calls.length === 0)
+      output.push(messageItem(parsed.text, `msg_${turnId(10)}`));
+    for (const call of parsed.calls)
+      output.push(
+        opencliToolCallItem(call, turn.tools, {
+          itemId: `fc_${turnId(10)}`,
+          callId: `call_${turnId(12)}`
+        })
+      );
+    if (turn.resumedFrom) ledger.consume(turn.site, turn.resumedFrom);
+    if (reply.conversationId) {
+      const last = prefixDigests([
+        ...turn.segments,
+        ...transcriptSegments(output)
+      ]).at(-1);
+      if (last) ledger.record(turn.site, last, reply.conversationId);
+    }
+    return { output, calls: parsed.calls.length };
+  }
+
   async function handleResponses(
     request: IncomingMessage,
     response: ServerResponse
@@ -659,44 +793,36 @@ export function createOpencliBridge(
     // A client that goes away cancels its turn: nothing keeps typing into the
     // site for a caller that is no longer listening.
     const controller = new AbortController();
+    const responseId = `resp_${turnId(12)}`;
+    const stream = turn.stream
+      ? new TurnStream(response, responseId, turn.model)
+      : null;
     const onClose = () => {
-      if (!response.writableEnded) controller.abort();
+      if (!response.writableEnded) {
+        controller.abort();
+        stream?.dispose();
+      }
     };
     response.once("close", onClose);
     let reply: OpencliReply;
     try {
       reply = await runTurn(turn, controller.signal);
     } catch (error) {
-      if (!controller.signal.aborted) sendFailure(response, error);
+      if (controller.signal.aborted) return;
+      if (stream) {
+        writeErrorLine(`opencli turn failed: ${errorMessage(error)}`);
+        stream.fail(error);
+      } else sendFailure(response, error);
       return;
     } finally {
       response.removeListener("close", onClose);
     }
 
-    const parsed = parseOpencliReply(reply.response);
-    const output: JsonRecord[] = [];
-    if (parsed.text || parsed.calls.length === 0)
-      output.push(messageItem(parsed.text, `msg_${turnId(10)}`));
-    for (const call of parsed.calls)
-      output.push(
-        opencliToolCallItem(call, turn.tools, {
-          itemId: `fc_${turnId(10)}`,
-          callId: `call_${turnId(12)}`
-        })
-      );
-    if (reply.conversationId) {
-      const digests = prefixDigests([
-        ...turn.segments,
-        ...transcriptSegments(output)
-      ]);
-      const last = digests.at(-1);
-      if (last) ledger.record(turn.site, last, reply.conversationId);
-    }
+    const { output, calls } = finishTurn(turn, reply);
     writeErrorLine(
-      `opencli ${turn.site}/${turn.siteModel} turn: ${parsed.calls.length} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
+      `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s)${turn.conversationId ? ", continued conversation" : ""}`
     );
-    const responseId = `resp_${turnId(12)}`;
-    if (turn.stream) sendStream(response, responseId, turn.model, output);
+    if (stream) stream.complete(output);
     else
       sendJson(
         response,
