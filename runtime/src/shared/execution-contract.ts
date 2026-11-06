@@ -165,6 +165,15 @@ export function roleScopedMcp(role: unknown): string[] {
   return roleContract(role).roleScopedMcp ?? [];
 }
 
+/**
+ * Whether a provider can create Codex children at all. An orchestrator that
+ * cannot delegate cannot do its job, so only these providers may serve the
+ * orchestrator tier, however an operator ranks the rest.
+ */
+export function providerDelegates(provider: string): boolean {
+  return providerContract(provider).delegation !== "none";
+}
+
 /** Whether a provider bridge owns MCP startup and role-specific tool filtering. */
 export function providerInjectsRoleMcp(provider: string): boolean {
   return providerContract(provider).roleMcpInjection === true;

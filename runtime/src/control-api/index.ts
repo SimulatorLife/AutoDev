@@ -811,11 +811,9 @@ export function setControlApiProviderModelDiscoverySource(
 function providerTierPriorities(
   provider: string
 ): { tier: string; group: number }[] {
-  return Object.entries(ROUTING_POLICY.config.providerGroups).flatMap(
+  return Object.entries(ROUTING_POLICY.effectiveTierGroups()).flatMap(
     ([tier, groups]) => {
-      const index = groups.findIndex((group) =>
-        group.some((name) => name.trim().toLowerCase() === provider)
-      );
+      const index = groups.findIndex((group) => group.includes(provider));
       return index === -1 ? [] : [{ tier, group: index + 1 }];
     }
   );
@@ -1090,7 +1088,7 @@ function providersView(now: number): Record<string, unknown> {
   return {
     schema: "autodev-control-providers-v3",
     orchestratorTier: ROUTING_POLICY.config.orchestrator.tier,
-    tiers: Object.entries(ROUTING_POLICY.config.providerGroups).map(
+    tiers: Object.entries(ROUTING_POLICY.effectiveTierGroups()).map(
       ([tier, groups]) => ({ tier, groups })
     ),
     providers

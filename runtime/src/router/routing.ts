@@ -10,6 +10,7 @@ import {
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import {
+  providerDelegates,
   providerInjectsRoleMcp,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -1001,22 +1002,92 @@ export class RoutingPolicy {
     return items;
   }
 
+  /**
+   * The operator's assignment that governs a provider on one tier.
+   *
+   * The Console assigns each provider four roles. `orchestrator` governs the
+   * orchestrator tier. `default` and `smart` are routing roles that govern the
+   * tier of the same name. `subagent` is the agent execution role: it governs
+   * every other subagent tier (such as `browser-tester`), and its `disabled`
+   * also switches the provider off for all subagent traffic -- which
+   * `isProviderEnabledForRole` already enforces.
+   */
+  tierAssignment(
+    provider: string,
+    tier: string,
+    role: ProviderRole
+  ): ProviderRoleAssignment | undefined {
+    if (role === "orchestrator")
+      return this.assignmentFor(provider, "orchestrator");
+    if (tier === "default" || tier === "smart")
+      return this.assignmentFor(provider, tier);
+    return this.assignmentFor(provider, "subagent");
+  }
+
+  /**
+   * A tier's effective priority groups, best first.
+   *
+   * `providerGroups` is the default ranking; an operator's assignment for the
+   * tier's governing role overrides it. A provider assigned priority N joins
+   * group N whether or not the routing config lists it for the tier -- which is
+   * how an opt-in provider such as opencli enters routing from the Console --
+   * and one assigned `disabled` leaves the tier. A provider neither listed nor
+   * assigned does not serve the tier. Before this, the Console's P1/P2/P3 were
+   * persisted and reported but never read: order came from the config alone,
+   * and the `default`/`smart` assignments steered nothing.
+   */
+  effectiveProviderGroups(tier: string, role: ProviderRole): string[][] {
+    const configured = new Map<string, number>();
+    for (const [index, group] of (
+      this.config.providerGroups[tier] ?? []
+    ).entries())
+      for (const raw of group) {
+        const provider = this.providerKey(raw);
+        if (!configured.has(provider)) configured.set(provider, index + 1);
+      }
+    const ranked = new Map<number, string[]>();
+    const candidates = [
+      ...configured.keys(),
+      ...this.providerIds().filter((provider) => !configured.has(provider))
+    ];
+    for (const provider of candidates) {
+      const assignment = this.tierAssignment(provider, tier, role);
+      if (assignment?.priority === "disabled") continue;
+      const rank =
+        typeof assignment?.priority === "number"
+          ? assignment.priority
+          : configured.get(provider);
+      if (rank === undefined) continue;
+      ranked.set(rank, [...(ranked.get(rank) ?? []), provider]);
+    }
+    return [...ranked.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, providers]) => providers);
+  }
+
+  /** Every configured tier's effective groups, under the role that governs it. */
+  effectiveTierGroups(): Record<string, string[][]> {
+    return Object.fromEntries(
+      Object.keys(this.config.providerGroups).map((tier) => [
+        tier,
+        this.effectiveProviderGroups(
+          tier,
+          tier === this.config.orchestrator.tier ? "orchestrator" : "subagent"
+        )
+      ])
+    );
+  }
+
   providerPriority(
     tier: string,
     random = Math.random,
     role: ProviderRole = "subagent"
   ): string[] {
     const providers: string[] = [];
-    const seen = new Set<string>();
-    for (const rawGroup of this.config.providerGroups[tier] ?? []) {
-      const group = rawGroup.map((provider) => provider.trim().toLowerCase());
+    for (const group of this.effectiveProviderGroups(tier, role)) {
       for (const provider of this.shuffleGroup(group, random)) {
-        if (
-          !this.isProviderEnabledForRole(provider, role) ||
-          seen.has(provider)
-        )
-          continue;
-        seen.add(provider);
+        if (!this.isProviderEnabledForRole(provider, role)) continue;
+        if (role === "orchestrator" && !providerDelegates(provider)) continue;
         providers.push(provider);
       }
     }
@@ -1117,13 +1188,11 @@ export class RoutingPolicy {
       // The Console's model selector therefore reported a change that no request
       // ever saw, which is why choosing Claude Opus on a provider could not alter
       // the model that ran.
-      const model =
-        this.assignmentFor(provider, role)?.model ??
-        this.configuredModel(provider, tier);
+      const assignment = this.tierAssignment(provider, tier, role);
+      const model = assignment?.model ?? this.configuredModel(provider, tier);
       if (!model || !this.isModelEnabled(model)) return [];
       const route = this.routeForModel(model);
       if (!route) return [];
-      const assignment = this.assignmentFor(provider, role);
       const configuredEffort =
         assignment?.reasoningEffort ??
         (role === "orchestrator"

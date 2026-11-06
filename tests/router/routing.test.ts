@@ -427,7 +427,8 @@ test("model enablement removes a model from every tier it serves and survives re
     providerGroups: {
       default: [["claude", "minimax"]],
       smart: [["claude"]],
-      orchestrator: [["claude"], ["minimax"]]
+      // The orchestrator fallback must be a provider that can delegate.
+      orchestrator: [["claude"], ["copilot"]]
     },
     providers: {
       claude: {
@@ -437,7 +438,8 @@ test("model enablement removes a model from every tier it serves and survives re
           smart: CLAUDE_SMART_TEST_MODEL
         }
       },
-      minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } }
+      minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } },
+      copilot: { models: { default: "copilot", orchestrator: "copilot" } }
     },
     roles: {
       default: { tier: "default" },
@@ -469,6 +471,11 @@ test("model enablement removes a model from every tier it serves and survives re
       model: MINIMAX_DEFAULT_TEST_MODEL,
       provider: "minimax",
       tiers: ["default"]
+    },
+    {
+      model: "copilot",
+      provider: "copilot",
+      tiers: ["default", "orchestrator"]
     }
   ]);
 
@@ -478,7 +485,7 @@ test("model enablement removes a model from every tier it serves and survives re
     policy
       .orchestratorCandidates(seeded(3))
       .map(({ provider, model }) => [provider, model]),
-    [["minimax", MINIMAX_DEFAULT_TEST_MODEL]]
+    [["copilot", "copilot"]]
   );
   assert.deepEqual(policy.roleCandidates("smart", seeded(3)), []);
   assert.ok(
@@ -537,4 +544,134 @@ test("model enablement removes a model from every tier it serves and survives re
     providerLimits: {}
   });
   assert.equal(policy.isModelEnabled(CLAUDE_SMART_TEST_MODEL), true);
+});
+
+function assignmentTestPolicy(): RoutingPolicy {
+  return new RoutingPolicy(
+    validateRoutingConfig({
+      providerGroups: {
+        default: [["claude"], ["copilot"]],
+        smart: [["claude"]],
+        "browser-tester": [["claude"]],
+        orchestrator: [["claude"]]
+      },
+      providers: {
+        claude: {
+          models: {
+            default: CLAUDE_DEFAULT_TEST_MODEL,
+            smart: CLAUDE_SMART_TEST_MODEL
+          }
+        },
+        copilot: { models: { default: "copilot" } },
+        minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } },
+        opencli: { models: { default: "opencli-chatgpt" } }
+      },
+      roles: {
+        default: { tier: "default" },
+        "docs-researcher": { tier: "default" },
+        "browser-tester": { tier: "browser-tester" },
+        explorer: { tier: "default" },
+        worker: { tier: "default" },
+        validator: { tier: "default" },
+        smart: { tier: "smart" },
+        playtester: { tier: "default" },
+        "playtest-analyst": { tier: "default" }
+      },
+      orchestrator: { alias: "autodev/orchestrator", tier: "orchestrator" }
+    }),
+    "model-routing.json",
+    {}
+  );
+}
+
+test("operator priorities rank providers within a tier and override the configured groups", () => {
+  const policy = assignmentTestPolicy();
+  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
+    ["claude"],
+    ["copilot"]
+  ]);
+  // Copilot promoted ahead of Claude, which is demoted to P3.
+  policy.setProviderAssignment("copilot", "default", {
+    priority: 1,
+    model: null
+  });
+  policy.setProviderAssignment("claude", "default", {
+    priority: 3,
+    model: null
+  });
+  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
+    ["copilot"],
+    ["claude"]
+  ]);
+  assert.deepEqual(
+    policy.roleCandidates("default", seeded(1)).map(({ provider }) => provider),
+    ["copilot", "claude"]
+  );
+});
+
+test("an unlisted provider enters a tier only when the operator assigns it a priority", () => {
+  const policy = assignmentTestPolicy();
+  const providers = (tier: string) =>
+    policy.effectiveProviderGroups(tier, "subagent").flat();
+  // opencli is configured but in no group: opt-in.
+  assert.equal(providers("default").includes("opencli"), false);
+  policy.setProviderAssignment("opencli", "default", {
+    priority: 2,
+    model: "opencli-gemini"
+  });
+  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
+    ["claude"],
+    ["copilot", "opencli"]
+  ]);
+  const candidate = policy
+    .roleCandidates("default", seeded(1))
+    .find(({ provider }) => provider === "opencli");
+  assert.equal(candidate?.model, "opencli-gemini");
+  // The `default` assignment governs only the default tier.
+  assert.equal(providers("smart").includes("opencli"), false);
+  assert.equal(providers("browser-tester").includes("opencli"), false);
+  // `subagent` governs the other subagent tiers.
+  policy.setProviderAssignment("opencli", "subagent", {
+    priority: 1,
+    model: null
+  });
+  assert.deepEqual(
+    policy.effectiveProviderGroups("browser-tester", "subagent"),
+    [["claude", "opencli"]]
+  );
+});
+
+test("a disabled tier assignment removes the provider from that tier only", () => {
+  const policy = assignmentTestPolicy();
+  policy.setProviderAssignment("claude", "smart", DISABLED_ASSIGNMENT);
+  assert.deepEqual(policy.roleCandidates("smart", seeded(1)), []);
+  assert.ok(
+    policy
+      .roleCandidates("default", seeded(1))
+      .some(({ provider }) => provider === "claude")
+  );
+  // Disabling the subagent execution role switches every subagent tier off.
+  policy.setProviderAssignment("claude", "subagent", DISABLED_ASSIGNMENT);
+  assert.equal(
+    policy
+      .roleCandidates("default", seeded(1))
+      .some(({ provider }) => provider === "claude"),
+    false
+  );
+});
+
+test("the orchestrator tier admits only providers that can delegate, however they are ranked", () => {
+  const policy = assignmentTestPolicy();
+  policy.setProviderAssignment("minimax", "orchestrator", {
+    priority: 1,
+    model: MINIMAX_DEFAULT_TEST_MODEL
+  });
+  policy.setProviderAssignment("copilot", "orchestrator", {
+    priority: 2,
+    model: "copilot"
+  });
+  assert.deepEqual(
+    policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
+    ["claude", "copilot"]
+  );
 });

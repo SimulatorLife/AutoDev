@@ -1088,6 +1088,34 @@ Provider role enablement and model enablement are mutable runtime state. The sup
 
 The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
 
+#### Operator priorities decide tier membership and order
+
+Each provider has four Console roles, each with a priority (`P1`, `P2`, `P3`
+or `Disabled`), a model, and a reasoning effort. Which assignment governs a
+request depends on the tier it routes through
+(`RoutingPolicy.tierAssignment`):
+
+- `orchestrator` governs the orchestrator tier;
+- `default` and `smart` govern the tier of the same name;
+- `subagent` governs every other subagent tier (such as `browser-tester`), and
+  its `Disabled` switches the provider off for all subagent traffic, direct
+  concrete requests included.
+
+`providerGroups` in `config/model-routing.json` is only the default ranking.
+`RoutingPolicy.effectiveProviderGroups` overlays the operator's assignments: a
+provider assigned `P<n>` for the governing role joins group `n` of that tier,
+whether or not the config lists it there, and one assigned `Disabled` leaves
+the tier. A provider neither listed nor assigned does not serve the tier. The
+assignment's model and effort then apply to that tier. The orchestrator tier
+additionally admits only providers whose execution-contract `delegation` is
+not `none`, however they are ranked. `GET /control/providers` (`tiers`,
+`priorities`) and the router status report these effective groups, so the
+Console's Routing priority panel shows the order in force.
+
+Before this, the priorities were persisted and reported but never read:
+order came from the config alone, and the `default`/`smart` assignments
+steered nothing.
+
 #### Reasoning effort on a provider role
 
 `PATCH /control/providers/:provider/roles/:role` carries a role's whole
@@ -2161,10 +2189,11 @@ site registry in `runtime/src/providers/opencli-turn.ts` all derive from it.
   web chat cannot create Codex children, so opencli never enters the
   orchestrator tier. Usage reports zero tokens and the models are priced at
   zero, as the user's own subscription.
-- **Opt-in routing.** opencli is not in any `providerGroups` tier, so no role
-  reaches a browser tab unless the operator adds `"opencli"` to a tier's
-  group (for example a last group in `default`) or a request names
-  `opencli-chatgpt`/`opencli-gemini` directly.
+- **Opt-in routing.** opencli is in no `providerGroups` tier, so no role
+  reaches a browser tab until the operator gives it a priority in the Console
+  (for example `Default: P3` with model `opencli-gemini`), exactly as for any
+  other provider (see "Operator priorities decide tier membership and order"),
+  or a request names `opencli-chatgpt`/`opencli-gemini` directly.
 - **Reply normalisation.** Each site spec's `reply` strips what the adapter
   adds around the model's text (opencli's `gemini ask` prefixes every reply
   with `💬 `), so the decoration never reaches Codex.

@@ -680,28 +680,21 @@ export function routingStatus(): Record<string, unknown> {
       reasoningEffort: { ...ORCHESTRATOR_REASONING_EFFORT }
     },
     roles: { ...ROUTING.roles },
-    providerGroups: { ...ROUTING.providerGroups },
+    providerGroups: ROUTING_POLICY.effectiveTierGroups(),
     priorities: Object.fromEntries(
-      ROUTES.map((route) => {
-        const tierPrios: Record<string, string> = {};
-        for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
-          if (Array.isArray(groups)) {
-            for (const [gIdx, group] of groups.entries()) {
-              if (
-                Array.isArray(group) &&
-                group.some(
-                  (name) =>
-                    String(name).toLowerCase() === route.provider.toLowerCase()
-                )
-              ) {
-                tierPrios[tier] = `P${gIdx + 1}`;
-                break;
-              }
+      ROUTES.map((route) => [
+        route.provider,
+        Object.fromEntries(
+          Object.entries(ROUTING_POLICY.effectiveTierGroups()).flatMap(
+            ([tier, groups]) => {
+              const index = groups.findIndex((group) =>
+                group.includes(route.provider.toLowerCase())
+              );
+              return index === -1 ? [] : [[tier, `P${index + 1}`]];
             }
-          }
-        }
-        return [route.provider, tierPrios];
-      })
+          )
+        )
+      ])
     ),
     configuredProviders: Object.keys(ROUTING.providers),
     enabledOrchestratorProviders: Object.keys(ROUTING.providers).filter((p) =>
@@ -1217,20 +1210,14 @@ export function ingestAgentEvents(
 }
 
 function providerTierPriorities(provider: string): string[] {
-  const priorities: string[] = [];
-  for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
-    for (const [groupIndex, group] of groups.entries()) {
-      if (
-        group.some(
-          (name) => String(name).toLowerCase() === provider.toLowerCase()
-        )
-      ) {
-        priorities.push(`${tier}: P${groupIndex + 1}`);
-        break;
-      }
+  return Object.entries(ROUTING_POLICY.effectiveTierGroups()).flatMap(
+    ([tier, groups]) => {
+      const index = groups.findIndex((group) =>
+        group.includes(provider.toLowerCase())
+      );
+      return index === -1 ? [] : [`${tier}: P${index + 1}`];
     }
-  }
-  return priorities;
+  );
 }
 
 function routerProviderStatus(
