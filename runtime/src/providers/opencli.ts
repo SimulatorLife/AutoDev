@@ -525,20 +525,18 @@ export function createOpencliBridge(
     // (see roleSection), so it is added from the router's role header, as the
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
     const agentRole = resolveAgentRole(request.headers);
-    const role = isOrchestratorRole(agentRole)
-      ? roleInstructions(agentRole)
-      : null;
+    const orchestrator = isOrchestratorRole(agentRole);
     const prompt = resume
       ? renderOpencliContinuation(
           tools,
           segments.slice(resume.seen).join("\n\n"),
-          role
+          orchestrator
         )
       : renderOpencliPrompt(
           typeof payload.instructions === "string" ? payload.instructions : "",
           tools,
           segments.join("\n\n"),
-          role
+          orchestrator ? roleInstructions(agentRole) : null
         );
     if (
       !spec.attachesPrompt &&

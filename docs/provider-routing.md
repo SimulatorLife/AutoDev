@@ -2222,6 +2222,13 @@ single list; the route patterns and the site registry in
   conversation rather than appending to one whose history no longer matches.
   Tool-result affinity routes a call's output back to opencli, so the
   continuation normally lands here.
+  The first message of a site conversation carries everything (response
+  rules, instructions, the orchestrator role, the full tool reference, the
+  transcript); a follow-up carries a one-paragraph restatement of the call
+  syntax, an index of the tools (with the functions `exec` exposes), and the
+  new items -- not the reference again, which made every attachment tens of
+  kilobytes for one tool output. The index stays because, given only a tool
+  output, ChatGPT once lost track of the `wait_agent` call it needed next.
 - **Serialisation.** A site is one browser tab: turns for the same site queue
   in the bridge; different sites run in parallel. A command the bridge
   cancels ends at once, but opencli's daemon keeps the site session until
@@ -2246,8 +2253,7 @@ single list; the route patterns and the site registry in
   add the full role prompt from the router's `x-autodev-agent-role` header
   (`composeProviderPrompt`); opencli does the same for the orchestrator role
   (`roleInstructions`: bootstrap, canonical orchestration skill, and role
-  contract) as a `## Your role` section on every turn, continued ones
-  included. A leaf's instructions arrive whole in Codex's input (its role
+  contract) as a `## Your role` section in the conversation's first message; a follow-up reminds the model it is still orchestrating and names the spawn, wait and close functions. A leaf's instructions arrive whole in Codex's input (its role
   TOML's developer instructions), so leaf turns get no extra section.
 - **Delegation.** The execution contract declares `delegation: "native"`:
   the bridge relays Codex's own `exec` tool, whose `tools` global carries the

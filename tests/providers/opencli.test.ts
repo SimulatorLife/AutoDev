@@ -32,6 +32,7 @@ import {
   parseOpencliReply,
   prefixDigests,
   replyFromRow,
+  toolIndex,
   transcriptSegments
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 import {
@@ -567,10 +568,14 @@ test("a tool call goes to Codex and its output continues the same site conversat
         ["--conversation", "conv-9"]
       );
       assert.match(runs.prompts[1]!, /\/Users\/me\/AutoDev/u);
-      // The rules and tools travel with every turn: the site does not keep an
-      // earlier attachment in the model's context.
-      assert.match(runs.prompts[1]!, /## How to respond/u);
-      assert.match(runs.prompts[1]!, /### `exec`/u);
+      // A follow-up is small: the chat keeps its own history, so the full
+      // rules and tool reference are not re-sent -- only the call syntax and
+      // an index of the tools.
+      assert.doesNotMatch(runs.prompts[1]!, /## How to respond/u);
+      assert.doesNotMatch(runs.prompts[1]!, /### `exec`/u);
+      assert.match(runs.prompts[1]!, /<tool_call name="TOOL_NAME">/u);
+      assert.match(runs.prompts[1]!, /- `exec`/u);
+      assert.ok(runs.prompts[1]!.length < runs.prompts[0]!.length);
       assert.doesNotMatch(runs.prompts[1]!, /Which directory is this\?/u);
     }
   );
@@ -697,12 +702,13 @@ test("an orchestrator turn carries the full orchestrator role prompt, a leaf tur
         orchestrator
       );
       // Codex truncates the hook-injected root policy, so the bridge adds the
-      // whole role prompt -- on the continued turn too.
-      for (const prompt of runs.prompts.slice(0, 2)) {
-        assert.match(prompt, /## Your role/u);
-        assert.match(prompt, /Root orchestrator bootstrap/u);
-        assert.match(prompt, /Canonical orchestration skill/u);
-      }
+      // whole role prompt to the conversation's first message; a follow-up
+      // only reminds the model it is orchestrating.
+      assert.match(runs.prompts[0]!, /## Your role/u);
+      assert.match(runs.prompts[0]!, /Root orchestrator bootstrap/u);
+      assert.match(runs.prompts[0]!, /Canonical orchestration skill/u);
+      assert.doesNotMatch(runs.prompts[1]!, /Root orchestrator bootstrap/u);
+      assert.match(runs.prompts[1]!, /still the root orchestrator/u);
       await post(baseUrl, {
         model: "opencli-chatgpt-balanced",
         tools: [EXEC_TOOL],
@@ -796,6 +802,31 @@ test("a provider's model listing answers from cache and 503s before any list is 
     release();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("the follow-up tool index names exec's nested functions", () => {
+  const index = toolIndex([
+    {
+      kind: "custom",
+      name: "exec",
+      description:
+        "Run JavaScript.\ndeclare const tools: {\n  exec_command(args: { cmd: string }): Promise<string>;\n  multi_agent_v1__wait_agent(args: { targets: string[] }): Promise<unknown>;\n};\ntext(value)",
+      parameters: null,
+      namespace: null
+    },
+    {
+      kind: "function",
+      name: "wait",
+      description: "Wait for a running cell.",
+      parameters: {},
+      namespace: null
+    }
+  ]);
+  assert.match(index, /- `exec`: Run JavaScript\./u);
+  assert.match(index, /`exec_command`, `multi_agent_v1__wait_agent`/u);
+  // `text(` is not a snake_case tool name.
+  assert.doesNotMatch(index, /`text`/u);
+  assert.match(index, /- `wait`: Wait for a running cell\./u);
 });
 
 test("a busy site session is waited out instead of failing the turn", async () => {

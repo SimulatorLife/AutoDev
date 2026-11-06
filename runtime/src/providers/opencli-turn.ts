@@ -27,6 +27,11 @@ import {
   OPENCLI_SITES,
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  MULTI_AGENT_CLOSE_TOOL,
+  MULTI_AGENT_SPAWN_TOOL,
+  MULTI_AGENT_WAIT_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import {
   type CodexTool,
@@ -283,7 +288,7 @@ function roleSection(role: string | null): string[] {
 }
 
 const NEXT_REPLY =
-  'Write the agent\'s next reply to the conversation above, following the rules under "How to respond".';
+  "Write the agent's next reply to the conversation above, following the response rules.";
 
 /** The first prompt of a site conversation: everything the model needs. */
 export function renderOpencliPrompt(
@@ -305,26 +310,70 @@ export function renderOpencliPrompt(
   ].join("\n\n");
 }
 
+const CONTINUATION_RULES =
+  'Same rules as this chat\'s first message: to act, reply with <tool_call name="TOOL_NAME">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. Nothing about the machine is known except what tool results show.';
+
+const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\`, and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
+
+/**
+ * A call-shaped identifier in a code-mode tool's description (`exec_command(`).
+ * Codex's tool names are snake_case, so only names with an underscore count.
+ */
+const NESTED_TOOL_PATTERN = /\b([a-z]\w*)\(/gu;
+
+/**
+ * Every tool by name, with the functions `exec` exposes: a reminder, not a
+ * reference. The full reference is in the conversation's first message.
+ */
+export function toolIndex(tools: readonly CodexTool[]): string {
+  if (tools.length === 0)
+    return "No tools are available on this turn: answer in plain text.";
+  return tools
+    .map((tool) => {
+      const description = tool.description.trim();
+      const newline = description.indexOf("\n");
+      const summary =
+        newline === -1 ? description : description.slice(0, newline);
+      const nested =
+        tool.kind === "custom"
+          ? [
+              ...new Set(
+                Array.from(
+                  tool.description.matchAll(NESTED_TOOL_PATTERN),
+                  (match) => match[1] ?? ""
+                ).filter((name) => name.includes("_"))
+              )
+            ]
+          : [];
+      return `- \`${tool.name}\`${summary ? `: ${summary}` : ""}${nested.length > 0 ? ` Functions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.` : ""}`;
+    })
+    .join("\n");
+}
+
 /**
  * A follow-up prompt inside a continued site conversation.
  *
- * The transcript is not repeated -- only what the site has not seen -- but the
- * response rules and the tool reference are. A chat site does not keep an
- * earlier attachment's text in the model's context: given only a tool output,
- * ChatGPT read it as a document ("The attachment reports that subagent ... was
- * spawned") and said it could not wait for the child, when the next step was a
- * `wait_agent` call it no longer knew it had.
+ * A chat keeps its own history, so the first message of a conversation
+ * carries everything -- rules, instructions, role, the full tool reference,
+ * the transcript -- and a follow-up carries only what is new: the results of
+ * the model's calls and any new messages. Re-sending the reference and role
+ * on every turn made each attachment tens of kilobytes for one tool output.
+ * The follow-up still restates the call syntax, names every tool (and the
+ * functions `exec` exposes), and for an orchestrator says it is still
+ * orchestrating: given only a tool output, ChatGPT once read a spawn result
+ * as a document and said it could not wait for the child, when the next step
+ * was a `wait_agent` call it no longer had in view.
  */
 export function renderOpencliContinuation(
   tools: readonly CodexTool[],
   delta: string,
-  role: string | null = null
+  orchestrator = false
 ): string {
   return [
     "# Codex agent turn (continued)",
-    RESPONSE_RULES,
-    ...roleSection(role),
-    toolsSection(tools),
+    CONTINUATION_RULES,
+    ...(orchestrator ? [ORCHESTRATOR_REMINDER] : []),
+    `## Tools\n\n${toolIndex(tools)}`,
     `## New in the conversation\n\n${CONTINUATION_HEADER}\n\n${delta}`,
     NEXT_REPLY
   ].join("\n\n");
