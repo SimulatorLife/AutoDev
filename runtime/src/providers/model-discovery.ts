@@ -965,11 +965,30 @@ export class ProviderModelDiscoveryService {
     this.retryTimer.unref();
   }
 
-  /** Refresh every provider; resolves to how many did not confirm their models. */
-  private async refreshProviders(signal: AbortSignal): Promise<number> {
+  /**
+   * Re-read one provider's listing now, as an operator's provider check does,
+   * and return its discovery state afterwards; null for a provider with no
+   * listing adapter. It does not wait for, or disturb, the periodic refresh.
+   */
+  async refreshProvider(
+    provider: string
+  ): Promise<ControlApiProviderModelDiscovery | null> {
+    if (this.stopped || !this.adapters[provider]) return null;
+    await this.refreshProviders(
+      AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS * 2),
+      [provider]
+    );
+    return this.states.get(provider) ?? null;
+  }
+
+  /** Refresh providers; resolves to how many did not confirm their models. */
+  private async refreshProviders(
+    signal: AbortSignal,
+    providers: readonly string[] = this.providerIds()
+  ): Promise<number> {
     let unconfirmed = 0;
     await Promise.all(
-      this.providerIds().map(async (provider) => {
+      providers.map(async (provider) => {
         const adapter = this.adapters[provider];
         if (!adapter) return;
         const attemptedAt = this.now().toISOString();

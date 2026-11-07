@@ -37,6 +37,24 @@ export interface StateProviderTelemetryEntry {
   lastFailureAt: string | null;
   lastFailureClass: string | null;
   lastFailure: unknown;
+  lastCheck: unknown;
+}
+
+/** A persisted operator check, or null when the saved value is not one. */
+function readProviderCheck(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return null;
+  const check = value as Record<string, unknown>;
+  return typeof check.at === "string" &&
+    typeof check.ok === "boolean" &&
+    (check.failureClass === null || typeof check.failureClass === "string") &&
+    typeof check.detail === "string"
+    ? {
+        at: check.at,
+        ok: check.ok,
+        failureClass: check.failureClass,
+        detail: check.detail
+      }
+    : null;
 }
 
 function lookupCurrentEntry(
@@ -109,6 +127,8 @@ export function restoreProviderTelemetrySection(
     ) {
       current.lastFailure = savedEntry.lastFailure;
     }
+    if ("lastCheck" in savedEntry)
+      current.lastCheck = readProviderCheck(savedEntry.lastCheck);
   }
 }
 

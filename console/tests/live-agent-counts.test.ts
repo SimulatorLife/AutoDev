@@ -78,6 +78,7 @@ const PROVIDER: ControlApiProviderRecord = {
     cooldown: null,
     failureStreak: 0,
     probeFailureStreak: 0,
+    lastCheck: null,
     inFlightRequests: 0,
     activeAgents: 99,
     attempts: 0,

@@ -203,6 +203,18 @@ export class ProviderCooldowns {
     this.probeStreaks.clear();
   }
 
+  /**
+   * Clear what a passing live probe disproves: the probe-failure streak and a
+   * provider cooldown that a failed probe set. A cooldown the provider declared
+   * (a quota, a rate limit) or that request failures set is evidence a probe
+   * cannot answer, so it stays until it lapses or a request succeeds.
+   */
+  clearProbeFailures(provider: string): void {
+    this.probeStreaks.delete(provider);
+    if (this.cooldowns.get(provider)?.kind === "probe")
+      this.cooldowns.delete(provider);
+  }
+
   /** Clear provider health and only the quota pool that just succeeded. */
   clearAfterSuccess(provider: string, model: string): void {
     this.cooldowns.delete(provider);

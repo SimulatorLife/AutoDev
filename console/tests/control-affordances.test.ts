@@ -117,6 +117,7 @@ const PROVIDERS_FIXTURE = {
         cooldown: null,
         failureStreak: 0,
         probeFailureStreak: 0,
+        lastCheck: null,
         inFlightRequests: 0,
         activeAgents: 0,
         attempts: 0,

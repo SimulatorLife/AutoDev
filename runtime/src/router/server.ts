@@ -19,12 +19,20 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   getControlApiAvailability,
   handleControlApiRequest,
+  setControlApiProviderCheckSource,
   setControlApiProviderModelDiscoverySource,
   warmupDefaultPlaytestingRepository
 } from "../control-api/index.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
-import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
+import {
+  checkProvider,
+  codexState,
+  handle,
+  HOST,
+  PORT,
+  refreshCodexState
+} from "./http.ts";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import {
   isClientDisconnectError,
@@ -176,6 +184,12 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   if (modelDiscovery) {
     setControlApiProviderModelDiscoverySource(() => modelDiscovery.snapshot());
   }
+  setControlApiProviderCheckSource((provider) =>
+    checkProvider(
+      provider,
+      modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null
+    )
+  );
   const closePlaytestingSafely = (): Promise<void> => {
     if (playtestingShutdown !== null) return playtestingShutdown;
     playtestingShutdown = shutdownDefaultPlaytestRunControl().catch(() => {
@@ -223,6 +237,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (controlServer?.listening) controlServer.close();
     modelDiscovery?.stop();
     if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);
+    setControlApiProviderCheckSource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);

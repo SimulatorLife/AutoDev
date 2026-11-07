@@ -263,7 +263,11 @@ function providerColumns(
       // 168 holds the longest verdict there is in practice -- "Unavailable
       // (unavailable)" measures 129px -- with the cell's own 32px of inset.
       weight: 168,
-      cell: (provider) => React.createElement(ProviderStatusBadge, { provider })
+      cell: (provider) =>
+        React.createElement(ProviderStatusBadge, {
+          provider,
+          returnTo: providersPath()
+        })
     },
     {
       id: "activeAgents",

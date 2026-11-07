@@ -276,7 +276,8 @@ test("restoreProviderTelemetrySection restores telemetry maps and records", () =
         lastSuccessAt: null,
         lastFailureAt: null,
         lastFailureClass: null,
-        lastFailure: null
+        lastFailure: null,
+        lastCheck: null as unknown
       }
     ]
   ]);
@@ -291,7 +292,13 @@ test("restoreProviderTelemetrySection restores telemetry maps and records", () =
       lastSuccessAt: "2026-09-16T10:00:05.000Z",
       lastFailureAt: "2026-09-16T09:59:00.000Z",
       lastFailureClass: "timeout",
-      lastFailure: { code: "ETIMEDOUT" }
+      lastFailure: { code: "ETIMEDOUT" },
+      lastCheck: {
+        at: "2026-09-16T10:01:00.000Z",
+        ok: true,
+        failureClass: null,
+        detail: "probe answered"
+      }
     },
     unknownProvider: {
       attempts: 99
@@ -304,6 +311,13 @@ test("restoreProviderTelemetrySection restores telemetry maps and records", () =
   assert.equal(claudeState.failures, 1);
   assert.equal(claudeState.lastFailureClass, "timeout");
   assert.deepEqual(claudeState.lastFailure, { code: "ETIMEDOUT" });
+  // An operator check survives a restart as health evidence.
+  assert.deepEqual(claudeState.lastCheck, {
+    at: "2026-09-16T10:01:00.000Z",
+    ok: true,
+    failureClass: null,
+    detail: "probe answered"
+  });
   assert.equal(currentMap.has("unknownProvider"), false);
 });
 

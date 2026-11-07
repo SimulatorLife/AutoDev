@@ -60,6 +60,7 @@ import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
+import * as providerCheckRoute from "../app/api/providers/[provider]/check/route.ts";
 import * as providerLimitsRoute from "../app/api/providers/[provider]/limits/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import * as providerRoute from "../app/api/providers/[provider]/route.ts";
@@ -126,6 +127,7 @@ import {
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
+import { ProviderStatusBadge } from "../src/features/providers/provider-status.ts";
 import { ProviderUsagePanel } from "../src/features/providers/ProviderDetailView.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
@@ -4000,6 +4002,7 @@ test("provider readiness never turns configuration without a success into Ready"
         cooldown: null,
         failureStreak: 0,
         probeFailureStreak: 0,
+        lastCheck: null,
         inFlightRequests: 0,
         activeAgents: 0,
         attempts: 0,
@@ -4017,6 +4020,7 @@ test("provider readiness never turns configuration without a success into Ready"
         cooldown: null,
         failureStreak: 0,
         probeFailureStreak: 0,
+        lastCheck: null,
         inFlightRequests: 0,
         activeAgents: 0,
         attempts: 1,
@@ -4027,6 +4031,83 @@ test("provider readiness never turns configuration without a success into Ready"
       })
     ).label,
     "Ready"
+  );
+});
+
+test("an Unavailable provider verdict carries a re-check control that spins while it runs", () => {
+  const unavailable = {
+    id: "opencli-chatgpt",
+    disabled: false,
+    route: {
+      pattern: "^opencli-chatgpt-[a-z0-9][a-z0-9.-]*$",
+      baseUrl: "http://127.0.0.1:4004/v1",
+      healthUrl: "http://127.0.0.1:4004/health/liveliness"
+    },
+    credential: { envKey: null, configured: true },
+    health: {
+      cooldown: null,
+      failureStreak: 1,
+      probeFailureStreak: 0,
+      lastCheck: null,
+      inFlightRequests: 0,
+      activeAgents: 0,
+      attempts: 1,
+      successes: 0,
+      failures: 1,
+      lastSuccessAt: null,
+      lastFailure: {
+        at: "2026-11-07T12:00:00.000Z",
+        failureClass: "upstream_5xx",
+        status: 502
+      }
+    }
+  } as unknown as Parameters<typeof ProviderStatusBadge>[0]["provider"];
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderStatusBadge, {
+      provider: unavailable,
+      returnTo: "/providers"
+    })
+  );
+  // The form wraps the badge; its busy state is what the icons follow.
+  assert.match(markup, /^<form class="group /u);
+  assert.match(
+    markup,
+    /action="\/api\/providers\/opencli-chatgpt\/check" method="POST"/u
+  );
+  assert.match(markup, /name="returnTo" value="\/providers"/u);
+  assert.match(markup, /aria-label="Re-check provider opencli-chatgpt"/u);
+  // The refresh symbol hides and the spinning circle shows while busy.
+  assert.match(markup, /class="shrink-0 group-aria-busy:hidden"/u);
+  assert.match(
+    markup,
+    /class="shrink-0 hidden animate-spin group-aria-busy:block"/u
+  );
+  // The control sits inside the badge, after the verdict.
+  assert.match(markup, /Unavailable \(upstream_5xx\)<\/span><button/u);
+
+  // A Ready provider, or a badge with nowhere to return to, has no control.
+  const ready = {
+    ...unavailable,
+    health: {
+      ...unavailable.health,
+      lastFailure: null,
+      lastSuccessAt: "2026-11-07T12:00:00.000Z"
+    }
+  } as typeof unavailable;
+  assert.doesNotMatch(
+    renderToStaticMarkup(
+      React.createElement(ProviderStatusBadge, {
+        provider: ready,
+        returnTo: "/providers"
+      })
+    ),
+    /<form|data-provider-check/u
+  );
+  assert.doesNotMatch(
+    renderToStaticMarkup(
+      React.createElement(ProviderStatusBadge, { provider: unavailable })
+    ),
+    /<form/u
   );
 });
 
@@ -11717,6 +11798,7 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
         },
         failureStreak: 2,
         probeFailureStreak: 0,
+        lastCheck: null,
         inFlightRequests: 1,
         activeAgents: 1,
         attempts: 10,
@@ -16752,6 +16834,7 @@ test("Providers mutation routes export only POST", () => {
   for (const route of [
     providerRoleRoute,
     providerRoute,
+    providerCheckRoute,
     providerLimitsRoute,
     modelRoute
   ]) {
@@ -16761,6 +16844,61 @@ test("Providers mutation routes export only POST", () => {
     assert.equal("PUT" in route, false);
     assert.equal("DELETE" in route, false);
   }
+});
+
+test("provider check Console route asks Runtime to re-check the provider and returns to Providers", async () => {
+  const requests: Array<{ url: string; method: string | undefined }> = [];
+  await withControlRouteEnvironment(
+    "provider-check-route-token",
+    async (input, init) => {
+      requests.push({ url: String(input), method: init?.method });
+      return Response.json({
+        schema: "autodev-control-provider-check-v1",
+        provider: "opencli-gemini",
+        check: {
+          at: "2026-11-07T12:00:00.000Z",
+          ok: false,
+          failureClass: "probe_unavailable",
+          detail: "The provider's live probe failed."
+        },
+        health: null
+      });
+    },
+    async () => {
+      const send = (body: string, provider = "opencli-gemini") =>
+        providerCheckRoute.POST(
+          sameOriginFormRequest(`/api/providers/${provider}/check`, body),
+          { params: Promise.resolve({ provider }) }
+        );
+      const valid = new URLSearchParams({
+        provider: "opencli-gemini",
+        returnTo: "/providers?tab=providers"
+      }).toString();
+      // A check that ran is not a failed request, even if the provider is
+      // still unavailable: the refreshed page carries that verdict.
+      const ran = await send(valid);
+      assert.equal(ran.status, 303);
+      assert.equal(ran.headers.get("location"), "/providers?tab=providers");
+      assert.equal(requests.length, 1);
+      assert.match(
+        requests[0]!.url,
+        /\/control\/providers\/opencli-gemini\/check$/u
+      );
+      assert.equal(requests[0]!.method, "POST");
+      // A mismatched or padded form never reaches Runtime.
+      const mismatched = await send(valid, "opencli-chatgpt");
+      assert.equal(
+        mismatched.headers.get("location"),
+        "/providers?tab=providers&control=failed"
+      );
+      const padded = await send(valid + "&extra=value");
+      assert.equal(
+        padded.headers.get("location"),
+        "/providers?tab=providers&control=failed"
+      );
+      assert.equal(requests.length, 1);
+    }
+  );
 });
 
 test("provider-role Console route returns an unconfirmed failure when Runtime rejects the PATCH", async () => {
@@ -19876,6 +20014,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       cooldown: null,
       failureStreak: 0,
       probeFailureStreak: 0,
+      lastCheck: null,
       inFlightRequests: 0,
       activeAgents: 0,
       attempts: 0,

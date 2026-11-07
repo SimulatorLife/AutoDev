@@ -72,6 +72,7 @@ import {
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
   type ControlApiProviderAgentLimits,
+  type ControlApiProviderCheckResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
   type ControlApiProviderModelDiscovery,
@@ -1131,7 +1132,22 @@ function isProviderHealth(value: unknown): boolean {
             value.lastFailure.failureClass.length <= 128)) &&
         (value.lastFailure.status === null ||
           (isNonNegativeInteger(value.lastFailure.status) &&
-            value.lastFailure.status <= 999))))
+            value.lastFailure.status <= 999)))) &&
+    (value.lastCheck === null || isProviderCheck(value.lastCheck))
+  );
+}
+
+/** One operator-requested provider check, as Runtime records it. */
+function isProviderCheck(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isCanonicalTimestamp(value.at) &&
+    typeof value.ok === "boolean" &&
+    (value.failureClass === null ||
+      (typeof value.failureClass === "string" &&
+        value.failureClass.length <= 128)) &&
+    typeof value.detail === "string" &&
+    value.detail.length <= 2000
   );
 }
 
@@ -1304,6 +1320,25 @@ export function patchProviderEnabled(
     "PATCH",
     providerControlPath(provider),
     { disabled },
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed POST re-checking one provider: Runtime runs its live probe
+ * and model listing and answers with the check and the provider's health after
+ * it. The request carries no settings.
+ */
+export function checkProvider(
+  provider: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderCheckResponse>> {
+  return mutateControlApi<ControlApiProviderCheckResponse>(
+    "POST",
+    providerControlPath(provider, "check"),
+    {},
     config,
     options
   );

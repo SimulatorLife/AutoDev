@@ -38,6 +38,7 @@ import {
   type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
+  type ControlApiProviderCheckResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderHealth,
   type ControlApiProviderLimitsPatchResponse,
@@ -222,6 +223,10 @@ const PROVIDER_ROLE_PATH = new RegExp(
 const PROVIDER_LIMITS_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/limits$/u;
 const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
+const UNKNOWN_PROVIDER_ERROR = "autodev_control_api_unknown_provider";
+const UNKNOWN_PROVIDER_MESSAGE = "Unknown provider.";
+const PROVIDER_CHECK_PATH =
+  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/check$/u;
 const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
   process.env.AUTODEV_REPO_ROOT
@@ -748,6 +753,14 @@ export type ControlApiProviderHealthSource = (
   now: number
 ) => Readonly<Record<string, ControlApiProviderHealth>>;
 
+/**
+ * Runs an operator-requested check of one provider and answers with what it
+ * found. The router registers it; without one there is nothing to check with.
+ */
+export type ControlApiProviderCheckSource = (
+  provider: string
+) => Promise<ControlApiProviderCheckResponse>;
+
 /** Canonical Runtime activity source for the read-only live-count projection. */
 export type ControlApiLiveAgentCountsSource = (
   now: number
@@ -764,6 +777,14 @@ export type ControlApiMcpObservationsSource =
   () => readonly ControlApiMcpRuntimeServer[];
 
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
+let providerCheckSource: ControlApiProviderCheckSource | null = null;
+
+/** The router registers its provider check here; a standalone Control API has none. */
+export function setControlApiProviderCheckSource(
+  source: ControlApiProviderCheckSource | null
+): void {
+  providerCheckSource = source;
+}
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
 let mcpObservationsSource: ControlApiMcpObservationsSource | null = null;
 let providerModelDiscoverySource:
@@ -5131,8 +5152,8 @@ async function patchProviderRole(
     sendControlError(
       response,
       404,
-      "autodev_control_api_unknown_provider",
-      "Unknown provider."
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
     );
     return;
   }
@@ -5473,6 +5494,84 @@ async function resetProviders(
  * restores the configuration the operator had rather than requiring it to be
  * re-entered. `disabled` is the only accepted key.
  */
+/**
+ * Re-check one provider now: its live probe and model listing.
+ *
+ * Operator-only and audited like every other provider write, because it can
+ * change routing state -- a passing probe clears a probe-failure cooldown, a
+ * failing one starts one. It takes no body.
+ */
+async function postProviderCheck(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/check`;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "check_provider",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {})
+    });
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to check a provider."
+    );
+    return;
+  }
+  if (!providerIsKnown(provider)) {
+    audit("error", null, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
+    );
+    return;
+  }
+  const source = providerCheckSource;
+  if (source === null) {
+    audit("error", null, "check_unavailable");
+    sendControlError(
+      response,
+      503,
+      "autodev_control_api_provider_check_unavailable",
+      "No router is running to check this provider with."
+    );
+    return;
+  }
+  try {
+    const result = await source(provider);
+    audit("ok", {
+      ok: result.check.ok,
+      failureClass: result.check.failureClass
+    });
+    sendJson(response, 200, result);
+  } catch {
+    audit("error", null, "check_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_provider_check_failed",
+      "The provider check could not be run."
+    );
+  }
+}
+
 async function patchProviderEnabled(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5514,8 +5613,8 @@ async function patchProviderEnabled(
     sendControlError(
       response,
       404,
-      "autodev_control_api_unknown_provider",
-      "Unknown provider."
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
     );
     return;
   }
@@ -5630,8 +5729,8 @@ async function patchProviderLimits(
     sendControlError(
       response,
       404,
-      "autodev_control_api_unknown_provider",
-      "Unknown provider."
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
     );
     return;
   }
@@ -8518,6 +8617,23 @@ async function handleMutationOnlyRoute(
       return true;
     }
     await resetProviders(request, response, actor);
+    return true;
+  }
+  const providerCheckMatch = pathname.match(PROVIDER_CHECK_PATH);
+  if (providerCheckMatch) {
+    if (method !== "POST") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "POST",
+        "A provider check is run via POST only."
+      );
+      return true;
+    }
+    await postProviderCheck(response, actor, providerCheckMatch[1]!);
     return true;
   }
   const providerOnlyMatch = pathname.match(PROVIDER_PATH);

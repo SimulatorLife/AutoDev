@@ -33,6 +33,7 @@ import {
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource,
   setControlApiMcpObservationsSource,
+  setControlApiProviderCheckSource,
   setControlApiProviderHealthSource,
   setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
@@ -777,6 +778,71 @@ test("operator PATCH validates fields, persists provider state, and audits the a
       ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("POST /control/providers/:provider/check runs the router's check for an operator", async () => {
+  const saved = saveEnv();
+  const checked: string[] = [];
+  try {
+    configure();
+    const path = CONTROL_API_PATHS.providers + "/minimax/check";
+    // A standalone Control API has no router to check with.
+    setControlApiProviderCheckSource(null);
+    const noRouter = await call("POST", path, {
+      actor: "operator-a",
+      body: {}
+    });
+    assert.equal(noRouter.response.statusCode, 503);
+    assert.equal(
+      noRouter.body.error.code,
+      "autodev_control_api_provider_check_unavailable"
+    );
+
+    setControlApiProviderCheckSource(async (provider) => {
+      checked.push(provider);
+      return {
+        schema: "autodev-control-provider-check-v1",
+        provider,
+        check: {
+          at: "2026-11-07T12:00:00.000Z",
+          ok: true,
+          failureClass: null,
+          detail: "The provider answered its live probe and listed 2 model(s)."
+        },
+        health: null
+      };
+    });
+    const viewer = await call("POST", path, { actor: "viewer-a", body: {} });
+    assert.equal(viewer.response.statusCode, 403);
+    const unknown = await call(
+      "POST",
+      CONTROL_API_PATHS.providers + "/nonexistent/check",
+      { actor: "operator-a", body: {} }
+    );
+    assert.equal(unknown.response.statusCode, 404);
+    const wrongMethod = await call("GET", path, { actor: "operator-a" });
+    assert.equal(wrongMethod.response.statusCode, 405);
+    assert.deepEqual(checked, [], "refused checks never reach the router");
+
+    const { result: ok, lines } = await captureAudit(() =>
+      call("POST", path, { actor: "operator-a", body: {} })
+    );
+    assert.equal(ok.response.statusCode, 200);
+    assert.equal(ok.body.schema, "autodev-control-provider-check-v1");
+    assert.equal(ok.body.check.ok, true);
+    assert.deepEqual(checked, ["minimax"]);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes('"action":"check_provider"') &&
+          line.includes('"outcome":"ok"')
+      ),
+      "a check is audited like every other provider write"
+    );
+  } finally {
+    setControlApiProviderCheckSource(null);
     restoreEnv(saved);
   }
 });
@@ -1702,6 +1768,7 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
         cooldown: null,
         failureStreak: 0,
         probeFailureStreak: 0,
+        lastCheck: null,
         inFlightRequests: 2,
         activeAgents: 1,
         attempts: 5,
@@ -3233,6 +3300,7 @@ test("Agent readiness uses observed provider health rather than configuration al
       cooldown: null,
       failureStreak: 0,
       probeFailureStreak: 0,
+      lastCheck: null,
       inFlightRequests: 0,
       activeAgents: 0,
       attempts: 0,

@@ -39,6 +39,12 @@ export interface StatusBadgeProps {
   readonly label?: string;
   /** Extra explanation revealed on hover, for a verbose state behind a short label. */
   readonly title?: string | undefined;
+  /**
+   * A control that belongs to this status -- such as re-checking an
+   * Unavailable provider -- drawn inside the badge after the word, so the
+   * action reads as part of the verdict it acts on.
+   */
+  readonly action?: React.ReactNode;
 }
 
 /**
@@ -228,7 +234,8 @@ export function StatusDot({
 export function StatusBadge({
   status,
   label,
-  title
+  title,
+  action
 }: StatusBadgeProps): React.JSX.Element {
   const style = BADGE_STYLES[status as StatusBadgeVariant] ?? DEFAULT_STYLE;
   const displayLabel = label ?? statusBadgeLabel(status);
@@ -261,6 +268,11 @@ export function StatusBadge({
     // is a flex container, and `text-overflow` does not apply to one — which is
     // why the cut was invisible: the box simply ran out. `min-w-0` is what lets
     // this item shrink below its `white-space: nowrap` min-content at all.
-    React.createElement("span", { className: "min-w-0 truncate" }, displayLabel)
+    React.createElement(
+      "span",
+      { className: "min-w-0 truncate" },
+      displayLabel
+    ),
+    ...(action === undefined ? [] : [action])
   );
 }

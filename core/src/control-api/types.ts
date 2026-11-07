@@ -192,6 +192,31 @@ export interface ControlApiProviderHealth {
     readonly failureClass: string | null;
     readonly status: number | null;
   } | null;
+  /**
+   * The latest operator-requested check (`POST /control/providers/:provider/check`):
+   * the provider's live probe plus its model listing. A passing check newer
+   * than the last failure is evidence the provider recovered; a failing one is
+   * evidence it has not. `null` when no check has run.
+   */
+  readonly lastCheck: ControlApiProviderCheck | null;
+}
+
+/** One operator-requested provider check and what it found. */
+export interface ControlApiProviderCheck {
+  readonly at: string;
+  readonly ok: boolean;
+  /** The failure class when the check failed (`probe_unavailable`), else null. */
+  readonly failureClass: string | null;
+  /** What was checked, or why the check failed, in one sentence. */
+  readonly detail: string;
+}
+
+/** `POST /control/providers/:provider/check`: the check and the provider's health after it. */
+export interface ControlApiProviderCheckResponse {
+  readonly schema: "autodev-control-provider-check-v1";
+  readonly provider: string;
+  readonly check: ControlApiProviderCheck;
+  readonly health: ControlApiProviderHealth | null;
 }
 
 /**

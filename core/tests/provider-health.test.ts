@@ -20,6 +20,7 @@ function health(
     failures: 0,
     lastSuccessAt: null,
     lastFailure: null,
+    lastCheck: null,
     ...overrides
   };
 }
@@ -81,6 +82,79 @@ test("active cooldown and failed health probes remain unavailable", () => {
   );
   assert.equal(
     providerHealthReadiness(health({ probeFailureStreak: 1 })),
+    "unavailable"
+  );
+});
+
+test("a passing check newer than the last failure counts as recovery", () => {
+  const failure = {
+    at: "2026-11-07T12:00:00.000Z",
+    failureClass: "upstream_5xx",
+    status: 502
+  };
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastSuccessAt: "2026-11-07T11:00:00.000Z",
+        lastFailure: failure,
+        lastCheck: {
+          at: "2026-11-07T12:05:00.000Z",
+          ok: true,
+          failureClass: null,
+          detail: "probe and listing answered"
+        }
+      })
+    ),
+    "ready"
+  );
+  // A check older than the failure says nothing about it.
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastFailure: failure,
+        lastCheck: {
+          at: "2026-11-07T11:55:00.000Z",
+          ok: true,
+          failureClass: null,
+          detail: "probe answered"
+        }
+      })
+    ),
+    "unavailable"
+  );
+  // A failing check is failure evidence, even with no request ever made.
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastCheck: {
+          at: "2026-11-07T12:05:00.000Z",
+          ok: false,
+          failureClass: "probe_unavailable",
+          detail: "probe failed"
+        }
+      })
+    ),
+    "unavailable"
+  );
+  // A passing check cannot clear a cooldown the provider declared.
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        cooldown: {
+          kind: "quota",
+          failureClass: "quota_exhausted",
+          until: "2026-11-07T13:00:00.000Z",
+          resetsAt: "2026-11-07T13:00:00.000Z",
+          lastResortEligible: false
+        },
+        lastCheck: {
+          at: "2026-11-07T12:05:00.000Z",
+          ok: true,
+          failureClass: null,
+          detail: "probe answered"
+        }
+      })
+    ),
     "unavailable"
   );
 });

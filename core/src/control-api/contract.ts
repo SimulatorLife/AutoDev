@@ -104,11 +104,16 @@
  * and every limit the operator had configured was labelled as a default. The
  * limit's source is now a closed union the Console can render, and the file's
  * location travels beside it under the name that says what it is.
+ * v29: a provider can be re-checked on request through
+ * `POST /control/providers/{provider}/check`, which runs its live probe and
+ * model listing and answers with the check and the provider's health after
+ * it; provider health publishes the latest check (`lastCheck`), and a passing
+ * check newer than the last failure counts as recovery.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 28
+  version: 29
 } as const;
 
 export type ControlApiContractResponse = {

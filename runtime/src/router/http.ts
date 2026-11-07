@@ -8,7 +8,10 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 import type {
   ControlApiLiveAgentCounts,
-  ControlApiProviderHealth
+  ControlApiProviderCheck,
+  ControlApiProviderCheckResponse,
+  ControlApiProviderHealth,
+  ControlApiProviderModelDiscovery
 } from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
@@ -31,7 +34,8 @@ import {
 } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   COOLDOWN_CONFIG,
-  COOLDOWNS
+  COOLDOWNS,
+  PROBE_FAILURE_CLASS
 } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   getDefaultRouterEventRecorder,
@@ -120,6 +124,7 @@ import {
   getActiveRequests,
   LAST_RESORT_MAX_ATTEMPTS,
   PROBE_TIMEOUT_MS,
+  providerAvailable,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
   proxyRoleResponse,
@@ -212,7 +217,8 @@ export const providerTelemetry = new Map(
         timestamp: string;
         class: string | null;
         status: number | null | undefined;
-      } | null
+      } | null,
+      lastCheck: null as ControlApiProviderCheck | null
     }
   ])
 );
@@ -615,7 +621,8 @@ export function providerState(provider: string) {
       lastSuccessAt: null,
       lastFailureAt: null,
       lastFailureClass: null,
-      lastFailure: null
+      lastFailure: null,
+      lastCheck: null
     });
   }
   return providerTelemetry.get(provider)!;
@@ -1356,13 +1363,79 @@ function controlApiProviderHealth(
               failureClass: state.lastFailure.class,
               status: state.lastFailure.status ?? null
             }
-          : null
+          : null,
+        lastCheck: state.lastCheck
       };
       return [route.provider, health];
     })
   );
 }
 setControlApiProviderHealthSource(controlApiProviderHealth);
+
+/** Re-read one provider's model listing, for a check; null when nothing lists models. */
+export type ProviderModelRecheck = (
+  provider: string
+) => Promise<ControlApiProviderModelDiscovery | null>;
+
+/**
+ * Re-check one provider now, on an operator's request.
+ *
+ * Routing only re-probes a provider when a request is about to use it, so a
+ * provider marked unavailable stays that way until traffic happens to try it
+ * again. The check runs what routing would: the live probe (credential, the
+ * bridge's health endpoint, or Codex's own auth), then the provider's model
+ * listing, which confirms its account still answers.
+ *
+ * A passing probe clears a probe-failure cooldown, and the passing check is
+ * recorded as health evidence (`lastCheck`) that a request failure older than
+ * it no longer stands for. A failing probe cools the provider down exactly as
+ * routing does. A cooldown the provider declared -- a quota or rate limit --
+ * is not something a probe can disprove, so it stays until it resets.
+ */
+export async function checkProvider(
+  provider: string,
+  recheckModels: ProviderModelRecheck | null
+): Promise<ControlApiProviderCheckResponse> {
+  const route = ROUTES.find((candidate) => candidate.provider === provider);
+  if (!route) throw new Error(`Unknown provider: ${provider}`);
+  const live = await providerAvailable(route);
+  let check: ControlApiProviderCheck;
+  if (live) {
+    COOLDOWNS.clearProbeFailures(provider);
+    const listing = recheckModels ? await recheckModels(provider) : null;
+    const listed = listing === null || listing.status !== "unavailable";
+    check = {
+      at: new Date().toISOString(),
+      ok: listed,
+      failureClass: listed ? null : "model_listing_unavailable",
+      detail: listed
+        ? listing === null
+          ? "The provider answered its live probe."
+          : listing.status === "observed"
+            ? `The provider answered its live probe and listed ${listing.models.length} model(s).`
+            : `The provider answered its live probe; its model listing failed (${listing.reason}), so its last listing is kept.`
+        : `The provider answered its live probe, but its model listing is unavailable: ${listing.reason}`
+    };
+  } else {
+    COOLDOWNS.cooldownProvider(provider, { failureClass: PROBE_FAILURE_CLASS });
+    check = {
+      at: new Date().toISOString(),
+      ok: false,
+      failureClass: PROBE_FAILURE_CLASS,
+      detail: route.healthUrl
+        ? `The provider's live probe failed: no credential, or ${route.healthUrl} did not answer.`
+        : "The provider's live probe failed: its credential is unavailable."
+    };
+  }
+  providerState(provider).lastCheck = check;
+  scheduleRouterStatePersist();
+  return {
+    schema: "autodev-control-provider-check-v1",
+    provider,
+    check,
+    health: controlApiProviderHealth(Date.now())[provider] ?? null
+  };
+}
 setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
 // The MCP observations are the router's own telemetry of the MCP servers it
 // has reached, so the Control API publishes them rather than reaching into

@@ -5,6 +5,8 @@ import {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Button } from "../../components/forms/Button.ts";
+import { Icon } from "../../components/icons/Icon.ts";
 import {
   NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
@@ -110,16 +112,74 @@ export function resolveProviderStatus(
   };
 }
 
-/** The Status column: one verdict per provider, never a summary of parts. */
-export function ProviderStatusBadge({
+/**
+ * The re-check control inside an Unavailable verdict.
+ *
+ * A provider marked unavailable stays so until traffic happens to try it
+ * again; this asks Runtime to re-run its live probe and model listing now.
+ * It submits the enclosing form (`ProviderStatusBadge`), and the Console's
+ * form owner marks that form `aria-busy` while the check runs -- which is what
+ * swaps the refresh symbol for a spinning circle, with no client state of its
+ * own. The redirected page then carries the new verdict.
+ */
+function ProviderCheckButton({
   provider
 }: {
+  readonly provider: string;
+}): React.JSX.Element {
+  return React.createElement(
+    Button,
+    {
+      type: "submit",
+      variant: "inline",
+      size: "icon",
+      className:
+        "ml-1.5 -mr-1 shrink-0 group-aria-busy:pointer-events-none group-aria-busy:cursor-default",
+      ariaLabel: `Re-check provider ${provider}`,
+      title: "Re-check this provider now: its live probe and model listing.",
+      dataAttributes: { "data-provider-check": provider }
+    },
+    React.createElement(Icon, {
+      name: "refresh",
+      size: 12,
+      className: "group-aria-busy:hidden"
+    }),
+    React.createElement(Icon, {
+      name: "spinner",
+      size: 12,
+      className: "hidden animate-spin group-aria-busy:block"
+    })
+  );
+}
+
+/**
+ * The Status column: one verdict per provider, never a summary of parts.
+ *
+ * An Unavailable verdict -- a failed request, a failed probe, a cooldown --
+ * carries a re-check control when `returnTo` is given (the page to come back
+ * to after the check). The form wraps the badge, because a form cannot sit
+ * inside the badge's inline box, and it is the form's busy state that turns
+ * the control into a spinner.
+ */
+export function ProviderStatusBadge({
+  provider,
+  returnTo
+}: {
   readonly provider: ControlApiProviderRecord;
+  readonly returnTo?: string | undefined;
 }): React.JSX.Element {
   const status = resolveProviderStatus(provider);
-  return React.createElement(StatusBadge, {
+  const checkable = status.tone === "unavailable" && returnTo !== undefined;
+  const badge = React.createElement(StatusBadge, {
     status: status.tone,
     label: status.label,
+    ...(checkable
+      ? {
+          action: React.createElement(ProviderCheckButton, {
+            provider: provider.id
+          })
+        }
+      : {}),
     // The title carries the verdict as well as the explanation of it.
     //
     // A badge's title is the only way back to a label the column could not
@@ -132,6 +192,27 @@ export function ProviderStatusBadge({
       ? {}
       : { title: `${status.label} — ${status.title}` })
   });
+  if (!checkable) return badge;
+  return React.createElement(
+    "form",
+    {
+      action: `/api/providers/${encodeURIComponent(provider.id)}/check`,
+      method: "POST",
+      className: "group inline-flex max-w-full",
+      "data-provider-check-form": provider.id
+    },
+    React.createElement("input", {
+      type: "hidden",
+      name: "provider",
+      value: provider.id
+    }),
+    React.createElement("input", {
+      type: "hidden",
+      name: "returnTo",
+      value: returnTo
+    }),
+    badge
+  );
 }
 
 /**

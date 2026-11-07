@@ -60,6 +60,15 @@ export const OUTLINE_BUTTON_CLASS = OUTLINE_BUTTON_CHROME_CLASS;
 const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
 
 /**
+ * A control drawn inside another element -- such as the re-check symbol inside
+ * a Status badge -- rather than beside it: no border or fill of its own, the
+ * colour of what it sits in, and a 16px box as an icon so it fits a badge's
+ * line.
+ */
+const INLINE_BUTTON_CHROME_CLASS = `inline-flex items-center justify-center rounded-full text-current opacity-80 transition-opacity hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
+const INLINE_ICON_BUTTON_SIZE_CLASS = "size-4 p-0";
+
+/**
  * An irreversible action: erasing or purging. Separate from the error status
  * colour so "this control is destructive" reads consistently with every other
  * destructive control rather than being re-typed per feature.
@@ -74,7 +83,7 @@ export interface ButtonProps {
   readonly children?: React.ReactNode;
   readonly type?: "submit" | "button" | "reset" | undefined;
   readonly variant?:
-    "primary" | "secondary" | "destructive" | "outline" | undefined;
+    "primary" | "secondary" | "destructive" | "outline" | "inline" | undefined;
   readonly size?: "default" | "compact" | "icon" | undefined;
   readonly disabled?: boolean | undefined;
   /**
@@ -124,21 +133,24 @@ const BUTTON_VARIANT_CLASS = {
   primary: PRIMARY_BUTTON_CLASS,
   secondary: SECONDARY_BUTTON_CLASS,
   destructive: DESTRUCTIVE_BUTTON_CLASS,
-  outline: OUTLINE_BUTTON_CLASS
+  outline: OUTLINE_BUTTON_CLASS,
+  inline: `${INLINE_BUTTON_CHROME_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS}`
 } as const;
 
 const BUTTON_VARIANT_COMPACT_CLASS = {
   primary: `${PRIMARY_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${PRIMARY_BUTTON_AFTER_SIZE_CLASS}`,
   secondary: `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`,
   destructive: `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`,
-  outline: `${OUTLINE_BUTTON_CLASS} ${COMPACT_BUTTON_SIZE_CLASS}`
+  outline: `${OUTLINE_BUTTON_CLASS} ${COMPACT_BUTTON_SIZE_CLASS}`,
+  inline: `${INLINE_BUTTON_CHROME_CLASS} ${COMPACT_BUTTON_SIZE_CLASS}`
 } as const;
 
 const BUTTON_VARIANT_ICON_CLASS = {
   primary: `${PRIMARY_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${PRIMARY_BUTTON_AFTER_SIZE_CLASS}`,
   secondary: `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`,
   destructive: `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`,
-  outline: `${OUTLINE_BUTTON_CLASS} ${ICON_BUTTON_SIZE_CLASS}`
+  outline: `${OUTLINE_BUTTON_CLASS} ${ICON_BUTTON_SIZE_CLASS}`,
+  inline: `${INLINE_BUTTON_CHROME_CLASS} ${INLINE_ICON_BUTTON_SIZE_CLASS}`
 } as const;
 
 export function Button({
