@@ -124,12 +124,32 @@ export interface OpencliBridgeOptions {
   readonly tempRoot?: string;
   /** How long to wait before re-trying a site session opencli reports busy. */
   readonly sessionBusyRetryMs?: number;
+  /** How long to wait before re-trying a command the site was not ready for. */
+  readonly unsentRetryMs?: number;
+  /** Keep-alive cadence on a streamed turn. */
+  readonly keepAliveMs?: number;
 }
 
 /** opencli's code for a site session another command still holds. */
 const SESSION_BUSY = "SESSION_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 const OUTPUT_ITEM_ADDED = "response.output_item.added";
+const DEFAULT_UNSENT_RETRY_MS = 3000;
+const UNSENT_RETRIES = 2;
+
+/**
+ * Failures opencli reports before the prompt reached the site: the tab had no
+ * composer yet, or an attachment never became ready. Nothing was sent, so the
+ * command is safe to run again -- unlike a failure after sending, where a retry
+ * would put the prompt in the chat twice. A ChatGPT turn failed this way when
+ * its tab was still loading the conversation it had been asked to continue.
+ */
+const FAILED_BEFORE_SENDING =
+  /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer/u;
+
+function failedBeforeSending(error: OpencliCommandError): boolean {
+  return FAILED_BEFORE_SENDING.test(error.message);
+}
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
 /** Keep-alive cadence on a streamed turn, well inside every idle timeout. */
 const KEEP_ALIVE_MS = 15_000;
@@ -352,7 +372,12 @@ class TurnStream {
   private readonly responseId: string;
   private readonly model: string;
 
-  constructor(response: ServerResponse, responseId: string, model: string) {
+  constructor(
+    response: ServerResponse,
+    responseId: string,
+    model: string,
+    keepAliveMs: number
+  ) {
     this.response = response;
     this.responseId = responseId;
     this.model = model;
@@ -365,9 +390,17 @@ class TurnStream {
       type: "response.created",
       response: responseObject(responseId, model, "in_progress", [])
     });
+    // A keep-alive has to be an event, not an SSE comment: an SSE parser drops
+    // comments, so Codex never saw the old `: keep-alive` lines and aborted
+    // every site turn that ran past its 5-minute stream idle timeout -- a
+    // ChatGPT turn queued behind another agent's turn on the same tab does.
+    // `response.in_progress` is the Responses event for exactly this state.
     this.keepAlive = setInterval(() => {
-      if (this.writable()) this.response.write(": opencli keep-alive\n\n");
-    }, KEEP_ALIVE_MS);
+      this.emit("response.in_progress", {
+        type: "response.in_progress",
+        response: responseObject(responseId, model, "in_progress", [])
+      });
+    }, keepAliveMs);
   }
 
   complete(output: JsonRecord[]): void {
@@ -678,21 +711,30 @@ export function createOpencliBridge(
   function execFor(signal: AbortSignal): OpencliExec {
     const deadline = Date.now() + options.turnTimeoutSeconds * 1000;
     const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
-    const attempt = async (args: readonly string[]): Promise<JsonRecord[]> => {
+    const unsentRetryMs = options.unsentRetryMs ?? DEFAULT_UNSENT_RETRY_MS;
+    const attempt = async (
+      args: readonly string[],
+      unsentRetries = UNSENT_RETRIES
+    ): Promise<JsonRecord[]> => {
       if (signal.aborted)
         throw new OpencliCommandError("turn cancelled", "CANCELLED", null);
       try {
         return await options.run({ args, signal });
       } catch (error) {
-        if (
-          !(error instanceof OpencliCommandError) ||
-          error.code !== SESSION_BUSY ||
-          Date.now() + retryMs > deadline
-        )
-          throw error;
-        writeErrorLine(`opencli site session busy; retrying in ${retryMs}ms`);
-        await sleep(retryMs);
-        return attempt(args);
+        if (!(error instanceof OpencliCommandError)) throw error;
+        if (error.code === SESSION_BUSY && Date.now() + retryMs <= deadline) {
+          writeErrorLine(`opencli site session busy; retrying in ${retryMs}ms`);
+          await sleep(retryMs);
+          return attempt(args, unsentRetries);
+        }
+        if (unsentRetries > 0 && failedBeforeSending(error)) {
+          writeErrorLine(
+            `opencli site was not ready (${error.message}); retrying in ${unsentRetryMs}ms`
+          );
+          await sleep(unsentRetryMs);
+          return attempt(args, unsentRetries - 1);
+        }
+        throw error;
       }
     };
     return attempt;
@@ -795,7 +837,12 @@ export function createOpencliBridge(
     const controller = new AbortController();
     const responseId = `resp_${turnId(12)}`;
     const stream = turn.stream
-      ? new TurnStream(response, responseId, turn.model)
+      ? new TurnStream(
+          response,
+          responseId,
+          turn.model,
+          options.keepAliveMs ?? KEEP_ALIVE_MS
+        )
       : null;
     const onClose = () => {
       if (!response.writableEnded) {

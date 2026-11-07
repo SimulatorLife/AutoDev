@@ -134,6 +134,17 @@ export const CHATGPT_MODELS = Object.freeze([
   "gpt-5.6-pro"
 ]);
 
+/** opencli could not open or read Gemini's model picker, so selected no model. */
+const GEMINI_MODEL_SELECTION_FAILURE =
+  /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open model picker|not found in picker menu/u;
+
+function isGeminiModelSelectionFailure(error: unknown): boolean {
+  return (
+    error instanceof OpencliCommandError &&
+    GEMINI_MODEL_SELECTION_FAILURE.test(error.message)
+  );
+}
+
 /** The conversation a Gemini `/app/<id>` URL names, or null for any other page. */
 export function geminiConversationId(url: unknown): string | null {
   return typeof url === "string"
@@ -220,21 +231,29 @@ export const OPENCLI_SITE_SPECS: Readonly<
           invocation.conversationId,
           ...JSON_FORMAT
         ]);
-      const { response } = replyFromRow(
-        firstRow(
-          await exec([
-            "gemini",
-            "ask",
-            invocation.prompt,
-            "--model",
-            invocation.siteModel,
-            ...(invocation.conversationId ? [] : ["--new", "true"]),
-            "--timeout",
-            String(invocation.timeoutSeconds),
-            ...JSON_FORMAT
-          ])
-        )
-      );
+      const ask = (model: string | null) =>
+        exec([
+          "gemini",
+          "ask",
+          invocation.prompt,
+          ...(model === null ? [] : ["--model", model]),
+          ...(invocation.conversationId ? [] : ["--new", "true"]),
+          "--timeout",
+          String(invocation.timeoutSeconds),
+          ...JSON_FORMAT
+        ]);
+      let rows: JsonRecord[];
+      try {
+        rows = await ask(invocation.siteModel);
+      } catch (error) {
+        // Gemini's model picker does not render in a hidden or covered
+        // window, and opencli then cannot select any model -- before anything
+        // is sent. A root turn failed outright that way; it is asked with the
+        // model the site already has instead.
+        if (!isGeminiModelSelectionFailure(error)) throw error;
+        rows = await ask(null);
+      }
+      const { response } = replyFromRow(firstRow(rows));
       const status = firstRow(await exec(["gemini", "status", ...JSON_FORMAT]));
       return {
         response: response.startsWith(GEMINI_REPLY_PREFIX)

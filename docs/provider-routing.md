@@ -2245,9 +2245,24 @@ single list; the route patterns and the site registry in
   that command's browser step finishes, so the next command can be refused
   with `SESSION_BUSY`; the bridge waits that out (retrying every 5 s) until
   the turn's own timeout instead of failing the turn.
+- **Keep-alives are events.** The 15 s keep-alive is a `response.in_progress`
+  event, not an SSE comment: an SSE parser drops comments, so Codex never
+  counted the old `: keep-alive` lines and aborted every site turn that ran
+  past its own 5-minute `stream_idle_timeout_ms` (`client_aborted` at 300 s,
+  then retried until "idle timeout waiting for SSE"; session
+  `01a1b6e5-ba5b-7f83-a471-0669d92f0ee1`). Two agents sharing one site queue
+  behind each other's turns, so such turns are common.
+- **Retrying what was never sent.** A command opencli failed before the prompt
+  reached the site -- no composer yet ("requires an authenticated session
+  with an active composer"), an attachment that never became ready ("prompt
+  was not sent") -- is retried twice, 3 s apart; a failure after sending is
+  not, so a prompt is never put in a chat twice. Gemini's model picker does
+  not render in a hidden or covered window, and opencli then selects no model
+  at all ("model discovery returned no selectable models"); such a turn is
+  asked with the model Gemini already has rather than failing.
 - **Streaming and failures.** A streamed turn (Codex always streams) opens at
   once: headers and `response.created` go out before the site is asked, and a
-  keep-alive comment follows every 15 s. A site turn can outlast five
+  `response.in_progress` event follows every 15 s. A site turn can outlast five
   minutes -- a slow model, or a queue behind other turns on the same tab --
   and the router's HTTP client abandons a response whose headers have not
   arrived by then (`UND_ERR_HEADERS_TIMEOUT`); the router's retry of such a

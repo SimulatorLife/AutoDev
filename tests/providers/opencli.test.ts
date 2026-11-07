@@ -229,6 +229,41 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
   ]);
 });
 
+test("Gemini is asked with its current model when its model picker cannot be read", async () => {
+  const calls: string[][] = [];
+  let asks = 0;
+  const exec = async (args: readonly string[]) => {
+    calls.push([...args]);
+    if (args[1] === "ask") {
+      asks += 1;
+      if (asks === 1)
+        throw new OpencliCommandError(
+          "Gemini model discovery returned no selectable models. Gemini Web may have changed its model selector UI.",
+          "COMMAND_EXEC",
+          1
+        );
+      return [{ response: "💬 answered" }];
+    }
+    return [{ Url: "https://gemini.google.com/app/abc" }];
+  };
+  const reply = await OPENCLI_SITE_SPECS.gemini.turn(
+    {
+      prompt: "p",
+      promptFile: "/unused",
+      conversationId: null,
+      siteModel: "3.1-pro",
+      selectModel: true,
+      timeoutSeconds: 60
+    },
+    exec
+  );
+  assert.equal(reply.response, "answered");
+  const askCalls = calls.filter((args) => args[1] === "ask");
+  assert.equal(askCalls.length, 2);
+  assert.ok(askCalls[0]!.includes("--model"));
+  assert.equal(askCalls[1]!.includes("--model"), false);
+});
+
 test("every turn attaches its prompt under a fresh name the message names", () => {
   // ChatGPT renames a repeated upload, which opencli then cannot match.
   const first = attachedPromptFileName();
@@ -473,7 +508,7 @@ test("a streamed turn opens at once, keeps alive, and reports a failure in the s
     assert.equal(response.status, 200);
     release(
       new OpencliCommandError(
-        "Could not find ChatGPT composer",
+        "ChatGPT reply could not be read",
         "COMMAND_EXEC",
         1
       )
@@ -481,7 +516,7 @@ test("a streamed turn opens at once, keeps alive, and reports a failure in the s
     const events = await response.text();
     assert.match(events, /event: response\.created/u);
     assert.match(events, /event: response\.failed/u);
-    assert.match(events, /Could not find ChatGPT composer/u);
+    assert.match(events, /ChatGPT reply could not be read/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -504,6 +539,7 @@ async function withBridge(
     turnTimeoutSeconds: 30,
     tempRoot,
     sessionBusyRetryMs: 1,
+    unsentRetryMs: 1,
     run: async (request) => {
       // Model switches and listings are answered here, not from `replies`.
       if (request.args[1] === "model")
@@ -641,7 +677,7 @@ test("a site limit is a 429 with limit headers and a timeout is a non-retried 40
       ),
       new OpencliCommandError("chatgpt ask timed out after 30s", "TIMEOUT", 75),
       new OpencliCommandError(
-        "Could not find Gemini composer",
+        "Gemini reply could not be read",
         "COMMAND_EXEC",
         1
       )
@@ -663,7 +699,7 @@ test("a site limit is a 429 with limit headers and a timeout is a non-retried 40
       assert.equal(broken.status, 503);
       assert.match(
         ((await broken.json()) as { error: { message: string } }).error.message,
-        /Gemini composer/u
+        /Gemini reply could not be read/u
       );
     }
   );
@@ -877,6 +913,85 @@ test("the follow-up tool index names exec's nested functions", () => {
   // `text(` is not a snake_case tool name.
   assert.doesNotMatch(index, /`text`/u);
   assert.match(index, /- `wait`: Wait for a running cell\./u);
+});
+
+test("a slow streamed turn keeps Codex's idle timer alive with real events", async () => {
+  let release: () => void = () => {};
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    keepAliveMs: 5,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [{ response: "done", conversation_id: "c1" }];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const response = await post(`http://127.0.0.1:${port}`, {
+      model: "opencli-chatgpt-balanced",
+      stream: true,
+      input: "hi"
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    release();
+    const events = await response.text();
+    // An SSE comment is dropped by the client's parser and never resets its
+    // idle timer; a `response.in_progress` event does.
+    assert.ok(
+      (events.match(/event: response\.in_progress/gu) ?? []).length >= 2
+    );
+    assert.doesNotMatch(events, /^: /mu);
+    assert.match(events, /event: response\.completed/u);
+  } finally {
+    release();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a command the site was not ready for is retried, because nothing was sent", async () => {
+  await withBridge(
+    [
+      new OpencliCommandError(
+        "ChatGPT ask-file requires an authenticated session with an active composer.",
+        "COMMAND_EXEC",
+        1
+      ),
+      { response: "done", conversation_id: "c1" }
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: "hi"
+      });
+      assert.equal(reply.status, 200);
+      assert.equal(runs.requests.length, 2);
+    }
+  );
+});
+
+test("a failure after sending is not retried, so the prompt is never sent twice", async () => {
+  await withBridge(
+    [
+      new OpencliCommandError("Failed to read ChatGPT reply", "COMMAND_EXEC", 1)
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: "hi"
+      });
+      assert.equal(reply.status, 503);
+      assert.equal(runs.requests.length, 1);
+    }
+  );
 });
 
 test("a busy site session is waited out instead of failing the turn", async () => {
