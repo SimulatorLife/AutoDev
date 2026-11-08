@@ -76,6 +76,7 @@ import {
   AutoSubmitSelectField,
   type AutoSubmitSelectFieldProps
 } from "../src/components/forms/AutoSubmitSelectField.ts";
+import { SUBMIT_ON_CHANGE_SCRIPT } from "../src/components/forms/submit-on-change.ts";
 import type { SelectFieldProps } from "../src/components/forms/SelectField.ts";
 import {
   ICON_PATHS,
@@ -20529,36 +20530,91 @@ test("BarChart keeps unobserved, empty and observed data three distinct things",
   assert.match(withZero, />0<\/span>/);
 });
 
-test("AutoSubmitSelectField submits its containing form on change", () => {
-  let submissions = 0;
-  const field = AutoSubmitSelectField({
-    name: "workspaceId",
-    label: "Workspace",
-    options: [{ value: "workspace-a", label: "workspace-a" }]
-  });
-  const onChange = (field as React.ReactElement<SelectFieldProps>).props
-    .onChange;
-  assert.ok(onChange, "the shared select must own the auto-submit event");
-  onChange({
-    currentTarget: {
-      form: { requestSubmit: () => submissions++ }
-    }
-  } as unknown as React.ChangeEvent<HTMLSelectElement>);
-  assert.equal(submissions, 1);
-
-  assert.doesNotThrow(() =>
-    onChange({
-      currentTarget: { form: null }
-    } as unknown as React.ChangeEvent<HTMLSelectElement>)
-  );
+test("AutoSubmitSelectField is marked for the page-level submit and shows the server's value", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AutoSubmitSelectField, {
       name: "workspaceId",
       label: "Workspace",
-      options: [{ value: "workspace-a", label: "workspace-a" }]
+      defaultValue: "workspace-b",
+      options: [
+        { value: "workspace-a", label: "workspace-a" },
+        { value: "workspace-b", label: "workspace-b" }
+      ]
     })
   );
+  // The page-level listener submits it, hydrated or not.
   assert.match(markup, /data-submit-on-change="true"/u);
+  assert.match(markup, /<option value="workspace-b" selected="">/u);
+  assert.doesNotMatch(markup, /<option value="workspace-a" selected/u);
+});
+
+/**
+ * The submit listener as the browser runs it: the inline script, evaluated
+ * against a document that records the listener it installs.
+ */
+function installedSubmitListener(): (event: { target: unknown }) => void {
+  let listener: ((event: { target: unknown }) => void) | undefined;
+  const document = {
+    addEventListener: (type: string, handler: typeof listener) => {
+      assert.equal(type, "change");
+      listener = handler;
+    }
+  };
+  new Function("document", SUBMIT_ON_CHANGE_SCRIPT)(document);
+  assert.ok(listener, "the script installs a change listener");
+  return listener;
+}
+
+function changedSelect(
+  marked: boolean,
+  options: { disabled?: boolean; tagName?: string; form?: boolean } = {}
+): { target: unknown; submissions: () => number } {
+  let submissions = 0;
+  return {
+    target: {
+      tagName: options.tagName ?? "SELECT",
+      disabled: options.disabled ?? false,
+      getAttribute: (name: string) =>
+        name === "data-submit-on-change" && marked ? "true" : null,
+      form:
+        options.form === false
+          ? null
+          : { requestSubmit: () => (submissions += 1) }
+    },
+    submissions: () => submissions
+  };
+}
+
+test("the page-level listener submits only an enabled, marked select in a form", () => {
+  const listener = installedSubmitListener();
+  const marked = changedSelect(true);
+  listener({ target: marked.target });
+  assert.equal(marked.submissions(), 1);
+  for (const ignored of [
+    changedSelect(false),
+    changedSelect(true, { disabled: true }),
+    changedSelect(true, { tagName: "INPUT" }),
+    changedSelect(true, { form: false })
+  ]) {
+    assert.doesNotThrow(() => listener({ target: ignored.target }));
+    assert.equal(ignored.submissions(), 0);
+  }
+  assert.doesNotThrow(() => listener({ target: null }));
+});
+
+test("the root layout installs the submit listener before any control", () => {
+  // The layout imports the global stylesheet, which Node cannot load, so its
+  // source is read: the inline script must come before the page it serves.
+  const source = readFileSync(
+    new URL("../app/layout.tsx", import.meta.url),
+    "utf8"
+  );
+  const script = source.indexOf("__html: SUBMIT_ON_CHANGE_SCRIPT");
+  assert.notEqual(script, -1, "the listener is inlined in the page");
+  assert.ok(
+    script < source.indexOf("React.Suspense"),
+    "and comes before the page"
+  );
 });
 
 test("AutoSubmitSelectFieldProps rejects a multi-select at the type level", () => {

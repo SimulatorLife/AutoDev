@@ -8,7 +8,6 @@ import {
   resetOperationHistoryForTests
 } from "../src/control-api/index.ts";
 import {
-  getDefaultPersistenceManager,
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "../src/router/persistence/index.ts";
@@ -80,8 +79,7 @@ function harness(): {
   // test exercises what the runtime reports, not where it stores it, so the
   // persistence is replaced with a manager that reports success: the mutation
   // then lands in the live routing policy exactly as it does in production.
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }

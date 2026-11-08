@@ -749,6 +749,10 @@ async function handlePostSubmission(
     });
 
     if (response.status >= 400) {
+      // The page re-reads after every write, refused or failed included: a
+      // control that showed the operator's choice would otherwise keep
+      // showing it, as if the server held it.
+      options.router.refresh();
       options.onStatusChange?.(
         "error",
         `Submission failed (${response.status})`
@@ -814,6 +818,7 @@ async function handlePostSubmission(
       ...(rejected ? { error: "The server rejected these changes." } : {})
     };
   } catch (error) {
+    options.router.refresh();
     const message =
       error instanceof Error ? error.message : "Submission failed";
     options.onStatusChange?.("error", message);

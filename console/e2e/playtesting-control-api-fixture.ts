@@ -6053,6 +6053,138 @@ function handleFixtureCatalogRoutes(
   return handleCatalogResourceRead(url, response);
 }
 
+/** The role a provider assignment is for, as the Console writes it. */
+const PROVIDER_ROLE_ROUTE =
+  /^\/control\/providers\/([^/]+)\/roles\/(default|smart|orchestrator|subagent)$/u;
+type FixtureProviderRole = "default" | "smart" | "orchestrator" | "subagent";
+type FixtureRolePriority = 1 | 2 | 3 | "disabled";
+const INITIAL_ROLE_PRIORITIES: Readonly<
+  Record<FixtureProviderRole, FixtureRolePriority>
+> = { default: 1, smart: 1, orchestrator: 2, subagent: 1 };
+
+/**
+ * The provider role writes the fixture has accepted, by `provider:role`.
+ *
+ * The provider list is otherwise static. A role write is held here so the
+ * list read after it carries what was written, as the Runtime's does, and
+ * the specs read it back to see what reached the "Runtime".
+ */
+const providerRoleWrites = new Map<
+  string,
+  { priority: FixtureRolePriority; model: string | null }
+>();
+/** A code the next role write is refused with, as the Runtime would. */
+let refuseNextProviderRoleWrite: string | null = null;
+
+function fixtureProviderRole(
+  provider: string,
+  role: FixtureProviderRole,
+  model: string | null
+): { priority: FixtureRolePriority; model: string | null } {
+  return (
+    providerRoleWrites.get(`${provider}:${role}`) ?? {
+      priority: INITIAL_ROLE_PRIORITIES[role],
+      model
+    }
+  );
+}
+
+async function handleProviderRoleMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(PROVIDER_ROLE_ROUTE);
+  if (match === null || request.method !== "PATCH") return false;
+  const provider = decodeURIComponent(match[1] ?? "");
+  const role = match[2] as FixtureProviderRole;
+  const body = await readJsonBody(request);
+  const priority = body?.priority;
+  const model = body?.model ?? null;
+  if (
+    (priority !== 1 &&
+      priority !== 2 &&
+      priority !== 3 &&
+      priority !== "disabled") ||
+    (model !== null && typeof model !== "string")
+  ) {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "autodev_control_api_bad_body",
+          message: "The fixture needs a priority and a model.",
+          type: "invalid_request_error"
+        }
+      },
+      400
+    );
+    return true;
+  }
+  if (refuseNextProviderRoleWrite !== null) {
+    const code = refuseNextProviderRoleWrite;
+    refuseNextProviderRoleWrite = null;
+    sendJson(
+      response,
+      {
+        error: {
+          code,
+          message: "The fixture refused this role write.",
+          type: "conflict"
+        }
+      },
+      409
+    );
+    return true;
+  }
+  providerRoleWrites.set(`${provider}:${role}`, { priority, model });
+  sendJson(response, { provider, role, priority, model });
+  return true;
+}
+
+/**
+ * The fixture's own control over provider roles.
+ *
+ * `POST /fixture/providers/roles?state=reset` forgets every write;
+ * `?state=refuse-next&code=<code>` refuses the next write with that code;
+ * `GET` lists the writes that were accepted.
+ */
+function configureProviderRoleFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/fixture/providers/roles") return false;
+  if (request.method === "GET") {
+    sendJson(response, { writes: Object.fromEntries(providerRoleWrites) });
+    return true;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const state = url.searchParams.get("state");
+  if (state === "reset") {
+    providerRoleWrites.clear();
+    refuseNextProviderRoleWrite = null;
+  } else if (state === "refuse-next") {
+    refuseNextProviderRoleWrite =
+      url.searchParams.get("code") ?? "autodev_control_api_bad_body";
+  } else {
+    sendJson(
+      response,
+      {
+        code: "autodev_fixture_unknown_state",
+        message: "The fixture knows reset and refuse-next."
+      },
+      400
+    );
+    return true;
+  }
+  sendJson(response, { state });
+  return true;
+}
+
 /**
  * The fixture's own write routes.
  *
@@ -6077,6 +6209,8 @@ async function handleSyntheticMutationRoutes(
   if (await handleSyntheticSkillRoleMutation(request, response, url))
     return true;
   if (await handleAgentEnablementMutation(request, response, url)) return true;
+  if (await handleProviderRoleMutation(request, response, url)) return true;
+  if (configureProviderRoleFixture(request, response, url)) return true;
   if (await handleCanonicalSourceMutation(request, response, url)) return true;
   if (await applyMcpDeclarationWrite(response, request, url)) {
     return true;
@@ -6158,12 +6292,20 @@ const server = createServer(
         },
         credential: { envKey: null, configured: true },
         disabled: false,
-        roles: {
-          default: { priority: 1, model, mutable: true, convergence },
-          smart: { priority: 1, model, mutable: true, convergence },
-          orchestrator: { priority: 2, model, mutable: true, convergence },
-          subagent: { priority: 1, model, mutable: true, convergence }
-        },
+        roles: Object.fromEntries(
+          (["default", "smart", "orchestrator", "subagent"] as const).map(
+            (role) => [
+              role,
+              {
+                ...fixtureProviderRole(id, role, model),
+                mutable: true,
+                canServe: true,
+                cannotServeReason: null,
+                convergence
+              }
+            ]
+          )
+        ),
         agentLimits: null,
         models: model === null ? [] : [{ tier: "default", model }],
         priorities: groups,

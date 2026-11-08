@@ -65,6 +65,15 @@ export interface SelectFieldProps {
   readonly options: readonly SelectOption[];
   /** One value, or several when the control is a `multiple` select. */
   readonly defaultValue?: string | readonly string[] | undefined;
+  /**
+   * The selected value, for a control whose owner decides what it shows.
+   *
+   * With `value` the control is controlled: it shows what its owner says and
+   * nothing else, so a page re-read after a write shows what the server
+   * holds. A `defaultValue` is read once, when the control mounts, and a
+   * changed one is ignored after that.
+   */
+  readonly value?: string | undefined;
   readonly disabled?: boolean | undefined;
   /** An additive semantic color treatment; it never replaces the shared chrome. */
   readonly tone?: "warning" | undefined;
@@ -110,6 +119,7 @@ export function SelectField({
   hideLabel,
   options,
   defaultValue,
+  value,
   disabled,
   tone,
   disabledReason,
@@ -156,7 +166,11 @@ export function SelectField({
         {
           id: controlId,
           name,
-          ...(defaultValue === undefined ? {} : { defaultValue }),
+          ...(value === undefined
+            ? defaultValue === undefined
+              ? {}
+              : { defaultValue }
+            : { value }),
           ...(disabled === undefined ? {} : { disabled }),
           ...(describedBy === undefined
             ? {}

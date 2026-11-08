@@ -1167,9 +1167,34 @@ does not read as a role whose effort is unknown.
 
 #### Persistence and default behavior
 
-- **Default state:** Every configured provider starts enabled for both roles.
-- **Immediate atomic persistence:** A successful role or model mutation persists `disabledOrchestratorProviders`, `disabledSubagentProviders`, and `disabledModels` atomically to `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** router-state loading restores all three arrays; a restored model that is no longer configured is dropped.
+- **Default state:** A provider with no assignment for a role is enabled for
+  it at the rank `providerGroups` gives it; one the routing config does not
+  list for a tier serves that tier only once it is assigned a priority.
+- **Immediate atomic persistence:** Every accepted Control API change -- a
+  role's priority, model and effort, a provider's or model's enablement, a
+  provider's limits, a reset -- is applied and written to
+  `$CODEX_HOME/codex-router-state.json` (`roleAssignments`,
+  `disabledProviders`, `disabledModels`, `providerLimits`) in one serialized
+  step, through a temporary file renamed into place. A write that cannot be
+  persisted is rolled back and answered 500, so it never steers routing.
+- **Survives restarts:** the router reads the file at startup and restores
+  every section; an assignment for a provider no longer configured is
+  skipped. A role set to Disabled keeps its model, and disabling and enabling
+  the whole provider leaves the role's own Disabled in place.
+- **Only the router writes the file.** There is no implicit persistence
+  manager: the router module sets one, and anything that persists without it
+  fails. Every test script loads
+  `runtime/tests/support/isolate-codex-state.ts`, which points
+  `CODEX_ROUTER_STATE_FILE` at a temporary file. Before both, the Control API
+  tests replaced the live router's file with an empty state on every run
+  from a maintainer's shell (91 such 94-byte writes were found stranded beside
+  it), and a router that restarted before saving again came back with every
+  role at its default.
+- **Tested end to end:** `tests/router/role-change-persistence.test.ts` drives
+  a role change from the Console's form route through the Control API over
+  HTTP into routing, reads the state file, restarts, and checks the provider
+  is still excluded -- including after the provider is disabled and enabled
+  again -- and that an unpersisted change is rolled back.
 
 #### Disable semantics across routing tiers
 

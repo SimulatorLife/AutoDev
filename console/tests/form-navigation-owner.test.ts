@@ -719,7 +719,8 @@ test("POST submission handles HTTP error by reporting error status and announcem
   };
 
   const statuses: { status: FormNavigationStatus; message: string }[] = [];
-  const { router, replacements } = createMockRouter();
+  const mockRouter = createMockRouter();
+  const { router, replacements } = mockRouter;
   const result = await handleFormSubmission(submitEvent, {
     router,
     fetch: fetchImpl,
@@ -729,6 +730,9 @@ test("POST submission handles HTTP error by reporting error status and announcem
 
   assert.equal(nativeEvent.defaultPrevented, true);
   assert.equal(replacements.length, 0);
+  // The page re-reads the authoritative state after a failed write too, so a
+  // control that showed the operator's choice shows the server's again.
+  assert.equal(mockRouter.refreshes, 1);
   assert.equal(result.intercepted, true);
   assert.equal(result.status, "error");
   assert.match(result.error ?? "", /400/u);
@@ -1464,4 +1468,32 @@ test("same-origin POST followed to external origin never unloads Console and sur
       writable: true
     });
   }
+});
+
+test("a POST that never reaches the server still re-reads the page", async () => {
+  const form: MockDomForm = {
+    action: "/api/providers/claude/roles/orchestrator",
+    method: "POST",
+    elements: [{ name: "priority", value: "disabled" }]
+  };
+  const nativeEvent = new Event("submit", { cancelable: true });
+  const mockRouter = createMockRouter();
+  const result = await handleFormSubmission(
+    {
+      get defaultPrevented() {
+        return nativeEvent.defaultPrevented;
+      },
+      preventDefault: () => nativeEvent.preventDefault(),
+      target: form
+    },
+    {
+      router: mockRouter.router,
+      fetch: async () => {
+        throw new TypeError("fetch failed");
+      },
+      currentUrl: "http://console.test/providers"
+    }
+  );
+  assert.equal(result.status, "error");
+  assert.equal(mockRouter.refreshes, 1);
 });

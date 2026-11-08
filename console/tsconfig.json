@@ -34,6 +34,8 @@
   },
   "include": [
     ".next-dev/types/**/*.ts",
+    ".next-staging-e2e-21785-64573/types/**/*.ts",
+    ".next-staging-e2e-22578-64925/types/**/*.ts",
     ".next/types/**/*.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
@@ -42,7 +44,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "tests/**/*.ts",
-    "tests/**/*.tsx"
+    "tests/**/*.tsx",
+    ".next-staging-e2e-23737-65280/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

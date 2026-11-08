@@ -13,7 +13,6 @@ import {
   setDefaultConcurrencyManager
 } from "../src/router/concurrency/index.ts";
 import {
-  getDefaultPersistenceManager,
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "../src/router/persistence/index.ts";
@@ -91,8 +90,7 @@ function harness(): {
   // the runtime reports, not where it stores it, so the persistence is
   // replaced with a manager that reports success: the mutation then lands in
   // the live limit exactly as it does in production.
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }

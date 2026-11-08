@@ -10,7 +10,6 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { POST } from "../app/api/providers/[provider]/roles/[role]/route.ts";
-import { AutoSubmitSelectField } from "../src/components/forms/AutoSubmitSelectField.ts";
 import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
@@ -376,55 +375,24 @@ test("ProviderRoleControls submits no effort for a role that holds no model", ()
   assert.doesNotMatch(form, /name="reasoningEffort" value="medium"/);
 });
 
-test("ProviderRoleControls effort select auto-submits on change", () => {
-  const controls = ProviderRoleControls({
-    provider: mockClaudeProvider,
-    modelDiscovery: mockDiscovery,
-    returnTo: "/providers"
-  });
-
-  const listItems = React.Children.toArray(
-    controls.props.children
-  ) as React.ReactElement<{ readonly children?: React.ReactNode }>[];
-
-  // smart role is index 1
-  const smartRowElement = listItems[1]!.props.children as React.ReactElement<{
-    readonly children?: React.ReactNode;
-  }>;
-  const smartRowFn = smartRowElement.type as (
-    props: typeof smartRowElement.props
-  ) => React.ReactElement<{ readonly children?: React.ReactNode }>;
-  const smartRow = smartRowFn(smartRowElement.props);
-
-  const formChildren = React.Children.toArray(
-    smartRow.props.children
-  ) as React.ReactElement<{ readonly name?: string; readonly role?: string }>[];
-
-  // Find RoleEffortSelect by role and props
-  const effortElement = formChildren.find(
-    (child) =>
-      typeof child.type === "function" &&
-      child.props?.role === "smart" &&
-      !("models" in child.props) &&
-      "disabledReason" in child.props
+test("every role select is submitted by the page-level listener and shows the Runtime's value", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: mockClaudeProvider,
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers"
+    })
   );
-  assert.ok(effortElement, "Must find RoleEffortSelect for smart role");
-
-  const effortSelectFn = effortElement.type as (
-    props: unknown
-  ) => React.ReactElement<React.ComponentProps<typeof AutoSubmitSelectField>>;
-  const renderedSelectField = effortSelectFn(effortElement.props);
-  assert.equal(renderedSelectField.type, AutoSubmitSelectField);
-
-  let submitted = 0;
-  const renderedField = AutoSubmitSelectField(renderedSelectField.props);
-  renderedField.props.onChange?.({
-    currentTarget: {
-      form: { requestSubmit: () => submitted++ }
-    }
-  } as unknown as React.ChangeEvent<HTMLSelectElement>);
-
-  assert.equal(submitted, 1, "Effort change must call requestSubmit");
+  const smart = roleForm(markup, "claude", "smart");
+  for (const control of ["priority", "model", "effort"]) {
+    const select = new RegExp(
+      `<select id="select-${control}-claude-smart"[^>]*data-submit-on-change="true"`,
+      "u"
+    );
+    assert.match(smart, select, `the ${control} select submits on change`);
+  }
+  // The rendered selection is the Runtime's assignment for the role.
+  assert.match(smart, /<option value="high" selected="">High<\/option>/u);
 });
 
 test("POST /api/providers/[provider]/roles/[role] rejects non-same-origin requests", async () => {

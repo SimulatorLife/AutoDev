@@ -40,7 +40,6 @@ import {
 } from "@simulatorlife/autodev-runtime/control-api";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
-  getDefaultPersistenceManager,
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
@@ -213,6 +212,21 @@ async function captureAudit<T>(action: () => Promise<T>): Promise<{
     process.stderr.write = original;
   }
 }
+
+/**
+ * Persistence for a test that does not stub its own: memory only.
+ *
+ * Every Control API mutation persists. Persisting with no manager is an
+ * error, and the router module's manager writes
+ * `$CODEX_HOME/codex-router-state.json`, which on a maintainer's machine is
+ * the live router's file -- the concurrency tests once replaced it with an
+ * empty state on every run.
+ */
+setDefaultPersistenceManager({
+  async persistNow() {
+    return true;
+  }
+} as unknown as RouterPersistence);
 
 test("Control API does not turn an unavailable evaluation store into empty history", async () => {
   const saved = saveEnv();
@@ -672,10 +686,9 @@ test("role headers cannot grant access and viewers cannot mutate", async () => {
 
 test("operator PATCH validates fields, persists provider state, and audits the action", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   let persistCalls = 0;
   let previous: ProviderRoleAssignment | null = null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       return true;
@@ -853,11 +866,10 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
   const saved = saveEnv();
   // Every shipped provider can delegate; this contract says MiniMax cannot.
   const restoreContract = useNonDelegatingContract("minimax");
-  const originalPersistence = getDefaultPersistenceManager();
   let persistCalls = 0;
   const previous =
     ROUTING_POLICY.assignmentFor("minimax", "orchestrator") ?? null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       return true;
@@ -934,8 +946,7 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
 
 test("operator role PATCH configures and validates reasoning effort, respecting model catalogs and Antigravity fixed suffixes", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -1040,9 +1051,8 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
 
 test("failed persistence rolls back the in-memory provider policy", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const previous = ROUTING_POLICY.assignmentFor("claude", "subagent");
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
     }
@@ -1077,8 +1087,7 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
 
 test("provider enablement disables globally while preserving its roles and limits", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -1210,8 +1219,7 @@ test("provider enablement disables globally while preserving its roles and limit
 
 test("provider agent limits accept Unlimited and reject values that are not limits", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -1276,8 +1284,7 @@ test("provider agent limits accept Unlimited and reject values that are not limi
 
 test("a failed provider limits persist leaves no limits behind", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
     }
@@ -1307,8 +1314,7 @@ test("a failed provider limits persist leaves no limits behind", async () => {
 
 test("a failed persist cannot leave behind an assignment that had none before", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
     }
@@ -1346,8 +1352,7 @@ test("a failed persist cannot leave behind an assignment that had none before", 
 
 test("provider reset requires an operator actor and a body of exactly { confirm: true }", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -1399,12 +1404,11 @@ test("provider reset requires an operator actor and a body of exactly { confirm:
 
 test("provider reset clears only role assignments, provider disables, model disables, and provider limits, and preserves everything else", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorState = ROUTING_POLICY.runtimeState();
   const priorDiscoveredModels = ROUTING_POLICY.discoveredModels();
   const manager = getDefaultConcurrencyManager();
   const priorConcurrencyState = manager.persistenceSnapshot();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -1571,9 +1575,8 @@ test("provider reset clears only role assignments, provider disables, model disa
 
 test("a failed provider reset persist restores the exact prior provider state", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorState = ROUTING_POLICY.runtimeState();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
     }
@@ -1614,7 +1617,6 @@ test("a failed provider reset persist restores the exact prior provider state", 
 
 test("provider reset serializes with a concurrent provider role mutation on the shared router-state queue", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -1623,7 +1625,7 @@ test("provider reset serializes with a concurrent provider role mutation on the 
   let persistCalls = 0;
   let resetCall: Promise<any> | null = null;
   let roleCall: Promise<any> | null = null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       if (persistCalls === 1) {
@@ -1912,7 +1914,6 @@ test("model enablement becomes mutable only for an observed routeable provider m
 
 test("operator model PATCH validates, persists, audits, and rolls back on persistence failure", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const configured = ROUTING_POLICY.configuredModels()[0]!;
   const { model, provider } = configured;
   const path = CONTROL_API_PATHS.models + "/" + model;
@@ -1925,7 +1926,7 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
     }));
   let persistCalls = 0;
   let failPersist = false;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       if (failPersist) throw new Error("disk failure");
@@ -2059,7 +2060,6 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
 
 test("operator cannot change model enablement without current routeable availability", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const configured = ROUTING_POLICY.configuredModels()[0]!;
   const previousDiscovered = ROUTING_POLICY.discoveredModels()
     .filter((entry) => entry.provider === configured.provider)
@@ -2069,7 +2069,7 @@ test("operator cannot change model enablement without current routeable availabi
       routeability
     }));
   let persistCalls = 0;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       return true;
@@ -2119,7 +2119,6 @@ test("operator cannot change model enablement without current routeable availabi
 
 test("provider role edits preserve an unavailable current model but accept new models only from current routeable discovery", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const provider = "claude";
   const role = "subagent" as const;
   const previousAssignment = ROUTING_POLICY.assignmentFor(provider, role);
@@ -2136,7 +2135,7 @@ test("provider role edits preserve an unavailable current model but accept new m
     routeability: { status: "supported" as const }
   };
   let persistCalls = 0;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       return true;
@@ -2595,14 +2594,13 @@ test("an agent detail whose contract was not read is not an unknown role", async
 
 test("Agent enablement is Runtime-owned, revision-bound, and independent of provider assignments", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorContract = getDefaultExecutionContract();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const previousAssignment = ROUTING_POLICY.assignmentFor("claude", "subagent");
   let failPersistence = false;
   let persistCalls = 0;
   let persistedDisabledAgentRoles: readonly string[] = [];
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       persistedDisabledAgentRoles =
@@ -2779,9 +2777,8 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
 
 test("Agent detail and mutation paths canonicalize role aliases before applying policy", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }
@@ -2813,7 +2810,6 @@ test("Agent detail and mutation paths canonicalize role aliases before applying 
 
 test("concurrent Agent enablement writes compare revisions after the prior persist completes", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -2822,7 +2818,7 @@ test("concurrent Agent enablement writes compare revisions after the prior persi
   let persistCalls = 0;
   let firstPatch: Promise<any> | null = null;
   let secondPatch: Promise<any> | null = null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       if (persistCalls === 1) {
@@ -4810,7 +4806,6 @@ test("Control API /control/runtime/concurrency mutates orchestrator concurrency 
 
 test("queued provider role patches revalidate an unchanged model after reset clears its assignment", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -4820,7 +4815,7 @@ test("queued provider role patches revalidate an unchanged model after reset cle
   let firstCall: Promise<any> | null = null;
   let resetCall: Promise<any> | null = null;
   let staleRoleCall: Promise<any> | null = null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       if (persistCalls === 1) {
@@ -4890,7 +4885,6 @@ test("queued provider role patches revalidate an unchanged model after reset cle
 
 test("queued provider role patches recheck provider enablement after a disable commits", async () => {
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -4900,7 +4894,7 @@ test("queued provider role patches recheck provider enablement after a disable c
   let firstCall: Promise<any> | null = null;
   let disableCall: Promise<any> | null = null;
   let roleCall: Promise<any> | null = null;
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
       if (persistCalls === 1) {
@@ -4969,8 +4963,7 @@ test("a provider role accepts a model no catalog declares, and keeps the effort 
   // states, which left the Claude provider's orchestrator role with no model
   // the operator could choose.
   const saved = saveEnv();
-  const originalPersistence = getDefaultPersistenceManager();
-  setDefaultPersistenceManager({
+  const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
     }

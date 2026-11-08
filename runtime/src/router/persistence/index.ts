@@ -307,17 +307,33 @@ export class RouterPersistence {
 
 let defaultPersistenceManager: RouterPersistence | null = null;
 
+/**
+ * The router's persistence manager, set by the router module (`http.ts`).
+ *
+ * There is no implicit default. One used to be created on first use, with no
+ * snapshot to write: anything that persisted before the router module was
+ * loaded -- a Control API test, chiefly -- replaced
+ * `$CODEX_HOME/codex-router-state.json` with an empty state. Run from a
+ * maintainer's shell, that is the live router's file: every role
+ * assignment, disabled provider and limit was gone the next time the router
+ * started before it had saved again, and 91 such 94-byte writes were found
+ * stranded beside it. A caller with no manager is a bug, and says so.
+ */
 export function getDefaultPersistenceManager(): RouterPersistence {
-  if (!defaultPersistenceManager) {
-    defaultPersistenceManager = new RouterPersistence();
-  }
+  if (!defaultPersistenceManager)
+    throw new Error(
+      "Router persistence is not configured: the router module sets it, and a test that persists must set its own."
+    );
   return defaultPersistenceManager;
 }
 
+/** Set the manager, returning the one it replaces so a caller can restore it. */
 export function setDefaultPersistenceManager(
   manager: RouterPersistence | null
-): void {
+): RouterPersistence | null {
+  const previous = defaultPersistenceManager;
   defaultPersistenceManager = manager;
+  return previous;
 }
 
 export function serializeRouterState(
