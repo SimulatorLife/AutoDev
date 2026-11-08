@@ -60,11 +60,16 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
 
-import { codexToolCallEvents, codexToolSurface } from "./claude-codex-tools.ts";
+import {
+  type CodexTool,
+  codexToolCallEvents,
+  codexToolSurface
+} from "./claude-codex-tools.ts";
 import { turnId } from "./codex-tool-turns.ts";
 import {
   attachedPromptFileName,
   CHATGPT_MODELS,
+  compactCodexTools,
   OPENCLI_SITE_SPECS,
   type OpencliChatScope,
   OpencliCommandError,
@@ -88,12 +93,16 @@ export const OPENCLI_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_OPENCLI_API_KEY";
 const DEFAULT_PORT = 4004;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 600;
 /**
- * The largest prompt passed on the command line. A site that takes its prompt
- * as argv cannot carry a transcript past the platform's argument limit, and a
- * prompt this long would also take minutes to type into a composer; such a
- * request is refused so the router moves on to a route that can serve it.
+ * The largest prompt a site that takes it on the command line is given.
+ *
+ * The bound is Gemini's composer, not the platform's argument limit (1 MiB):
+ * the largest Gemini prompt that ever succeeded was 61 KB, a 150 KB prompt
+ * lost its tab's debugger after 223 s, and a 300 KB one was still not taken
+ * after 270 s. A first prompt over it is rendered again with MCP tools named
+ * rather than documented; one still over it is refused, so the router moves
+ * on to a route that can serve it.
  */
-const MAX_ARGV_PROMPT_BYTES = 200_000;
+const MAX_ARGV_PROMPT_BYTES = 100_000;
 /** opencli's own exit code for a timed-out command. */
 const OPENCLI_TIMEOUT_EXIT_CODE = 75;
 const LIMIT_STATUS_CLASSES = new Set([
@@ -706,12 +715,29 @@ export function createOpencliBridge(
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
     const agentRole = resolveAgentRole(request.headers);
     const orchestrator = isOrchestratorRole(agentRole);
-    const fullPrompt = renderOpencliPrompt(
-      typeof payload.instructions === "string" ? payload.instructions : "",
-      tools,
-      segments.join("\n\n"),
-      orchestrator ? roleInstructions(agentRole) : null
-    );
+    const renderFirst = (reference: readonly CodexTool[]) =>
+      renderOpencliPrompt(
+        typeof payload.instructions === "string" ? payload.instructions : "",
+        reference,
+        segments.join("\n\n"),
+        orchestrator ? roleInstructions(agentRole) : null
+      );
+    // A site that takes its prompt on the command line gets MCP tools named
+    // rather than documented when the full reference would not fit; the
+    // model reads one's details from `ALL_TOOLS` before calling it.
+    let fullPrompt = renderFirst(tools);
+    for (const detail of ["summaries", "names"] as const) {
+      if (
+        spec.attachesPrompt ||
+        Buffer.byteLength(fullPrompt) <= MAX_ARGV_PROMPT_BYTES
+      )
+        break;
+      const compact = renderFirst(compactCodexTools(tools, detail));
+      writeErrorLine(
+        `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; MCP tools listed by ${detail === "names" ? "name only" : "name and summary"} (${Buffer.byteLength(compact)} bytes)`
+      );
+      fullPrompt = compact;
+    }
     const prompt = resume
       ? renderOpencliContinuation(
           tools,

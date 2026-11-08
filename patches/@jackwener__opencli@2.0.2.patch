@@ -117,7 +117,7 @@ index e715672a7f59cc525abd97ceec07341b4e159438..5e0f5af834e44cd7edd871e90bd0b1bc
 +    }
 +}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..d873f8c407791faac24eaf7c7d32a69fabe277bf 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..bd911d5c74637bdbb40c86eb06058bfc2ef10219 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
 @@ -4,6 +4,12 @@ import {
@@ -182,7 +182,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..d873f8c407791faac24eaf7c7d32a69f
              await startNewGeminiChat(page);
  
          // ── Early validation: model format & thinking value ────────────
-@@ -256,20 +271,36 @@ export const askCommand = cli({
+@@ -256,20 +271,39 @@ export const askCommand = cli({
              }
          }
  
@@ -203,17 +203,21 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..d873f8c407791faac24eaf7c7d32a69f
                  'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
          }
          const remainingTimeoutSeconds = Math.max(0, timeout - Math.ceil((Date.now() - submissionStartedAt) / 1000));
-         const response = await waitForGeminiResponse(page, submitted, prompt, remainingTimeoutSeconds);
+-        const response = await waitForGeminiResponse(page, submitted, prompt, remainingTimeoutSeconds);
++        const observed = {};
++        const response = await waitForGeminiResponse(page, submitted, prompt, remainingTimeoutSeconds, observed);
          if (!response) {
 +            await requireGeminiNotBlocked(page);
              throw new TimeoutError('Gemini reply', timeout,
                  'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
          }
 -        return [{ response: `💬 ${response}` }];
-+        // The chat this reply is in, read from the page that sent it. A
-+        // separate `status` call can bind a different Gemini tab when more
-+        // than one is open, and then names a chat this turn never touched.
-+        const url = await getCurrentGeminiUrl(page);
++        // The chat this reply is in: the URL of the very snapshot the reply
++        // was read from. A later, separate URL read once named a chat the
++        // turn never touched while the prompt and reply were in the right one.
++        const url = typeof observed.url === 'string' && observed.url
++            ? observed.url
++            : await getCurrentGeminiUrl(page);
 +        if (conversation && geminiChatIdOf(url) !== conversation) {
 +            throw new CommandExecutionError(`Gemini answered in chat ${geminiChatIdOf(url) ?? 'none'}, not ${conversation}`);
 +        }
@@ -221,7 +225,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..d873f8c407791faac24eaf7c7d32a69f
      },
  });
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..e72ca0c8a94f10c3ab4722305048c81e68a36d28 100644
+index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b112726c70ac1 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@
@@ -230,7 +234,38 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..e72ca0c8a94f10c3ab4722305048c81e
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
-@@ -2770,7 +2770,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2537,7 +2537,11 @@ export async function exportGeminiImages(page, urls) {
+     }
+     return assets;
+ }
+-export async function waitForGeminiResponse(page, baseline, promptText, timeoutSeconds) {
++/**
++ * `observed.url`, when given, receives the URL of the snapshot the reply was
++ * read from: the chat the reply is in, from the same read as its text.
++ */
++export async function waitForGeminiResponse(page, baseline, promptText, timeoutSeconds, observed = null) {
+     if (timeoutSeconds <= 0)
+         return '';
+     // Reply ownership must survive Gemini prepending older history later.
+@@ -2590,6 +2594,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+                 structuredStableCount = 1;
+             }
+             if (!current.isGenerating && structuredStableCount >= 2) {
++                if (observed)
++                    observed.url = current.url;
+                 return structuredCandidate;
+             }
+             continue;
+@@ -2607,6 +2613,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+             transcriptStableCount = 1;
+         }
+         if (!current.isGenerating && transcriptStableCount >= 2) {
++            if (observed)
++                observed.url = current.url;
+             return transcriptCandidate;
+         }
+     }
+@@ -2770,7 +2778,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -243,7 +278,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..e72ca0c8a94f10c3ab4722305048c81e
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2778,3 +2782,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2778,3 +2790,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

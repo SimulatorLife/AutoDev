@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@jackwener/opencli@2.0.2':
-    hash: fcb5cc2eeb588ae2ff3e72b8360fcb262021fca18073bbe1897769091b0f23a2
+    hash: ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed
     path: patches/@jackwener__opencli@2.0.2.patch
 
 importers:
@@ -217,7 +217,7 @@ importers:
     dependencies:
       '@jackwener/opencli':
         specifier: 2.0.2
-        version: 2.0.2(patch_hash=fcb5cc2eeb588ae2ff3e72b8360fcb262021fca18073bbe1897769091b0f23a2)
+        version: 2.0.2(patch_hash=ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed)
       '@letta-ai/trajectory':
         specifier: ^0.4.3
         version: 0.4.3
@@ -3624,7 +3624,7 @@ snapshots:
     dependencies:
       '@isaacs/balanced-match': 4.0.1
 
-  '@jackwener/opencli@2.0.2(patch_hash=fcb5cc2eeb588ae2ff3e72b8360fcb262021fca18073bbe1897769091b0f23a2)':
+  '@jackwener/opencli@2.0.2(patch_hash=ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed)':
     dependencies:
       '@mozilla/readability': 0.6.0
       acorn: 8.19.0

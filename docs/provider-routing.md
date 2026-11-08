@@ -2218,13 +2218,30 @@ single list; the route patterns and the site registry in
   patch adds or extends; the patch also declares them in opencli's
   `cli-manifest.json`, without which the CLI refuses the flag). The chat a
   reply belongs to comes from the reply itself: `ask` returns the URL of the
-  page that answered (`url`, `/app/<id>`). A separate `status` after the
+  very page snapshot the reply was read from (`url`, `/app/<id>`); a URL read
+  after the reply once named a chat the turn never touched, although the
+  prompt and reply were both in the right one. A separate `status` after the
   answer read another Gemini tab once, and a subagent's follow-ups went into
   an older chat holding other sessions' turns, which it then answered from
   (session `01a1b8ef-0797-73d2-82bd-a887418caf2b`). `ask` also prefixes every reply with `💬 `,
-  which the spec strips. A prompt over 200 KB is refused as
-  `provider_request_unsupported`; with continuation only a first turn or one
-  enormous tool output can reach that.
+  which the spec strips.
+- **A Gemini first prompt names MCP tools instead of documenting them when
+  it would not fit.** `exec`'s description documents every nested tool, and a
+  root orchestrator in the Codex app carries enough connector and MCP tools
+  that its first prompt reached 204-302 KB. Every such Gemini root failed at
+  once with a 400 (session `01a1b914-9431-7620-ad4a-e6362957b1e6`), and the
+  composer did not take a 300 KB prompt within 270 s even when tried by hand.
+  The bound is the composer, not the command line (1 MiB): the largest Gemini
+  prompt that ever succeeded was 61 KB, and a 150 KB one lost its tab's
+  debugger after 223 s, so a site that takes its prompt on the command line is
+  given at most 100 KB. A first prompt over that is rendered again with every
+  `mcp__*` tool reduced to its name and summary line under its server heading
+  -- or to its name alone if that is still too long -- while the built-in
+  tools (commands, files, delegation) keep their full sections, and the model
+  is told to read a tool's full description from `ALL_TOOLS` inside `exec`
+  before calling it, as Codex itself does for a subagent's deferred tools.
+  Only a prompt still over 100 KB is refused as `provider_request_unsupported`.
+  ChatGPT attaches its prompt and keeps the full reference.
 - **Conversation continuity.** Codex re-sends the whole conversation each
   request. Without continuation the prompt grows with every tool output: a
   Gemini worker turn was refused after ~25 tool calls once its prompt passed

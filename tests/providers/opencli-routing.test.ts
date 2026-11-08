@@ -120,7 +120,8 @@ class FakeSites {
       "every turn names its chat or asks for a new one"
     );
     // Open the chat the turn asked for.
-    if (expected !== null) {
+    if (expected === null) state.tab = null;
+    else {
       if (!state.chats.has(expected))
         throw new OpencliCommandError(
           `No turns were visible in chat ${expected}; prompt was not sent`,
@@ -128,7 +129,7 @@ class FakeSites {
           66
         );
       state.tab = expected;
-    } else state.tab = null;
+    }
     if (state.tab !== null && state.stale.delete(state.tab))
       state.stopped.push(state.tab);
     const interfere = state.beforeSend;
@@ -162,12 +163,15 @@ class FakeSites {
     const response = prompt.includes("SAME_REPLY")
       ? "On it."
       : prompt.includes("NEEDS_TOOL")
-      ? '<tool_call name="exec">\ntext("look");\n</tool_call>'
-      : `answered in ${chat}`;
+        ? '<tool_call name="exec">\ntext("look");\n</tool_call>'
+        : `answered in ${chat}`;
     return [
       site === "chatgpt"
         ? { response, conversation_id: chat }
-        : { response: `💬 ${response}`, url: `https://gemini.google.com/app/${chat}` }
+        : {
+            response: `💬 ${response}`,
+            url: `https://gemini.google.com/app/${chat}`
+          }
     ];
   };
 
@@ -212,7 +216,7 @@ const TWIN_TASK = "Review the renderer. NEEDS_TOOL";
 
 async function withSites(
   body: (
-    send: (agent: Agent, signal?: AbortSignal) => Promise<Response>,
+    send: (sender: Agent, signal?: AbortSignal) => Promise<Response>,
     sites: FakeSites,
     ledger: OpencliConversationLedger
   ) => Promise<void>
@@ -234,25 +238,25 @@ async function withSites(
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const send = (agent: Agent, signal?: AbortSignal) =>
+  const send = (sender: Agent, signal?: AbortSignal) =>
     fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(agent.via === "header"
+        ...(sender.via === "header"
           ? {
               "x-codex-turn-metadata": JSON.stringify({
-                thread_id: agent.thread
+                thread_id: sender.thread
               })
             }
           : {})
       },
       body: JSON.stringify({
-        model: MODEL[agent.site],
+        model: MODEL[sender.site],
         tools: [EXEC_TOOL],
-        input: agent.input,
-        ...(agent.via === "body"
-          ? { client_metadata: { thread_id: agent.thread } }
+        input: sender.input,
+        ...(sender.via === "body"
+          ? { client_metadata: { thread_id: sender.thread } }
           : {})
       }),
       ...(signal ? { signal } : {})
@@ -267,16 +271,16 @@ async function withSites(
 
 /** One request; the reply's items join the agent's transcript, as Codex does. */
 async function turn(
-  send: (agent: Agent) => Promise<Response>,
-  agent: Agent
+  send: (sender: Agent) => Promise<Response>,
+  sender: Agent
 ): Promise<{ text: string; callId: string | null }> {
-  const response = await send(agent);
-  assert.equal(response.status, 200, `${agent.marker}: ${response.status}`);
+  const response = await send(sender);
+  assert.equal(response.status, 200, `${sender.marker}: ${response.status}`);
   const body = (await response.json()) as {
     output: JsonRecord[];
     output_text: string;
   };
-  agent.input.push(...body.output);
+  sender.input.push(...body.output);
   const call = body.output.find((item) => item.type === "custom_tool_call");
   return {
     text: body.output_text,

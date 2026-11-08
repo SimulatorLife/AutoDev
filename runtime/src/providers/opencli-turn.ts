@@ -359,6 +359,127 @@ function roleSection(role: string | null): string[] {
 const NEXT_REPLY =
   "Write the agent's next reply to the conversation above, following the response rules.";
 
+/** A heading in a code-mode tool's description: a server group or one nested tool. */
+const CODE_MODE_HEADING = /^(#{2,3}) /u;
+const NESTED_TOOL_HEADING = /^### `([^`]+)`/u;
+/** The longest summary a compacted nested tool keeps. */
+const COMPACT_SUMMARY_CHARS = 160;
+
+/** The first prose line of a nested tool's section, cut to a summary. */
+function sectionSummary(body: readonly string[]): string {
+  const line =
+    body.find((text) => {
+      const trimmed = text.trim();
+      return (
+        trimmed !== "" &&
+        !trimmed.startsWith("```") &&
+        !trimmed.startsWith("declare ")
+      );
+    }) ?? "";
+  const trimmed = line.trim();
+  return trimmed.length > COMPACT_SUMMARY_CHARS
+    ? `${trimmed.slice(0, COMPACT_SUMMARY_CHARS - 1)}…`
+    : trimmed;
+}
+
+/** How much of each MCP tool a compacted reference keeps. */
+export type ToolReferenceDetail = "summaries" | "names";
+
+/**
+ * A code-mode tool's description with its MCP tools named, not documented.
+ *
+ * `exec`'s description documents every nested tool -- a description and a
+ * TypeScript declaration each -- and a root orchestrator in the Codex app has
+ * enough connector and MCP tools that its first prompt reached 300 KB. Gemini
+ * takes its prompt through the composer, which did not finish taking 300 KB
+ * in 270 s, so no Gemini root could start (session
+ * `01a1b914-9431-7620-ad4a-e6362957b1e6`). Codex itself leaves deferred tools
+ * out of a subagent's description and points to `ALL_TOOLS`; this does the
+ * same for MCP tools: the built-in tools (commands, files, delegation) keep
+ * their full sections, and every `mcp__*` tool keeps its name -- with its
+ * summary line, or alone when even summaries do not fit -- and how to read
+ * the rest.
+ */
+export function compactCodeModeDescription(
+  description: string,
+  detail: ToolReferenceDetail = "summaries"
+): string {
+  const { preamble, sections } = codeModeSections(description);
+  const out = [...preamble];
+  let compacted = 0;
+  let names: string[] = [];
+  const flushNames = () => {
+    if (names.length > 0)
+      out.push(names.map((name) => `\`${name}\``).join(", "));
+    names = [];
+  };
+  for (const { heading, body } of sections) {
+    const name = NESTED_TOOL_HEADING.exec(heading)?.[1];
+    if (name?.startsWith("mcp__")) {
+      compacted += 1;
+      if (detail === "names") names.push(name);
+      else out.push(namedTool(name, sectionSummary(body)));
+      continue;
+    }
+    flushNames();
+    out.push(
+      "",
+      heading,
+      ...(name === undefined ? groupNotes(body, detail) : body)
+    );
+  }
+  flushNames();
+  if (compacted > 0)
+    out.push(
+      "",
+      `The ${compacted} \`mcp__*\` tools above are listed by name only, to keep this message short. Before calling one, read its full description inside \`exec\`: \`text(ALL_TOOLS.find((tool) => tool.name === "NAME").description)\`.`
+    );
+  return out.join("\n").replaceAll(/\n{3,}/gu, "\n\n");
+}
+
+/** A description's lines before its first heading, then each heading's section. */
+function codeModeSections(description: string): {
+  preamble: string[];
+  sections: Array<{ heading: string; body: string[] }>;
+} {
+  const preamble: string[] = [];
+  const sections: Array<{ heading: string; body: string[] }> = [];
+  for (const line of description.split("\n")) {
+    if (CODE_MODE_HEADING.test(line))
+      sections.push({ heading: line, body: [] });
+    else (sections.at(-1)?.body ?? preamble).push(line);
+  }
+  return { preamble, sections };
+}
+
+function namedTool(name: string, summary: string): string {
+  return `- \`${name}\`${summary ? `: ${summary}` : ""}`;
+}
+
+/** A server group's notes, cut to their first line, or dropped with names only. */
+function groupNotes(
+  body: readonly string[],
+  detail: ToolReferenceDetail
+): string[] {
+  const summary = sectionSummary(body);
+  return summary && detail === "summaries" ? [summary] : [];
+}
+
+/** The tools with every code-mode description compacted. */
+export function compactCodexTools(
+  tools: readonly CodexTool[],
+  detail: ToolReferenceDetail = "summaries"
+): CodexTool[] {
+  return tools.map((tool) =>
+    tool.kind === "custom"
+      ? {
+          ...tool,
+          description: compactCodeModeDescription(tool.description, detail)
+        }
+      : tool
+  );
+}
+
 /** The first prompt of a site conversation: everything the model needs. */
 export function renderOpencliPrompt(
   instructions: string,

@@ -23,6 +23,7 @@ import {
   attachedPromptFileName,
   attachedPromptMessage,
   CHATGPT_MODELS,
+  compactCodeModeDescription,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -1342,6 +1343,137 @@ test("a Gemini worker turn continues its web conversation with only the new item
   );
 });
 
+/** A code-mode `exec` description shaped like Codex's, with many MCP tools. */
+function codeModeDescription(mcpTools: number): string {
+  const section = (name: string, summary: string) =>
+    `### \`${name}\`\n${summary}\n\n\`\`\`ts\ndeclare const tools: { ${name}(args: {\n  ${"field: string; ".repeat(40)}\n}): Promise<unknown>; };\n\`\`\`\n`;
+  return [
+    "Run JavaScript code to orchestrate/compose tool calls",
+    "- All nested tools are available on the global `tools` object.",
+    "",
+    section("exec_command", "Runs a command in a PTY, returning output."),
+    section("multi_agent_v1__spawn_agent", "Spawn a child agent for a task."),
+    "## mcp__codex_apps",
+    "Connector tools for GitHub and more.",
+    "",
+    ...Array.from({ length: mcpTools }, (_, index) =>
+      section(
+        `mcp__codex_apps__github_tool_${index}`,
+        `GitHub operation number ${index}.`
+      )
+    )
+  ].join("\n");
+}
+
+test("a code-mode reference lists MCP tools by name and keeps the built-in tools whole", () => {
+  const full = codeModeDescription(3);
+  const compact = compactCodeModeDescription(full);
+  // Built-in tools keep their whole section, declaration included.
+  assert.match(compact, /### `exec_command`\nRuns a command in a PTY/u);
+  assert.match(
+    compact,
+    /declare const tools: \{ multi_agent_v1__spawn_agent\(/u
+  );
+  // An MCP tool keeps its name and summary, not its declaration.
+  assert.match(
+    compact,
+    /- `mcp__codex_apps__github_tool_1`: GitHub operation number 1\./u
+  );
+  assert.doesNotMatch(compact, /declare const tools: \{ mcp__/u);
+  assert.match(compact, /## mcp__codex_apps\nConnector tools for GitHub/u);
+  // And the model is told how to read the rest before calling one.
+  assert.match(compact, /The 3 `mcp__\*` tools above are listed by name only/u);
+  assert.match(compact, /ALL_TOOLS\.find/u);
+  // A description with no MCP tools is unchanged in substance.
+  const builtIn = codeModeDescription(0);
+  assert.doesNotMatch(compactCodeModeDescription(builtIn), /listed by name/u);
+});
+
+test("a Gemini root whose full tool reference is too long starts with MCP tools named", async () => {
+  // A root orchestrator in the Codex app carries enough connector tools that
+  // its first prompt reached 300 KB, which Gemini's composer could not take:
+  // every Gemini root failed at once with a 400.
+  const exec = {
+    type: "custom",
+    name: "exec",
+    description: codeModeDescription(600)
+  };
+  assert.ok(Buffer.byteLength(exec.description) > 300_000);
+  await withBridge(
+    [{ response: "💬 ok", url: "https://gemini.google.com/app/root1" }],
+    async (baseUrl, runs) => {
+      const response = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        tools: [exec],
+        input: [userMessage("Plan the work.")]
+      });
+      assert.equal(response.status, 200);
+      const prompt = runs.prompts[0]!;
+      assert.ok(Buffer.byteLength(prompt) < 100_000, `${prompt.length}`);
+      assert.match(prompt, /declare const tools: \{ exec_command\(/u);
+      assert.match(prompt, /- `mcp__codex_apps__github_tool_599`/u);
+      assert.match(prompt, /listed by name only/u);
+      assert.match(prompt, /Plan the work\./u);
+    }
+  );
+  // ChatGPT takes the prompt as an attachment and keeps the full reference.
+  await withBridge(
+    [{ response: "ok", conversation_id: "c-root" }],
+    async (baseUrl, runs) => {
+      const response = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [exec],
+        input: [userMessage("Plan the work.")]
+      });
+      assert.equal(response.status, 200);
+      assert.match(
+        runs.prompts[0]!,
+        /declare const tools: \{ mcp__codex_apps__github_tool_599\(/u
+      );
+    }
+  );
+});
+
+test("a Gemini root with too many MCP tools even for summaries lists them by name", async () => {
+  const exec = {
+    type: "custom",
+    name: "exec",
+    description: codeModeDescription(2000)
+  };
+  await withBridge(
+    [{ response: "💬 ok", url: "https://gemini.google.com/app/root2" }],
+    async (baseUrl, runs) => {
+      const response = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        tools: [exec],
+        input: [userMessage("Plan the work.")]
+      });
+      assert.equal(response.status, 200);
+      const prompt = runs.prompts[0]!;
+      assert.ok(Buffer.byteLength(prompt) < 100_000, `${prompt.length}`);
+      assert.match(prompt, /`mcp__codex_apps__github_tool_1999`/u);
+      assert.doesNotMatch(prompt, /GitHub operation number 1999/u);
+      assert.match(prompt, /The 2000 `mcp__\*` tools above/u);
+      assert.match(prompt, /declare const tools: \{ exec_command\(/u);
+    }
+  );
+});
+
+test("a Gemini prompt still too long once compacted is refused before opencli runs", async () => {
+  await withBridge([], async (baseUrl, runs) => {
+    const response = await post(baseUrl, {
+      model: "opencli-gemini-3.1-pro",
+      input: [userMessage("x".repeat(120_000))]
+    });
+    assert.equal(response.status, 400);
+    assert.match(
+      ((await response.json()) as { error: { message: string } }).error.message,
+      /takes at most 100000/u
+    );
+    assert.equal(runs.requests.length, 0);
+  });
+});
+
 test("the installed opencli accepts every flag the site specs pass", async () => {
   // The specs are tested against fakes; this is the real CLI's parser. A flag
   // AutoDev's patch adds to a command's code but not to opencli's manifest is
@@ -1350,8 +1482,7 @@ test("the installed opencli accepts every flag the site specs pass", async () =>
   const record = async (args: readonly string[]) => {
     const command = `${args[0]} ${args[1]}`;
     const flags = used.get(command) ?? new Set<string>();
-    for (const arg of args)
-      if (arg.startsWith("--")) flags.add(arg.slice(2));
+    for (const arg of args) if (arg.startsWith("--")) flags.add(arg.slice(2));
     used.set(command, flags);
     return [
       {
