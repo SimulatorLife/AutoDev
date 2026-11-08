@@ -2214,10 +2214,14 @@ single list; the route patterns and the site registry in
   by the uploaded name, so a reused name failed every later turn with "new
   ready attachment chips did not appear".
 - **Gemini.** `opencli gemini ask` takes the prompt on the command line and
-  continues whichever conversation its tab shows, and does not report which.
-  A continued turn therefore first reopens the conversation
-  (`gemini detail <id>`), and every turn reads the id back from the tab
-  (`gemini status`, `/app/<id>`). `ask` also prefixes every reply with `💬 `,
+  continues whichever conversation its tab shows. A continued turn therefore
+  first reopens the conversation (`gemini detail <id>`) and confirms it with
+  `gemini status` before sending. The chat a reply belongs to comes from the
+  reply itself: AutoDev's opencli patch makes `ask` return the URL of the page
+  that answered (`url`, `/app/<id>`). A separate `status` after the answer
+  could bind another Gemini tab when more than one is open; one did, and a
+  subagent's follow-ups went into an older chat holding other sessions'
+  turns, which it then answered from. `ask` also prefixes every reply with `💬 `,
   which the spec strips. A prompt over 200 KB is refused as
   `provider_request_unsupported`; with continuation only a first turn or one
   enormous tool output can reach that.

@@ -242,7 +242,9 @@ test("Gemini is asked with its current model when its model picker cannot be rea
           "COMMAND_EXEC",
           1
         );
-      return [{ response: "💬 answered" }];
+      return [
+        { response: "💬 answered", url: "https://gemini.google.com/app/abc" }
+      ];
     }
     return [{ Url: "https://gemini.google.com/app/abc" }];
   };
@@ -275,12 +277,13 @@ test("every turn attaches its prompt under a fresh name the message names", () =
   );
 });
 
-test("Gemini turns read the conversation id back and reopen it to continue", async () => {
+test("Gemini turns take the chat from the page that answered and reopen it to continue", async () => {
+  // `ask` names the chat by the URL of the page it answered on. A separate
+  // `status` can bind another Gemini tab, so none is run after the answer.
   const fresh = recordingExec([
-    { response: "💬 PONG" },
     {
-      Status: "Connected",
-      Url: "https://gemini.google.com/app/0c7fc86c8c985ae2"
+      response: "💬 PONG",
+      url: "https://gemini.google.com/app/0c7fc86c8c985ae2"
     }
   ]);
   assert.deepEqual(
@@ -311,16 +314,14 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
       "60",
       "-f",
       "json"
-    ],
-    ["gemini", "status", "-f", "json"]
+    ]
   ]);
   const continued = recordingExec([
     { Index: 1 },
     // The tab shows the chat before anything is sent into it...
     { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" },
-    { response: "next" },
-    // ...and still shows it after the answer.
-    { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
+    // ...and the answer came from that chat.
+    { response: "next", url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
   ]);
   await OPENCLI_SITE_SPECS.gemini.turn(
     {
@@ -346,8 +347,7 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
       "60",
       "-f",
       "json"
-    ],
-    ["gemini", "status", "-f", "json"]
+    ]
   ]);
   assert.equal(geminiConversationId("https://gemini.google.com/app"), null);
 });
@@ -776,12 +776,11 @@ test("a Gemini tab that moved is caught before sending and after answering", asy
     before.calls.some((args) => args[1] === "ask"),
     false
   );
-  // After answering: the tab moved while the site answered.
+  // After answering: the page that answered shows another chat.
   const after = exec([
     { Index: 1 },
     { Url: "https://gemini.google.com/app/mine" },
-    { response: "answer" },
-    { Url: "https://gemini.google.com/app/theirs" }
+    { response: "answer", url: "https://gemini.google.com/app/theirs" }
   ]);
   await assert.rejects(
     OPENCLI_SITE_SPECS.gemini.turn(invocation, after.run),
@@ -1315,13 +1314,12 @@ test("a Gemini worker turn continues its web conversation with only the new item
     [
       {
         response:
-          '💬 <tool_call name="exec">\ntext(await tools.exec_command({cmd: "ls"}));\n</tool_call>'
+          '💬 <tool_call name="exec">\ntext(await tools.exec_command({cmd: "ls"}));\n</tool_call>',
+        url: "https://gemini.google.com/app/abc123"
       },
-      { Url: "https://gemini.google.com/app/abc123" },
       { Index: 1 },
       { Url: "https://gemini.google.com/app/abc123" },
-      { response: "💬 Listed." },
-      { Url: "https://gemini.google.com/app/abc123" }
+      { response: "💬 Listed.", url: "https://gemini.google.com/app/abc123" }
     ],
     async (baseUrl, runs) => {
       const input: JsonRecord[] = [userMessage("List the files.")];
@@ -1348,7 +1346,14 @@ test("a Gemini worker turn continues its web conversation with only the new item
         ]
       });
       assert.equal(second.status, 200);
-      assert.deepEqual(runs.requests[2]!.args, [
+      // The chat is the one the first answer came from: no `status` runs
+      // after an answer, since it can read another Gemini tab -- one such
+      // read sent a subagent's follow-ups into another session's chat.
+      assert.deepEqual(
+        runs.requests.map(({ args }) => args[1]),
+        ["ask", "detail", "status", "ask"]
+      );
+      assert.deepEqual(runs.requests[1]!.args, [
         "gemini",
         "detail",
         "abc123",

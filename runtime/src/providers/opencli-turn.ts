@@ -215,9 +215,10 @@ function firstRow(rows: JsonRecord[]): JsonRecord {
  *   is an account setting switched with `chatgpt model <level>`.
  * - Gemini's `ask` takes the prompt on the command line, the model with
  *   `--model`, and continues whichever conversation its tab shows. A continued
- *   turn therefore opens the conversation first (`detail <id>`), and every turn
- *   reads the conversation id back from the tab (`status`), since `ask` does
- *   not report it. The bridge runs a site's turns one at a time, and the tab
+ *   turn therefore opens the conversation first (`detail <id>`). The reply
+ *   row carries the URL of the page that answered (`url`, AutoDev's opencli
+ *   patch), which names the chat; a separate `status` could read another
+ *   Gemini tab. The bridge runs a site's turns one at a time, and the tab
  *   is confirmed to show the turn's chat before the prompt is sent, since
  *   anything else driving the browser could have moved it. `ask` also decorates every reply with a speech
  *   bubble, which is the adapter's, not the model's, and is removed. Its models
@@ -304,13 +305,17 @@ export const OPENCLI_SITE_SPECS: Readonly<
         if (!isGeminiModelSelectionFailure(error)) throw error;
         rows = await ask(null);
       }
-      const { response } = replyFromRow(firstRow(rows));
-      const status = firstRow(await exec(["gemini", "status", ...JSON_FORMAT]));
+      // The chat comes from the page `ask` answered on (its `url`), never from
+      // a later `status`: with more than one Gemini tab open, `status` can
+      // bind another tab, and a subagent's follow-ups were then sent into an
+      // older chat belonging to other sessions.
+      const row = firstRow(rows);
+      const { response } = replyFromRow(row);
       return answeredIn("Gemini", invocation.conversationId, {
         response: response.startsWith(GEMINI_REPLY_PREFIX)
           ? response.slice(GEMINI_REPLY_PREFIX.length)
           : response,
-        conversationId: geminiConversationId(status.Url)
+        conversationId: geminiConversationId(row.url)
       });
     }
   }

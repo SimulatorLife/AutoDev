@@ -1,8 +1,16 @@
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..078bb08ba62ec3c1d2f42ed0b10f012632133875 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390827b5729 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
-@@ -53,7 +53,7 @@ function validateAskModelValue(value) {
+@@ -4,6 +4,7 @@ import {
+   GEMINI_DOMAIN,
+   ensureGeminiPage,
+   getCurrentGeminiModel,
++  getCurrentGeminiUrl,
+   readGeminiSnapshot,
+   selectGeminiModel,
+   selectGeminiThinking,
+@@ -53,7 +54,7 @@ function validateAskModelValue(value) {
          );
      }
      // Reject short aliases like "pro", "flash", "flash-lite" that lack a version number.
@@ -11,7 +19,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..078bb08ba62ec3c1d2f42ed0b10f0126
          throw new ArgumentError(
              '--model "' + value + '" is not accepted. ' +
              'Short aliases like "pro", "flash", or "flash-lite" are not supported. ' +
-@@ -61,8 +61,10 @@ function validateAskModelValue(value) {
+@@ -61,8 +62,10 @@ function validateAskModelValue(value) {
              'Use "opencli gemini models" to list available values.'
          );
      }
@@ -24,6 +32,27 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..078bb08ba62ec3c1d2f42ed0b10f0126
          throw new ArgumentError(
              '--model "' + value + '" is not a valid canonical model id. ' +
              'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
+@@ -93,7 +96,7 @@ export const askCommand = cli({
+         { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
+         { name: 'thinking', required: false, help: 'Thinking level: standard or extended (omitted = leave unchanged)', default: null },
+     ],
+-    columns: ['response'],
++    columns: ['response', 'url'],
+     func: async (page, kwargs) => {
+         const prompt = kwargs.prompt;
+         const timeout = kwargs.timeout;
+@@ -270,6 +273,10 @@ export const askCommand = cli({
+             throw new TimeoutError('Gemini reply', timeout,
+                 'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
+         }
+-        return [{ response: `💬 ${response}` }];
++        // The chat this reply is in, read from the page that sent it. A
++        // separate `status` call can bind a different Gemini tab when more
++        // than one is open, and then names a chat this turn never touched.
++        const url = await getCurrentGeminiUrl(page);
++        return [{ response: `💬 ${response}`, url }];
+     },
+ });
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
 index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..fb8123542c4af3b2d849dcec4f4df91f78aa0e10 100644
 --- a/clis/gemini/utils.js
