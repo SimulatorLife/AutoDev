@@ -21,6 +21,13 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 
 import {
@@ -456,16 +463,25 @@ export interface ConversationResume {
 export class OpencliConversationLedger {
   private readonly entries = new Map<string, string>();
   private readonly maxEntries: number;
+  private readonly file: string | null;
 
-  constructor(maxEntries = 256) {
-    this.maxEntries = maxEntries;
+  /**
+   * `file` keeps the ledger across bridge restarts. Held only in memory, it
+   * was lost on every deploy, crash or reboot, and the next message in an
+   * AutoDev session -- a user's "Continue" an hour later -- started a new chat
+   * with the whole transcript as its first message (225 KB in one case)
+   * instead of continuing the chat the session had been using.
+   */
+  constructor(options: { maxEntries?: number; file?: string | null } = {}) {
+    this.maxEntries = options.maxEntries ?? 256;
+    this.file = options.file ?? null;
+    this.load();
   }
 
   private key(site: OpencliSite, digest: string): string {
     return `${site}:${digest}`;
   }
 
-  /** The longest recorded prefix of `digests` for this site, consuming it. */
   /** The longest recorded prefix of `digests` for this site. */
   find(
     site: OpencliSite,
@@ -483,7 +499,7 @@ export class OpencliConversationLedger {
 
   /** Spend an entry once the turn that continued from it has succeeded. */
   consume(site: OpencliSite, digest: string): void {
-    this.entries.delete(this.key(site, digest));
+    if (this.entries.delete(this.key(site, digest))) this.save();
   }
 
   record(site: OpencliSite, digest: string, conversationId: string): void {
@@ -495,12 +511,56 @@ export class OpencliConversationLedger {
       if (oldest === undefined) break;
       this.entries.delete(oldest);
     }
+    this.save();
   }
 
   get size(): number {
     return this.entries.size;
   }
+
+  /** Read the saved ledger; an unreadable file is an empty ledger, not a failure. */
+  private load(): void {
+    if (this.file === null || !existsSync(this.file)) return;
+    try {
+      const saved: unknown = JSON.parse(readFileSync(this.file, "utf8"));
+      const entries =
+        isRecord(saved) && Array.isArray(saved.entries) ? saved.entries : [];
+      for (const entry of entries.slice(-this.maxEntries)) {
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          LEDGER_KEY_PATTERN.test(entry[0]) &&
+          typeof entry[1] === "string" &&
+          entry[1].length > 0
+        )
+          this.entries.set(entry[0], entry[1]);
+      }
+    } catch {
+      this.entries.clear();
+    }
+  }
+
+  /** Write the ledger atomically, oldest entry first, so eviction order survives. */
+  private save(): void {
+    if (this.file === null) return;
+    try {
+      mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      const temporary = `${this.file}.${process.pid}.tmp`;
+      writeFileSync(
+        temporary,
+        JSON.stringify({ schema: LEDGER_SCHEMA, entries: [...this.entries] }),
+        { mode: 0o600 }
+      );
+      renameSync(temporary, this.file);
+    } catch {
+      // A ledger that cannot be written still serves this process; the next
+      // restart then starts fresh chats, which is the state before persisting.
+    }
+  }
 }
+
+const LEDGER_SCHEMA = "autodev-opencli-conversations-v1";
+const LEDGER_KEY_PATTERN = /^[a-z]+:[0-9a-f]{64}$/u;
 
 export interface OpencliReply {
   readonly response: string;

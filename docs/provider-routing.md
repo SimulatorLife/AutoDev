@@ -2239,6 +2239,17 @@ single list; the route patterns and the site registry in
   new items -- not the reference again, which made every attachment tens of
   kilobytes for one tool output. The index stays because, given only a tool
   output, ChatGPT once lost track of the `wait_agent` call it needed next.
+- **Continuity survives restarts.** The conversation ledger is written to
+  `$CODEX_HOME/run/opencli-conversations.json` (atomically, on every change;
+  `OPENCLI_CONVERSATION_LEDGER_FILE` overrides it) and read at startup. Held
+  only in memory, it was lost on every deploy, crash or reboot, and the next
+  message in an AutoDev session -- a "Continue" an hour later -- started a new
+  chat whose first message was the whole transcript (225 KB in session
+  `01a1b6e5-ba5b-7f83-a471-0669d92f0ee1`) instead of continuing the chat the
+  session had used. If a recorded chat no longer opens (deleted, or a Gemini
+  chat that loads with no visible turns) and continuing fails before anything
+  was sent, the entry is dropped and the turn runs once more as a new chat
+  with the whole conversation, so the session does not stick on a dead chat.
 - **Serialisation.** A site is one browser tab: turns for the same site queue
   in the bridge; different sites run in parallel. A command the bridge
   cancels ends at once, but opencli's daemon keeps the site session until

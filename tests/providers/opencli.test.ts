@@ -522,6 +522,134 @@ test("a streamed turn opens at once, keeps alive, and reports a failure in the s
   }
 });
 
+test("the conversation ledger survives a bridge restart through its file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-opencli-ledger-"));
+  const file = join(directory, "run", "opencli-conversations.json");
+  try {
+    const digests = prefixDigests([
+      "<user>\nhi\n</user>",
+      "<assistant>\nyo\n</assistant>"
+    ]);
+    const first = new OpencliConversationLedger({ file });
+    first.record("chatgpt", digests[1]!, "conv-1");
+    // A restart is a new ledger reading the same file.
+    const restarted = new OpencliConversationLedger({ file });
+    assert.deepEqual(restarted.find("chatgpt", digests), {
+      conversationId: "conv-1",
+      seen: 2,
+      digest: digests[1]
+    });
+    restarted.consume("chatgpt", digests[1]!);
+    assert.equal(new OpencliConversationLedger({ file }).size, 0);
+    // An unreadable file is an empty ledger, not a bridge that cannot start.
+    writeFileSync(file, "{not json");
+    assert.equal(new OpencliConversationLedger({ file }).size, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a later message in the same session continues the same chat after a restart", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-opencli-restart-"));
+  const file = join(directory, "opencli-conversations.json");
+  const serve = async (
+    reply: JsonRecord,
+    payload: JsonRecord
+  ): Promise<{ args: readonly string[]; body: { output: JsonRecord[] } }> => {
+    let args: readonly string[] = [];
+    const bridge = createOpencliBridge({
+      authToken: "",
+      turnTimeoutSeconds: 30,
+      ledger: new OpencliConversationLedger({ file }),
+      run: async (request) => {
+        if (request.args[1] === "model")
+          return [{ Status: "ok", Model: String(request.args[2]) }];
+        args = request.args;
+        return [reply];
+      }
+    });
+    const server: Server = createServer((request, response) => {
+      void bridge.handle(request, response);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
+    const { port } = server.address() as AddressInfo;
+    try {
+      const response = await post(`http://127.0.0.1:${port}`, payload);
+      return {
+        args,
+        body: (await response.json()) as { output: JsonRecord[] }
+      };
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  };
+  try {
+    const input: JsonRecord[] = [userMessage("Make the safety car bigger.")];
+    const first = await serve(
+      { response: "Done.", conversation_id: "conv-7" },
+      { model: "opencli-chatgpt-balanced", input }
+    );
+    assert.ok(first.args.includes("--new"));
+    // The bridge restarts (a deploy); the user then says "Continue".
+    const later = await serve(
+      { response: "Continuing.", conversation_id: "conv-7" },
+      {
+        model: "opencli-chatgpt-balanced",
+        input: [...input, ...first.body.output, userMessage("Continue")]
+      }
+    );
+    assert.deepEqual(
+      later.args.slice(
+        later.args.indexOf("--conversation"),
+        later.args.indexOf("--conversation") + 2
+      ),
+      ["--conversation", "conv-7"]
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a recorded chat that no longer opens is replaced by a new chat, not retried forever", async () => {
+  const notReady = () =>
+    new OpencliCommandError(
+      "ChatGPT ask-file requires an authenticated session with an active composer.",
+      "COMMAND_EXEC",
+      1
+    );
+  await withBridge(
+    [
+      { response: "Done.", conversation_id: "conv-gone" },
+      // Continuing conv-gone fails before sending, retries included.
+      notReady(),
+      notReady(),
+      notReady(),
+      { response: "Continuing in a new chat.", conversation_id: "conv-new" }
+    ],
+    async (baseUrl, runs) => {
+      const input: JsonRecord[] = [userMessage("Start.")];
+      const first = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input
+      });
+      const firstBody = (await first.json()) as { output: JsonRecord[] };
+      const later = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: [...input, ...firstBody.output, userMessage("Continue")]
+      });
+      assert.equal(later.status, 200);
+      const last = runs.requests.at(-1)!.args;
+      assert.ok(last.includes("--new"));
+      assert.equal(last.includes("--conversation"), false);
+      // The new chat gets the whole conversation, the first message included.
+      assert.match(runs.prompts.at(-1)!, /Start\./u);
+      assert.match(runs.prompts.at(-1)!, /## How to respond/u);
+    }
+  );
+});
+
 interface FakeRun {
   readonly requests: OpencliRunRequest[];
   readonly prompts: string[];

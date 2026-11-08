@@ -21,7 +21,7 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -134,6 +134,8 @@ export interface OpencliBridgeOptions {
 const SESSION_BUSY = "SESSION_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 const OUTPUT_ITEM_ADDED = "response.output_item.added";
+/** opencli's code for a read that found nothing, e.g. a chat with no visible turns. */
+const EMPTY_RESULT = "EMPTY_RESULT";
 const DEFAULT_UNSENT_RETRY_MS = 3000;
 const UNSENT_RETRIES = 2;
 
@@ -547,6 +549,11 @@ interface PreparedTurn {
   readonly conversationId: string | null;
   /** The ledger entry this turn continues, spent once the turn succeeds. */
   readonly resumedFrom: string | null;
+  /**
+   * The whole-conversation prompt, for a continued turn whose chat can no
+   * longer be opened; null for a fresh turn, or when it would not fit.
+   */
+  readonly freshPrompt: string | null;
   readonly segments: string[];
   readonly tools: ReturnType<typeof codexToolSurface>["tools"];
 }
@@ -661,18 +668,19 @@ export function createOpencliBridge(
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
     const agentRole = resolveAgentRole(request.headers);
     const orchestrator = isOrchestratorRole(agentRole);
+    const fullPrompt = renderOpencliPrompt(
+      typeof payload.instructions === "string" ? payload.instructions : "",
+      tools,
+      segments.join("\n\n"),
+      orchestrator ? roleInstructions(agentRole) : null
+    );
     const prompt = resume
       ? renderOpencliContinuation(
           tools,
           segments.slice(resume.seen).join("\n\n"),
           orchestrator
         )
-      : renderOpencliPrompt(
-          typeof payload.instructions === "string" ? payload.instructions : "",
-          tools,
-          segments.join("\n\n"),
-          orchestrator ? roleInstructions(agentRole) : null
-        );
+      : fullPrompt;
     if (
       !spec.attachesPrompt &&
       Buffer.byteLength(prompt) > MAX_ARGV_PROMPT_BYTES
@@ -693,6 +701,12 @@ export function createOpencliBridge(
       prompt,
       conversationId: resume?.conversationId ?? null,
       resumedFrom: resume?.digest ?? null,
+      freshPrompt:
+        resume &&
+        (spec.attachesPrompt ||
+          Buffer.byteLength(fullPrompt) <= MAX_ARGV_PROMPT_BYTES)
+          ? fullPrompt
+          : null,
       segments,
       tools
     };
@@ -740,8 +754,10 @@ export function createOpencliBridge(
     return attempt;
   }
 
-  async function runTurn(
+  async function attemptTurn(
     turn: PreparedTurn,
+    prompt: string,
+    conversationId: string | null,
     signal: AbortSignal
   ): Promise<OpencliReply> {
     const directory = mkdtempSync(
@@ -750,15 +766,15 @@ export function createOpencliBridge(
     try {
       const promptFile = path.join(directory, attachedPromptFileName());
       if (turn.spec.attachesPrompt)
-        writeFileSync(promptFile, turn.prompt, { mode: 0o600 });
+        writeFileSync(promptFile, prompt, { mode: 0o600 });
       return await queues.run(turn.site, async () => {
         // Decided inside the site's queue: the model a site last answered
         // with is what its tab shows now.
         const reply = await turn.spec.turn(
           {
-            prompt: turn.prompt,
+            prompt,
             promptFile,
-            conversationId: turn.conversationId,
+            conversationId,
             siteModel: turn.siteModel,
             selectModel: selectedModels.get(turn.site) !== turn.siteModel,
             timeoutSeconds: options.turnTimeoutSeconds
@@ -770,6 +786,44 @@ export function createOpencliBridge(
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Run a turn in the chat the ledger names, or in a new one.
+   *
+   * A recorded chat can stop opening -- deleted on the site, or a Gemini chat
+   * whose page shows no turns -- and every retry of the session would then fail
+   * the same way. When continuing fails before anything was sent, the entry is
+   * dropped and the turn runs once more as a new chat with the whole
+   * conversation, so the session goes on rather than sticking.
+   */
+  async function runTurn(
+    turn: PreparedTurn,
+    signal: AbortSignal
+  ): Promise<OpencliReply> {
+    try {
+      return await attemptTurn(turn, turn.prompt, turn.conversationId, signal);
+    } catch (error) {
+      if (
+        turn.conversationId === null ||
+        turn.freshPrompt === null ||
+        turn.resumedFrom === null ||
+        signal.aborted ||
+        !(error instanceof OpencliCommandError) ||
+        (!failedBeforeSending(error) && error.code !== EMPTY_RESULT)
+      )
+        throw error;
+      writeErrorLine(
+        `opencli ${turn.site} chat ${turn.conversationId} could not be continued (${error.message}); starting a new chat`
+      );
+      ledger.consume(turn.site, turn.resumedFrom);
+      return attemptTurn(
+        { ...turn, conversationId: null, resumedFrom: null },
+        turn.freshPrompt,
+        null,
+        signal
+      );
     }
   }
 
@@ -953,6 +1007,15 @@ if (IS_MAIN) {
   const bridge = createOpencliBridge({
     run: processRunner(() => resolveOpencliCommand(), live),
     authToken: process.env[OPENCLI_ROUTER_AUTH_VARIABLE] ?? "",
+    ledger: new OpencliConversationLedger({
+      file:
+        process.env.OPENCLI_CONVERSATION_LEDGER_FILE?.trim() ||
+        path.join(
+          process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex"),
+          "run",
+          "opencli-conversations.json"
+        )
+    }),
     turnTimeoutSeconds: parseNonNegativeInteger(
       process.env.OPENCLI_TURN_TIMEOUT_SECONDS,
       DEFAULT_TURN_TIMEOUT_SECONDS
