@@ -2213,15 +2213,15 @@ single list; the route patterns and the site registry in
   (`turn(20261106-183651).md`), and opencli matches its attachment chip only
   by the uploaded name, so a reused name failed every later turn with "new
   ready attachment chips did not appear".
-- **Gemini.** `opencli gemini ask` takes the prompt on the command line and
-  continues whichever conversation its tab shows. A continued turn therefore
-  first reopens the conversation (`gemini detail <id>`) and confirms it with
-  `gemini status` before sending. The chat a reply belongs to comes from the
-  reply itself: AutoDev's opencli patch makes `ask` return the URL of the page
-  that answered (`url`, `/app/<id>`). A separate `status` after the answer
-  could bind another Gemini tab when more than one is open; one did, and a
-  subagent's follow-ups went into an older chat holding other sessions'
-  turns, which it then answered from. `ask` also prefixes every reply with `💬 `,
+- **Gemini.** `opencli gemini ask` takes the prompt on the command line, and
+  the chat with `--conversation <id>` or `--new` (both AutoDev's opencli
+  patch adds or extends; the patch also declares them in opencli's
+  `cli-manifest.json`, without which the CLI refuses the flag). The chat a
+  reply belongs to comes from the reply itself: `ask` returns the URL of the
+  page that answered (`url`, `/app/<id>`). A separate `status` after the
+  answer read another Gemini tab once, and a subagent's follow-ups went into
+  an older chat holding other sessions' turns, which it then answered from
+  (session `01a1b8ef-0797-73d2-82bd-a887418caf2b`). `ask` also prefixes every reply with `💬 `,
   which the spec strips. A prompt over 200 KB is refused as
   `provider_request_unsupported`; with continuation only a first turn or one
   enormous tool output can reach that.
@@ -2248,15 +2248,43 @@ single list; the route patterns and the site registry in
   subagent -- comes from Codex's turn metadata (forwarded by the router) or
   the body's `client_metadata.thread_id`; a root and its subagents share a
   session but never a thread. Keyed by content alone, two agents whose
-  transcripts began alike (subagents spawned with the same task) could
-  resolve to one chat. Several agents and sessions take turns in one browser
-  tab per site, so each turn also confirms its chat: Gemini's tab must show
-  the turn's chat after `detail` and before `ask` (if not, nothing is sent and
-  the command is retried), and a reply either site gave in another chat
-  fails the turn (`CHAT_MISMATCH`) rather than being answered from, or
-  recorded under, a conversation this agent never had. Each HTTP request
-  answers only its own response stream; turns per site are serialised; and
-  a ChatGPT reply is paired by a message unique to its turn.
+  transcripts began alike (subagents spawned with the same task and given the
+  same plain reply) could resolve to one chat.
+- **A prompt only ever goes into its own chat.** Every agent and session takes
+  turns in one browser tab per site, and the tab can be moved by anything
+  else driving the browser -- someone clicking another chat in it, or another
+  opencli client. So one opencli command is the whole turn (`ask-file` /
+  `ask` with `--conversation <id>` or `--new`), and AutoDev's patch makes it,
+  on the page that sends and immediately before sending: open the chat, stop
+  a reply an interrupted turn left running there, and confirm the tab shows
+  the turn's chat (a new chat for a fresh turn). If it does not, nothing is
+  sent ("prompt was not sent"), and the bridge retries the command, which
+  opens the chat again. A reply that came from any other chat fails the turn
+  (`CHAT_MISMATCH`) and is not recorded; a ChatGPT reply is also paired by a
+  message unique to its turn. A tab moved between turns is therefore
+  harmless, and one moved during a reply can fail a turn but not misroute it.
+- **Interrupts, steering and queued messages.** An interrupted turn records
+  nothing, so the agent's ledger entry still names its chat; Codex's next
+  request (the interrupted message, its `<turn_aborted>` marker and the new
+  message, such as "Continue") continues that chat with those items. The
+  site may still be writing the abandoned reply, which would block the
+  composer; the turn stops it before sending. A steering message arrives in
+  the agent's next request after its tool outputs and a queued message as
+  the next request, so both are new items of the same thread and go to the
+  same chat.
+- **Google's unusual-traffic check.** Rapid navigation can make Google
+  replace Gemini with its CAPTCHA page (`www.google.com/sorry/...`) until
+  someone solves it in the browser. The patched commands report it as a rate
+  limit ("Gemini is rate limited: ..."), a 429 the router cools the provider
+  down on, instead of a missing chat or a reply that timed out.
+- **Tested against a simulated site.** `tests/providers/opencli-routing.test.ts`
+  drives the bridge over HTTP against simulated ChatGPT and Gemini sites that
+  keep each chat's history and the tab's current chat: concurrent sessions
+  with roots and subagents on both sites, twins with identical tasks and
+  replies, an interrupt followed by "Continue", a steer and a queued message,
+  and a chat opened in the tab between turns or just before sending. A test
+  in `tests/providers/opencli.test.ts` checks every flag the specs pass
+  against the installed opencli's own parser.
 - **Continuity survives restarts.** The conversation ledger is written to
   `$CODEX_HOME/run/opencli-conversations.json` (atomically, on every change;
   `OPENCLI_CONVERSATION_LEDGER_FILE` overrides it) and read at startup. Held

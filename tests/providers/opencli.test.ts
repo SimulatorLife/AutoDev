@@ -35,6 +35,7 @@ import {
   toolIndex,
   transcriptSegments
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+import { resolveOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   OPENCLI_CHATGPT_MODEL_PATTERN,
   OPENCLI_GEMINI_MODEL_PATTERN,
@@ -316,11 +317,10 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
       "json"
     ]
   ]);
+  // One command continues the chat: opencli opens it and confirms it on the
+  // sending page right before sending, so no other command can move the tab
+  // in between.
   const continued = recordingExec([
-    { Index: 1 },
-    // The tab shows the chat before anything is sent into it...
-    { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" },
-    // ...and the answer came from that chat.
     { response: "next", url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
   ]);
   await OPENCLI_SITE_SPECS.gemini.turn(
@@ -335,14 +335,14 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
     continued.exec
   );
   assert.deepEqual(continued.calls, [
-    ["gemini", "detail", "0c7fc86c8c985ae2", "-f", "json"],
-    ["gemini", "status", "-f", "json"],
     [
       "gemini",
       "ask",
       "only the delta",
       "--model",
       "3.1-pro",
+      "--conversation",
+      "0c7fc86c8c985ae2",
       "--timeout",
       "60",
       "-f",
@@ -739,53 +739,33 @@ test("concurrent agents with identical transcripts each keep their own chat", as
   }
 });
 
-test("a Gemini tab that moved is caught before sending and after answering", async () => {
-  const exec = (rows: JsonRecord[]) => {
-    const calls: string[][] = [];
-    return {
-      calls,
-      run: async (args: readonly string[]) => {
-        calls.push([...args]);
-        const row = rows.shift();
-        if (!row) throw new Error("no fake row left");
-        return [row];
-      }
-    };
-  };
-  const invocation = {
-    prompt: "delta",
-    promptFile: "/unused",
-    conversationId: "mine",
-    siteModel: "3.1-pro",
-    selectModel: false,
-    timeoutSeconds: 60
-  };
-  // Before sending: the tab shows another chat, and nothing is asked.
-  const before = exec([
-    { Index: 1 },
-    { Url: "https://gemini.google.com/app/theirs" }
-  ]);
+test("a Gemini answer from another chat fails the turn", async () => {
+  // The check before sending is opencli's, on the page that sends; this is
+  // the bridge's own check of where the answer came from.
+  const calls: string[][] = [];
   await assert.rejects(
-    OPENCLI_SITE_SPECS.gemini.turn(invocation, before.run),
+    OPENCLI_SITE_SPECS.gemini.turn(
+      {
+        prompt: "delta",
+        promptFile: "/unused",
+        conversationId: "mine",
+        siteModel: "3.1-pro",
+        selectModel: false,
+        timeoutSeconds: 60
+      },
+      async (args) => {
+        calls.push([...args]);
+        return [
+          { response: "answer", url: "https://gemini.google.com/app/theirs" }
+        ];
+      }
+    ),
     (error: unknown) =>
       error instanceof OpencliCommandError &&
       error.code === "CHAT_MISMATCH" &&
-      /prompt was not sent/u.test(error.message)
+      /answered in chat theirs, not mine/u.test(error.message)
   );
-  assert.equal(
-    before.calls.some((args) => args[1] === "ask"),
-    false
-  );
-  // After answering: the page that answered shows another chat.
-  const after = exec([
-    { Index: 1 },
-    { Url: "https://gemini.google.com/app/mine" },
-    { response: "answer", url: "https://gemini.google.com/app/theirs" }
-  ]);
-  await assert.rejects(
-    OPENCLI_SITE_SPECS.gemini.turn(invocation, after.run),
-    /answered in chat theirs, not mine/u
-  );
+  assert.equal(calls.length, 1);
 });
 
 test("a ChatGPT answer from another chat fails the turn and is not recorded", async () => {
@@ -1317,8 +1297,6 @@ test("a Gemini worker turn continues its web conversation with only the new item
           '💬 <tool_call name="exec">\ntext(await tools.exec_command({cmd: "ls"}));\n</tool_call>',
         url: "https://gemini.google.com/app/abc123"
       },
-      { Index: 1 },
-      { Url: "https://gemini.google.com/app/abc123" },
       { response: "💬 Listed.", url: "https://gemini.google.com/app/abc123" }
     ],
     async (baseUrl, runs) => {
@@ -1351,19 +1329,69 @@ test("a Gemini worker turn continues its web conversation with only the new item
       // read sent a subagent's follow-ups into another session's chat.
       assert.deepEqual(
         runs.requests.map(({ args }) => args[1]),
-        ["ask", "detail", "status", "ask"]
+        ["ask", "ask"]
       );
-      assert.deepEqual(runs.requests[1]!.args, [
-        "gemini",
-        "detail",
-        "abc123",
-        "-f",
-        "json"
-      ]);
+      const continuedArgs = runs.requests[1]!.args;
+      assert.equal(
+        continuedArgs[continuedArgs.indexOf("--conversation") + 1],
+        "abc123"
+      );
       assert.match(runs.prompts[1]!, /a\.txt/u);
       assert.doesNotMatch(runs.prompts[1]!, /List the files\./u);
     }
   );
+});
+
+test("the installed opencli accepts every flag the site specs pass", async () => {
+  // The specs are tested against fakes; this is the real CLI's parser. A flag
+  // AutoDev's patch adds to a command's code but not to opencli's manifest is
+  // refused as an unknown option -- every continued Gemini turn once was.
+  const used = new Map<string, Set<string>>();
+  const record = async (args: readonly string[]) => {
+    const command = `${args[0]} ${args[1]}`;
+    const flags = used.get(command) ?? new Set<string>();
+    for (const arg of args)
+      if (arg.startsWith("--")) flags.add(arg.slice(2));
+    used.set(command, flags);
+    return [
+      {
+        response: "ok",
+        conversation_id: "c1",
+        url: "https://gemini.google.com/app/c1"
+      }
+    ];
+  };
+  for (const site of ["chatgpt", "gemini"] as const)
+    for (const conversationId of [null, "c1"])
+      await OPENCLI_SITE_SPECS[site].turn(
+        {
+          prompt: "p",
+          promptFile: "/tmp/turn.md",
+          conversationId,
+          siteModel: site === "chatgpt" ? "balanced" : "3.1-pro",
+          selectModel: true,
+          timeoutSeconds: 60
+        },
+        record
+      );
+  const opencli = resolveOpencliCommand();
+  for (const [command, flags] of used) {
+    const help = spawnSync(
+      opencli.command,
+      [...opencli.args, ...command.split(" "), "--help", "-f", "json"],
+      { encoding: "utf8" }
+    );
+    assert.equal(help.status, 0, help.stderr);
+    const declared = new Set(
+      (
+        JSON.parse(help.stdout) as { command_options: Array<{ name: string }> }
+      ).command_options.map(({ name }) => name)
+    );
+    declared.add("format");
+    for (const flag of flags)
+      assert.ok(declared.has(flag), `opencli ${command} has no --${flag}`);
+  }
+  assert.ok(used.get("gemini ask")?.has("conversation"));
 });
 
 test("opencli launcher loads the Router bridge key from the private CODEX_HOME env file", () => {

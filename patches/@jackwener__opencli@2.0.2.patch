@@ -1,16 +1,139 @@
+diff --git a/cli-manifest.json b/cli-manifest.json
+index b66b50b6f44b18eb7f83b891f66c0e1f762bd8af..667f2fbf22fc99212d840809ac8c453eb1a00fd5 100644
+--- a/cli-manifest.json
++++ b/cli-manifest.json
+@@ -12172,6 +12172,12 @@
+         "required": false,
+         "help": "Start a new chat first (true/false, default: false)"
+       },
++      {
++        "name": "conversation",
++        "type": "string",
++        "required": false,
++        "help": "Continue this conversation id; the prompt is sent only if the tab shows it"
++      },
+       {
+         "name": "thinking",
+         "type": "str",
+@@ -12181,7 +12187,8 @@
+       }
+     ],
+     "columns": [
+-      "response"
++      "response",
++      "url"
+     ],
+     "defaultFormat": "plain",
+     "type": "js",
+diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
+index 976208dca661fbb87a02335cc87606f5c1a534bb..8912e3831460200e9f358122657c3ff29bea68d2 100644
+--- a/clis/chatgpt/ask-file.js
++++ b/clis/chatgpt/ask-file.js
+@@ -11,7 +11,9 @@ import {
+     openChatGPTConversation,
+     navigateToProject,
+     parseChatGPTConversationId,
++    requireChatGPTChat,
+     sendChatGPTMessage,
++    stopStaleChatGPTReply,
+     startNewChat,
+     uploadChatGPTFiles,
+     waitForChatGPTResponse,
+@@ -73,12 +75,15 @@ export const askFileCommand = cli({
+             throw new ArgumentError('chatgpt ask-file cannot use --project and --conversation together');
+         }
+ 
++        let expectedChat;
+         if (kwargs.conversation) {
+-            await openChatGPTConversation(page, kwargs.conversation);
++            expectedChat = await openChatGPTConversation(page, kwargs.conversation);
++            await stopStaleChatGPTReply(page);
+         } else if (kwargs.project) {
+             await navigateToProject(page, kwargs.project);
+         } else if (normalizeBooleanFlag(kwargs.new)) {
+             await startNewChat(page);
++            expectedChat = null;
+         } else {
+             await ensureOnChatGPT(page);
+         }
+@@ -103,7 +108,11 @@ export const askFileCommand = cli({
+         const baselineCount = baselineMessages.length;
+         const baselinePairCounts = getChatGPTResponsePairCounts(baselineMessages, prompt);
+ 
+-        // 2. Send prompt
++        // 2. Send prompt -- into the chat asked for, checked on this page
++        // right before sending, so nothing that moved the tab since it was
++        // opened can redirect the prompt.
++        if (expectedChat !== undefined)
++            await requireChatGPTChat(page, expectedChat);
+         const sent = await sendChatGPTMessage(page, prompt);
+         if (!sent) {
+             throw new CommandExecutionError('Failed to send message to ChatGPT');
+diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
+index e715672a7f59cc525abd97ceec07341b4e159438..5e0f5af834e44cd7edd871e90bd0b1bc95f98228 100644
+--- a/clis/chatgpt/utils.js
++++ b/clis/chatgpt/utils.js
+@@ -3697,3 +3697,42 @@ export async function getChatGPTImageAssets(page, urls) {
+         })(${urlsJson})
+     `)), 'chatgpt image asset export');
+ }
++
++// ── AutoDev: chat guards ───────────────────────────────────────────────
++// See the Gemini adapter: checked on the sending page right before sending.
++function clickChatGPTStopScript() {
++    return `(() => {
++      const node = document.querySelector('[data-testid="stop-button"]')
++        || Array.from(document.querySelectorAll('button, [role="button"]')).find((el) => {
++          const aria = el.getAttribute('aria-label') || '';
++          return aria.includes('Stop generating') || aria.includes('Stop streaming') || aria.includes('停止生成');
++        });
++      if (!node) return false;
++      node.click();
++      return true;
++    })()`;
++}
++/** Stop a reply an interrupted caller left the site writing. */
++export async function stopStaleChatGPTReply(page, timeoutSeconds = 20) {
++    if (!(await isGenerating(page)))
++        return false;
++    await page.evaluate(clickChatGPTStopScript());
++    for (let waited = 0; waited < timeoutSeconds; waited += 1) {
++        await page.wait({ time: 1 });
++        if (!(await isGenerating(page)))
++            return true;
++    }
++    throw new CommandExecutionError('ChatGPT is still answering an earlier prompt; prompt was not sent');
++}
++/** `expected` is a conversation id, or null for a new chat that has none yet. */
++export async function requireChatGPTChat(page, expected) {
++    let shown = null;
++    try {
++        shown = parseChatGPTConversationId(await currentChatGPTUrl(page)) || null;
++    } catch {
++        // A page that is not a /c/<id> conversation, such as a new chat.
++    }
++    if (shown !== expected) {
++        throw new CommandExecutionError(`the ChatGPT tab shows chat ${shown ?? 'none'}, not ${expected ?? 'a new chat'}; prompt was not sent`);
++    }
++}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390827b5729 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..d873f8c407791faac24eaf7c7d32a69fabe277bf 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
-@@ -4,6 +4,7 @@ import {
+@@ -4,6 +4,12 @@ import {
    GEMINI_DOMAIN,
    ensureGeminiPage,
    getCurrentGeminiModel,
++  geminiChatIdOf,
 +  getCurrentGeminiUrl,
++  openGeminiConversation,
++  requireGeminiNotBlocked,
++  requireGeminiChat,
++  stopStaleGeminiReply,
    readGeminiSnapshot,
    selectGeminiModel,
    selectGeminiThinking,
-@@ -53,7 +54,7 @@ function validateAskModelValue(value) {
+@@ -53,7 +59,7 @@ function validateAskModelValue(value) {
          );
      }
      // Reject short aliases like "pro", "flash", "flash-lite" that lack a version number.
@@ -19,7 +142,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390
          throw new ArgumentError(
              '--model "' + value + '" is not accepted. ' +
              'Short aliases like "pro", "flash", or "flash-lite" are not supported. ' +
-@@ -61,8 +62,10 @@ function validateAskModelValue(value) {
+@@ -61,8 +67,10 @@ function validateAskModelValue(value) {
              'Use "opencli gemini models" to list available values.'
          );
      }
@@ -32,8 +155,11 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390
          throw new ArgumentError(
              '--model "' + value + '" is not a valid canonical model id. ' +
              'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
-@@ -93,7 +96,7 @@ export const askCommand = cli({
+@@ -91,9 +99,10 @@ export const askCommand = cli({
+         { name: 'model', type: 'string', required: false, help: 'Gemini model to use (e.g. "2.5-flash"). Use "opencli gemini models" to list available values.' },
+         { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait (default: 60)', default: 60 },
          { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
++        { name: 'conversation', type: 'string', required: false, help: 'Continue this conversation id; the prompt is sent only if the tab shows it' },
          { name: 'thinking', required: false, help: 'Thinking level: standard or extended (omitted = leave unchanged)', default: null },
      ],
 -    columns: ['response'],
@@ -41,7 +167,45 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390
      func: async (page, kwargs) => {
          const prompt = kwargs.prompt;
          const timeout = kwargs.timeout;
-@@ -270,6 +273,10 @@ export const askCommand = cli({
+@@ -103,7 +112,13 @@ export const askCommand = cli({
+ 
+         // ── New chat (must happen before model/thinking selection) ──────
+         const startFresh = normalizeBooleanFlag(kwargs.new);
+-        if (startFresh)
++        const conversation = kwargs.conversation == null ? null : String(kwargs.conversation).trim() || null;
++        if (startFresh && conversation) {
++            throw new ArgumentError('gemini ask cannot use --new and --conversation together');
++        }
++        if (conversation)
++            await openGeminiConversation(page, conversation);
++        else if (startFresh)
+             await startNewGeminiChat(page);
+ 
+         // ── Early validation: model format & thinking value ────────────
+@@ -256,20 +271,36 @@ export const askCommand = cli({
+             }
+         }
+ 
++        // A chat named by --conversation, or a new one, is checked on this
++        // page right before sending: nothing between commands -- another
++        // client, or someone clicking in the tab -- can redirect the prompt.
++        if (conversation || startFresh) {
++            await stopStaleGeminiReply(page);
++            await requireGeminiChat(page, conversation);
++        }
+         const before = await readGeminiSnapshot(page);
+         await sendGeminiMessage(page, prompt);
+         const submissionStartedAt = Date.now();
+         const submitted = await waitForGeminiSubmission(page, before, timeout);
+         if (!submitted) {
++            await requireGeminiNotBlocked(page);
+             throw new TimeoutError('Gemini reply', timeout,
+                 'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
+         }
+         const remainingTimeoutSeconds = Math.max(0, timeout - Math.ceil((Date.now() - submissionStartedAt) / 1000));
+         const response = await waitForGeminiResponse(page, submitted, prompt, remainingTimeoutSeconds);
+         if (!response) {
++            await requireGeminiNotBlocked(page);
              throw new TimeoutError('Gemini reply', timeout,
                  'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
          }
@@ -50,13 +214,22 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..f15b6261302e0276a5bc3304aaad3390
 +        // separate `status` call can bind a different Gemini tab when more
 +        // than one is open, and then names a chat this turn never touched.
 +        const url = await getCurrentGeminiUrl(page);
++        if (conversation && geminiChatIdOf(url) !== conversation) {
++            throw new CommandExecutionError(`Gemini answered in chat ${geminiChatIdOf(url) ?? 'none'}, not ${conversation}`);
++        }
 +        return [{ response: `💬 ${response}`, url }];
      },
  });
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..fb8123542c4af3b2d849dcec4f4df91f78aa0e10 100644
+index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..e72ca0c8a94f10c3ab4722305048c81e68a36d28 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
+@@ -1,4 +1,4 @@
+-import { CommandExecutionError, TimeoutError } from '@jackwener/opencli/errors';
++import { CommandExecutionError, EmptyResultError, TimeoutError } from '@jackwener/opencli/errors';
+ export const GEMINI_DOMAIN = 'gemini.google.com';
+ export const GEMINI_APP_URL = 'https://gemini.google.com/app';
+ export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
 @@ -2770,7 +2770,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
@@ -70,3 +243,81 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..fb8123542c4af3b2d849dcec4f4df91f
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
+@@ -2778,3 +2782,77 @@ export async function selectGeminiModel(page, modelId) {
+         );
+     }
+ }
++
++// ── AutoDev: chat guards ───────────────────────────────────────────────
++// A caller that keeps one chat per agent must know a prompt goes into that
++// chat, and must not have it land in whatever chat the tab shows. These run
++// on the page that sends, immediately before the prompt is sent.
++const GEMINI_CHAT_ID_PATTERN = /\/app\/([\w-]+)/;
++export function geminiChatIdOf(url) {
++    const match = GEMINI_CHAT_ID_PATTERN.exec(String(url || ''));
++    return match ? match[1] : null;
++}
++function clickGeminiStopScript() {
++    return `(() => {
++      const node = Array.from(document.querySelectorAll('button, [role="button"]')).find((el) => {
++        const text = (el.textContent || '').trim().toLowerCase();
++        const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
++        return text === 'stop response' || aria === 'stop response'
++          || text === 'detener respuesta' || aria === 'detener respuesta'
++          || text === '停止回答' || aria === '停止回答';
++      });
++      if (!node) return false;
++      node.click();
++      return true;
++    })()`;
++}
++/**
++ * Stop a reply still being written in this chat. A caller that was
++ * interrupted leaves the site answering a prompt nobody waits for, and a
++ * new prompt cannot be sent until that reply ends.
++ */
++export async function stopStaleGeminiReply(page, timeoutSeconds = 20) {
++    if (!(await isGeminiGenerating(page)))
++        return false;
++    await page.evaluate(clickGeminiStopScript());
++    for (let waited = 0; waited < timeoutSeconds; waited += 1) {
++        await page.wait({ time: 1 });
++        if (!(await isGeminiGenerating(page)))
++            return true;
++    }
++    throw new CommandExecutionError('Gemini is still answering an earlier prompt; prompt was not sent');
++}
++/**
++ * Google's unusual-traffic check. It replaces Gemini with a CAPTCHA page
++ * (www.google.com/sorry/...) until someone solves it in the browser, and
++ * until then no prompt can be sent. It is reported as the rate limit it is,
++ * not as a missing chat or a reply that never came.
++ */
++export async function requireGeminiNotBlocked(page) {
++    const blocked = await page.evaluate(`(() => {
++      const url = window.location.href;
++      return /^https:\\/\\/(?:www\\.)?google\\.[a-z.]+\\/sorry\\//.test(url)
++        || /unusual traffic from your computer network|detected unusual traffic/i.test(document.body ? document.body.innerText.slice(0, 2000) : '');
++    })()`).catch(() => false);
++    if (unwrapGeminiEvaluateResult(blocked, 'Gemini block probe') === true) {
++        throw new CommandExecutionError("Gemini is rate limited: Google is showing its unusual-traffic check (CAPTCHA) in opencli's Gemini tab; solve it in the browser");
++    }
++}
++/** Open a conversation by id on this page; refuse one that shows no turns. */
++export async function openGeminiConversation(page, id) {
++    await ensureGeminiPage(page);
++    await page.goto(`${GEMINI_APP_URL}/${id}`, { waitUntil: 'load', settleMs: 2500 });
++    await requireGeminiNotBlocked(page);
++    const turns = await getGeminiVisibleTurns(page);
++    if (!Array.isArray(turns) || turns.length === 0) {
++        throw new EmptyResultError('gemini ask', `No turns were visible in chat ${id}; prompt was not sent`);
++    }
++}
++/** `expected` is a chat id, or null for a new chat that has none yet. */
++export async function requireGeminiChat(page, expected) {
++    await requireGeminiNotBlocked(page);
++    const shown = geminiChatIdOf(await getCurrentGeminiUrl(page));
++    if (shown !== expected) {
++        throw new CommandExecutionError(`the Gemini tab shows chat ${shown ?? 'none'}, not ${expected ?? 'a new chat'}; prompt was not sent`);
++    }
++}

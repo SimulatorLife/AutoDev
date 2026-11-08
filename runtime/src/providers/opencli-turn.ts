@@ -214,15 +214,21 @@ function firstRow(rows: JsonRecord[]): JsonRecord {
  *   to continue with `--conversation`; the reply row carries its id. Its model
  *   is an account setting switched with `chatgpt model <level>`.
  * - Gemini's `ask` takes the prompt on the command line, the model with
- *   `--model`, and continues whichever conversation its tab shows. A continued
- *   turn therefore opens the conversation first (`detail <id>`). The reply
- *   row carries the URL of the page that answered (`url`, AutoDev's opencli
- *   patch), which names the chat; a separate `status` could read another
- *   Gemini tab. The bridge runs a site's turns one at a time, and the tab
- *   is confirmed to show the turn's chat before the prompt is sent, since
- *   anything else driving the browser could have moved it. `ask` also decorates every reply with a speech
- *   bubble, which is the adapter's, not the model's, and is removed. Its models
- *   are listed by `gemini models`.
+ *   `--model`, and the chat with `--conversation <id>` or `--new` (AutoDev's
+ *   opencli patch), which it opens and confirms on the sending page right
+ *   before sending. The reply row carries the URL of the page that answered
+ *   (`url`), which names the chat; a separate `status` could read another
+ *   Gemini tab. `ask` also decorates every reply with a speech bubble, which
+ *   is the adapter's, not the model's, and is removed. Its models are listed
+ *   by `gemini models`.
+ *
+ * On both sites one command is the whole turn: it opens the chat, stops a
+ * reply an interrupted turn left running there, and confirms on the page
+ * that sends -- right before sending -- that it shows the turn's chat (a new
+ * one for a fresh turn). Someone clicking in the tab, or anything else
+ * driving the browser between turns, can then only fail a turn before its
+ * prompt is sent, never redirect it. The bridge also runs a site's turns one
+ * at a time, and checks that the reply came from the chat it continued.
  */
 export const OPENCLI_SITE_SPECS: Readonly<
   Record<OpencliSite, OpencliSiteSpec>
@@ -264,32 +270,19 @@ export const OPENCLI_SITE_SPECS: Readonly<
         .filter((model) => model !== "");
     },
     turn: async (invocation, exec) => {
-      if (invocation.conversationId) {
-        await exec([
-          "gemini",
-          "detail",
-          invocation.conversationId,
-          ...JSON_FORMAT
-        ]);
-        // `ask` continues whatever chat the tab shows; confirm it shows this
-        // turn's chat before anything is sent into it.
-        const opened = geminiConversationId(
-          firstRow(await exec(["gemini", "status", ...JSON_FORMAT])).Url
-        );
-        if (opened !== invocation.conversationId)
-          throw new OpencliCommandError(
-            `the Gemini tab shows chat ${opened ?? "none"}, not ${invocation.conversationId}; prompt was not sent`,
-            CHAT_MISMATCH,
-            null
-          );
-      }
       const ask = (model: string | null) =>
         exec([
           "gemini",
           "ask",
           invocation.prompt,
           ...(model === null ? [] : ["--model", model]),
-          ...(invocation.conversationId ? [] : ["--new", "true"]),
+          // opencli opens the chat, stops a reply an interrupted turn left
+          // running, and confirms the chat on the sending page right before
+          // sending (AutoDev's patch): nothing that moves the tab between
+          // commands can redirect the prompt.
+          ...(invocation.conversationId
+            ? ["--conversation", invocation.conversationId]
+            : ["--new", "true"]),
           "--timeout",
           String(invocation.timeoutSeconds),
           ...JSON_FORMAT
