@@ -35,10 +35,17 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../src/lib/server/form-mutation.ts";
+import {
+  logMutationRejection,
+  type MutationRejection,
+  runtimeRejection
+} from "../../../../../../src/lib/server/mutation-rejection.ts";
 import { providerMutationRefusalFor } from "../../../../../../src/lib/server/provider-mutation-refusal.ts";
 
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MAX_FORM_BODY_BYTES = 4096;
+
+const ROUTE = "/api/providers/[provider]/roles/[role]";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -78,20 +85,27 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string; role: string }> }
 ): Promise<NextResponse> {
-  const failed = (returnTo: string = providersPath()): NextResponse =>
-    redirectTo(withControlFailure(returnTo));
-  if (!isSameOriginMutation(request)) return failed();
+  const failed = (
+    rejection: Omit<MutationRejection, "route">,
+    returnTo: string = providersPath()
+  ): NextResponse => {
+    logMutationRejection({ route: ROUTE, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
+  if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { provider, role } = await context.params;
+  const resource = `providers/${provider}/roles/${role}`;
   if (!PROVIDER_ID_PATTERN.test(provider) || !isProviderRole(role)) {
-    return failed();
+    return failed({ cause: "invalid_target" });
   }
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return failed();
+  if (!form) return failed({ cause: "invalid_body" });
 
   const returnTo = form.get("returnTo");
-  if (!isProvidersReturnPath(returnTo)) return failed();
+  if (!isProvidersReturnPath(returnTo))
+    return failed({ cause: "invalid_return_path" });
   const priority = parsePriority(form.get("priority"));
   const model = parseModel(form.get("model"));
   const hasEffort = form.has("reasoningEffort");
@@ -106,11 +120,12 @@ export async function POST(
     form.get("role") !== role ||
     !validFieldCount
   ) {
-    return failed(returnTo);
+    return failed({ cause: "invalid_fields", resource }, returnTo);
   }
 
   const config = readControlApiConfig();
-  if (!config) return failed(returnTo);
+  if (!config)
+    return failed({ cause: "control_api_unconfigured", resource }, returnTo);
 
   const result = await patchProviderRole(
     provider,
@@ -126,6 +141,7 @@ export async function POST(
   // The Runtime's code says why it declined. Carrying the reason keeps the
   // notice from claiming only "could not be confirmed" when the Runtime named
   // the refusal, which is what left the operator with no next move.
+  logMutationRejection({ route: ROUTE, ...runtimeRejection(result), resource });
   const refusal = providerMutationRefusalFor(result);
   return redirectTo(
     refusal === undefined

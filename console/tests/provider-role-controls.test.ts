@@ -18,6 +18,7 @@ import {
   type ControlRefusalReason,
   readControlRefusal
 } from "../src/lib/control-failure.ts";
+import { MUTATION_REJECTION_SCHEMA } from "../src/lib/server/mutation-rejection.ts";
 
 const mockDiscovery: ProviderModelDiscoveryState = {
   status: "available",
@@ -560,4 +561,175 @@ test("an unrecognised Runtime code keeps the generic notice rather than guessing
     await refusalForCode(400, "autodev_control_api_some_future_thing"),
     undefined
   );
+});
+
+/**
+ * The rejection lines a mutation route wrote to stderr while `run` ran.
+ *
+ * A change the Console turned away never reached the Runtime's audit, so an
+ * operator's Disabled orchestrator role left no trace anywhere when it did
+ * not land; these lines are that trace.
+ */
+async function rejectionLines(
+  run: () => Promise<unknown>
+): Promise<Array<Record<string, unknown>>> {
+  const written: string[] = [];
+  const previousWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    written.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await run();
+  } finally {
+    process.stderr.write = previousWrite;
+  }
+  return written
+    .flatMap((chunk) => chunk.split("\n"))
+    .filter((line) => line.includes(MUTATION_REJECTION_SCHEMA))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function orchestratorRoleRequest(
+  fields: Record<string, string>,
+  headers: Record<string, string> = {}
+): NextRequest {
+  return new NextRequest(
+    "http://127.0.0.1:3000/api/providers/claude/roles/orchestrator",
+    {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:3000",
+        origin: "http://127.0.0.1:3000",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/x-www-form-urlencoded",
+        ...headers
+      },
+      body: new URLSearchParams(fields).toString()
+    }
+  );
+}
+
+const DISABLE_ORCHESTRATOR = {
+  provider: "claude",
+  role: "orchestrator",
+  priority: "disabled",
+  model: "claude-opus-5-5",
+  reasoningEffort: "medium",
+  returnTo: "/providers"
+};
+
+test("a role change the Console turns away is logged with its cause", async () => {
+  // A rejected change must not reach any Control API, least of all the
+  // Runtime this machine runs: the Console falls back to the real service
+  // credential in CODEX_HOME when the variable is unset.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("a rejected change must not reach the Control API");
+  }) as typeof fetch;
+  try {
+    const params = {
+      params: Promise.resolve({ provider: "claude", role: "orchestrator" })
+    };
+    const crossOrigin = await rejectionLines(() =>
+      POST(
+        orchestratorRoleRequest(DISABLE_ORCHESTRATOR, {
+          origin: "http://evil.example"
+        }),
+        params
+      )
+    );
+    assert.equal(crossOrigin.length, 1);
+    assert.equal(
+      crossOrigin[0]!.route,
+      "/api/providers/[provider]/roles/[role]"
+    );
+    assert.equal(crossOrigin[0]!.cause, "cross_origin");
+
+    const { model: _dropped, ...withoutModel } = DISABLE_ORCHESTRATOR;
+    const missingField = await rejectionLines(() =>
+      POST(orchestratorRoleRequest(withoutModel), params)
+    );
+    assert.deepEqual(
+      missingField.map(({ cause, resource }) => ({ cause, resource })),
+      [
+        {
+          cause: "invalid_fields",
+          resource: "providers/claude/roles/orchestrator"
+        }
+      ]
+    );
+    // Codes and the resource only: no submitted value is echoed into the log.
+    assert.doesNotMatch(
+      JSON.stringify(missingField),
+      /claude-opus-5-5|disabled/u
+    );
+
+    // No credential anywhere: neither the variable nor the secret file the
+    // Console falls back to. A fetch that is reached anyway fails the test
+    // rather than writing to whatever Runtime this machine runs.
+    const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+    const previousSecretFile = process.env.AUTODEV_OPENLIT_SECRET_FILE;
+    const previousFetch = globalThis.fetch;
+    delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE =
+      "/nonexistent/autodev-test-secrets.env";
+    globalThis.fetch = (async () => {
+      throw new Error("an unconfigured Console must not call the Control API");
+    }) as typeof fetch;
+    try {
+      const unconfigured = await rejectionLines(() =>
+        POST(orchestratorRoleRequest(DISABLE_ORCHESTRATOR), params)
+      );
+      assert.equal(unconfigured[0]?.cause, "control_api_unconfigured");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousToken !== undefined)
+        process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+      if (previousSecretFile === undefined)
+        delete process.env.AUTODEV_OPENLIT_SECRET_FILE;
+      else process.env.AUTODEV_OPENLIT_SECRET_FILE = previousSecretFile;
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a role change the Runtime refuses is logged with its status and code", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
+  globalThis.fetch = (async () =>
+    Response.json(
+      {
+        error: {
+          message: "no",
+          code: "autodev_control_api_invalid_body",
+          type: "t"
+        }
+      },
+      { status: 400 }
+    )) as typeof fetch;
+  try {
+    const lines = await rejectionLines(() =>
+      POST(orchestratorRoleRequest(DISABLE_ORCHESTRATOR), {
+        params: Promise.resolve({ provider: "claude", role: "orchestrator" })
+      })
+    );
+    assert.deepEqual(
+      lines.map(({ cause, status, code }) => ({ cause, status, code })),
+      [
+        {
+          cause: "runtime_rejected",
+          status: 400,
+          code: "autodev_control_api_invalid_body"
+        }
+      ]
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+  }
 });

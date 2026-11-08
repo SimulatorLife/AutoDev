@@ -22,8 +22,15 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import {
+  logMutationRejection,
+  type MutationRejection,
+  runtimeRejection
+} from "../../../../src/lib/server/mutation-rejection.ts";
 
 const MAX_FORM_BODY_BYTES = 4096;
+
+const ROUTE = "/api/providers/reset";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,23 +40,34 @@ function redirectTo(location: string): NextResponse {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const failed = (returnTo: string = providersPath()): NextResponse =>
-    redirectTo(withControlFailure(returnTo));
-  if (!isSameOriginMutation(request)) return failed();
+  const resource = "providers/reset";
+  const failed = (
+    rejection: Omit<MutationRejection, "route">,
+    returnTo: string = providersPath()
+  ): NextResponse => {
+    logMutationRejection({ route: ROUTE, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
+  if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return failed();
+  if (!form) return failed({ cause: "invalid_body" });
 
   const returnTo = form.get("returnTo");
-  if (!isProvidersReturnPath(returnTo)) return failed();
+  if (!isProvidersReturnPath(returnTo))
+    return failed({ cause: "invalid_return_path" });
   if (form.get("confirm") !== "true") {
+    logMutationRejection({ route: ROUTE, cause: "invalid_fields", resource });
     return redirectTo(withControlRefusal(returnTo, "confirmation_missing"));
   }
-  if (form.size !== 2) return failed(returnTo);
+  if (form.size !== 2)
+    return failed({ cause: "invalid_fields", resource }, returnTo);
 
   const config = readControlApiConfig();
-  if (!config) return failed(returnTo);
+  if (!config)
+    return failed({ cause: "control_api_unconfigured", resource }, returnTo);
 
   const result = await resetProviderSettings(config);
-  return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
+  if (result.kind === "ok") return redirectTo(returnTo);
+  return failed({ ...runtimeRejection(result), resource }, returnTo);
 }

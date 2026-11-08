@@ -1047,6 +1047,20 @@ sole read/write access. Override the fallback paths with
 when sandboxing requires a different writable location. The legacy world-
 writable `/tmp/codex-model-router.log` path is gone.
 
+Every Control API change that reaches the Runtime -- accepted, refused or
+failed -- is an `autodev-control-api-audit-v1` line in the same log. A change
+the Console turns away before forwarding it never reached that audit, so the
+Console's provider, model and agent mutation routes write their own line,
+`autodev-console-mutation-rejected-v1`, to the Console's stderr
+(`$CODEX_HOME/run/codex-autodev-console.launchd.err.log`): the route, the
+resource, and a cause (`cross_origin`, `invalid_target`, `invalid_body`,
+`invalid_return_path`, `invalid_fields`, `control_api_unconfigured`,
+`runtime_rejected` with the Runtime's status and code, or
+`runtime_unreachable`). It carries codes, never submitted values or messages.
+A role change that shows in neither log never left the browser. An operator's
+Disabled orchestrator role once reached neither the Runtime nor any log, and
+the next session was routed to that provider with nothing to say why.
+
 The router ensure hook rotates the launchd and fallback logs to a `.1` sibling
 once they pass the same size budget, so a crash loop cannot fill the disk, and
 it prints the tail of `codex-model-router.launchd.err.log` when the router fails

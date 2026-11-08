@@ -28,11 +28,18 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import {
+  logMutationRejection,
+  type MutationRejection,
+  runtimeRejection
+} from "../../../../src/lib/server/mutation-rejection.ts";
 
 const CONCURRENCY_LIMIT_PATTERN = /^\d{1,3}$/u;
 const REVISION_PATTERN = /^[1-9]\d{0,15}$/u;
 const MAX_FORM_BODY_BYTES = 4096;
 const MAX_CONCURRENCY_LIMIT = 999;
+
+const ROUTE = "/api/agents/concurrency";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -83,26 +90,36 @@ function resolvePayload(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const failed = (returnTo: string = AGENTS_PATH): NextResponse =>
-    redirectTo(withControlFailure(returnTo));
+  const resource = "agents/concurrency";
+  const failed = (
+    rejection: Omit<MutationRejection, "route">,
+    returnTo: string = AGENTS_PATH
+  ): NextResponse => {
+    logMutationRejection({ route: ROUTE, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
 
-  if (!isSameOriginMutation(request)) return failed();
+  if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return failed();
+  if (!form) return failed({ cause: "invalid_body" });
 
   const returnTo = form.get("returnTo");
-  if (!isAgentsReturnPath(returnTo)) return failed();
+  if (!isAgentsReturnPath(returnTo))
+    return failed({ cause: "invalid_return_path" });
 
   const parsedRevision = parseRevision(form.get("revision"));
-  if (!parsedRevision.valid) return failed(returnTo);
+  if (!parsedRevision.valid)
+    return failed({ cause: "invalid_fields", resource }, returnTo);
   const revision = parsedRevision.revision;
 
   const requestPayload = resolvePayload(form, revision);
-  if (!requestPayload) return failed(returnTo);
+  if (!requestPayload)
+    return failed({ cause: "invalid_fields", resource }, returnTo);
 
   const config = readControlApiConfig();
-  if (!config) return failed(returnTo);
+  if (!config)
+    return failed({ cause: "control_api_unconfigured", resource }, returnTo);
 
   const result = await patchConcurrencyLimit(requestPayload, config);
   if (result.kind === "ok") {
@@ -118,6 +135,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (result.kind === "http-error") {
+    logMutationRejection({
+      route: ROUTE,
+      ...runtimeRejection(result),
+      resource
+    });
     if (result.status === 409) {
       return redirectTo(withControlRefusal(returnTo, "conflicted"));
     }
@@ -126,5 +148,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  return failed(returnTo);
+  return failed({ ...runtimeRejection(result), resource }, returnTo);
 }

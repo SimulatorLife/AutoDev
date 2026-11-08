@@ -19,9 +19,16 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import {
+  logMutationRejection,
+  type MutationRejection,
+  runtimeRejection
+} from "../../../../src/lib/server/mutation-rejection.ts";
 
 const ROLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MAX_FORM_BODY_BYTES = 4096;
+
+const ROUTE = "/api/agents/[role]";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,17 +51,24 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ role: string }> }
 ): Promise<NextResponse> {
-  const failed = (returnTo: string = "/agents"): NextResponse =>
-    redirectTo(withControlFailure(returnTo));
-  if (!isSameOriginMutation(request)) return failed();
+  const failed = (
+    rejection: Omit<MutationRejection, "route">,
+    returnTo: string = "/agents"
+  ): NextResponse => {
+    logMutationRejection({ route: ROUTE, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
+  if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { role } = await context.params;
-  if (!ROLE_PATTERN.test(role)) return failed();
+  if (!ROLE_PATTERN.test(role)) return failed({ cause: "invalid_target" });
+  const resource = `agents/${role}`;
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return failed();
+  if (!form) return failed({ cause: "invalid_body" });
 
   const returnTo = form.get("returnTo");
-  if (!isAgentsReturnPath(returnTo)) return failed();
+  if (!isAgentsReturnPath(returnTo))
+    return failed({ cause: "invalid_return_path" });
   const enabled = parseEnabled(form.get("enabled"));
   const expectedRevision = parseRevision(form.get("expectedRevision"));
   if (
@@ -63,11 +77,12 @@ export async function POST(
     form.get("role") !== role ||
     form.size !== 4
   ) {
-    return failed(returnTo);
+    return failed({ cause: "invalid_fields", resource }, returnTo);
   }
 
   const config = readControlApiConfig();
-  if (!config) return failed(returnTo);
+  if (!config)
+    return failed({ cause: "control_api_unconfigured", resource }, returnTo);
   const result = await patchAgentEnablement(
     role,
     { enabled, expectedRevision },
@@ -80,7 +95,12 @@ export async function POST(
   // same write again. The generic notice would not say that, and would leave
   // the first operator retrying an identical request.
   if (result.kind === "http-error" && result.status === 409) {
+    logMutationRejection({
+      route: ROUTE,
+      ...runtimeRejection(result),
+      resource
+    });
     return redirectTo(withControlRefusal(returnTo, "conflicted"));
   }
-  return failed(returnTo);
+  return failed({ ...runtimeRejection(result), resource }, returnTo);
 }

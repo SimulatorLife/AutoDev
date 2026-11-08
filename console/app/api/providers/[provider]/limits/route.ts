@@ -34,6 +34,11 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../src/lib/server/form-mutation.ts";
+import {
+  logMutationRejection,
+  type MutationRejection,
+  runtimeRejection
+} from "../../../../../src/lib/server/mutation-rejection.ts";
 
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const AGENT_LIMIT_PATTERN = /^\d{1,3}$/u;
@@ -65,6 +70,8 @@ type SubmittedChange =
 
 const MALFORMED_LIMIT: SubmittedLimit = { ok: false };
 const MALFORMED_CHANGE: SubmittedChange = { ok: false };
+
+const ROUTE = "/api/providers/[provider]/limits";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -123,18 +130,26 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string }> }
 ): Promise<NextResponse> {
-  const failed = (returnTo: string = providersPath()): NextResponse =>
-    redirectTo(withControlFailure(returnTo));
-  if (!isSameOriginMutation(request)) return failed();
+  const failed = (
+    rejection: Omit<MutationRejection, "route">,
+    returnTo: string = providersPath()
+  ): NextResponse => {
+    logMutationRejection({ route: ROUTE, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
+  if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { provider } = await context.params;
-  if (!PROVIDER_ID_PATTERN.test(provider)) return failed();
+  if (!PROVIDER_ID_PATTERN.test(provider))
+    return failed({ cause: "invalid_target" });
+  const resource = `providers/${provider}/limits`;
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return failed();
+  if (!form) return failed({ cause: "invalid_body" });
 
   const returnTo = form.get("returnTo");
-  if (!isProvidersReturnPath(returnTo)) return failed();
+  if (!isProvidersReturnPath(returnTo))
+    return failed({ cause: "invalid_return_path" });
   const perSession = parseAxis(form.get("perSession"));
   const acrossSessions = parseAxis(form.get("acrossSessions"));
   const override = readOverride(form);
@@ -144,11 +159,12 @@ export async function POST(
     !override.ok ||
     form.get("provider") !== provider
   ) {
-    return failed(returnTo);
+    return failed({ cause: "invalid_fields", resource }, returnTo);
   }
 
   const config = readControlApiConfig();
-  if (!config) return failed(returnTo);
+  if (!config)
+    return failed({ cause: "control_api_unconfigured", resource }, returnTo);
 
   // The unchanged axis travels with the submission so both are always sent, but
   // the operator's change is the one that moves: an axis they did not touch
@@ -167,5 +183,6 @@ export async function POST(
     },
     config
   );
-  return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
+  if (result.kind === "ok") return redirectTo(returnTo);
+  return failed({ ...runtimeRejection(result), resource }, returnTo);
 }
