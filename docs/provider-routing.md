@@ -2239,6 +2239,20 @@ single list; the route patterns and the site registry in
   new items -- not the reference again, which made every attachment tens of
   kilobytes for one tool output. The index stays because, given only a tool
   output, ChatGPT once lost track of the `wait_agent` call it needed next.
+- **Every agent keeps its own chats.** A ledger entry is keyed by site, Codex
+  thread and transcript digest. The thread -- one per agent: a root and each
+  subagent -- comes from Codex's turn metadata (forwarded by the router) or
+  the body's `client_metadata.thread_id`; a root and its subagents share a
+  session but never a thread. Keyed by content alone, two agents whose
+  transcripts began alike (subagents spawned with the same task) could
+  resolve to one chat. Several agents and sessions take turns in one browser
+  tab per site, so each turn also confirms its chat: Gemini's tab must show
+  the turn's chat after `detail` and before `ask` (if not, nothing is sent and
+  the command is retried), and a reply either site gave in another chat
+  fails the turn (`CHAT_MISMATCH`) rather than being answered from, or
+  recorded under, a conversation this agent never had. Each HTTP request
+  answers only its own response stream; turns per site are serialised; and
+  a ChatGPT reply is paired by a message unique to its turn.
 - **Continuity survives restarts.** The conversation ledger is written to
   `$CODEX_HOME/run/opencli-conversations.json` (atomically, on every change;
   `OPENCLI_CONVERSATION_LEDGER_FILE` overrides it) and read at startup. Held

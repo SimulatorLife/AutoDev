@@ -189,7 +189,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
     ]
   ]);
   const continued = recordingExec([
-    { response: "Again", conversation_id: "c1" }
+    { response: "Again", conversation_id: "abc" }
   ]);
   await OPENCLI_SITE_SPECS.chatgpt.turn(
     {
@@ -316,7 +316,10 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
   ]);
   const continued = recordingExec([
     { Index: 1 },
+    // The tab shows the chat before anything is sent into it...
+    { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" },
     { response: "next" },
+    // ...and still shows it after the answer.
     { Url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
   ]);
   await OPENCLI_SITE_SPECS.gemini.turn(
@@ -332,6 +335,7 @@ test("Gemini turns read the conversation id back and reopen it to continue", asy
   );
   assert.deepEqual(continued.calls, [
     ["gemini", "detail", "0c7fc86c8c985ae2", "-f", "json"],
+    ["gemini", "status", "-f", "json"],
     [
       "gemini",
       "ask",
@@ -453,6 +457,7 @@ test("parsed calls become the Responses item for the tool Codex offered", () => 
 
 test("the conversation ledger resumes the longest recorded prefix until the turn succeeds", () => {
   const ledger = new OpencliConversationLedger();
+  const CHATGPT_SCOPE = { site: "chatgpt", thread: "thread-a" } as const;
   const segments = transcriptSegments([
     userMessage("first"),
     { type: "additional_tools", tools: [] },
@@ -461,20 +466,29 @@ test("the conversation ledger resumes the longest recorded prefix until the turn
   // The tool surface renders to nothing and is not a segment.
   assert.equal(segments.length, 2);
   const digests = prefixDigests(segments);
-  ledger.record("chatgpt", digests[1]!, "conv-1");
+  ledger.record(CHATGPT_SCOPE, digests[1]!, "conv-1");
   const extended = prefixDigests([...segments, "<tool_output>y</tool_output>"]);
-  assert.equal(ledger.find("gemini", extended), null);
-  const resume = ledger.find("chatgpt", extended);
+  assert.equal(
+    ledger.find({ site: "gemini", thread: "thread-a" }, extended),
+    null
+  );
+  const resume = ledger.find(CHATGPT_SCOPE, extended);
   assert.deepEqual(resume, {
     conversationId: "conv-1",
     seen: 2,
     digest: digests[1]
   });
+  // Another agent's thread never resolves to this thread's chat, however
+  // alike their transcripts.
+  assert.equal(
+    ledger.find({ site: "chatgpt", thread: "thread-b" }, extended),
+    null
+  );
   // A retry of a turn that failed continues the same conversation...
-  assert.deepEqual(ledger.find("chatgpt", extended), resume);
+  assert.deepEqual(ledger.find(CHATGPT_SCOPE, extended), resume);
   // ...and the entry is spent only once a turn continuing from it succeeds.
-  ledger.consume("chatgpt", resume!.digest);
-  assert.equal(ledger.find("chatgpt", extended), null);
+  ledger.consume(CHATGPT_SCOPE, resume!.digest);
+  assert.equal(ledger.find(CHATGPT_SCOPE, extended), null);
 });
 
 test("a streamed turn opens at once, keeps alive, and reports a failure in the stream", async () => {
@@ -530,16 +544,17 @@ test("the conversation ledger survives a bridge restart through its file", () =>
       "<user>\nhi\n</user>",
       "<assistant>\nyo\n</assistant>"
     ]);
+    const SCOPE = { site: "chatgpt", thread: "thread-a" } as const;
     const first = new OpencliConversationLedger({ file });
-    first.record("chatgpt", digests[1]!, "conv-1");
+    first.record(SCOPE, digests[1]!, "conv-1");
     // A restart is a new ledger reading the same file.
     const restarted = new OpencliConversationLedger({ file });
-    assert.deepEqual(restarted.find("chatgpt", digests), {
+    assert.deepEqual(restarted.find(SCOPE, digests), {
       conversationId: "conv-1",
       seen: 2,
       digest: digests[1]
     });
-    restarted.consume("chatgpt", digests[1]!);
+    restarted.consume(SCOPE, digests[1]!);
     assert.equal(new OpencliConversationLedger({ file }).size, 0);
     // An unreadable file is an empty ledger, not a bridge that cannot start.
     writeFileSync(file, "{not json");
@@ -646,6 +661,158 @@ test("a recorded chat that no longer opens is replaced by a new chat, not retrie
       // The new chat gets the whole conversation, the first message included.
       assert.match(runs.prompts.at(-1)!, /Start\./u);
       assert.match(runs.prompts.at(-1)!, /## How to respond/u);
+    }
+  );
+});
+
+test("concurrent agents with identical transcripts each keep their own chat", async () => {
+  let nextChat = 0;
+  const continuedIn: string[] = [];
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      const at = request.args.indexOf("--conversation");
+      const chat =
+        at === -1 ? `chat-${++nextChat}` : String(request.args[at + 1]);
+      if (at !== -1) continuedIn.push(chat);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return [{ response: `answered in ${chat}`, conversation_id: chat }];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const forThread = (thread: string) => ({
+    "x-codex-turn-metadata": JSON.stringify({ thread_id: thread })
+  });
+  try {
+    // Two subagents spawned with the same task: identical first requests.
+    const input: JsonRecord[] = [userMessage("Review the renderer.")];
+    const firsts = await Promise.all(
+      ["thread-a", "thread-b"].map(async (thread) => {
+        const response = await post(
+          baseUrl,
+          { model: "opencli-chatgpt-balanced", input },
+          forThread(thread)
+        );
+        return {
+          thread,
+          body: (await response.json()) as {
+            output: JsonRecord[];
+            output_text: string;
+          }
+        };
+      })
+    );
+    const chatOf = new Map(
+      firsts.map(({ thread, body }) => [
+        thread,
+        body.output_text.replace("answered in ", "")
+      ])
+    );
+    assert.notEqual(chatOf.get("thread-a"), chatOf.get("thread-b"));
+    // Their follow-ups, again at once, each continue the agent's own chat.
+    const follow = await Promise.all(
+      firsts.map(async ({ thread, body }) => {
+        const response = await post(
+          baseUrl,
+          {
+            model: "opencli-chatgpt-balanced",
+            input: [...input, ...body.output, userMessage("Continue")]
+          },
+          forThread(thread)
+        );
+        const reply = (await response.json()) as { output_text: string };
+        return [thread, reply.output_text.replace("answered in ", "")];
+      })
+    );
+    for (const [thread, chat] of follow)
+      assert.equal(chat, chatOf.get(thread!), `${thread} stayed in its chat`);
+    assert.equal(continuedIn.length, 2);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a Gemini tab that moved is caught before sending and after answering", async () => {
+  const exec = (rows: JsonRecord[]) => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      run: async (args: readonly string[]) => {
+        calls.push([...args]);
+        const row = rows.shift();
+        if (!row) throw new Error("no fake row left");
+        return [row];
+      }
+    };
+  };
+  const invocation = {
+    prompt: "delta",
+    promptFile: "/unused",
+    conversationId: "mine",
+    siteModel: "3.1-pro",
+    selectModel: false,
+    timeoutSeconds: 60
+  };
+  // Before sending: the tab shows another chat, and nothing is asked.
+  const before = exec([
+    { Index: 1 },
+    { Url: "https://gemini.google.com/app/theirs" }
+  ]);
+  await assert.rejects(
+    OPENCLI_SITE_SPECS.gemini.turn(invocation, before.run),
+    (error: unknown) =>
+      error instanceof OpencliCommandError &&
+      error.code === "CHAT_MISMATCH" &&
+      /prompt was not sent/u.test(error.message)
+  );
+  assert.equal(
+    before.calls.some((args) => args[1] === "ask"),
+    false
+  );
+  // After answering: the tab moved while the site answered.
+  const after = exec([
+    { Index: 1 },
+    { Url: "https://gemini.google.com/app/mine" },
+    { response: "answer" },
+    { Url: "https://gemini.google.com/app/theirs" }
+  ]);
+  await assert.rejects(
+    OPENCLI_SITE_SPECS.gemini.turn(invocation, after.run),
+    /answered in chat theirs, not mine/u
+  );
+});
+
+test("a ChatGPT answer from another chat fails the turn and is not recorded", async () => {
+  await withBridge(
+    [
+      { response: "Done.", conversation_id: "conv-a" },
+      { response: "Wrong place.", conversation_id: "conv-b" }
+    ],
+    async (baseUrl, runs) => {
+      const input: JsonRecord[] = [userMessage("Start.")];
+      const first = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input
+      });
+      const body = (await first.json()) as { output: JsonRecord[] };
+      const next = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: [...input, ...body.output, userMessage("Continue")]
+      });
+      assert.equal(next.status, 503);
+      assert.match(
+        ((await next.json()) as { error: { message: string } }).error.message,
+        /answered in chat conv-b, not conv-a/u
+      );
+      // Answered after sending: not retried into the same chat.
+      assert.equal(runs.requests.length, 2);
     }
   );
 });
@@ -1152,6 +1319,7 @@ test("a Gemini worker turn continues its web conversation with only the new item
       },
       { Url: "https://gemini.google.com/app/abc123" },
       { Index: 1 },
+      { Url: "https://gemini.google.com/app/abc123" },
       { response: "💬 Listed." },
       { Url: "https://gemini.google.com/app/abc123" }
     ],

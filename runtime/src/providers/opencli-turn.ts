@@ -141,6 +141,36 @@ export const CHATGPT_MODELS = Object.freeze([
   "gpt-5.6-pro"
 ]);
 
+/** opencli's chat was not the one the turn named. */
+export const CHAT_MISMATCH = "CHAT_MISMATCH";
+
+/**
+ * The reply, once it is shown to belong to the chat the turn continued.
+ *
+ * Several agents and sessions take turns in one browser tab per site, and
+ * anything else driving that tab can move it between commands. A reply the
+ * site gave in another chat answered a conversation this agent never saw;
+ * recording it would also file another agent's chat under this one. It fails
+ * the turn instead -- after sending, so it is not retried into the same chat.
+ */
+function answeredIn(
+  site: string,
+  expected: string | null,
+  reply: OpencliReply
+): OpencliReply {
+  if (
+    expected !== null &&
+    reply.conversationId !== null &&
+    reply.conversationId !== expected
+  )
+    throw new OpencliCommandError(
+      `${site} answered in chat ${reply.conversationId}, not ${expected}`,
+      CHAT_MISMATCH,
+      null
+    );
+  return reply;
+}
+
 /** opencli could not open or read Gemini's model picker, so selected no model. */
 const GEMINI_MODEL_SELECTION_FAILURE =
   /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open model picker|not found in picker menu/u;
@@ -187,8 +217,9 @@ function firstRow(rows: JsonRecord[]): JsonRecord {
  *   `--model`, and continues whichever conversation its tab shows. A continued
  *   turn therefore opens the conversation first (`detail <id>`), and every turn
  *   reads the conversation id back from the tab (`status`), since `ask` does
- *   not report it. The bridge runs a site's turns one at a time, so nothing
- *   moves the tab in between. `ask` also decorates every reply with a speech
+ *   not report it. The bridge runs a site's turns one at a time, and the tab
+ *   is confirmed to show the turn's chat before the prompt is sent, since
+ *   anything else driving the browser could have moved it. `ask` also decorates every reply with a speech
  *   bubble, which is the adapter's, not the model's, and is removed. Its models
  *   are listed by `gemini models`.
  */
@@ -202,7 +233,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
     turn: async (invocation, exec) => {
       if (invocation.selectModel)
         await exec(["chatgpt", "model", invocation.siteModel, ...JSON_FORMAT]);
-      return replyFromRow(
+      const reply = replyFromRow(
         firstRow(
           await exec([
             "chatgpt",
@@ -219,6 +250,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
           ])
         )
       );
+      return answeredIn("ChatGPT", invocation.conversationId, reply);
     }
   },
   gemini: {
@@ -231,13 +263,25 @@ export const OPENCLI_SITE_SPECS: Readonly<
         .filter((model) => model !== "");
     },
     turn: async (invocation, exec) => {
-      if (invocation.conversationId)
+      if (invocation.conversationId) {
         await exec([
           "gemini",
           "detail",
           invocation.conversationId,
           ...JSON_FORMAT
         ]);
+        // `ask` continues whatever chat the tab shows; confirm it shows this
+        // turn's chat before anything is sent into it.
+        const opened = geminiConversationId(
+          firstRow(await exec(["gemini", "status", ...JSON_FORMAT])).Url
+        );
+        if (opened !== invocation.conversationId)
+          throw new OpencliCommandError(
+            `the Gemini tab shows chat ${opened ?? "none"}, not ${invocation.conversationId}; prompt was not sent`,
+            CHAT_MISMATCH,
+            null
+          );
+      }
       const ask = (model: string | null) =>
         exec([
           "gemini",
@@ -262,12 +306,12 @@ export const OPENCLI_SITE_SPECS: Readonly<
       }
       const { response } = replyFromRow(firstRow(rows));
       const status = firstRow(await exec(["gemini", "status", ...JSON_FORMAT]));
-      return {
+      return answeredIn("Gemini", invocation.conversationId, {
         response: response.startsWith(GEMINI_REPLY_PREFIX)
           ? response.slice(GEMINI_REPLY_PREFIX.length)
           : response,
         conversationId: geminiConversationId(status.Url)
-      };
+      });
     }
   }
 };
@@ -478,19 +522,25 @@ export class OpencliConversationLedger {
     this.load();
   }
 
-  private key(site: OpencliSite, digest: string): string {
-    return `${site}:${digest}`;
+  /**
+   * An entry belongs to one site and one Codex thread. The transcript digest
+   * alone identified a chat by its content, so two threads whose transcripts
+   * began alike -- subagents spawned with the same task -- could resolve to
+   * one chat; the thread makes every agent's chats its own.
+   */
+  private key(scope: OpencliChatScope, digest: string): string {
+    return `${scope.site}:${scope.thread ?? NO_THREAD}:${digest}`;
   }
 
-  /** The longest recorded prefix of `digests` for this site. */
+  /** The longest recorded prefix of `digests` in this site and thread. */
   find(
-    site: OpencliSite,
+    scope: OpencliChatScope,
     digests: readonly string[]
   ): ConversationResume | null {
     for (let index = digests.length - 1; index >= 0; index -= 1) {
       const digest = digests[index];
       if (digest === undefined) continue;
-      const conversationId = this.entries.get(this.key(site, digest));
+      const conversationId = this.entries.get(this.key(scope, digest));
       if (conversationId === undefined) continue;
       return { conversationId, seen: index + 1, digest };
     }
@@ -498,12 +548,16 @@ export class OpencliConversationLedger {
   }
 
   /** Spend an entry once the turn that continued from it has succeeded. */
-  consume(site: OpencliSite, digest: string): void {
-    if (this.entries.delete(this.key(site, digest))) this.save();
+  consume(scope: OpencliChatScope, digest: string): void {
+    if (this.entries.delete(this.key(scope, digest))) this.save();
   }
 
-  record(site: OpencliSite, digest: string, conversationId: string): void {
-    const key = this.key(site, digest);
+  record(
+    scope: OpencliChatScope,
+    digest: string,
+    conversationId: string
+  ): void {
+    const key = this.key(scope, digest);
     this.entries.delete(key);
     this.entries.set(key, conversationId);
     while (this.entries.size > this.maxEntries) {
@@ -560,7 +614,16 @@ export class OpencliConversationLedger {
 }
 
 const LEDGER_SCHEMA = "autodev-opencli-conversations-v1";
-const LEDGER_KEY_PATTERN = /^[a-z]+:[0-9a-f]{64}$/u;
+const LEDGER_KEY_PATTERN = /^[a-z]+:[\w.-]{1,128}:[0-9a-f]{64}$/u;
+/** The thread part of a key for a request that named no Codex thread. */
+const NO_THREAD = "-";
+
+/** Whose chats an entry belongs to: one site, one Codex thread (agent). */
+export interface OpencliChatScope {
+  readonly site: OpencliSite;
+  /** The Codex thread; null when the request named none. */
+  readonly thread: string | null;
+}
 
 export interface OpencliReply {
   readonly response: string;

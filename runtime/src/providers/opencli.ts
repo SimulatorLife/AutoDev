@@ -66,6 +66,7 @@ import {
   attachedPromptFileName,
   CHATGPT_MODELS,
   OPENCLI_SITE_SPECS,
+  type OpencliChatScope,
   OpencliCommandError,
   OpencliConversationLedger,
   type OpencliExec,
@@ -148,6 +149,37 @@ const UNSENT_RETRIES = 2;
  */
 const FAILED_BEFORE_SENDING =
   /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer/u;
+
+const THREAD_ID_PATTERN = /^[\w.-]{1,128}$/u;
+
+/**
+ * The Codex thread a request belongs to: one agent -- a root or one subagent.
+ * Codex names it in its turn metadata, which the router forwards, and in the
+ * body's `client_metadata`; a root and its subagents share a session but never
+ * a thread.
+ */
+function codexThread(
+  request: IncomingMessage,
+  payload: JsonRecord
+): string | null {
+  const header = request.headers["x-codex-turn-metadata"];
+  const raw = Array.isArray(header) ? header[0] : header;
+  let fromHeader: unknown;
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    fromHeader = isRecord(parsed) ? parsed.thread_id : null;
+  } catch {
+    fromHeader = null;
+  }
+  const metadata = isRecord(payload.client_metadata)
+    ? payload.client_metadata
+    : {};
+  for (const candidate of [fromHeader, metadata.thread_id]) {
+    if (typeof candidate === "string" && THREAD_ID_PATTERN.test(candidate))
+      return candidate;
+  }
+  return null;
+}
 
 function failedBeforeSending(error: OpencliCommandError): boolean {
   return FAILED_BEFORE_SENDING.test(error.message);
@@ -549,6 +581,8 @@ interface PreparedTurn {
   readonly conversationId: string | null;
   /** The ledger entry this turn continues, spent once the turn succeeds. */
   readonly resumedFrom: string | null;
+  /** The site and Codex thread whose chats this turn may continue. */
+  readonly scope: OpencliChatScope;
   /**
    * The whole-conversation prompt, for a continued turn whose chat can no
    * longer be opened; null for a fresh turn, or when it would not fit.
@@ -662,7 +696,11 @@ export function createOpencliBridge(
     const spec = OPENCLI_SITE_SPECS[site];
     const tools = codexToolSurface(payload).tools;
     const segments = transcriptSegments(payload.input);
-    const resume = ledger.find(site, prefixDigests(segments));
+    const scope: OpencliChatScope = {
+      site,
+      thread: codexThread(request, payload)
+    };
+    const resume = ledger.find(scope, prefixDigests(segments));
     // A root orchestrator's policy is the one role Codex does not carry whole
     // (see roleSection), so it is added from the router's role header, as the
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
@@ -700,6 +738,7 @@ export function createOpencliBridge(
       stream: payload.stream === true,
       prompt,
       conversationId: resume?.conversationId ?? null,
+      scope,
       resumedFrom: resume?.digest ?? null,
       freshPrompt:
         resume &&
@@ -817,7 +856,7 @@ export function createOpencliBridge(
       writeErrorLine(
         `opencli ${turn.site} chat ${turn.conversationId} could not be continued (${error.message}); starting a new chat`
       );
-      ledger.consume(turn.site, turn.resumedFrom);
+      ledger.consume(turn.scope, turn.resumedFrom);
       return attemptTurn(
         { ...turn, conversationId: null, resumedFrom: null },
         turn.freshPrompt,
@@ -847,13 +886,13 @@ export function createOpencliBridge(
           callId: `call_${turnId(12)}`
         })
       );
-    if (turn.resumedFrom) ledger.consume(turn.site, turn.resumedFrom);
+    if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
     if (reply.conversationId) {
       const last = prefixDigests([
         ...turn.segments,
         ...transcriptSegments(output)
       ]).at(-1);
-      if (last) ledger.record(turn.site, last, reply.conversationId);
+      if (last) ledger.record(turn.scope, last, reply.conversationId);
     }
     return { output, calls: parsed.calls.length };
   }
