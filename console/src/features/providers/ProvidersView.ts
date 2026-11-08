@@ -49,7 +49,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { liveAgentCount } from "../live-agent-count.ts";
+import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import {
   modelPath,
@@ -280,6 +280,8 @@ function providerColumns(
       // the floor matches the other columns', so a system font with different
       // metrics does not put the header back on two lines.
       weight: 139,
+      cellTitle: (provider) =>
+        liveAgentRoleBreakdown(liveAgents, "byProviderRole", provider.id),
       cell: (provider) =>
         React.createElement(
           "span",
@@ -388,6 +390,12 @@ function modelColumns(
       id: "activeAgents",
       header: "Active Agents",
       weight: 112,
+      cellTitle: (model) =>
+        liveAgentRoleBreakdown(
+          liveAgents,
+          "byModelRole",
+          `${model.provider}/${model.id}`
+        ),
       cell: (model) =>
         React.createElement(
           "span",
@@ -790,6 +798,12 @@ function ModelsTab({
                 {
                   id: "activeAgents",
                   header: "Active Agents",
+                  cellTitle: (model) =>
+                    liveAgentRoleBreakdown(
+                      runtime?.liveAgents,
+                      "byModelRole",
+                      `${model.provider}/${model.id}`
+                    ),
                   cell: (model) =>
                     liveAgentCount(
                       runtime?.liveAgents,

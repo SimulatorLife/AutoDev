@@ -2967,6 +2967,12 @@ function isCountMap(value: unknown): value is Readonly<Record<string, number>> {
   );
 }
 
+function isRoleCountMap(
+  value: unknown
+): value is Readonly<Record<string, Readonly<Record<string, number>>>> {
+  return isRecord(value) && Object.values(value).every(isCountMap);
+}
+
 function isControlApiLiveAgentCounts(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2977,6 +2983,8 @@ function isControlApiLiveAgentCounts(value: unknown): boolean {
     isCountMap(value.byProvider) &&
     isCountMap(value.byModel) &&
     isCountMap(value.byWorkspace) &&
+    isRoleCountMap(value.byProviderRole) &&
+    isRoleCountMap(value.byModelRole) &&
     typeof value.missingProvider === "number" &&
     Number.isInteger(value.missingProvider) &&
     value.missingProvider >= 0 &&

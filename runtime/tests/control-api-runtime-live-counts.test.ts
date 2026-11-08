@@ -55,6 +55,8 @@ test("runtime distinguishes unobserved live activity from an observed zero", asy
       byProvider: {},
       byModel: {},
       byWorkspace: {},
+      byProviderRole: {},
+      byModelRole: {},
       missingProvider: 0,
       missingModel: 0
     }));
@@ -65,6 +67,8 @@ test("runtime distinguishes unobserved live activity from an observed zero", asy
       byProvider: {},
       byModel: {},
       byWorkspace: {},
+      byProviderRole: {},
+      byModelRole: {},
       missingProvider: 0,
       missingModel: 0
     });
@@ -92,6 +96,8 @@ test("runtime publishes provider, model, and role live counts from its source", 
     byProvider: { [provider]: 3 },
     byModel: { [model]: 2 },
     byWorkspace: { "SimulatorLife/AutoDev": 1 },
+    byProviderRole: { [provider]: { roleFixture: 3 } },
+    byModelRole: { [model]: { roleFixture: 2 } },
     missingProvider: 1,
     missingModel: 2
   };

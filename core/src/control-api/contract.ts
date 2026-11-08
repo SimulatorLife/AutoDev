@@ -109,11 +109,14 @@
  * model listing and answers with the check and the provider's health after
  * it; provider health publishes the latest check (`lastCheck`), and a passing
  * check newer than the last failure counts as recovery.
+ * v30: the live agent counts split each provider's and each model's count by
+ * role (`byProviderRole`, `byModelRole`), so a count can be read as the agents
+ * it is made of rather than as a bare number.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 29
+  version: 30
 } as const;
 
 export type ControlApiContractResponse = {

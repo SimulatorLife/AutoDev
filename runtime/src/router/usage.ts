@@ -217,6 +217,10 @@ export interface LiveAgentsProjection {
   byRole: Record<string, number>;
   byOrigin: Record<string, number>;
   byWorkspace: Record<string, number>;
+  /** Live agents per provider, split by the role each agent serves. */
+  byProviderRole: Record<string, Record<string, number>>;
+  /** Live agents per `<provider>/<model>`, split by role. */
+  byModelRole: Record<string, Record<string, number>>;
 }
 
 export interface UsageStatus {
@@ -1496,11 +1500,25 @@ export class UsageTracker {
     const byRole: Record<string, number> = {};
     const byOrigin: Record<string, number> = {};
     const byWorkspace: Record<string, number> = {};
+    const byProviderRole: Record<string, Record<string, number>> = {};
+    const byModelRole: Record<string, Record<string, number>> = {};
+    const countRole = (
+      counts: Record<string, Record<string, number>>,
+      key: string,
+      role: string
+    ): void => {
+      const roles = (counts[key] ??= {});
+      roles[role] = (roles[role] ?? 0) + 1;
+    };
 
     for (const agent of allLiveAgents) {
+      const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
+      byRole[rKey] = (byRole[rKey] ?? 0) + 1;
+
       if (agent.provider) {
         const pKey = agent.provider;
         byProvider[pKey] = (byProvider[pKey] ?? 0) + 1;
+        countRole(byProviderRole, pKey, rKey);
       }
 
       if (agent.provider && agent.model) {
@@ -1508,10 +1526,8 @@ export class UsageTracker {
           ? agent.model
           : `${agent.provider}/${agent.model}`;
         byModel[mKey] = (byModel[mKey] ?? 0) + 1;
+        countRole(byModelRole, mKey, rKey);
       }
-
-      const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
-      byRole[rKey] = (byRole[rKey] ?? 0) + 1;
 
       const oKey = agent.origin ?? UNATTRIBUTED_DIMENSION;
       byOrigin[oKey] = (byOrigin[oKey] ?? 0) + 1;
@@ -1531,7 +1547,9 @@ export class UsageTracker {
       byModel,
       byRole,
       byOrigin,
-      byWorkspace
+      byWorkspace,
+      byProviderRole,
+      byModelRole
     };
   }
 

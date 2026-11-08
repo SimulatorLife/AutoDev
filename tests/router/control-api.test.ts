@@ -613,6 +613,8 @@ test("Control API reports per-workspace configuration health and runtime availab
       byProvider: {},
       byModel: {},
       byWorkspace: { "SimulatorLife/AutoDev": 1 },
+      byProviderRole: {},
+      byModelRole: {},
       missingProvider: 0,
       missingModel: 0
     }));

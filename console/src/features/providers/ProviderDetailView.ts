@@ -37,7 +37,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { liveAgentCount } from "../live-agent-count.ts";
+import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
@@ -228,6 +228,12 @@ function ModelsPanel({
       id: "activeAgents",
       header: "Active Agents",
       weight: 112,
+      cellTitle: (model) =>
+        liveAgentRoleBreakdown(
+          runtime?.liveAgents,
+          "byModelRole",
+          `${model.provider}/${model.id}`
+        ),
       cell: (model) =>
         React.createElement(
           "span",
@@ -756,7 +762,17 @@ export function ProviderDetailView({
           React.createElement(
             DetailValue,
             { label: "Active agents" },
-            liveAgentCount(runtime?.liveAgents, "byProvider", provider.id)
+            React.createElement(
+              "span",
+              {
+                title: liveAgentRoleBreakdown(
+                  runtime?.liveAgents,
+                  "byProviderRole",
+                  provider.id
+                )
+              },
+              liveAgentCount(runtime?.liveAgents, "byProvider", provider.id)
+            )
           )
         )
       )

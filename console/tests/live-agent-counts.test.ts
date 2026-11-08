@@ -21,7 +21,10 @@ import {
 import { LiveCountRefresh } from "../src/components/navigation/LiveCountRefresh.ts";
 import { AgentDetailView } from "../src/features/agents/AgentDetailView.ts";
 import { AgentsView } from "../src/features/agents/AgentsView.ts";
-import { liveAgentCount } from "../src/features/live-agent-count.ts";
+import {
+  liveAgentCount,
+  liveAgentRoleBreakdown
+} from "../src/features/live-agent-count.ts";
 import {
   ProviderDetailView,
   ProviderUsagePanel
@@ -99,6 +102,8 @@ const ACTIVE_COUNTS: ControlApiLiveAgentCounts = {
   byProvider: { "provider-fixture": 2 },
   byModel: { "provider-fixture/model-fixture": 1 },
   byWorkspace: { "SimulatorLife/AutoDev": 1 },
+  byProviderRole: { "provider-fixture": { worker: 1, orchestrator: 1 } },
+  byModelRole: { "provider-fixture/model-fixture": { "role-fixture": 1 } },
   missingProvider: 1,
   missingModel: 2
 };
@@ -134,6 +139,8 @@ test("live-count lookup distinguishes unavailable data from observed zero", () =
         byProvider: {},
         byModel: {},
         byWorkspace: {},
+        byProviderRole: {},
+        byModelRole: {},
         missingProvider: 0,
         missingModel: 0
       },
@@ -256,7 +263,10 @@ test("agent, provider, and model views render counts from one Runtime projection
     providerDetailMarkup,
     /data-live-agent-provider="provider-fixture"/
   );
-  assert.match(providerDetailMarkup, /Active agents<\/dt><dd[^>]*>2/);
+  assert.match(
+    providerDetailMarkup,
+    /Active agents<\/dt><dd[^>]*><span title="1 Orchestrator\n1 Worker">2</
+  );
 });
 
 test("live-count refresh schedules and clears a five-second server refresh", () => {
@@ -304,5 +314,52 @@ test("live-count refresh schedules and clears a five-second server refresh", () 
     marker,
     "",
     "the live-count refresh owns an effect, not a sentence"
+  );
+});
+
+test("a live count's hover spells out the roles it is made of", () => {
+  assert.equal(
+    liveAgentRoleBreakdown(ACTIVE_COUNTS, "byProviderRole", "provider-fixture"),
+    "1 Orchestrator\n1 Worker"
+  );
+  assert.equal(
+    liveAgentRoleBreakdown(
+      {
+        ...ACTIVE_COUNTS,
+        byProviderRole: { p: { worker: 2, orchestrator: 1, unattributed: 1 } }
+      },
+      "byProviderRole",
+      "p"
+    ),
+    "2 Worker\n1 Orchestrator\n1 Unattributed",
+    "largest first, then by name"
+  );
+  // Nothing to break down: the count stays the hover text.
+  assert.equal(liveAgentRoleBreakdown(null, "byProviderRole", "p"), undefined);
+  assert.equal(
+    liveAgentRoleBreakdown(ACTIVE_COUNTS, "byProviderRole", "idle-provider"),
+    undefined
+  );
+
+  const providersMarkup = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: {
+        schema: "autodev-control-providers-v3",
+        orchestratorTier: "root",
+        tiers: [],
+        providers: [PROVIDER]
+      },
+      models: { status: "unavailable", message: "Fixture not observed." },
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      },
+      runtime: runtime(ACTIVE_COUNTS),
+      activeTab: "providers"
+    })
+  );
+  assert.match(
+    providersMarkup,
+    /<td[^>]*title="1 Orchestrator\n1 Worker"[^>]*><span[^>]*data-live-agent-provider="provider-fixture"[^>]*>2</
   );
 });

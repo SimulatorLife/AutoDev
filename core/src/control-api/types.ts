@@ -1660,6 +1660,18 @@ export interface ControlApiLiveAgentCounts {
    * zero live agents, which is a measured fact rather than a missing one.
    */
   readonly byWorkspace: Readonly<Record<string, number>>;
+  /**
+   * The same live agents per provider, split by the role each one serves, so
+   * a provider's count can say what it is made of. Roles a provider has no
+   * live agent in are absent; an agent with no role is under `unattributed`.
+   */
+  readonly byProviderRole: Readonly<
+    Record<string, Readonly<Record<string, number>>>
+  >;
+  /** `byProviderRole` per canonical `<provider>/<model>` identifier. */
+  readonly byModelRole: Readonly<
+    Record<string, Readonly<Record<string, number>>>
+  >;
   readonly missingProvider: number;
   readonly missingModel: number;
 }

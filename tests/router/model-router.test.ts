@@ -9911,6 +9911,21 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
   assert.equal(status.agents.missingProvider, 1);
   assert.equal(status.agents.missingModel, 1);
 
+  // The same provider/model counts split by role, which is what a count's
+  // hover text in the Console spells out. The roleless agent has no provider,
+  // so it is in neither.
+  const projection = getDefaultUsageTracker().projectLiveAgents();
+  assert.deepEqual(projection.byProviderRole, {
+    codex: { orchestrator: 1 },
+    minimax: { worker: 1 },
+    claude: { validator: 1 }
+  });
+  assert.deepEqual(projection.byModelRole, {
+    [`codex/${CONFIGURED_ORCHESTRATOR_MODEL}`]: { orchestrator: 1 },
+    "minimax/MiniMax-M3": { worker: 1 },
+    "claude/sonnet": { validator: 1 }
+  });
+
   // byState covers the full tracker state histogram; "active" holds the
   // four live agents we just seeded and every other state is zero.
   assert.equal(status.agents.byState.active, 4);

@@ -55,6 +55,12 @@ export interface ColumnDef<T> {
   readonly align?: ColumnAlign | undefined;
   /** Clamp `prose` cells to this many lines. Requires `align: "prose"`. */
   readonly clampLines?: number | undefined;
+  /**
+   * The cell's hover text, when what the cell shows is a summary of something
+   * the hover should spell out -- a count whose parts are the useful answer.
+   * `undefined` falls back to the cell's own text, as for every other cell.
+   */
+  readonly cellTitle?: ((row: T) => string | undefined) | undefined;
 }
 
 export interface DataTableProps<T> {
@@ -453,7 +459,8 @@ export function DataTable<T>({
             columns.map((col, index) => {
               const content = col.cell(row);
               const clamp = clamps[index];
-              const hover = truncatingCellTitle(col, content);
+              const hover =
+                col.cellTitle?.(row) ?? truncatingCellTitle(col, content);
               return React.createElement(
                 "td",
                 {

@@ -12056,6 +12056,8 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
           byProvider: {},
           byModel: {},
           byWorkspace: {},
+          byProviderRole: {},
+          byModelRole: {},
           missingProvider: 1,
           missingModel: 1
         }
@@ -15853,6 +15855,8 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
           byRole: {},
           byProvider: {},
           byWorkspace: {},
+          byProviderRole: {},
+          byModelRole: {},
           byModel: Object.fromEntries(
             MODELS_FIXTURE.models.map((model, index) => [
               `${model.provider}/${model.id}`,
@@ -16141,6 +16145,8 @@ test("ProviderDetailView reads an absent provider route without throwing", async
             byProvider: {},
             byModel: {},
             byWorkspace: {},
+            byProviderRole: {},
+            byModelRole: {},
             missingProvider: 0,
             missingModel: 0
           }
@@ -17145,6 +17151,8 @@ test("Console rejects a runtime response that does not match the v2 contract", a
       byProvider: { fixtureProvider: 2 },
       byModel: { "fixtureProvider/fixtureModel": 1 },
       byWorkspace: { "SimulatorLife/AutoDev": 2 },
+      byProviderRole: { fixtureProvider: { fixtureRole: 2 } },
+      byModelRole: { "fixtureProvider/fixtureModel": { fixtureRole: 1 } },
       missingProvider: 0,
       missingModel: 1
     }
@@ -17219,6 +17227,16 @@ test("Console rejects a runtime response that does not match the v2 contract", a
         missingModel: 0
       }
     },
+    // The per-role split is a map of count maps; a role count that is not a
+    // count must not reach a tooltip that reads it as one.
+    {
+      ...valid,
+      liveAgents: {
+        ...valid.liveAgents,
+        byProviderRole: { fixtureProvider: { fixtureRole: "two" } }
+      }
+    },
+    { ...valid, liveAgents: { ...valid.liveAgents, byModelRole: undefined } },
     // A recorded denial is a real object; only its absence or nullness counts
     // as "no denial observed". Rejecting the object would discard evidence.
     { ...valid, concurrency: { lastDenial: "per_session_limit" } },

@@ -29,7 +29,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { liveAgentCount } from "../live-agent-count.ts";
+import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
@@ -201,10 +201,20 @@ export function ModelDetailView({
         React.createElement(
           DetailValue,
           { label: "Active agents" },
-          liveAgentCount(
-            runtime?.liveAgents,
-            "byModel",
-            `${model.provider}/${model.id}`
+          React.createElement(
+            "span",
+            {
+              title: liveAgentRoleBreakdown(
+                runtime?.liveAgents,
+                "byModelRole",
+                `${model.provider}/${model.id}`
+              )
+            },
+            liveAgentCount(
+              runtime?.liveAgents,
+              "byModel",
+              `${model.provider}/${model.id}`
+            )
           )
         ),
         React.createElement(
