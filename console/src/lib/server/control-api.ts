@@ -4131,6 +4131,17 @@ function workspacePlaytestApprovalPath(workspaceId: string): string {
   return `${CONTROL_API_PATHS.workspaces}/${encodeURIComponent(workspaceId)}/playtesting-approval`;
 }
 
+/**
+ * One workspace's playtesting approval.
+ *
+ * This is a playtesting read: the Control API answers it from the
+ * ClickHouse-backed playtesting store, and the Workspaces page reads one per
+ * workspace as a single fan-out. It therefore carries the playtesting budget
+ * rather than the generic one, for the reason the playtesting page's own
+ * workspace read does: the Control API answers this read set as one fan-out,
+ * and a shorter deadline here fails the whole page while the Control API is
+ * still answering it.
+ */
 export async function fetchWorkspacePlaytestApproval(
   workspaceId: string,
   config: ControlApiConfig,
@@ -4139,7 +4150,10 @@ export async function fetchWorkspacePlaytestApproval(
   const result = await fetchControlApi<unknown>(
     workspacePlaytestApprovalPath(workspaceId),
     config,
-    options
+    {
+      ...options,
+      timeoutMs: options.timeoutMs ?? PLAYTESTING_CONTROL_API_TIMEOUT_MS
+    }
   );
   if (result.kind !== "ok") return result;
   return isWorkspacePlaytestApprovalResponse(result.data, workspaceId)

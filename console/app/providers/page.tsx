@@ -11,12 +11,7 @@ import {
   readControlRefusal
 } from "../../src/lib/control-failure.ts";
 import {
-  controlApiFailureCode,
-  fetchModels,
-  fetchProviderModelDiscovery,
-  fetchProviders,
-  fetchProviderVersions,
-  fetchRuntime
+  controlApiFailureCode
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -24,6 +19,7 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
+import { readProvidersSurface } from "./providers-reads.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -50,19 +46,16 @@ export default async function ProvidersPage({
   }
   const query = (await searchParams) ?? {};
   const tab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
-  const [
-    providersResult,
-    modelsResult,
-    discoveryResult,
-    runtimeResult,
-    versionsResult
-  ] = await Promise.all([
-    fetchProviders(config),
-    tab === "models" ? fetchModels(config) : Promise.resolve(null),
-    fetchProviderModelDiscovery(config),
-    fetchRuntime(config),
-    fetchProviderVersions(config)
-  ]);
+  const {
+    providers: providersResult,
+    models: modelsResult,
+    modelDiscovery: discoveryResult,
+    providerVersions: versionsResult,
+    runtime: runtimeResult
+  } = await readProvidersSurface(config, {
+    includeModels: tab === "models",
+    includeProviderVersions: true
+  });
   if (providersResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

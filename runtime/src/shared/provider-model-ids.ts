@@ -22,7 +22,18 @@
 export const ANTIGRAVITY_MODEL_PATTERN =
   /^(gemini-[A-Za-z0-9][A-Za-z0-9.-]*|claude-[a-z0-9-]*[a-z0-9]-(?:low|medium|high))$/;
 
-export type AntigravityQuotaPool = "first_party" | "third_party";
+export const ANTIGRAVITY_QUOTA_POOLS = Object.freeze([
+  "first_party",
+  "third_party"
+] as const);
+
+export type AntigravityQuotaPool = (typeof ANTIGRAVITY_QUOTA_POOLS)[number];
+
+/** All quota pools recognized for a provider, or empty when unpooled. */
+export function providerKnownPools(provider: string): readonly string[] {
+  if (provider === "antigravity") return ANTIGRAVITY_QUOTA_POOLS;
+  return [];
+}
 
 /** Antigravity's currently routed Gemini and Claude families use separate quota pools. */
 export function providerQuotaPool(

@@ -135,12 +135,15 @@ export default async function EvaluationsPage({
     );
   }
 
-  const [result, traceLookupResult] = await Promise.all([
-    fetchEvaluations(config),
+  // The evaluations read and the trace read are answered separately, in that
+  // order. The trace read is a telemetry query against the traces store, and
+  // run beside the Control API read it competes with it for the host until
+  // one of them is reported as a failure that did not happen.
+  const result = await fetchEvaluations(config);
+  const traceLookupResult =
     spanIdValues !== undefined && !hasInvalidSpanSelection
-      ? loadOpenLITTrace(requestedSpanId!)
-      : Promise.resolve(null)
-  ]);
+      ? await loadOpenLITTrace(requestedSpanId!)
+      : null;
   if (result.kind !== "ok") {
     return renderEvaluationsFailure(section, result);
   }

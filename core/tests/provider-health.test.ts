@@ -37,14 +37,17 @@ test("provider readiness requires current positive evidence", () => {
 });
 
 test("provider failure evidence overrides an older success", () => {
+  // `authentication` is the failure class that stays live: a provider that
+  // answers 401 or 403 is down until the operator fixes its credential, so
+  // nothing about it passes until then.
   assert.equal(
     providerHealthReadiness(
       health({
         lastSuccessAt: "2026-10-19T12:00:00.000Z",
         lastFailure: {
           at: "2026-10-19T12:01:00.000Z",
-          failureClass: "upstream_error",
-          status: 503
+          failureClass: "authentication",
+          status: 401
         }
       })
     ),
@@ -56,8 +59,8 @@ test("provider failure evidence overrides an older success", () => {
         lastSuccessAt: "2026-10-19T12:01:00.000Z",
         lastFailure: {
           at: "2026-10-19T12:00:00.000Z",
-          failureClass: "upstream_error",
-          status: 503
+          failureClass: "authentication",
+          status: 401
         }
       })
     ),
@@ -362,7 +365,16 @@ test("multi-pool provider stays ready when failure specifies model from exhauste
 });
 
 test("transient and rate_limit failure classes are treated as expired once cooldown clears and evidence exists", () => {
-  for (const failureClass of ["rate_limit", "overloaded", "cooldown", "transient"]) {
+  for (const failureClass of [
+    "rate_limit",
+    "overloaded",
+    "cooldown",
+    "transient",
+    "capacity",
+    "timeout",
+    "unavailable",
+    "upstream_error"
+  ]) {
     assert.equal(
       providerHealthReadiness(
         health({
@@ -378,4 +390,62 @@ test("transient and rate_limit failure classes are treated as expired once coold
       "ready"
     );
   }
+});
+
+/**
+ * A browser-driven bridge (opencli) answers a turn it could not serve with a
+ * 503, which the router classifies as `unavailable`. The Runtime cools the
+ * provider down for that failure and routes to it again once the cooldown has
+ * passed, so the verdict has to say the same thing: while the cooldown is in
+ * force the provider is not ready, and afterwards it is.
+ *
+ * The verdict that used to stay "Unavailable" until the provider happened to
+ * serve another request was the reason the two opencli providers read
+ * Unavailable for hours after a single failed turn, while the Runtime was
+ * routing to them.
+ */
+test("a transient upstream failure is live only while the Runtime is still cooling the provider down", () => {
+  const failure = {
+    at: "2026-11-09T11:05:00.000Z",
+    failureClass: "unavailable",
+    status: 503
+  };
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastSuccessAt: "2026-11-09T11:00:00.000Z",
+        cooldown: {
+          kind: "transient",
+          failureClass: "unavailable",
+          until: "2026-11-09T11:05:30.000Z",
+          resetsAt: null,
+          lastResortEligible: false
+        },
+        lastFailure: failure
+      })
+    ),
+    "unavailable"
+  );
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastSuccessAt: "2026-11-09T11:00:00.000Z",
+        cooldown: null,
+        lastFailure: failure
+      })
+    ),
+    "ready"
+  );
+  // A provider with no positive evidence has nothing to fall back on, so its
+  // failure stands even though the class is a transient one.
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastSuccessAt: null,
+        cooldown: null,
+        lastFailure: failure
+      })
+    ),
+    "unavailable"
+  );
 });

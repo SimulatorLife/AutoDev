@@ -616,3 +616,238 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+/**
+ * A site is one browser tab, so a turn for a site that is already busy waits
+ * for the tab rather than driving it.
+ *
+ * These tests cover what the bridge does with a turn that could not get the
+ * tab, and with a turn that failed before the prompt reached the site: both
+ * used to end the turn as a provider outage, and both are now what they are.
+ */
+async function withBridge(
+  options: {
+    readonly turnTimeoutSeconds: number;
+    readonly modelListTtlMs?: number;
+    readonly run: (
+      request: OpencliRunRequest,
+      sites: FakeSites
+    ) => Promise<JsonRecord[]>;
+  },
+  body: (baseUrl: string, sites: FakeSites) => Promise<void>
+): Promise<void> {
+  const sites = new FakeSites();
+  const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-budget-"));
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: options.turnTimeoutSeconds,
+    ...(options.modelListTtlMs === undefined
+      ? {}
+      : { modelListTtlMs: options.modelListTtlMs }),
+    tempRoot,
+    ledger: new OpencliConversationLedger(),
+    sessionBusyRetryMs: 1,
+    unsentRetryMs: 1,
+    run: (request) => options.run(request, sites)
+  });
+  const server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    await body(baseUrl, sites);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+/** A turn request the bridge accepts, as the router sends it. */
+function turnRequest(marker: string, model: string, thread: string): string {
+  return JSON.stringify({
+    model,
+    tools: [EXEC_TOOL],
+    input: [userMessage(`${marker}: start`)],
+    client_metadata: { thread_id: thread }
+  });
+}
+
+test("a turn that could not get the site's tab is refused, not an outage", async () => {
+  let blocked = false;
+  await withBridge(
+    {
+      // A turn's whole budget. The first turn holds the tab well past it.
+      turnTimeoutSeconds: 1,
+      run: async (request, sites) => {
+        if (!blocked && request.args[1] === "ask-file") {
+          blocked = true;
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 1500);
+          });
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const first = fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("first", MODEL.chatgpt, "first-thread")
+      });
+      // Let the first turn take the tab.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const second = await fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("second", MODEL.chatgpt, "second-thread")
+      });
+      // The second turn waited for the tab for longer than its whole budget,
+      // so there was nothing left to give the site. That is a refusal of this
+      // request: the router moves on to a route that can serve it, and opencli
+      // stays healthy instead of being marked unavailable for being busy.
+      assert.equal(second.status, 400);
+      const refusal = (await second.json()) as {
+        error: { type: string; message: string };
+      };
+      assert.equal(refusal.error.type, "provider_request_unsupported");
+      assert.match(refusal.error.message, /busy/u);
+
+      assert.equal((await first).status, 200);
+    }
+  );
+});
+
+test("a turn that failed before the prompt was sent is run again", async () => {
+  let attempts = 0;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (request.args[1] === "ask-file") {
+          attempts += 1;
+          if (attempts === 1)
+            // opencli refusing to attach the prompt file: the page had no
+            // single file input it could use. Nothing was sent, and the next
+            // attempt navigates the tab and finds a different page.
+            throw new OpencliCommandError(
+              "file input is missing or ambiguous",
+              "COMMAND_EXEC",
+              1
+            );
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("retry", MODEL.chatgpt, "retry-thread")
+      });
+      assert.equal(response.status, 200);
+      assert.equal(attempts, 2, "the turn was run again after the refusal");
+    }
+  );
+});
+
+test("a background model listing does not take the site's tab from a turn", async () => {
+  let listings = 0;
+  let release: (() => void) | null = null;
+  let blocked = false;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      // Every read finds the list stale, so every read after the first asks
+      // the site again.
+      modelListTtlMs: 0,
+      run: async (request, sites) => {
+        if (request.args[1] === "models") listings += 1;
+        if (!blocked && request.args[1] === "ask") {
+          blocked = true;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      // The first listing reads the site's models.
+      const first = await fetch(`${baseUrl}/v1/models?provider=opencli-gemini`);
+      assert.equal(first.status, 200);
+      assert.equal(listings, 1);
+
+      const turn = fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("busy", MODEL.gemini, "busy-thread")
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // The list is stale, so this read asks the site again -- in the
+      // background, which must not take the tab the turn is holding.
+      const during = await fetch(
+        `${baseUrl}/v1/models?provider=opencli-gemini`
+      );
+      assert.equal(during.status, 200);
+      assert.equal(
+        listings,
+        1,
+        "no listing was read while the turn had the tab"
+      );
+
+      release?.();
+      assert.equal((await turn).status, 200);
+
+      // With the tab free again the background listing runs.
+      await fetch(`${baseUrl}/v1/models?provider=opencli-gemini`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(listings, 2, "the listing was read once the tab was free");
+    }
+  );
+});
+
+test("a busy site reports itself busy rather than unavailable", async () => {
+  let release: (() => void) | null = null;
+  let blocked = false;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (!blocked && request.args[1] === "ask") {
+          blocked = true;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const turn = fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("busy", MODEL.gemini, "busy-thread")
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const health = await fetch(
+        `${baseUrl}/health/liveliness?provider=opencli-gemini`
+      );
+      assert.equal(health.status, 200);
+      const body = (await health.json()) as {
+        status: string;
+        busy: boolean;
+        queueDepth: number;
+      };
+      assert.equal(body.status, "ok");
+      assert.equal(body.busy, true);
+      assert.equal(body.queueDepth, 1);
+
+      release?.();
+      assert.equal((await turn).status, 200);
+    }
+  );
+});

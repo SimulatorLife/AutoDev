@@ -41,6 +41,7 @@ import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
   isHardLimitClass,
+  isPoolScopableLimitClass,
   LIMIT_HEADER_CLASS,
   LIMIT_HEADER_RESETS_AT,
   LIMIT_SOURCE_REPORTED,
@@ -615,10 +616,7 @@ export function cooldownFor(
   provider: string | null = null
 ): CooldownOptions {
   const resolvedFailureClass = limit?.limitClass ?? failureClass;
-  const isPoolScopableClass =
-    resolvedFailureClass === "quota_exhausted" ||
-    resolvedFailureClass === "session_limit" ||
-    resolvedFailureClass === "throttled";
+  const isPoolScopableClass = isPoolScopableLimitClass(resolvedFailureClass);
   return {
     failureClass: resolvedFailureClass,
     resetsAt: limit?.resetsAt ?? null,

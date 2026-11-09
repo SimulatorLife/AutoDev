@@ -42,7 +42,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "tests/**/*.ts",
-    "tests/**/*.tsx"
+    "tests/**/*.tsx",
+    ".next-staging-probe/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

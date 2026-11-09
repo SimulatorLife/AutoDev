@@ -1,3 +1,27 @@
+import {
+  isHardLimitClass,
+  isPoolScopableLimitClass,
+  isTransientFailureClass,
+  PROVIDER_HARD_LIMIT_CLASSES,
+  PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES,
+  PROVIDER_TRANSIENT_FAILURE_CLASSES,
+  type ProviderHardLimitClass,
+  type ProviderPoolScopableLimitClass,
+  type ProviderTransientFailureClass
+} from "@simulatorlife/autodev-core";
+
+export {
+  isHardLimitClass,
+  isPoolScopableLimitClass,
+  isTransientFailureClass,
+  PROVIDER_HARD_LIMIT_CLASSES,
+  PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES,
+  PROVIDER_TRANSIENT_FAILURE_CLASSES,
+  type ProviderHardLimitClass,
+  type ProviderPoolScopableLimitClass,
+  type ProviderTransientFailureClass
+};
+
 // Shared vocabulary for provider usage limits and for closing a turn that a
 // limit cut short.
 //
@@ -48,12 +72,8 @@ export const INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted";
 // out of is already closed.
 export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
 
-// Classes that mean "this provider will not serve again until its window
-// resets", as opposed to a transient failure worth retrying in seconds.
-export const HARD_LIMIT_CLASSES = Object.freeze([
-  "quota_exhausted",
-  "session_limit"
-]);
+// Re-export the canonical Core hard limit classes
+export const HARD_LIMIT_CLASSES = PROVIDER_HARD_LIMIT_CLASSES;
 
 /** A bounded, provider-supplied failure classification safe to return downstream. */
 export interface ProviderFailureDiagnostic {
@@ -81,9 +101,7 @@ export interface LimitHeaders {
   [name: string]: string | string[] | undefined;
 }
 
-export function isHardLimitClass(limitClass: string): boolean {
-  return HARD_LIMIT_CLASSES.includes(limitClass);
-}
+// isHardLimitClass is canonically imported from @simulatorlife/autodev-core above
 
 /**
  * Normalize a provider-supplied reset time to an ISO-8601 UTC string. Providers

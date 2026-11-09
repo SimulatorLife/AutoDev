@@ -631,7 +631,14 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   cooldown, resolves model-scoped failures to their owning pool (keeping
   Antigravity ready when only its third-party Claude pool is exhausted), and
   does not leave a provider stuck in `unavailable` after a rate-limit or
-  transient cooldown has expired. In addition, `createProviderQuotaDiscoveryService`
+  transient cooldown has expired. A failure that describes a condition which
+  passes -- a rate limit, a throttle, a busy upstream, a timeout, a 5xx -- is
+  live only while the Runtime is still cooling the provider down for it, and
+  stops being live once that cooldown has passed: the Runtime routes to the
+  provider again at that point, so the verdict has to agree with it. A failure
+  that is not a condition but a fact about the provider (`authentication`)
+  stays live until the operator fixes it. In addition,
+  `createProviderQuotaDiscoveryService`
   polls provider usage limits every 60s in the background, keeping positive
   readiness evidence fresh.
 
@@ -2331,7 +2338,12 @@ single list; the route patterns and the site registry in
     once and refreshes in the background; only the very first read waits,
     briefly, and answers `503` if no list has been read yet. An empty read
     (the picker did not render) keeps the last list, in the bridge and in the
-    Runtime's discovery alike (see `docs/autodev-console-target-state.md`).
+    Runtime's discovery alike (see `docs/autodev-console-target-state.md`). A
+    background refresh takes the tab only while nothing else wants it: it is a
+    refresh of what the site can answer rather than a request, and one that
+    queued behind a turn would hold the tab away from the turns that arrive
+    after it -- a listing that cannot read the site's models holds it for its
+    whole timeout.
 
 - **The site's own tools are not the agent's.** A ChatGPT `advanced`
   orchestrator turn (session `01a1b319-fa94-7ff2-875f-7dd06e895984`) made no
@@ -2430,6 +2442,32 @@ single list; the route patterns and the site registry in
   (`CHAT_MISMATCH`) and is not recorded; a ChatGPT reply is also paired by a
   message unique to its turn. A tab moved between turns is therefore
   harmless, and one moved during a reply can fail a turn but not misroute it.
+- **One budget per turn, and a busy site is not a broken site.** A site is one
+  browser tab, so turns for it run one at a time and a turn that finds the tab
+  busy waits for it. A turn draws one budget when it is accepted, and every
+  command in that turn draws on the same one: the command opencli runs is given
+  the time the turn has left rather than the whole turn timeout, and a turn
+  that continues its chat in a new one runs its second command on what is left
+  rather than on a fresh timeout. A turn therefore cannot hold the tab longer
+  than its budget, so the site's liveliness endpoint
+  (`GET /health/liveliness?provider=<provider>`) reports it wedged only when a
+  command stopped answering -- a turn that is merely slow is reported as
+  `busy`, with HTTP 200. A turn that waited for the tab for longer than its
+  whole budget has nothing left to give the site: the bridge refuses it with
+  the typed `provider_request_unsupported` refusal, so the router's chain moves
+  on to a route that can serve the request while opencli stays healthy.
+  Refusing is what a bridge does for a request it cannot serve; answering
+  `503` would tell the Runtime that the provider itself is down, and it would
+  cool the provider down and mark it unavailable for being busy.
+- **A failure before the prompt was sent is run again.** Nothing was sent, so
+  running the command again cannot put the prompt into the chat twice, and each
+  attempt navigates the tab and rebuilds the composer -- so the next attempt
+  sees a different page. This covers a tab that has no composer yet and an
+  attachment opencli could not target: ChatGPT's page carries several file
+  inputs, and opencli refuses to attach the prompt when it cannot find
+  exactly one it can use ("file input is missing or ambiguous"). That refusal
+  was the largest single cause of failed opencli turns, and it was terminal:
+  the turn died even though nothing had been sent.
 - **Interrupts, steering and queued messages.** An interrupted turn records
   nothing, so the agent's ledger entry still names its chat; Codex's next
   request (the interrupted message, its `<turn_aborted>` marker and the new

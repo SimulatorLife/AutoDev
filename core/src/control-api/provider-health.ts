@@ -1,4 +1,8 @@
-import type { ControlApiProviderHealth, ControlApiSubproviderQuota } from "./types.ts";
+import { isTransientFailureClass } from "./provider-limits.ts";
+import type {
+  ControlApiProviderHealth,
+  ControlApiSubproviderQuota
+} from "./types.ts";
 
 export type ProviderHealthReadiness = "ready" | "unavailable" | "not-observed";
 
@@ -25,21 +29,21 @@ function isFailureOtherPoolOnly(
   );
 }
 
-function isFailureExpiredRateLimit(
+/**
+ * Whether a failure has stopped being live evidence.
+ *
+ * A transient failure is live while the Runtime is still cooling the provider
+ * down for it, and stops being live once that cooldown has passed: the Runtime
+ * will route to the provider again, so the failure no longer speaks for it.
+ * A provider with no positive evidence at all -- it has never served a request
+ * and never passed a check -- has nothing to fall back on, so its failure stands.
+ */
+function isFailureExpiredTransient(
   health: ControlApiProviderHealth,
   lastSuccessAt: number
 ): boolean {
   if (lastSuccessAt === Number.NEGATIVE_INFINITY) return false;
-  const failureClass = health.lastFailure?.failureClass ?? "";
-  const isRateLimit =
-    failureClass === "quota_exhausted" ||
-    failureClass === "session_limit" ||
-    failureClass === "throttled" ||
-    failureClass === "rate_limit" ||
-    failureClass === "overloaded" ||
-    failureClass === "cooldown" ||
-    failureClass === "transient";
-  if (!isRateLimit) return false;
+  if (!isTransientFailureClass(health.lastFailure?.failureClass)) return false;
   const hasActiveCooldown =
     health.cooldown !== null ||
     Boolean(
@@ -91,14 +95,14 @@ export function providerHealthReadiness(
     quotaAvailableAt
   );
   const failureIsOtherPoolOnly = isFailureOtherPoolOnly(health, quota?.pools);
-  const failureIsExpiredRateLimit = isFailureExpiredRateLimit(
+  const failureIsExpiredTransient = isFailureExpiredTransient(
     health,
     lastSuccessAt
   );
   const lastFailureAt = Math.max(
     health.lastFailure === null ||
       failureIsOtherPoolOnly ||
-      failureIsExpiredRateLimit
+      failureIsExpiredTransient
       ? Number.NEGATIVE_INFINITY
       : timestamp(health.lastFailure.at, Number.POSITIVE_INFINITY),
     check && !check.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY

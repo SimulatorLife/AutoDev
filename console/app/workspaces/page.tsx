@@ -109,10 +109,13 @@ export default async function WorkspacesPage({
   }
   const workspaces = result.data.workspaces;
   const workspaceIds = workspaces.map((workspace) => workspace.id);
-  const [approvals, requests] = await Promise.all([
-    readApprovals(workspaceIds, config),
-    readWorkspaceRequests(workspaceIds)
-  ]);
+  // The Control API reads and the Usage read are answered separately, in that
+  // order, for the same reason the Providers detail page does it: the Usage
+  // read is a twenty-four hour telemetry aggregation, and run beside the
+  // Control API fan-out it competes with those reads for the host until one
+  // of them is reported as a failure that did not happen.
+  const approvals = await readApprovals(workspaceIds, config);
+  const requests = await readWorkspaceRequests(workspaceIds);
   const saveOutcome = workspaceSaveOutcomeFromQuery(resolvedSearchParams.save);
   // A refused write leaves the control based on the revision it was filled
   // from, so the operator's edit is not silently paired with a catalog that

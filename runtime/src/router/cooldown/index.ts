@@ -1,9 +1,13 @@
 import type { ProviderRole } from "@simulatorlife/autodev-core";
 import {
   isHardLimitClass,
+  isPoolScopableLimitClass,
   normalizeResetsAt
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
-import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  providerKnownPools,
+  providerQuotaPool
+} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 export type CooldownKind = "config" | "probe" | "hard" | "transient";
 
@@ -152,19 +156,18 @@ export class ProviderCooldowns {
     const providerEntry = liveEntry(this.cooldowns, provider, now);
     if (providerEntry) return providerEntry;
     if (model === null) {
-      if (provider === "antigravity") {
-        const firstParty = liveEntry(
-          this.poolCooldowns,
-          modelKey(provider, "first_party"),
-          now
+      const pools = providerKnownPools(provider);
+      if (pools.length > 0) {
+        const poolEntries = pools.map((pool) =>
+          liveEntry(this.poolCooldowns, modelKey(provider, pool), now)
         );
-        const thirdParty = liveEntry(
-          this.poolCooldowns,
-          modelKey(provider, "third_party"),
-          now
-        );
-        if (firstParty && thirdParty) {
-          return firstParty.until <= thirdParty.until ? firstParty : thirdParty;
+        if (
+          poolEntries.length > 0 &&
+          poolEntries.every((entry): entry is CooldownEntry => entry !== null)
+        ) {
+          return poolEntries.reduce((earliest, entry) =>
+            entry.until <= earliest.until ? entry : earliest
+          );
         }
       }
       return null;
@@ -327,10 +330,7 @@ export class ProviderCooldowns {
     const scopedPool =
       pool ?? (scope === "pool" ? providerQuotaPool(provider, model) : null);
     const poolScoped =
-      scopedPool !== null &&
-      (failureClass === "quota_exhausted" ||
-        failureClass === "session_limit" ||
-        failureClass === "throttled");
+      scopedPool !== null && isPoolScopableLimitClass(failureClass);
     const record = (
       kind: CooldownKind,
       durationMs: number,

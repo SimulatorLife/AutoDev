@@ -45,6 +45,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   classifyCliLimit,
+  isPoolScopableLimitClass,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   limitPayload,
@@ -1401,10 +1402,7 @@ class CopilotResponseStream {
     limit: ReturnType<typeof classifyCliLimit>
   ): void {
     const status =
-      limit &&
-      ["throttled", "session_limit", "quota_exhausted"].includes(
-        limit.limitClass
-      )
+      limit && isPoolScopableLimitClass(limit.limitClass)
         ? 429
         : 503;
     const headers = limitResponseHeaders(limit);

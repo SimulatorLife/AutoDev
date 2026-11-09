@@ -5,11 +5,7 @@ import React from "react";
 import { ModelDetailView } from "../../../../../src/features/providers/ModelDetailView.ts";
 import { isControlFailure } from "../../../../../src/lib/control-failure.ts";
 import {
-  controlApiFailureCode,
-  fetchModels,
-  fetchProviderModelDiscovery,
-  fetchProviders,
-  fetchRuntime
+  controlApiFailureCode
 } from "../../../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -17,6 +13,7 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../../../../_console.ts";
+import { readProvidersSurface } from "../../../providers-reads.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -54,13 +51,12 @@ export default async function ModelDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
-  const [modelsResult, providersResult, discoveryResult, runtimeResult] =
-    await Promise.all([
-      fetchModels(config),
-      fetchProviders(config),
-      fetchProviderModelDiscovery(config),
-      fetchRuntime(config)
-    ]);
+  const {
+    models: modelsResult,
+    providers: providersResult,
+    modelDiscovery: discoveryResult,
+    runtime: runtimeResult
+  } = await readProvidersSurface(config, { includeModels: true });
   if (modelsResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

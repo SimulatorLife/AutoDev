@@ -138,12 +138,27 @@ export interface OpencliBridgeOptions {
   readonly unsentRetryMs?: number;
   /** Keep-alive cadence on a streamed turn. */
   readonly keepAliveMs?: number;
+  /**
+   * How old a site's model list may be before it is read again.
+   *
+   * The list is a background refresh: the bridge keeps the last good one and
+   * asks again when it is this old. A test sets it to zero to exercise the
+   * refresh on every read.
+   */
+  readonly modelListTtlMs?: number;
   /** How long a turn may run before the site is reported wedged (turnTimeoutSeconds + 30s by default). */
   readonly wedgedTimeoutMs?: number;
 }
 
 /** opencli's code for a site session another command still holds. */
 const SESSION_BUSY = "SESSION_BUSY";
+/**
+ * The bridge's own code for a turn the site's single tab never became free for.
+ *
+ * The site is serving somebody else and opencli is working, so this is a
+ * refusal of this request rather than an outage of the provider.
+ */
+const SITE_BUSY = "SITE_BUSY";
 const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 const OUTPUT_ITEM_ADDED = "response.output_item.added";
 /** opencli's code for a read that found nothing, e.g. a chat with no visible turns. */
@@ -157,9 +172,18 @@ const UNSENT_RETRIES = 2;
  * command is safe to run again -- unlike a failure after sending, where a retry
  * would put the prompt in the chat twice. A ChatGPT turn failed this way when
  * its tab was still loading the conversation it had been asked to continue.
+ *
+ * The attachment failures are here for the same reason. opencli refuses to
+ * attach a file when the ChatGPT page does not show exactly one file input it
+ * can use -- the page carries several, and which ones are there depends on
+ * what the page is showing at that moment. That refusal was the largest single
+ * cause of failed opencli turns, and it was a terminal failure: the turn died
+ * even though nothing had been sent. Each attempt of a turn navigates the tab
+ * and rebuilds the composer, so the next attempt sees a different page and can
+ * find the input the last one could not.
  */
 const FAILED_BEFORE_SENDING =
-  /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer/u;
+  /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer|file input is missing or ambiguous|file input not found|active composer form not found/u;
 
 const THREAD_ID_PATTERN = /^[\w.-]{1,128}$/u;
 
@@ -294,6 +318,23 @@ class SiteQueues {
 
   activeSinceFor(site: OpencliSite): number | null {
     return this.activeSince.get(site) ?? null;
+  }
+
+  /**
+   * Run a background task on the site's tab, but only while the tab is free.
+   *
+   * A background task is a refresh of what the site can answer, not a request:
+   * it may be dropped and asked for again. One that queued behind a turn would
+   * hold the tab away from the turns that arrive after it, and one that cannot
+   * read the site's models holds it for its whole timeout. So a background task
+   * takes the tab only when nothing else wants it, and is dropped otherwise.
+   */
+  runInBackground<T>(
+    site: OpencliSite,
+    task: () => Promise<T>
+  ): Promise<T | null> {
+    if ((this.depth.get(site) ?? 0) > 0) return Promise.resolve(null);
+    return this.run(site, task);
   }
 
   depthFor(site: OpencliSite): number {
@@ -573,6 +614,12 @@ class TurnStream {
  * answer. Any other failure -- a signed-out browser, a site whose page changed
  * under its adapter, a missing opencli -- is a 503, which the router treats as
  * this provider being unavailable for the turn.
+ *
+ * A turn the site's single tab never became free for is neither: the site is
+ * serving somebody else, and opencli is working. That is the typed refusal the
+ * router already knows -- "this route cannot serve this request" -- so the
+ * chain moves on to a route that can serve it and opencli stays healthy
+ * instead of being marked unavailable for being busy.
  */
 function sendFailure(response: ServerResponse, error: unknown): void {
   const message = errorMessage(error);
@@ -580,6 +627,10 @@ function sendFailure(response: ServerResponse, error: unknown): void {
   const code = error instanceof OpencliCommandError ? error.code : null;
   writeErrorLine(`opencli turn failed${code ? ` (${code})` : ""}: ${message}`);
   if (response.headersSent || response.destroyed) return;
+  if (code === SITE_BUSY) {
+    sendUnsupportedRequestFailure(response, PROVIDER, message);
+    return;
+  }
   const limit = classifyCliLimit(message, exitCode);
   const timedOut = code === "TIMEOUT" || exitCode === OPENCLI_TIMEOUT_EXIT_CODE;
   const status =
@@ -645,17 +696,36 @@ export function createOpencliBridge(
 
   const modelRefreshes = new Map<OpencliSite, Promise<void>>();
 
-  /** Read a site's model list into the cache; an empty read keeps the last list. */
-  function refreshSiteModels(site: OpencliSite): Promise<void> {
+  /**
+   * Read a site's model list into the cache; an empty read keeps the last list.
+   *
+   * `background` is a refresh of what the site can answer, not a request: it
+   * may be dropped and asked for again. A background listing that queued behind
+   * a turn would hold the tab away from the turns that arrive after it, and a
+   * listing that cannot read the site's models holds it for its whole timeout.
+   * So a background listing takes the tab only while nothing else wants it.
+   */
+  function refreshSiteModels(
+    site: OpencliSite,
+    options: { readonly background?: boolean } = {}
+  ): Promise<void> {
     const inFlight = modelRefreshes.get(site);
     if (inFlight) return inFlight;
-    const refresh = queues
-      .run(site, () =>
-        OPENCLI_SITE_SPECS[site].models(
-          execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS))
-        )
-      )
+    const list = () => {
+      // The listing's own budget starts when it takes the tab, so a listing
+      // that waited for a turn does not then hold the tab for a second one.
+      const deadline = Date.now() + MODEL_LIST_TIMEOUT_MS;
+      return OPENCLI_SITE_SPECS[site].models(
+        execFor(AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS), deadline)
+      );
+    };
+    const refresh = (
+      options.background === true
+        ? queues.runInBackground(site, list)
+        : queues.run(site, list)
+    )
       .then((models) => {
+        if (models === null) return undefined;
         // An empty list is the site's picker failing to render (a hidden or
         // covered window), not an account with no models: the last good
         // list stays, and the next listing asks again.
@@ -691,8 +761,11 @@ export function createOpencliBridge(
         refreshSiteModels(site),
         sleep(FIRST_MODEL_LIST_WAIT_MS)
       ]);
-    } else if (Date.now() - cached.at > MODEL_LIST_TTL_MS) {
-      void refreshSiteModels(site);
+    } else if (
+      Date.now() - cached.at >
+      (options.modelListTtlMs ?? MODEL_LIST_TTL_MS)
+    ) {
+      void refreshSiteModels(site, { background: true });
     }
     return (modelLists.get(site)?.models ?? []).map((siteModel) =>
       opencliModelId(provider, siteModel)
@@ -813,9 +886,12 @@ export function createOpencliBridge(
    * command is then refused with `SESSION_BUSY` although nothing else wants
    * the tab -- a worker turn failed that way. The session frees itself, so a
    * busy refusal is retried until the turn's own timeout.
+   *
+   * The deadline is the *turn's* budget, not this command's: a turn that
+   * continues a chat in a new one runs two commands, and both draw on the same
+   * budget, so a turn can never hold the browser tab longer than it was given.
    */
-  function execFor(signal: AbortSignal): OpencliExec {
-    const deadline = Date.now() + options.turnTimeoutSeconds * 1000;
+  function execFor(signal: AbortSignal, deadline: number): OpencliExec {
     const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
     const unsentRetryMs = options.unsentRetryMs ?? DEFAULT_UNSENT_RETRY_MS;
     const attempt = async (
@@ -846,11 +922,44 @@ export function createOpencliBridge(
     return attempt;
   }
 
+  /**
+   * The turn's own budget: the whole turn, every command in it, has this long.
+   *
+   * It is drawn once, when the turn is accepted, and shared by the commands
+   * that run it. A turn that continues a chat in a new one runs a second
+   * command, and that second command draws on what is left of the same budget
+   * rather than on a fresh one -- otherwise a turn could hold the site's single
+   * browser tab for twice its timeout, which is longer than the site is
+   * reported wedged, and the site would answer "unavailable" while it was
+   * working.
+   */
+  function turnBudget(): number {
+    return Date.now() + options.turnTimeoutSeconds * 1000;
+  }
+
+  /** The milliseconds a turn has left of its budget. */
+  function budgetLeft(deadline: number): number {
+    return deadline - Date.now();
+  }
+
+  /**
+   * The seconds a command may still run for, within the turn's budget.
+   *
+   * opencli takes its timeout in whole seconds, so the command is given the
+   * next second up: a turn with 995 ms left is given one second rather than
+   * none. A turn with no time left at all is refused instead, in
+   * `attemptTurn`.
+   */
+  function remainingSeconds(deadline: number): number {
+    return Math.max(1, Math.ceil(budgetLeft(deadline) / 1000));
+  }
+
   async function attemptTurn(
     turn: PreparedTurn,
     prompt: string,
     conversationId: string | null,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deadline: number
   ): Promise<OpencliReply> {
     const directory = mkdtempSync(
       path.join(options.tempRoot ?? tmpdir(), "autodev-opencli-")
@@ -860,6 +969,15 @@ export function createOpencliBridge(
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, prompt, { mode: 0o600 });
       return await queues.run(turn.site, async () => {
+        // A turn that waited for the site can arrive with its budget spent.
+        // There is nothing left to give the site then, and a command with no
+        // time left would hold the tab without answering.
+        if (budgetLeft(deadline) <= 0)
+          throw new OpencliCommandError(
+            "the site's tab was busy for the whole of the turn",
+            SITE_BUSY,
+            null
+          );
         // Decided inside the site's queue: the model a site last answered
         // with is what its tab shows now.
         const reply = await turn.spec.turn(
@@ -869,9 +987,12 @@ export function createOpencliBridge(
             conversationId,
             siteModel: turn.siteModel,
             selectModel: selectedModels.get(turn.site) !== turn.siteModel,
-            timeoutSeconds: options.turnTimeoutSeconds
+            // What is left of the turn's budget, not the whole of it: a turn
+            // that already waited for the site must not be given a command
+            // timeout longer than the turn itself.
+            timeoutSeconds: remainingSeconds(deadline)
           },
-          execFor(signal)
+          execFor(signal, deadline)
         );
         selectedModels.set(turn.site, turn.siteModel);
         return reply;
@@ -889,13 +1010,25 @@ export function createOpencliBridge(
    * the same way. When continuing fails before anything was sent, the entry is
    * dropped and the turn runs once more as a new chat with the whole
    * conversation, so the session goes on rather than sticking.
+   *
+   * Both attempts share one budget. The second one is only worth starting if
+   * that budget still has time in it: a turn that has already spent it has
+   * nothing left to give the site, and running it anyway would hold the site's
+   * tab past the point at which the site is reported wedged.
    */
   async function runTurn(
     turn: PreparedTurn,
     signal: AbortSignal
   ): Promise<OpencliReply> {
+    const deadline = turnBudget();
     try {
-      return await attemptTurn(turn, turn.prompt, turn.conversationId, signal);
+      return await attemptTurn(
+        turn,
+        turn.prompt,
+        turn.conversationId,
+        signal,
+        deadline
+      );
     } catch (error) {
       if (
         turn.conversationId === null ||
@@ -906,6 +1039,12 @@ export function createOpencliBridge(
         (!failedBeforeSending(error) && error.code !== EMPTY_RESULT)
       )
         throw error;
+      if (budgetLeft(deadline) <= 0)
+        throw new OpencliCommandError(
+          "the site's tab was busy for the whole of the turn",
+          SITE_BUSY,
+          null
+        );
       writeErrorLine(
         `opencli ${turn.site} chat ${turn.conversationId} could not be continued (${error.message}); starting a new chat`
       );
@@ -914,7 +1053,8 @@ export function createOpencliBridge(
         { ...turn, conversationId: null, resumedFrom: null },
         turn.freshPrompt,
         null,
-        signal
+        signal,
+        deadline
       );
     }
   }
@@ -1043,17 +1183,25 @@ export function createOpencliBridge(
         const site = OPENCLI_PROVIDER_SITES[requested as OpencliProvider];
         const activeSince = queues.activeSinceFor(site);
         const wedgedThresholdMs =
-          options.wedgedTimeoutMs ??
-          options.turnTimeoutSeconds * 1000 + 30_000;
+          options.wedgedTimeoutMs ?? options.turnTimeoutSeconds * 1000 + 30_000;
+        // A site is wedged when the task holding its tab has run past the time
+        // it was given. Every turn draws one budget and every command in that
+        // turn draws on the same one, so a turn cannot hold the tab past the
+        // threshold: the threshold is reached by a command that stopped
+        // answering, not by a turn that is merely slow.
         const isWedged =
-          activeSince !== null &&
-          Date.now() - activeSince > wedgedThresholdMs;
+          activeSince !== null && Date.now() - activeSince > wedgedThresholdMs;
         if (isWedged) {
           sendJson(response, 503, {
             status: "unavailable",
             provider: requested,
             site,
-            error: "opencli " + site + " turn has been running for " + Math.round((Date.now() - activeSince) / 1000) + "s"
+            error:
+              "opencli " +
+              site +
+              " turn has been running for " +
+              Math.round((Date.now() - activeSince) / 1000) +
+              "s"
           });
           return;
         }
@@ -1062,6 +1210,9 @@ export function createOpencliBridge(
           status: "ok",
           provider: requested,
           site,
+          // A site is one browser tab: it is busy whenever a turn holds it.
+          // Busy is not broken, and the caller is told which one it is.
+          busy: activeSince !== null,
           queueDepth: queues.depthFor(site),
           queued: queues.status(),
           modelsObserved: Boolean(

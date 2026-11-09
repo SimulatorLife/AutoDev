@@ -108,17 +108,19 @@ export default async function ToolDetailPage({
     );
   }
 
-  const [result, usageResult] = await Promise.all([
-    fetchTools(config),
-    loadOpenLITUsage({
-      range: "24H",
-      values: {},
-      customRange: {
-        startDate: first(sp.startDate),
-        endDate: first(sp.endDate)
-      }
-    })
-  ]);
+  // The catalogue read and the Usage read are answered separately, in that
+  // order. The Usage read is a twenty-four hour telemetry aggregation, and
+  // run beside the Control API read it competes with it for the host until
+  // one of them is reported as a failure that did not happen.
+  const result = await fetchTools(config);
+  const usageResult = await loadOpenLITUsage({
+    range: "24H",
+    values: {},
+    customRange: {
+      startDate: first(sp.startDate),
+      endDate: first(sp.endDate)
+    }
+  });
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

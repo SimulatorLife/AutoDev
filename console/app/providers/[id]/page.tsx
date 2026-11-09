@@ -12,12 +12,7 @@ import {
 } from "../../../src/features/providers/ProviderDetailView.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import {
-  controlApiFailureCode,
-  fetchModels,
-  fetchProviderModelDiscovery,
-  fetchProviders,
-  fetchProviderVersions,
-  fetchRuntime
+  controlApiFailureCode
 } from "../../../src/lib/server/control-api.ts";
 import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
 import {
@@ -26,6 +21,7 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../../_console.ts";
+import { readProvidersSurface } from "../providers-reads.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -96,21 +92,23 @@ export default async function ProviderDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
-  const [
-    providersResult,
-    modelsResult,
-    discoveryResult,
-    runtimeResult,
-    versionsResult,
-    usageSource
-  ] = await Promise.all([
-    fetchProviders(config),
-    fetchModels(config),
-    fetchProviderModelDiscovery(config),
-    fetchRuntime(config),
-    fetchProviderVersions(config),
-    readProviderUsage(id)
-  ]);
+  // The Control API reads are answered before the telemetry read starts, not
+  // beside it. The usage panel reads a seven-day telemetry aggregation, which
+  // is the slowest thing this page asks for by an order of magnitude; run
+  // together with the Control API fan-out it competes with those reads for
+  // the host, and the page then reports a Control API failure for a Control
+  // API that answered every request.
+  const {
+    providers: providersResult,
+    models: modelsResult,
+    modelDiscovery: discoveryResult,
+    providerVersions: versionsResult,
+    runtime: runtimeResult
+  } = await readProvidersSurface(config, {
+    includeModels: true,
+    includeProviderVersions: true
+  });
+  const usageSource = await readProviderUsage(id);
   if (providersResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
