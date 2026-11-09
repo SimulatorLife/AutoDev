@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -36,6 +39,17 @@ function deps(overrides: Partial<DependencyDeps> = {}): DependencyDeps {
     platform: "linux",
     ...overrides
   };
+}
+
+/**
+ * An environment in which neither resolver finds anything.
+ *
+ * The checks resolve the tools the way the MCP launcher does -- through the
+ * shared resolvers, which look in `~/.local/bin` as well as on PATH -- so a
+ * check that meant to assert "missing" has to say where it is looking.
+ */
+function emptyEnvironment(): NodeJS.ProcessEnv {
+  return { PATH: "", HOME: "/nonexistent-home" };
 }
 
 test("dependency options read the installer skip switches", () => {
@@ -190,13 +204,16 @@ test("Python language-server installation falls back to python user installs whe
 });
 
 test("dependency checks honor explicit skips and fail closed when tools are missing", () => {
-  assert.equal(checkCocoIndex(options({ skipCocoIndex: true }), deps()), 0);
-  assert.equal(checkCocoIndex(options(), deps()), 1);
+  assert.equal(
+    checkCocoIndex(options({ skipCocoIndex: true }), emptyEnvironment()),
+    0
+  );
+  assert.equal(checkCocoIndex(options(), emptyEnvironment()), 1);
   assert.equal(
     checkCodeGraphContext(options({ skipCodeGraphContext: true }), deps()),
     0
   );
-  assert.equal(checkCodeGraphContext(options(), deps()), 1);
+  assert.equal(checkCodeGraphContext(options(), deps(), emptyEnvironment()), 1);
   assert.equal(
     checkCodeGraphContext(
       options({ codegraphcontextBin: "/custom/cgc" }),
@@ -211,4 +228,21 @@ test("dependency checks honor explicit skips and fail closed when tools are miss
     ),
     1
   );
+});
+
+test("the dependency checks find the pipx installs the MCP launcher finds", () => {
+  // pipx installs into `~/.local/bin`, which a shell profile puts on PATH and
+  // a bare process does not. The checks used to look at PATH alone, so they
+  // reported an installed tool as missing on a machine where the launcher
+  // started it every day.
+  const home = mkdtempSync(join(tmpdir(), "autodev-deps-home-"));
+  const bin = join(home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
+  for (const command of ["codegraphcontext", "ccc"]) {
+    writeFileSync(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
+  const env: NodeJS.ProcessEnv = { PATH: "", HOME: home };
+  assert.equal(checkCodeGraphContext(options(), deps(), env), 0);
+  assert.equal(checkCocoIndex(options(), env), 0);
+  rmSync(home, { recursive: true, force: true });
 });

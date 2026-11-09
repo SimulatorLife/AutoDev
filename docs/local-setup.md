@@ -171,6 +171,31 @@ worker uses the same binary resolution as the MCP launcher, including
 `AUTODEV_CODEGRAPHCONTEXT_BIN`, and shares CGC's FalkorDB server with the
 running MCP servers. `tests/platform/code-graph-ensure.test.ts` covers it.
 
+**The graph database has to answer, or the MCP server does not start.** CGC
+reads its graph from the database `~/.codegraphcontext/.env` names in
+`DEFAULT_DATABASE`, and the MCP server connects to it before it answers
+anything. A database that is not there takes the whole server with it: it
+exits at startup, writes nothing to stdout, and the MCP client reports
+`Failed to connect: Connection closed` — which names the transport and not the
+cause. The same database is what the session-start refresh writes to, so a
+database that is down leaves the graph stale as well, and the refresh fails
+into a log the operator does not read.
+
+`bash scripts/install.sh --check` therefore asks the database a question
+rather than asking whether the executable is installed: `ok CodeGraphContext
+graph database` when it answers, and the database it was using together with
+the reason it did not when it does not. `codegraphcontext doctor` is the same
+question asked by CGC itself. The local `falkordb` database is the one that
+holds the graph on a host with no shared database server: it starts on
+demand, keeps its data in `~/.codegraphcontext/global/db/falkordb`, and
+`DEFAULT_DATABASE=falkordb` selects it.
+
+The checks resolve the tools the way the MCP launcher resolves them, because
+the launcher is what has to run them. pipx installs into `~/.local/bin`, which
+a shell profile puts on `PATH` and a bare process does not, so a `PATH`-only
+lookup reported an installed tool as missing on a host where the launcher
+started it every day.
+
 ### User configuration composition
 
 Codex user-level configuration is managed via a composed model rather than a direct symlink:

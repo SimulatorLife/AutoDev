@@ -30,6 +30,7 @@ import {
   antigravitySkillsStatus,
   missingAntigravityPermissions
 } from "./antigravity-settings.ts";
+import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import {
   checkCocoIndex,
@@ -1051,11 +1052,19 @@ function checkDependencies(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
-  if (checkCocoIndex(resolveDependencyOptions(process.env)) !== 0)
-    failures.value = 1;
-  if (checkCodeGraphContext(resolveDependencyOptions(process.env)) !== 0)
-    failures.value = 1;
-  if (checkPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0)
+  const options = resolveDependencyOptions(process.env);
+  if (checkCocoIndex(options) !== 0) failures.value = 1;
+  if (checkCodeGraphContext(options) !== 0) failures.value = 1;
+  if (checkPythonLanguageServer(options) !== 0) failures.value = 1;
+  // The graph database is the other half of the CodeGraphContext dependency:
+  // the executable being installed says nothing about whether the server can
+  // reach the graph it answers queries from. Without this the only symptom is
+  // an MCP client reporting "Connection closed", which names no cause.
+  //
+  // A host that has declined the CodeGraphContext dependency is not asked
+  // about its database: the executable check already reported the absence,
+  // and a database that was never installed is not a second missing thing.
+  if (!options.skipCodeGraphContext && checkCodeGraphDatabase() !== 0)
     failures.value = 1;
 }
 

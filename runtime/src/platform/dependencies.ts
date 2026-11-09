@@ -8,6 +8,10 @@ import {
 import path from "node:path";
 
 import {
+  resolveCocoIndexBinary,
+  resolveCodeGraphContextBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
+import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
@@ -257,7 +261,7 @@ export function installPythonLanguageServer(
 
 export function checkCocoIndex(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  env: NodeJS.ProcessEnv = process.env
 ): number {
   if (options.skipCocoIndex) {
     writeLine(
@@ -265,7 +269,11 @@ export function checkCocoIndex(
     );
     return 0;
   }
-  const existing = deps.commandPath("ccc");
+  // The same resolution the MCP launcher uses, because the launcher is what
+  // has to run the tool. pipx installs into `~/.local/bin`, which a shell
+  // profile puts on PATH and a bare process does not, so a PATH-only lookup
+  // reported an installed tool as missing.
+  const existing = resolveCocoIndexBinary(env);
   if (existing) {
     writeLine(`ok CocoIndex Code executable (${existing})`);
     return 0;
@@ -278,7 +286,8 @@ export function checkCocoIndex(
 
 export function checkCodeGraphContext(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  deps = defaultDeps(),
+  env: NodeJS.ProcessEnv = process.env
 ): number {
   if (options.skipCodeGraphContext) {
     writeLine(
@@ -297,7 +306,13 @@ export function checkCodeGraphContext(
     );
     return 1;
   }
-  const existing = deps.commandPath("codegraphcontext");
+  // The same resolution the MCP launcher uses, because the launcher is what
+  // has to run the tool. pipx installs into `~/.local/bin`, which a shell
+  // profile puts on PATH and a bare process does not, so a PATH-only lookup
+  // reported an installed tool as missing -- and then the graph database
+  // check beside it answered, which is how a working dependency was reported
+  // as missing while the thing that depends on it worked.
+  const existing = resolveCodeGraphContextBinary(env);
   if (existing) {
     writeLine(`ok CodeGraphContext executable (${existing})`);
     return 0;

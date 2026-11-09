@@ -132,11 +132,16 @@ function acquireLock(lock: string): boolean {
 
 /** The repository paths the graph has indexed, parsed from `query`'s JSON. */
 function indexedRepositories(binary: string, env: NodeJS.ProcessEnv): string[] {
-  const output = execFileSync(binary, ["query", REPOSITORIES_QUERY], {
-    encoding: "utf8",
-    env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  let output: string;
+  try {
+    output = execFileSync(binary, ["query", REPOSITORIES_QUERY], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } catch (error) {
+    throw new Error(failureReason(error));
+  }
   const start = output.search(JSON_RESULT_START);
   if (start < 0)
     throw new Error("codegraphcontext query returned no JSON result");
@@ -144,6 +149,72 @@ function indexedRepositories(binary: string, env: NodeJS.ProcessEnv): string[] {
   return rows
     .map((row) => row.path)
     .filter((value): value is string => typeof value === "string");
+}
+
+/**
+ * The child's own account of a failed CodeGraphContext command.
+ *
+ * Node's message for a command that exited non-zero is "Command failed: <path>
+ * <args>", which names the command and nothing else. The reason is in the
+ * child's output: which database it was using, and why the connection did not
+ * hold. A graph that cannot be reached is a graph whose reason has to be read
+ * out of it rather than inferred from the fact that it failed.
+ *
+ * A traceback's frames are dropped: they say which line of which library
+ * failed, not why. The cause is the last unindented line, and the database the
+ * command reached is named by the first.
+ */
+function failureReason(error: unknown): string {
+  const failure = error as {
+    readonly stdout?: Buffer | string;
+    readonly stderr?: Buffer | string;
+  };
+  const text = [failure.stderr, failure.stdout]
+    .map((part) =>
+      typeof part === "string" ? part : (part?.toString("utf8") ?? "")
+    )
+    .join("\n");
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const database = lines.find((line) => line.startsWith("Using database:"));
+  const cause = lines.findLast((line) => !line.startsWith(" ")) ?? "";
+  const reason = [database, cause].filter((part) => part !== "").join(" — ");
+  return reason === "" ? "the command failed without saying why" : reason;
+}
+
+/**
+ * Whether the graph database answers a query.
+ *
+ * The MCP server and the indexing worker read the same graph, and a database
+ * that is down takes both with it: the MCP server exits before it answers its
+ * first request, so the client reports "Connection closed" and names nothing,
+ * and the session-start refresh fails into a log the operator does not read.
+ *
+ * The graph is a dependency this repository's own tooling needs, so the check
+ * that names it belongs beside the check that says the executable is there.
+ */
+export function checkCodeGraphDatabase(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const binary = resolveCodeGraphContextBinary(env);
+  if (!binary) {
+    writeErrorLine(
+      "missing CodeGraphContext executable, so its graph database cannot be reached"
+    );
+    return 1;
+  }
+  try {
+    indexedRepositories(binary, env);
+    writeLine("ok CodeGraphContext graph database");
+    return 0;
+  } catch (error) {
+    writeErrorLine(
+      `CodeGraphContext graph database is not answering: ${error instanceof Error ? error.message : error}`
+    );
+    return 1;
+  }
 }
 
 /** Index or refresh `root`'s graph unless it is current or another run holds it. */

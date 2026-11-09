@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  checkCodeGraphDatabase,
   codeGraphStateDir,
   ensureCodeGraph,
   gitRoot,
@@ -51,7 +52,13 @@ function fixture(): Fixture {
     `#!/bin/sh
 echo "$*" >> "${log}"
 case "$1" in
-  query) echo "Services initialized."; cat "${indexed}" ;;
+  query)
+    if [ -n "\${FAKE_CGC_QUERY_ERROR:-}" ]; then
+      echo "Using database: falkordb-remote (source: /tmp/cgc.env, host: 127.0.0.1)" >&2
+      echo "Database Connection Error: \${FAKE_CGC_QUERY_ERROR}" >&2
+      exit 1
+    fi
+    echo "Services initialized."; cat "${indexed}" ;;
   index|update) exit "\${FAKE_CGC_EXIT:-0}" ;;
 esac
 `,
@@ -170,4 +177,87 @@ test("ensureCodeGraph starts a worker for the checkout's top level only", (t) =>
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   assert.equal(ensureCodeGraph(outside, f.env, spawnWorker), null);
   assert.equal(started.length, 1, "no worker outside a git checkout");
+});
+
+/**
+ * The reason a check prints has to be the reason the child gave.
+ *
+ * A command that exits non-zero leaves Node's own message as "Command failed:
+ * <path> <args>", which names the command and nothing else. The operator who
+ * has to act on it needs the database the command was using and the reason it
+ * did not answer.
+ */
+function captureOutput(callback: () => void): {
+  readonly stdout: string;
+  readonly stderr: string;
+} {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const originalStdout = process.stdout.write;
+  const originalStderr = process.stderr.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    callback();
+  } finally {
+    process.stdout.write = originalStdout;
+    process.stderr.write = originalStderr;
+  }
+  return { stdout: stdout.join(""), stderr: stderr.join("") };
+}
+
+test("the graph database is checked by asking it a question", (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const output = captureOutput(() => {
+    assert.equal(checkCodeGraphDatabase(f.env), 0);
+  });
+  assert.match(output.stdout, /ok CodeGraphContext graph database/u);
+  assert.equal(output.stderr, "");
+});
+
+test("a graph database that does not answer is named, with the reason it gave", (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const output = captureOutput(() => {
+    assert.equal(
+      checkCodeGraphDatabase({
+        ...f.env,
+        FAKE_CGC_QUERY_ERROR: "Connection refused."
+      }),
+      1
+    );
+  });
+  assert.match(
+    output.stderr,
+    /CodeGraphContext graph database is not answering/u
+  );
+  // The database it was using and the reason it did not answer: both are the
+  // child's own words, because the check cannot infer them.
+  assert.match(output.stderr, /falkordb-remote/u);
+  assert.match(output.stderr, /Connection refused\./u);
+});
+
+test("a graph database that cannot be reached leaves the reason in the worker's own log", (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const output = captureOutput(() => {
+    assert.equal(
+      runCodeGraphWorker(f.root, {
+        ...f.env,
+        FAKE_CGC_QUERY_ERROR: "Connection refused."
+      }),
+      "failed"
+    );
+  });
+  // "failed" with no reason is the symptom this fixes: the worker said the
+  // graph was not there and named nothing.
+  assert.match(output.stderr, /code-graph-ensure:/u);
+  assert.match(output.stderr, /Connection refused\./u);
 });
