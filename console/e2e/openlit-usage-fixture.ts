@@ -18,6 +18,8 @@ import { createServer, type ServerResponse } from "node:http";
 const PORT = Number(process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT ?? 4312);
 const WORKSPACE_ID = "fixture/game";
 const LOGICAL_REQUESTS = 12;
+/** The provider hops the fixture reports: three requests changed provider. */
+const PROVIDER_HOPS = 3;
 
 /**
  * The scopes that answer with a failure instead of a snapshot.
@@ -79,6 +81,13 @@ const USAGE_WIDGET_IDS = [
   "git-commits-by-workspace",
   "git-commits-by-provider",
   "git-commits-by-agent",
+  "provider-hops",
+  "provider-hops-over-time",
+  "provider-hops-by-route",
+  "provider-hops-by-provider",
+  "provider-hops-by-role",
+  "provider-hops-by-workspace",
+  "provider-hops-by-reason",
   "skill-events-by-event",
   "estimated-cost"
 ] as const;
@@ -144,6 +153,86 @@ function observedWidgets(): readonly UsageWidget[] {
       ],
       xAxis: "role",
       yAxis: "count"
+    },
+    {
+      // The hop count and its breakdowns describe the same three hops: two
+      // fallbacks away from Claude and one reselection, in one workspace,
+      // across two roles.
+      key: "provider-hops",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ hops: String(PROVIDER_HOPS) }],
+      valuePath: "0.hops"
+    },
+    {
+      key: "provider-hops-over-time",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { label: "2026-11-09 09:00", count: 2 },
+        { label: "2026-11-09 10:00", count: 1 }
+      ],
+      xAxis: "label",
+      yAxis: "count"
+    },
+    {
+      key: "provider-hops-by-route",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { g0: "claude → minimax", hops: 2 },
+        { g0: "claude → antigravity", hops: 1 }
+      ],
+      xAxis: "g0",
+      yAxis: "hops"
+    },
+    {
+      key: "provider-hops-by-provider",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { g0: "minimax", hops: 2 },
+        { g0: "antigravity", hops: 1 }
+      ],
+      xAxis: "g0",
+      yAxis: "hops"
+    },
+    {
+      key: "provider-hops-by-role",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { g0: "worker", hops: 2 },
+        { g0: "orchestrator", hops: 1 }
+      ],
+      xAxis: "g0",
+      yAxis: "hops"
+    },
+    {
+      key: "provider-hops-by-workspace",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ g0: WORKSPACE_ID, hops: PROVIDER_HOPS }],
+      xAxis: "g0",
+      yAxis: "hops"
+    },
+    {
+      key: "provider-hops-by-reason",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { g0: "fallback", hops: 2 },
+        { g0: "reselection", hops: 1 }
+      ],
+      xAxis: "g0",
+      yAxis: "hops"
     }
   ];
 }

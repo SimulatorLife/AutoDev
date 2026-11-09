@@ -10,8 +10,10 @@ import type {
   ControlApiLiveAgentCounts,
   ControlApiProviderCheck,
   ControlApiProviderCheckResponse,
+  ControlApiProviderCooldown,
   ControlApiProviderHealth,
-  ControlApiProviderModelDiscovery
+  ControlApiProviderModelDiscovery,
+  ControlApiProviderQuota
 } from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
@@ -34,11 +36,13 @@ import {
 } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   COOLDOWN_CONFIG,
+  type CooldownEntry,
   COOLDOWNS,
   PROBE_FAILURE_CLASS
 } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   getDefaultRouterEventRecorder,
+  isRequestRefusalClass,
   noteRequestIdentity,
   recordRouterEvent,
   type RouterEvent,
@@ -78,6 +82,7 @@ import {
   loadCodexStateCollectorConfig
 } from "@simulatorlife/autodev-runtime/router/state-collector";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import {
   isDirectory,
   parseTurnMetadataJson,
@@ -99,6 +104,7 @@ import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
+import { getCachedProviderQuota } from "../providers/quota-discovery.ts";
 import {
   correlationSnapshot,
   correlationStatus,
@@ -124,7 +130,7 @@ import {
   getActiveRequests,
   LAST_RESORT_MAX_ATTEMPTS,
   PROBE_TIMEOUT_MS,
-  providerAvailable,
+  probeProvider,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
   proxyRoleResponse,
@@ -217,6 +223,8 @@ export const providerTelemetry = new Map(
         timestamp: string;
         class: string | null;
         status: number | null | undefined;
+        pool?: string | null;
+        model?: string | null;
       } | null,
       lastCheck: null as ControlApiProviderCheck | null
     }
@@ -292,6 +300,24 @@ function usageEventFromRouterEvent(
   };
 }
 
+function isNonProviderHealthFailureClass(
+  failureClass: string | null | undefined
+): boolean {
+  return (
+    isRequestRefusalClass(failureClass) ||
+    failureClass === "provider_disabled" ||
+    failureClass === "model_disabled" ||
+    failureClass === "request_error"
+  );
+}
+
+function isNonProviderHealthFailure(event: RouterEvent): boolean {
+  return (
+    event.outcome === "client_aborted" ||
+    isNonProviderHealthFailureClass(event.failureClass)
+  );
+}
+
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
@@ -348,21 +374,29 @@ const routerEvents = new RouterEventRecorder({
       state.lastAttemptAt = event.timestamp;
     } else if (state && event.phase === "skipped") {
       state.skipped += 1;
-      state.lastFailureClass = event.failureClass;
+      if (!isNonProviderHealthFailure(event)) {
+        state.lastFailureClass = event.failureClass;
+      }
     } else if (state && event.phase === "result") {
       if (event.outcome === "success") {
         state.successes += 1;
         state.lastSuccessAt = event.timestamp;
         state.lastFailureClass = null;
         state.lastFailure = null;
-      } else {
+      } else if (!isNonProviderHealthFailure(event)) {
+        const pool =
+          event.provider && event.model
+            ? providerQuotaPool(event.provider, event.model)
+            : null;
         state.failures += 1;
         state.lastFailureAt = event.timestamp;
         state.lastFailureClass = event.failureClass;
         state.lastFailure = {
           timestamp: event.timestamp,
           class: event.failureClass,
-          status: event.status
+          status: event.status,
+          ...(pool ? { pool } : {}),
+          ...(event.model ? { model: event.model } : {})
         };
       }
     }
@@ -1248,6 +1282,11 @@ function routerProviderStatus(
   projection: ReturnType<UsageTracker["projectLiveAgents"]>
 ): [string, Record<string, unknown>] {
   const state = providerState(route.provider);
+  const activeLastFailure =
+    state.lastFailure &&
+    !isNonProviderHealthFailureClass(state.lastFailure.class)
+      ? state.lastFailure
+      : null;
   const cooldown = COOLDOWNS.get(route.provider, now);
   const inFlightRequests = getActiveRequests(route.provider);
   const active = projection.byProvider[route.provider] ?? 0;
@@ -1326,10 +1365,27 @@ function routerProviderStatus(
       skipped: state.skipped,
       lastAttemptAt: state.lastAttemptAt,
       lastSuccessAt: state.lastSuccessAt,
-      lastFailureAt: state.lastFailureAt,
-      lastFailure: state.lastFailure
+      lastFailureAt: activeLastFailure ? state.lastFailureAt : null,
+      lastFailure: activeLastFailure
     }
   ];
+}
+
+function serializeProviderCooldown(
+  cooldown: CooldownEntry,
+  now: number
+): ControlApiProviderCooldown {
+  return {
+    kind: cooldown.kind,
+    failureClass: cooldown.failureClass ?? null,
+    until: new Date(cooldown.until).toISOString(),
+    resetsAt: cooldown.resetsAt ?? null,
+    lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now),
+    ...(cooldown.pool !== undefined ? { scope: "pool" as const } : {}),
+    ...(cooldown.model !== undefined ? { scope: "model" as const } : {}),
+    ...(cooldown.pool !== undefined ? { pool: cooldown.pool } : {}),
+    ...(cooldown.model !== undefined ? { model: cooldown.model } : {})
+  };
 }
 
 /** Typed live provider evidence the Control API serves to the Console. */
@@ -1341,16 +1397,31 @@ function controlApiProviderHealth(
     ROUTES.map((route) => {
       const state = providerState(route.provider);
       const cooldown = COOLDOWNS.get(route.provider, now);
+      const rawPoolCooldowns = COOLDOWNS.getPoolCooldowns(route.provider, now);
+      const poolCooldownEntries = Object.entries(rawPoolCooldowns).map(
+        ([pool, entry]) => [pool, serializeProviderCooldown(entry, now)]
+      );
+      const rawModelCooldowns = COOLDOWNS.getModelCooldowns(
+        route.provider,
+        now
+      );
+      const modelCooldownEntries = Object.entries(rawModelCooldowns).map(
+        ([model, entry]) => [model, serializeProviderCooldown(entry, now)]
+      );
+      const quota = getCachedProviderQuota(route.provider, now);
+      const activeLastFailure =
+        state.lastFailure &&
+        !isNonProviderHealthFailureClass(state.lastFailure.class)
+          ? state.lastFailure
+          : null;
       const health: ControlApiProviderHealth = {
-        cooldown: cooldown
-          ? {
-              kind: cooldown.kind,
-              failureClass: cooldown.failureClass ?? null,
-              until: new Date(cooldown.until).toISOString(),
-              resetsAt: cooldown.resetsAt ?? null,
-              lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now)
-            }
-          : null,
+        cooldown: cooldown ? serializeProviderCooldown(cooldown, now) : null,
+        ...(poolCooldownEntries.length > 0
+          ? { poolCooldowns: Object.fromEntries(poolCooldownEntries) }
+          : {}),
+        ...(modelCooldownEntries.length > 0
+          ? { modelCooldowns: Object.fromEntries(modelCooldownEntries) }
+          : {}),
         failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
         probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
         inFlightRequests: getActiveRequests(route.provider),
@@ -1359,14 +1430,21 @@ function controlApiProviderHealth(
         successes: state.successes,
         failures: state.failures,
         lastSuccessAt: state.lastSuccessAt,
-        lastFailure: state.lastFailure
+        lastFailure: activeLastFailure
           ? {
-              at: state.lastFailure.timestamp,
-              failureClass: state.lastFailure.class,
-              status: state.lastFailure.status ?? null
+              at: activeLastFailure.timestamp,
+              failureClass: activeLastFailure.class,
+              status: activeLastFailure.status ?? null,
+              ...(activeLastFailure.pool !== undefined
+                ? { pool: activeLastFailure.pool }
+                : {}),
+              ...(activeLastFailure.model !== undefined
+                ? { model: activeLastFailure.model }
+                : {})
             }
           : null,
-        lastCheck: state.lastCheck
+        lastCheck: state.lastCheck,
+        ...(quota ? { quota } : {})
       };
       return [route.provider, health];
     })
@@ -1378,6 +1456,11 @@ setControlApiProviderHealthSource(controlApiProviderHealth);
 export type ProviderModelRecheck = (
   provider: string
 ) => Promise<ControlApiProviderModelDiscovery | null>;
+
+/** Re-read one provider's quota/usage limits, for a check; null when nothing checks quota. */
+export type ProviderQuotaRecheck = (
+  provider: string
+) => Promise<ControlApiProviderQuota | null>;
 
 /**
  * The failure class a check records for a provider that has no route.
@@ -1396,17 +1479,18 @@ const MISSING_ROUTE_FAILURE_CLASS = "missing_route";
  * provider marked unavailable stays that way until traffic happens to try it
  * again. The check runs what routing would: the live probe (credential, the
  * bridge's health endpoint, or Codex's own auth), then the provider's model
- * listing, which confirms its account still answers.
+ * listing. Model discovery is reported separately from provider health.
  *
  * A passing probe clears a probe-failure cooldown, and the passing check is
  * recorded as health evidence (`lastCheck`) that a request failure older than
- * it no longer stands for. A failing probe cools the provider down exactly as
- * routing does. A cooldown the provider declared -- a quota or rate limit --
- * is not something a probe can disprove, so it stays until it resets.
+ * it no longer stands for. A failing operator-requested probe records health
+ * evidence without increasing cooldown penalties or failure streaks. A
+ * provider-declared quota or rate-limit cooldown remains in effect.
  */
 export async function checkProvider(
   provider: string,
-  recheckModels: ProviderModelRecheck | null
+  recheckModels: ProviderModelRecheck | null,
+  recheckQuota: ProviderQuotaRecheck | null = null
 ): Promise<ControlApiProviderCheckResponse> {
   const route = ROUTES.find((candidate) => candidate.provider === provider);
   if (!route) {
@@ -1438,42 +1522,46 @@ export async function checkProvider(
       health: controlApiProviderHealth(Date.now())[provider] ?? null
     };
   }
-  const live = await providerAvailable(route);
+  const probe = await probeProvider(route);
   let check: ControlApiProviderCheck;
-  if (live) {
+  let listing: ControlApiProviderModelDiscovery | null = null;
+  if (probe.ok) {
     COOLDOWNS.clearProbeFailures(provider);
-    const listing = recheckModels ? await recheckModels(provider) : null;
-    const listed = listing === null || listing.status !== "unavailable";
+    listing = recheckModels ? await recheckModels(provider) : null;
     check = {
       at: new Date().toISOString(),
-      ok: listed,
-      failureClass: listed ? null : "model_listing_unavailable",
-      detail: listed
-        ? listing === null
+      ok: true,
+      failureClass: null,
+      models: listing,
+      detail:
+        listing === null
           ? "The provider answered its live probe."
           : listing.status === "observed"
             ? `The provider answered its live probe and listed ${listing.models.length} model(s).`
-            : `The provider answered its live probe; its model listing failed (${listing.reason}), so its last listing is kept.`
-        : `The provider answered its live probe, but its model listing is unavailable: ${listing.reason}`
+            : listing.status === "stale"
+              ? `The provider answered its live probe; its model listing failed (${listing.reason}), so its last listing is kept.`
+              : `The provider answered its live probe, but its model listing is unavailable: ${listing.reason}`
     };
   } else {
-    COOLDOWNS.cooldownProvider(provider, { failureClass: PROBE_FAILURE_CLASS });
+    const failureClass = probe.failureClass ?? PROBE_FAILURE_CLASS;
     check = {
       at: new Date().toISOString(),
       ok: false,
-      failureClass: PROBE_FAILURE_CLASS,
-      detail: route.healthUrl
-        ? `The provider's live probe failed: no credential, or ${route.healthUrl} did not answer.`
-        : "The provider's live probe failed: its credential is unavailable."
+      failureClass,
+      detail: probe.detail ?? "The provider's live probe failed."
     };
   }
   providerState(provider).lastCheck = check;
+  if (recheckQuota) {
+    await recheckQuota(provider).catch(() => null);
+  }
   scheduleRouterStatePersist();
   return {
     schema: "autodev-control-provider-check-v1",
     provider,
     check,
-    health: controlApiProviderHealth(Date.now())[provider] ?? null
+    health: controlApiProviderHealth(Date.now())[provider] ?? null,
+    models: listing
   };
 }
 setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
@@ -1536,7 +1624,9 @@ function buildRouterStatus(now = Date.now()) {
   };
 }
 
-export function getRouterStatus(now = Date.now()): ReturnType<typeof buildRouterStatus> {
+export function getRouterStatus(
+  now = Date.now()
+): ReturnType<typeof buildRouterStatus> {
   return buildRouterStatus(now);
 }
 

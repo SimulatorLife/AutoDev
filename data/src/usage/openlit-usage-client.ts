@@ -1,5 +1,6 @@
 import {
   deriveContextCompactionRatePercent,
+  deriveProviderHopRatePercent,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
   USAGE_VARIABLE_IDS,
@@ -10,7 +11,9 @@ import {
   type UsageGitChangeMetrics,
   type UsageGitChangeUnsupportedFilter,
   type UsageMetricsData,
+  type UsageProviderHopUnsupportedFilter,
   type UsageSnapshot,
+  type UsageTimeBucketCount,
   type UsageTraceAttempt,
   type UsageTraceDetail,
   type UsageTraceList,
@@ -90,6 +93,13 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "git-commits-by-workspace",
   "git-commits-by-provider",
   "git-commits-by-agent",
+  "provider-hops",
+  "provider-hops-over-time",
+  "provider-hops-by-route",
+  "provider-hops-by-provider",
+  "provider-hops-by-role",
+  "provider-hops-by-workspace",
+  "provider-hops-by-reason",
   "skill-events-by-event",
   "estimated-cost"
 ];
@@ -573,6 +583,23 @@ function contextCompactionUnsupportedFilters(
   return unsupported;
 }
 
+/**
+ * The filters a provider hop cannot answer.
+ *
+ * A hop records the provider that now serves the agent, the provider it came
+ * from, the agent's role and its workspace. It does not record the requested
+ * model or a skill, so a selection on either of them cannot describe hops.
+ */
+function providerHopUnsupportedFilters(
+  selection: UsageFilterSelection
+): readonly UsageProviderHopUnsupportedFilter[] {
+  const unsupported: UsageProviderHopUnsupportedFilter[] = [];
+  if ((selection.values.provider?.length ?? 0) > 0) unsupported.push("provider");
+  if ((selection.values.model?.length ?? 0) > 0) unsupported.push("model");
+  if ((selection.values.skill?.length ?? 0) > 0) unsupported.push("skill");
+  return unsupported;
+}
+
 function gitChangeUnsupportedFilters(
   selection: UsageFilterSelection
 ): readonly UsageGitChangeUnsupportedFilter[] {
@@ -606,13 +633,21 @@ function unavailableGitChanges(
   };
 }
 
-function gitBreakdownRows(
+/**
+ * One bounded breakdown of counts by category.
+ *
+ * An empty breakdown is only read as "no rows at all" when the total it
+ * breaks down agrees with it; otherwise the source returned rows it cannot
+ * explain and the breakdown is not observed. A breakdown the source did not
+ * observe is not an empty one either: it is missing.
+ */
+function breakdownRows(
   widget: OpenLITWidgetResult | undefined,
-  observedCommits: number | null
+  total: number | null
 ): readonly UsageBreakdownCount[] | null {
   if (!widget?.querySucceeded) return null;
   if (!widget.observed || widget.rows.length === 0) {
-    return observedCommits === 0 ? [] : null;
+    return total === 0 ? [] : null;
   }
   const rows = groupedRows(widget);
   return rows?.every((row) => Number.isSafeInteger(row.count) && row.count >= 0)
@@ -736,17 +771,107 @@ function gitChangeMetrics(
         ? null
         : observedCount(widgets.get("git-lines-removed")),
     partialCommits,
-    commitsByWorkspace: gitBreakdownRows(
+    commitsByWorkspace: breakdownRows(
       widgets.get("git-commits-by-workspace"),
       commits
     ),
-    commitsByProvider: gitBreakdownRows(
+    commitsByProvider: breakdownRows(
       widgets.get("git-commits-by-provider"),
       commits
     ),
-    commitsByAgent: gitBreakdownRows(
+    commitsByAgent: breakdownRows(
       widgets.get("git-commits-by-agent"),
       commits
+    )
+  };
+}
+
+/** The provider-hop evidence one Usage snapshot carries. */
+interface ProviderHopMetrics {
+  readonly providerHops: number | null;
+  readonly providerHopRatePercent: number | null;
+  readonly providerHopsOverTime: readonly UsageTimeBucketCount[] | null;
+  readonly providerHopsByRoute: readonly UsageBreakdownCount[] | null;
+  readonly providerHopsByProvider: readonly UsageBreakdownCount[] | null;
+  readonly providerHopsByRole: readonly UsageBreakdownCount[] | null;
+  readonly providerHopsByWorkspace: readonly UsageBreakdownCount[] | null;
+  readonly providerHopsByReason: readonly UsageBreakdownCount[] | null;
+  readonly providerHopsUnsupportedFilters: readonly UsageProviderHopUnsupportedFilter[];
+  readonly providerHopsBreakdownsPartial: boolean;
+}
+
+const PROVIDER_HOP_BREAKDOWN_IDS: readonly UsageWidgetId[] = [
+  "provider-hops-by-route",
+  "provider-hops-by-provider",
+  "provider-hops-by-role",
+  "provider-hops-by-workspace",
+  "provider-hops-by-reason"
+];
+
+/**
+ * Read the provider-hop evidence.
+ *
+ * A hop is recorded on the logical request that observed it, so the hop count
+ * and its breakdowns answer the same question about the same requests. A
+ * selection on a dimension the hop does not carry leaves the whole evidence
+ * unavailable rather than answering it for every provider, model or skill.
+ */
+function providerHopMetrics(
+  widgets: ReadonlyMap<UsageWidgetId, OpenLITWidgetResult>,
+  selection: UsageFilterSelection,
+  logicalRequests: number | null
+): ProviderHopMetrics {
+  const unsupportedFilters = providerHopUnsupportedFilters(selection);
+  if (unsupportedFilters.length > 0) {
+    return {
+      providerHops: null,
+      providerHopRatePercent: null,
+      providerHopsOverTime: null,
+      providerHopsByRoute: null,
+      providerHopsByProvider: null,
+      providerHopsByRole: null,
+      providerHopsByWorkspace: null,
+      providerHopsByReason: null,
+      providerHopsUnsupportedFilters: unsupportedFilters,
+      providerHopsBreakdownsPartial: false
+    };
+  }
+  const providerHops = observedCount(widgets.get("provider-hops"));
+  const timeSeries = breakdownRows(
+    widgets.get("provider-hops-over-time"),
+    providerHops
+  );
+  return {
+    providerHops,
+    providerHopRatePercent: deriveProviderHopRatePercent(
+      providerHops,
+      logicalRequests
+    ),
+    providerHopsOverTime:
+      timeSeries?.map(({ name, count }) => ({ bucket: name, count })) ?? null,
+    providerHopsByRoute: breakdownRows(
+      widgets.get("provider-hops-by-route"),
+      providerHops
+    ),
+    providerHopsByProvider: breakdownRows(
+      widgets.get("provider-hops-by-provider"),
+      providerHops
+    ),
+    providerHopsByRole: breakdownRows(
+      widgets.get("provider-hops-by-role"),
+      providerHops
+    ),
+    providerHopsByWorkspace: breakdownRows(
+      widgets.get("provider-hops-by-workspace"),
+      providerHops
+    ),
+    providerHopsByReason: breakdownRows(
+      widgets.get("provider-hops-by-reason"),
+      providerHops
+    ),
+    providerHopsUnsupportedFilters: unsupportedFilters,
+    providerHopsBreakdownsPartial: PROVIDER_HOP_BREAKDOWN_IDS.some(
+      (id) => widgets.get(id)?.partial === true
     )
   };
 }
@@ -788,6 +913,7 @@ function toUsageSnapshot(
     compactions
   );
   const compactionsAvailable = unsupportedCompactionFilters.length === 0;
+  const hops = providerHopMetrics(widgets, selection, logicalRequests);
   const breakdownsPartial = [
     "context-compactions-by-workspace",
     "context-compactions-by-model",
@@ -840,6 +966,16 @@ function toUsageSnapshot(
     contextCompactionsUnsupportedFilters: unsupportedCompactionFilters,
     contextCompactionsBreakdownsPartial:
       compactionsAvailable && breakdownsPartial,
+    providerHops: hops.providerHops,
+    providerHopRatePercent: hops.providerHopRatePercent,
+    providerHopsOverTime: hops.providerHopsOverTime,
+    providerHopsByRoute: hops.providerHopsByRoute,
+    providerHopsByProvider: hops.providerHopsByProvider,
+    providerHopsByRole: hops.providerHopsByRole,
+    providerHopsByWorkspace: hops.providerHopsByWorkspace,
+    providerHopsByReason: hops.providerHopsByReason,
+    providerHopsUnsupportedFilters: hops.providerHopsUnsupportedFilters,
+    providerHopsBreakdownsPartial: hops.providerHopsBreakdownsPartial,
     gitChanges: gitChangeMetrics(widgets, selection),
     skillEventsByEvent:
       skillEvents === null

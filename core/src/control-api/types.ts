@@ -170,15 +170,103 @@ export interface ControlApiAgentEnablementPatchResponse {
   readonly reconciliation: ReconciliationView;
 }
 
+/** Active cooldown window on a provider, subprovider quota pool, or model. */
+export interface ControlApiProviderCooldown {
+  readonly kind: string;
+  readonly failureClass: string | null;
+  readonly until: string;
+  readonly resetsAt: string | null;
+  readonly lastResortEligible: boolean;
+  readonly scope?: "provider" | "pool" | "model";
+  readonly pool?: string | null;
+  readonly model?: string | null;
+}
+
+export type ControlApiQuotaWindowKind =
+  | "five_hour"
+  | "weekly"
+  | "daily"
+  | "monthly"
+  | "session"
+  | "credits"
+  | "custom";
+
+export type ControlApiQuotaStatus =
+  | "available"
+  | "warning"
+  | "exhausted"
+  | "cooldown"
+  | "unlimited"
+  | "unknown";
+
+/** A single rate-limit or usage-quota window (e.g., 5-hour or weekly limit). */
+export interface ControlApiQuotaWindow {
+  readonly id: string;
+  readonly kind: ControlApiQuotaWindowKind;
+  readonly label: string;
+  readonly scope: "provider" | "pool" | "model";
+  readonly pool?: string | null;
+  readonly poolLabel?: string | null;
+  readonly model?: string | null;
+  readonly usedPercent: number | null;
+  readonly remainingPercent: number | null;
+  readonly usedCount?: number | null;
+  readonly totalCount?: number | null;
+  readonly remainingCount?: number | null;
+  readonly unlimited?: boolean;
+  readonly status: ControlApiQuotaStatus;
+  readonly resetsAt: string | null;
+  readonly windowSeconds?: number | null;
+  readonly source: "cli" | "api" | "headers" | "router_limit";
+  readonly detail?: string | null;
+}
+
+/** Quota and cooldown state for a subprovider model class/pool (e.g. Antigravity first_party vs third_party). */
+export interface ControlApiSubproviderQuota {
+  readonly pool: string;
+  readonly label: string;
+  readonly status: ControlApiQuotaStatus;
+  readonly usedPercent: number | null;
+  readonly remainingPercent: number | null;
+  readonly resetsAt: string | null;
+  readonly models: readonly string[];
+  readonly windows: readonly ControlApiQuotaWindow[];
+  readonly cooldown?: ControlApiProviderCooldown | null;
+}
+
+/** Quota and limit state for a specific model on a provider. */
+export interface ControlApiModelQuota {
+  readonly model: string;
+  readonly displayName?: string | null;
+  readonly pool?: string | null;
+  readonly poolLabel?: string | null;
+  readonly status: ControlApiQuotaStatus;
+  readonly usedPercent: number | null;
+  readonly remainingPercent: number | null;
+  readonly resetsAt: string | null;
+  readonly windows: readonly ControlApiQuotaWindow[];
+}
+
+/** Live usage, quota, and limit snapshot for a provider across its windows, pools, and models. */
+export interface ControlApiProviderQuota {
+  readonly provider: string;
+  readonly updatedAt: string | null;
+  readonly status: "ok" | "unavailable" | "unsupported";
+  readonly source: "cli" | "api" | "headers" | "router_limit" | "none";
+  readonly plan?: string | null;
+  readonly summaryStatus: ControlApiQuotaStatus;
+  readonly windows: readonly ControlApiQuotaWindow[];
+  readonly pools: readonly ControlApiSubproviderQuota[];
+  readonly models: Readonly<Record<string, ControlApiModelQuota>>;
+  readonly reason?: string | null;
+}
+
 /** Live router evidence for one provider; absent when the router is not observed. */
 export interface ControlApiProviderHealth {
-  readonly cooldown: {
-    readonly kind: string;
-    readonly failureClass: string | null;
-    readonly until: string;
-    readonly resetsAt: string | null;
-    readonly lastResortEligible: boolean;
-  } | null;
+  readonly cooldown: ControlApiProviderCooldown | null;
+  readonly poolCooldowns?: Readonly<Record<string, ControlApiProviderCooldown>>;
+  readonly modelCooldowns?: Readonly<Record<string, ControlApiProviderCooldown>>;
+  readonly quota?: ControlApiProviderQuota | null;
   readonly failureStreak: number;
   readonly probeFailureStreak: number;
   readonly inFlightRequests: number;
@@ -191,6 +279,8 @@ export interface ControlApiProviderHealth {
     readonly at: string;
     readonly failureClass: string | null;
     readonly status: number | null;
+    readonly pool?: string | null;
+    readonly model?: string | null;
   } | null;
   /**
    * The latest operator-requested check (`POST /control/providers/:provider/check`):
@@ -379,6 +469,7 @@ export interface ControlApiProviderRecord {
   }[];
   readonly orchestratorReasoningEffort: string | null;
   readonly health: ControlApiProviderHealth | null;
+  readonly quota?: ControlApiProviderQuota | null;
   /**
    * Desired-vs-actual state for the provider as a whole, alongside the
    * per-role convergence above.

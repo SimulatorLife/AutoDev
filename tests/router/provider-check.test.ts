@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { providerHealthReadiness } from "@simulatorlife/autodev-core";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
+import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
   checkProvider,
   providerState
@@ -36,14 +37,93 @@ function withProbe(answers: boolean, body: () => Promise<void>): Promise<void> {
   });
 }
 
-test("a failed probe cools the provider down and records a failing check", () =>
+test("a failed operator probe records health evidence without adding cooldown penalties", () =>
   withProbe(false, async () => {
     const result = await checkProvider(PROVIDER, null);
     assert.equal(result.check.ok, false);
     assert.equal(result.check.failureClass, "probe_unavailable");
-    assert.equal(result.health?.cooldown?.kind, "probe");
+    assert.equal(result.health?.cooldown, null);
+    assert.equal(result.health?.failureStreak, 0);
+    assert.equal(result.health?.probeFailureStreak, 0);
     assert.equal(providerHealthReadiness(result.health), "unavailable");
     assert.deepEqual(providerState(PROVIDER).lastCheck, result.check);
+  }));
+
+test("a failed operator probe preserves existing cooldowns and failure streaks", () =>
+  withProbe(false, async () => {
+    COOLDOWNS.cooldownProvider(PROVIDER, {
+      failureClass: "probe_unavailable"
+    });
+    const cooldown = COOLDOWNS.get(PROVIDER);
+    const failureStreak = COOLDOWNS.failureStreak(PROVIDER);
+    const probeFailureStreak = COOLDOWNS.probeFailureStreak(PROVIDER);
+
+    const result = await checkProvider(PROVIDER, null);
+    assert.equal(result.check.ok, false);
+    assert.deepEqual(COOLDOWNS.get(PROVIDER), cooldown);
+    assert.equal(COOLDOWNS.failureStreak(PROVIDER), failureStreak);
+    assert.equal(COOLDOWNS.probeFailureStreak(PROVIDER), probeFailureStreak);
+  }));
+
+test("request refusals remain visible as events without recording provider outages", () => {
+  const state = providerState(PROVIDER);
+  const before = {
+    failures: state.failures,
+    lastFailureAt: state.lastFailureAt,
+    lastFailureClass: state.lastFailureClass,
+    lastFailure: state.lastFailure
+  };
+  try {
+    for (const failureClass of ["unsupported_request", "invalid_model"]) {
+      const event = recordRouterEvent({
+        phase: "result",
+        provider: PROVIDER,
+        model: "unsupported-fixture",
+        outcome: "failure",
+        status: 400,
+        failureClass
+      });
+      assert.equal(event.failureClass, failureClass);
+    }
+    assert.equal(state.failures, before.failures);
+    assert.equal(state.lastFailureAt, before.lastFailureAt);
+    assert.equal(state.lastFailureClass, before.lastFailureClass);
+    assert.deepEqual(state.lastFailure, before.lastFailure);
+  } finally {
+    Object.assign(state, before);
+  }
+});
+
+test("a missing credential is reported without creating an outage cooldown", async () => {
+  const originalCredential = process.env[CREDENTIAL];
+  delete process.env[CREDENTIAL];
+  COOLDOWNS.clear(PROVIDER);
+  try {
+    const result = await checkProvider(PROVIDER, null);
+    assert.equal(result.check.ok, false);
+    assert.equal(result.check.failureClass, "missing_credential");
+    assert.match(result.check.detail, /Missing credential/u);
+    assert.equal(result.health?.cooldown, null);
+  } finally {
+    if (originalCredential === undefined) delete process.env[CREDENTIAL];
+    else process.env[CREDENTIAL] = originalCredential;
+    COOLDOWNS.clear(PROVIDER);
+    providerState(PROVIDER).lastCheck = null;
+  }
+});
+
+test("a transient timeout is retried before marking a provider unavailable", () =>
+  withProbe(true, async () => {
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      if (attempts === 1) throw new DOMException("timed out", "TimeoutError");
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const result = await checkProvider(PROVIDER, null);
+    assert.equal(result.check.ok, true);
+    assert.equal(attempts, 2);
+    assert.equal(result.health?.cooldown, null);
   }));
 
 test("a passing check clears a probe cooldown and outranks an older request failure", () =>
@@ -63,6 +143,8 @@ test("a passing check clears a probe cooldown and outranks an older request fail
     }));
     assert.equal(result.check.ok, true);
     assert.match(result.check.detail, /listed 0 model/u);
+    assert.equal(result.models?.status, "observed");
+    assert.equal(result.check.models?.status, "observed");
     assert.equal(result.health?.cooldown, null);
     assert.equal(result.health?.probeFailureStreak, 0);
     assert.equal(providerHealthReadiness(result.health), "ready");
@@ -84,7 +166,7 @@ test("a passing probe cannot clear a cooldown the provider declared", () =>
     assert.equal(providerHealthReadiness(result.health), "unavailable");
   }));
 
-test("a model listing that is unavailable fails the check", () =>
+test("unavailable model discovery is reported separately from successful provider health", () =>
   withProbe(true, async () => {
     const result = await checkProvider(PROVIDER, async () => ({
       status: "unavailable",
@@ -92,9 +174,13 @@ test("a model listing that is unavailable fails the check", () =>
       lastAttemptAt: new Date().toISOString(),
       reason: "fetch failed"
     }));
-    assert.equal(result.check.ok, false);
-    assert.equal(result.check.failureClass, "model_listing_unavailable");
+    assert.equal(result.check.ok, true);
+    assert.equal(result.check.failureClass, null);
+    assert.equal(result.models?.status, "unavailable");
+    assert.equal(result.check.models?.status, "unavailable");
     assert.match(result.check.detail, /fetch failed/u);
+    assert.equal(result.health?.cooldown, null);
+    assert.equal(providerHealthReadiness(result.health), "ready");
   }));
 
 /**

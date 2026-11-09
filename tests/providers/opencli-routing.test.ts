@@ -500,3 +500,119 @@ test("subagents with identical tasks and identical replies continue their own ch
     }
   });
 });
+
+test("opencli bridge reports per-site health and isolates wedged turns", async () => {
+  const sites = new FakeSites();
+  const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-health-"));
+  const ledger = new OpencliConversationLedger();
+  let releaseTurn: (() => void) | null = null;
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 1,
+    wedgedTimeoutMs: 50,
+    tempRoot,
+    ledger,
+    sessionBusyRetryMs: 1,
+    unsentRetryMs: 1,
+    run: async (req) => {
+      if (req.args.includes("gemini") && releaseTurn !== null) {
+        await new Promise<void>((resolve) => {
+          releaseTurn = resolve;
+        });
+      }
+      return sites.run(req);
+    }
+  });
+  const server = createServer((req, res) => {
+    void bridge.handle(req, res);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  try {
+    // 1. General bridge liveliness
+    const generalRes = await fetch(`${baseUrl}/health/liveliness`);
+    assert.equal(generalRes.status, 200);
+    const general = (await generalRes.json()) as { status: string };
+    assert.equal(general.status, "ok");
+
+    // 2. Chatgpt site health
+    const chatgptRes = await fetch(
+      `${baseUrl}/health/liveliness?provider=opencli-chatgpt`
+    );
+    assert.equal(chatgptRes.status, 200);
+    const chatgpt = (await chatgptRes.json()) as {
+      status: string;
+      provider: string;
+      site: string;
+    };
+    assert.equal(chatgpt.status, "ok");
+    assert.equal(chatgpt.provider, "opencli-chatgpt");
+    assert.equal(chatgpt.site, "chatgpt");
+
+    // 3. Gemini site health
+    const geminiRes = await fetch(
+      `${baseUrl}/health/liveliness?provider=opencli-gemini`
+    );
+    assert.equal(geminiRes.status, 200);
+    const gemini = (await geminiRes.json()) as {
+      status: string;
+      provider: string;
+      site: string;
+    };
+    assert.equal(gemini.status, "ok");
+    assert.equal(gemini.provider, "opencli-gemini");
+    assert.equal(gemini.site, "gemini");
+
+    // 4. Unknown provider returns 400
+    const unknownRes = await fetch(
+      `${baseUrl}/health/liveliness?provider=unknown-provider`
+    );
+    assert.equal(unknownRes.status, 400);
+
+    // 5. Wedged turn isolation: start a long-running turn on gemini
+    let turnDone = false;
+    releaseTurn = () => {};
+    const turnPromise = fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL.gemini,
+        tools: [EXEC_TOOL],
+        input: [userMessage("start")]
+      })
+    }).then(() => {
+      turnDone = true;
+    });
+
+    // Wait until gemini has entered the turn and exceeded wedgedTimeoutMs (50ms)
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // Gemini should now report 503 unavailable
+    const wedgedGeminiRes = await fetch(
+      `${baseUrl}/health/liveliness?provider=opencli-gemini`
+    );
+    assert.equal(wedgedGeminiRes.status, 503);
+    const wedgedGemini = (await wedgedGeminiRes.json()) as {
+      status: string;
+      site: string;
+      error: string;
+    };
+    assert.equal(wedgedGemini.status, "unavailable");
+    assert.equal(wedgedGemini.site, "gemini");
+    assert.match(wedgedGemini.error, /turn has been running/u);
+
+    // ChatGPT is NOT wedged and still reports 200 ok
+    const independentChatgptRes = await fetch(
+      `${baseUrl}/health/liveliness?provider=opencli-chatgpt`
+    );
+    assert.equal(independentChatgptRes.status, 200);
+
+    // Release the blocked turn and verify cleanup
+    if (releaseTurn) releaseTurn();
+    await turnPromise;
+  } finally {
+    server.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

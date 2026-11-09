@@ -80,13 +80,13 @@
     "opencli-chatgpt": {
       "pattern": "^opencli-chatgpt-[a-z0-9][a-z0-9.-]*$",
       "baseUrl": "http://127.0.0.1:4004/v1",
-      "healthUrl": "http://127.0.0.1:4004/health/liveliness",
+      "healthUrl": "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
       "envKey": "CODEX_ROUTER_OPENCLI_API_KEY"
     },
     "opencli-gemini": {
       "pattern": "^opencli-gemini-[a-z0-9][a-z0-9.-]*$",
       "baseUrl": "http://127.0.0.1:4004/v1",
-      "healthUrl": "http://127.0.0.1:4004/health/liveliness",
+      "healthUrl": "http://127.0.0.1:4004/health/liveliness?provider=opencli-gemini",
       "envKey": "CODEX_ROUTER_OPENCLI_API_KEY"
     }
   },

@@ -50,6 +50,13 @@ export type UsageWidgetId =
   | "git-commits-by-workspace"
   | "git-commits-by-provider"
   | "git-commits-by-agent"
+  | "provider-hops"
+  | "provider-hops-over-time"
+  | "provider-hops-by-route"
+  | "provider-hops-by-provider"
+  | "provider-hops-by-role"
+  | "provider-hops-by-workspace"
+  | "provider-hops-by-reason"
   | "skill-events-by-event"
   | "estimated-cost";
 
@@ -97,6 +104,18 @@ export type UsageCompactionUnsupportedFilter = "provider" | "skill";
 
 /** Filters the source does not record on a commit itself. */
 export type UsageGitChangeUnsupportedFilter = "model" | "skill";
+
+/**
+ * Filters the source does not record on a provider hop.
+ *
+ * A hop is a change of the provider serving an agent/role, and it is recorded
+ * on the logical request that observed it. The workspace and the role are
+ * recorded there, so a selection on them describes hops. The provider is not:
+ * the logical request span never carries one provider for a route that may
+ * touch several, so the hop names its own two providers instead. The requested
+ * model and the skill are not recorded on a hop at all.
+ */
+export type UsageProviderHopUnsupportedFilter = "provider" | "model" | "skill";
 
 export type UsageGitChangeStatus =
   "observed" | "not-observed" | "unavailable" | "not-applicable";
@@ -270,6 +289,33 @@ export interface UsageMetricsData {
   /** True when one or more bounded compaction breakdowns may be truncated. */
   readonly contextCompactionsBreakdownsPartial: boolean;
   readonly gitChanges: UsageGitChangeMetrics;
+  /**
+   * Provider hops: changes of the provider serving an agent/role.
+   *
+   * A hop is counted once per change and carries both providers and the reason
+   * for the change, so the count answers "how often" and the breakdowns answer
+   * "which way" and "why". Every value is null when the source did not observe
+   * it: an empty aggregate is not a measured zero.
+   */
+  readonly providerHops: number | null;
+  /** Source-confirmed provider hops per logical routed request, as a percent. */
+  readonly providerHopRatePercent: number | null;
+  /** Provider hops per time bucket. */
+  readonly providerHopsOverTime: readonly UsageTimeBucketCount[] | null;
+  /** Provider hops grouped by the provider pair the agent moved between. */
+  readonly providerHopsByRoute: readonly UsageBreakdownCount[] | null;
+  /** Provider hops grouped by the provider that now serves the agent. */
+  readonly providerHopsByProvider: readonly UsageBreakdownCount[] | null;
+  /** Provider hops grouped by the agent role that changed provider. */
+  readonly providerHopsByRole: readonly UsageBreakdownCount[] | null;
+  /** Provider hops grouped by workspace. */
+  readonly providerHopsByWorkspace: readonly UsageBreakdownCount[] | null;
+  /** Provider hops grouped by why the provider changed. */
+  readonly providerHopsByReason: readonly UsageBreakdownCount[] | null;
+  /** Filters the source does not record on a provider hop. */
+  readonly providerHopsUnsupportedFilters: readonly UsageProviderHopUnsupportedFilter[];
+  /** True when one or more bounded provider-hop breakdowns may be truncated. */
+  readonly providerHopsBreakdownsPartial: boolean;
   readonly skillEventsByEvent:
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:

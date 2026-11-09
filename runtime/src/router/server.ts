@@ -26,6 +26,10 @@ import {
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import {
+  discoverProviderQuota,
+  refreshAllProviderQuotas
+} from "../providers/quota-discovery.ts";
+import {
   checkProvider,
   codexState,
   handle,
@@ -39,6 +43,7 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
+import { ROUTES } from "./routing.ts";
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -173,6 +178,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     void handle(request, response);
   });
   let livePollStarted = false;
+  let quotaPollInterval: ReturnType<typeof setInterval> | null = null;
   let controlServer: Server | null = null;
   let cleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
@@ -187,7 +193,14 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   setControlApiProviderCheckSource((provider) =>
     checkProvider(
       provider,
-      modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null
+      modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null,
+      IS_MAIN
+        ? (name) =>
+            discoverProviderQuota(name, {
+              now: Date.now(),
+              syncCooldowns: true
+            })
+        : null
     )
   );
   const closePlaytestingSafely = (): Promise<void> => {
@@ -234,6 +247,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       codexState.collector.stopLivePoll();
       codexState.livePollStarted = false;
     }
+    if (quotaPollInterval !== null) {
+      clearInterval(quotaPollInterval);
+      quotaPollInterval = null;
+    }
     if (controlServer?.listening) controlServer.close();
     modelDiscovery?.stop();
     if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);
@@ -272,6 +289,14 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         }
         void refreshCodexState();
         modelDiscovery?.start();
+        if (IS_MAIN) {
+          const providerNames = ROUTES.map((route) => route.provider);
+          void refreshAllProviderQuotas(providerNames).catch(() => undefined);
+          quotaPollInterval = setInterval(() => {
+            void refreshAllProviderQuotas(providerNames).catch(() => undefined);
+          }, 120_000);
+          quotaPollInterval.unref();
+        }
         const controlListener = configuredControlApiListener(port);
         if (controlListener) {
           controlServer = createControlApiServer();

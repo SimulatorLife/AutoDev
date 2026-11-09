@@ -1419,6 +1419,29 @@ The Console and OpenLIT agree on the widget set exactly: the Usage client reject
 
 Live, after the router restarted with the new telemetry: a compaction served through the router carries `autodev.compaction.provider=codex` on its own span, the `autodev.context.compactions` counter carries the same `gen_ai.provider.name=codex`, and the logical-request span still carries **no** `gen_ai.provider.name` -- the three readings agree, and the parent still refuses to name a provider it cannot know.
 
+## Nobody could see an agent change provider
+
+The router picks a provider per request. The provider an agent runs on is therefore not fixed for the life of a session, and nothing in the product measured what happens when it changes. A turn that started on one provider and was served by another is two different conversations -- and for a provider that keeps turn state between requests, the second one continues work the first one started. The routing contract had already recorded that a turn can hop providers mid-step and had made the router remember which provider issued each tool call so the result could go back to it, but the *hop itself* left no evidence: the only trace of it was the gap between two requests that named different providers.
+
+The gap is not evidence a reader can use. It needs the pair, the reason, the role and the workspace, and it needs them at the moment the change happened.
+
+**A hop is a fact about the request that observed it, not about the agent's whole history.** The router's request already knows what it saw of the providers it passed over -- one failed, one was cooling down, one was disabled -- and the agent's own record knows which provider served it last. Together they say whether the agent's provider changed and why:
+
+- **The identity is the agent and its role.** A session that hands work from its orchestrator to a subagent changes role without changing agent, and that handover is not a hop; keying by the session alone would have counted every delegation as one.
+- **The reason is a closed vocabulary.** `fallback` (the provider the agent was on failed while serving the request), `skipped` (it was never tried: disabled, cooling down, or unable to serve the role) and `reselection` (the provider changed and nothing the router observed explains it). An open-ended reason would have become a telemetry attribute with no bounded value set, and a breakdown nobody could read.
+- **A failure class outside the bounded vocabulary is dropped, not published.** A hop whose class is not one the router knows is still a hop; it is a hop without its class.
+- **The provider the request did not reach cannot explain the hop.** When the router passed over a provider that was not the agent's, the change is a `reselection` -- the agent's provider is still the one the hop came from.
+
+The hop is published on the request's own logical-request span, under hop-scoped attributes -- `autodev.hop.from`, `autodev.hop.to`, `autodev.hop.route` (the pair as one label, because "we keep moving from Claude to Minimax" is a statement about a pair), `autodev.hop.reason` and, when one applies, `autodev.hop.failure_class`. **The logical-request span still carries no `gen_ai.provider.name`**: a logical route can touch several providers, and the hop names only the two providers it is about.
+
+That is also why the hop panels **fail closed** under a provider, requested-model or Skill selection, the same way the compaction panels do: those dimensions are not recorded on this signal, so the panels say the evidence is unavailable rather than quietly showing every provider's hops under a filter that reads as if it had narrowed them. The provider breakdown the hop *does* carry is its own -- grouped by the provider that now serves the agent.
+
+The OpenLIT side is patch 75, `75-autodev-provider-hops-usage.patch`: seven widgets over the same `service.name=autodev-router` and `autodev.routed_request` scope, filtered by the presence of `autodev.hop.reason` -- the count, the time series, and the breakdowns by provider pair, by provider, by agent role, by workspace and by reason. The whole 75-patch series applies cleanly to the pinned revision, and the fork's own seed and usage-route suites pass on the patched tree.
+
+The Console reads those widgets through the fixed Usage contract: the Data client parses them into typed metrics, reports the provider/model/Skill filters this signal cannot answer, and the Usage page renders the hop count, the hop rate over the same scope and range as the logical-request denominator, the time series and the breakdowns. The browser acceptance reads the hop evidence from the Usage fixture and checks that the count and the breakdowns beside it describe the same hops.
+
+**What remains open:** the patched OpenLIT image has to be rebuilt and deployed before the live Usage API answers the new widgets, and live ClickHouse ingestion has to be verified against a router that has published hops. The provider, requested-model and Skill filters remain unsupported for this signal by construction, not by omission.
+
 ## The Prompt Hub was a second authority that could not win
 
 The fork shipped a Prompt Hub: four pages under `/prompt-hub`, six API routes under `/api/prompt`, three components, and a ClickHouse-backed store with its own version and compile history. It looked like a second copy of the Console's Prompts surface, and it was one -- but the duplication was not the interesting part.

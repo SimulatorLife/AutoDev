@@ -927,6 +927,8 @@ function* translateAssistantEvent(
   yield { kind: "message_stop" };
 }
 
+let latestClaudeRateLimitInfo: JsonRecord | null = null;
+
 /**
  * Translates one parsed stream-json line, mutating `state` and yielding the
  * turn events it carries. Throws when the line reports a provider failure.
@@ -939,6 +941,12 @@ function* translateClaudeStreamLine(
 ): Generator<ClaudeCliEvent, void, void> {
   const eventType = event.type;
   if (eventType === "rate_limit_event") {
+    if (event.rate_limit_info && typeof event.rate_limit_info === "object") {
+      latestClaudeRateLimitInfo = {
+        ...(event.rate_limit_info as JsonRecord),
+        observedAt: new Date().toISOString()
+      };
+    }
     const rateError = rateLimitEventError(event);
     if (rateError !== null) throw rateError;
     return;
@@ -1376,7 +1384,8 @@ async function handle(
     sendJson(response, 200, {
       status: "ok",
       turns: turns.status(),
-      spawnSessions: spawnSessions.status()
+      spawnSessions: spawnSessions.status(),
+      rateLimitInfo: latestClaudeRateLimitInfo
     });
     return;
   }

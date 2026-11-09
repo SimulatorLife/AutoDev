@@ -586,30 +586,44 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   ladder.
 - **Antigravity usage limits follow its separate model-family pools.** Its
   usage panel separates Gemini models from Claude/GPT models. The router maps
-  Antigravity's Gemini ids to a first-party pool and its effort-suffixed Claude
-  ids to a shared third-party pool, so exhausting Claude Opus or Sonnet does
-  not take Gemini offline (and a Gemini limit does not disable Claude). This
-  scopes quota failures only; other Antigravity failures and all other
-  providers keep their provider-wide cooldown behavior. A successful request
-  clears only its own pool. Antigravity CLI limits currently arrive as inferred
-  stderr text, so they get a transient pool cooldown rather than a persisted
-  hard reset; AutoDev does not know remaining quota percentages. Use
-  Antigravity's [`/usage` panel](https://antigravity.google/docs/cli/commands/usage/)
-  for upstream quota totals.
+  Antigravity's Gemini ids to a `first_party` pool and its effort-suffixed Claude
+  ids to a shared `third_party` pool, so exhausting Claude Opus or Sonnet does
+  not take Gemini offline (and a Gemini limit does not disable Claude). All
+  rate-limit failure classes (`quota_exhausted`, `session_limit`, and
+  `throttled`) arm that pool scope on Antigravity; non-rate-limit failures and
+  single-pool providers keep their provider-wide cooldown behavior. A successful
+  request clears only its own pool, and `COOLDOWNS.get("antigravity", now)`
+  reports a provider-level cooldown only when a provider-wide cooldown is active
+  or both `first_party` and `third_party` pools are simultaneously cooling.
 
-  Only the `quota_exhausted` class arms that pool scope, so the classification is
-  load-bearing rather than cosmetic. Antigravity states an exhausted
-  subscription as "Individual quota reached. Please upgrade your subscription to
-  increase your limits. Resets in 24m43s.", and the `429` in the surrounding
-  `RESOURCE_EXHAUSTED (code 429)` once matched the rate-limit catch-all ahead of
-  the quota wording. That classed it `throttled`, which is neither a hard limit
-  nor pool-scoped: the cooldown covered the whole provider, so a spent Gemini
-  quota took an assigned Claude model offline with it — the opposite of what this
-  section describes — and it retried on the transient ladder into a quota that
-  had already answered. The reset is also stated as a remaining duration
-  (`24m43s`, `14h23m32s`) rather than a clock time, which the absolute-time
-  pattern could not read; both the class and the duration are parsed now, so
-  `/status` and the 503 body report the window the provider actually named.
+- **Per-provider, per-subprovider, and per-model quota discovery.**
+  `runtime/src/providers/quota-discovery.ts` discovers live usage windows (5-hour
+  limits, weekly limits, `% used` / `% remaining`, and reset times) and exposes
+  them on `/control/providers` (`provider.quota` and `provider.health.quota`),
+  overlaying active router pool/provider cooldowns and synchronizing exhausted
+  windows or pools into `COOLDOWNS`:
+  - **MiniMax:** `mmx quota --output json` (5-hour token interval and weekly
+    limits).
+  - **Codex:** ChatGPT `/backend-api/wham/usage` and live `x-codex-*` upstream
+    response rate-limit headers (5-hour primary and weekly secondary windows).
+  - **Antigravity:** Google Cloud Code `v1internal:fetchAvailableModels` using
+    the CLI's keychain/file OAuth token, separating `first_party` (Gemini) and
+    `third_party` (Claude) subprovider quota pools and per-model quotas.
+  - **Copilot:** `gh api /copilot_internal/user` (`premium_interactions` and
+    `chat` snapshots).
+  - **Claude:** Claude bridge `/health` `rateLimitInfo` captured from live
+    `rate_limit_event` stream events, with fallback to Anthropic OAuth
+    `/api/oauth/usage`.
+
+  In the Console UI, inline quota bars and reset countdowns render in each
+  provider's `Status` cell on `/providers` and in each model's row on
+  `/providers?tab=models`, while dedicated **Quota & usage limits** panels render
+  on `/providers/:provider` (`ProviderDetailView`) and
+  `/providers/:provider/models/:model` (`ModelDetailView`).
+  `providerHealthReadiness` in `@simulatorlife/autodev-core` keeps a multi-pool
+  provider `ready` whenever at least one pool has remaining usage and is not in
+  cooldown, and does not leave a provider stuck in `unavailable` after a
+  rate-limit cooldown has already expired.
 
 - **A route that cannot serve a request is not a provider failure.** A bridge
   whose transport cannot carry the request's content refuses it, before the
@@ -660,7 +674,18 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 Selection then runs in up to three passes, and only answers if all three come up
 empty:
 
-1. **Primary.** Every candidate that is not cooling, in tier order.
+1. **Primary (with sticky session continuity and short-cooldown waiting).** Every
+   candidate that is not cooling, in tier order, with the session's sticky
+   `preferredProvider` hoisted first (both across an orchestrator session and
+   across a subagent's `thread:<threadId>` sub-session, even between tool calls).
+   When the sticky preferred provider is in a short non-config cooldown (or
+   hits a transient rate-limit/blip that sets a short cooldown) that expires
+   within `CODEX_ROUTER_STICKY_COOLDOWN_WAIT_MS` (default 15s for role requests,
+   and at least `CODEX_ROUTER_PROVIDER_COOLDOWN_MS` / 30s for orchestrator
+   turns), the router waits out that short cooldown and retries the sticky
+   provider once before switching providers mid-session. If the cooldown is a
+   longer quota window, the router falls back to the next candidate without
+   waiting.
 2. **Last resort.** The candidates pass 1 skipped, capped at
    `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Providers with no live
    agent go first, so concurrent exhausted requests spread over the skipped
@@ -2373,6 +2398,26 @@ single list; the route patterns and the site registry in
   not render in a hidden or covered window, and opencli then selects no model
   at all ("model discovery returned no selectable models"); such a turn is
   asked with the model Gemini already has rather than failing.
+- **Per-site health isolation and live probe resilience.** Both opencli
+  providers share the `:4004` bridge process, but each route probes its own
+  site via `http://127.0.0.1:4004/health/liveliness?provider=<provider>`.
+  The bridge tracks queue depth and turn activity per site; a wedged turn or
+  stuck tab on one site (running past its turn timeout) reports `503` for
+  that provider while the other continues answering `200 ok`. Live probes
+  retry transient timeouts once with an extended deadline before declaring a
+  failure. Operator checks are observational: a failing probe records
+  evidence without deepening cooldowns or incrementing failure streaks, and
+  model listing failures are reported in `check.models` without failing the
+  provider health verdict. Cancelled turns escalate from `SIGTERM` to `SIGKILL`
+  after a 2-second grace period, preventing abandoned commands from holding
+  the site session lock busy.
+- **Request refusals do not pollute provider health.** A request refused
+  before the turn starts -- an oversized Gemini prompt on argv (over 100 KB),
+  an unsupported capability, or an unknown model -- returns a 400 refusal
+  (`unsupported_request`, `invalid_model`). Refusals are classified as client
+  and request failures and are not recorded against the provider health or
+  lastFailure, so an individual prompt exceeding limits never flips the
+  Console provider badge to Unavailable.
 - **Streaming and failures.** A streamed turn (Codex always streams) opens at
   once: headers and `response.created` go out before the site is asked, and a
   `response.in_progress` event follows every 15 s. A site turn can outlast five
@@ -2611,6 +2656,42 @@ It is a preference, not a pin: a disabled or cooling provider is skipped as
 usual and the next provider continues from the replayed history. An
 orchestrator with no owned calls to answer keeps its existing session
 preference.
+
+### Measuring a provider hop
+
+Affinity keeps a turn's tool results with the provider that asked for them. It
+does not keep the *agent* on one provider for the life of its session: the
+routing tiers, the cooldowns and the operator's own switches all move an agent
+from one provider to another, and when that happens the agent's work moved with
+it.
+
+A hop is therefore measured, because "we keep changing providers" is otherwise
+only visible as the gap between two requests that named different providers.
+The router tracks the provider that last served each agent (its live-activity
+subject, together with the role it runs under, so a delegation from an
+orchestrator to a subagent is not a hop) and publishes a hop on the request that
+observed the change:
+
+- `autodev.hop.from` and `autodev.hop.to` -- the two providers.
+- `autodev.hop.route` -- the pair as one label, because an operator's question
+  is about a pair ("we keep moving from Claude to Minimax"), not about either
+  provider alone.
+- `autodev.hop.reason` -- `fallback` when the provider the agent was on failed
+  while serving the request, `skipped` when it was never tried (disabled,
+  cooling down, or unable to serve the role), `reselection` when nothing the
+  router observed explains the change.
+- `autodev.hop.failure_class` -- the bounded class that explains a `fallback`
+  or a `skip`, when one applies.
+
+The attributes are hop-scoped. The logical-request span still carries no
+`gen_ai.provider.name`, because a logical route can touch several providers and
+a hop names only the two it is about. The hop lives with the request because
+that is the thing that observed it, and the Usage page reads it from the same
+trace the request it belongs to is read from.
+
+The tracker is bounded: it remembers the current provider of the most recently
+served agents and forgets the oldest beyond that bound, so a long-lived router
+cannot grow its state with the number of agents it has ever seen.
 
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth

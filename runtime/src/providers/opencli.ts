@@ -138,6 +138,8 @@ export interface OpencliBridgeOptions {
   readonly unsentRetryMs?: number;
   /** Keep-alive cadence on a streamed turn. */
   readonly keepAliveMs?: number;
+  /** How long a turn may run before the site is reported wedged (turnTimeoutSeconds + 30s by default). */
+  readonly wedgedTimeoutMs?: number;
 }
 
 /** opencli's code for a site session another command still holds. */
@@ -229,7 +231,17 @@ export function processRunner(
       child.stderr.on("data", (chunk: string) => {
         stderr = (stderr + chunk).slice(-4000);
       });
-      const onAbort = () => child.kill("SIGTERM");
+      const onAbort = () => {
+        child.kill("SIGTERM");
+        const killTimer = setTimeout(() => {
+          if (!child.killed) {
+            try {
+              child.kill("SIGKILL");
+            } catch {}
+          }
+        }, 2000);
+        if (typeof killTimer.unref === "function") killTimer.unref();
+      };
       signal.addEventListener("abort", onAbort, { once: true });
       child.once("error", (error) => {
         live.delete(child);
@@ -261,16 +273,31 @@ export function processRunner(
 class SiteQueues {
   private readonly tails = new Map<OpencliSite, Promise<unknown>>();
   private readonly depth = new Map<OpencliSite, number>();
+  private readonly activeSince = new Map<OpencliSite, number>();
 
   run<T>(site: OpencliSite, task: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(site) ?? Promise.resolve();
     this.depth.set(site, (this.depth.get(site) ?? 0) + 1);
     const next = previous
       .catch(() => {})
-      .then(task)
-      .finally(() => this.depth.set(site, (this.depth.get(site) ?? 1) - 1));
+      .then(() => {
+        this.activeSince.set(site, Date.now());
+        return task();
+      })
+      .finally(() => {
+        this.activeSince.delete(site);
+        this.depth.set(site, (this.depth.get(site) ?? 1) - 1);
+      });
     this.tails.set(site, next);
     return next;
+  }
+
+  activeSinceFor(site: OpencliSite): number | null {
+    return this.activeSince.get(site) ?? null;
+  }
+
+  depthFor(site: OpencliSite): number {
+    return this.depth.get(site) ?? 0;
   }
 
   status(): Record<string, number> {
@@ -1001,8 +1028,50 @@ export function createOpencliBridge(
     request: IncomingMessage,
     response: ServerResponse
   ): Promise<void> {
-    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const pathname = url.pathname;
     if (pathname === "/health" || pathname === "/health/liveliness") {
+      const requested = url.searchParams.get("provider");
+      if (requested) {
+        if (!OPENCLI_PROVIDERS.includes(requested as OpencliProvider)) {
+          sendJson(response, 400, {
+            status: "error",
+            error: "Unknown opencli provider: " + requested
+          });
+          return;
+        }
+        const site = OPENCLI_PROVIDER_SITES[requested as OpencliProvider];
+        const activeSince = queues.activeSinceFor(site);
+        const wedgedThresholdMs =
+          options.wedgedTimeoutMs ??
+          options.turnTimeoutSeconds * 1000 + 30_000;
+        const isWedged =
+          activeSince !== null &&
+          Date.now() - activeSince > wedgedThresholdMs;
+        if (isWedged) {
+          sendJson(response, 503, {
+            status: "unavailable",
+            provider: requested,
+            site,
+            error: "opencli " + site + " turn has been running for " + Math.round((Date.now() - activeSince) / 1000) + "s"
+          });
+          return;
+        }
+        const cachedModels = modelLists.get(site);
+        sendJson(response, 200, {
+          status: "ok",
+          provider: requested,
+          site,
+          queueDepth: queues.depthFor(site),
+          queued: queues.status(),
+          modelsObserved: Boolean(
+            cachedModels && cachedModels.models.length > 0
+          ),
+          modelsCount: cachedModels?.models.length ?? 0,
+          conversations: ledger.size
+        });
+        return;
+      }
       sendJson(response, 200, {
         status: "ok",
         provider: PROVIDER,

@@ -67,7 +67,10 @@ import {
   unsupportedProviderModels
 } from "./provider-model-discovery.ts";
 import {
+  formatQuotaResetRemaining,
+  ProviderQuotaInlineSummary,
   ProviderStatusBadge,
+  resolveModelQuota,
   resolveProviderStatus
 } from "./provider-status.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
@@ -267,11 +270,22 @@ function providerColumns(
       // title. The control is `shrink-0`, so it stays whole and visible at the
       // badge's right-hand end however far the word is cut.
       weight: 168,
-      cell: (provider) =>
-        React.createElement(ProviderStatusBadge, {
+      cell: (provider) => {
+        const badge = React.createElement(ProviderStatusBadge, {
           provider,
           returnTo: providersPath()
-        })
+        });
+        const quotaSummary = ProviderQuotaInlineSummary({ provider });
+        if (quotaSummary === null) {
+          return badge;
+        }
+        return React.createElement(
+          "div",
+          { className: "flex min-w-0 flex-col items-start" },
+          badge,
+          quotaSummary
+        );
+      }
     },
     {
       id: "activeAgents",
@@ -345,15 +359,26 @@ function providerColumns(
  */
 function modelColumns(
   returnTo: string,
-  liveAgents: ControlApiLiveAgentCounts | null | undefined
+  liveAgents: ControlApiLiveAgentCounts | null | undefined,
+  providersById?: ReadonlyMap<string, ControlApiProviderRecord>
 ): ColumnDef<ProviderModelRow>[] {
   return [
     {
       id: "model",
       header: "Model",
       weight: 288,
-      cell: (model) =>
-        React.createElement(
+      cell: (model) => {
+        const providerRecord = providersById?.get(model.provider);
+        const modelQuota = resolveModelQuota(providerRecord, model.id);
+        const quotaReset = modelQuota
+          ? formatQuotaResetRemaining(
+              modelQuota.resetsAt ??
+                modelQuota.cooldown?.resetsAt ??
+                modelQuota.cooldown?.until ??
+                null
+            )
+          : null;
+        return React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
           model.enablement === null
@@ -381,8 +406,29 @@ function modelColumns(
                 "span",
                 { className: MUTED_META_CLASS },
                 model.displayName
+              ),
+          modelQuota === null
+            ? null
+            : React.createElement(
+                "span",
+                {
+                  className: `${MUTED_META_CLASS} tabular-nums`,
+                  "data-model-quota": model.id
+                },
+                [
+                  modelQuota.pool ? `pool: ${modelQuota.pool}` : null,
+                  modelQuota.status === "unlimited"
+                    ? "Unlimited"
+                    : modelQuota.usedPercent !== null
+                      ? `${Math.round(modelQuota.usedPercent)}% used`
+                      : modelQuota.status,
+                  quotaReset ? `resets ${quotaReset}` : null
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               )
-        )
+        );
+      }
     },
     {
       id: "provider",
@@ -625,14 +671,19 @@ function ProvidersTab({
 }
 
 function ModelsTab({
+  providers,
   models,
   modelDiscovery,
   runtime
 }: {
+  readonly providers: ControlApiProvidersResponse;
   readonly models: ProvidersModelsState;
   readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime: ControlApiRuntimeResponse | undefined;
 }): React.JSX.Element {
+  const providersById = new Map(
+    providers.providers.map((entry) => [entry.id, entry] as const)
+  );
   const modelRows = providerModelRows(
     models.status === "available" ? models.data.models : null,
     modelDiscovery
@@ -737,7 +788,11 @@ function ModelsTab({
       ),
       React.createElement<DataTableProps<ProviderModelRow>>(DataTable, {
         data: modelRows,
-        columns: modelColumns(providersPath("models"), runtime?.liveAgents),
+        columns: modelColumns(
+          providersPath("models"),
+          runtime?.liveAgents,
+          providersById
+        ),
         keyExtractor: (model: ProviderModelRow) =>
           `${model.provider}/${model.id}`,
         emptyMessage:
@@ -855,7 +910,12 @@ export function ProvidersView({
       ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
       : null,
     tab === "models"
-      ? React.createElement(ModelsTab, { models, modelDiscovery, runtime })
+      ? React.createElement(ModelsTab, {
+          providers,
+          models,
+          modelDiscovery,
+          runtime
+        })
       : React.createElement(ProvidersTab, {
           providers,
           modelDiscovery,

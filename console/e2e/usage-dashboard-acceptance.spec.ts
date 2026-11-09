@@ -172,6 +172,33 @@ test("the breakdown chart draws the measured breakdown, and agrees with the coun
   expect(total).toBe(Number(LOGICAL_REQUESTS));
 });
 
+test("the provider hop evidence names both providers, the reason and the place", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  // The hop count and the breakdowns beside it describe the same three hops:
+  // two away from Claude and one that nothing observed explains. A card that
+  // disagreed with its own breakdown would be two claims, and the reader
+  // could not tell which one was wrong.
+  await expect(statValue(page, "Provider Hops")).toHaveText("3");
+  const route = page.getByRole("list", {
+    name: "Provider hops by the provider pair the agent moved between"
+  });
+  await expect(route).toBeVisible();
+  await expect(route.getByText("claude → minimax")).toBeVisible();
+  await expect(route.getByText("claude → antigravity")).toBeVisible();
+
+  // The reason is what makes the count actionable, so it is shown next to it.
+  const reason = page.getByRole("list", {
+    name: "Provider hops by why the provider changed"
+  });
+  await expect(reason).toBeVisible();
+  await expect(reason.getByText("fallback")).toBeVisible();
+  await expect(reason.getByText("reselection")).toBeVisible();
+});
+
 test("the filters tell an observed dimension from an unobserved one", async ({
   page
 }) => {

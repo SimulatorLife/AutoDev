@@ -47,7 +47,13 @@ import {
   providerModelRows,
   unsupportedProviderModels
 } from "./provider-model-discovery.ts";
-import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
+import {
+  CredentialBadge,
+  formatQuotaResetRemaining,
+  ProviderHealthBadge,
+  resolveModelQuota,
+  resolveProviderQuota
+} from "./provider-status.ts";
 import {
   providerUsagePath,
   type ProviderUsageSummary
@@ -193,26 +199,60 @@ function ModelsPanel({
     {
       id: "model",
       header: "Model",
-      cell: (model) =>
-        model.enablement === null
-          ? React.createElement(
-              "span",
-              {
-                className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
-                "data-model-id": model.id,
-                title: model.id
-              },
-              model.id
+      cell: (model) => {
+        const modelQuota = resolveModelQuota(provider, model.id);
+        const quotaReset = modelQuota
+          ? formatQuotaResetRemaining(
+              modelQuota.resetsAt ??
+                modelQuota.cooldown?.resetsAt ??
+                modelQuota.cooldown?.until ??
+                null
             )
-          : React.createElement(
-              NavigationLink,
-              {
-                href: modelPath(provider.id, model.id),
-                className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
-                "aria-label": `Open model ${model.id}`
-              },
-              model.id
-            )
+          : null;
+        return React.createElement(
+          "div",
+          { className: "flex flex-col gap-0.5" },
+          model.enablement === null
+            ? React.createElement(
+                "span",
+                {
+                  className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
+                  "data-model-id": model.id,
+                  title: model.id
+                },
+                model.id
+              )
+            : React.createElement(
+                NavigationLink,
+                {
+                  href: modelPath(provider.id, model.id),
+                  className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
+                  "aria-label": `Open model ${model.id}`
+                },
+                model.id
+              ),
+          modelQuota === null
+            ? null
+            : React.createElement(
+                "span",
+                {
+                  className: `${MUTED_META_CLASS} tabular-nums`,
+                  "data-model-quota": model.id
+                },
+                [
+                  modelQuota.pool ? `pool: ${modelQuota.pool}` : null,
+                  modelQuota.status === "unlimited"
+                    ? "Unlimited"
+                    : modelQuota.usedPercent !== null
+                      ? `${Math.round(modelQuota.usedPercent)}% used`
+                      : modelQuota.status,
+                  quotaReset ? `resets ${quotaReset}` : null
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              )
+        );
+      }
     },
     {
       id: "tiers",
@@ -600,7 +640,11 @@ function HealthPanel({
                   health.lastFailure.failureClass ?? "unclassified",
                   health.lastFailure.status === null
                     ? null
-                    : `HTTP ${health.lastFailure.status}`
+                    : `HTTP ${health.lastFailure.status}`,
+                  health.lastFailure.pool
+                    ? `pool ${health.lastFailure.pool}`
+                    : null,
+                  health.lastFailure.model ?? null
                 ]
                   .filter(Boolean)
                   .join(" · ")
@@ -608,6 +652,227 @@ function HealthPanel({
             )
       )
     )
+  );
+}
+
+export function ProviderQuotaLimitsPanel({
+  provider,
+  nowMs = Date.now()
+}: {
+  readonly provider: ControlApiProviderRecord;
+  readonly nowMs?: number;
+}): React.JSX.Element | null {
+  const quota = resolveProviderQuota(provider);
+  const poolCooldowns = provider.health?.poolCooldowns;
+  const hasPoolCooldowns =
+    poolCooldowns !== undefined && Object.keys(poolCooldowns).length > 0;
+  if (!quota && !hasPoolCooldowns) {
+    return null;
+  }
+
+  return React.createElement(
+    "section",
+    {
+      className: DETAIL_PANEL_CLASS,
+      "data-section": "provider-quota-limits",
+      "data-provider-quota-status": quota?.summaryStatus ?? "unavailable"
+    },
+    React.createElement(
+      "div",
+      { className: "mb-3 flex flex-wrap items-center justify-between gap-2" },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Quota & usage limits"
+      ),
+      quota?.plan
+        ? React.createElement(
+            "span",
+            { className: `font-mono ${MUTED_META_CLASS}` },
+            `Plan: ${quota.plan}`
+          )
+        : null
+    ),
+    quota?.updatedAt
+      ? React.createElement(
+          "p",
+          { className: `mb-3 ${MUTED_META_CLASS}` },
+          `Source: ${quota.source} · Updated `,
+          formatTimestamp(quota.updatedAt)
+        )
+      : null,
+    quota?.status === "unavailable"
+      ? React.createElement(
+          "p",
+          { className: MUTED_BODY_CLASS },
+          quota.error ?? "Live quota limits could not be read for this provider."
+        )
+      : null,
+    quota && quota.windows.length > 0
+      ? React.createElement(
+          DetailGrid,
+          { columns: 2, className: "mb-4" },
+          ...quota.windows.map((window) => {
+            const resetRemaining = formatQuotaResetRemaining(
+              window.resetsAt,
+              nowMs
+            );
+            const usedSummary =
+              window.status === "unlimited"
+                ? "Unlimited"
+                : window.usedPercent !== null
+                  ? `${Math.round(window.usedPercent)}% used (${Math.round(
+                      window.remainingPercent ?? 100 - window.usedPercent
+                    )}% remaining)`
+                  : window.status;
+            const countSummary =
+              window.used != null && window.limit != null
+                ? `${window.used} / ${window.limit}${window.unit ? ` ${window.unit}` : ""}`
+                : null;
+            return React.createElement(
+              DetailValue,
+              {
+                key: window.id,
+                label: window.label
+              },
+              React.createElement(
+                "div",
+                {
+                  className: "flex flex-col gap-1 tabular-nums",
+                  "data-quota-window": window.id
+                },
+                React.createElement(
+                  "span",
+                  { className: "font-mono text-xs text-fg" },
+                  [usedSummary, countSummary].filter(Boolean).join(" · ")
+                ),
+                window.usedPercent === null
+                  ? null
+                  : React.createElement(
+                      "div",
+                      {
+                        className:
+                          "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
+                      },
+                      React.createElement("div", {
+                        className:
+                          window.status === "exhausted"
+                            ? "h-full bg-danger"
+                            : window.status === "warning"
+                              ? "h-full bg-warning"
+                              : "h-full bg-accent",
+                        style: {
+                          width: `${Math.max(
+                            0,
+                            Math.min(100, Math.round(window.usedPercent))
+                          )}%`
+                        }
+                      })
+                    ),
+                window.resetsAt
+                  ? React.createElement(
+                      "span",
+                      { className: MUTED_META_CLASS },
+                      "Resets ",
+                      resetRemaining ? `${resetRemaining} (` : "",
+                      formatTimestamp(window.resetsAt),
+                      resetRemaining ? ")" : ""
+                    )
+                  : null
+              )
+            );
+          })
+        )
+      : null,
+    quota?.pools && quota.pools.length > 0
+      ? React.createElement(
+          "div",
+          { className: "mt-3", "data-section": "provider-quota-pools" },
+          React.createElement(
+            "h4",
+            { className: `mb-2 ${MUTED_META_CLASS}` },
+            "Subprovider quota pools"
+          ),
+          React.createElement(
+            DetailGrid,
+            { columns: 2 },
+            ...quota.pools.map((pool) => {
+              const resetRemaining = formatQuotaResetRemaining(
+                pool.resetsAt ??
+                  pool.cooldown?.resetsAt ??
+                  pool.cooldown?.until ??
+                  null,
+                nowMs
+              );
+              const usedSummary =
+                pool.usedPercent !== null
+                  ? `${Math.round(pool.usedPercent)}% used (${Math.round(
+                      pool.remainingPercent ?? 100 - pool.usedPercent
+                    )}% remaining)`
+                  : pool.status;
+              return React.createElement(
+                DetailValue,
+                {
+                  key: pool.pool,
+                  label: pool.label
+                },
+                React.createElement(
+                  "div",
+                  {
+                    className: "flex flex-col gap-1 tabular-nums",
+                    "data-quota-pool": pool.pool
+                  },
+                  React.createElement(
+                    "span",
+                    { className: "font-mono text-xs text-fg" },
+                    usedSummary
+                  ),
+                  pool.usedPercent === null
+                    ? null
+                    : React.createElement(
+                        "div",
+                        {
+                          className:
+                            "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
+                        },
+                        React.createElement("div", {
+                          className:
+                            pool.status === "exhausted"
+                              ? "h-full bg-danger"
+                              : pool.status === "warning"
+                                ? "h-full bg-warning"
+                                : "h-full bg-accent",
+                          style: {
+                            width: `${Math.max(
+                              0,
+                              Math.min(100, Math.round(pool.usedPercent))
+                            )}%`
+                          }
+                        })
+                      ),
+                  pool.resetsAt
+                    ? React.createElement(
+                        "span",
+                        { className: MUTED_META_CLASS },
+                        "Resets ",
+                        resetRemaining ? `${resetRemaining} (` : "",
+                        formatTimestamp(pool.resetsAt),
+                        resetRemaining ? ")" : ""
+                      )
+                    : null,
+                  pool.models.length > 0
+                    ? React.createElement(
+                        "span",
+                        { className: MUTED_META_CLASS },
+                        `Models: ${pool.models.join(", ")}`
+                      )
+                    : null
+                )
+              );
+            })
+          )
+        )
+      : null
   );
 }
 
@@ -794,6 +1059,7 @@ export function ProviderDetailView({
     }),
     React.createElement(RoutingPanel, { provider, tiers, orchestratorTier }),
     React.createElement(RoutePanel, { provider }),
+    React.createElement(ProviderQuotaLimitsPanel, { provider }),
     React.createElement(HealthPanel, { health: provider.health }),
     usagePanel
   );

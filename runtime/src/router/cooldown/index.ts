@@ -37,7 +37,9 @@ export interface CooldownOptions {
   structured?: boolean;
   /** The model that failed; an `invalid_model` failure cools down only it. */
   model?: string | null;
-  /** Scope `quota_exhausted` to the model's configured family pool. */
+  /** Explicit quota pool name when cooling down a subprovider pool directly. */
+  pool?: string | null;
+  /** Scope `quota_exhausted`, `session_limit`, or `throttled` to the model's configured family pool. */
   scope?: "provider" | "pool";
   detail?: string | null;
 }
@@ -148,7 +150,25 @@ export class ProviderCooldowns {
     model: string | null = null
   ): CooldownEntry | null {
     const providerEntry = liveEntry(this.cooldowns, provider, now);
-    if (providerEntry || model === null) return providerEntry;
+    if (providerEntry) return providerEntry;
+    if (model === null) {
+      if (provider === "antigravity") {
+        const firstParty = liveEntry(
+          this.poolCooldowns,
+          modelKey(provider, "first_party"),
+          now
+        );
+        const thirdParty = liveEntry(
+          this.poolCooldowns,
+          modelKey(provider, "third_party"),
+          now
+        );
+        if (firstParty && thirdParty) {
+          return firstParty.until <= thirdParty.until ? firstParty : thirdParty;
+        }
+      }
+      return null;
+    }
 
     const modelEntry = liveEntry(
       this.modelCooldowns,
@@ -161,6 +181,48 @@ export class ProviderCooldowns {
     return pool === null
       ? null
       : liveEntry(this.poolCooldowns, modelKey(provider, pool), now);
+  }
+
+  getPoolCooldowns(
+    provider: string,
+    now = Date.now()
+  ): Record<string, CooldownEntry> {
+    const prefix = modelKey(provider, "");
+    const result: Record<string, CooldownEntry> = {};
+    for (const key of Array.from(this.poolCooldowns.keys())) {
+      if (!key.startsWith(prefix)) continue;
+      const entry = liveEntry(this.poolCooldowns, key, now);
+      if (!entry) continue;
+      const pool = entry.pool ?? key.slice(prefix.length);
+      result[pool] = entry;
+    }
+    return result;
+  }
+
+  getModelCooldowns(
+    provider: string,
+    now = Date.now()
+  ): Record<string, CooldownEntry> {
+    const prefix = modelKey(provider, "");
+    const result: Record<string, CooldownEntry> = {};
+    for (const key of Array.from(this.modelCooldowns.keys())) {
+      if (!key.startsWith(prefix)) continue;
+      const entry = liveEntry(this.modelCooldowns, key, now);
+      if (!entry) continue;
+      const model = entry.model ?? key.slice(prefix.length);
+      result[model] = entry;
+    }
+    return result;
+  }
+
+  clearPool(provider: string, pool: string): void {
+    const key = modelKey(provider, pool);
+    this.poolCooldowns.delete(key);
+    this.poolFailureStreaks.delete(key);
+  }
+
+  clearModel(provider: string, model: string): void {
+    this.modelCooldowns.delete(modelKey(provider, model));
   }
 
   isCooling(
@@ -237,6 +299,7 @@ export class ProviderCooldowns {
       resetsAt = null,
       structured = false,
       model = null,
+      pool = null,
       scope = "provider",
       detail = null
     }: CooldownOptions = {}
@@ -262,9 +325,12 @@ export class ProviderCooldowns {
       };
     }
     const scopedPool =
-      scope === "pool" ? providerQuotaPool(provider, model) : null;
+      pool ?? (scope === "pool" ? providerQuotaPool(provider, model) : null);
     const poolScoped =
-      scopedPool !== null && failureClass === "quota_exhausted";
+      scopedPool !== null &&
+      (failureClass === "quota_exhausted" ||
+        failureClass === "session_limit" ||
+        failureClass === "throttled");
     const record = (
       kind: CooldownKind,
       durationMs: number,

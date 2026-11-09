@@ -1,0 +1,516 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 1c733e67..837cbba6 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -104,6 +104,13 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+         "context-compactions-by-model",
+         "context-compactions-by-agent",
+         "context-compactions-by-provider",
++        "provider-hops",
++        "provider-hops-over-time",
++        "provider-hops-by-route",
++        "provider-hops-by-provider",
++        "provider-hops-by-role",
++        "provider-hops-by-workspace",
++        "provider-hops-by-reason",
+         "skill-events-by-event",
+         "estimated-cost",
+         "requests-by-workspace"
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index eb30cf4e..a2aafb5d 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -432,6 +432,89 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		]);
+ 	});
+ 
++	it("counts provider hops from the hop attributes the router publishes", () => {
++		// A hop is a fact about one request: the request moved the agent from
++		// one provider to another. The router publishes it on the request's own
++		// span, so the count and the breakdowns read the same source as the
++		// request they belong to.
++		const hops = widgets.find((candidate) => candidate.title === "Provider hops");
++		expect(hops).toBeDefined();
++		expect(hops?.type).toBe("STAT_CARD");
++		expect(hops?.properties).toMatchObject({
++			value: "0.hops",
++			optInVariables: ["workspace", "agent"],
++		});
++		expect(hops?.config.structuredQuery?.query?.filters).toEqual([
++			{
++				target: "attribute",
++				scope: "resource",
++				key: "service.name",
++				op: "eq",
++				value: "autodev-router",
++			},
++			{ target: "spanName", op: "eq", value: "autodev.routed_request" },
++			{
++				target: "attribute",
++				scope: "span",
++				key: "autodev.hop.reason",
++				op: "exists",
++			},
++		]);
++		expect(hops?.config.structuredQuery?.query?.aggregations).toEqual([
++			{ fn: "count", as: "hops" },
++		]);
++		// The logical request span never carries one provider for a route that
++		// may touch several, so the standard provider variable cannot describe
++		// a hop. The hop names its own two providers instead.
++		expect(hops?.properties.optInVariables).not.toContain("provider");
++		expect(hops?.properties.optInVariables).not.toContain("model");
++		expect(hops?.properties.optInVariables).not.toContain("skill");
++	});
++
++	it("breaks provider hops down by the pair, the provider and the reason", () => {
++		const hops = widgets.find((candidate) => candidate.title === "Provider hops");
++		for (const [title, dimension] of [
++			["Provider hops by route", "autodev.hop.route"],
++			["Provider hops by provider", "autodev.hop.to"],
++			["Provider hops by agent role", "autodev.agent.role"],
++			["Provider hops by workspace", "autodev.workspace"],
++			["Provider hops by reason", "autodev.hop.reason"],
++		] as const) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			const query = widget?.config.structuredQuery?.query;
++			expect(widget?.type).toBe("BAR_CHART");
++			expect(widget?.properties).toMatchObject({
++				xAxis: "g0",
++				yAxis: "hops",
++				resultLimit: 20,
++				optInVariables: ["workspace", "agent"],
++			});
++			expect(query?.filters).toEqual(
++				hops?.config.structuredQuery?.query?.filters,
++			);
++			expect(query?.groupBy).toEqual([dimension]);
++			expect(query?.limit).toBe(20);
++			expect(query?.aggregations).toEqual([{ fn: "count", as: "hops" }]);
++		}
++	});
++
++	it("counts provider hops over time from the same request scope", () => {
++		const hops = widgets.find((candidate) => candidate.title === "Provider hops");
++		const timeSeries = widgets.find(
++			(candidate) => candidate.title === "Provider hops over time",
++		);
++		expect(timeSeries?.type).toBe("LINE_CHART");
++		expect(timeSeries?.properties).toMatchObject({
++			xAxis: "label",
++			yAxis: "count",
++			optInVariables: ["workspace", "agent"],
++		});
++		expect(timeSeries?.config.structuredQuery?.mode).toBe("timeseries");
++		expect(timeSeries?.config.structuredQuery?.query?.filters).toEqual(
++			hops?.config.structuredQuery?.query?.filters,
++		);
++	});
++
+ 	it("groups skill observations by event and filters by bounded skill name", () => {
+ 		const widget = widgets.find((candidate) => candidate.title === "Skill events by event");
+ 		expect(widget).toBeDefined();
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index cd6e5303..08f4195a 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -45,6 +45,13 @@ const USAGE_WIDGET_IDS = {
+ 	"context-compactions-by-model": "47c52af8-0c4a-4e85-8a9e-a8f85745b114",
+ 	"context-compactions-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b115",
+ 	"context-compactions-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b117",
++	"provider-hops": "47c52af8-0c4a-4e85-8a9e-a8f85745b118",
++	"provider-hops-over-time": "47c52af8-0c4a-4e85-8a9e-a8f85745b119",
++	"provider-hops-by-route": "47c52af8-0c4a-4e85-8a9e-a8f85745b120",
++	"provider-hops-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b121",
++	"provider-hops-by-role": "47c52af8-0c4a-4e85-8a9e-a8f85745b122",
++	"provider-hops-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b123",
++	"provider-hops-by-reason": "47c52af8-0c4a-4e85-8a9e-a8f85745b124",
+ 	"skill-events-by-event": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
+ 	"estimated-cost": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
+ } as const;
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index 17af97fa..1444f1d4 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -1217,6 +1217,381 @@
+           }
+         }
+       }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b118": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b118",
++      "title": "Provider hops",
++      "description": "Count of logical routed-request spans that observed the provider serving an agent/role change. Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.hops",
++        "color": "#f59e0b",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b119": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b119",
++      "title": "Provider hops over time",
++      "description": "Time-bucketed count of logical routed-request spans that observed the provider serving an agent/role change. Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "LINE_CHART",
++      "properties": {
++        "xAxis": "label",
++        "yAxis": "count",
++        "color": "#f59e0b",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "timeseries",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b120": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b120",
++      "title": "Provider hops by route",
++      "description": "Counts provider hops grouped by the provider pair the agent moved between, published as one label ('from → to'). Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "hops",
++        "color": "#fb7185",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.hop.route"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b121": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b121",
++      "title": "Provider hops by provider",
++      "description": "Counts provider hops grouped by the provider that now serves the agent (autodev.hop.to). Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "hops",
++        "color": "#f59e0b",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.hop.to"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b122": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b122",
++      "title": "Provider hops by agent role",
++      "description": "Counts provider hops grouped by the role the agent ran under (autodev.agent.role). Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "hops",
++        "color": "#F36C06",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.agent.role"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b123": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b123",
++      "title": "Provider hops by workspace",
++      "description": "Counts provider hops grouped by the workspace the agent worked in (autodev.workspace). Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "hops",
++        "color": "#10b981",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.workspace"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b124": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b124",
++      "title": "Provider hops by reason",
++      "description": "Counts provider hops grouped by why the provider changed: the previous provider failed (fallback), was passed over (skipped), or was replaced without an observed cause (reselection). Provider, requested model and skill filters do not apply to this logical-request signal: a hop is recorded on the request that observed it, and that request never carries one provider for a route that may touch several.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "hops",
++        "color": "#8b5cf6",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.hop.reason",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.hop.reason"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "hops"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
+     }
+   },
+   "tags": "[\"autodev\",\"usage\"]",

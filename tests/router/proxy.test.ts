@@ -1347,3 +1347,125 @@ test("a route that refused does not make a request another route could serve un-
     "600"
   );
 });
+
+test(
+  "sticky preferred provider waits out a short cooldown instead of switching providers mid-session",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    const originalFetch = globalThis.fetch;
+    const saved = {
+      LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+      MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+    };
+    process.env.LITELLM_API_KEY = "shared-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+
+    const candidates = [
+      { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" },
+      { ...route("minimax", "MINIMAX_API_KEY"), model: "MiniMax-M2.7" }
+    ];
+
+    const contactedUrls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      contactedUrls.push(String(input));
+      return jsonResponse({
+        id: "resp_sticky_ok",
+        status: "completed",
+        output: []
+      });
+    }) as typeof fetch;
+
+    try {
+      // Place the sticky preferred provider ("claude") into a short 30ms cooldown.
+      const now = Date.now();
+      COOLDOWNS.cooldownProvider("claude", {
+        now: now - (COOLDOWNS.config.providerCooldownMs - 30),
+        failureClass: "throttled",
+        structured: false
+      });
+      assert.equal(COOLDOWNS.isCooling("claude", now, "sonnet"), true);
+
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates,
+          preferredProvider: "claude",
+          role: "orchestrator",
+          subject: "the orchestrator",
+          sessionKey: "sticky-session-1",
+          session: {
+            key: "sticky-session-1",
+            scope: "identified",
+            thread: "sticky-session-1"
+          }
+        },
+        { model: "autodev/orchestrator", input: [], stream: false },
+        false,
+        "req-sticky-wait",
+        null,
+        null
+      );
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(contactedUrls.length, 1);
+      assert.match(
+        contactedUrls[0]!,
+        /^http:\/\/claude\.test\/v1\/responses$/,
+        "must wait out the short cooldown and stay on the sticky provider (claude) rather than switching to minimax"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      agentActivity.reset();
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "Antigravity session_limit and throttled failures cool only the affected subprovider pool",
+  { concurrency: false },
+  () => {
+    COOLDOWNS.clearAll();
+    try {
+      const now = Date.now();
+      COOLDOWNS.cooldownProvider("antigravity", {
+        now,
+        failureClass: "session_limit",
+        resetsAt: new Date(now + 3_600_000).toISOString(),
+        structured: true,
+        model: "claude-opus-5-5-high",
+        scope: "pool"
+      });
+
+      assert.equal(
+        COOLDOWNS.isCooling("antigravity", now, "claude-opus-5-5-high"),
+        true,
+        "Claude model in third_party pool must be cooled"
+      );
+      assert.equal(
+        COOLDOWNS.isCooling("antigravity", now, "claude-sonnet-5-5-medium"),
+        true,
+        "Other Claude models in third_party pool must share the pool cooldown"
+      );
+      assert.equal(
+        COOLDOWNS.isCooling("antigravity", now, "gemini-3.8-flash-high"),
+        false,
+        "Gemini models in first_party pool must remain available"
+      );
+      assert.equal(
+        COOLDOWNS.get("antigravity", now),
+        null,
+        "Provider-level Antigravity cooldown must remain null while first_party pool is available"
+      );
+    } finally {
+      COOLDOWNS.clearAll();
+    }
+  }
+);

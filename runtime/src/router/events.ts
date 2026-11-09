@@ -92,6 +92,14 @@ const UNAVAILABLE_PATTERN = /temporarily unavailable|unavailable/i;
 export const INVALID_MODEL_PATTERN =
   /invalid[ _]model|model name.*(?:invalid|not found)|unknown model/i;
 
+export function isRequestRefusalClass(
+  failureClass: string | null | undefined
+): boolean {
+  return (
+    failureClass === "unsupported_request" || failureClass === "invalid_model"
+  );
+}
+
 export function classifyProviderFailure(
   status: number,
   body: unknown = ""

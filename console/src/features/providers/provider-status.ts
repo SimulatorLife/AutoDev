@@ -1,6 +1,11 @@
 import {
+  type ControlApiModelQuota,
   type ControlApiProviderHealth,
+  type ControlApiProviderQuota,
   type ControlApiProviderRecord,
+  type ControlApiQuotaStatus,
+  type ControlApiQuotaWindow,
+  type ControlApiSubproviderQuota,
   providerHealthReadiness
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -98,6 +103,18 @@ export function resolveProviderStatus(
       };
     }
     const failureClass = provider.health?.lastFailure?.failureClass;
+    if (
+      !failureClass &&
+      provider.health?.quota?.status === "ok" &&
+      provider.health.quota.summaryStatus === "exhausted"
+    ) {
+      return {
+        tone: "unavailable",
+        label: "Quota exhausted",
+        title:
+          "This provider has reached its usage or quota limit until the current window resets."
+      };
+    }
     return {
       tone: "unavailable",
       label: failureClass ? `Unavailable (${failureClass})` : "Unavailable",
@@ -110,6 +127,323 @@ export function resolveProviderStatus(
     title:
       "Healthy, routed and credentialed: this provider can serve requests now."
   };
+}
+
+/**
+ * Resolve the canonical quota snapshot attached to a provider record or its
+ * live health payload.
+ */
+export function resolveProviderQuota(
+  provider: ControlApiProviderRecord | null | undefined
+): ControlApiProviderQuota | null {
+  if (!provider) return null;
+  return provider.quota ?? provider.health?.quota ?? null;
+}
+
+/**
+ * Resolve quota details for one specific model on a provider, falling back to
+ * its subprovider pool or provider-wide windows when applicable.
+ */
+export function resolveModelQuota(
+  provider: ControlApiProviderRecord | null | undefined,
+  modelId: string
+): ControlApiModelQuota | null {
+  const quota = resolveProviderQuota(provider);
+  if (!quota || quota.status !== "ok") return null;
+  const direct = quota.models?.find((entry) => entry.model === modelId);
+  if (direct) return direct;
+  const matchingPool = quota.pools?.find((pool) =>
+    pool.models.includes(modelId)
+  );
+  if (matchingPool) {
+    return {
+      model: modelId,
+      pool: matchingPool.pool,
+      status: matchingPool.status,
+      usedPercent: matchingPool.usedPercent,
+      remainingPercent: matchingPool.remainingPercent,
+      resetsAt: matchingPool.resetsAt,
+      windows: matchingPool.windows,
+      ...(matchingPool.cooldown ? { cooldown: matchingPool.cooldown } : {})
+    };
+  }
+  if (quota.windows.length > 0) {
+    const primary = quota.windows[0]!;
+    return {
+      model: modelId,
+      pool: null,
+      status: quota.summaryStatus,
+      usedPercent: primary.usedPercent,
+      remainingPercent: primary.remainingPercent,
+      resetsAt: primary.resetsAt,
+      windows: quota.windows
+    };
+  }
+  return null;
+}
+
+/**
+ * Format time remaining until a quota window or cooldown resets.
+ */
+export function formatQuotaResetRemaining(
+  resetsAt: string | null | undefined,
+  nowMs = Date.now()
+): string | null {
+  if (!resetsAt) return null;
+  const targetMs = Date.parse(resetsAt);
+  if (!Number.isFinite(targetMs)) return null;
+  const diffMs = targetMs - nowMs;
+  if (diffMs <= 0) return "resetting";
+  const totalMinutes = Math.ceil(diffMs / 60_000);
+  if (totalMinutes < 60) {
+    return `in ${totalMinutes}m`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remMinutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return remMinutes > 0
+      ? `in ${totalHours}h ${remMinutes}m`
+      : `in ${totalHours}h`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const remHours = totalHours % 24;
+  return remHours > 0 ? `in ${days}d ${remHours}h` : `in ${days}d`;
+}
+
+function shortWindowLabel(window: ControlApiQuotaWindow): string {
+  switch (window.kind) {
+    case "five_hour":
+      return "5h";
+    case "weekly":
+      return "7d";
+    case "monthly":
+      return "Monthly";
+    case "daily":
+      return "24h";
+    case "credits":
+      return "Credits";
+    default:
+      return window.label;
+  }
+}
+
+function shortPoolLabel(pool: ControlApiSubproviderQuota): string {
+  if (pool.pool === "first_party") return "Gemini";
+  if (pool.pool === "third_party") return "Claude";
+  return pool.label;
+}
+
+function quotaToneClass(status: ControlApiQuotaStatus): string {
+  switch (status) {
+    case "exhausted":
+      return "text-danger";
+    case "warning":
+      return "text-warning";
+    case "available":
+    case "unlimited":
+      return "text-fg-secondary";
+    default:
+      return "text-fg-muted";
+  }
+}
+
+function quotaBarColorClass(status: ControlApiQuotaStatus): string {
+  switch (status) {
+    case "exhausted":
+      return "bg-danger";
+    case "warning":
+      return "bg-warning";
+    default:
+      return "bg-accent";
+  }
+}
+
+export function formatQuotaWindowCompact(
+  window: ControlApiQuotaWindow,
+  nowMs = Date.now()
+): string {
+  const label = shortWindowLabel(window);
+  if (window.status === "unlimited") {
+    return `${label}: Unlimited`;
+  }
+  const reset = formatQuotaResetRemaining(window.resetsAt, nowMs);
+  if (window.usedPercent !== null) {
+    const pct = Math.round(window.usedPercent);
+    return `${label}: ${pct}% used${reset ? ` (${reset})` : ""}`;
+  }
+  return `${label}: ${window.status}${reset ? ` (${reset})` : ""}`;
+}
+
+export function formatSubproviderPoolCompact(
+  pool: ControlApiSubproviderQuota,
+  nowMs = Date.now()
+): string {
+  const label = shortPoolLabel(pool);
+  const reset = formatQuotaResetRemaining(
+    pool.resetsAt ?? pool.cooldown?.resetsAt ?? pool.cooldown?.until ?? null,
+    nowMs
+  );
+  if (pool.usedPercent !== null) {
+    const pct = Math.round(pool.usedPercent);
+    return `${label}: ${pct}% used${reset ? ` (${reset})` : ""}`;
+  }
+  if (pool.status === "exhausted" || pool.cooldown) {
+    return `${label}: Exhausted${reset ? ` (${reset})` : ""}`;
+  }
+  return `${label}: ${pool.status}${reset ? ` (${reset})` : ""}`;
+}
+
+/**
+ * Compact per-provider quota/limits summary rendered inside the provider's row
+ * on `/providers` when quota or subprovider pool cooldown evidence is present.
+ *
+ * Uses `data-provider-quota` and `data-quota-status` rather than `StatusBadge`
+ * so the row's single `StatusBadge` verdict contract remains intact.
+ */
+export function ProviderQuotaInlineSummary({
+  provider,
+  nowMs = Date.now()
+}: {
+  readonly provider: ControlApiProviderRecord;
+  readonly nowMs?: number;
+}): React.JSX.Element | null {
+  const quota = resolveProviderQuota(provider);
+  const poolCooldowns = provider.health?.poolCooldowns;
+  const hasPoolCooldowns =
+    poolCooldowns !== undefined && Object.keys(poolCooldowns).length > 0;
+  if (!quota && !hasPoolCooldowns) {
+    return null;
+  }
+  if (quota && quota.status === "ok") {
+    const pools = quota.pools ?? [];
+    if (pools.length > 0) {
+      return React.createElement(
+        "div",
+        {
+          className: "mt-1.5 flex flex-col gap-1 text-micro tabular-nums",
+          "data-provider-quota": provider.id,
+          "data-quota-status": quota.summaryStatus
+        },
+        ...pools.map((pool) => {
+          const text = formatSubproviderPoolCompact(pool, nowMs);
+          const pct =
+            pool.usedPercent === null
+              ? null
+              : Math.max(0, Math.min(100, Math.round(pool.usedPercent)));
+          return React.createElement(
+            "div",
+            {
+              key: pool.pool,
+              className: "flex flex-col gap-0.5",
+              "data-provider-quota-pool": `${provider.id}:${pool.pool}`,
+              title: pool.resetsAt
+                ? `${pool.label} — ${text} (resets at ${pool.resetsAt})`
+                : `${pool.label} — ${text}`
+            },
+            React.createElement(
+              "span",
+              { className: `truncate ${quotaToneClass(pool.status)}` },
+              text
+            ),
+            pct === null
+              ? null
+              : React.createElement(
+                  "div",
+                  {
+                    className:
+                      "h-1 w-full overflow-hidden rounded-full bg-surface-raised"
+                  },
+                  React.createElement("div", {
+                    className: `h-full ${quotaBarColorClass(pool.status)}`,
+                    style: { width: `${pct}%` }
+                  })
+                )
+          );
+        })
+      );
+    }
+    const visibleWindows = quota.windows.filter(
+      (w) => w.status !== "unlimited" || quota.windows.length === 1
+    );
+    if (visibleWindows.length > 0) {
+      return React.createElement(
+        "div",
+        {
+          className: "mt-1.5 flex flex-col gap-1 text-micro tabular-nums",
+          "data-provider-quota": provider.id,
+          "data-quota-status": quota.summaryStatus
+        },
+        ...visibleWindows.map((window) => {
+          const text = formatQuotaWindowCompact(window, nowMs);
+          const pct =
+            window.usedPercent === null
+              ? null
+              : Math.max(0, Math.min(100, Math.round(window.usedPercent)));
+          return React.createElement(
+            "div",
+            {
+              key: window.id,
+              className: "flex flex-col gap-0.5",
+              "data-provider-quota-window": `${provider.id}:${window.id}`,
+              title: window.resetsAt
+                ? `${window.label} — ${text} (resets at ${window.resetsAt})`
+                : `${window.label} — ${text}`
+            },
+            React.createElement(
+              "span",
+              { className: `truncate ${quotaToneClass(window.status)}` },
+              text
+            ),
+            pct === null
+              ? null
+              : React.createElement(
+                  "div",
+                  {
+                    className:
+                      "h-1 w-full overflow-hidden rounded-full bg-surface-raised"
+                  },
+                  React.createElement("div", {
+                    className: `h-full ${quotaBarColorClass(window.status)}`,
+                    style: { width: `${pct}%` }
+                  })
+                )
+          );
+        })
+      );
+    }
+  }
+  if (hasPoolCooldowns && poolCooldowns) {
+    return React.createElement(
+      "div",
+      {
+        className: "mt-1.5 flex flex-col gap-0.5 text-micro tabular-nums",
+        "data-provider-quota": provider.id,
+        "data-quota-status": "warning"
+      },
+      ...Object.entries(poolCooldowns).map(([pool, cooldown]) => {
+        const label =
+          pool === "first_party"
+            ? "Gemini"
+            : pool === "third_party"
+              ? "Claude"
+              : pool;
+        const reset = formatQuotaResetRemaining(
+          cooldown.resetsAt ?? cooldown.until,
+          nowMs
+        );
+        return React.createElement(
+          "span",
+          {
+            key: pool,
+            className: "truncate text-warning",
+            "data-provider-quota-pool": `${provider.id}:${pool}`
+          },
+          `${label}: Cooling down${reset ? ` (${reset})` : ""}`
+        );
+      })
+    );
+  }
+  return null;
 }
 
 /**
@@ -283,7 +617,10 @@ export function ProviderHealthBadge({
         ? `Cooling down (${health.cooldown.failureClass})`
         : health.lastFailure?.failureClass
           ? `Unavailable (${health.lastFailure.failureClass})`
-          : "Unavailable"
+          : health.quota?.status === "ok" &&
+              health.quota.summaryStatus === "exhausted"
+            ? "Quota exhausted"
+            : "Unavailable"
     });
   }
   return React.createElement(StatusBadge, { status: "ready", label: "Ready" });

@@ -17,6 +17,10 @@ import {
   recordBridgeSkillUsed
 } from "@simulatorlife/autodev-runtime/router/correlation";
 import {
+  ProviderHopTracker,
+  setDefaultProviderHopTracker
+} from "@simulatorlife/autodev-runtime/router/provider-hops";
+import {
   EXHAUSTION_WAIT_MS,
   fetchUpstream,
   proxyConcreteResponse,
@@ -3211,3 +3215,139 @@ function totalGitCommits(): number {
     0
   );
 }
+
+test(
+  "a provider hop is published on the request that observed it",
+  { concurrency: false },
+  async () => {
+    // The router picked Claude, Claude could not serve the request, and
+    // MiniMax served it instead. The agent's provider changed inside one
+    // request, and the Usage telemetry has to say so with both providers and
+    // the reason, or the hop is a number nobody can act on.
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    const previousMiniMaxKey = process.env.MINIMAX_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      return url.includes("claude.test")
+        ? new Response("capacity", { status: 503 })
+        : jsonResponse({
+            id: "resp-hop",
+            status: "completed",
+            model: "MiniMax-M3",
+            output: []
+          });
+    }) as typeof fetch;
+    installExporter();
+    setDefaultProviderHopTracker(new ProviderHopTracker());
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [
+            { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" },
+            { ...route("minimax", "MINIMAX_API_KEY"), model: "MiniMax-M3" }
+          ],
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: "session-hop",
+          session: { key: "session-hop", scope: "identified" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-hop",
+        null,
+        { key: "provider-hop-workspace" }
+      );
+
+      const logical = findLogical(snapshotSpans());
+      assert.equal(logical.length, 1);
+      const hopAttributes = logical[0]?.attributes ?? {};
+      assert.equal(hopAttributes["autodev.hop.from"], "claude");
+      assert.equal(hopAttributes["autodev.hop.to"], "minimax");
+      assert.equal(hopAttributes["autodev.hop.route"], "claude → minimax");
+      assert.equal(hopAttributes["autodev.hop.reason"], "fallback");
+      assert.equal(hopAttributes["autodev.hop.failure_class"], "capacity");
+      assert.equal(hopAttributes["autodev.agent.role"], "worker");
+      assert.equal(
+        hopAttributes["autodev.workspace"],
+        "provider-hop-workspace"
+      );
+      assert.equal(
+        Object.hasOwn(hopAttributes, "gen_ai.provider.name"),
+        false,
+        "the logical request span must not claim one provider for the route"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      if (previousMiniMaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+      else process.env.MINIMAX_API_KEY = previousMiniMaxKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+      setDefaultProviderHopTracker(null);
+    }
+  }
+);
+
+test(
+  "an agent that stays on its provider publishes no hop",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp-stay",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      })) as typeof fetch;
+    installExporter();
+    setDefaultProviderHopTracker(new ProviderHopTracker());
+    try {
+      for (const requestId of ["req-stay-1", "req-stay-2"]) {
+        await proxyFallbackChain(
+          responseRecorder(),
+          {
+            candidates: [
+              { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" }
+            ],
+            role: "worker",
+            subject: "worker turn",
+            sessionKey: "session-stay",
+            session: { key: "session-stay", scope: "identified" }
+          },
+          { model: "autodev/worker", input: [], stream: false },
+          false,
+          requestId,
+          null,
+          { key: "provider-stay-workspace" }
+        );
+      }
+
+      const logical = findLogical(snapshotSpans());
+      assert.equal(logical.length, 2);
+      for (const span of logical) {
+        assert.equal(
+          Object.hasOwn(span.attributes ?? {}, "autodev.hop.reason"),
+          false,
+          "two requests on the same provider are not a hop"
+        );
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+      setDefaultProviderHopTracker(null);
+    }
+  }
+);

@@ -7,6 +7,7 @@ import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   COOLDOWN_CONFIG,
+  type CooldownEntry,
   type CooldownOptions,
   COOLDOWNS,
   type CooldownSummary,
@@ -15,14 +16,15 @@ import {
 import {
   classifyProviderFailure,
   INVALID_MODEL_PATTERN,
+  isRequestRefusalClass,
   recordRouterEvent
 } from "@simulatorlife/autodev-runtime/router/events";
 import {
   type Candidate,
   type OrchestratorCandidate,
   type ProviderRoute,
-  ROUTING_CONFIG,
   type RouteDisabledReason,
+  ROUTING_CONFIG,
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
@@ -60,6 +62,10 @@ import {
   injectOrchestratorMemory
 } from "./memory-injection.ts";
 import {
+  observeProviderServed,
+  type ProviderHopOutcome
+} from "./provider-hops.ts";
+import {
   bufferedEnvelope,
   collectToolCallIds,
   countToolCallsInResponse,
@@ -89,6 +95,7 @@ import {
 import {
   endAttemptSpan,
   endLogicalRequestSpan,
+  publishProviderHop,
   startAttemptSpan,
   startLogicalRequestSpan,
   withLogicalSpan
@@ -98,6 +105,11 @@ import {
   UNATTRIBUTED_DIMENSION,
   usageOrigin
 } from "./usage.ts";
+import {
+  getCachedProviderQuota,
+  parseCodexResponseRateLimitHeaders,
+  setCachedProviderQuota
+} from "../providers/quota-discovery.ts";
 
 const CODEX_HOME =
   process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
@@ -601,12 +613,16 @@ export function cooldownFor(
   provider: string | null = null
 ): CooldownOptions {
   const resolvedFailureClass = limit?.limitClass ?? failureClass;
+  const isPoolScopableClass =
+    resolvedFailureClass === "quota_exhausted" ||
+    resolvedFailureClass === "session_limit" ||
+    resolvedFailureClass === "throttled";
   return {
     failureClass: resolvedFailureClass,
     resetsAt: limit?.resetsAt ?? null,
     structured: limit?.source === LIMIT_SOURCE_REPORTED,
     scope:
-      resolvedFailureClass === "quota_exhausted" &&
+      isPoolScopableClass &&
       provider !== null &&
       model !== null &&
       providerQuotaPool(provider, model) !== null
@@ -672,27 +688,81 @@ export function decideCandidateFailure(
   };
 }
 
-export async function providerAvailable(
+export interface ProviderProbeResult {
+  ok: boolean;
+  failureClass: string | null;
+  detail?: string;
+}
+
+export const PROBE_RETRY_TIMEOUT_MS = Math.max(1500, PROBE_TIMEOUT_MS * 2);
+
+export async function probeProvider(
   route: ProviderRoute
-): Promise<boolean> {
-  if (!ROUTING_POLICY.routeCredentialAvailable(route)) return false;
+): Promise<ProviderProbeResult> {
+  if (!ROUTING_POLICY.routeCredentialAvailable(route)) {
+    return {
+      ok: false,
+      failureClass: "missing_credential",
+      detail: `Missing credential: ${route.envKey ?? "required environment variable"}.`
+    };
+  }
   if (route.provider === "codex") {
     try {
       await loadCodexAuth();
-      return true;
-    } catch {
-      return false;
+      return { ok: true, failureClass: null };
+    } catch (error) {
+      return {
+        ok: false,
+        failureClass: "missing_credential",
+        detail: `Codex authentication unavailable: ${errorMessage(error)}`
+      };
     }
   }
-  if (!route.healthUrl) return true;
-  try {
-    const result = await fetch(route.healthUrl, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
-    });
-    return result.ok;
-  } catch {
-    return false;
+  if (!route.healthUrl) return { ok: true, failureClass: null };
+
+  const attemptProbe = async (
+    timeoutMs: number
+  ): Promise<{ ok: boolean; status?: number; error?: unknown }> => {
+    try {
+      const response = await fetch(route.healthUrl!, {
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      return { ok: response.ok, status: response.status };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  };
+
+  let first = await attemptProbe(PROBE_TIMEOUT_MS);
+  if (first.ok) return { ok: true, failureClass: null };
+
+  const isTimeout =
+    first.error instanceof Error &&
+    (first.error.name === "TimeoutError" ||
+      first.error.name === "AbortError" ||
+      /timeout|timed out/i.test(first.error.message));
+
+  if (isTimeout) {
+    const second = await attemptProbe(PROBE_RETRY_TIMEOUT_MS);
+    if (second.ok) return { ok: true, failureClass: null };
+    first = second;
   }
+
+  const detail = first.error
+    ? `Probe failed: ${errorMessage(first.error)}`
+    : `Probe returned HTTP ${first.status}`;
+
+  return {
+    ok: false,
+    failureClass: PROBE_FAILURE_CLASS,
+    detail
+  };
+}
+
+export async function providerAvailable(
+  route: ProviderRoute
+): Promise<boolean> {
+  return (await probeProvider(route)).ok;
 }
 
 export function payloadForCandidate(
@@ -1518,6 +1588,15 @@ export async function fetchUpstream(
       });
     }
     throw error;
+  }
+  if (route.provider === "codex" && upstream.headers) {
+    const codexQuota = parseCodexResponseRateLimitHeaders(
+      upstream.headers,
+      getCachedProviderQuota("codex")
+    );
+    if (codexQuota) {
+      setCachedProviderQuota("codex", codexQuota, { syncCooldowns: true });
+    }
   }
   if (!upstream.ok) return failedUpstreamResponse(upstream, attemptSpan);
   if (!wantsStream) {
@@ -2739,6 +2818,7 @@ type FallbackContext = {
   agentRole: string | null;
   sessionKey: string | null;
   session: RouterSession | null;
+  preferredProvider: string | null;
   payload: Record<string, unknown>;
   wantsStream: boolean;
   requestId: string;
@@ -2768,11 +2848,25 @@ type FallbackContext = {
 class CandidateFailures {
   private readonly lines: string[] = [];
   private readonly classes = new Map<string, string>();
+  private readonly kinds = new Map<string, "failed" | "skipped">();
 
-  /** Record what a candidate did, and why, in the order it happened. */
-  record(provider: string, why: string, failureClass: string): void {
+  /**
+   * Record what a candidate did, and why, in the order it happened.
+   *
+   * The kind is what separates a provider that was tried and could not serve
+   * the request from one that was never tried. The provider-hop tracker needs
+   * that difference to say why an agent's provider changed: a failed provider
+   * is a fallback, a provider that was passed over is not.
+   */
+  record(
+    provider: string,
+    why: string,
+    failureClass: string,
+    kind: "failed" | "skipped"
+  ): void {
     this.lines.push(`${provider}: ${why}`);
     this.classes.set(provider, failureClass);
+    this.kinds.set(provider, kind);
   }
 
   /** The account of the chain, for the error body. */
@@ -2784,6 +2878,18 @@ class CandidateFailures {
   get observed(): ReadonlyMap<string, string> {
     return this.classes;
   }
+
+  /**
+   * What this request saw of the providers it passed over, in the order it
+   * passed them.
+   */
+  passedOver(): readonly ProviderHopOutcome[] {
+    return Array.from(this.kinds, ([provider, kind]) => ({
+      provider,
+      kind,
+      failureClass: this.classes.get(provider) ?? null
+    }));
+  }
 }
 
 function recordFallbackSkip(
@@ -2793,7 +2899,7 @@ function recordFallbackSkip(
   failureClass: string,
   failures: CandidateFailures
 ): void {
-  failures.record(route.provider, why, failureClass);
+  failures.record(route.provider, why, failureClass, "skipped");
   recordRouterEvent({
     phase: "skipped",
     requestId: ctx.requestId,
@@ -2823,6 +2929,38 @@ function recordFallbackSelected(
     workspace: ctx.workspace,
     selection
   });
+}
+
+/**
+ * Record the provider hop this request caused, if it caused one.
+ *
+ * A hop is a property of the agent, not of the request: the tracker knows
+ * which provider served the agent last, and this request knows what it saw of
+ * the providers it passed over. Together they say whether the agent's provider
+ * changed and why. The provider that served the request is not among the
+ * providers it passed over, so it never becomes the hop's own origin.
+ *
+ * The hop is published on the request's own span, because the request is the
+ * thing that observed it: the trace of the turn that moved the agent says so,
+ * and the Usage evidence can count it.
+ */
+function observeProviderHopForRequest(
+  ctx: FallbackContext,
+  route: Candidate,
+  failures: CandidateFailures,
+  span: Span
+): void {
+  const hop = observeProviderServed({
+    subject: ctx.activitySubject,
+    role: ctx.effectiveRole,
+    workspace: ctx.workspace?.key ?? null,
+    provider: route.provider,
+    passedOver: failures
+      .passedOver()
+      .filter((outcome) => outcome.provider !== route.provider)
+  });
+  if (!hop) return;
+  publishProviderHop(span, hop);
 }
 
 function beginCandidateRequest(
@@ -2900,6 +3038,7 @@ export async function proxyFallbackChain(
     agentRole = null,
     sessionKey = null,
     session = null,
+    preferredProvider = null,
     preparePayload
   }: {
     candidates: Candidate[] | OrchestratorCandidate[];
@@ -2909,6 +3048,7 @@ export async function proxyFallbackChain(
     agentRole?: string | null;
     sessionKey?: string | null;
     session?: RouterSession | null;
+    preferredProvider?: string | null;
     preparePayload?: (
       payload: Record<string, unknown>
     ) => Promise<Record<string, unknown>>;
@@ -2991,6 +3131,7 @@ export async function proxyFallbackChain(
     agentRole,
     sessionKey,
     session,
+    preferredProvider,
     payload,
     wantsStream,
     requestId,
@@ -3028,20 +3169,24 @@ export async function proxyFallbackChain(
       skipped.push(route);
       return "unavailable";
     }
-    if (!(await providerAvailable(route))) {
-      COOLDOWNS.cooldownProvider(route.provider, {
-        failureClass: PROBE_FAILURE_CLASS
-      });
+    const probe = await probeProvider(route);
+    if (!probe.ok) {
+      if (probe.failureClass !== "missing_credential") {
+        COOLDOWNS.cooldownProvider(route.provider, {
+          failureClass: probe.failureClass ?? PROBE_FAILURE_CLASS
+        });
+      }
       recordFallbackSkip(
         fbCtx,
         route,
         "unavailable",
-        PROBE_FAILURE_CLASS,
+        probe.failureClass ?? PROBE_FAILURE_CLASS,
         failures
       );
       skipped.push(route);
       return "unavailable";
     }
+    COOLDOWNS.clearProbeFailures(route.provider);
     const outcome = await attemptCandidate(
       fbCtx,
       route,
@@ -3054,6 +3199,7 @@ export async function proxyFallbackChain(
       logicalOutcome = "ok";
       logicalErrorMessage = null;
       servedProvider = route.provider;
+      observeProviderHopForRequest(fbCtx, route, failures, logicalSpan);
     } else if (outcome === "terminal") {
       logicalErrorMessage = "provider attempt returned a terminal failure";
     }
@@ -3234,6 +3380,92 @@ function triedCandidates(
   return (provider: string) => attempted.has(provider);
 }
 
+export function stickyCooldownWaitWindowMs(isOrchestratorTurn: boolean): number {
+  const configured = Number.parseInt(
+    process.env.CODEX_ROUTER_STICKY_COOLDOWN_WAIT_MS ?? ""
+  );
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  if (EXHAUSTION_WAIT_MS <= 0) return 0;
+  return Math.max(
+    exhaustionWaitWindowMs(isOrchestratorTurn),
+    COOLDOWN_CONFIG.providerCooldownMs * 2
+  );
+}
+
+function canWaitOutStickyCooldown(
+  ctx: FallbackContext,
+  candidates: Candidate[] | OrchestratorCandidate[],
+  route: Candidate,
+  cooldown: CooldownEntry | null
+): number {
+  if (
+    !cooldown ||
+    candidates.length <= 1 ||
+    ctx.preferredProvider === null ||
+    ctx.preferredProvider !== route.provider
+  ) {
+    return 0;
+  }
+  if (ctx.clientSignal?.aborted || ctx.response.headersSent) return 0;
+  if (cooldown.kind === "config") return 0;
+  const windowMs = stickyCooldownWaitWindowMs(ctx.isOrchestratorTurn);
+  if (windowMs <= 0) return 0;
+  const now = Date.now();
+  if (isHardLimitClass(cooldown.failureClass ?? "")) {
+    const resetsAtMs = cooldown.resetsAt
+      ? Date.parse(cooldown.resetsAt)
+      : Number.NaN;
+    if (!Number.isFinite(resetsAtMs) || resetsAtMs > now + windowMs) {
+      return 0;
+    }
+    return Math.max(0, resetsAtMs - now);
+  }
+  const remainingMs = cooldown.until - now;
+  if (remainingMs <= 0 || remainingMs > windowMs) return 0;
+  return remainingMs;
+}
+
+async function waitOutStickyCooldown(
+  ctx: FallbackContext,
+  route: Candidate,
+  initialWaitMs: number
+): Promise<boolean> {
+  const windowMs = stickyCooldownWaitWindowMs(ctx.isOrchestratorTurn);
+  if (windowMs <= 0 || initialWaitMs <= 0 || initialWaitMs > windowMs) {
+    return false;
+  }
+  const waitStartedAt = Date.now();
+  recordRouterEvent({
+    phase: "exhaustion_wait",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    elapsedMs: initialWaitMs
+  });
+  /* eslint-disable no-await-in-loop -- Sequential recheck of cooldown expiry on the sticky provider. */
+  while (!ctx.clientSignal?.aborted && !ctx.response.headersSent) {
+    const now = Date.now();
+    const entry = COOLDOWNS.get(route.provider, now, route.model);
+    const remainingCooldownMs = entry ? Math.max(0, entry.until - now) : 0;
+    if (remainingCooldownMs <= 0) {
+      ctx.selectionDeadline += Date.now() - waitStartedAt;
+      return true;
+    }
+    const remainingWindowMs = windowMs - (now - waitStartedAt);
+    if (remainingWindowMs <= 0) break;
+    await delay(
+      Math.min(remainingCooldownMs, remainingWindowMs),
+      ctx.clientSignal
+    );
+  }
+  /* eslint-enable no-await-in-loop */
+  return false;
+}
+
 async function tryPrimaryRoute(
   ctx: FallbackContext,
   candidates: Candidate[] | OrchestratorCandidate[],
@@ -3280,8 +3512,20 @@ async function tryPrimaryRoute(
       served
     );
   }
-  const cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
-  if (cooldown) {
+  let cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
+  if (cooldown && cooldown.kind !== "probe") {
+    const stickyWaitMs = canWaitOutStickyCooldown(
+      ctx,
+      candidates,
+      route,
+      cooldown
+    );
+    if (stickyWaitMs > 0) {
+      await waitOutStickyCooldown(ctx, route, stickyWaitMs);
+      cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
+    }
+  }
+  if (cooldown && cooldown.kind !== "probe") {
     recordFallbackSkip(
       ctx,
       route,
@@ -3301,7 +3545,35 @@ async function tryPrimaryRoute(
       served
     );
   }
-  if (served(await tryCandidate(route, "primary"))) return true;
+  const firstOutcome = await tryCandidate(route, "primary");
+  if (served(firstOutcome)) return true;
+  if (
+    (firstOutcome === "fallback" || firstOutcome === "unavailable") &&
+    ctx.preferredProvider !== null &&
+    ctx.preferredProvider === route.provider &&
+    !ctx.response.headersSent &&
+    !ctx.clientSignal?.aborted &&
+    !isRequestRefusalClass(failures.observed.get(route.provider))
+  ) {
+    const postCooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
+    const retryWaitMs = canWaitOutStickyCooldown(
+      ctx,
+      candidates,
+      route,
+      postCooldown
+    );
+    if (retryWaitMs > 0) {
+      const waited = await waitOutStickyCooldown(ctx, route, retryWaitMs);
+      if (
+        waited &&
+        !ctx.clientSignal?.aborted &&
+        !ctx.response.headersSent &&
+        !COOLDOWNS.isCooling(route.provider, Date.now(), route.model)
+      ) {
+        if (served(await tryCandidate(route, "primary"))) return true;
+      }
+    }
+  }
   return tryPrimaryRoute(
     ctx,
     candidates,
@@ -3865,7 +4137,8 @@ function handleCandidateUpstreamFailure(
     refusal
       ? `cannot serve this request (${refusal})`
       : `HTTP ${result.status}`,
-    failureClass
+    failureClass,
+    "failed"
   );
   recordRouterEvent({
     phase: "result",
@@ -3942,7 +4215,7 @@ function handleCandidateTransportError(
       error,
       workspace: ctx.workspace
     });
-  failures.record(route.provider, failureClass, failureClass);
+  failures.record(route.provider, failureClass, failureClass, "failed");
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,
@@ -3996,19 +4269,26 @@ export function proxyRoleResponse(
   clientSignal: AbortSignal | null = null,
   session: RouterSession | null = null
 ): Promise<void> {
+  const threadSubject =
+    session?.thread && session.thread !== session.key
+      ? `thread:${session.thread}`
+      : null;
+  const preferred =
+    TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
+    (threadSubject
+      ? (getDefaultUsageTracker().activityTracker?.getRecord(threadSubject)
+          ?.provider ?? null)
+      : null);
   return proxyFallbackChain(
     response,
     {
-      candidates: ROUTING_POLICY.roleCandidates(
-        role,
-        Math.random,
-        TOOL_CALL_OWNERSHIP.ownerFor(payload)
-      ),
+      candidates: ROUTING_POLICY.roleCandidates(role, Math.random, preferred),
       role,
       agentRole: role,
       subject: `role ${role}`,
       sessionKey: session?.key ?? null,
-      session
+      session,
+      preferredProvider: preferred
     },
     payload,
     wantsStream,
@@ -4034,9 +4314,7 @@ export function proxyOrchestratorResponse(
   // an orchestrator mid-session stays with the provider it started on.
   const preferred =
     TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
-    (carriesPendingToolResult(payload)
-      ? orchestratorProviderForSession(sessionKey)
-      : null);
+    orchestratorProviderForSession(sessionKey);
   return proxyFallbackChain(
     response,
     {
@@ -4047,6 +4325,7 @@ export function proxyOrchestratorResponse(
       subject: "the orchestrator",
       sessionKey,
       session,
+      preferredProvider: preferred,
       preparePayload: (requestPayload) =>
         injectOrchestratorMemory({
           payload: requestPayload,

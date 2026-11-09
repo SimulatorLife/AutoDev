@@ -1113,6 +1113,9 @@ function providersView(now: number): Record<string, unknown> {
       priorities: providerTierPriorities(provider),
       orchestratorReasoningEffort: reasoningEffort?.[provider] ?? null,
       health: health?.[provider] ?? null,
+      ...(health?.[provider]?.quota !== undefined
+        ? { quota: health[provider].quota }
+        : {}),
       reconciliation: providerReconciliationView(provider)
     };
   });

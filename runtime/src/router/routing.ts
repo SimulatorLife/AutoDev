@@ -188,14 +188,14 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     provider: "opencli-chatgpt",
     pattern: OPENCLI_CHATGPT_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4004/v1",
-    healthUrl: "http://127.0.0.1:4004/health/liveliness",
+    healthUrl: "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
     envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
   },
   {
     provider: "opencli-gemini",
     pattern: OPENCLI_GEMINI_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4004/v1",
-    healthUrl: "http://127.0.0.1:4004/health/liveliness",
+    healthUrl: "http://127.0.0.1:4004/health/liveliness?provider=opencli-gemini",
     envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
   }
 ];

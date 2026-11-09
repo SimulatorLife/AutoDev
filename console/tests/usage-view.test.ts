@@ -70,6 +70,16 @@ const observedMetrics: UsageMetricsData = {
   contextCompactionsByModel: [{ name: "gpt-6-luna", count: 3 }],
   contextCompactionsByAgent: [{ name: "orchestrator", count: 3 }],
   contextCompactionsByProvider: [{ name: "anthropic", count: 3 }],
+  providerHops: 3,
+  providerHopRatePercent: 6,
+  providerHopsOverTime: [{ bucket: "2026-11-09 09:00", count: 2 }],
+  providerHopsByRoute: [{ name: "anthropic → openai", count: 3 }],
+  providerHopsByProvider: [{ name: "openai", count: 3 }],
+  providerHopsByRole: [{ name: "worker", count: 3 }],
+  providerHopsByWorkspace: [{ name: "autodev", count: 3 }],
+  providerHopsByReason: [{ name: "fallback", count: 3 }],
+  providerHopsUnsupportedFilters: [],
+  providerHopsBreakdownsPartial: false,
   contextCompactionsUnsupportedFilters: [],
   contextCompactionsBreakdownsPartial: false,
   gitChanges: {
@@ -121,6 +131,39 @@ test("Usage renders Git output without double-counting file subsets or hiding pa
   assert.match(markup, /Commits by agent role/u);
 });
 
+test("Usage shows provider hops with both providers, the reason and where they happened", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics })
+  );
+
+  assert.match(markup, /Provider Hops/u);
+  assert.match(markup, /Hops per Request/u);
+  assert.match(markup, /Provider Hops Over Time/u);
+  assert.match(markup, /Provider Hops by Route/u);
+  assert.match(markup, /anthropic → openai/u);
+  assert.match(markup, /Provider Hops by Reason/u);
+  assert.match(markup, /fallback/u);
+  assert.match(markup, /Provider Hops by Provider/u);
+  assert.match(markup, /Provider Hops by Workspace/u);
+  assert.match(markup, /Provider Hops by Agent Role/u);
+});
+
+test("Usage says when provider hops cannot answer the selected filters", () => {
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    providerHopsUnsupportedFilters: ["provider"]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.match(markup, /data-provider-hop-scope="not-applicable"/u);
+  assert.match(
+    markup,
+    /Provider hop data is unavailable for the selected provider filter/u
+  );
+});
+
 test("unobserved Git status alone does not make the Usage page look observed", () => {
   const metrics: UsageMetricsData = {
     ...observedMetrics,
@@ -143,6 +186,16 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     contextCompactionsByModel: null,
     contextCompactionsByAgent: null,
     contextCompactionsByProvider: null,
+    providerHops: null,
+    providerHopRatePercent: null,
+    providerHopsOverTime: null,
+    providerHopsByRoute: null,
+    providerHopsByProvider: null,
+    providerHopsByRole: null,
+    providerHopsByWorkspace: null,
+    providerHopsByReason: null,
+    providerHopsUnsupportedFilters: [],
+    providerHopsBreakdownsPartial: false,
     skillEventsByEvent: null,
     requestsByRole: null,
     requestsByWorkspace: null,
@@ -261,6 +314,16 @@ test("UsageView fails compaction widgets closed for unsupported provider and ski
         contextCompactionsByModel: null,
         contextCompactionsByAgent: null,
         contextCompactionsByProvider: null,
+        providerHops: null,
+        providerHopRatePercent: null,
+        providerHopsOverTime: null,
+        providerHopsByRoute: null,
+        providerHopsByProvider: null,
+        providerHopsByRole: null,
+        providerHopsByWorkspace: null,
+        providerHopsByReason: null,
+        providerHopsUnsupportedFilters: [],
+        providerHopsBreakdownsPartial: false,
         contextCompactionsUnsupportedFilters: ["provider", "skill"]
       },
       selection
@@ -299,6 +362,16 @@ test("UsageView shows the bounded recent-attempt table and preserves filters whe
         contextCompactionsByModel: null,
         contextCompactionsByAgent: null,
         contextCompactionsByProvider: null,
+        providerHops: null,
+        providerHopRatePercent: null,
+        providerHopsOverTime: null,
+        providerHopsByRoute: null,
+        providerHopsByProvider: null,
+        providerHopsByRole: null,
+        providerHopsByWorkspace: null,
+        providerHopsByReason: null,
+        providerHopsUnsupportedFilters: [],
+        providerHopsBreakdownsPartial: false,
         contextCompactionsUnsupportedFilters: ["provider", "skill"]
       },
       traceList,

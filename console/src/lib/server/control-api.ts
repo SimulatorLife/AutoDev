@@ -1100,21 +1100,152 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isProviderCooldown(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.kind === "string" &&
+    value.kind.length > 0 &&
+    (value.failureClass === null ||
+      (typeof value.failureClass === "string" &&
+        value.failureClass.length <= 128)) &&
+    isCanonicalTimestamp(value.until) &&
+    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt)) &&
+    typeof value.lastResortEligible === "boolean" &&
+    (value.scope === undefined ||
+      value.scope === "provider" ||
+      value.scope === "pool" ||
+      value.scope === "model") &&
+    (value.pool === undefined ||
+      value.pool === null ||
+      typeof value.pool === "string") &&
+    (value.model === undefined ||
+      value.model === null ||
+      typeof value.model === "string")
+  );
+}
+
+function isProviderCooldownMap(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => isProviderCooldown(entry))
+  );
+}
+
+function isQuotaStatus(value: unknown): boolean {
+  return (
+    value === "available" ||
+    value === "warning" ||
+    value === "exhausted" ||
+    value === "unlimited" ||
+    value === "unavailable"
+  );
+}
+
+function isQuotaWindow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    typeof value.kind === "string" &&
+    isQuotaStatus(value.status) &&
+    (value.usedPercent === null || typeof value.usedPercent === "number") &&
+    (value.remainingPercent === null ||
+      typeof value.remainingPercent === "number") &&
+    (value.used === undefined ||
+      value.used === null ||
+      typeof value.used === "number") &&
+    (value.limit === undefined ||
+      value.limit === null ||
+      typeof value.limit === "number") &&
+    (value.remaining === undefined ||
+      value.remaining === null ||
+      typeof value.remaining === "number") &&
+    (value.unit === undefined ||
+      value.unit === null ||
+      typeof value.unit === "string") &&
+    (value.windowSeconds === undefined ||
+      value.windowSeconds === null ||
+      typeof value.windowSeconds === "number") &&
+    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt))
+  );
+}
+
+function isSubproviderQuota(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.pool === "string" &&
+    typeof value.label === "string" &&
+    isQuotaStatus(value.status) &&
+    (value.usedPercent === null || typeof value.usedPercent === "number") &&
+    (value.remainingPercent === null ||
+      typeof value.remainingPercent === "number") &&
+    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt)) &&
+    Array.isArray(value.windows) &&
+    value.windows.every(isQuotaWindow) &&
+    Array.isArray(value.models) &&
+    value.models.every((model) => typeof model === "string") &&
+    (value.cooldown === undefined ||
+      value.cooldown === null ||
+      isProviderCooldown(value.cooldown))
+  );
+}
+
+function isModelQuota(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.model === "string" &&
+    (value.displayName === undefined ||
+      value.displayName === null ||
+      typeof value.displayName === "string") &&
+    (value.pool === undefined ||
+      value.pool === null ||
+      typeof value.pool === "string") &&
+    isQuotaStatus(value.status) &&
+    (value.usedPercent === null || typeof value.usedPercent === "number") &&
+    (value.remainingPercent === null ||
+      typeof value.remainingPercent === "number") &&
+    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt)) &&
+    Array.isArray(value.windows) &&
+    value.windows.every(isQuotaWindow) &&
+    (value.cooldown === undefined ||
+      value.cooldown === null ||
+      isProviderCooldown(value.cooldown))
+  );
+}
+
+function isProviderQuota(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return (
+    isRecord(value) &&
+    typeof value.provider === "string" &&
+    (value.status === "ok" || value.status === "unavailable") &&
+    typeof value.source === "string" &&
+    (value.updatedAt === null || isCanonicalTimestamp(value.updatedAt)) &&
+    (value.plan === undefined ||
+      value.plan === null ||
+      typeof value.plan === "string") &&
+    (value.error === undefined ||
+      value.error === null ||
+      typeof value.error === "string") &&
+    isQuotaStatus(value.summaryStatus) &&
+    Array.isArray(value.windows) &&
+    value.windows.every(isQuotaWindow) &&
+    (value.pools === undefined ||
+      (Array.isArray(value.pools) &&
+        value.pools.every(isSubproviderQuota))) &&
+    (value.models === undefined ||
+      (Array.isArray(value.models) && value.models.every(isModelQuota)))
+  );
+}
+
 /** Health is a complete Runtime observation, not a partially present record. */
 function isProviderHealth(value: unknown): boolean {
   return (
     isRecord(value) &&
-    (value.cooldown === null ||
-      (isRecord(value.cooldown) &&
-        typeof value.cooldown.kind === "string" &&
-        value.cooldown.kind.length > 0 &&
-        (value.cooldown.failureClass === null ||
-          (typeof value.cooldown.failureClass === "string" &&
-            value.cooldown.failureClass.length <= 128)) &&
-        isCanonicalTimestamp(value.cooldown.until) &&
-        (value.cooldown.resetsAt === null ||
-          isCanonicalTimestamp(value.cooldown.resetsAt)) &&
-        typeof value.cooldown.lastResortEligible === "boolean")) &&
+    (value.cooldown === null || isProviderCooldown(value.cooldown)) &&
+    isProviderCooldownMap(value.poolCooldowns) &&
+    isProviderCooldownMap(value.modelCooldowns) &&
     isNonNegativeInteger(value.failureStreak) &&
     isNonNegativeInteger(value.probeFailureStreak) &&
     isNonNegativeInteger(value.inFlightRequests) &&
@@ -1132,8 +1263,15 @@ function isProviderHealth(value: unknown): boolean {
             value.lastFailure.failureClass.length <= 128)) &&
         (value.lastFailure.status === null ||
           (isNonNegativeInteger(value.lastFailure.status) &&
-            value.lastFailure.status <= 999)))) &&
-    (value.lastCheck === null || isProviderCheck(value.lastCheck))
+            value.lastFailure.status <= 999)) &&
+        (value.lastFailure.pool === undefined ||
+          value.lastFailure.pool === null ||
+          typeof value.lastFailure.pool === "string") &&
+        (value.lastFailure.model === undefined ||
+          value.lastFailure.model === null ||
+          typeof value.lastFailure.model === "string"))) &&
+    (value.lastCheck === null || isProviderCheck(value.lastCheck)) &&
+    isProviderQuota(value.quota)
   );
 }
 
@@ -1195,7 +1333,8 @@ function isControlApiProvidersResponse(
         isReconciliationBundle(provider.reconciliation) &&
         // Health drives the readiness badge, which reads `cooldown.failureClass`
         // and `lastFailure.failureClass`.
-        (provider.health === null || isProviderHealth(provider.health))
+        (provider.health === null || isProviderHealth(provider.health)) &&
+        isProviderQuota(provider.quota)
     )
   );
 }

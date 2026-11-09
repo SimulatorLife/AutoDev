@@ -203,6 +203,51 @@ const partialPayload = {
       xAxis: "g0",
       yAxis: "commits"
     }),
+    makeWidget("provider-hops", {
+      observed: true,
+      rows: [{ hops: "3" }],
+      valuePath: "0.hops"
+    }),
+    makeWidget("provider-hops-over-time", {
+      observed: true,
+      rows: [
+        { label: "10/06 00:00", count: "1" },
+        { label: "10/07 00:00", count: "2" }
+      ],
+      xAxis: "label",
+      yAxis: "count"
+    }),
+    makeWidget("provider-hops-by-route", {
+      observed: true,
+      rows: [{ g0: "anthropic → openai", hops: "3" }],
+      xAxis: "g0",
+      yAxis: "hops"
+    }),
+    makeWidget("provider-hops-by-provider", {
+      observed: true,
+      rows: [{ g0: "openai", hops: "3" }],
+      xAxis: "g0",
+      yAxis: "hops"
+    }),
+    makeWidget("provider-hops-by-role", {
+      observed: true,
+      rows: [{ g0: "worker", hops: "3" }],
+      xAxis: "g0",
+      yAxis: "hops"
+    }),
+    makeWidget("provider-hops-by-workspace", {
+      observed: true,
+      rows: [{ g0: "repo-a", hops: "3" }],
+      xAxis: "g0",
+      yAxis: "hops"
+    }),
+    makeWidget("provider-hops-by-reason", {
+      observed: true,
+      partial: true,
+      rows: [{ g0: "fallback", hops: "3" }],
+      xAxis: "g0",
+      yAxis: "hops"
+    }),
     makeWidget("skill-events-by-event", {
       observed: true,
       rows: [{ event: "used", events: "4" }],
@@ -283,6 +328,29 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     []
   );
   assert.equal(result.data.metrics.contextCompactionsBreakdownsPartial, true);
+  assert.equal(result.data.metrics.providerHops, 3);
+  assert.equal(result.data.metrics.providerHopRatePercent, 25);
+  assert.deepEqual(result.data.metrics.providerHopsOverTime, [
+    { bucket: "10/06 00:00", count: 1 },
+    { bucket: "10/07 00:00", count: 2 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsByRoute, [
+    { name: "anthropic → openai", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsByProvider, [
+    { name: "openai", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsByRole, [
+    { name: "worker", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsByWorkspace, [
+    { name: "repo-a", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsByReason, [
+    { name: "fallback", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.providerHopsUnsupportedFilters, []);
+  assert.equal(result.data.metrics.providerHopsBreakdownsPartial, true);
   assert.deepEqual(result.data.metrics.skillEventsByEvent, [
     { event: "used", count: 4 }
   ]);
@@ -484,6 +552,21 @@ test("OpenLITUsageClient does not claim compaction metrics for provider or skill
   assert.equal(result.data.metrics.contextCompactionsByModel, null);
   assert.equal(result.data.metrics.contextCompactionsByAgent, null);
   assert.deepEqual(result.data.metrics.contextCompactionsUnsupportedFilters, [
+    "provider",
+    "skill"
+  ]);
+  // A hop is recorded on the logical request that observed it, and that
+  // request carries neither a provider nor a skill, so a selection on either
+  // of them cannot describe hops.
+  assert.equal(result.data.metrics.providerHops, null);
+  assert.equal(result.data.metrics.providerHopRatePercent, null);
+  assert.equal(result.data.metrics.providerHopsOverTime, null);
+  assert.equal(result.data.metrics.providerHopsByRoute, null);
+  assert.equal(result.data.metrics.providerHopsByProvider, null);
+  assert.equal(result.data.metrics.providerHopsByRole, null);
+  assert.equal(result.data.metrics.providerHopsByWorkspace, null);
+  assert.equal(result.data.metrics.providerHopsByReason, null);
+  assert.deepEqual(result.data.metrics.providerHopsUnsupportedFilters, [
     "provider",
     "skill"
   ]);

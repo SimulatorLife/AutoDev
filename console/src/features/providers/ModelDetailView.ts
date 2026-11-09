@@ -36,6 +36,10 @@ import {
   providerModelAvailability,
   type ProviderModelDiscoveryState
 } from "./provider-model-discovery.ts";
+import {
+  formatQuotaResetRemaining,
+  resolveModelQuota
+} from "./provider-status.ts";
 import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge.ts";
 
 export interface ModelDetailViewProps {
@@ -70,6 +74,132 @@ function ProviderRoleState({
         label: `${role}: ${disabled ? "Disabled" : `P${assignment.priority}`}`
       });
     })
+  );
+}
+
+function ModelQuotaLimitsPanel({
+  model,
+  provider,
+  nowMs = Date.now()
+}: {
+  readonly model: ControlApiModelRecord;
+  readonly provider: ControlApiProviderRecord | null;
+  readonly nowMs?: number;
+}): React.JSX.Element | null {
+  const modelQuota = resolveModelQuota(provider, model.id);
+  if (modelQuota === null) {
+    return null;
+  }
+  const resetRemaining = formatQuotaResetRemaining(
+    modelQuota.resetsAt ??
+      modelQuota.cooldown?.resetsAt ??
+      modelQuota.cooldown?.until ??
+      null,
+    nowMs
+  );
+  const usedSummary =
+    modelQuota.status === "unlimited"
+      ? "Unlimited"
+      : modelQuota.usedPercent !== null
+        ? `${Math.round(modelQuota.usedPercent)}% used (${Math.round(
+            modelQuota.remainingPercent ?? 100 - modelQuota.usedPercent
+          )}% remaining)`
+        : modelQuota.status;
+
+  return React.createElement(
+    "section",
+    {
+      className: DETAIL_PANEL_CLASS,
+      "data-section": "model-quota-limits",
+      "data-model-quota-status": modelQuota.status
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Quota & usage limits"
+    ),
+    React.createElement(
+      DetailGrid,
+      { columns: 2 },
+      React.createElement(
+        DetailValue,
+        { label: "Current usage" },
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1 tabular-nums" },
+          React.createElement(
+            "span",
+            { className: "font-mono text-xs text-fg" },
+            usedSummary
+          ),
+          modelQuota.usedPercent === null
+            ? null
+            : React.createElement(
+                "div",
+                {
+                  className:
+                    "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
+                },
+                React.createElement("div", {
+                  className:
+                    modelQuota.status === "exhausted"
+                      ? "h-full bg-danger"
+                      : modelQuota.status === "warning"
+                        ? "h-full bg-warning"
+                        : "h-full bg-accent",
+                  style: {
+                    width: `${Math.max(
+                      0,
+                      Math.min(100, Math.round(modelQuota.usedPercent))
+                    )}%`
+                  }
+                })
+              )
+        )
+      ),
+      React.createElement(
+        DetailValue,
+        { label: "Quota pool" },
+        modelQuota.pool ?? "Provider-wide"
+      ),
+      React.createElement(
+        DetailValue,
+        { label: "Next reset" },
+        modelQuota.resetsAt
+          ? React.createElement(
+              "span",
+              { className: "tabular-nums" },
+              resetRemaining ? `${resetRemaining} (` : "",
+              React.createElement(
+                "time",
+                { dateTime: modelQuota.resetsAt },
+                modelQuota.resetsAt
+              ),
+              resetRemaining ? ")" : ""
+            )
+          : "None reported"
+      ),
+      ...modelQuota.windows.map((window) => {
+        const winReset = formatQuotaResetRemaining(window.resetsAt, nowMs);
+        const winUsed =
+          window.status === "unlimited"
+            ? "Unlimited"
+            : window.usedPercent !== null
+              ? `${Math.round(window.usedPercent)}% used`
+              : window.status;
+        return React.createElement(
+          DetailValue,
+          { key: window.id, label: window.label },
+          React.createElement(
+            "span",
+            { className: "font-mono text-xs tabular-nums" },
+            [winUsed, winReset ? `resets ${winReset}` : null]
+              .filter(Boolean)
+              .join(" · ")
+          )
+        );
+      })
+    )
   );
 }
 
@@ -223,6 +353,7 @@ export function ModelDetailView({
           React.createElement(ProviderRoleState, { provider })
         )
       )
-    )
+    ),
+    React.createElement(ModelQuotaLimitsPanel, { model, provider })
   );
 }

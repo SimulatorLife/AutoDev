@@ -71,6 +71,10 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
+import {
+  PROVIDER_HOP_FAILURE_CLASSES,
+  type ProviderHop
+} from "./provider-hops.ts";
 // Experimental (incubating) attribute keys are imported via the package's
 // `./incubating` subpath. NodeNext module resolution does not always resolve
 // the subpath declaration, so the keys are also declared inline below to
@@ -156,6 +160,46 @@ export const ATTR_AUTODEV_COMPACTION_STRATEGY =
  */
 export const ATTR_AUTODEV_COMPACTION_PROVIDER =
   "autodev.compaction.provider" as const;
+
+/**
+ * The provider serving an agent/role changed.
+ *
+ * A hop is a fact about one request: the request moved the agent from one
+ * provider to another. It is published on the request's own span under
+ * hop-scoped keys, because the logical request span never carries
+ * `gen_ai.provider.name` -- a logical route may touch several providers, so a
+ * single provider name on the parent would be a claim the source cannot make.
+ * A hop knows exactly which two providers it is about, so it names both of
+ * them under its own keys.
+ */
+export const ATTR_AUTODEV_HOP_FROM = "autodev.hop.from" as const;
+export const ATTR_AUTODEV_HOP_TO = "autodev.hop.to" as const;
+/**
+ * The two providers of a hop as one label, "from → to".
+ *
+ * A hop is counted per provider pair, which is what an operator asks about:
+ * "we keep moving from Claude to Minimax" is a statement about a pair, not
+ * about either provider alone. The pair is published as one label so a
+ * breakdown reads it directly; the two providers stay published separately.
+ */
+export const ATTR_AUTODEV_HOP_ROUTE = "autodev.hop.route" as const;
+export const ATTR_AUTODEV_HOP_REASON = "autodev.hop.reason" as const;
+export const ATTR_AUTODEV_HOP_FAILURE_CLASS =
+  "autodev.hop.failure_class" as const;
+/** The separator between the two providers of a hop's route label. */
+export const HOP_ROUTE_SEPARATOR = " → ";
+
+/** One provider hop, as the counter records it. */
+export interface ProviderHopMeasurement {
+  readonly fromProvider: string;
+  readonly toProvider: string;
+  readonly reason: ProviderHopReason;
+  /** The bounded failure class that explains the hop, when one does. */
+  readonly failureClass: string | null;
+  readonly role: string | null;
+  readonly workspace: string | null;
+}
+
 const METRIC_GEN_AI_CLIENT_TOKEN_USAGE = "gen_ai.client.token.usage";
 const METRIC_GEN_AI_CLIENT_OPERATION_DURATION =
   "gen_ai.client.operation.duration";
@@ -454,7 +498,7 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
     gitLinesRemoved: meter.createCounter(METRIC_GIT_LINES_REMOVED, {
       description: "Lines deleted by a commit, as reported by git numstat.",
       unit: "{line}"
-    })
+    }),
   };
 }
 
@@ -1007,6 +1051,45 @@ export function recordGitCommit(options: RecordGitCommitOptions): boolean {
 /** Router event listener for commit observations; this module owns the metric emitter. */
 export const observeRouterWorkspaceGitCommits =
   createRouterWorkspaceGitCommitObserver(recordGitCommit);
+
+/**
+ * Publish one provider hop on the request's own span.
+ *
+ * The hop is published with both providers and the reason for the change, so
+ * the evidence answers "how often", "which way" and "why" without the reader
+ * having to reconstruct the chain from separate spans.
+ *
+ * A hop whose providers cannot be named is not published: a hop from
+ * "nothing" to "something" is not a change of provider, and a hop to an
+ * unnamed provider cannot be explained or filtered.
+ */
+export function publishProviderHop(span: Span, hop: ProviderHop): boolean {
+  const from = safeProviderName(hop.fromProvider);
+  const to = safeProviderName(hop.toProvider);
+  if (!from || !to || from === to) return false;
+  const failureClass =
+    hop.failureClass &&
+    PROVIDER_HOP_FAILURE_CLASSES.has(hop.failureClass) &&
+    safeTrim(hop.failureClass)
+      ? safeTrim(hop.failureClass)
+      : null;
+  try {
+    span.setAttribute(ATTR_AUTODEV_HOP_FROM, from);
+    span.setAttribute(ATTR_AUTODEV_HOP_TO, to);
+    span.setAttribute(
+      ATTR_AUTODEV_HOP_ROUTE,
+      `${from}${HOP_ROUTE_SEPARATOR}${to}`
+    );
+    span.setAttribute(ATTR_AUTODEV_HOP_REASON, hop.reason);
+    if (failureClass) {
+      span.setAttribute(ATTR_AUTODEV_HOP_FAILURE_CLASS, failureClass);
+    }
+    return true;
+  } catch {
+    logTelemetryError("provider_hop_publication_failed");
+    return false;
+  }
+}
 
 export interface LogicalRequestSpanOptions {
   requestId: string | null;

@@ -37,6 +37,13 @@ const usageWidgetIds = [
   "git-commits-by-workspace",
   "git-commits-by-provider",
   "git-commits-by-agent",
+  "provider-hops",
+  "provider-hops-over-time",
+  "provider-hops-by-route",
+  "provider-hops-by-provider",
+  "provider-hops-by-role",
+  "provider-hops-by-workspace",
+  "provider-hops-by-reason",
   "skill-events-by-event",
   "estimated-cost"
 ] as const;
