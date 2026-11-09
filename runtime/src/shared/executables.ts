@@ -38,10 +38,7 @@ export function findExecutable(
  * in subshells whose PATH carries no nvm bin directory. A CLI installed by npm under
  * nvm is therefore invisible to a standard PATH lookup there.
  */
-export function findNvmBinary(
-  name: string,
-  home = homedir()
-): string | null {
+export function findNvmBinary(name: string, home = homedir()): string | null {
   const nvmRoot = path.join(home, ".nvm", "versions", "node");
   if (!existsSync(nvmRoot)) return null;
   const versions = readdirSync(nvmRoot, { withFileTypes: true })
@@ -242,7 +239,9 @@ export function resolveAgyBinary(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** The same lookup without the failure: where the CLI is, or null when it is not there. */
-export function findAgyBinary(env: NodeJS.ProcessEnv = process.env): string | null {
+export function findAgyBinary(
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
   const resolved = resolveAgyBinary(env);
   return isExecutable(resolved) ? resolved : null;
 }

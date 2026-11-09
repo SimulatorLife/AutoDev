@@ -29,7 +29,10 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function fakeSpawn(output: string, exitCode = 0): {
+function fakeSpawn(
+  output: string,
+  exitCode = 0
+): {
   spawnProcess: typeof import("node:child_process").spawn;
   child: FakeChild;
 } {
@@ -39,7 +42,9 @@ function fakeSpawn(output: string, exitCode = 0): {
       child.stdout.emit("data", Buffer.from(output, "utf8"));
       child.emit("close", exitCode);
     });
-    return child as unknown as ReturnType<typeof import("node:child_process").spawn>;
+    return child as unknown as ReturnType<
+      typeof import("node:child_process").spawn
+    >;
   }) as unknown as typeof import("node:child_process").spawn;
   return { spawnProcess, child };
 }
@@ -117,7 +122,8 @@ test("a CLI that prints no version is not read as one", async () => {
 
 test("a CLI that hangs is stopped rather than waited for", async () => {
   const child = new FakeChild();
-  const spawnProcess = (() => child) as unknown as typeof import("node:child_process").spawn;
+  const spawnProcess = (() =>
+    child) as unknown as typeof import("node:child_process").spawn;
   const capture = await captureCliVersion(
     { command: "codex", program: "/opt/bin/codex", args: [] },
     { spawnProcess },
@@ -153,7 +159,9 @@ test("the service reports the version it read and the reason for the one it coul
   const snapshot = service.snapshot();
   assert.equal(snapshot.schema, "autodev-control-provider-versions-v1");
   assert.equal(snapshot.source, "runtime-provider-cli-versions");
-  const claude = snapshot.providers.find((entry) => entry.provider === "claude");
+  const claude = snapshot.providers.find(
+    (entry) => entry.provider === "claude"
+  );
   const codex = snapshot.providers.find((entry) => entry.provider === "codex");
   // The Codex CLI answered, so its version is the one it reported.
   assert.deepEqual(codex?.cli, {

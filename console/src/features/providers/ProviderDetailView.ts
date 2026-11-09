@@ -39,13 +39,12 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
-import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
+import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
   CLI_VERSIONS_NOT_OBSERVED,
-  providerCliVersionView,
-  type ProviderCliVersionState
+  type ProviderCliVersionState,
+  providerCliVersionView
 } from "./provider-cli-version.ts";
-import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
   type ProviderModelDiscoveryState,
   providerModelDiscoveryView,
@@ -64,6 +63,7 @@ import {
   providerUsagePath,
   type ProviderUsageSummary
 } from "./provider-usage.ts";
+import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import {
@@ -719,7 +719,8 @@ export function ProviderQuotaLimitsPanel({
       ? React.createElement(
           "p",
           { className: MUTED_BODY_CLASS },
-          quota.error ?? "Live quota limits could not be read for this provider."
+          quota.error ??
+            "Live quota limits could not be read for this provider."
         )
       : null,
     quota && quota.windows.length > 0

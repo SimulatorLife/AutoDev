@@ -231,9 +231,13 @@ export function captureCliVersion(
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      child = deps.spawnProcess(command.program, [...command.args, "--version"], {
-        stdio: ["ignore", "pipe", "pipe"]
-      });
+      child = deps.spawnProcess(
+        command.program,
+        [...command.args, "--version"],
+        {
+          stdio: ["ignore", "pipe", "pipe"]
+        }
+      );
     } catch {
       resolve({
         ok: false,
@@ -306,8 +310,7 @@ export interface ProviderCliVersionOptions {
   readonly now?: (() => Date) | undefined;
   readonly refreshIntervalMs?: number | undefined;
   readonly capture?:
-    | ((command: ProviderCliCommand) => Promise<CliVersionCapture>)
-    | undefined;
+    ((command: ProviderCliCommand) => Promise<CliVersionCapture>) | undefined;
   /**
    * Where each provider's CLI is.
    *
@@ -337,7 +340,9 @@ export class ProviderCliVersionService {
   private readonly env: NodeJS.ProcessEnv;
   private readonly now: () => Date;
   private readonly refreshIntervalMs: number;
-  private readonly capture: (command: ProviderCliCommand) => Promise<CliVersionCapture>;
+  private readonly capture: (
+    command: ProviderCliCommand
+  ) => Promise<CliVersionCapture>;
   private readonly locate: (
     provider: string,
     env: NodeJS.ProcessEnv
@@ -359,8 +364,7 @@ export class ProviderCliVersionService {
       options.capture ??
       ((command) => captureCliVersion(command, { spawnProcess }));
     this.locate =
-      options.locate ??
-      ((provider, env) => providerCliCommand(provider, env));
+      options.locate ?? ((provider, env) => providerCliCommand(provider, env));
     for (const provider of this.providerIds()) {
       this.states.set(provider, {
         status: "unavailable",

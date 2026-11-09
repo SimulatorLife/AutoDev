@@ -51,12 +51,12 @@ import {
   mcpToolDefinition
 } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   type RoleContract,
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,

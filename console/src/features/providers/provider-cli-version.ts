@@ -83,7 +83,11 @@ export function providerCliVersionView(
     };
   }
   if (cli.kind === "not-installed") {
-    return { status: "not-installed", command: cli.command, reason: cli.reason };
+    return {
+      status: "not-installed",
+      command: cli.command,
+      reason: cli.reason
+    };
   }
   return { status: "not-readable", command: cli.command, reason: cli.reason };
 }
@@ -106,9 +110,7 @@ export function providerCliVersionLabel(view: ProviderCliVersionView): string {
         : `${view.command} · Not installed`;
     }
     case "not-readable": {
-      return view.command === null
-        ? "Not read"
-        : `${view.command} · Not read`;
+      return view.command === null ? "Not read" : `${view.command} · Not read`;
     }
     case NOT_OBSERVED_STATUS: {
       return "Not observed";

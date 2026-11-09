@@ -728,7 +728,9 @@ export interface ClaudeUsage {
 /** Read one usage object, defaulting every count to zero. */
 export function claudeUsageFrom(value: unknown): ClaudeUsage {
   const usage =
-    value && typeof value === "object" ? (value as JsonRecord) : ({} as JsonRecord);
+    value && typeof value === "object"
+      ? (value as JsonRecord)
+      : ({} as JsonRecord);
   return {
     input_tokens: Number(usage.input_tokens ?? usage.inputTokens ?? 0),
     output_tokens: Number(usage.output_tokens ?? usage.outputTokens ?? 0),
@@ -762,7 +764,8 @@ export function claudeUsageFromResult(result: JsonRecord | null): ClaudeUsage {
   const modelUsage = result.modelUsage;
   if (!modelUsage || typeof modelUsage !== "object") return direct;
   const record = modelUsage as JsonRecord;
-  if (carriesTokenCounts(claudeUsageFrom(record))) return claudeUsageFrom(record);
+  if (carriesTokenCounts(claudeUsageFrom(record)))
+    return claudeUsageFrom(record);
   const total = claudeUsageFrom(null);
   for (const value of Object.values(record)) {
     const perModel = claudeUsageFrom(value);
@@ -791,7 +794,9 @@ function carriesTokenCounts(usage: ClaudeUsage): boolean {
 export function claudeResponsesUsage(usage: ClaudeUsage): ClaudeUsage {
   return {
     input_tokens:
-      usage.input_tokens + usage.cache_read_tokens + usage.cache_creation_tokens,
+      usage.input_tokens +
+      usage.cache_read_tokens +
+      usage.cache_creation_tokens,
     output_tokens: usage.output_tokens,
     cache_read_tokens: usage.cache_read_tokens,
     cache_creation_tokens: usage.cache_creation_tokens
@@ -955,7 +960,9 @@ function persistClaudeRateLimitInfo(info: JsonRecord): void {
     mkdirSync(path.dirname(targetFile), { recursive: true });
     writeFileSync(targetFile, JSON.stringify(info, null, 2), "utf8");
   } catch (error) {
-    writeErrorLine(`Failed to persist Claude rate limit info: ${String(error)}`);
+    writeErrorLine(
+      `Failed to persist Claude rate limit info: ${String(error)}`
+    );
   }
 }
 

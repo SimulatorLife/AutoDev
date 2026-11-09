@@ -46,10 +46,10 @@ import {
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRoleAssignment,
   type ControlApiProviderRolePatchResponse,
-  type ControlApiProviderVersionsResponse,
   type ControlApiProvidersResetRequest,
   type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
+  type ControlApiProviderVersionsResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentPatchResponse,
@@ -227,8 +227,7 @@ const PROVIDER_LIMITS_PATH =
 const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
 const UNKNOWN_PROVIDER_ERROR = "autodev_control_api_unknown_provider";
 const UNKNOWN_PROVIDER_MESSAGE = "Unknown provider.";
-const PROVIDER_CHECK_PATH =
-  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/check$/u;
+const PROVIDER_CHECK_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)\/check$/u;
 const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
   process.env.AUTODEV_REPO_ROOT
@@ -832,8 +831,7 @@ export function setControlApiProviderModelDiscoverySource(
 }
 
 let providerCliVersionSource:
-  | (() => ControlApiProviderVersionsResponse)
-  | null = null;
+  (() => ControlApiProviderVersionsResponse) | null = null;
 
 /**
  * Register the Runtime-owned provider CLI version snapshot.
@@ -1120,8 +1118,10 @@ function providersView(now: number): Record<string, unknown> {
           canServe:
             ROUTING_POLICY.providerRoleCapabilityReason(provider, role) ===
             null,
-          cannotServeReason:
-            ROUTING_POLICY.providerRoleCapabilityExplanation(provider, role),
+          cannotServeReason: ROUTING_POLICY.providerRoleCapabilityExplanation(
+            provider,
+            role
+          ),
           convergence: providerRoleConvergence(provider, role)
         };
       }),

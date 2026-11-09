@@ -3,19 +3,19 @@ import test from "node:test";
 
 import type {
   ControlApiProviderRecord,
-  ControlApiProviderVersionsResponse,
-  ControlApiProvidersResponse
+  ControlApiProvidersResponse,
+  ControlApiProviderVersionsResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
-import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import {
   providerCliVersionLabel,
-  providerCliVersionView,
-  type ProviderCliVersionState
+  type ProviderCliVersionState,
+  providerCliVersionView
 } from "../src/features/providers/provider-cli-version.ts";
+import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
+import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 
 const NO_CONVERGENCE = {
   convergence: "not-observed" as const,
@@ -92,7 +92,10 @@ const VERSIONS: ControlApiProviderVersionsResponse = {
   ]
 };
 
-const AVAILABLE: ProviderCliVersionState = { status: "available", data: VERSIONS };
+const AVAILABLE: ProviderCliVersionState = {
+  status: "available",
+  data: VERSIONS
+};
 
 test("the version reads as the CLI's name and the release it reported", () => {
   const view = providerCliVersionView(AVAILABLE, "claude");

@@ -252,11 +252,15 @@ test("the providers table names the CLI version each provider is on", async ({
   // A CLI that is installed but would not answer is not the same fact as a
   // CLI that is not installed, and the page says which one it is.
   await expect(
-    page.locator('[data-tab-panel="providers"] [data-provider-cli-version="not-readable"]')
-  ).toHaveText("codex \u00b7 Not read");
+    page.locator(
+      '[data-tab-panel="providers"] [data-provider-cli-version="not-readable"]'
+    )
+  ).toHaveText("codex \u00B7 Not read");
   await expect(
-    page.locator('[data-tab-panel="providers"] [data-provider-cli-version="not-installed"]')
-  ).toHaveText("copilot \u00b7 Not installed");
+    page.locator(
+      '[data-tab-panel="providers"] [data-provider-cli-version="not-installed"]'
+    )
+  ).toHaveText("copilot \u00B7 Not installed");
 
   // The provider's own page carries the same fact, in the place where an
   // operator looks for the provider's own details.

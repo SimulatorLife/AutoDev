@@ -39,12 +39,6 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
-import {
-  CLI_VERSIONS_NOT_OBSERVED,
-  providerCliVersionView,
-  type ProviderCliVersionState
-} from "./provider-cli-version.ts";
 import {
   resolveActiveTabId,
   type TabDefinition,
@@ -64,6 +58,11 @@ import {
   providersPath
 } from "./paths.ts";
 import {
+  CLI_VERSIONS_NOT_OBSERVED,
+  type ProviderCliVersionState,
+  providerCliVersionView
+} from "./provider-cli-version.ts";
+import {
   providerDiscoverySummaries,
   type ProviderModelDiscoveryState,
   providerModelDiscoveryView,
@@ -79,6 +78,7 @@ import {
   resolveModelQuota,
   resolveProviderStatus
 } from "./provider-status.ts";
+import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import {

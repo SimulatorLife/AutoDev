@@ -73,16 +73,16 @@ import {
   type ControlApiPromptVersionsResponse,
   type ControlApiProviderAgentLimits,
   type ControlApiProviderCheckResponse,
+  type ControlApiProviderCliVersion,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
-  type ControlApiProviderCliVersion,
   type ControlApiProviderModelDiscovery,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
-  type ControlApiProviderVersionsResponse,
   type ControlApiProvidersResetRequest,
   type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
+  type ControlApiProviderVersionsResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentPatchRequest,
   type ControlApiSkillContentPatchResponse,
@@ -1235,8 +1235,7 @@ function isProviderQuota(value: unknown): boolean {
     Array.isArray(value.windows) &&
     value.windows.every(isQuotaWindow) &&
     (value.pools === undefined ||
-      (Array.isArray(value.pools) &&
-        value.pools.every(isSubproviderQuota))) &&
+      (Array.isArray(value.pools) && value.pools.every(isSubproviderQuota))) &&
     (value.models === undefined ||
       (Array.isArray(value.models) && value.models.every(isModelQuota)))
   );

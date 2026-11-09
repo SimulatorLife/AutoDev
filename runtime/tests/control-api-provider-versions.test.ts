@@ -82,7 +82,8 @@ test("a Runtime that has not read the versions says so for every provider", asyn
       );
     }
   } finally {
-    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
     else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
     if (previousOperators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
@@ -118,7 +119,8 @@ test("the versions read carries the version the Runtime observed", async () => {
     assert.equal(claude?.cli.observedAt, "2026-11-09T12:00:00.000Z");
   } finally {
     setControlApiProviderCliVersionSource(null);
-    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
     else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
     if (previousOperators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
