@@ -594,7 +594,8 @@ function providerHopUnsupportedFilters(
   selection: UsageFilterSelection
 ): readonly UsageProviderHopUnsupportedFilter[] {
   const unsupported: UsageProviderHopUnsupportedFilter[] = [];
-  if ((selection.values.provider?.length ?? 0) > 0) unsupported.push("provider");
+  if ((selection.values.provider?.length ?? 0) > 0)
+    unsupported.push("provider");
   if ((selection.values.model?.length ?? 0) > 0) unsupported.push("model");
   if ((selection.values.skill?.length ?? 0) > 0) unsupported.push("skill");
   return unsupported;
@@ -779,10 +780,7 @@ function gitChangeMetrics(
       widgets.get("git-commits-by-provider"),
       commits
     ),
-    commitsByAgent: breakdownRows(
-      widgets.get("git-commits-by-agent"),
-      commits
-    )
+    commitsByAgent: breakdownRows(widgets.get("git-commits-by-agent"), commits)
   };
 }
 

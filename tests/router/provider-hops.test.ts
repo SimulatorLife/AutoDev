@@ -7,7 +7,9 @@ import {
   setDefaultProviderHopTracker
 } from "@simulatorlife/autodev-runtime/router/provider-hops";
 
-function tracker(options: { maxTrackedAgents?: number } = {}): ProviderHopTracker {
+function tracker(
+  options: { maxTrackedAgents?: number } = {}
+): ProviderHopTracker {
   return new ProviderHopTracker({
     ...options,
     now: () => new Date("2026-11-09T12:00:00.000Z")

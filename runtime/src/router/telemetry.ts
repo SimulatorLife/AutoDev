@@ -487,7 +487,7 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
     gitLinesRemoved: meter.createCounter(METRIC_GIT_LINES_REMOVED, {
       description: "Lines deleted by a commit, as reported by git numstat.",
       unit: "{line}"
-    }),
+    })
   };
 }
 

@@ -213,7 +213,9 @@ export class ProviderHopTracker {
           : null,
       role: typeof role === "string" && role.trim() ? role.trim() : null,
       workspace:
-        typeof workspace === "string" && workspace.trim() ? workspace.trim() : null,
+        typeof workspace === "string" && workspace.trim()
+          ? workspace.trim()
+          : null,
       timestamp: this.now().toISOString()
     };
   }
