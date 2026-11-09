@@ -113,6 +113,24 @@ const PROVIDER_HOP_EMPTY_MESSAGE =
   "No provider hops were observed in this time range.";
 const NOT_APPLICABLE_STATUS = "not-applicable" as const;
 
+/**
+ * The chart palette, named once.
+ *
+ * Every breakdown on this page draws its bars with one of these series
+ * colours and its values with the matching text colour. The pairs live here
+ * instead of at every chart because a colour is a property of the page, not
+ * of one breakdown: the third series on the page is the same colour whether
+ * it is the third chart of one section or the third chart of another, and a
+ * reader who learns that once should not have to re-learn it from a literal.
+ */
+const CHART_PALETTE = {
+  series1: { bar: "bg-chart-1", value: "text-chart-1" },
+  series2: { bar: "bg-chart-2", value: "text-chart-2" },
+  series3: { bar: "bg-chart-3", value: "text-chart-3" },
+  series4: { bar: "bg-chart-4", value: "text-chart-4" },
+  series5: { bar: "bg-chart-5", value: "text-chart-5" }
+} as const;
+
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
   return TOKEN_FORMATTER.format(value);
@@ -904,8 +922,8 @@ function renderGitChangeMetrics(
           label: "Source-confirmed agent commits by workspace",
           notObservedMessage: "Workspace commit telemetry not observed.",
           emptyMessage: "No workspace-attributed commits were observed.",
-          barClass: "bg-chart-1",
-          valueClass: "text-chart-1"
+          barClass: CHART_PALETTE.series1.bar,
+          valueClass: CHART_PALETTE.series1.value
         },
         {
           title: "Commits by provider",
@@ -913,8 +931,8 @@ function renderGitChangeMetrics(
           label: "Source-confirmed agent commits by provider",
           notObservedMessage: "Provider commit telemetry not observed.",
           emptyMessage: "No provider-attributed commits were observed.",
-          barClass: "bg-chart-2",
-          valueClass: "text-chart-2"
+          barClass: CHART_PALETTE.series2.bar,
+          valueClass: CHART_PALETTE.series2.value
         },
         {
           title: "Commits by agent role",
@@ -922,8 +940,8 @@ function renderGitChangeMetrics(
           label: "Source-confirmed agent commits by role",
           notObservedMessage: "Agent-role commit telemetry not observed.",
           emptyMessage: "No agent-attributed commits were observed.",
-          barClass: "bg-chart-4",
-          valueClass: "text-chart-4"
+          barClass: CHART_PALETTE.series4.bar,
+          valueClass: CHART_PALETTE.series4.value
         }
       ].map((chart) =>
         React.createElement(
@@ -955,6 +973,226 @@ function renderGitChangeMetrics(
   );
 }
 
+/**
+ * The provider-hop section of the Usage page.
+ *
+ * A hop is a fact about one request: that request changed the provider
+ * serving an agent. It is its own section because it is its own story --
+ * which pair of providers the agent moved between, why it moved, and where
+ * it moved -- and because none of the page's other history (requests,
+ * reliability, skills) can explain a change of provider.
+ */
+function renderProviderHopMetrics(
+  metrics: UsageMetricsData
+): React.JSX.Element {
+  const providerHopUnsupportedFilters = metrics.providerHopsUnsupportedFilters;
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "h2",
+      {
+        className: SECTION_HEADING_CLASS
+      },
+      "Provider hops"
+    ),
+    React.createElement(
+      "div",
+      { className: PAGE_SECTION_STACK_CLASS },
+      providerHopUnsupportedFilters.length > 0
+        ? React.createElement(
+            "p",
+            {
+              className: CALLOUT_WARNING_CLASS,
+              role: "status",
+              "data-provider-hop-scope": NOT_APPLICABLE_STATUS
+            },
+            `Provider hop data is unavailable for the selected ${providerHopUnsupportedFilters.join(" and ")} filter${providerHopUnsupportedFilters.length === 1 ? "" : "s"}; this source records a hop on the logical request that observed it, and that request does not carry those dimensions.`
+          )
+        : null,
+      metrics.providerHopsBreakdownsPartial
+        ? React.createElement(
+            "p",
+            {
+              className: CALLOUT_WARNING_CLASS,
+              role: "status",
+              "data-provider-hop-breakdowns": "partial"
+            },
+            "A provider hop breakdown reached its 20-row limit; the shown categories may be partial."
+          )
+        : null,
+      React.createElement(
+        StatGrid,
+        { columns: 2 },
+        React.createElement(StatCard, {
+          title: "Provider Hops",
+          value: formatCount(metrics.providerHops),
+          subtitle: "Requests that changed the provider serving the agent"
+        }),
+        React.createElement(StatCard, {
+          title: "Hops per Request",
+          value: formatCacheRate(metrics.providerHopRatePercent),
+          subtitle: "Provider hops / logical routed requests"
+        })
+      ),
+      React.createElement(
+        "div",
+        { className: LIST_PANEL_CLASS },
+        React.createElement(
+          "h3",
+          { className: SECTION_HEADING_CLASS },
+          "Provider Hops Over Time"
+        ),
+        React.createElement(BarChart, {
+          data:
+            metrics.providerHopsOverTime === null
+              ? null
+              : metrics.providerHopsOverTime.map((item) => ({
+                  label: item.bucket,
+                  value: item.count,
+                  valueText: formatCount(item.count)
+                })),
+          label: "Provider hops by time bucket",
+          notObservedMessage: "Provider hop time-series data not observed.",
+          emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+          barClass: CHART_PALETTE.series3.bar,
+          valueClass: CHART_PALETTE.series3.value
+        })
+      ),
+      React.createElement(
+        "div",
+        { className: gridRowClass(2, "gap-6") },
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            "Provider Hops by Route"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.providerHopsByRoute === null
+                ? null
+                : metrics.providerHopsByRoute.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Provider hops by the provider pair the agent moved between",
+            notObservedMessage: "Provider hop route breakdown not observed.",
+            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+            barClass: CHART_PALETTE.series1.bar,
+            valueClass: CHART_PALETTE.series1.value
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            "Provider Hops by Reason"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.providerHopsByReason === null
+                ? null
+                : metrics.providerHopsByReason.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Provider hops by why the provider changed",
+            notObservedMessage: "Provider hop reason breakdown not observed.",
+            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+            barClass: CHART_PALETTE.series2.bar,
+            valueClass: CHART_PALETTE.series2.value
+          })
+        )
+      ),
+      React.createElement(
+        "div",
+        { className: gridRowClass(3, "gap-6") },
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            "Provider Hops by Provider"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.providerHopsByProvider === null
+                ? null
+                : metrics.providerHopsByProvider.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Provider hops by the provider that now serves the agent",
+            notObservedMessage: "Provider hop provider breakdown not observed.",
+            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+            barClass: CHART_PALETTE.series3.bar,
+            valueClass: CHART_PALETTE.series3.value
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            "Provider Hops by Workspace"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.providerHopsByWorkspace === null
+                ? null
+                : metrics.providerHopsByWorkspace.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Provider hops by workspace",
+            notObservedMessage:
+              "Provider hop workspace breakdown not observed.",
+            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+            barClass: CHART_PALETTE.series4.bar,
+            valueClass: CHART_PALETTE.series4.value
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            "Provider Hops by Agent Role"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.providerHopsByRole === null
+                ? null
+                : metrics.providerHopsByRole.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Provider hops by agent role",
+            notObservedMessage:
+              "Provider hop agent-role breakdown not observed.",
+            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
+            barClass: CHART_PALETTE.series5.bar,
+            valueClass: CHART_PALETTE.series5.value
+          })
+        )
+      )
+    )
+  );
+}
+
 function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
   const requestsByRole = metrics.requestsByRole;
   const attemptsByProvider = metrics.attemptsByProvider;
@@ -963,7 +1201,6 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
   const skillEventsByEvent = metrics.skillEventsByEvent;
   const compactionUnsupportedFilters =
     metrics.contextCompactionsUnsupportedFilters;
-  const providerHopUnsupportedFilters = metrics.providerHopsUnsupportedFilters;
 
   return React.createElement(
     React.Fragment,
@@ -1035,8 +1272,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           label: "Logical routed requests by agent role",
           notObservedMessage: "Role telemetry not observed.",
           emptyMessage: "No logical requests were observed in this time range.",
-          barClass: "bg-chart-1",
-          valueClass: "text-chart-1"
+          barClass: CHART_PALETTE.series1.bar,
+          valueClass: CHART_PALETTE.series1.value
         })
       ),
       React.createElement(
@@ -1064,8 +1301,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           notObservedMessage: "Provider attempt telemetry not observed.",
           emptyMessage:
             "No provider attempts were observed in this time range.",
-          barClass: "bg-chart-2",
-          valueClass: "text-chart-2"
+          barClass: CHART_PALETTE.series2.bar,
+          valueClass: CHART_PALETTE.series2.value
         })
       )
     ),
@@ -1148,8 +1385,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
             label: "Source-confirmed context compactions by time bucket",
             notObservedMessage: "Compaction time-series data not observed.",
             emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
-            barClass: "bg-chart-3",
-            valueClass: "text-chart-3"
+            barClass: CHART_PALETTE.series3.bar,
+            valueClass: CHART_PALETTE.series3.value
           })
         ),
         React.createElement(
@@ -1176,8 +1413,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
               notObservedMessage:
                 "Workspace compaction breakdown not observed.",
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
-              barClass: "bg-chart-1",
-              valueClass: "text-chart-1"
+              barClass: CHART_PALETTE.series1.bar,
+              valueClass: CHART_PALETTE.series1.value
             })
           ),
           React.createElement(
@@ -1201,8 +1438,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
               notObservedMessage:
                 "Requested-model compaction breakdown not observed.",
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
-              barClass: "bg-chart-2",
-              valueClass: "text-chart-2"
+              barClass: CHART_PALETTE.series2.bar,
+              valueClass: CHART_PALETTE.series2.value
             })
           ),
           React.createElement(
@@ -1226,8 +1463,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
               notObservedMessage:
                 "Agent-role compaction breakdown not observed.",
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
-              barClass: "bg-chart-4",
-              valueClass: "text-chart-4"
+              barClass: CHART_PALETTE.series4.bar,
+              valueClass: CHART_PALETTE.series4.value
             })
           ),
           React.createElement(
@@ -1251,8 +1488,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                 "Source-confirmed context compactions by the provider that served them",
               notObservedMessage: "Provider compaction breakdown not observed.",
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
-              barClass: "bg-chart-5",
-              valueClass: "text-chart-5"
+              barClass: CHART_PALETTE.series5.bar,
+              valueClass: CHART_PALETTE.series5.value
             })
           )
         ),
@@ -1280,215 +1517,13 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
             notObservedMessage: "Provider failure telemetry not observed.",
             emptyMessage:
               "No failed provider attempts were observed in this time range.",
-            barClass: "bg-chart-5",
-            valueClass: "text-chart-5"
+            barClass: CHART_PALETTE.series5.bar,
+            valueClass: CHART_PALETTE.series5.value
           })
         )
       )
     ),
-    React.createElement(
-      "div",
-      null,
-      React.createElement(
-        "h2",
-        {
-          className: SECTION_HEADING_CLASS
-        },
-        "Provider hops"
-      ),
-      React.createElement(
-        "div",
-        { className: PAGE_SECTION_STACK_CLASS },
-        providerHopUnsupportedFilters.length > 0
-          ? React.createElement(
-              "p",
-              {
-                className: CALLOUT_WARNING_CLASS,
-                role: "status",
-                "data-provider-hop-scope": NOT_APPLICABLE_STATUS
-              },
-              `Provider hop data is unavailable for the selected ${providerHopUnsupportedFilters.join(" and ")} filter${providerHopUnsupportedFilters.length === 1 ? "" : "s"}; this source records a hop on the logical request that observed it, and that request does not carry those dimensions.`
-            )
-          : null,
-        metrics.providerHopsBreakdownsPartial
-          ? React.createElement(
-              "p",
-              {
-                className: CALLOUT_WARNING_CLASS,
-                role: "status",
-                "data-provider-hop-breakdowns": "partial"
-              },
-              "A provider hop breakdown reached its 20-row limit; the shown categories may be partial."
-            )
-          : null,
-        React.createElement(
-          StatGrid,
-          { columns: 2 },
-          React.createElement(StatCard, {
-            title: "Provider Hops",
-            value: formatCount(metrics.providerHops),
-            subtitle: "Requests that changed the provider serving the agent"
-          }),
-          React.createElement(StatCard, {
-            title: "Hops per Request",
-            value: formatCacheRate(metrics.providerHopRatePercent),
-            subtitle: "Provider hops / logical routed requests"
-          })
-        ),
-        React.createElement(
-          "div",
-          { className: LIST_PANEL_CLASS },
-          React.createElement(
-            "h3",
-            { className: SECTION_HEADING_CLASS },
-            "Provider Hops Over Time"
-          ),
-          React.createElement(BarChart, {
-            data:
-              metrics.providerHopsOverTime === null
-                ? null
-                : metrics.providerHopsOverTime.map((item) => ({
-                    label: item.bucket,
-                    value: item.count,
-                    valueText: formatCount(item.count)
-                  })),
-            label: "Provider hops by time bucket",
-            notObservedMessage: "Provider hop time-series data not observed.",
-            emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-            barClass: "bg-chart-3",
-            valueClass: "text-chart-3"
-          })
-        ),
-        React.createElement(
-          "div",
-          { className: gridRowClass(2, "gap-6") },
-          React.createElement(
-            "div",
-            { className: LIST_PANEL_CLASS },
-            React.createElement(
-              "h3",
-              { className: SECTION_HEADING_CLASS },
-              "Provider Hops by Route"
-            ),
-            React.createElement(BarChart, {
-              data:
-                metrics.providerHopsByRoute === null
-                  ? null
-                  : metrics.providerHopsByRoute.map((item) => ({
-                      label: formatDimension(item.name),
-                      value: item.count,
-                      valueText: formatCount(item.count)
-                    })),
-              label: "Provider hops by the provider pair the agent moved between",
-              notObservedMessage: "Provider hop route breakdown not observed.",
-              emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-              barClass: "bg-chart-1",
-              valueClass: "text-chart-1"
-            })
-          ),
-          React.createElement(
-            "div",
-            { className: LIST_PANEL_CLASS },
-            React.createElement(
-              "h3",
-              { className: SECTION_HEADING_CLASS },
-              "Provider Hops by Reason"
-            ),
-            React.createElement(BarChart, {
-              data:
-                metrics.providerHopsByReason === null
-                  ? null
-                  : metrics.providerHopsByReason.map((item) => ({
-                      label: formatDimension(item.name),
-                      value: item.count,
-                      valueText: formatCount(item.count)
-                    })),
-              label: "Provider hops by why the provider changed",
-              notObservedMessage: "Provider hop reason breakdown not observed.",
-              emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-              barClass: "bg-chart-2",
-              valueClass: "text-chart-2"
-            })
-          )
-        ),
-        React.createElement(
-          "div",
-          { className: gridRowClass(3, "gap-6") },
-          React.createElement(
-            "div",
-            { className: LIST_PANEL_CLASS },
-            React.createElement(
-              "h3",
-              { className: SECTION_HEADING_CLASS },
-              "Provider Hops by Provider"
-            ),
-            React.createElement(BarChart, {
-              data:
-                metrics.providerHopsByProvider === null
-                  ? null
-                  : metrics.providerHopsByProvider.map((item) => ({
-                      label: formatDimension(item.name),
-                      value: item.count,
-                      valueText: formatCount(item.count)
-                    })),
-              label: "Provider hops by the provider that now serves the agent",
-              notObservedMessage: "Provider hop provider breakdown not observed.",
-              emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-              barClass: "bg-chart-3",
-              valueClass: "text-chart-3"
-            })
-          ),
-          React.createElement(
-            "div",
-            { className: LIST_PANEL_CLASS },
-            React.createElement(
-              "h3",
-              { className: SECTION_HEADING_CLASS },
-              "Provider Hops by Workspace"
-            ),
-            React.createElement(BarChart, {
-              data:
-                metrics.providerHopsByWorkspace === null
-                  ? null
-                  : metrics.providerHopsByWorkspace.map((item) => ({
-                      label: formatDimension(item.name),
-                      value: item.count,
-                      valueText: formatCount(item.count)
-                    })),
-              label: "Provider hops by workspace",
-              notObservedMessage: "Provider hop workspace breakdown not observed.",
-              emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-              barClass: "bg-chart-4",
-              valueClass: "text-chart-4"
-            })
-          ),
-          React.createElement(
-            "div",
-            { className: LIST_PANEL_CLASS },
-            React.createElement(
-              "h3",
-              { className: SECTION_HEADING_CLASS },
-              "Provider Hops by Agent Role"
-            ),
-            React.createElement(BarChart, {
-              data:
-                metrics.providerHopsByRole === null
-                  ? null
-                  : metrics.providerHopsByRole.map((item) => ({
-                      label: formatDimension(item.name),
-                      value: item.count,
-                      valueText: formatCount(item.count)
-                    })),
-              label: "Provider hops by agent role",
-              notObservedMessage: "Provider hop agent-role breakdown not observed.",
-              emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
-              barClass: "bg-chart-5",
-              valueClass: "text-chart-5"
-            })
-          )
-        )
-      )
-    ),
+    renderProviderHopMetrics(metrics),
     React.createElement(
       "div",
       { className: LIST_PANEL_CLASS },
@@ -1511,8 +1546,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         label: "Skill observations by event",
         notObservedMessage: "Skill telemetry not observed.",
         emptyMessage: "No skill observations were reported in this time range.",
-        barClass: "bg-chart-4",
-        valueClass: "text-chart-4"
+        barClass: CHART_PALETTE.series4.bar,
+        valueClass: CHART_PALETTE.series4.value
       })
     ),
     React.createElement(
@@ -1569,8 +1604,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         label: "MCP calls by tool name",
         notObservedMessage: "Tool-call telemetry not observed.",
         emptyMessage: "No MCP tool calls were observed in this time range.",
-        barClass: "bg-chart-3",
-        valueClass: "text-chart-3"
+        barClass: CHART_PALETTE.series3.bar,
+        valueClass: CHART_PALETTE.series3.value
       })
     ),
     renderGitChangeMetrics(metrics.gitChanges)
