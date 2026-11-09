@@ -189,17 +189,6 @@ export const ATTR_AUTODEV_HOP_FAILURE_CLASS =
 /** The separator between the two providers of a hop's route label. */
 export const HOP_ROUTE_SEPARATOR = " → ";
 
-/** One provider hop, as the counter records it. */
-export interface ProviderHopMeasurement {
-  readonly fromProvider: string;
-  readonly toProvider: string;
-  readonly reason: ProviderHopReason;
-  /** The bounded failure class that explains the hop, when one does. */
-  readonly failureClass: string | null;
-  readonly role: string | null;
-  readonly workspace: string | null;
-}
-
 const METRIC_GEN_AI_CLIENT_TOKEN_USAGE = "gen_ai.client.token.usage";
 const METRIC_GEN_AI_CLIENT_OPERATION_DURATION =
   "gen_ai.client.operation.duration";
