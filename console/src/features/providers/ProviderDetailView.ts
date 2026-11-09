@@ -39,6 +39,12 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
+import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
+import {
+  CLI_VERSIONS_NOT_OBSERVED,
+  providerCliVersionView,
+  type ProviderCliVersionState
+} from "./provider-cli-version.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
   type ProviderModelDiscoveryState,
@@ -73,6 +79,14 @@ export interface ProviderDetailViewProps {
   /** This provider's models, or `null` when the Models collection is unavailable. */
   readonly models: readonly ControlApiModelRecord[] | null;
   readonly modelDiscovery: ProviderModelDiscoveryState;
+  /**
+   * The versions of the CLIs the Runtime found on this machine.
+   *
+   * Optional because a caller without them is a caller that has not read
+   * them: the page then says the version was not observed, which is the
+   * truth, rather than inventing a version for the provider.
+   */
+  readonly cliVersions?: ProviderCliVersionState | undefined;
   readonly usagePanel: React.ReactNode;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
@@ -975,6 +989,7 @@ export function ProviderDetailView({
   orchestratorTier,
   models,
   modelDiscovery,
+  cliVersions,
   usagePanel,
   runtime,
   controlFailed
@@ -1038,6 +1053,20 @@ export function ProviderDetailView({
               },
               liveAgentCount(runtime?.liveAgents, "byProvider", provider.id)
             )
+          ),
+          // The CLI's release is the provider's own fact, and it is the first
+          // thing an operator looks for when the provider behaves differently
+          // than it used to. It sits beside the live count in the header
+          // because both are facts about the provider as it is right now.
+          React.createElement(
+            DetailValue,
+            { label: "CLI version" },
+            React.createElement(ProviderCliVersionText, {
+              view: providerCliVersionView(
+                cliVersions ?? CLI_VERSIONS_NOT_OBSERVED,
+                provider.id
+              )
+            })
           )
         )
       )

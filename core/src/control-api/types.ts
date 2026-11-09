@@ -187,38 +187,28 @@ export type ControlApiQuotaWindowKind =
   | "weekly"
   | "daily"
   | "monthly"
-  | "session"
-  | "credits"
-  | "custom";
+  | "rolling";
 
 export type ControlApiQuotaStatus =
   | "available"
   | "warning"
   | "exhausted"
-  | "cooldown"
   | "unlimited"
-  | "unknown";
+  | "unavailable";
 
 /** A single rate-limit or usage-quota window (e.g., 5-hour or weekly limit). */
 export interface ControlApiQuotaWindow {
   readonly id: string;
-  readonly kind: ControlApiQuotaWindowKind;
   readonly label: string;
-  readonly scope: "provider" | "pool" | "model";
-  readonly pool?: string | null;
-  readonly poolLabel?: string | null;
-  readonly model?: string | null;
+  readonly kind: ControlApiQuotaWindowKind;
+  readonly status: ControlApiQuotaStatus;
   readonly usedPercent: number | null;
   readonly remainingPercent: number | null;
-  readonly usedCount?: number | null;
-  readonly totalCount?: number | null;
-  readonly remainingCount?: number | null;
-  readonly unlimited?: boolean;
-  readonly status: ControlApiQuotaStatus;
-  readonly resetsAt: string | null;
+  readonly used?: number | null;
+  readonly limit?: number | null;
+  readonly unit?: string | null;
   readonly windowSeconds?: number | null;
-  readonly source: "cli" | "api" | "headers" | "router_limit";
-  readonly detail?: string | null;
+  readonly resetsAt: string | null;
 }
 
 /** Quota and cooldown state for a subprovider model class/pool (e.g. Antigravity first_party vs third_party). */
@@ -229,8 +219,8 @@ export interface ControlApiSubproviderQuota {
   readonly usedPercent: number | null;
   readonly remainingPercent: number | null;
   readonly resetsAt: string | null;
-  readonly models: readonly string[];
   readonly windows: readonly ControlApiQuotaWindow[];
+  readonly models: readonly string[];
   readonly cooldown?: ControlApiProviderCooldown | null;
 }
 
@@ -239,26 +229,26 @@ export interface ControlApiModelQuota {
   readonly model: string;
   readonly displayName?: string | null;
   readonly pool?: string | null;
-  readonly poolLabel?: string | null;
   readonly status: ControlApiQuotaStatus;
   readonly usedPercent: number | null;
   readonly remainingPercent: number | null;
   readonly resetsAt: string | null;
   readonly windows: readonly ControlApiQuotaWindow[];
+  readonly cooldown?: ControlApiProviderCooldown | null;
 }
 
 /** Live usage, quota, and limit snapshot for a provider across its windows, pools, and models. */
 export interface ControlApiProviderQuota {
   readonly provider: string;
+  readonly status: "ok" | "unavailable";
+  readonly source: string;
   readonly updatedAt: string | null;
-  readonly status: "ok" | "unavailable" | "unsupported";
-  readonly source: "cli" | "api" | "headers" | "router_limit" | "none";
   readonly plan?: string | null;
+  readonly error?: string | null;
   readonly summaryStatus: ControlApiQuotaStatus;
   readonly windows: readonly ControlApiQuotaWindow[];
-  readonly pools: readonly ControlApiSubproviderQuota[];
-  readonly models: Readonly<Record<string, ControlApiModelQuota>>;
-  readonly reason?: string | null;
+  readonly pools?: readonly ControlApiSubproviderQuota[];
+  readonly models?: readonly ControlApiModelQuota[];
 }
 
 /** Live router evidence for one provider; absent when the router is not observed. */
@@ -431,6 +421,79 @@ export interface ControlApiProviderModelsResponse {
   readonly schema: "autodev-control-provider-model-discovery-v1";
   readonly source: "runtime-provider-discovery";
   readonly providers: readonly ControlApiProviderModelDiscoveryEntry[];
+}
+
+/**
+ * The version of the CLI that serves a provider.
+ *
+ * Every provider AutoDev routes to is served by a CLI, and the CLI's release
+ * is the first thing an operator needs when a provider behaves differently
+ * than it used to: a release note names a version, and a bug report needs
+ * one. The Runtime reads the version from the CLI it would actually spawn,
+ * so the number beside a provider is the number in use rather than the
+ * number some other installation reports.
+ *
+ * The two states are kept apart on purpose. A version nobody has read yet is
+ * not the same fact as a CLI that is not installed, and the page says which
+ * of the two it is instead of showing a blank where a version would go.
+ */
+export type ControlApiProviderCliVersion =
+  | {
+      readonly status: "observed";
+      /**
+       * The CLI's command, as the operator would name it: `claude`, `codex`,
+       * `agy`, `mmx`, `copilot`, `opencli`.
+       */
+      readonly command: string;
+      /** The version the CLI reported, exactly as it printed it. */
+      readonly version: string;
+      /** When the Runtime read it. */
+      readonly observedAt: string;
+    }
+  | {
+      readonly status: "unavailable";
+      /**
+       * Why the version was not read.
+       *
+       * The two cases are different facts and the page says which one it is:
+       * a CLI that is not installed needs an installation, and a CLI that is
+       * installed but would not answer needs a different fix. Parsing the
+       * reason's prose to tell them apart would make the page's wording
+       * part of the contract.
+       */
+      readonly kind: "not-installed" | "not-readable";
+      /**
+       * The command the provider's CLI would be, when the provider has one
+       * and the Runtime could name it, even though no version was read.
+       */
+      readonly command: string | null;
+      /** Why no version was observed, in words. */
+      readonly reason: string;
+      /** When the Runtime last tried, or null when it never has. */
+      readonly lastAttemptAt: string | null;
+    };
+
+/** One provider's CLI version. */
+export interface ControlApiProviderVersionEntry {
+  readonly provider: string;
+  readonly cli: ControlApiProviderCliVersion;
+}
+
+/**
+ * The versions of the CLIs this machine has.
+ *
+ * This is its own response rather than a field on the provider record
+ * because it is a different kind of fact: the provider record is the
+ * operator's routing configuration, and a version is what the machine
+ * happens to have installed today. Keeping them apart means a Runtime that
+ * cannot read versions still answers the providers contract exactly as
+ * before, and the page says the version was not observed rather than
+ * failing the whole page over a missing release number.
+ */
+export interface ControlApiProviderVersionsResponse {
+  readonly schema: "autodev-control-provider-versions-v1";
+  readonly source: "runtime-provider-cli-versions";
+  readonly providers: readonly ControlApiProviderVersionEntry[];
 }
 
 export interface ControlApiProviderRecord {

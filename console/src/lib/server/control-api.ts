@@ -75,9 +75,11 @@ import {
   type ControlApiProviderCheckResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
+  type ControlApiProviderCliVersion,
   type ControlApiProviderModelDiscovery,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
+  type ControlApiProviderVersionsResponse,
   type ControlApiProvidersResetRequest,
   type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
@@ -751,6 +753,7 @@ export const CONTROL_API_PATHS = {
   agents: "/control/agents",
   providers: "/control/providers",
   providerModels: "/control/provider-models",
+  providerVersions: "/control/provider-versions",
   models: "/control/models",
   mcps: "/control/mcps",
   mcpRuntime: "/control/mcp-runtime",
@@ -1641,6 +1644,95 @@ function isControlApiProviderModelsResponse(
     providerIds.add(entry.provider);
   }
   return true;
+}
+
+function isControlApiProviderVersionsResponse(
+  value: unknown
+): value is ControlApiProviderVersionsResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-provider-versions-v1" ||
+    value.source !== "runtime-provider-cli-versions" ||
+    !Array.isArray(value.providers)
+  ) {
+    return false;
+  }
+  const providerIds = new Set<string>();
+  for (const entry of value.providers) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.provider !== "string" ||
+      entry.provider.trim() !== entry.provider ||
+      entry.provider.length === 0 ||
+      entry.provider.length > 128 ||
+      providerIds.has(entry.provider) ||
+      !isProviderCliVersion(entry.cli)
+    ) {
+      return false;
+    }
+    providerIds.add(entry.provider);
+  }
+  return true;
+}
+
+/**
+ * One provider's CLI version.
+ *
+ * The two states are kept apart on the way in as well as on the way out: a
+ * version that was read and a version that was never read are different
+ * facts, and a response that cannot tell them apart would let the page
+ * show a release number nobody confirmed.
+ */
+function isProviderCliVersion(
+  value: unknown
+): value is ControlApiProviderCliVersion {
+  if (!isRecord(value)) return false;
+  if (value.status === "observed") {
+    return (
+      typeof value.command === "string" &&
+      value.command.trim().length > 0 &&
+      typeof value.version === "string" &&
+      value.version.trim().length > 0 &&
+      isCanonicalTimestamp(value.observedAt)
+    );
+  }
+  if (value.status !== "unavailable") return false;
+  return (
+    (value.command === null ||
+      (typeof value.command === "string" && value.command.trim().length > 0)) &&
+    typeof value.reason === "string" &&
+    value.reason.trim().length > 0 &&
+    (value.lastAttemptAt === null || isCanonicalTimestamp(value.lastAttemptAt))
+  );
+}
+
+/**
+ * Reads the versions of the CLIs the Runtime found on this machine.
+ *
+ * The versions are their own response rather than a field on the provider
+ * record, so a Runtime that does not publish them still answers the providers
+ * contract, and the page reports the version as not observed instead of
+ * failing over a missing release number.
+ */
+export async function fetchProviderVersions(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderVersionsResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.providerVersions,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiProviderVersionsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_provider_versions_response",
+    message:
+      "AutoDev Control API returned an incompatible provider-versions response; the Console requires the v1 observed/unavailable contract."
+  };
 }
 
 /** Reads Runtime-owned provider availability without inventing a catalog. */

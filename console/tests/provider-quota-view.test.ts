@@ -232,7 +232,7 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
         disabled: false,
         roles: buildRoleAssignments({
           orchestrator: "gemini-3.8-flash-high",
-          worker: "gemini-3.8-flash-medium"
+          default: "gemini-3.8-flash-medium"
         }),
         agentLimits: {
           perSession: null,
@@ -302,7 +302,7 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
         },
         disabled: false,
         roles: buildRoleAssignments({
-          worker: "MiniMax-M2.7"
+          default: "MiniMax-M2.7"
         }),
         agentLimits: null,
         models: [{ tier: "default", model: "MiniMax-M2.7" }],
@@ -343,10 +343,8 @@ function buildModelsResponseFixture(): ControlApiModelsResponse {
         provider: "antigravity",
         tiers: ["orchestrator", "smart"],
         enablement: {
-          kind: "observed",
           enabled: true,
           mutable: true,
-          revision: "rev-1",
           convergence: CONVERGED_STATUS
         }
       },
@@ -356,10 +354,8 @@ function buildModelsResponseFixture(): ControlApiModelsResponse {
         provider: "antigravity",
         tiers: ["claude-opus"],
         enablement: {
-          kind: "observed",
           enabled: true,
           mutable: true,
-          revision: "rev-1",
           convergence: CONVERGED_STATUS
         }
       },
@@ -369,10 +365,8 @@ function buildModelsResponseFixture(): ControlApiModelsResponse {
         provider: "minimax",
         tiers: ["default"],
         enablement: {
-          kind: "observed",
           enabled: true,
           mutable: true,
-          revision: "rev-1",
           convergence: CONVERGED_STATUS
         }
       }
@@ -508,7 +502,7 @@ test("fetchProviders accepts provider quota and poolCooldowns payloads from Cont
   const envelope = await fetchProviders(
     {
       baseUrl: "http://127.0.0.1:4100",
-      token: "test-token"
+      serviceToken: "test-token"
     },
     {
       fetchImpl: async () =>

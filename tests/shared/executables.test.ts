@@ -11,7 +11,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  findCodexBinary,
   findCopilotBinary,
+  findNvmBinary,
+  resolveCodexBinary,
   resolveCopilotBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
 
@@ -94,7 +97,7 @@ test("a version-managed Copilot CLI is found when PATH carries no nvm", (t) => {
   // directory, so a PATH lookup alone finds nothing to spawn.
   assert.equal(
     resolveCopilotBinary(
-      { PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" },
+      { PATH: join(fixture.home, "empty") },
       fixture.home
     ),
     newer
@@ -118,5 +121,63 @@ test("a missing Copilot CLI is reported as absent rather than guessed", (t) => {
   assert.throws(
     () => resolveCopilotBinary({ PATH: "" }, fixture.home),
     /Copilot CLI not found/
+  );
+});
+
+test("an explicit Codex CLI named as a command is resolved on PATH", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const directory = join(fixture.home, "bin");
+  const binary = installExecutable(join(directory, "codex"));
+  assert.equal(
+    resolveCodexBinary(
+      { CODEX_BIN: "codex", PATH: directory },
+      fixture.home
+    ),
+    binary
+  );
+  assert.equal(
+    findCodexBinary(
+      { CODEX_BIN: "codex", PATH: directory },
+      fixture.home
+    ),
+    binary
+  );
+});
+
+test("a version-managed Codex CLI is found when PATH carries no nvm", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const older = installExecutable(
+    join(fixture.home, ".nvm", "versions", "node", "v24.11.0", "bin", "codex")
+  );
+  const newer = installExecutable(
+    join(fixture.home, ".nvm", "versions", "node", "v25.0.0", "bin", "codex")
+  );
+  assert.equal(
+    resolveCodexBinary(
+      { PATH: join(fixture.home, "empty") },
+      fixture.home
+    ),
+    newer
+  );
+  assert.equal(
+    findCodexBinary(
+      { PATH: join(fixture.home, "empty") },
+      fixture.home
+    ),
+    newer
+  );
+  assert.equal(findNvmBinary("codex", fixture.home), newer);
+  assert.notEqual(newer, older);
+});
+
+test("a missing Codex CLI is reported as absent rather than guessed", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  assert.equal(findCodexBinary({ PATH: "" }, fixture.home), null);
+  assert.throws(
+    () => resolveCodexBinary({ PATH: "" }, fixture.home),
+    /Codex CLI not found/
   );
 });

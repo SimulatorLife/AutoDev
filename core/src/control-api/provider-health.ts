@@ -1,14 +1,56 @@
-import type { ControlApiProviderHealth } from "./types.ts";
+import type { ControlApiProviderHealth, ControlApiSubproviderQuota } from "./types.ts";
 
 export type ProviderHealthReadiness = "ready" | "unavailable" | "not-observed";
 
-/**
- * Derive provider readiness only from Runtime evidence: a successful request,
- * a passing operator check, or a live quota observation with remaining usage,
- * that is not superseded by a later failure (of a request or of a check), an
- * exhausted quota state, or an active provider-wide cooldown. A configured
- * route with no successful observation is not proof of health.
- */
+function isFailureOtherPoolOnly(
+  health: ControlApiProviderHealth,
+  pools: readonly ControlApiSubproviderQuota[] | undefined
+): boolean {
+  if (!Array.isArray(pools) || pools.length === 0) return false;
+  const failedPool =
+    health.lastFailure?.pool ??
+    (health.lastFailure?.model
+      ? (pools.find((pool) => pool.models.includes(health.lastFailure!.model!))
+          ?.pool ?? null)
+      : null);
+  if (failedPool == null) return false;
+  return pools.some(
+    (pool) =>
+      pool.pool !== failedPool &&
+      (pool.status === "available" ||
+        pool.status === "warning" ||
+        pool.status === "unlimited") &&
+      !pool.cooldown &&
+      !health.poolCooldowns?.[pool.pool]
+  );
+}
+
+function isFailureExpiredRateLimit(
+  health: ControlApiProviderHealth,
+  lastSuccessAt: number
+): boolean {
+  if (lastSuccessAt === Number.NEGATIVE_INFINITY) return false;
+  const failureClass = health.lastFailure?.failureClass ?? "";
+  const isRateLimit =
+    failureClass === "quota_exhausted" ||
+    failureClass === "session_limit" ||
+    failureClass === "throttled" ||
+    failureClass === "rate_limit" ||
+    failureClass === "overloaded" ||
+    failureClass === "cooldown" ||
+    failureClass === "transient";
+  if (!isRateLimit) return false;
+  const hasActiveCooldown =
+    health.cooldown !== null ||
+    Boolean(
+      health.poolCooldowns && Object.keys(health.poolCooldowns).length > 0
+    ) ||
+    Boolean(
+      health.modelCooldowns && Object.keys(health.modelCooldowns).length > 0
+    );
+  return !hasActiveCooldown;
+}
+
 export function providerHealthReadiness(
   health: ControlApiProviderHealth | null
 ): ProviderHealthReadiness {
@@ -48,34 +90,11 @@ export function providerHealthReadiness(
     check?.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY,
     quotaAvailableAt
   );
-  const failureIsOtherPoolOnly =
-    health.lastFailure?.pool != null &&
-    Array.isArray(quota?.pools) &&
-    quota.pools.some(
-      (pool) =>
-        pool.pool !== health.lastFailure?.pool &&
-        (pool.status === "available" ||
-          pool.status === "warning" ||
-          pool.status === "unlimited") &&
-        !pool.cooldown &&
-        !health.poolCooldowns?.[pool.pool]
-    );
-  const isRateLimitFailureClass =
-    health.lastFailure?.failureClass === "quota_exhausted" ||
-    health.lastFailure?.failureClass === "session_limit" ||
-    health.lastFailure?.failureClass === "throttled";
-  const hasAnyActiveCooldown =
-    health.cooldown !== null ||
-    Boolean(
-      health.poolCooldowns && Object.keys(health.poolCooldowns).length > 0
-    ) ||
-    Boolean(
-      health.modelCooldowns && Object.keys(health.modelCooldowns).length > 0
-    );
-  const failureIsExpiredRateLimit =
-    isRateLimitFailureClass &&
-    !hasAnyActiveCooldown &&
-    lastSuccessAt > Number.NEGATIVE_INFINITY;
+  const failureIsOtherPoolOnly = isFailureOtherPoolOnly(health, quota?.pools);
+  const failureIsExpiredRateLimit = isFailureExpiredRateLimit(
+    health,
+    lastSuccessAt
+  );
   const lastFailureAt = Math.max(
     health.lastFailure === null ||
       failureIsOtherPoolOnly ||
@@ -92,10 +111,6 @@ export function providerHealthReadiness(
   return lastFailureAt > lastSuccessAt ? "unavailable" : "ready";
 }
 
-/**
- * Milliseconds for an ISO time, or `invalid` when it is absent or unreadable.
- * An unreadable failure time counts as the latest evidence, as it always has.
- */
 function timestamp(
   value: string | null,
   invalid: number = Number.NEGATIVE_INFINITY

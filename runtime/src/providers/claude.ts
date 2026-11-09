@@ -25,8 +25,6 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
-import { homedir } from "node:os";
-import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
@@ -43,6 +41,7 @@ import {
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { resolveClaudeBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,
@@ -121,9 +120,10 @@ const CLAUDE_TIMEOUT_SECONDS = Number.parseFloat(
 const CLAUDE_PARK_SECONDS = Number.parseFloat(
   process.env.CLAUDE_CODE_BRIDGE_PARK_SECONDS ?? "1800"
 );
-const CLI =
-  process.env.CLAUDE_BIN ??
-  path.join(process.env.HOME ?? homedir(), ".local/bin/claude");
+// The bridge spawns the CLI this resolves, and the Runtime reads this CLI's
+// version for the Console; both name the same file, so both resolve it in
+// one place.
+const CLI = resolveClaudeBinary();
 const DEFAULT_CLAUDE_MODEL = "sonnet";
 const DEFAULT_CLAUDE_EFFORT = "medium";
 // The only built-in tools the CLI ever keeps, and only when Codex offered its

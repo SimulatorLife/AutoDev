@@ -15,6 +15,7 @@ import {
   fetchModels,
   fetchProviderModelDiscovery,
   fetchProviders,
+  fetchProviderVersions,
   fetchRuntime
 } from "../../src/lib/server/control-api.ts";
 import {
@@ -49,13 +50,19 @@ export default async function ProvidersPage({
   }
   const query = (await searchParams) ?? {};
   const tab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
-  const [providersResult, modelsResult, discoveryResult, runtimeResult] =
-    await Promise.all([
-      fetchProviders(config),
-      tab === "models" ? fetchModels(config) : Promise.resolve(null),
-      fetchProviderModelDiscovery(config),
-      fetchRuntime(config)
-    ]);
+  const [
+    providersResult,
+    modelsResult,
+    discoveryResult,
+    runtimeResult,
+    versionsResult
+  ] = await Promise.all([
+    fetchProviders(config),
+    tab === "models" ? fetchModels(config) : Promise.resolve(null),
+    fetchProviderModelDiscovery(config),
+    fetchRuntime(config),
+    fetchProviderVersions(config)
+  ]);
   if (providersResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -92,6 +99,13 @@ export default async function ProvidersPage({
         discoveryResult.kind === "ok"
           ? { status: "available", data: discoveryResult.data }
           : { status: "unavailable", message: discoveryResult.message },
+      // The CLI versions are their own read: a Runtime that does not publish
+      // them still answers the providers contract, so a missing version is
+      // reported in the rows rather than failing the page.
+      cliVersions:
+        versionsResult.kind === "ok"
+          ? { status: "available", data: versionsResult.data }
+          : { status: "unavailable", message: versionsResult.message },
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       activeTab: tab,
       controlFailed: isControlFailure(query.control),

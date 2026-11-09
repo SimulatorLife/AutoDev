@@ -56,6 +56,10 @@ import {
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
+import {
+  parseCodexResponseRateLimitHeaders,
+  setCachedProviderQuota
+} from "../providers/quota-discovery.ts";
 import { recordMcpExposure } from "./correlation.ts";
 import {
   currentRouterMemoryMode,
@@ -69,6 +73,7 @@ import {
   bufferedEnvelope,
   collectToolCallIds,
   countToolCallsInResponse,
+  estimatePayloadInputTokens,
   processSseEvent,
   rewriteResponseValue,
   type RouterProviderRouteLike,
@@ -85,12 +90,14 @@ import {
   noteBridgeRequest,
   noteBridgeSession,
   noteOrchestratorSession,
+  noteSubagentSession,
   ORCHESTRATOR_AGENT_ROLE,
   orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
   SESSION_ID_HEADER,
-  SESSION_SCOPE_HEADER
+  SESSION_SCOPE_HEADER,
+  subagentProviderForSession
 } from "./subagents.ts";
 import {
   endAttemptSpan,
@@ -105,11 +112,6 @@ import {
   UNATTRIBUTED_DIMENSION,
   usageOrigin
 } from "./usage.ts";
-import {
-  getCachedProviderQuota,
-  parseCodexResponseRateLimitHeaders,
-  setCachedProviderQuota
-} from "../providers/quota-discovery.ts";
 
 const CODEX_HOME =
   process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
@@ -1015,6 +1017,7 @@ function flushSseBuffer(args: {
   isWritable: () => boolean;
   safeWrite: (chunk: string | Uint8Array) => boolean;
   publicModel: string;
+  minimumInputTokens?: number;
   seenToolCalls: Set<string>;
   toolCallIds: Set<string>;
   streamState: {
@@ -1043,6 +1046,9 @@ function flushSseBuffer(args: {
     // three passes over the same bytes -- see processSseEvent.
     const processed = processSseEvent(event, {
       publicModel: args.publicModel,
+      ...(args.minimumInputTokens !== undefined
+        ? { minimumInputTokens: args.minimumInputTokens }
+        : {}),
       seenToolCalls: args.seenToolCalls,
       onParsed: (parsed) =>
         applyParsedSseEvent(
@@ -1062,6 +1068,9 @@ function flushSseBuffer(args: {
   if (args.flush && working && args.isWritable()) {
     const processed = processSseEvent(working, {
       publicModel: args.publicModel,
+      ...(args.minimumInputTokens !== undefined
+        ? { minimumInputTokens: args.minimumInputTokens }
+        : {}),
       seenToolCalls: args.seenToolCalls,
       onParsed: (parsed) =>
         applyParsedSseEvent(
@@ -1181,7 +1190,8 @@ export async function writeResponseStream(
   onHeartbeat: (() => void) | null = null,
   clientSignal: AbortSignal | null = null,
   replayable = false,
-  attemptTelemetry?: { span?: Span; statusCode?: number }
+  attemptTelemetry?: { span?: Span; statusCode?: number },
+  minimumInputTokens?: number
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
@@ -1262,6 +1272,7 @@ export async function writeResponseStream(
       isWritable,
       safeWrite,
       publicModel,
+      ...(minimumInputTokens !== undefined ? { minimumInputTokens } : {}),
       seenToolCalls,
       toolCallIds,
       streamState,
@@ -1590,10 +1601,7 @@ export async function fetchUpstream(
     throw error;
   }
   if (route.provider === "codex" && upstream.headers) {
-    const codexQuota = parseCodexResponseRateLimitHeaders(
-      upstream.headers,
-      getCachedProviderQuota("codex")
-    );
+    const codexQuota = parseCodexResponseRateLimitHeaders(upstream.headers);
     if (codexQuota) {
       setCachedProviderQuota("codex", codexQuota, { syncCooldowns: true });
     }
@@ -1668,6 +1676,14 @@ export function errorBody(
   };
 }
 
+function bridgeMinimumInputTokens(
+  provider: string,
+  payload: Record<string, unknown>
+): number {
+  if (provider === "codex" || provider === "minimax") return 0;
+  return estimatePayloadInputTokens(payload);
+}
+
 export async function writeSuccessfulResponse(
   response: ServerResponse,
   route: ProviderRoute,
@@ -1677,7 +1693,8 @@ export async function writeSuccessfulResponse(
   requestId: string,
   resolvedModel: string,
   onHeartbeat: (() => void) | null = null,
-  clientSignal: AbortSignal | null = null
+  clientSignal: AbortSignal | null = null,
+  minimumInputTokens?: number
 ): Promise<StreamWriteResult> {
   const written = await writeProviderResponse(
     response,
@@ -1688,7 +1705,8 @@ export async function writeSuccessfulResponse(
     requestId,
     resolvedModel,
     onHeartbeat,
-    clientSignal
+    clientSignal,
+    minimumInputTokens
   );
   // Whoever asked for these calls gets their results: see tool-call-ownership.ts.
   TOOL_CALL_OWNERSHIP.record(written.toolCallIds, route.provider);
@@ -1705,6 +1723,7 @@ interface ProviderResponseContext {
   requestId: string;
   resolvedModel: string;
   responseHeaders: Record<string, string>;
+  minimumInputTokens?: number;
 }
 
 function emptyBufferedResult(failed = false): StreamWriteResult {
@@ -1738,7 +1757,14 @@ async function writeStreamedProviderResponse(
   onHeartbeat: (() => void) | null,
   clientSignal: AbortSignal | null
 ): Promise<StreamWriteResult> {
-  const { response, route, result, publicModel, responseHeaders } = context;
+  const {
+    response,
+    route,
+    result,
+    publicModel,
+    responseHeaders,
+    minimumInputTokens
+  } = context;
   const upstream = result.upstream;
   response.writeHead(upstream.status, {
     ...responseHeaders,
@@ -1759,7 +1785,8 @@ async function writeStreamedProviderResponse(
       ...(result.attemptStatusCode === undefined
         ? {}
         : { statusCode: result.attemptStatusCode })
-    }
+    },
+    minimumInputTokens
   );
   if (!response.writableEnded && !response.destroyed && !response.closed) {
     try {
@@ -1775,7 +1802,13 @@ function writeCodexBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const { response, result, publicModel, responseHeaders } = context;
+  const {
+    response,
+    result,
+    publicModel,
+    responseHeaders,
+    minimumInputTokens
+  } = context;
   // One pass over the body answers all three questions the buffered path used to
   // ask with three separate parses.
   const summary = summarizeBufferedSse(body);
@@ -1788,7 +1821,8 @@ function writeCodexBufferedResponse(
   const toolCalls = summary.toolCalls;
   const parsed = rewriteResponseValue(
     bufferedEnvelope(summary),
-    publicModel
+    publicModel,
+    minimumInputTokens
   ) as Record<string, unknown>;
   sendJson(response, result.upstream.status, parsed, responseHeaders);
   const incomplete = incompleteFromResponse(parsed);
@@ -1823,7 +1857,13 @@ function writeJsonBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const { response, result, publicModel, responseHeaders } = context;
+  const {
+    response,
+    result,
+    publicModel,
+    responseHeaders,
+    minimumInputTokens
+  } = context;
   try {
     const parsed: unknown = JSON.parse(body);
     const responseObject =
@@ -1836,10 +1876,11 @@ function writeJsonBufferedResponse(
       responseWasNotCompleted(responseObject)
     );
     const toolCalls = countToolCallsInResponse(parsed);
-    const rewritten = rewriteResponseValue(parsed, publicModel) as Record<
-      string,
-      unknown
-    >;
+    const rewritten = rewriteResponseValue(
+      parsed,
+      publicModel,
+      minimumInputTokens
+    ) as Record<string, unknown>;
     sendJson(response, result.upstream.status, rewritten, responseHeaders);
     const incomplete = incompleteFromResponse(rewritten);
     const toolCallIds = new Set<string>();
@@ -1866,7 +1907,8 @@ async function writeProviderResponse(
   requestId: string,
   resolvedModel: string,
   onHeartbeat: (() => void) | null,
-  clientSignal: AbortSignal | null = null
+  clientSignal: AbortSignal | null = null,
+  minimumInputTokens?: number
 ): Promise<StreamWriteResult> {
   const context: ProviderResponseContext = {
     response,
@@ -1875,6 +1917,7 @@ async function writeProviderResponse(
     publicModel,
     requestId,
     resolvedModel,
+    ...(minimumInputTokens !== undefined ? { minimumInputTokens } : {}),
     responseHeaders: {
       "x-autodev-provider": route.provider,
       "x-autodev-model": resolvedModel,
@@ -2656,7 +2699,8 @@ async function handleConcreteSuccess(
     ctx.requestId,
     ctx.modelName,
     () => getDefaultUsageTracker().activityTracker?.touch(ctx.activitySubject),
-    ctx.clientSignal
+    ctx.clientSignal,
+    bridgeMinimumInputTokens(ctx.route.provider, ctx.payload)
   );
   if (responseResult.clientDisconnected) {
     recordConcreteAbort(ctx);
@@ -3025,6 +3069,12 @@ function emitFallbackBridgeContext(
       workspace: ctx.workspace?.key ?? null,
       requestId: ctx.requestId
     });
+  } else if (ctx.role) {
+    noteSubagentSession(ctx.sessionKey, ctx.role, route.provider, {
+      model: route.model,
+      workspace: ctx.workspace?.key ?? null,
+      requestId: ctx.requestId
+    });
   }
 }
 
@@ -3247,7 +3297,14 @@ export async function proxyFallbackChain(
       )
         return;
       if (
-        await runExhaustionWait(fbCtx, candidates, state, tryCandidate, served)
+        await runExhaustionWait(
+          fbCtx,
+          candidates,
+          state,
+          failures,
+          tryCandidate,
+          served
+        )
       )
         return;
       finalizeFallbackFailure(
@@ -3513,7 +3570,7 @@ async function tryPrimaryRoute(
     );
   }
   let cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
-  if (cooldown && cooldown.kind !== "probe") {
+  if (cooldown && cooldown.kind !== "config") {
     const stickyWaitMs = canWaitOutStickyCooldown(
       ctx,
       candidates,
@@ -3569,9 +3626,7 @@ async function tryPrimaryRoute(
         !ctx.clientSignal?.aborted &&
         !ctx.response.headersSent &&
         !COOLDOWNS.isCooling(route.provider, Date.now(), route.model)
-      ) {
-        if (served(await tryCandidate(route, "primary"))) return true;
-      }
+       && served(await tryCandidate(route, "primary"))) return true;
     }
   }
   return tryPrimaryRoute(
@@ -3706,6 +3761,7 @@ async function runExhaustionWait(
   ctx: FallbackContext,
   candidates: Candidate[] | OrchestratorCandidate[],
   state: { deadlineReached: boolean; lastResortAttempts: number },
+  failures: CandidateFailures,
   tryCandidate: (
     route: Candidate,
     selection: string
@@ -3723,6 +3779,8 @@ async function runExhaustionWait(
   const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
   const waitCandidates = candidates.filter((route) => {
     if (ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) !== null)
+      return false;
+    if (isRequestRefusalClass(failures.observed.get(route.provider)))
       return false;
     const cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
     if (!cooldown) return true;
@@ -3805,7 +3863,7 @@ async function tryExhaustionRoute(
   }
   const outcome = await tryCandidate(route, "exhaustion_wait");
   if (served(outcome)) return true;
-  if (outcome !== "unavailable") return false;
+  if (outcome !== "unavailable" && outcome !== "fallback") return false;
   return tryExhaustionRoute(waitCandidates, index + 1, tryCandidate, served);
 }
 
@@ -4031,7 +4089,8 @@ async function handleCandidateSuccess(
           getDefaultConcurrencyManager().touchOpenSubagentSlots(ctx.sessionKey);
         }
       },
-      ctx.clientSignal
+      ctx.clientSignal,
+      bridgeMinimumInputTokens(route.provider, ctx.payload)
     );
     if (responseResult.clientDisconnected) {
       recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
@@ -4269,14 +4328,22 @@ export function proxyRoleResponse(
   clientSignal: AbortSignal | null = null,
   session: RouterSession | null = null
 ): Promise<void> {
+  const sessionKey = session?.key ?? null;
+  const threadId = session?.thread ?? null;
   const threadSubject =
     session?.thread && session.thread !== session.key
       ? `thread:${session.thread}`
       : null;
   const preferred =
     TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
+    subagentProviderForSession(sessionKey, role) ??
+    (threadId ? subagentProviderForSession(threadId, role) : null) ??
     (threadSubject
       ? (getDefaultUsageTracker().activityTracker?.getRecord(threadSubject)
+          ?.provider ?? null)
+      : null) ??
+    (sessionKey
+      ? (getDefaultUsageTracker().activityTracker?.getRecord(sessionKey)
           ?.provider ?? null)
       : null);
   return proxyFallbackChain(

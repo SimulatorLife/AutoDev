@@ -80,6 +80,215 @@ function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
   return false;
 }
 
+export const DEFAULT_MAX_MINIMAX_INPUT_CHARS = 3_000_000;
+
+function configuredMaxMinimaxInputChars(): number {
+  const raw = Number.parseInt(process.env.MINIMAX_MAX_INPUT_CHARS ?? "");
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_MAX_MINIMAX_INPUT_CHARS;
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSyntheticBridgeReasoningItem(item: unknown): boolean {
+  if (!isJsonRecord(item) || item.type !== "reasoning") return false;
+  if (typeof item.id !== "string" || !item.id.startsWith("rs_")) return false;
+  return (
+    typeof item.encrypted_content !== "string" ||
+    item.encrypted_content.length === 0
+  );
+}
+
+function isEmptyAssistantMessageItem(item: unknown): boolean {
+  if (!isJsonRecord(item)) return false;
+  if (item.type !== "message" || item.role !== "assistant") return false;
+  if (!Array.isArray(item.content) || item.content.length === 0) return false;
+  return item.content.every(
+    (part) =>
+      isJsonRecord(part) &&
+      part.type === "output_text" &&
+      typeof part.text === "string" &&
+      part.text.trim().length === 0
+  );
+}
+
+function estimateMinimaxValueChars(value: unknown): number {
+  if (value === null || value === undefined) return 4;
+  if (typeof value === "string") return value.length + 2;
+  if (typeof value === "number" || typeof value === "boolean") return 6;
+  if (Array.isArray(value)) {
+    let total = 2;
+    for (const child of value) total += estimateMinimaxValueChars(child) + 1;
+    return total;
+  }
+  if (isJsonRecord(value)) {
+    let total = 2;
+    for (const [key, child] of Object.entries(value)) {
+      total += key.length + 4 + estimateMinimaxValueChars(child);
+    }
+    return total;
+  }
+  return 0;
+}
+
+function isToolCallItem(item: unknown): item is JsonRecord {
+  return (
+    isJsonRecord(item) &&
+    (item.type === "function_call" || item.type === "custom_tool_call") &&
+    typeof item.call_id === "string" &&
+    item.call_id.length > 0
+  );
+}
+
+function isToolOutputItem(item: unknown): item is JsonRecord {
+  return (
+    isJsonRecord(item) &&
+    (item.type === "function_call_output" ||
+      item.type === "custom_tool_call_output") &&
+    typeof item.call_id === "string" &&
+    item.call_id.length > 0
+  );
+}
+
+function truncateOversizedToolOutput(
+  item: unknown,
+  maxOutputChars: number
+): unknown {
+  if (!isToolOutputItem(item) || typeof item.output !== "string") return item;
+  if (item.output.length <= maxOutputChars) return item;
+  const keepHalf = Math.max(256, Math.floor(maxOutputChars / 2) - 64);
+  const omitted = item.output.length - keepHalf * 2;
+  return {
+    ...item,
+    output: `${item.output.slice(0, keepHalf)}\n...[truncated ${omitted} chars for context window]...\n${item.output.slice(-keepHalf)}`
+  };
+}
+
+/**
+ * Strip bridge-only synthetic items (unencrypted `rs_` reasoning summaries and
+ * empty assistant placeholder messages) and bound oversized replayed histories
+ * so failover from a long stateful CLI session does not exceed MiniMax's
+ * context window (`invalid params, context window exceeds limit (2013)`).
+ */
+export function compactMinimaxInputItems(
+  input: unknown,
+  maxInputChars: number = configuredMaxMinimaxInputChars()
+): unknown {
+  if (!Array.isArray(input) || input.length <= 1) return input;
+  const filtered = input.filter(
+    (item) =>
+      !isSyntheticBridgeReasoningItem(item) && !isEmptyAssistantMessageItem(item)
+  );
+  const working = filtered.length > 0 ? filtered : input;
+  const changedByFilter = working.length !== input.length;
+
+  const sizes = working.map(estimateMinimaxValueChars);
+  const totalChars = sizes.reduce((sum, n) => sum + n, 2);
+  if (totalChars <= maxInputChars) {
+    return changedByFilter ? working : input;
+  }
+
+  const maxPrefixChars = Math.floor(maxInputChars * 0.15);
+  let prefixEnd = 0;
+  let prefixChars = 0;
+  let sawFirstUser = false;
+  while (prefixEnd < working.length - 1) {
+    const item = working[prefixEnd];
+    const size = sizes[prefixEnd] ?? 0;
+    const isSetup =
+      isJsonRecord(item) &&
+      (item.role === "developer" ||
+        item.role === "system" ||
+        item.type === "additional_tools" ||
+        (!sawFirstUser && item.role === "user"));
+    if (!isSetup || prefixChars + size > maxPrefixChars) break;
+    if (isJsonRecord(item) && item.role === "user") sawFirstUser = true;
+    prefixChars += size;
+    prefixEnd += 1;
+  }
+
+  const noticeReserveChars = 256;
+  const maxSingleOutputChars = Math.max(
+    4096,
+    Math.floor((maxInputChars - prefixChars - noticeReserveChars) * 0.25)
+  );
+  const remainingBudget = Math.max(
+    1024,
+    maxInputChars - prefixChars - noticeReserveChars
+  );
+
+  let suffixStart = working.length;
+  let suffixChars = 0;
+  for (let i = working.length - 1; i >= prefixEnd; i -= 1) {
+    const candidate = truncateOversizedToolOutput(
+      working[i],
+      maxSingleOutputChars
+    );
+    const size =
+      candidate === working[i]
+        ? (sizes[i] ?? 0)
+        : estimateMinimaxValueChars(candidate);
+    if (suffixStart < working.length && suffixChars + size > remainingBudget) {
+      break;
+    }
+    suffixChars += size;
+    suffixStart = i;
+  }
+
+  // Include any preceding tool calls that pair with tool outputs near the start
+  // of the suffix when they sit immediately before suffixStart and fit.
+  const prefixItems = working.slice(0, prefixEnd);
+  const middleAdditionalTools = working
+    .slice(prefixEnd, suffixStart)
+    .filter(
+      (item) => isJsonRecord(item) && item.type === "additional_tools"
+    );
+  const rawSuffix = working
+    .slice(suffixStart)
+    .map((item) => truncateOversizedToolOutput(item, maxSingleOutputChars));
+
+  const callIdsInKept = new Set<string>();
+  for (const item of prefixItems) {
+    if (isToolCallItem(item)) callIdsInKept.add(String(item.call_id));
+  }
+  for (const item of rawSuffix) {
+    if (isToolCallItem(item)) callIdsInKept.add(String(item.call_id));
+  }
+  const pairedSuffix = rawSuffix.filter((item) => {
+    if (!isToolOutputItem(item)) return true;
+    return callIdsInKept.has(String(item.call_id));
+  });
+
+  const omittedCount =
+    working.length -
+    prefixItems.length -
+    middleAdditionalTools.length -
+    pairedSuffix.length;
+  if (omittedCount <= 0) {
+    return [...prefixItems, ...middleAdditionalTools, ...pairedSuffix];
+  }
+
+  const guardNotice: JsonRecord = {
+    type: "message",
+    role: "developer",
+    content: [
+      {
+        type: "input_text",
+        text: `[Context window guard: omitted ${omittedCount} earlier history items so this turn fits within the model context window.]`
+      }
+    ]
+  };
+  return [
+    ...prefixItems,
+    ...middleAdditionalTools,
+    guardNotice,
+    ...pairedSuffix
+  ];
+}
+
 // Codex duplicates its turn metadata -- absolute workspace paths, git remote
 // URLs, commit hashes, installation and session ids -- into `client_metadata`
 // in the request body. It is Codex-internal correlation that the MiniMax
@@ -91,6 +300,9 @@ function rewriteOutboundPayload(
   if (payload === null || typeof payload !== "object" || Array.isArray(payload))
     return payload;
   const { client_metadata: _clientMetadata, ...rewritten } = payload;
+  if (Array.isArray(rewritten.input)) {
+    rewritten.input = compactMinimaxInputItems(rewritten.input);
+  }
   return rewritten;
 }
 

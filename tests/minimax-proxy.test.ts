@@ -1135,3 +1135,133 @@ test("an image the user attached reaches MiniMax with its bytes intact", async (
     "the proxy must forward the image the user attached, byte for byte"
   );
 });
+
+test("compactMinimaxInputItems strips synthetic bridge reasoning and empty assistant messages while preserving MiniMax reasoning", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+
+  const items = [
+    {
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: "System setup" }]
+    },
+    {
+      type: "reasoning",
+      id: "rs_bridge_synthetic_1",
+      summary: [{ type: "summary_text", text: "Ran command" }]
+    },
+    {
+      type: "reasoning",
+      id: "06f8b0803f8f804f65cab7da91194351_rs",
+      summary: [{ type: "summary_text", text: "MiniMax native reasoning" }]
+    },
+    {
+      type: "message",
+      role: "assistant",
+      id: "msg_empty_1",
+      content: [{ type: "output_text", text: "   " }]
+    },
+    {
+      type: "message",
+      role: "assistant",
+      id: "msg_non_empty_1",
+      content: [{ type: "output_text", text: "Actual answer" }]
+    }
+  ];
+
+  const compacted = compactMinimaxInputItems(items, 3_000_000) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(compacted.length, 3);
+  assert.equal(compacted[0]?.type, "message");
+  assert.equal(
+    (compacted[1] as { id?: string })?.id,
+    "06f8b0803f8f804f65cab7da91194351_rs"
+  );
+  assert.equal((compacted[2] as { id?: string })?.id, "msg_non_empty_1");
+});
+
+test("compactMinimaxInputItems bounds oversized input histories while preserving setup prefix, additional_tools, and call_id pairing", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+
+  const items: Array<Record<string, unknown>> = [
+    {
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: "Developer instructions" }]
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Initial user goal" }]
+    },
+    {
+      type: "additional_tools",
+      tools: [{ type: "custom", name: "exec" }]
+    }
+  ];
+
+  for (let i = 1; i <= 20; i += 1) {
+    items.push({
+      type: "custom_tool_call",
+      id: `ctc_${i}`,
+      call_id: `call_${i}`,
+      name: "exec",
+      input: `console.log(${i}); // ${"a".repeat(2_000)}`
+    });
+    items.push({
+      type: "custom_tool_call_output",
+      call_id: `call_${i}`,
+      output: `output_${i}_${"b".repeat(2_000)}`
+    });
+  }
+
+  // Budget of 25,000 chars cannot fit all 20 turns (~80,000 chars)
+  const compacted = compactMinimaxInputItems(items, 25_000) as Array<
+    Record<string, unknown>
+  >;
+
+  assert.ok(
+    JSON.stringify(compacted).length <= 26_000,
+    "compacted input must stay within budget"
+  );
+  // Preserves prefix + additional_tools
+  assert.equal(compacted[0]?.role, "developer");
+  assert.equal(compacted[1]?.role, "user");
+  assert.ok(
+    compacted.some((item) => item.type === "additional_tools"),
+    "must preserve additional_tools declarations"
+  );
+  assert.ok(
+    compacted.some(
+      (item) =>
+        item.type === "message" &&
+        item.role === "developer" &&
+        JSON.stringify(item.content).includes("Context window guard: omitted")
+    ),
+    "must insert developer context-window guard notice when middle turns are omitted"
+  );
+
+  // Every custom_tool_call and custom_tool_call_output in compacted must have its paired call_id
+  const callIds = new Set(
+    compacted
+      .filter((item) => item.type === "custom_tool_call")
+      .map((item) => String(item.call_id))
+  );
+  const outputIds = new Set(
+    compacted
+      .filter((item) => item.type === "custom_tool_call_output")
+      .map((item) => String(item.call_id))
+  );
+  assert.deepEqual(
+    callIds,
+    outputIds,
+    "every retained tool call must retain its matching tool output without orphaned call_ids"
+  );
+  assert.ok(
+    callIds.has("call_20"),
+    "the most recent tool call pair must be retained"
+  );
+});

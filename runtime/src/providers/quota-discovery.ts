@@ -16,6 +16,10 @@ import type {
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
+import {
+  findAgyBinary,
+  findMiniMaxBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
 import { loadCodexAuth } from "../router/proxy.ts";
 
 const execFileAsync = promisify(execFile);
@@ -124,8 +128,6 @@ function windowLabelFromKind(
       return "Weekly limit";
     case "monthly":
       return "Monthly limit";
-    case "credits":
-      return "Credits";
     default:
       return fallback;
   }
@@ -565,7 +567,6 @@ export function parseCopilotUserQuota(
       remainingPercent,
       used,
       limit: entitlement,
-      remaining,
       unit: "requests",
       resetsAt
     });
@@ -885,7 +886,7 @@ async function discoverMinimaxQuota(
   nowMs: number
 ): Promise<ControlApiProviderQuota | null> {
   try {
-    const { stdout } = await execFileAsync("mmx", ["quota", "--output", "json"], {
+    const { stdout } = await execFileAsync(findMiniMaxBinary() ?? "mmx", ["quota", "--output", "json"], {
       timeout: QUOTA_DISCOVERY_TIMEOUT_MS,
       env: cliSearchEnv()
     });
@@ -900,9 +901,9 @@ async function discoverCodexQuota(
 ): Promise<ControlApiProviderQuota | null> {
   try {
     const auth = await loadCodexAuth();
-    if (!auth?.accessToken) return null;
+    if (!auth?.token) return null;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${auth.accessToken}`,
+      Authorization: `Bearer ${auth.token}`,
       Accept: "application/json"
     };
     if (auth.accountId) {
@@ -997,7 +998,7 @@ async function discoverAntigravityQuota(
     let response = await fetchAntigravityModelsWithToken(token);
     if (response.status === 401 || response.status === 403) {
       // Trigger `agy models` once so the CLI refreshes its stored OAuth token.
-      await execFileAsync("agy", ["models"], {
+      await execFileAsync(findAgyBinary() ?? "agy", ["models"], {
         timeout: QUOTA_DISCOVERY_TIMEOUT_MS,
         env: cliSearchEnv()
       }).catch(() => null);
@@ -1129,4 +1130,100 @@ export async function refreshAllProviderQuotas(
     })
   );
   return Object.fromEntries(results);
+}
+
+
+export const DEFAULT_QUOTA_PROVIDERS = [
+  "antigravity",
+  "codex",
+  "minimax",
+  "copilot",
+  "claude"
+] as const;
+
+export const PROVIDER_QUOTA_REFRESH_INTERVAL_MS = 60_000;
+
+export interface ProviderQuotaDiscoveryService {
+  start(): void;
+  stop(): void;
+  refresh(): Promise<Record<string, ControlApiProviderQuota | null>>;
+  refreshProvider(provider: string): Promise<ControlApiProviderQuota | null>;
+  snapshot(): Record<string, ControlApiProviderQuota | null>;
+}
+
+export function createProviderQuotaDiscoveryService(
+  options: {
+    providers?: readonly string[];
+    intervalMs?: number;
+    now?: () => number;
+  } = {}
+): ProviderQuotaDiscoveryService {
+  const providers = options.providers ?? DEFAULT_QUOTA_PROVIDERS;
+  const intervalMs = options.intervalMs ?? PROVIDER_QUOTA_REFRESH_INTERVAL_MS;
+  const now = options.now ?? Date.now;
+  let timer: NodeJS.Timeout | null = null;
+  let running = false;
+  let inFlight: Promise<Record<string, ControlApiProviderQuota | null>> | null =
+    null;
+
+  const refresh = async (): Promise<
+    Record<string, ControlApiProviderQuota | null>
+  > => {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      try {
+        const nowMs = now();
+        return await refreshAllProviderQuotas(providers, {
+          now: nowMs,
+          syncCooldowns: true
+        });
+      } finally {
+        inFlight = null;
+      }
+    })();
+    return inFlight;
+  };
+
+  const refreshProvider = (
+    provider: string
+  ): Promise<ControlApiProviderQuota | null> => {
+    const nowMs = now();
+    return discoverProviderQuota(provider, {
+      now: nowMs,
+      syncCooldowns: true
+    });
+  };
+
+  const snapshot = (): Record<string, ControlApiProviderQuota | null> => {
+    const nowMs = now();
+    const result: Record<string, ControlApiProviderQuota | null> = {};
+    for (const p of providers) {
+      result[p] = getCachedProviderQuota(p, nowMs);
+    }
+    return result;
+  };
+
+  return {
+    start(): void {
+      if (running) return;
+      running = true;
+      void refresh().catch(() => {});
+      timer = setInterval(() => {
+        void refresh().catch(() => {});
+      }, intervalMs);
+      if (timer.unref) {
+        timer.unref();
+      }
+    },
+    stop(): void {
+      running = false;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+    refresh,
+    refreshProvider,
+    snapshot
+  };
 }

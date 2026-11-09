@@ -20,12 +20,15 @@ import {
   getControlApiAvailability,
   handleControlApiRequest,
   setControlApiProviderCheckSource,
+  setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
   warmupDefaultPlaytestingRepository
 } from "../control-api/index.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
+import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import {
+  createProviderQuotaDiscoveryService,
   discoverProviderQuota,
   refreshAllProviderQuotas
 } from "../providers/quota-discovery.ts";
@@ -190,17 +193,29 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   if (modelDiscovery) {
     setControlApiProviderModelDiscoverySource(() => modelDiscovery.snapshot());
   }
+  // The CLI versions are read in the background for the same reason the model
+  // listings are: reading a version starts a process, and a Control API
+  // request must not wait on six CLIs to answer a question about six numbers.
+  const cliVersions = IS_MAIN ? createProviderCliVersionService() : null;
+  if (cliVersions) {
+    setControlApiProviderCliVersionSource(() => cliVersions.snapshot());
+    cliVersions.start();
+  }
+  const quotaDiscovery = IS_MAIN ? createProviderQuotaDiscoveryService() : null;
+  if (quotaDiscovery) {
+    quotaDiscovery.start();
+  }
   setControlApiProviderCheckSource((provider) =>
     checkProvider(
       provider,
       modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null,
-      IS_MAIN
-        ? (name) =>
+      quotaDiscovery
+        ? (name) => quotaDiscovery.refreshProvider(name)
+        : (name) =>
             discoverProviderQuota(name, {
               now: Date.now(),
               syncCooldowns: true
             })
-        : null
     )
   );
   const closePlaytestingSafely = (): Promise<void> => {
@@ -254,6 +269,9 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (controlServer?.listening) controlServer.close();
     modelDiscovery?.stop();
     if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);
+    cliVersions?.stop();
+    if (cliVersions) setControlApiProviderCliVersionSource(null);
+    quotaDiscovery?.stop();
     setControlApiProviderCheckSource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();

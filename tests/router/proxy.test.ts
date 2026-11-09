@@ -37,8 +37,8 @@ import {
 } from "@simulatorlife/autodev-runtime/router/server";
 import {
   noteOrchestratorSession,
-  resetSubagentTelemetry
-} from "@simulatorlife/autodev-runtime/router/subagents";
+  resetSubagentTelemetry,
+  subagentProviderForSession} from "@simulatorlife/autodev-runtime/router/subagents";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
@@ -1465,6 +1465,301 @@ test(
         "Provider-level Antigravity cooldown must remain null while first_party pool is available"
       );
     } finally {
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+
+test(
+  "proxyRoleResponse records subagent session and sticks to that provider across multi-turn requests",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    resetSubagentTelemetry();
+    const originalFetch = globalThis.fetch;
+    const saved = {
+      LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+      MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+    };
+    process.env.LITELLM_API_KEY = "claude-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+
+    const contactedUrls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      contactedUrls.push(String(input));
+      return jsonResponse({
+        id: "resp_subagent_ok",
+        status: "completed",
+        output: []
+      });
+    }) as typeof fetch;
+
+    try {
+      const session = {
+        key: "subagent-session-stickiness-1",
+        scope: "identified" as const,
+        thread: "subagent-session-stickiness-1"
+      };
+
+      // Turn 1
+      await proxyRoleResponse(
+        responseRecorder(),
+        "worker",
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-sub-turn-1",
+        null,
+        null,
+        null,
+        session
+      );
+      const responseCalls1 = contactedUrls.filter((u) => u.endsWith("/responses"));
+      assert.equal(responseCalls1.length, 1);
+      const firstUrl = responseCalls1[0];
+      const firstProvider = subagentProviderForSession(
+        "subagent-session-stickiness-1",
+        "worker"
+      );
+      assert.ok(firstProvider, "Turn 1 must record subagent session provider");
+
+      // Turn 2 in the same session without tool call ownership:
+      // must stick to the provider chosen on turn 1
+      contactedUrls.length = 0;
+      await proxyRoleResponse(
+        responseRecorder(),
+        "worker",
+        {
+          model: "autodev/worker",
+          input: [
+            {
+              type: "message",
+              role: "user",
+              content: "follow-up task"
+            }
+          ],
+          stream: false
+        },
+        false,
+        "req-sub-turn-2",
+        null,
+        null,
+        null,
+        session
+      );
+      const responseCalls2 = contactedUrls.filter((u) => u.endsWith("/responses"));
+      assert.equal(responseCalls2.length, 1);
+      assert.equal(
+        responseCalls2[0],
+        firstUrl,
+        "Turn 2 must reuse the same provider from Turn 1 rather than reshuffling"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      agentActivity.reset();
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "context-window overflow (2013) on a stateless fallback route is treated as unsupported_request and rescued by last-resort on the sticky bridge without cooling down the refusing provider",
+  { concurrency: false },
+  async () => {
+    // Regression for session 01a1bc3f-e5cf-7642-bfa0-34930eb04b1c:
+    // Antigravity had a brief probe_unavailable / transient cooldown blip and
+    // the router failed over to MiniMax, which returned HTTP 400
+    // "invalid params, context window exceeds limit (2013)". Previously that
+    // was treated as a terminal request_error and killed the orchestrator turn
+    // without running last_resort or exhaustion_wait on Antigravity.
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    const originalFetch = globalThis.fetch;
+    const saved = {
+      LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+      MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+    };
+    process.env.LITELLM_API_KEY = "shared-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+
+    const candidates = [
+      {
+        ...route("antigravity", "LITELLM_API_KEY"),
+        model: "gemini-3.8-flash-high"
+      },
+      { ...route("minimax", "MINIMAX_API_KEY"), model: "MiniMax-M3.1-Flash" }
+    ];
+
+    // Put Antigravity in a 60s transient cooldown (exceeding sticky wait so
+    // primary selection skips it and falls back to MiniMax).
+    const now = Date.now();
+    COOLDOWNS.cooldownProvider("antigravity", {
+      failureClass: "unavailable",
+      now
+    });
+    COOLDOWNS.cooldownProvider("antigravity", {
+      failureClass: "unavailable",
+      now
+    });
+
+    const responseCalls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      responseCalls.push(url);
+      if (url === "http://minimax.test/v1/responses") {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: "invalid params, context window exceeds limit (2013)",
+              type: "invalid_request_error",
+              code: "invalid_request_error"
+            }
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+      return jsonResponse({
+        id: "resp_rescued_by_last_resort",
+        status: "completed",
+        model: "gemini-3.8-flash-high",
+        output: []
+      });
+    }) as typeof fetch;
+
+    try {
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates,
+          preferredProvider: "antigravity",
+          role: "orchestrator",
+          subject: "the orchestrator",
+          sessionKey: "01a1bc3f-e5cf-7642-bfa0-34930eb04b1c",
+          session: {
+            key: "01a1bc3f-e5cf-7642-bfa0-34930eb04b1c",
+            scope: "identified",
+            thread: "01a1bc3f-e5cf-7642-bfa0-34930eb04b1c"
+          }
+        },
+        { model: "autodev/orchestrator", input: [], stream: false },
+        false,
+        "req-2013-rescue",
+        null,
+        null
+      );
+
+      assert.deepEqual(responseCalls, [
+        "http://minimax.test/v1/responses",
+        "http://antigravity.test/v1/responses"
+      ]);
+      assert.equal(response.statusCode, 200);
+      assert.match(response.body, /resp_rescued_by_last_resort/);
+      assert.equal(
+        COOLDOWNS.isCooling("minimax"),
+        false,
+        "a context-window refusal on an oversized transcript must not cool down MiniMax for normal requests"
+      );
+      assert.equal(
+        COOLDOWNS.isCooling("antigravity"),
+        false,
+        "the successful last-resort turn on Antigravity clears its transient cooldown"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      agentActivity.reset();
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "stateful/web bridge responses floor downstream usage.input_tokens to the wire prompt estimate so Codex auto-compaction triggers before context overflow",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    const originalFetch = globalThis.fetch;
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "shared-key";
+
+    const largeTranscriptText = "x".repeat(50_000);
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp_bridge_usage_floor",
+        status: "completed",
+        model: "gemini-3.8-flash-high",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 250,
+          total_tokens: 250
+        },
+        output: []
+      })) as typeof fetch;
+
+    try {
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates: [
+            {
+              ...route("antigravity", "LITELLM_API_KEY"),
+              model: "gemini-3.8-flash-high"
+            }
+          ],
+          role: "orchestrator",
+          subject: "the orchestrator"
+        },
+        {
+          model: "autodev/orchestrator",
+          instructions: "Orchestrator instructions",
+          input: [
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: largeTranscriptText }]
+            }
+          ],
+          stream: false
+        },
+        false,
+        "req-usage-floor",
+        null,
+        null
+      );
+
+      assert.equal(response.statusCode, 200);
+      const parsed = JSON.parse(response.body) as {
+        usage: {
+          input_tokens: number;
+          output_tokens: number;
+          total_tokens: number;
+        };
+      };
+      assert.ok(
+        parsed.usage.input_tokens >= 10_000,
+        `expected usage.input_tokens to be floored to wire transcript estimate (>= 10000), got ${parsed.usage.input_tokens}`
+      );
+      assert.equal(parsed.usage.output_tokens, 250);
+      assert.equal(
+        parsed.usage.total_tokens,
+        parsed.usage.input_tokens + parsed.usage.output_tokens
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      agentActivity.reset();
       COOLDOWNS.clearAll();
     }
   }

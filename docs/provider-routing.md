@@ -622,19 +622,60 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   `/providers/:provider/models/:model` (`ModelDetailView`).
   `providerHealthReadiness` in `@simulatorlife/autodev-core` keeps a multi-pool
   provider `ready` whenever at least one pool has remaining usage and is not in
-  cooldown, and does not leave a provider stuck in `unavailable` after a
-  rate-limit cooldown has already expired.
+  cooldown, resolves model-scoped failures to their owning pool (keeping
+  Antigravity ready when only its third-party Claude pool is exhausted), and
+  does not leave a provider stuck in `unavailable` after a rate-limit or
+  transient cooldown has expired. In addition, `createProviderQuotaDiscoveryService`
+  polls provider usage limits every 60s in the background, keeping positive
+  readiness evidence fresh.
+
+- **Subagents and orchestrators stay with their session provider across turns.**
+  Both orchestrator sessions (`noteOrchestratorSession`) and subagent sessions
+  (`noteSubagentSession`) are tracked by the SubagentRegistry. Multi-turn
+  subagent sessions and parked subagents reused for follow-up assignments retain
+  their allocated provider (`subagentProviderForSession`) rather than reshuffling
+  providers mid-session.
+- **Short cooldowns on preferred providers are waited out rather than causing mid-session hops.**
+  When an orchestrator or subagent session experiences a short transient, probe,
+  or rate-limit cooldown (<= 30 s) on its preferred provider, `tryPrimaryRoute`
+  waits for the cooldown to lapse (`canWaitOutStickyCooldown`) rather than
+  switching providers mid-session. Mid-session hops are reserved strictly for
+  unrecoverable hard limits or long exhaustion windows exceeding the wait window.
 
 - **A route that cannot serve a request is not a provider failure.** A bridge
   whose transport cannot carry the request's content refuses it, before the
-  provider is started, with the typed error `provider_request_unsupported`. The
+  provider is started, with the typed error `provider_request_unsupported`, and
+  an upstream that rejects a prompt for exceeding its model context window
+  (e.g. MiniMax `invalid params, context window exceeds limit (2013)`, OpenAI
+  `context_length_exceeded`, or Anthropic `prompt is too long`) is classified
+  under the same `unsupported_request` refusal class. The
   router reads that refusal as a fallback: the next candidate may serve the
   request, so the chain moves on and the provider stays healthy (a refusal cools
   nothing down and is recorded as the failure class `unsupported_request`, not
-  as an outage). A route that renders an image as text and answers anyway used
+  as an outage). If a stateful primary route (such as Antigravity) was skipped
+  only for a transient probe blip or cooldown when a stateless fallback route
+  refuses the oversized transcript, the router proceeds to `last_resort` and
+  `exhaustion_wait` on the stateful route rather than aborting the turn. A route
+  that renders an image as text and answers anyway used
   to answer a question the model was never asked -- HTTP 200, a well-formed
   response, and a caller that read it as an answer -- so the refusal is the
   contract.
+- **Stateful/web bridges floor downstream `usage.input_tokens` to the wire transcript estimate, and MiniMax bounds replayed transcripts.**
+  Codex triggers native context auto-compaction (`compacted` rollout event)
+  based on `usage.total_tokens` in the `response.completed` envelope. Stateful
+  CLI and web bridges (`antigravity`, `claude`, `opencli`, `copilot`) execute a
+  distilled prompt in their own persistent session and report `0` or delta-only
+  `input_tokens`, which previously left Codex blind to wire transcript growth
+  across multi-hour sessions. The router now floors downstream `usage.input_tokens`
+  (and `usage.total_tokens`) on bridge responses to `estimatePayloadInputTokens(payload)`
+  while preserving raw provider token counts on OpenTelemetry attempt spans. As
+  defense-in-depth, the MiniMax adapter (`compactMinimaxInputItems` in
+  `runtime/src/providers/minimax.ts`) strips bridge-only synthetic `rs_`
+  reasoning summaries and empty assistant placeholder messages and bounds
+  replayed `input` arrays to `MINIMAX_MAX_INPUT_CHARS` (default `3,000,000` JSON
+  bytes, well inside MiniMax's `204,800`-token window) while preserving the
+  initial setup prefix, `additional_tools` declarations, and `call_id` pairing
+  on the most recent suffix turns.
 - **What each transport can carry is a property of the CLI, not of the model.**
   The models behind these routes read images; what decides whether a route can
   serve an image-bearing request is the channel the bridge hands the turn to.
@@ -1319,6 +1360,45 @@ every router restart.
 The collector never writes to `state_5.sqlite`. The router persists the
 derived workspace counters and bridge observations under its own
 `codex-router-state.json`, never the Codex-owned state file.
+
+## Provider CLI versions
+
+Every provider AutoDev routes to is served by a CLI, and the CLI's release is
+the first thing an operator needs when a provider behaves differently than it
+used to: a release note names a version, and a bug report needs one. Nothing
+measured it, so the Console now reads it from the Runtime.
+
+The Runtime reads the version from the binary it would actually spawn. The
+Claude Code CLI is `CLAUDE_BIN` or `~/.local/bin/claude`, the Antigravity CLI
+is `AGY_CLI_PATH` or `~/.local/bin/agy`, the Codex CLI is resolved by the
+shared lookup the MCP launcher uses, the MiniMax CLI is `mmx` on `PATH`, the
+Copilot CLI is resolved by the shared lookup the bridge uses, and opencli is
+the package entry point the lockfile pins. The bridges and the version read
+resolve the same files, so the number beside a provider is the number in use
+rather than the number some other installation reports.
+
+Each CLI is asked with `--version`, and the first dotted number in its output
+is the version: `claude --version` prints `2.1.280 (Claude Code)`,
+`codex --version` prints `codex-cli 0.154.0`, and `agy --version` prints
+`1.5.3`. The read is bounded twice over -- the CLI has a deadline and its
+output has a size bound -- and it happens in the background every ten
+minutes, off the request path, because a Control API request must not wait on
+six CLIs to answer a question about six numbers.
+
+`GET /control/provider-versions` answers with one entry per provider. Each
+entry is `observed` (the command, the version, and when it was read) or
+`unavailable`, and the unavailable case says which kind it is: `not-installed`
+(the CLI is not on this machine) or `not-readable` (it is there and would not
+answer). A Runtime that has not started the discovery says so for every
+provider rather than reporting a version it did not read.
+
+The Console shows the version under the provider's name in the providers
+table and in the header of the provider's own page. It is small text on
+purpose: the version matters when an operator is comparing it with a release
+note, and it is not worth a column of the table to say so. The provider,
+requested-model and Skill filters do not narrow it -- the versions are a
+property of the machine, not of a request -- so the page says which CLI a
+provider is served by rather than implying the number was filtered.
 
 ## Supervision, liveness, and graceful drain
 

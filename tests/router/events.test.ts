@@ -52,6 +52,27 @@ test("classifyProviderFailure accurately classifies status codes and error bodie
     "upstream_error"
   );
   assert.equal(
+    classifyProviderFailure(
+      400,
+      '{"error":{"message":"invalid params, context window exceeds limit (2013)","type":"invalid_request_error","code":"invalid_request_error"}}'
+    ),
+    "unsupported_request"
+  );
+  assert.equal(
+    classifyProviderFailure(
+      400,
+      '{"error":{"message":"This model\'s maximum context length is 204800 tokens.","code":"context_length_exceeded"}}'
+    ),
+    "unsupported_request"
+  );
+  assert.equal(
+    classifyProviderFailure(
+      400,
+      '{"error":{"message":"prompt is too long: 215000 tokens > 200000 maximum"}}'
+    ),
+    "unsupported_request"
+  );
+  assert.equal(
     classifyProviderFailure(400, "malformed request body"),
     "request_error"
   );

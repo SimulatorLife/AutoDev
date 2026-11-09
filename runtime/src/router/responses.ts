@@ -280,6 +280,148 @@ function replaceModelFieldsSharing(
   });
 }
 
+const CHARS_PER_WIRE_TOKEN_ESTIMATE = 5;
+const MAX_INLINE_IMAGE_CHAR_ESTIMATE = 4000;
+
+function estimateJsonValueChars(value: unknown): number {
+  if (value === null || value === undefined) return 4;
+  if (typeof value === "string") {
+    if (value.startsWith("data:image/")) {
+      return Math.min(value.length, MAX_INLINE_IMAGE_CHAR_ESTIMATE) + 2;
+    }
+    return value.length + 2;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return 6;
+  if (Array.isArray(value)) {
+    let total = 2;
+    for (const child of value) {
+      total += estimateJsonValueChars(child) + 1;
+    }
+    return total;
+  }
+  if (isRecord(value)) {
+    let total = 2;
+    for (const [key, child] of Object.entries(value)) {
+      total += key.length + 4 + estimateJsonValueChars(child);
+    }
+    return total;
+  }
+  return 0;
+}
+
+/**
+ * Estimate the token footprint of the wire prompt (`instructions` + `input`)
+ * that Codex sent on `/v1/responses`.
+ *
+ * Stateful CLI bridges (`antigravity`, `claude`) and web bridges (`opencli`,
+ * `copilot`) either report `input_tokens: 0` or report only their incremental
+ * resumed CLI turn usage, which blinds Codex's `last_token_usage` tracker to
+ * the true size of the uncompacted `payload.input` transcript and prevents
+ * Codex's native auto-compaction (`compacted`) from firing before a failover
+ * to a stateless upstream hits the context-window ceiling.
+ */
+export function estimatePayloadInputTokens(payload: unknown): number {
+  if (!isRecord(payload)) return 0;
+  let totalChars = 0;
+  if (payload.instructions !== undefined && payload.instructions !== null) {
+    totalChars += estimateJsonValueChars(payload.instructions);
+  }
+  if (payload.input !== undefined && payload.input !== null) {
+    totalChars += estimateJsonValueChars(payload.input);
+  }
+  if (totalChars <= 0) return 0;
+  return Math.ceil(totalChars / CHARS_PER_WIRE_TOKEN_ESTIMATE);
+}
+
+function floorUsageRecordSharing(
+  usage: Record<string, unknown>,
+  minimumInputTokens: number,
+  trace: RewriteTrace
+): Record<string, unknown> {
+  if (
+    !Number.isSafeInteger(minimumInputTokens) ||
+    minimumInputTokens <= 0
+  ) {
+    return usage;
+  }
+  const rawInput =
+    typeof usage.input_tokens === "number" &&
+    Number.isFinite(usage.input_tokens) &&
+    usage.input_tokens >= 0
+      ? usage.input_tokens
+      : 0;
+  if (rawInput >= minimumInputTokens) return usage;
+  const rawOutput =
+    typeof usage.output_tokens === "number" &&
+    Number.isFinite(usage.output_tokens) &&
+    usage.output_tokens >= 0
+      ? usage.output_tokens
+      : 0;
+  const rawTotal =
+    typeof usage.total_tokens === "number" &&
+    Number.isFinite(usage.total_tokens) &&
+    usage.total_tokens >= 0
+      ? usage.total_tokens
+      : rawInput + rawOutput;
+  trace.value = true;
+  return {
+    ...usage,
+    input_tokens: minimumInputTokens,
+    total_tokens: Math.max(rawTotal, minimumInputTokens + rawOutput)
+  };
+}
+
+function floorResponseUsageSharing(
+  value: unknown,
+  minimumInputTokens: number | undefined,
+  trace: RewriteTrace
+): unknown {
+  if (
+    typeof minimumInputTokens !== "number" ||
+    !Number.isSafeInteger(minimumInputTokens) ||
+    minimumInputTokens <= 0 ||
+    value === null ||
+    !isRecord(value)
+  ) {
+    return value;
+  }
+  if (
+    value.type === "response.completed" &&
+    isRecord(value.response) &&
+    isRecord(value.response.usage)
+  ) {
+    const nextUsage = floorUsageRecordSharing(
+      value.response.usage,
+      minimumInputTokens,
+      trace
+    );
+    if (nextUsage === value.response.usage) return value;
+    return {
+      ...value,
+      response: {
+        ...value.response,
+        usage: nextUsage
+      }
+    };
+  }
+  if (
+    isRecord(value.usage) &&
+    (value.object === "response" || Array.isArray(value.output))
+  ) {
+    const nextUsage = floorUsageRecordSharing(
+      value.usage,
+      minimumInputTokens,
+      trace
+    );
+    if (nextUsage === value.usage) return value;
+    return {
+      ...value,
+      usage: nextUsage
+    };
+  }
+  return value;
+}
+
 export function rewriteToolNamespaces(value: unknown): unknown {
   return rewriteToolNamespacesSharing(value, { value: false });
 }
@@ -293,9 +435,11 @@ export function replaceModelFields(
 
 export function rewriteResponseValue(
   value: unknown,
-  publicModel: string
+  publicModel: string,
+  minimumInputTokens?: number
 ): unknown {
-  return rewriteToolNamespaces(replaceModelFields(value, publicModel));
+  return rewriteResponseValueTracking(value, publicModel, minimumInputTokens)
+    .value;
 }
 
 export interface ResponseRewrite {
@@ -311,12 +455,18 @@ export interface ResponseRewrite {
  */
 export function rewriteResponseValueTracking(
   value: unknown,
-  publicModel: string
+  publicModel: string,
+  minimumInputTokens?: number
 ): ResponseRewrite {
   const trace: RewriteTrace = { value: false };
   const replaced = replaceModelFieldsSharing(value, publicModel, trace);
   const rewritten = rewriteToolNamespacesSharing(replaced, trace);
-  return { value: rewritten, changed: trace.value };
+  const floored = floorResponseUsageSharing(
+    rewritten,
+    minimumInputTokens,
+    trace
+  );
+  return { value: floored, changed: trace.value };
 }
 
 export function transformSseEvent(event: string, publicModel: string): string {
@@ -406,6 +556,7 @@ export interface ProcessedSseEvent {
 export interface ProcessSseEventOptions {
   readonly publicModel: string;
   readonly seenToolCalls?: Set<string>;
+  readonly minimumInputTokens?: number;
   /**
    * Called once per successfully parsed `data:` payload, with the event exactly
    * as it arrived. The rewriters are copy-on-write, so the object observed here
@@ -455,7 +606,8 @@ export function processSseEvent(
     }
     const { value, changed } = rewriteResponseValueTracking(
       parsed,
-      options.publicModel
+      options.publicModel,
+      options.minimumInputTokens
     );
     output += changed ? `data: ${JSON.stringify(value)}` : line;
   }

@@ -16,6 +16,7 @@ import {
   fetchModels,
   fetchProviderModelDiscovery,
   fetchProviders,
+  fetchProviderVersions,
   fetchRuntime
 } from "../../../src/lib/server/control-api.ts";
 import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
@@ -100,12 +101,14 @@ export default async function ProviderDetailPage({
     modelsResult,
     discoveryResult,
     runtimeResult,
+    versionsResult,
     usageSource
   ] = await Promise.all([
     fetchProviders(config),
     fetchModels(config),
     fetchProviderModelDiscovery(config),
     fetchRuntime(config),
+    fetchProviderVersions(config),
     readProviderUsage(id)
   ]);
   if (providersResult.kind !== "ok") {
@@ -144,6 +147,10 @@ export default async function ProviderDetailPage({
         discoveryResult.kind === "ok"
           ? { status: "available", data: discoveryResult.data }
           : { status: "unavailable", message: discoveryResult.message },
+      cliVersions:
+        versionsResult.kind === "ok"
+          ? { status: "available", data: versionsResult.data }
+          : { status: "unavailable", message: versionsResult.message },
       usagePanel: React.createElement(ProviderUsagePanel, {
         provider,
         summary: summarizeProviderUsage(usageSource, provider.id)

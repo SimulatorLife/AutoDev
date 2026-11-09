@@ -5,6 +5,8 @@ import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 
 import {
   clearProviderQuotaCacheForTests,
+  createProviderQuotaDiscoveryService,
+  DEFAULT_QUOTA_PROVIDERS,
   overlayRouterCooldownsOnQuota,
   parseAntigravityAvailableModelsQuota,
   parseClaudeOAuthUsage,
@@ -13,6 +15,7 @@ import {
   parseCodexWhamUsage,
   parseCopilotUserQuota,
   parseMinimaxQuotaOutput,
+  PROVIDER_QUOTA_REFRESH_INTERVAL_MS,
   syncQuotaToCooldowns
 } from "../src/providers/quota-discovery.ts";
 
@@ -50,14 +53,14 @@ test("parseMinimaxQuotaOutput parses 5h and weekly windows from mmx quota --outp
   assert.equal(quota.windows[0]?.remainingPercent, 65);
   assert.equal(
     quota.windows[0]?.resetsAt,
-    new Date(1794236400000).toISOString()
+    new Date(1_794_236_400_000).toISOString()
   );
   assert.equal(quota.windows[1]?.kind, "weekly");
   assert.equal(quota.windows[1]?.usedPercent, 18);
   assert.equal(quota.windows[1]?.remainingPercent, 82);
   assert.equal(
     quota.windows[1]?.resetsAt,
-    new Date(1794805200000).toISOString()
+    new Date(1_794_805_200_000).toISOString()
   );
   assert.equal(quota.models?.[0]?.model, "MiniMax-M2.7");
   assert.equal(quota.models?.[0]?.usedPercent, 35);
@@ -73,12 +76,12 @@ test("parseCodexWhamUsage and parseCodexResponseRateLimitHeaders parse 5h and we
         primary_window: {
           used_percent: 24,
           limit_window_seconds: 18_000,
-          reset_at: 1794236324
+          reset_at: 1_794_236_324
         },
         secondary_window: {
           used_percent: 41,
           limit_window_seconds: 604_800,
-          reset_at: 1794718944
+          reset_at: 1_794_718_944
         }
       }
     },
@@ -211,7 +214,7 @@ test("parseCopilotUserQuota and Claude parsers build structured quota snapshots"
       status: "allowed_warning",
       rateLimitType: "five_hour",
       utilization: 0.85,
-      resetsAt: 1794240000
+      resetsAt: 1_794_240_000
     },
     NOW
   );
@@ -275,4 +278,37 @@ test("syncQuotaToCooldowns cools only exhausted subprovider pools and leaves hea
     COOLDOWNS.clearAll();
     clearProviderQuotaCacheForTests();
   }
+});
+
+test("createProviderQuotaDiscoveryService manages lifecycle and snapshots", async () => {
+  assert.equal(PROVIDER_QUOTA_REFRESH_INTERVAL_MS, 60_000);
+  assert.deepEqual(DEFAULT_QUOTA_PROVIDERS, [
+    "antigravity",
+    "codex",
+    "minimax",
+    "copilot",
+    "claude"
+  ]);
+
+  const customNow = 1_000_000;
+  const service = createProviderQuotaDiscoveryService({
+    providers: ["antigravity"],
+    intervalMs: 500,
+    now: () => customNow
+  });
+
+  const snapInitial = service.snapshot();
+  assert.equal(typeof snapInitial, "object");
+
+  service.start();
+  // Double-start is safe
+  service.start();
+
+  await service.refresh();
+  const snapAfter = service.snapshot();
+  assert.ok("antigravity" in snapAfter);
+
+  service.stop();
+  // Double-stop is safe
+  service.stop();
 });

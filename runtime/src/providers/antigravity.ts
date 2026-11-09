@@ -56,6 +56,7 @@ import {
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,
@@ -118,9 +119,10 @@ const IS_MAIN =
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002");
-const CLI =
-  process.env.AGY_CLI_PATH ??
-  `${process.env.HOME ?? process.cwd()}/.local/bin/agy`;
+// The bridge spawns the CLI this resolves, and the Runtime reads this CLI's
+// version for the Console; both name the same file, so both resolve it in
+// one place.
+const CLI = resolveAgyBinary();
 const DEFAULT_MODEL = "gemini-3.8-flash-medium";
 const DEFAULT_EFFORT = "medium";
 const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";

@@ -220,8 +220,6 @@ function shortWindowLabel(window: ControlApiQuotaWindow): string {
       return "Monthly";
     case "daily":
       return "24h";
-    case "credits":
-      return "Credits";
     default:
       return window.label;
   }

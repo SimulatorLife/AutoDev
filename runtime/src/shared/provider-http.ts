@@ -53,19 +53,47 @@ export function sendUnsupportedRequestFailure(
   });
 }
 
+const CONTEXT_WINDOW_EXCEEDED_PATTERN =
+  /context[_ ]?(?:window|length)\b[^\n]{0,60}\b(?:exceed|limit|too (?:large|long))|exceeds? (?:the )?(?:maximum )?context[_ ]?(?:window|length)|maximum context length|prompt is too long|input (?:is too long|exceeds the maximum)|context_length_exceeded|string_above_max_length|request_too_large/i;
+
 /**
- * Whether an upstream body is the typed refusal a bridge answered.
+ * Whether an upstream body is a request-capability or context-window refusal
+ * ("this route cannot serve this request") rather than a broken provider.
  *
- * The router reads this to tell "this route cannot serve this request" apart
- * from "this provider is broken": the first moves to the next candidate and
- * leaves the provider healthy, the second is a provider failure.
+ * The router reads this to move on to the next candidate (or wait out a
+ * primary stateful bridge's transient cooldown) while leaving the refusing
+ * provider healthy for smaller or compatible requests.
  */
 export function providerRequestUnsupported(body: unknown): boolean {
-  if (typeof body !== "string") return false;
+  if (typeof body !== "string" || !body) return false;
+  if (CONTEXT_WINDOW_EXCEEDED_PATTERN.test(body)) return true;
   try {
     const parsed: unknown = JSON.parse(body);
-    if (!isRecord(parsed) || !isRecord(parsed.error)) return false;
-    return parsed.error.type === PROVIDER_REQUEST_UNSUPPORTED_TYPE;
+    if (!isRecord(parsed)) return false;
+    if (isRecord(parsed.error)) {
+      if (
+        parsed.error.type === PROVIDER_REQUEST_UNSUPPORTED_TYPE ||
+        parsed.error.code === "context_length_exceeded" ||
+        parsed.error.code === 2013 ||
+        parsed.error.code === "2013"
+      ) {
+        return true;
+      }
+      if (
+        typeof parsed.error.message === "string" &&
+        CONTEXT_WINDOW_EXCEEDED_PATTERN.test(parsed.error.message)
+      ) {
+        return true;
+      }
+    }
+    if (
+      isRecord(parsed.base_resp) &&
+      (parsed.base_resp.status_code === 2013 ||
+        parsed.base_resp.status_code === "2013")
+    ) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }

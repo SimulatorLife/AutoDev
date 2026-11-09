@@ -6439,6 +6439,47 @@ const server = createServer(
       });
       return;
     }
+    if (url.pathname === "/control/provider-versions") {
+      // The three cases the page has to tell apart: a CLI that reported its
+      // version, one that is installed but would not answer, and one that is
+      // not installed at all.
+      sendJson(response, {
+        schema: "autodev-control-provider-versions-v1",
+        source: "runtime-provider-cli-versions",
+        providers: [
+          {
+            provider: "claude",
+            cli: {
+              status: "observed",
+              command: "claude",
+              version: "2.1.280",
+              observedAt: FIXTURE_TIMESTAMP
+            }
+          },
+          {
+            provider: "codex",
+            cli: {
+              status: "unavailable",
+              kind: "not-readable",
+              command: "codex",
+              reason: "Reading the codex CLI's version timed out.",
+              lastAttemptAt: FIXTURE_TIMESTAMP
+            }
+          },
+          {
+            provider: "copilot",
+            cli: {
+              status: "unavailable",
+              kind: "not-installed",
+              command: "copilot",
+              reason: "The Copilot CLI (copilot) is not installed.",
+              lastAttemptAt: FIXTURE_TIMESTAMP
+            }
+          }
+        ]
+      });
+      return;
+    }
     if (url.pathname === "/control/tools") {
       sendJson(response, {
         schema: "autodev-control-tools-v2",

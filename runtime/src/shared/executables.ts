@@ -31,6 +31,30 @@ export function findExecutable(
   return null;
 }
 
+/**
+ * Look for a CLI installed under nvm's Node versions directory, newest version first.
+ *
+ * The bridges that run version-managed CLIs are often supervised by launchd or run
+ * in subshells whose PATH carries no nvm bin directory. A CLI installed by npm under
+ * nvm is therefore invisible to a standard PATH lookup there.
+ */
+export function findNvmBinary(
+  name: string,
+  home = homedir()
+): string | null {
+  const nvmRoot = path.join(home, ".nvm", "versions", "node");
+  if (!existsSync(nvmRoot)) return null;
+  const versions = readdirSync(nvmRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
+  for (const version of versions) {
+    const candidate = path.join(nvmRoot, version, "bin", name);
+    if (isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
 /** Resolve the Codex CLI from its explicit setting, PATH, or version-managed install. */
 export function resolveCodexBinary(
   env: NodeJS.ProcessEnv = process.env,
@@ -38,26 +62,33 @@ export function resolveCodexBinary(
 ): string {
   const configured = env.CODEX_BIN?.trim();
   if (configured) {
-    if (isExecutable(configured)) return configured;
+    const resolved = configured.includes(path.sep)
+      ? configured
+      : findExecutable(configured, env.PATH ?? "");
+    if (resolved && isExecutable(resolved)) return resolved;
     throw new Error(`Codex CLI is not executable: ${configured}`);
   }
-  const fromPath = findExecutable("codex", env.PATH);
+  const fromPath = findExecutable("codex", env.PATH ?? "");
   if (fromPath) return fromPath;
 
-  const nvmRoot = path.join(home, ".nvm", "versions", "node");
-  if (existsSync(nvmRoot)) {
-    const versions = readdirSync(nvmRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
-    for (const version of versions) {
-      const candidate = path.join(nvmRoot, version, "bin", "codex");
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
+  const fromNvm = findNvmBinary("codex", home);
+  if (fromNvm) return fromNvm;
+
   throw new Error(
     "Codex CLI not found; set CODEX_BIN to the current codex executable."
   );
+}
+
+/** The same lookup without the failure: where the Codex CLI is, or null when it is not installed. */
+export function findCodexBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): string | null {
+  try {
+    return resolveCodexBinary(env, home);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -88,17 +119,8 @@ export function resolveCopilotBinary(
   const fromPath = findExecutable("copilot", env.PATH ?? "");
   if (fromPath) return fromPath;
 
-  const nvmRoot = path.join(home, ".nvm", "versions", "node");
-  if (existsSync(nvmRoot)) {
-    const versions = readdirSync(nvmRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
-    for (const version of versions) {
-      const candidate = path.join(nvmRoot, version, "bin", "copilot");
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
+  const fromNvm = findNvmBinary("copilot", home);
+  if (fromNvm) return fromNvm;
   const local = path.join(home, ".local", "bin", "copilot");
   if (isExecutable(local)) return local;
   throw new Error(
@@ -182,8 +204,70 @@ export interface CodexAppMcpServer {
 }
 
 /**
- * Find the currently installed Codex App tools plugin without depending on a
- * version that Codex Desktop may replace on its next startup.
+ * The Claude Code CLI: `CLAUDE_BIN` as given, else the install under
+ * `~/.local/bin`.
+ *
+ * The bridge that spawns it and the Runtime's reading of its version must
+ * name the same file, so both resolve it here. A version read from a
+ * different installation than the one serving turns would be a number the
+ * operator cannot act on.
+ */
+export function resolveClaudeBinary(
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const configured = env.CLAUDE_BIN?.trim();
+  if (configured) return configured;
+  return path.join(env.HOME ?? homedir(), ".local", "bin", "claude");
+}
+
+/** The same lookup without the failure: where the CLI is, or null when it is not there. */
+export function findClaudeBinary(
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const resolved = resolveClaudeBinary(env);
+  return isExecutable(resolved) ? resolved : null;
+}
+
+/**
+ * The Antigravity CLI (`agy`): `AGY_CLI_PATH` as given, else the install under
+ * `~/.local/bin`.
+ *
+ * Resolved here for the same reason as the Claude CLI: the bridge that
+ * spawns it and the reading of its version have to name the same file.
+ */
+export function resolveAgyBinary(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.AGY_CLI_PATH?.trim();
+  if (configured) return configured;
+  return `${env.HOME ?? process.cwd()}/.local/bin/agy`;
+}
+
+/** The same lookup without the failure: where the CLI is, or null when it is not there. */
+export function findAgyBinary(env: NodeJS.ProcessEnv = process.env): string | null {
+  const resolved = resolveAgyBinary(env);
+  return isExecutable(resolved) ? resolved : null;
+}
+
+/**
+ * The MiniMax CLI (`mmx`): the first executable on PATH, else the install
+ * under `~/.local/bin`.
+ *
+ * The quota reader runs `mmx` by name and lets the shell resolve it, so the
+ * PATH lookup is the same answer it gets; the `~/.local/bin` fallback only
+ * adds a copy the login shell would have found but a bare process would not.
+ */
+export function findMiniMaxBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): string | null {
+  const fromPath = findExecutable("mmx", env.PATH ?? "");
+  if (fromPath) return fromPath;
+  const local = path.join(home, ".local", "bin", "mmx");
+  return isExecutable(local) ? local : null;
+}
+
+/**
+ * The Codex App tools plugin, without depending on a version that Codex
+ * Desktop may replace on its next startup.
  */
 export function findCodexAppMcpServer(
   env: NodeJS.ProcessEnv = process.env,

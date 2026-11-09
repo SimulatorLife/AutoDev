@@ -85,6 +85,47 @@ test("SubagentRegistry records spawns and maintains ring buffer and aggregations
   assert.equal(status.recent[0]?.role, "validator");
 });
 
+test("SubagentRegistry tracks subagent sessions by sessionKey and role ignoring process fallback", () => {
+  const registry = new SubagentRegistry();
+
+  registry.noteSubagentSession("session-worker-1", "worker", "antigravity", {
+    model: "gemini-3.8-flash-high",
+    requestId: "req-1"
+  });
+  assert.equal(
+    registry.subagentProviderForSession("session-worker-1", "worker"),
+    "antigravity"
+  );
+  assert.equal(
+    registry.subagentProviderForSession("session-worker-1"),
+    "antigravity"
+  );
+  const info = registry.subagentSessionInfo("session-worker-1", "worker");
+  assert.ok(info);
+  assert.equal(info.provider, "antigravity");
+  assert.equal(info.role, "worker");
+  assert.equal(info.model, "gemini-3.8-flash-high");
+
+  // Multi-role session tracks per-role and default
+  registry.noteSubagentSession("session-multi", "explorer", "claude");
+  registry.noteSubagentSession("session-multi", "validator", "minimax");
+  assert.equal(
+    registry.subagentProviderForSession("session-multi", "explorer"),
+    "claude"
+  );
+  assert.equal(
+    registry.subagentProviderForSession("session-multi", "validator"),
+    "minimax"
+  );
+
+  // Process fallback session key must be ignored
+  registry.noteSubagentSession(PROCESS_FALLBACK_SESSION_KEY, "worker", "codex");
+  assert.equal(
+    registry.subagentProviderForSession(PROCESS_FALLBACK_SESSION_KEY, "worker"),
+    null
+  );
+});
+
 test("SubagentRegistry tracks orchestrator sessions and workspace metadata ignoring process fallback", () => {
   const registry = new SubagentRegistry();
 
@@ -357,6 +398,9 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
     getDefaultSubagentRegistry,
     setDefaultSubagentRegistry,
     noteOrchestratorSession,
+    noteSubagentSession,
+    subagentProviderForSession,
+    subagentSessionInfo,
     orchestratorProviderForSession,
     rememberWorkspaceMetadata,
     getWorkspaceMetadata,
@@ -373,6 +417,10 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
 
   noteOrchestratorSession("sess-default", "claude");
   assert.equal(orchestratorProviderForSession("sess-default"), "claude");
+
+  noteSubagentSession("sub-sess-default", "worker", "antigravity");
+  assert.equal(subagentProviderForSession("sub-sess-default", "worker"), "antigravity");
+  assert.equal(subagentSessionInfo("sub-sess-default", "worker")?.provider, "antigravity");
 
   rememberWorkspaceMetadata("sess-default", "/test/workspace");
   assert.ok(getWorkspaceMetadata("sess-default")?.includes("/test/workspace"));

@@ -1442,6 +1442,22 @@ The Console reads those widgets through the fixed Usage contract: the Data clien
 
 **What remains open:** the patched OpenLIT image has to be rebuilt and deployed before the live Usage API answers the new widgets, and live ClickHouse ingestion has to be verified against a router that has published hops. The provider, requested-model and Skill filters remain unsupported for this signal by construction, not by omission.
 
+## Nobody could see which CLI a provider was running
+
+Every provider AutoDev routes to is served by a CLI, and the release that CLI is on was invisible. The Providers page named the provider, its status, its live agent count and its configuration; it never said which version of the Claude Code CLI, the Codex CLI, the Antigravity CLI or opencli was answering. So a provider that started behaving differently had no first question an operator could answer, and a bug report had no version to carry.
+
+The number had to come from the binary in use, not from somewhere near it. The Claude Code bridge spawns `CLAUDE_BIN` or `~/.local/bin/claude`, the Antigravity bridge spawns `AGY_CLI_PATH` or `~/.local/bin/agy`, and the Codex, Copilot and opencli CLIs are resolved by the shared lookups the MCP launcher and the bridges already use. Those lookups now live in one place (`shared/executables.ts`) and both the bridges and the version read resolve the same file through them: a version read from a different installation than the one serving turns would be a number the operator cannot act on.
+
+**The read is off the request path.** A version does not change while a request is in flight, and spawning a process per page view would make the page wait on six CLIs to answer a question about six numbers. The Runtime reads them in the background every ten minutes, with a deadline on the CLI and a size bound on its output, and answers `GET /control/provider-versions` from the snapshot it holds.
+
+**The versions are their own read rather than a field on the provider record.** The provider record is the operator's routing configuration; a version is what the machine happens to have installed today. Keeping them apart means a Runtime that cannot read versions still answers the providers contract exactly as before -- no contract bump, no new required field, no broken page for every operator on an older Runtime -- and the page reports the version as not observed instead of failing over a missing release number.
+
+**Three states, because they are three different problems.** A version that was read names the CLI and the release. A CLI that is not on the machine reads **Not installed**. A CLI that is there and would not answer reads **Not read**. A Runtime that has not read any version says **Not observed**. None of them reads as a version of zero, and the page does not parse the reason's prose to tell them apart: the Runtime says which kind it is, so the page's wording is not part of the contract.
+
+The Console shows the version as small text under the provider's name in the providers table and in the header of the provider's own page. It is small text on purpose: the version matters when an operator is comparing it with a release note, and it is not worth a column of the table to say so. The provider, requested-model and Skill filters do not narrow it -- the version is a property of the machine, not of a request -- so the page names the CLI beside the number rather than implying the number was filtered.
+
+**What remains open:** the live Runtime has to pick up the new source and be restarted before the live Console shows a version rather than **Not observed**; the read has not been exercised against the live machine's CLIs, only against the captured output shapes and a bounded fake.
+
 ## The Prompt Hub was a second authority that could not win
 
 The fork shipped a Prompt Hub: four pages under `/prompt-hub`, six API routes under `/api/prompt`, three components, and a ClickHouse-backed store with its own version and compile history. It looked like a second copy of the Console's Prompts surface, and it was one -- but the duplication was not the interesting part.

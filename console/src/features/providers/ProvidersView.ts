@@ -39,6 +39,12 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
+import {
+  CLI_VERSIONS_NOT_OBSERVED,
+  providerCliVersionView,
+  type ProviderCliVersionState
+} from "./provider-cli-version.ts";
 import {
   resolveActiveTabId,
   type TabDefinition,
@@ -174,6 +180,14 @@ export interface ProvidersViewProps {
   readonly providers: ControlApiProvidersResponse;
   readonly models: ProvidersModelsState;
   readonly modelDiscovery: ProviderModelDiscoveryState;
+  /**
+   * The versions of the CLIs the Runtime found on this machine.
+   *
+   * Optional because a caller without them is a caller that has not read
+   * them: the rows then say the version was not observed, which is the
+   * truth, rather than inventing a version for the provider.
+   */
+  readonly cliVersions?: ProviderCliVersionState | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   /** Raw `?tab=` value; unknown values fall back to the Providers tab. */
   readonly activeTab?: string | undefined;
@@ -224,7 +238,8 @@ function ProviderLink({
 function providerColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
-  modelDiscovery: ProviderModelDiscoveryState
+  modelDiscovery: ProviderModelDiscoveryState,
+  cliVersions: ProviderCliVersionState
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -245,6 +260,12 @@ function providerColumns(
           "div",
           { className: "flex flex-col gap-1" },
           React.createElement(ProviderLink, { provider: provider.id }),
+          // The CLI version rides under the provider's name: it is the
+          // provider's own fact, it is small, and the eye asking "which
+          // version is this provider on" is already looking there.
+          React.createElement(ProviderCliVersionText, {
+            view: providerCliVersionView(cliVersions, provider.id)
+          }),
           React.createElement(ProviderExternalLinks, {
             provider: provider.id,
             links: provider.links
@@ -579,13 +600,16 @@ function RoutingPriorityPanel({
 function ProvidersTab({
   providers,
   runtime,
-  modelDiscovery
+  modelDiscovery,
+  cliVersions
 }: {
   readonly providers: ControlApiProvidersResponse;
   readonly runtime: ControlApiRuntimeResponse | undefined;
   readonly modelDiscovery: ProviderModelDiscoveryState;
+  readonly cliVersions?: ProviderCliVersionState | undefined;
 }): React.JSX.Element {
   const records = providers.providers;
+  const versions = cliVersions ?? CLI_VERSIONS_NOT_OBSERVED;
   const healthObserved = records.every((provider) => provider.health !== null);
   // Ready is the one count worth leading with, and it is computed from the same
   // `resolveProviderStatus` the column uses, so the summary can never disagree
@@ -660,7 +684,8 @@ function ProvidersTab({
         columns: providerColumns(
           providersPath("providers"),
           runtime?.liveAgents,
-          modelDiscovery
+          modelDiscovery,
+          versions
         ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."
@@ -890,6 +915,7 @@ export function ProvidersView({
   providers,
   models,
   modelDiscovery,
+  cliVersions,
   runtime,
   activeTab,
   controlFailed,
@@ -919,6 +945,7 @@ export function ProvidersView({
       : React.createElement(ProvidersTab, {
           providers,
           modelDiscovery,
+          cliVersions,
           runtime
         })
   );

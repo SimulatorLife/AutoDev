@@ -341,6 +341,15 @@ export interface OrchestratorSessionEntry {
   updatedAt: number;
 }
 
+export interface SubagentSessionEntry {
+  provider: string;
+  role: string;
+  model: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  updatedAt: number;
+}
+
 export interface BridgeSubagentUsageEntry {
   requestId: string;
   provider: string;
@@ -670,6 +679,10 @@ export class SubagentRegistry {
     string,
     OrchestratorSessionEntry
   >();
+  private readonly subagentSessions = new Map<
+    string,
+    SubagentSessionEntry
+  >();
   private readonly workspaceMetadataBySession = new Map<string, string>();
   private readonly bridgeRequestContext = new Map<
     string,
@@ -807,6 +820,63 @@ export class SubagentRegistry {
   ): OrchestratorSessionEntry | null {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
     const entry = this.orchestratorSessions.get(sessionKey);
+    return entry ? { ...entry } : null;
+  }
+
+  noteSubagentSession(
+    sessionKey: string | null | undefined,
+    role: string | null | undefined,
+    provider: string | null | undefined,
+    details: {
+      model?: string | null;
+      workspace?: string | null;
+      requestId?: string | null;
+    } = {}
+  ): void {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !provider)
+      return;
+    const entry: SubagentSessionEntry = {
+      provider,
+      role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
+      model: details.model ?? null,
+      workspace: details.workspace ?? null,
+      requestId: details.requestId ?? null,
+      updatedAt: Date.now()
+    };
+    if (role) {
+      this.subagentSessions.delete(sessionKey + ":" + role);
+      this.subagentSessions.set(sessionKey + ":" + role, entry);
+    }
+    this.subagentSessions.delete(sessionKey);
+    this.subagentSessions.set(sessionKey, entry);
+    while (this.subagentSessions.size > this.maxTrackedSessions) {
+      const oldest = this.subagentSessions.keys().next().value;
+      if (oldest !== undefined) this.subagentSessions.delete(oldest);
+    }
+  }
+
+  subagentProviderForSession(
+    sessionKey: string | null | undefined,
+    role?: string | null
+  ): string | null {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    if (role) {
+      const scoped = this.subagentSessions.get(sessionKey + ":" + role);
+      if (scoped) return scoped.provider;
+    }
+    return this.subagentSessions.get(sessionKey)?.provider ?? null;
+  }
+
+  subagentSessionInfo(
+    sessionKey: string | null | undefined,
+    role?: string | null
+  ): SubagentSessionEntry | null {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    if (role) {
+      const scoped = this.subagentSessions.get(sessionKey + ":" + role);
+      if (scoped) return { ...scoped };
+    }
+    const entry = this.subagentSessions.get(sessionKey);
     return entry ? { ...entry } : null;
   }
 
@@ -1478,6 +1548,41 @@ export function orchestratorSessionInfo(
   sessionKey: string | null | undefined
 ): OrchestratorSessionEntry | null {
   return getDefaultSubagentRegistry().orchestratorSessionInfo(sessionKey);
+}
+
+export function noteSubagentSession(
+  sessionKey: string | null | undefined,
+  role: string | null | undefined,
+  provider: string | null | undefined,
+  details: {
+    model?: string | null;
+    workspace?: string | null;
+    requestId?: string | null;
+  } = {}
+): void {
+  getDefaultSubagentRegistry().noteSubagentSession(
+    sessionKey,
+    role,
+    provider,
+    details
+  );
+}
+
+export function subagentProviderForSession(
+  sessionKey: string | null | undefined,
+  role?: string | null
+): string | null {
+  return getDefaultSubagentRegistry().subagentProviderForSession(
+    sessionKey,
+    role
+  );
+}
+
+export function subagentSessionInfo(
+  sessionKey: string | null | undefined,
+  role?: string | null
+): SubagentSessionEntry | null {
+  return getDefaultSubagentRegistry().subagentSessionInfo(sessionKey, role);
 }
 
 export function hasActiveBridgeSubagentsForSession(

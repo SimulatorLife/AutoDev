@@ -235,6 +235,40 @@ test("Providers header exposes a confirmed reset and explains unavailable provid
   expect(await documentFitsViewport(page)).toBe(true);
 });
 
+test("the providers table names the CLI version each provider is on", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(PROVIDERS_TAB_URL);
+
+  // The version is the CLI's own release, and it is named with the CLI it
+  // belongs to: a number beside a provider would not say which program it is
+  // the version of.
+  const claudeVersion = page.locator(
+    '[data-tab-panel="providers"] [data-provider-cli-version="observed"]'
+  );
+  await expect(claudeVersion).toHaveText("claude 2.1.280");
+
+  // A CLI that is installed but would not answer is not the same fact as a
+  // CLI that is not installed, and the page says which one it is.
+  await expect(
+    page.locator('[data-tab-panel="providers"] [data-provider-cli-version="not-readable"]')
+  ).toHaveText("codex \u00b7 Not read");
+  await expect(
+    page.locator('[data-tab-panel="providers"] [data-provider-cli-version="not-installed"]')
+  ).toHaveText("copilot \u00b7 Not installed");
+
+  // The provider's own page carries the same fact, in the place where an
+  // operator looks for the provider's own details.
+  await page.goto(`/providers/${CLAUDE_PROVIDER_ID}`);
+  const details = page.locator("[data-detail-grid]");
+  await expect(
+    details
+      .locator('dt:text-is("CLI version")')
+      .locator("xpath=following-sibling::dd[1]")
+  ).toHaveText("claude 2.1.280");
+});
+
 test("Provider detail reuses provider-wide controls and navigates in place", async ({
   page
 }) => {

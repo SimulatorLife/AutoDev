@@ -46,6 +46,7 @@ import {
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRoleAssignment,
   type ControlApiProviderRolePatchResponse,
+  type ControlApiProviderVersionsResponse,
   type ControlApiProvidersResetRequest,
   type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
@@ -190,6 +191,7 @@ export const CONTROL_API_PATHS = {
   providers: "/control/providers",
   providersReset: "/control/providers/reset",
   providerModels: "/control/provider-models",
+  providerVersions: "/control/provider-versions",
   models: "/control/models",
   mcps: "/control/mcps",
   mcpRuntime: "/control/mcp-runtime",
@@ -827,6 +829,23 @@ export function setControlApiProviderModelDiscoverySource(
   source: (() => ControlApiProviderModelsResponse) | null
 ): void {
   providerModelDiscoverySource = source;
+}
+
+let providerCliVersionSource:
+  | (() => ControlApiProviderVersionsResponse)
+  | null = null;
+
+/**
+ * Register the Runtime-owned provider CLI version snapshot.
+ *
+ * A Control API that runs without a router has no versions to publish, and
+ * it says so for every provider rather than reporting a version it did not
+ * read.
+ */
+export function setControlApiProviderCliVersionSource(
+  source: (() => ControlApiProviderVersionsResponse) | null
+): void {
+  providerCliVersionSource = source;
 }
 
 function providerTierPriorities(
@@ -3120,6 +3139,26 @@ function providerModelsView(): ControlApiProviderModelsResponse {
     source: "runtime-provider-discovery",
     providers
   } satisfies ControlApiProviderModelsResponse;
+}
+
+function providerVersionsView(): ControlApiProviderVersionsResponse {
+  const versions = providerCliVersionSource?.();
+  if (versions) return versions;
+  const providers = ROUTING_POLICY.providerIds().map((provider) => ({
+    provider,
+    cli: {
+      status: "unavailable" as const,
+      kind: "not-readable" as const,
+      command: null,
+      reason: "Runtime has not started provider CLI version discovery.",
+      lastAttemptAt: null
+    }
+  }));
+  return {
+    schema: "autodev-control-provider-versions-v1",
+    source: "runtime-provider-cli-versions",
+    providers
+  } satisfies ControlApiProviderVersionsResponse;
 }
 
 function providerDiscoveryFor(
@@ -6212,6 +6251,7 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
     [CONTROL_API_PATHS.agents, (_actor, root) => agentsView(root)],
     [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
     [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
+    [CONTROL_API_PATHS.providerVersions, () => providerVersionsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
     [CONTROL_API_PATHS.mcps, (_actor, root) => mcpsView(root)],
     [CONTROL_API_PATHS.mcpRuntime, () => mcpRuntimeView()],
