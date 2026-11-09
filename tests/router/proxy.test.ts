@@ -1595,9 +1595,14 @@ test(
       { ...route("minimax", "MINIMAX_API_KEY"), model: "MiniMax-M3.1-Flash" }
     ];
 
-    // Put Antigravity in a 60s transient cooldown (exceeding sticky wait so
-    // primary selection skips it and falls back to MiniMax).
+    // Put Antigravity in a 120s transient cooldown (3 strikes = 120s,
+    // exceeding sticky wait window of 60s so primary selection skips it
+    // without sleeping and falls back to MiniMax).
     const now = Date.now();
+    COOLDOWNS.cooldownProvider("antigravity", {
+      failureClass: "unavailable",
+      now
+    });
     COOLDOWNS.cooldownProvider("antigravity", {
       failureClass: "unavailable",
       now
