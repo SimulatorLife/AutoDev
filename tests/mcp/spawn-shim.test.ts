@@ -92,7 +92,8 @@ async function withBridge(
         };
         requests.push(record);
         const payload = handler(requests);
-        response.writeHead(200, { "content-type": "application/json" });
+        const status = typeof (payload as any)?.status === "number" ? (payload as any).status : 200;
+        response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(payload));
       });
     }
@@ -234,6 +235,105 @@ test("spawn shim rejects malformed and unknown calls as model-readable errors", 
           method: "tools/list"
         });
         assert.deepEqual(listed.result, { tools: [] });
+      } finally {
+        await closeChild(child);
+      }
+    }
+  );
+});
+
+test("spawn shim forwards target for parked session reuse", async () => {
+  await withBridge(
+    (requests) =>
+      requests.at(-1)?.path.endsWith("/call")
+        ? { text: "Reused 1 subagent: reuse:child-parked-xyz." }
+        : { spawnAllowed: true },
+    async (url, requests) => {
+      const child = spawn(process.execPath, [shimPath], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          AUTODEV_BRIDGE_URL: url,
+          AUTODEV_SPAWN_SESSION: "session-reuse-test"
+        },
+        stdio: "pipe"
+      });
+      try {
+        const response = await send(child, {
+          jsonrpc: "2.0",
+          id: "call-reuse-1",
+          method: "tools/call",
+          params: {
+            name: "spawn_subagent",
+            arguments: {
+              children: [
+                {
+                  target: "child-parked-xyz",
+                  agent_type: "worker",
+                  message: "continue implementation"
+                }
+              ]
+            }
+          }
+        });
+        assert.deepEqual(response.result, {
+          content: [{ type: "text", text: "Reused 1 subagent: reuse:child-parked-xyz." }]
+        });
+        const call = requests.find((request) => request.path.endsWith("/call"));
+        assert.deepEqual(call?.body.children, [
+          {
+            target: "child-parked-xyz",
+            agent_type: "worker",
+            message: "continue implementation"
+          }
+        ]);
+        assert.equal(call?.body.session, "session-reuse-test");
+      } finally {
+        await closeChild(child);
+      }
+    }
+  );
+});
+
+test("spawn shim returns model-readable tool error when bridge rejects target reuse", async () => {
+  await withBridge(
+    (requests) =>
+      requests.at(-1)?.path.endsWith("/call")
+        ? { status: 409, error: 'Cannot reuse subagent "foreign-child": subagent belongs to a different parent session.' }
+        : { spawnAllowed: true },
+    async (url) => {
+      const child = spawn(process.execPath, [shimPath], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          AUTODEV_BRIDGE_URL: url,
+          AUTODEV_SPAWN_SESSION: "session-cross-test"
+        },
+        stdio: "pipe"
+      });
+      try {
+        const response = await send(child, {
+          jsonrpc: "2.0",
+          id: "call-reject-1",
+          method: "tools/call",
+          params: {
+            name: "spawn_subagent",
+            arguments: {
+              children: [
+                {
+                  target: "foreign-child",
+                  message: "illegal reuse"
+                }
+              ]
+            }
+          }
+        });
+        const result = response.result as { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
+        assert.equal(result?.isError, true);
+        assert.match(
+          result?.content?.[0]?.text ?? "",
+          /subagent belongs to a different parent session/
+        );
       } finally {
         await closeChild(child);
       }

@@ -674,7 +674,7 @@ export function resetRouterTelemetry(): void {
   scheduleRouterStatePersist();
 }
 
-export function routingStatus(): Record<string, unknown> {
+export function routingStatus() {
   return {
     ...ROUTING_POLICY.runtimeState(),
     configSource: process.env.CODEX_ROUTER_CONFIG_FILE
@@ -1380,6 +1380,16 @@ export type ProviderModelRecheck = (
 ) => Promise<ControlApiProviderModelDiscovery | null>;
 
 /**
+ * The failure class a check records for a provider that has no route.
+ *
+ * A provider can be configured without a route: it is listed, it holds
+ * priorities, models and limits, and no request can reach it. The verdict the
+ * Console shows for it is `Missing CODEX_ROUTE`, and a re-check cannot change
+ * that -- a route is configuration, not something a probe discovers.
+ */
+const MISSING_ROUTE_FAILURE_CLASS = "missing_route";
+
+/**
  * Re-check one provider now, on an operator's request.
  *
  * Routing only re-probes a provider when a request is about to use it, so a
@@ -1399,7 +1409,35 @@ export async function checkProvider(
   recheckModels: ProviderModelRecheck | null
 ): Promise<ControlApiProviderCheckResponse> {
   const route = ROUTES.find((candidate) => candidate.provider === provider);
-  if (!route) throw new Error(`Unknown provider: ${provider}`);
+  if (!route) {
+    // A provider the Runtime knows but has no route for is a provider the
+    // Control API has already accepted as known -- it is in the routing
+    // configuration -- so throwing here left the operator's re-check as a
+    // failed request with nothing said about the provider. The check answers
+    // instead.
+    //
+    // There is nothing to probe: a route is what a probe would call. The check
+    // records that, and the verdict stays the one it was, because a re-check
+    // cannot conjure a route into existence.
+    if (ROUTING_POLICY.config.providers[provider] === undefined) {
+      throw new Error(`Unknown provider: ${provider}`);
+    }
+    const check: ControlApiProviderCheck = {
+      at: new Date().toISOString(),
+      ok: false,
+      failureClass: MISSING_ROUTE_FAILURE_CLASS,
+      detail:
+        "This provider has no route configured, so there is nothing to probe."
+    };
+    providerState(provider).lastCheck = check;
+    scheduleRouterStatePersist();
+    return {
+      schema: "autodev-control-provider-check-v1",
+      provider,
+      check,
+      health: controlApiProviderHealth(Date.now())[provider] ?? null
+    };
+  }
   const live = await providerAvailable(route);
   let check: ControlApiProviderCheck;
   if (live) {
@@ -1444,7 +1482,7 @@ setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
 // the tracker itself.
 setControlApiMcpObservationsSource(mcpServerObservations);
 
-function buildRouterStatus(now = Date.now()): Record<string, unknown> {
+function buildRouterStatus(now = Date.now()) {
   const projection = getDefaultUsageTracker().projectLiveAgents(now);
   const recentEvents = getDefaultRouterEventRecorder().getRecentEvents(true);
   // The agent identity is not published on the public status: it is the
@@ -1498,7 +1536,7 @@ function buildRouterStatus(now = Date.now()): Record<string, unknown> {
   };
 }
 
-export function getRouterStatus(now = Date.now()): Record<string, unknown> {
+export function getRouterStatus(now = Date.now()): ReturnType<typeof buildRouterStatus> {
   return buildRouterStatus(now);
 }
 

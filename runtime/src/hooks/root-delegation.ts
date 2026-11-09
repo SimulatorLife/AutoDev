@@ -50,7 +50,10 @@ function logInput(input: HookInput): void {
 async function recoveryScript(parentId: string): Promise<string> {
   try {
     const tools = await import("@simulatorlife/autodev-runtime/agents");
-    return tools.buildRecoveryScript(parentId);
+    return tools.buildRecoveryScript(parentId, {
+      preserveParked: true,
+      maxCapacity: tools.resolveAuthoritativeCapacity()
+    });
   } catch {
     return "";
   }
@@ -71,19 +74,24 @@ function buildRecoveryContext(recovery: string): string {
   const header =
     "\n\n## Current-parent recovery preflight\n" +
     "If a thread-limit or admission failure leaves orphaned child threads " +
-    "under your session, recover before retrying. The recovery reads your " +
-    "spawn history, waits for every child, and closes only the ones that " +
-    "are terminal; foreign and still-running children are never touched.\n\n" +
+    "under your session, recover capacity before retrying. The recovery reads your " +
+    "spawn history, waits for each child, preserves running children (a wait " +
+    "timeout never implies child failure or justifies termination), collects and " +
+    "preserves finished or partial findings, and closes dead terminal handles. " +
+    "Completed children may be parked and reused for compatible follow-up tasks, " +
+    "or evicted (oldest-first) only when capacity pressure requires freeing slots " +
+    "for new work. Foreign and still-running children are never touched.\n\n" +
     "If you have a `mcp__codex_app__read_thread` tool, call it with " +
     "`{ threadId: <your session id>, turnLimit: 10, includeOutputs: false, " +
     "maxOutputCharsPerItem: 2000 }` to get the recent items. For every " +
     "`collabAgentToolCall` whose `senderThreadId` matches your session id, " +
     "collect the `receiverThreadIds`. Wait on each id with " +
-    "`multi_agent_v1__wait_agent({ targets: [<id>], timeout_ms: 30000 })` " +
-    "and close the terminal ones with " +
-    "`multi_agent_v1__close_agent({ target: <id> })`. Do not infer child ids " +
-    "from global task listings, telemetry, or any source other than your " +
-    "own session's spawn history.\n";
+    "`multi_agent_v1__wait_agent({ targets: [<id>], timeout_ms: 30000 })`. " +
+    "If the wait times out or the child is still running, leave it running. " +
+    "If the child is terminal, preserve its results, and close dead or evicted " +
+    "terminal handles with `multi_agent_v1__close_agent({ target: <id> })`. " +
+    "Do not infer child ids from global task listings, telemetry, or any source " +
+    "other than your own session's spawn history.\n";
   const codeBlock = recovery
     ? "\nIf your runtime exposes a single `exec` tool that runs raw JavaScript " +
       "(Codex code mode), the same steps are pre-bundled below as a " +

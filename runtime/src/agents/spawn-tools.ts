@@ -32,9 +32,11 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   EXEC_TOOL,
   MULTI_AGENT_CLOSE_TOOL,
+  MULTI_AGENT_SEND_INPUT_TOOL,
   MULTI_AGENT_SPAWN_TOOL,
   MULTI_AGENT_WAIT_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
@@ -48,11 +50,21 @@ const DEFAULT_YIELD_MS = 60_000;
 export interface SpawnChild {
   agentType?: string | null;
   message: string;
+  target?: string | null;
 }
 
 export interface SpawnScriptOptions {
   yieldTimeMs?: number;
   recoverParentId?: string | null;
+  preserveParked?: boolean;
+  maxCapacity?: number | null;
+}
+
+export interface RecoveryScriptOptions {
+  preserveParked?: boolean;
+  maxCapacity?: number | null;
+  newSlotsNeeded?: number;
+  reusedTargets?: readonly string[];
 }
 
 export interface SpawnResult {
@@ -119,6 +131,14 @@ export interface SpawnToolCallOutput {
   events: ExecToolCallSseEvent;
 }
 
+export function resolveAuthoritativeCapacity(): number | null {
+  try {
+    return getDefaultConcurrencyManager().effectivePerSessionLimit();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * JavaScript preflight that recovers terminal child handles owned by the
  * current parent when the Codex App MCP is available inside code mode.
@@ -128,12 +148,28 @@ export interface SpawnToolCallOutput {
  * foreign parent's child. The parent id is supplied by the bridge from the
  * router-generated conversation identity.
  */
-export function buildRecoveryScript(parentId: string): string {
+export function buildRecoveryScript(
+  parentId: string,
+  options: RecoveryScriptOptions = {}
+): string {
   if (!parentId.trim()) return "";
   const encodedParent = JSON.stringify(parentId.trim());
+  const preserveParked = options.preserveParked ?? true;
+  const maxCapacity =
+    options.maxCapacity === undefined
+      ? resolveAuthoritativeCapacity()
+      : options.maxCapacity;
+  const encodedCapacity = maxCapacity === null ? "null" : String(maxCapacity);
+  const newSlotsNeeded = options.newSlotsNeeded ?? 0;
+  const reusedTargets = options.reusedTargets ?? [];
+
   return [
     `const recoveryParentId = ${encodedParent};`,
-    `const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);`,
+    `const recoveryPreserveParked = ${preserveParked ? "true" : "false"};`,
+    `const recoveryMaxCapacity = ${encodedCapacity};`,
+    `const recoveryNewSlotsNeeded = ${newSlotsNeeded};`,
+    `const recoveryReusedTargets = new Set(${JSON.stringify(reusedTargets)});`,
+    'const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);',
     "const recoveryObjects = (value, seen = new Set()) => {",
     '  if (!value || typeof value !== "object" || seen.has(value)) return [];',
     "  seen.add(value);",
@@ -155,13 +191,64 @@ export function buildRecoveryScript(parentId: string): string {
     '  const calls = recoveryObjects(parsed).filter((item) => item?.type === "collabAgentToolCall" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));',
     '  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === "string" && id.trim())))];',
     `  if (typeof tools.${MULTI_AGENT_WAIT_TOOL} !== "function" || typeof tools.${MULTI_AGENT_CLOSE_TOOL} !== "function") return;`,
+    "  const childStatuses = [];",
     "  for (const childId of childIds) {",
     "    let waited;",
     `    try { waited = await tools.${MULTI_AGENT_WAIT_TOOL}({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }`,
     "    const status = waited?.status?.[childId];",
+    "    childStatuses.push({ childId, status });",
+    "  }",
+    "  const activeChildren = [];",
+    "  const parkedChildren = [];",
+    "  const deadChildren = [];",
+    "  for (const entry of childStatuses) {",
+    "    const { childId, status } = entry;",
+    '    const isCompleted = (typeof status === "object" && status !== null && "completed" in status) || status === "completed";',
     '    const terminal = typeof status === "string" ? recoveryTerminal.has(status) : Boolean(status && typeof status === "object" && Object.keys(status).some((key) => recoveryTerminal.has(key)));',
-    "    if (!terminal) continue;",
+    "    if (!terminal) {",
+    "      activeChildren.push(childId);",
+    "      continue;",
+    "    }",
+    "    if (isCompleted) {",
+    "      let completedResult = null;",
+    '      if (typeof status === "object" && status !== null && "completed" in status) {',
+    "        const comp = status.completed;",
+    '        if (typeof comp === "string") {',
+    "          completedResult = comp;",
+    '        } else if (comp && typeof comp === "object") {',
+    "          completedResult = comp.text ?? comp.content ?? JSON.stringify(comp);",
+    "        }",
+    "      }",
+    "      if (completedResult) {",
+    '        text(JSON.stringify({ recovery_status: "partial_result", child_id: childId, result: completedResult }));',
+    "      }",
+    "    }",
+    "    if (recoveryPreserveParked && isCompleted) {",
+    "      parkedChildren.push(entry);",
+    "    } else {",
+    "      deadChildren.push(entry);",
+    "    }",
+    "  }",
+    "  for (const { childId, status } of deadChildren) {",
     `    try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { }`,
+    "  }",
+    '  if (typeof recoveryMaxCapacity === "number") {',
+    "    const reusedCount = parkedChildren.filter((p) => recoveryReusedTargets.has(p.childId)).length;",
+    "    const allowedEvictableParked = recoveryNewSlotsNeeded > 0 ? Math.max(0, recoveryMaxCapacity - activeChildren.length - reusedCount - recoveryNewSlotsNeeded) : Math.max(0, recoveryMaxCapacity - reusedCount);",
+    "    const evictable = parkedChildren.filter((p) => !recoveryReusedTargets.has(p.childId));",
+    "    while (evictable.length > allowedEvictableParked) {",
+    "      const oldest = evictable.shift();",
+    "      const idx = parkedChildren.indexOf(oldest);",
+    "      if (idx !== -1) parkedChildren.splice(idx, 1);",
+    `      try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: oldest.childId }); text(JSON.stringify({ recovery_status: "evicted", child_id: oldest.childId, previous_status: oldest.status })); } catch { }`,
+    "    }",
+    "    const availableSlots = recoveryMaxCapacity - activeChildren.length - reusedCount - parkedChildren.filter((p) => !recoveryReusedTargets.has(p.childId)).length;",
+    "    if (recoveryNewSlotsNeeded > 0 && availableSlots < recoveryNewSlotsNeeded) {",
+    "      globalThis.__autodev_capacity_refusal = true;",
+    "    }",
+    "  }",
+    "  for (const { childId, status } of parkedChildren) {",
+    '    text(JSON.stringify({ recovery_status: "parked", child_id: childId, previous_status: status }));',
     "  }",
     "};",
     "await recoverOwnedTerminalChildren();",
@@ -173,30 +260,85 @@ export function buildSpawnScript(
   children: readonly SpawnChild[],
   {
     yieldTimeMs = DEFAULT_YIELD_MS,
-    recoverParentId = null
+    recoverParentId = null,
+    preserveParked = true,
+    maxCapacity = resolveAuthoritativeCapacity()
   }: SpawnScriptOptions = {}
 ): string {
   const taskPayloads = children.map((child) => {
+    const target =
+      typeof child.target === "string" && child.target.trim()
+        ? child.target.trim()
+        : null;
+    const message = typeof child.message === "string" ? child.message : "";
+    if (target) {
+      return { target, message };
+    }
     const agentType =
       typeof child.agentType === "string" && child.agentType.trim()
         ? child.agentType.trim()
         : null;
-    const message = typeof child.message === "string" ? child.message : "";
     return agentType ? { agent_type: agentType, message } : { message };
   });
-  if (taskPayloads.length === 0)
+  if (taskPayloads.length === 0) {
     throw new Error("buildSpawnScript requires at least one child");
+  }
+  const hasReused = children.some(
+    (c) => typeof c.target === "string" && Boolean(c.target.trim())
+  );
+  const newSlotsNeeded = children.filter(
+    (c) => typeof c.target !== "string" || !c.target.trim()
+  ).length;
+  const reusedTargets = children
+    .map((c) => c.target)
+    .filter((t): t is string => typeof t === "string" && Boolean(t.trim()));
+
   const recovery =
-    recoverParentId === null ? "" : buildRecoveryScript(recoverParentId);
-  return [
+    recoverParentId === null
+      ? ""
+      : buildRecoveryScript(recoverParentId, {
+          preserveParked,
+          maxCapacity,
+          newSlotsNeeded,
+          reusedTargets
+        });
+
+  const lines = [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
     ...(recovery ? [recovery] : []),
-    // Keep caller text as JSON data instead of hand-building JavaScript source.
-    `const tasks = ${JSON.stringify(taskPayloads)};`,
-    `const out = await Promise.allSettled(tasks.map((t) => tools.${MULTI_AGENT_SPAWN_TOOL}(t)));`,
-    `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
-    ""
-  ].join("\n");
+    `const tasks = ${JSON.stringify(taskPayloads)};`
+  ];
+
+  if (!hasReused && recoverParentId === null) {
+    lines.push(
+      `const out = await Promise.allSettled(tasks.map((t) => tools.${MULTI_AGENT_SPAWN_TOOL}(t)));`,
+      `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
+      ""
+    );
+  } else {
+    lines.push(
+      "const out = await Promise.allSettled(tasks.map((t) => {",
+      `  if (t.target) return tools.${MULTI_AGENT_SEND_INPUT_TOOL}(t);`,
+      '  if (globalThis.__autodev_capacity_refusal) return Promise.reject(new Error("Concurrency limit reached: no safely evictable capacity exists"));',
+      `  return tools.${MULTI_AGENT_SPAWN_TOOL}(t);`,
+      "}));",
+      "out.forEach((result, i) => {",
+      "  const task = tasks[i];",
+      '  if (result.status === "fulfilled") {',
+      "    if (task?.target) {",
+      '      text(JSON.stringify({ spawn_status: "reused", agent_id: task.target, ...(result.value && typeof result.value === "object" ? result.value : {}) }));',
+      "    } else {",
+      '      text(JSON.stringify({ spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) }));',
+      "    }",
+      "  } else {",
+      '    text(JSON.stringify({ spawn_status: "rejected", agent_id: task?.target ?? null, error: String(result.reason?.message ?? result.reason) }));',
+      "  }",
+      "});",
+      ""
+    );
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -350,7 +492,11 @@ export function buildSpawnToolCallItem(
     type: "custom_tool_call",
     call_id: callId,
     name: EXEC_TOOL,
-    input: buildSpawnScript(children, { recoverParentId: parentId }),
+    input: buildSpawnScript(children, {
+      recoverParentId: parentId,
+      preserveParked: true,
+      maxCapacity: resolveAuthoritativeCapacity()
+    }),
     status: "completed"
   };
 }

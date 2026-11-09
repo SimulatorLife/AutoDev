@@ -218,7 +218,7 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   );
   assert.match(
     leaf,
-    /If a required tool is denied, unavailable, or fails[\s\S]*end the turn/
+    /If a required tool is denied, unavailable, fails, or the turn reaches limits[\s\S]*end the turn/
   );
   assert.match(
     leaf,

@@ -57,7 +57,7 @@ test("the agents facade exports bridge operations, not spawn internals", () => {
 });
 
 test("recovery script closes only terminal children owned by the parent", async () => {
-  const source = agents.buildRecoveryScript("parent-1");
+  const source = agents.buildRecoveryScript("parent-1", { preserveParked: false });
   const closed: string[] = [];
   const output: unknown[] = [];
   const tools = {
@@ -377,4 +377,372 @@ test("a turn with no pending result is not mistaken for a continuation", () => {
     }),
     false
   );
+});
+
+test("recovery preserves running children when wait times out without closure or replacement", async () => {
+  const source = agents.buildRecoveryScript("parent-timeout");
+  const closed: string[] = [];
+  const output: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-timeout",
+                    receiverThreadIds: ["long-running-child"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: "running" }
+    }),
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => {
+      closed.push(target);
+      return { status: "closed" };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, [], "running child must not be closed on wait timeout");
+  assert.deepEqual(output, []);
+});
+
+test("completed-agent parking preserves completed children by default without options", async () => {
+  // Production callers like root delegation preflight previously omitted options,
+  // causing preserveParked to default false and closing every child. Now it defaults true.
+  const source = agents.buildRecoveryScript("parent-park-default");
+  assert.match(source, /const recoveryPreserveParked = true;/);
+  const closed: string[] = [];
+  const output: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-park-default",
+                    receiverThreadIds: ["completed-child-default"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: { completed: null } }
+    }),
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => {
+      closed.push(target);
+      return { status: "closed" };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, [], "parked child must not be closed when buildRecoveryScript has no options");
+  assert.deepEqual(output, [
+    {
+      recovery_status: "parked",
+      child_id: "completed-child-default",
+      previous_status: { completed: null }
+    }
+  ]);
+});
+
+test("reusing a parked session generates send_input and reports reused status", async () => {
+  const source = buildSpawnScript([
+    { target: "parked-worker-1", message: "continue next test step" }
+  ]);
+  assert.match(source, /multi_agent_v1__send_input/);
+  const values: unknown[] = [];
+  const tools = {
+    multi_agent_v1__send_input: async ({ target, message }: { target: string; message: string }) => {
+      assert.equal(target, "parked-worker-1");
+      assert.equal(message, "continue next test step");
+      return { status: "accepted", thread_id: target };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => values.push(JSON.parse(value)));
+  assert.deepEqual(values, [
+    {
+      spawn_status: "reused",
+      agent_id: "parked-worker-1",
+      status: "accepted",
+      thread_id: "parked-worker-1"
+    }
+  ]);
+});
+
+test("capacity-driven eviction closes oldest parked completed sessions when limit is exceeded", async () => {
+  const source = agents.buildRecoveryScript("parent-cap", {
+    preserveParked: true,
+    maxCapacity: 1
+  });
+  const closed: string[] = [];
+  const output: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-cap",
+                    receiverThreadIds: ["child-oldest", "child-newest", "child-running"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => {
+      const id = targets[0]!;
+      if (id === "child-running") return { status: { [id]: "running" } };
+      return { status: { [id]: "completed" } };
+    },
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => {
+      closed.push(target);
+      return { status: "closed" };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, ["child-oldest"], "only oldest parked child exceeding capacity should be evicted");
+  assert.ok(output.some((o: any) => o.recovery_status === "evicted" && o.child_id === "child-oldest"));
+  assert.ok(!closed.includes("child-newest"), "newest parked child must stay retained");
+  assert.ok(!closed.includes("child-running"), "running child must never be evicted");
+});
+
+test("capacity saturation: with two parked children and limit=2, fresh spawn evicts oldest and succeeds", async () => {
+  const source = buildSpawnScript(
+    [{ agentType: "explorer", message: "investigate subagent" }],
+    { recoverParentId: "parent-cap-2", maxCapacity: 2 }
+  );
+  const closed: string[] = [];
+  const output: unknown[] = [];
+  const spawned: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-cap-2",
+                    receiverThreadIds: ["parked-child-1", "parked-child-2"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: "completed" }
+    }),
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => {
+      closed.push(target);
+      return { status: "closed" };
+    },
+    multi_agent_v1__spawn_agent: async (payload: any) => {
+      spawned.push(payload);
+      return { agent_id: "child-fresh-3" };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, ["parked-child-1"], "oldest parked child must be evicted to free a slot");
+  assert.equal(spawned.length, 1);
+  assert.ok(output.some((o: any) => o.spawn_status === "created" && o.agent_id === "child-fresh-3"));
+});
+
+test("capacity refusal: when all slots are occupied by running children, fresh spawn is safely refused", async () => {
+  const source = buildSpawnScript(
+    [{ agentType: "worker", message: "new implementation" }],
+    { recoverParentId: "parent-running-sat", maxCapacity: 2 }
+  );
+  const closed: string[] = [];
+  const output: unknown[] = [];
+  const spawned: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-running-sat",
+                    receiverThreadIds: ["running-child-1", "running-child-2"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: "running" }
+    }),
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => {
+      closed.push(target);
+      return { status: "closed" };
+    },
+    multi_agent_v1__spawn_agent: async (payload: any) => {
+      spawned.push(payload);
+      return { agent_id: "should-not-spawn" };
+    }
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, [], "running children must never be closed or evicted");
+  assert.equal(spawned.length, 0, "no spawn should be attempted when no evictable capacity exists");
+  const rejected = output.find((o: any) => o.spawn_status === "rejected") as any;
+  assert.ok(rejected, "rejection event must be emitted");
+  assert.match(rejected.error, /Concurrency limit reached: no safely evictable capacity exists/);
+});
+
+test("partial-result preservation emits real protocol status.completed string findings", async () => {
+  // Realistic wait_agent returns status[id].completed rather than synthetic results/outputs.
+  const source = agents.buildRecoveryScript("parent-partial-real", { preserveParked: true });
+  const output: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-partial-real",
+                    receiverThreadIds: ["child-completed-text"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: { completed: "Found 4 API endpoints in runtime/src" } }
+    }),
+    multi_agent_v1__close_agent: async () => ({ status: "closed" })
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  const partial = output.find((o: any) => o.recovery_status === "partial_result") as any;
+  assert.ok(partial, "partial_result must be emitted from status.completed string");
+  assert.equal(partial.child_id, "child-completed-text");
+  assert.equal(partial.result, "Found 4 API endpoints in runtime/src");
+});
+
+test("partial-result preservation extracts object text from status.completed object", async () => {
+  const source = agents.buildRecoveryScript("parent-partial-obj", { preserveParked: true });
+  const output: unknown[] = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({
+      content: [
+        {
+          text: JSON.stringify({
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    senderThreadId: "parent-partial-obj",
+                    receiverThreadIds: ["child-completed-obj"]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      ]
+    }),
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({
+      status: { [targets[0]!]: { completed: { text: "Discovered module boundaries" } } }
+    }),
+    multi_agent_v1__close_agent: async () => ({ status: "closed" })
+  };
+  const run = new Function(
+    "tools",
+    "text",
+    `return (async () => {\n${source}\n})();`
+  );
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
+  const partial = output.find((o: any) => o.recovery_status === "partial_result") as any;
+  assert.ok(partial, "partial_result must be emitted from status.completed.text");
+  assert.equal(partial.child_id, "child-completed-obj");
+  assert.equal(partial.result, "Discovered module boundaries");
+});
+
+test("buildSpawnToolCallItem derives authoritative capacity and enables parked preservation", () => {
+  const item = agents.buildSpawnToolCallItem(
+    [{ agentType: "explorer", message: "explore" }],
+    "parent-call-item",
+    "call-item-1"
+  );
+  assert.ok(item);
+  assert.match(item.input, /const recoveryPreserveParked = true;/);
+  // Authoritative capacity is 2 in this workspace config
+  assert.match(item.input, /const recoveryMaxCapacity = 2;/);
 });

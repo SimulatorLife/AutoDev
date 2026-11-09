@@ -51,8 +51,9 @@ const TOOL = {
     "agents' ids and per-child dispatch status. A rejected child has no child id to close.",
     "",
     "Spawn a whole batch in one call when the work is independent -- that is cheaper",
-    "and runs in parallel. Each child must get the full context it needs: it cannot",
-    "see this conversation."
+    "and runs in parallel. Compatible completed subagents can be reused by providing",
+    "their `target` id instead of spawning a new one. Each child must get the full",
+    "context it needs: it cannot see this conversation."
   ].join("\n"),
   inputSchema: {
     type: "object",
@@ -72,6 +73,11 @@ const TOOL = {
             message: {
               type: "string",
               description: "The complete, self-contained task for this child."
+            },
+            target: {
+              type: "string",
+              description:
+                "Optional existing compatible subagent id to reuse/resume rather than spawning a new session."
             }
           },
           required: ["message"]
@@ -176,6 +182,19 @@ async function callSpawnTool(
       emit
     );
     return;
+  }
+  for (const child of children) {
+    if (child && typeof child === "object" && "target" in child) {
+      const target = (child as JsonObject).target;
+      if (typeof target !== "string" || !target.trim()) {
+        toolError(
+          id,
+          "spawn_subagent target must be a non-empty string when provided.",
+          emit
+        );
+        return;
+      }
+    }
   }
   try {
     const result = await callBridge("/v1/bridge-spawn/call", {

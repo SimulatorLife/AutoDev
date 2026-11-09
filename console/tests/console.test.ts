@@ -4035,7 +4035,7 @@ test("provider readiness never turns configuration without a success into Ready"
   );
 });
 
-test("an Unavailable provider verdict carries a re-check control that spins while it runs", () => {
+test("every provider verdict carries a re-check control that spins while it runs", () => {
   const unavailable = {
     id: "opencli-chatgpt",
     disabled: false,
@@ -4086,7 +4086,14 @@ test("an Unavailable provider verdict carries a re-check control that spins whil
   // The control sits inside the badge, after the verdict.
   assert.match(markup, /Unavailable \(upstream_5xx\)<\/span><button/u);
 
-  // A Ready provider, or a badge with nowhere to return to, has no control.
+  // The control is on every verdict, not only on the failing ones.
+  //
+  // Routing re-probes a provider when a request is about to use it, so a
+  // verdict nobody has re-checked is only as current as the moment it was
+  // observed -- and it can be stale in either direction. An operator who wants
+  // to know whether a provider is serving now should not have to wait for it
+  // to fail first, and a provider that has recovered reads `Ready` only after
+  // somebody looked at it again.
   const ready = {
     ...unavailable,
     health: {
@@ -4095,21 +4102,60 @@ test("an Unavailable provider verdict carries a re-check control that spins whil
       lastSuccessAt: "2026-11-07T12:00:00.000Z"
     }
   } as typeof unavailable;
-  assert.doesNotMatch(
-    renderToStaticMarkup(
+  const notObserved = {
+    ...unavailable,
+    health: {
+      ...unavailable.health,
+      failures: 0,
+      lastFailure: null,
+      lastSuccessAt: null
+    }
+  } as typeof unavailable;
+  const coolingDown = {
+    ...unavailable,
+    health: {
+      ...unavailable.health,
+      cooldown: {
+        kind: "probe",
+        failureClass: "probe_unavailable",
+        until: "2026-11-07T12:05:00.000Z",
+        resetsAt: null,
+        lastResortEligible: false
+      }
+    }
+  } as typeof unavailable;
+  const disabled = { ...unavailable, disabled: true } as typeof unavailable;
+  const missingRoute = { ...unavailable, route: null } as typeof unavailable;
+  const missingCredential = {
+    ...unavailable,
+    credential: { envKey: "LITELLM_API_KEY", configured: false }
+  } as typeof unavailable;
+
+  for (const [verdict, provider] of Object.entries({
+    Ready: ready,
+    "Not observed": notObserved,
+    "Cooling down": coolingDown,
+    Disabled: disabled,
+    "Missing CODEX_ROUTE": missingRoute,
+    "Missing LITELLM_API_KEY": missingCredential
+  })) {
+    const verdictMarkup = renderToStaticMarkup(
       React.createElement(ProviderStatusBadge, {
-        provider: ready,
+        provider,
         returnTo: "/providers"
       })
-    ),
-    /<form|data-provider-check/u
-  );
-  assert.doesNotMatch(
-    renderToStaticMarkup(
-      React.createElement(ProviderStatusBadge, { provider: unavailable })
-    ),
-    /<form/u
-  );
+    );
+    assert.match(
+      verdictMarkup,
+      /data-provider-check-form="opencli-chatgpt"/u,
+      `the ${verdict} verdict carries no re-check form`
+    );
+    assert.match(
+      verdictMarkup,
+      /aria-label="Re-check provider opencli-chatgpt"/u,
+      `the ${verdict} verdict carries no re-check control`
+    );
+  }
 });
 
 test("a stat card pairs its label with its value as a definition list", () => {
@@ -11735,7 +11781,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
             explanation: "Converged."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         smart: {
           priority: 2,
@@ -11749,7 +11797,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
             explanation: "Converged."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         orchestrator: {
           priority: 1,
@@ -11763,7 +11813,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
             explanation: "Converged."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         subagent: {
           priority: 2,
@@ -11777,7 +11829,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
             explanation: "Converged."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         }
       },
       models: [
@@ -11850,7 +11904,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: null,
             lastError: null,
             explanation: "Pending observation."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         smart: {
           priority: 2,
@@ -11864,7 +11920,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: null,
             lastError: null,
             explanation: "Pending observation."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         orchestrator: {
           priority: "disabled",
@@ -11878,7 +11936,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: "2026-10-05T15:30:00.000Z",
             lastError: null,
             explanation: "Converged."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         },
         subagent: {
           priority: 3,
@@ -11892,7 +11952,9 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             lastObservationAt: null,
             lastError: null,
             explanation: "Not observed."
-          }
+          },
+          canServe: true,
+          cannotServeReason: null
         }
       },
       models: [

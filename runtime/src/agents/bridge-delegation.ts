@@ -94,6 +94,6 @@ export function bridgeDelegationInstruction(options: {
     "```json",
     delegationCall(reach),
     "```",
-    "One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation."
+    "One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation. Compatible completed subagents can be parked and reused for follow-up tasks by specifying `target: \"<child_id>\" ` instead of `agent_type`."
   ].join("\n\n");
 }

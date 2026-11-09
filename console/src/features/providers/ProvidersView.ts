@@ -251,17 +251,21 @@ function providerColumns(
     {
       id: "status",
       header: "Status",
-      // Sized against the shortest verdict the column has to show in full, not
-      // against the longest: "Not observed" measures 112px as a badge, so 144
-      // is that with the cell's own 32px of padding and 160 holds it.
+      // Sized against the verdict the column has to show in full, and against
+      // the re-check control that rides inside the badge.
       //
-      // A pill like "Missing LITELLM_API_KEY" is longer than any column is
-      // wide, and it ellipsizes inside the badge with the whole name on its
-      // hover title -- so a column sized for it bought nothing and took 50px
-      // from the five columns that have to be read.
+      // Measured at 1440 with the control on every row: "Not observed" is
+      // 130px as a badge, which with the cell's own 32px of inset is 162, and
+      // 168 holds it. "Ready" (88px) and "Disabled" (102px) fit inside it as
+      // well.
       //
-      // 168 holds the longest verdict there is in practice -- "Unavailable
-      // (unavailable)" measures 129px -- with the cell's own 32px of inset.
+      // A longer verdict does not fit, and did not fit before the control was
+      // on every row either: "Unavailable (probe_unavailable)" measures 237px
+      // with the control and 219px without it. A column sized for it bought
+      // nothing and took 50px from the five columns that have to be read, so
+      // the badge ellipsizes instead and keeps the whole verdict on its hover
+      // title. The control is `shrink-0`, so it stays whole and visible at the
+      // badge's right-hand end however far the word is cut.
       weight: 168,
       cell: (provider) =>
         React.createElement(ProviderStatusBadge, {

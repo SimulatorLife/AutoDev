@@ -205,10 +205,18 @@ export interface ControlApiProviderHealth {
 export interface ControlApiProviderCheck {
   readonly at: string;
   readonly ok: boolean;
-  /** The failure class when the check failed (`probe_unavailable`), else null. */
+  /**
+   * The failure class when the check failed, else null.
+   *
+   * `probe_unavailable` is the live probe failing -- no credential, or the
+   * bridge's health endpoint did not answer. `missing_route` is a provider
+   * that is configured but has no route, so there was nothing to probe at all.
+   */
   readonly failureClass: string | null;
   /** What was checked, or why the check failed, in one sentence. */
   readonly detail: string;
+  /** The provider models observed during the check, reported separately from the health verdict. */
+  readonly models?: ControlApiProviderModelDiscovery | null;
 }
 
 /** `POST /control/providers/:provider/check`: the check and the provider's health after it. */
@@ -217,6 +225,7 @@ export interface ControlApiProviderCheckResponse {
   readonly provider: string;
   readonly check: ControlApiProviderCheck;
   readonly health: ControlApiProviderHealth | null;
+  readonly models?: ControlApiProviderModelDiscovery | null;
 }
 
 /**
@@ -268,9 +277,9 @@ export interface ControlApiProviderRoleAssignment {
    * Runtime refuses such an assignment rather than persisting one no request
    * would ever route to.
    */
-  readonly canServe: boolean;
+  readonly canServe?: boolean;
   /** Why the provider cannot serve this role, or null when it can. */
-  readonly cannotServeReason: string | null;
+  readonly cannotServeReason?: string | null;
 }
 
 /** Provider-wide concurrent-agent limits; `null` is the explicit Unlimited choice. */

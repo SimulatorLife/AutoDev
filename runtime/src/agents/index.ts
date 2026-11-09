@@ -11,5 +11,6 @@ export {
   buildSpawnToolCallItem,
   buildSpawnToolCallOutput,
   type CustomToolCallItem,
+  resolveAuthoritativeCapacity,
   type SpawnToolCallOutput
 } from "./spawn-tools.ts";

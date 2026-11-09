@@ -7,6 +7,7 @@ import {
   checkProvider,
   providerState
 } from "@simulatorlife/autodev-runtime/router/http";
+import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 
 /**
  * An operator's provider check re-runs what routing would before using a
@@ -95,3 +96,33 @@ test("a model listing that is unavailable fails the check", () =>
     assert.equal(result.check.failureClass, "model_listing_unavailable");
     assert.match(result.check.detail, /fetch failed/u);
   }));
+
+/**
+ * A provider can be configured without a route: it is listed, it holds
+ * priorities, models and limits, and no request can reach it.
+ *
+ * The Console's re-check control is on every verdict, so the Runtime has to
+ * answer for such a provider rather than throw and leave the operator with a
+ * failed request that says nothing about the provider.
+ */
+test("a provider with no route answers its check instead of throwing", async () => {
+  const ROUTELESS = "routeless-fixture";
+  ROUTING_POLICY.config.providers[ROUTELESS] = { models: {} };
+  try {
+    const result = await checkProvider(ROUTELESS, null);
+    assert.equal(result.check.ok, false);
+    assert.equal(result.check.failureClass, "missing_route");
+    assert.match(result.check.detail, /no route/u);
+    assert.deepEqual(providerState(ROUTELESS).lastCheck, result.check);
+  } finally {
+    delete ROUTING_POLICY.config.providers[ROUTELESS];
+    providerState(ROUTELESS).lastCheck = null;
+  }
+});
+
+test("a provider the Runtime does not know at all still fails the check", async () => {
+  await assert.rejects(
+    () => checkProvider("no-such-provider", null),
+    /Unknown provider/u
+  );
+});

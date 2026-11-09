@@ -113,10 +113,15 @@ export function resolveProviderStatus(
 }
 
 /**
- * The re-check control inside an Unavailable verdict.
+ * The re-check control inside a provider's verdict.
  *
- * A provider marked unavailable stays so until traffic happens to try it
- * again; this asks Runtime to re-run its live probe and model listing now.
+ * Every verdict carries one, not only a failing one. Routing re-probes a
+ * provider when a request is about to use it, so a verdict nobody has
+ * re-checked is only as current as the moment it was observed -- and it can be
+ * stale in either direction. An operator who wants to know whether a provider
+ * is serving now should not have to wait for it to fail first, and a provider
+ * that has recovered reads `Ready` only after somebody looked at it again.
+ *
  * It submits the enclosing form (`ProviderStatusBadge`), and the Console's
  * form owner marks that form `aria-busy` while the check runs -- which is what
  * swaps the refresh symbol for a spinning circle, with no client state of its
@@ -155,44 +160,46 @@ function ProviderCheckButton({
 /**
  * The Status column: one verdict per provider, never a summary of parts.
  *
- * An Unavailable verdict -- a failed request, a failed probe, a cooldown --
- * carries a re-check control when `returnTo` is given (the page to come back
- * to after the check). The form wraps the badge, because a form cannot sit
- * inside the badge's inline box, and it is the form's busy state that turns
- * the control into a spinner.
+ * Every verdict carries the re-check control, because every verdict is
+ * evidence that was observed at some moment and can go stale. The control
+ * rides inside the badge so it reads as part of the verdict it acts on, and
+ * the form wraps the badge -- a form cannot sit inside the badge's inline
+ * box -- and it is the form's busy state that turns the control into a
+ * spinner.
+ *
+ * `returnTo` is required rather than optional. The check is a redirect back to
+ * the page it was started from, and the Console's check route refuses a
+ * submission that does not carry one, so a badge without a return path could
+ * only ever render a control that fails.
  */
 export function ProviderStatusBadge({
   provider,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
-  readonly returnTo?: string | undefined;
+  readonly returnTo: string;
 }): React.JSX.Element {
   const status = resolveProviderStatus(provider);
-  const checkable = status.tone === "unavailable" && returnTo !== undefined;
   const badge = React.createElement(StatusBadge, {
     status: status.tone,
     label: status.label,
-    ...(checkable
-      ? {
-          action: React.createElement(ProviderCheckButton, {
-            provider: provider.id
-          })
-        }
-      : {}),
+    // The control is on every verdict, not only on the failing ones: an
+    // operator who wants a provider's status re-checked should not have to
+    // wait for it to look broken first.
+    action: React.createElement(ProviderCheckButton, { provider: provider.id }),
     // The title carries the verdict as well as the explanation of it.
     //
     // A badge's title is the only way back to a label the column could not
-    // hold: the Status column gives "Unavailable (upstream_5xx)" a 136px box,
-    // so the verdict's tail is cut and what is left is "Unavailable (u…". A
-    // title that only explains the verdict -- "The latest provider health
-    // evidence is a failure" -- leaves the part that was cut unavailable, so
-    // the verdict is named in the title and the explanation follows it.
+    // hold: the Status column gives "Unavailable (probe_unavailable)" a box
+    // narrower than the verdict, so the verdict's tail is cut and what is left
+    // is "Unavailable (probe…". A title that only explains the verdict --
+    // "The latest provider health evidence is a failure" -- leaves the part
+    // that was cut unavailable, so the verdict is named in the title and the
+    // explanation follows it.
     ...(status.title === undefined
       ? {}
       : { title: `${status.label} — ${status.title}` })
   });
-  if (!checkable) return badge;
   return React.createElement(
     "form",
     {

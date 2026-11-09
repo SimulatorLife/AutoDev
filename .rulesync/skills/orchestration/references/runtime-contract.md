@@ -34,9 +34,45 @@ uncertain rather than spawning beyond the limit.
 
 Terminal states are `completed`, `errored`, `interrupted`, `shutdown`, and
 explicit provider-incomplete terminal states. A terminal child still owns a
-handle until explicitly closed where the runtime requires it. After consuming a
-terminal result, call `close_agent` before creating replacement work or ending
-the task. Treat `agent_id` as an opaque handle and pass the complete value from
+handle until explicitly closed where the runtime requires it.
+
+### Wait timeouts and running children
+
+A wait timeout (such as the default 30-second wait in recovery or polling)
+never implies child failure, a crash, or an abandoned task, and NEVER justifies
+terminating the child or spawning a replacement. A timeout or non-terminal
+status simply means the child is still executing. Allow running children to
+finish by waiting on them, collecting any intermediate partial findings
+reported. Spawning a replacement while a child is in flight duplicates work,
+wastes tokens, and exhausts concurrency slots.
+
+### Parking and session reuse
+
+A child whose status is `completed` has finished its current turn. Instead of
+immediately closing the session, park completed discovery and worker sessions
+for compatible follow-up tasks. Reusing an existing child session with
+`multi_agent_v1__send_input({ target: childId, message: "<follow-up task>" })`
+preserves warmed context, file caches, and index state, avoiding redundant discovery
+and duplicate initialization. Note that `resume_agent` accepts only `target` and
+does not deliver new task input; always use `send_input` to deliver follow-up work,
+using `resume_agent` only where unpausing without new instructions is genuinely required.
+
+### Capacity-driven eviction
+
+Completed and parked child sessions occupy concurrency slots in the session
+thread pool. Close parked child handles with `close_agent` only when necessary:
+1. when the assignment is fully complete and no follow-up tasks will occur, or
+2. under capacity pressure, when new roles must be dispatched and the session
+   has reached its concurrency limit.
+
+When evicting under capacity pressure, evict (close) only the oldest
+parked/terminal children owned by this parent. Never evict, terminate, or
+interrupt active (running) children, and never touch foreign children owned
+by other parents.
+
+### Terminal result handling and partial results
+
+Treat `agent_id` as an opaque handle and pass the complete value from
 the spawn result verbatim; never abbreviate or retype it from memory. If a
 lifecycle call rejects an ID, recover the exact handle from this parent's
 verified spawn history instead of guessing. Router active-child telemetry is
@@ -48,19 +84,22 @@ A lifecycle status of `completed` means the turn ended, not necessarily that the
 child completed its assignment. Inspect the returned result for an explicit
 incomplete marker or provider-failure diagnostic; treat either as a failed or
 partial child result, preserve any useful partial work, and report the cause.
-Close the terminal child before replacement work. Do not automatically retry a
-deterministic permission denial; correct the cause first and leave any retry to
-the parent.
+Do not automatically retry a deterministic permission denial; correct the cause
+first and leave any retry to the parent. When terminal or errored sessions must
+be closed, ensure any useful partial findings produced by the child are
+collected and preserved rather than discarded.
 
 On interruption or admission failure, run any injected current-parent recovery
 preflight first when available, then:
 
 1. enumerate this parent's children with owner-scoped `list_agents` or `manage_subagents` when available
 2. otherwise recover IDs only from this parent's verified spawn history, including Codex App `read_thread` when needed
-3. close only known terminal children
-4. leave running or foreign children untouched
-5. retry the original delegation once if recovery freed capacity
-6. report the unavailable path if it still fails
+3. preserve running children (a wait timeout never implies child failure or justifies termination)
+4. collect and preserve any available finished results or partial findings
+5. under capacity pressure, evict only this parent's oldest parked/terminal children to free capacity
+6. leave running or foreign children untouched
+7. retry the original delegation once if recovery freed capacity
+8. report the unavailable path if it still fails
 
 Never perform global cleanup. A spawn failure does not authorize silently taking
 over delegated implementation work.

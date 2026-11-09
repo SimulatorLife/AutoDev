@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
+import { createAgentActivityTracker } from "../../agents/agent-activity.ts";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export type AgentActivityTracker = ReturnType<

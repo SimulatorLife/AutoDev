@@ -65,7 +65,7 @@ test("provider failure evidence overrides an older success", () => {
   );
 });
 
-test("active cooldown and failed health probes remain unavailable", () => {
+test("active cooldown remains unavailable while readiness does not depend on a sticky probe streak alone", () => {
   assert.equal(
     providerHealthReadiness(
       health({
@@ -80,9 +80,22 @@ test("active cooldown and failed health probes remain unavailable", () => {
     ),
     "unavailable"
   );
+  // Readiness derives from live evidence (an active cooldown or a failure newer
+  // than the last success), not from a probe streak that only a successful
+  // request resets. Without an active cooldown or failure evidence, a provider
+  // with a prior success is ready.
+  assert.equal(
+    providerHealthReadiness(
+      health({
+        lastSuccessAt: "2026-10-19T12:00:00.000Z",
+        probeFailureStreak: 1
+      })
+    ),
+    "ready"
+  );
   assert.equal(
     providerHealthReadiness(health({ probeFailureStreak: 1 })),
-    "unavailable"
+    "not-observed"
   );
 });
 

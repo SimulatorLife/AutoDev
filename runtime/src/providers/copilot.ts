@@ -1452,9 +1452,12 @@ class CopilotResponseStream {
     if (!this.isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
     const limit = classifyCliLimit(message, copilotErrorExitCode(error));
-    if (!this.streamStarted) {
+    if (!this.streamStarted && !this.partialText) {
       this.sendInitialFailure(message, limit);
       return;
+    }
+    if (!this.streamStarted) {
+      this.startStream();
     }
     this.emitIncompleteResponse(limit);
     this.endSse();
@@ -1834,7 +1837,10 @@ function prepareCopilotRequest(
   const skillContextHeader = bridgeSkillContext(headers);
   const sandboxInjection = readOnlySystemPromptInjection(headers);
   const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole)
+    orchestrator: isOrchestratorRole(agentRole),
+    role: agentRole,
+    workspace: cwd,
+    payload
   });
   const composedPrompt =
     composeProviderPrompt(agentRole, cwd) +

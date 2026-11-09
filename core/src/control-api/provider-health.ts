@@ -12,7 +12,7 @@ export function providerHealthReadiness(
   health: ControlApiProviderHealth | null
 ): ProviderHealthReadiness {
   if (health === null) return "not-observed";
-  if (health.cooldown !== null || health.probeFailureStreak > 0) {
+  if (health.cooldown !== null) {
     return "unavailable";
   }
   const check = health.lastCheck;

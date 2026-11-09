@@ -1283,7 +1283,10 @@ function startResponsesTurn(
   // is opened here, after the parked turn has been reattached, so a
   // continuation never replaces the children its own turn collected.
   const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole)
+    orchestrator: isOrchestratorRole(agentRole),
+    role: agentRole,
+    workspace: cwd,
+    payload
   });
   const mayDelegate =
     spawnSession !== null && spawnSessions.mayDelegate(spawnSession);

@@ -3710,7 +3710,10 @@ function prepareResponsesTurn(
   // An invalid workspace must not leave an orphaned entry that a later shim
   // process could attach to.
   const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole)
+    orchestrator: isOrchestratorRole(agentRole),
+    role: agentRole,
+    workspace: cwd,
+    payload
   });
   const codexTools = codexToolSurface(payload).tools;
   // Only a streamed turn can park a call and be continued by the request
@@ -4735,9 +4738,12 @@ class StreamingTurn implements ParkableTurn {
     // would let the cooldown honour a hard window; that envelope is not read
     // here, so this limit stays inferred by design.
     const limit = classifyCliLimit(message, agyFailure(error).exitCode);
-    if (!this.stream.started) {
+    if (!this.stream.started && !this.stream.partialText) {
       this.sendFailureStatus(error, limit);
       return;
+    }
+    if (!this.stream.started) {
+      this.stream.start();
     }
     // A failure after the stream opened cannot be replayed on another
     // provider, so the work already sent is all the parent will ever get for

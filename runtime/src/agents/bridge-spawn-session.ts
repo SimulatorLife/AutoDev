@@ -1,3 +1,64 @@
+function parseChildCandidate(child: unknown): {
+  message: string;
+  target: string | null;
+  agentType: string | null;
+} | null {
+  if (!child || typeof child !== "object") return null;
+  const rec = child as Record<string, unknown>;
+  if (typeof rec.message !== "string" || !rec.message.trim()) return null;
+  const target =
+    typeof rec.target === "string" && rec.target.trim()
+      ? rec.target.trim()
+      : typeof rec.agent_id === "string" && rec.agent_id.trim()
+        ? rec.agent_id.trim()
+        : null;
+  const agentType =
+    typeof rec.agent_type === "string" && rec.agent_type.trim()
+      ? rec.agent_type.trim()
+      : null;
+  return { message: rec.message, target, agentType };
+}
+
+function formatSessionRoles(accepted: readonly SpawnChild[]): string {
+  return [
+    ...new Set(
+      accepted.map((c) =>
+        c.target
+          ? `reuse:${c.target}${c.agentType ? ` (${c.agentType})` : ""}`
+          : c.agentType ?? "default"
+      )
+    )
+  ]
+    .sort()
+    .join(", ");
+}
+function validateReuseTarget(
+  target: string,
+  agentType: string | null,
+  sessionKey: string,
+  sessionWorkspace: string | null,
+  childRecord: ChildSessionRecord | undefined
+): string | null {
+  if (!childRecord) {
+    return `Cannot reuse subagent "${target}": target is not a verified subagent owned by this session. Never provide arbitrary target identifiers.`;
+  }
+  if (childRecord.parentId !== sessionKey) {
+    return `Cannot reuse subagent "${target}": subagent belongs to a different parent session ("${childRecord.parentId}").`;
+  }
+  if (sessionWorkspace && childRecord.workspace && childRecord.workspace !== sessionWorkspace) {
+    return `Cannot reuse subagent "${target}": subagent workspace ("${childRecord.workspace}") does not match requesting parent workspace ("${sessionWorkspace}").`;
+  }
+  if (agentType && agentType !== childRecord.role) {
+    return `Cannot reuse subagent "${target}": subagent role ("${childRecord.role}") is incompatible with requested role ("${agentType}").`;
+  }
+  if (childRecord.status === "running") {
+    return `Cannot reuse subagent "${target}": subagent is currently running and cannot accept follow-up input until complete.`;
+  }
+  if (childRecord.status !== "parked" && childRecord.status !== "completed") {
+    return `Cannot reuse subagent "${target}": subagent status is "${childRecord.status}" (must be parked or completed).`;
+  }
+  return null;
+}
 /**
  * Delegation requests collected during one bridge turn.
  *
@@ -39,12 +100,23 @@ const SESSION_ID_HEADER = "x-autodev-session-id";
  */
 const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
 
+export interface ChildSessionRecord {
+  childId: string;
+  parentId: string;
+  role: string;
+  workspace: string;
+  status: "parked" | "completed" | "running" | "failed" | "closed" | string;
+}
+
 export interface SpawnChild {
   agentType: string | null;
   message: string;
+  target?: string | null;
 }
 export interface SpawnSession {
   orchestrator: boolean;
+  role: string | null;
+  workspace: string | null;
   children: SpawnChild[];
   updatedAt: number;
 }
@@ -59,12 +131,190 @@ export interface SpawnRegistryOptions {
 const DEFAULT_MAX_SESSIONS = 8;
 const DEFAULT_IDLE_MS = 900_000;
 
+
+const NOTIFICATION_REGEX =
+  /<subagent_notification>([\s\S]*?)<\/subagent_notification>/g;
+
+function parseNotificationStatus(rawStatus: unknown): string {
+  if (rawStatus === "running") return "running";
+  if (rawStatus === "shutdown" || rawStatus === "closed") return "closed";
+  return "completed";
+}
+
+function parseNotificationRecords(
+  text: string,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord[] {
+  const records: ChildSessionRecord[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = NOTIFICATION_REGEX.exec(text)) !== null) {
+    const raw = match[1]?.trim();
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") continue;
+      const childId =
+        typeof parsed.agent_path === "string" && parsed.agent_path.trim()
+          ? parsed.agent_path.trim()
+          : typeof parsed.agent_id === "string" && parsed.agent_id.trim()
+            ? parsed.agent_id.trim()
+            : null;
+      if (!childId) continue;
+      records.push({
+        childId,
+        parentId: sessionKey,
+        role: "default",
+        workspace: workspace ?? "",
+        status: parseNotificationStatus(parsed.status)
+      });
+    } catch {
+      // Ignore malformed notification text
+    }
+  }
+  return records;
+}
+
+function parseCollabReceivers(
+  rec: Record<string, unknown>,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord[] {
+  const sender = rec.sender_thread_id ?? rec.senderThreadId;
+  const isSpawn =
+    rec.type === "CollabAgentToolCall" || rec.tool === "spawn_agent";
+  if (!isSpawn || sender !== sessionKey) return [];
+
+  const rawList = Array.isArray(rec.receiver_agents)
+    ? rec.receiver_agents
+    : Array.isArray(rec.receiverAgents)
+      ? rec.receiverAgents
+      : [];
+
+  const records: ChildSessionRecord[] = [];
+  for (const raw of rawList) {
+    if (!raw || typeof raw !== "object") continue;
+    const agent = raw as Record<string, unknown>;
+    const rawId = agent.thread_id ?? agent.threadId;
+    const childId =
+      typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
+    const rawRole = agent.agent_role ?? agent.agentRole;
+    const role =
+      typeof rawRole === "string" && rawRole.trim()
+        ? rawRole.trim()
+        : "default";
+    if (childId) {
+      records.push({
+        childId,
+        parentId: sessionKey,
+        role,
+        workspace: workspace ?? "",
+        status: "completed"
+      });
+    }
+  }
+  return records;
+}
+
+function extractRecordsFromValue(
+  val: unknown,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord[] {
+  if (typeof val === "string" && val.includes("subagent_notification")) {
+    return parseNotificationRecords(val, sessionKey, workspace);
+  }
+  return [];
+}
+
+function processPayloadItem(
+  item: unknown,
+  stack: unknown[],
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord[] {
+  if (item && typeof item === "object") {
+    stack.push(item);
+    return [];
+  }
+  return extractRecordsFromValue(item, sessionKey, workspace);
+}
+
+function scanPayloadChildren(
+  payload: unknown,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord[] {
+  if (!payload || typeof payload !== "object") return [];
+  const records: ChildSessionRecord[] = [];
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [payload];
+  while (stack.length > 0) {
+    const obj = stack.pop();
+    if (!obj || typeof obj !== "object" || seen.has(obj)) continue;
+    seen.add(obj);
+
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        records.push(...processPayloadItem(item, stack, sessionKey, workspace));
+      }
+      continue;
+    }
+
+    const rec = obj as Record<string, unknown>;
+    records.push(...parseCollabReceivers(rec, sessionKey, workspace));
+
+    for (const val of Object.values(rec)) {
+      records.push(...processPayloadItem(val, stack, sessionKey, workspace));
+    }
+  }
+  return records;
+}
+
 export class SpawnSessionRegistry {
   private readonly maxSessions: number;
   private readonly idleMs: number;
   private readonly now: () => number;
   private readonly sessions = new Map<string, SpawnSession>();
+  private readonly verifiedChildren = new Map<string, ChildSessionRecord>();
 
+  registerChildSession(record: ChildSessionRecord): void {
+    if (!record?.childId || !record?.parentId) return;
+    this.verifiedChildren.set(record.childId, { ...record });
+  }
+
+  getChildSession(childId: string): ChildSessionRecord | undefined {
+    return this.verifiedChildren.get(childId);
+  }
+
+  updateChildStatus(childId: string, status: ChildSessionRecord["status"]): boolean {
+    const record = this.verifiedChildren.get(childId);
+    if (!record) return false;
+    record.status = status;
+    return true;
+  }
+
+  scanAndRegisterChildren(
+    sessionKey: string,
+    workspace: string | null,
+    payload: unknown
+  ): void {
+    const records = scanPayloadChildren(payload, sessionKey, workspace);
+    for (const record of records) {
+      const existing = this.verifiedChildren.get(record.childId);
+      if (existing) {
+        existing.status = record.status;
+        if (record.role !== "default") {
+          existing.role = record.role;
+        }
+        if (record.workspace && !existing.workspace) {
+          existing.workspace = record.workspace;
+        }
+      } else {
+        this.registerChildSession(record);
+      }
+    }
+  }
   constructor({
     maxSessions = DEFAULT_MAX_SESSIONS,
     idleMs = DEFAULT_IDLE_MS,
@@ -91,7 +341,15 @@ export class SpawnSessionRegistry {
    */
   open(
     sessionKey: string,
-    { orchestrator = false }: { orchestrator?: boolean } = {}
+    {
+      orchestrator = false,
+      role = null,
+      workspace = null
+    }: {
+      orchestrator?: boolean;
+      role?: string | null;
+      workspace?: string | null;
+    } = {}
   ): void {
     this.sweep();
     while (
@@ -106,6 +364,11 @@ export class SpawnSessionRegistry {
     }
     this.sessions.set(sessionKey, {
       orchestrator,
+      role: typeof role === "string" && role.trim() ? role.trim() : null,
+      workspace:
+        typeof workspace === "string" && workspace.trim()
+          ? workspace.trim()
+          : null,
       children: [],
       updatedAt: this.now()
     });
@@ -144,14 +407,31 @@ export class SpawnSessionRegistry {
       };
 
     const accepted: SpawnChild[] = [];
-    for (const child of Array.isArray(children) ? children : []) {
-      const message = child?.message;
-      if (typeof message !== "string" || !message.trim()) continue;
-      const agentType =
-        typeof child?.agent_type === "string" && child.agent_type.trim()
-          ? child.agent_type.trim()
-          : null;
-      accepted.push({ agentType, message });
+    for (const raw of Array.isArray(children) ? children : []) {
+      const parsed = parseChildCandidate(raw);
+      if (!parsed) continue;
+      const { message, target, agentType } = parsed;
+      if (target) {
+        const childRecord = this.verifiedChildren.get(target);
+        if (!childRecord) {
+          return {
+            accepted: false,
+            message: `Cannot reuse subagent "${target}": target is not a verified subagent owned by this session. Never provide arbitrary target identifiers.`
+          };
+        }
+        const error = validateReuseTarget(
+          target,
+          agentType,
+          sessionKey,
+          session.workspace,
+          childRecord
+        );
+        if (error) return { accepted: false, message: error };
+        childRecord.status = "running";
+        accepted.push({ agentType: agentType ?? childRecord.role, message, target });
+      } else {
+        accepted.push({ agentType: agentType ?? null, message });
+      }
     }
     if (accepted.length === 0)
       return {
@@ -162,9 +442,7 @@ export class SpawnSessionRegistry {
 
     session.children.push(...accepted);
     session.updatedAt = this.now();
-    const roles = [...new Set(accepted.map((c) => c.agentType ?? "default"))]
-      .sort()
-      .join(", ");
+    const roles = formatSessionRoles(accepted);
     return {
       accepted: true,
       children: accepted,
@@ -232,12 +510,24 @@ function headerValue(headers: unknown, name: string): string | null {
 export function openSpawnSession(
   headers: unknown,
   registry: SpawnSessionRegistry,
-  { orchestrator }: { orchestrator: boolean }
+  options: {
+    orchestrator: boolean;
+    role?: string | null;
+    workspace?: string | null;
+    payload?: unknown;
+  }
 ): string | null {
   const session = headerValue(headers, SESSION_ID_HEADER);
   const scope = headerValue(headers, SESSION_SCOPE_HEADER);
   if (session === null) return null;
   if (!SpawnSessionRegistry.canHold(session, scope)) return null;
-  registry.open(session, { orchestrator });
+  registry.open(session, options);
+  if (options.payload) {
+    registry.scanAndRegisterChildren(
+      session,
+      options.workspace ?? null,
+      options.payload
+    );
+  }
   return session;
 }

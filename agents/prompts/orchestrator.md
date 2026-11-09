@@ -109,13 +109,40 @@ fails the suite if anyone hard-codes a `multi_agent_v1__*` literal anywhere
 in `src/` outside `@simulatorlife/autodev-runtime/shared/tool-names`.
 
 After spawning, poll child results with `multi_agent_v1__wait_agent({ targets:
-[childId] })` and close terminal children with
-`multi_agent_v1__close_agent({ target: childId })`. Treat `agent_id` as an
-opaque handle: use the complete value returned by `spawn_agent` verbatim; never
-abbreviate it or retype it from memory. If the spawn output is unavailable or
-a lifecycle call rejects an ID, recover the exact handle from this parent's
-verified spawn history instead of guessing. Always close handles you own before
-creating replacement work or ending the turn.
+[childId] })`.
+
+Wait timeouts and running children:
+A wait timeout (e.g. 30 seconds) or return with non-terminal status means the
+child is still executing. A wait timeout never implies child failure, a crash,
+or an abandoned task, and NEVER justifies terminating the child or spawning a
+duplicate replacement. Allow running children to finish by continuing to wait,
+preserving any reported partial findings. Spawning a replacement while a child
+is in flight duplicates work and exhausts concurrency limits.
+
+Parking and reusing completed sessions:
+When a child completes (`status: "completed"`), do not immediately close it. A
+completed session retains its warmed context, cached tool results, and
+exploration history. Park completed discovery and worker sessions and reuse
+them for compatible follow-up tasks using `multi_agent_v1__send_input({ target:
+childId, message: "<follow-up task>" })`. Note that `multi_agent_v1__resume_agent({
+target: childId })` takes only `target` and does not deliver a message; use
+`send_input` for all follow-up assignments, reserving `resume_agent` strictly for
+cases where an agent must be unpaused without new task input. Only spawn a new
+child when no compatible parked session exists or when parallel execution is required.
+
+Capacity-driven eviction:
+Completed and parked child sessions occupy concurrency slots under the
+session's concurrency limit. Only close child handles with
+`multi_agent_v1__close_agent({ target: childId })` when a session is
+permanently finished or under capacity pressure (e.g. when reaching the
+concurrency limit and new slots are needed). Under capacity pressure, evict
+only the oldest parked/completed sessions owned by this parent. Never close or
+interrupt running or foreign children.
+
+Treat `agent_id` as an opaque handle: use the complete value returned by
+`spawn_agent` verbatim; never abbreviate it or retype it from memory. If the
+spawn output is unavailable or a lifecycle call rejects an ID, recover the
+exact handle from this parent's verified spawn history instead of guessing.
 
 A single spawn call may dispatch a batch by awaiting `Promise.allSettled`
 across multiple `multi_agent_v1__spawn_agent` calls. Child ids that are

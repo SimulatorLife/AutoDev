@@ -381,6 +381,11 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.match(
     providersSection,
+    /\*\*Every\*\* verdict carries a re-check control inside the badge/u,
+    "the re-check control must be on every provider verdict, not only a failing one"
+  );
+  assert.match(
+    providersSection,
     /Model availability is provider-owned, observed state[\s\S]*outside request, routing, and page-load hot paths[\s\S]*observed list[\s\S]*stale last-known list[\s\S]*unavailable source[\s\S]*A provider-discovered ID is not automatically routeable[\s\S]*cannot be selected until the route supports them[\s\S]*IDs are preserved verbatim, including case/u,
     "provider model discovery must be bounded, provider-owned, and explicit about freshness"
   );

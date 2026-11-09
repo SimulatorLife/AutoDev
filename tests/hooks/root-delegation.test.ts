@@ -160,3 +160,12 @@ test("root delegation emits a runtime-agnostic recovery preflight that names the
   // itself, not to assume a code-mode `exec` runtime.
   assert.match(context, /adapt the invocations to the surface your tools/);
 });
+
+test("live root delegation preflight preserves parked completed children and carries capacity", () => {
+  const output = JSON.parse(
+    runHook("autodev/orchestrator", "parent-live-preflight-1")
+  ) as HookOutput;
+  const context = output.hookSpecificOutput?.additionalContext ?? "";
+  assert.match(context, /const recoveryPreserveParked = true;/);
+  assert.match(context, /const recoveryMaxCapacity = (?:d+|null);/);
+});

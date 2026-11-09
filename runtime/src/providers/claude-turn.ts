@@ -470,12 +470,13 @@ export class ResponseStream {
 
   fail(failure: TurnFailure, provider: string): void {
     if (this.ended) return;
-    if (!this.started && this.output.length === 0) {
+    if (!this.started && this.output.length === 0 && !this.outputText()) {
       // Nothing streamed yet: a real HTTP error lets the router react to it.
       this.ended = true;
       this.options.sendError(this.options.response, failure);
       return;
     }
+    this.start();
     this.closeReasoning("incomplete");
     const notice = truncationNotice({
       provider,

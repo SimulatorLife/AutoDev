@@ -40,9 +40,13 @@ export interface StatusBadgeProps {
   /** Extra explanation revealed on hover, for a verbose state behind a short label. */
   readonly title?: string | undefined;
   /**
-   * A control that belongs to this status -- such as re-checking an
-   * Unavailable provider -- drawn inside the badge after the word, so the
-   * action reads as part of the verdict it acts on.
+   * A control that belongs to this status -- such as re-checking a provider's
+   * live verdict -- drawn inside the badge after the word, so the action reads
+   * as part of the verdict it acts on.
+   *
+   * The control keeps its own size when the badge's word is cut short: the
+   * word truncates, the control does not, so a badge that cannot show its
+   * whole label still offers its action in full.
    */
   readonly action?: React.ReactNode;
 }
