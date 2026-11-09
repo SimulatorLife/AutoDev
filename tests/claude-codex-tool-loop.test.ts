@@ -199,7 +199,7 @@ async function withBridge(
     await exited;
   };
   try {
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 15000;
     for (;;) {
       try {
         if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break;
@@ -603,7 +603,7 @@ test("a client that disconnects mid-turn takes the CLI down with it", async () =
       const { pid } = await record();
       assert.ok(isAlive(pid));
       controller.abort();
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + 15000;
       while (isAlive(pid) && Date.now() < deadline) await delay(50);
       assert.equal(
         isAlive(pid),

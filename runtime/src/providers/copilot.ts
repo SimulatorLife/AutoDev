@@ -57,7 +57,6 @@ import {
   resolveCwd,
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -156,212 +155,17 @@ function readOnlyHeaderValue(
 
 const spawnSessions = new SpawnSessionRegistry();
 
-// Canonical skill roots whose `SKILL.md` a successful read counts as actual
-// usage, mirroring the approved roots `runtime/src/hooks/skill-read-telemetry.ts`
-// uses for Codex's own PreToolUse hook. The Copilot CLI's tool calls never
-// reach that hook -- it runs entirely inside its own runtime -- so this
-// bridge is the only place a read of one of these files is observable at all.
-const HOME = homedir();
-// Resolve the owning checkout or installed CODEX_HOME from this module's
-// location; the Runtime source tree is one level deeper than its installed
-// `src/providers/` copy.
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  extractSkillReadPath,
+  matchSkillReadPath,
+  normaliseSkillReadPath
+} from "@simulatorlife/autodev-runtime/shared/skill-reads";
+
 const REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
   process.env.AUTODEV_REPO_ROOT
 );
-const SKILL_ROOTS = [
-  pathApi.join(HOME, ".agents", "skills"),
-  pathApi.join(HOME, ".codex", "skills"),
-  pathApi.join(HOME, "AutoDev", ".agents", "skills"),
-  pathApi.join(HOME, "AutoDev", ".rulesync", "skills"),
-  pathApi.join(REPO_ROOT, ".agents", "skills"),
-  pathApi.join(REPO_ROOT, ".rulesync", "skills")
-].filter((path) => existsSync(path));
-
-// Tool names the Copilot CLI uses to read a file's contents outright, versus
-// the shell tools whose command line may contain a read of one. Anything
-// else -- a write, an edit, `report_intent` -- is deliberately excluded: a
-// mutation or an unrelated call must never be counted as a skill activation
-// just because its arguments happen to name a path.
-const COPILOT_READ_TOOL_NAMES = new Set([
-  "read_file",
-  "view_file",
-  "cat_file",
-  "view"
-]);
-const COPILOT_EXEC_TOOL_NAMES = new Set([
-  "bash",
-  "shell",
-  "execute",
-  "exec_command",
-  "run_command"
-]);
-
-function normaliseSkillReadPath(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim().replaceAll(/^['"]|['"]$/g, "");
-  if (!trimmed) return null;
-  let path = trimmed;
-  if (path.startsWith("~")) path = pathApi.join(HOME, path.slice(1));
-  if (!pathApi.isAbsolute(path)) path = pathApi.resolve(path);
-  return path;
-}
-
-// Shell tool names whose command line is treated as a read when it names a
-// file argument. `sed` only counts in its `-n` (suppress-output, print via
-// explicit `p`) form; a plain `sed 's/a/b/' file` mutates output rather than
-// dumping the file, so it is intentionally excluded.
-const SKILL_READ_COMMANDS = new Set([
-  "cat",
-  "head",
-  "tail",
-  "less",
-  "more",
-  "awk",
-  "grep"
-]);
-const SHELL_CONTROL_TOKENS = new Set(["|", "&&", "||", ";", "&"]);
-
-// Splits a shell command into words, honouring single- and double-quoted
-// spans so a quoted path containing a space (`cat "/a b/SKILL.md"`) is not
-// broken across two tokens. Not a full shell grammar -- backslash escapes and
-// `$()`/backtick substitution are not unwound -- but enough to recover the
-// plain file arguments Copilot's own tool calls put on these command lines.
-function tokenizeShellWords(cmd: string): string[] {
-  const tokens: string[] = [];
-  const re = /'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g;
-  let match;
-  while ((match = re.exec(cmd)) !== null) {
-    let token = match[0];
-    if (
-      (token.startsWith("'") && token.endsWith("'")) ||
-      (token.startsWith('"') && token.endsWith('"'))
-    ) {
-      token = token.slice(1, -1);
-    }
-    tokens.push(token);
-  }
-  return tokens;
-}
-
-// A word counts as a path argument, not a flag or a search pattern, only when
-// it is absolute or home-relative. Relative shell paths remain excluded so a
-// command cannot be attributed to the wrong working directory.
-function isPathLikeToken(token: unknown): string | null {
-  if (typeof token !== "string" || !token || token.startsWith("-")) return null;
-  if (token.startsWith("/") || token.startsWith("~")) return token;
-  return null;
-}
-
-// Resolves the raw value of a `cmd`/`command` argument to a single shell
-// string. Providers vary in how they shape this: a plain string, an argv
-// array (`["bash", "-lc", "cat file"]` or `["cat", "file"]`), or a nested
-// object carrying the real command one level down (`{ command: { cmd: "..." } }`).
-// Only one level of object nesting is unwrapped -- deeper nesting is not a
-// shape any tool call here actually uses.
-function flattenCommandValue(raw: unknown): string | null {
-  let value: unknown = raw;
-  if (isJsonRecord(value)) {
-    value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
-  }
-  if (Array.isArray(value)) {
-    return value.filter((entry) => typeof entry === "string").join(" ");
-  }
-  return typeof value === "string" ? value : null;
-}
-
-// Every path-like argument following a recognised read command on `cmd`'s
-// command line, in the order they appear. Bounded on both axes: overlong
-// commands are rejected outright, and only the next 8 words after a read
-// command are scanned for a path. Returning every candidate -- not just the
-// first -- lets the caller pick out whichever one actually names a SKILL.md
-// when a command reads more than one file (`grep pattern a.md SKILL.md`).
-function matchExecReadPaths(raw: unknown): string[] {
-  const cmd = flattenCommandValue(raw);
-  if (!cmd || cmd.length > 4096) return [];
-  const tokens = tokenizeShellWords(cmd);
-  const candidates: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const word = tokens[i];
-    const isSedPrint = word === "sed" && tokens[i + 1] === "-n";
-    if (!SKILL_READ_COMMANDS.has(word ?? "") && !isSedPrint) continue;
-    const start = isSedPrint ? i + 2 : i + 1;
-    for (let j = start; j < tokens.length && j < start + 8; j++) {
-      const next = tokens[j];
-      if (next === undefined || SHELL_CONTROL_TOKENS.has(next)) break;
-      const path = isPathLikeToken(next);
-      if (path) candidates.push(path);
-    }
-  }
-  return candidates;
-}
-
-/** The path a `read_file`-shaped or shell-read tool call names, if any. */
-function extractSkillReadPath(
-  toolName: unknown,
-  argsObject: unknown
-): string | null {
-  const name = String(toolName ?? "")
-    .trim()
-    .toLowerCase();
-  const args = isJsonRecord(argsObject) ? argsObject : {};
-  if (COPILOT_READ_TOOL_NAMES.has(name)) {
-    for (const key of [
-      "file_path",
-      "filePath",
-      "path",
-      "filepath",
-      "AbsolutePath",
-      "absolutePath",
-      "targetFile",
-      "TargetFile",
-      "file",
-      "filename",
-      "fileName"
-    ]) {
-      const value = args[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    return null;
-  }
-  if (COPILOT_EXEC_TOOL_NAMES.has(name)) {
-    const command =
-      typeof argsObject === "string" ? argsObject : (args.command ?? args.cmd);
-    const candidates = matchExecReadPaths(command);
-    for (const candidate of candidates) {
-      if (matchSkillReadPath(normaliseSkillReadPath(candidate)))
-        return candidate;
-    }
-    return candidates[0] ?? null;
-  }
-  return null;
-}
-
-// True when `path` resolves to `<root>/<skill-name>/SKILL.md` for one of the
-// approved roots. Returns the skill's directory name -- never the absolute
-// path -- because that is all the router retains.
-const SKILL_PATH_LEADING_SEPARATOR_PATTERN = /^[\\/]+/;
-
-function matchSkillReadPath(path: string | null): string | null {
-  if (!path) return null;
-  const normalised = path.replaceAll(/[\\/]+/g, pathApi.sep);
-  for (const rootRaw of SKILL_ROOTS) {
-    const root = rootRaw.replaceAll(/[\\/]+/g, pathApi.sep);
-    const rootWithSep = root.endsWith(pathApi.sep) ? root : root + pathApi.sep;
-    if (!normalised.startsWith(rootWithSep)) continue;
-    const relative = normalised
-      .slice(root.length)
-      .replace(SKILL_PATH_LEADING_SEPARATOR_PATTERN, "");
-    if (!relative.endsWith(`${pathApi.sep}SKILL.md`) && relative !== "SKILL.md")
-      continue;
-    const segments = relative.split(pathApi.sep).filter(Boolean);
-    if (segments.length !== 2) continue;
-    const [skill] = segments;
-    if (!skill || skill.includes("..")) continue;
-    return skill;
-  }
-  return null;
-}
 
 /**
  * The `skill_used` event for a successful, canonical `SKILL.md` read, or null.
@@ -1146,11 +950,10 @@ function mcpServerFromToolName(toolName: string): string | null {
 function copilotChildPath(): string {
   const nodeDirectory = pathApi.dirname(process.execPath);
   const current = process.env.PATH ?? "";
-  const directories = current.split(pathApi.delimiter);
-  if (directories.includes(nodeDirectory)) return current;
-  return current
-    ? `${nodeDirectory}${pathApi.delimiter}${current}`
-    : nodeDirectory;
+  const directories = current.split(pathApi.delimiter).filter(Boolean);
+  if (directories[0] === nodeDirectory) return current;
+  const filtered = directories.filter((dir) => dir !== nodeDirectory);
+  return [nodeDirectory, ...filtered].join(pathApi.delimiter);
 }
 
 /**

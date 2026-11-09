@@ -57,6 +57,14 @@ and duplicate initialization. Note that `resume_agent` accepts only `target` and
 does not deliver new task input; always use `send_input` to deliver follow-up work,
 using `resume_agent` only where unpausing without new instructions is genuinely required.
 
+Never terminate, close, or discard running discovery or worker subagents. A wait
+timeout (`timed_out: true` or `status: "running"`) indicates that the child is actively
+executing commands, reading files, or synthesizing results. Closing an in-flight child
+destroys its analysis and returns no useful results. Orchestrators must allow running
+children to finish, or if findings are urgently needed to proceed, prompt the subagent
+for an interim progress summary via `send_input({ target: childId, message: "..." })`
+rather than closing it.
+
 ### Capacity-driven eviction
 
 Completed and parked child sessions occupy concurrency slots in the session
@@ -68,7 +76,7 @@ thread pool. Close parked child handles with `close_agent` only when necessary:
 When evicting under capacity pressure, evict (close) only the oldest
 parked/terminal children owned by this parent. Never evict, terminate, or
 interrupt active (running) children, and never touch foreign children owned
-by other parents.
+by other parents. Never invoke `close_agent` as a cleanup step in wait or spawn scripts.
 
 ### Terminal result handling and partial results
 

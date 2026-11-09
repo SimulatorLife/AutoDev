@@ -233,7 +233,10 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     // cannot produce: the Runtime accepted it and published a reconciliation
     // view that says it has not observed the change. No Runtime code means
     // that, because the Runtime did not refuse anything.
-    "not_observed"
+    "not_observed",
+    // The provider role assignment route maps the Runtime's
+    // `autodev_control_api_provider_cannot_delegate` code in provider-mutation-refusal.ts.
+    "provider_cannot_delegate"
   ]);
   const reachable = new Set(RUNTIME_CODES.map((entry) => entry[2]));
   // The fallback is reachable, but not through a listed code — through the

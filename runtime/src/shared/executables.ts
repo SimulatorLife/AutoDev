@@ -259,8 +259,19 @@ export function findMiniMaxBinary(
   env: NodeJS.ProcessEnv = process.env,
   home = env.HOME?.trim() || homedir()
 ): string | null {
+  const configured = env.MINIMAX_BIN?.trim() || env.MMX_BIN?.trim();
+  if (configured) {
+    const resolved = configured.includes(path.sep)
+      ? configured
+      : findExecutable(configured, env.PATH ?? "");
+    if (resolved && isExecutable(resolved)) return resolved;
+  }
   const fromPath = findExecutable("mmx", env.PATH ?? "");
   if (fromPath) return fromPath;
+  const fromNvm = findNvmBinary("mmx", home);
+  if (fromNvm) return fromNvm;
+  const nodeDirCandidate = path.join(path.dirname(process.execPath), "mmx");
+  if (isExecutable(nodeDirCandidate)) return nodeDirCandidate;
   const local = path.join(home, ".local", "bin", "mmx");
   return isExecutable(local) ? local : null;
 }

@@ -18,6 +18,7 @@ import {
   SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
   SelectChevron
 } from "../../components/forms/SelectChevron.ts";
+import { Icon } from "../../components/icons/Icon.ts";
 import { NESTED_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import {
   NOT_OBSERVED_STATUS,
@@ -287,9 +288,7 @@ function RunRequestForm({
         disabled={pending || !valid}
         type="submit"
       >
-        <span aria-hidden="true" className="text-lg leading-none">
-          🚀
-        </span>
+        <Icon name="rocket" size={18} />
         {pending
           ? "Starting adapter playtest…"
           : assignments.length === 1
@@ -326,7 +325,7 @@ function RunRequestForm({
             {
               id: "championship",
               title: "Championship Tournament",
-              icon: "🏆",
+              icon: "trophy" as const,
               description:
                 "Full multi-race championship run with wagering, dynamic track conditions, and race standings.",
               steps: Math.min(2500, first.maxStepsPerEpisode)
@@ -334,7 +333,7 @@ function RunRequestForm({
             {
               id: "smoke",
               title: "Quick Smoke Check",
-              icon: "⚡",
+              icon: "bolt" as const,
               description:
                 "Fast 100-step smoke check verifying vehicle physics, rule engine, and simulation stability.",
               steps: Math.min(100, first.maxStepsPerEpisode)
@@ -342,7 +341,7 @@ function RunRequestForm({
             {
               id: "handling",
               title: "Speed & Wall Recovery",
-              icon: "⏱️",
+              icon: "clock" as const,
               description:
                 "1,000-step stress test evaluating cornering precision, wall collision, and bounce-back behavior.",
               steps: Math.min(1000, first.maxStepsPerEpisode)
@@ -367,8 +366,8 @@ function RunRequestForm({
                     : "border-border bg-surface-raised hover:border-fg-muted/40 hover:bg-surface")
                 }
               >
-                <span className="text-sm font-semibold text-fg">
-                  {preset.icon} {preset.title}
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+                  <Icon name={preset.icon} size={16} /> {preset.title}
                 </span>
                 <span className="text-xs text-fg-secondary leading-relaxed">
                   {preset.description}
@@ -402,7 +401,7 @@ function RunRequestForm({
                 : "border-border bg-surface-raised hover:bg-surface")
             }
           >
-            <span className="text-xl">🎲</span>
+            <Icon name="dice" size={20} className="mt-0.5" />
             <div>
               <p className="text-sm font-semibold text-fg">
                 Exploratory Racer (Uniform Legal)
@@ -428,7 +427,7 @@ function RunRequestForm({
                 : "border-border bg-surface-raised hover:bg-surface")
             }
           >
-            <span className="text-xl">🎯</span>
+            <Icon name="target" size={20} className="mt-0.5" />
             <div>
               <p className="text-sm font-semibold text-fg">
                 Goal-Driven Racer (First Legal)

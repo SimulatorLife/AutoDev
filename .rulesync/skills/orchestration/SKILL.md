@@ -54,6 +54,8 @@ Each delegated task must define:
 
 Delegated roles are leaves unless nested delegation is explicitly designed. Read-only roles may inspect authorized external state but must not edit, stage, commit, or push.
 
+Allow discovery and worker subagents to complete their assignments. Do not close or kill in-flight subagents on wait timeouts; if progress or partial evidence is urgently needed, prompt the subagent for an interim summary rather than terminating it. Completed subagents must remain parked and be reused for follow-up discovery and implementation tasks rather than closed and re-spawned.
+
 ## Validation rules
 
 Validators must be independent of the scope they validate. Pin validation to an identified repository state (commit/head plus any relevant uncommitted diff), and provide acceptance criteria, constraints, and expected evidence without priming validators with the implementer's conclusions unless investigating a specific finding. Validators for the same gate should inspect the same state.

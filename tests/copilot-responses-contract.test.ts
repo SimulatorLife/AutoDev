@@ -384,7 +384,10 @@ test("Copilot orchestrator receives only its identified AutoDev spawn shim", () 
   const config = JSON.parse(args[configIndex + 1] ?? "{}");
   const shim = config.mcpServers.autodev_spawn;
   assert.equal(shim.type, "stdio");
-  assert.equal(shim.command, process.execPath);
+  assert.equal(
+    shim.command,
+    process.env.AUTODEV_NODE_BIN ?? process.execPath
+  );
   assert.equal(shim.env.AUTODEV_SPAWN_SESSION, "copilot-session");
   assert.equal(
     copilotMcpArgs("worker").some((arg) => arg.includes("autodev_spawn")),

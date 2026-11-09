@@ -23,6 +23,7 @@ import {
   SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
   SelectChevron
 } from "../../components/forms/SelectChevron.ts";
+import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
@@ -230,7 +231,7 @@ type PlaytestingDashboardMode =
 const VISUAL_FOCUS_PRESETS = [
   {
     id: "explore",
-    icon: "🔎",
+    icon: "search",
     title: "Explore the Game",
     description:
       "Identify visible actions and how the current screen responds.",
@@ -239,7 +240,7 @@ const VISUAL_FOCUS_PRESETS = [
   },
   {
     id: "loop",
-    icon: "🔁",
+    icon: "repeat",
     title: "Follow One Play Loop",
     description:
       "Use visible actions to progress through one bounded, normal interaction loop.",
@@ -248,14 +249,20 @@ const VISUAL_FOCUS_PRESETS = [
   },
   {
     id: "recovery",
-    icon: "🧭",
+    icon: "compass",
     title: "Check a Recovery Path",
     description:
       "Observe how one unclear or blocked action is communicated and whether a safe path forward exists.",
     prompt:
       "Explore one safe recovery path from an unclear or blocked screen. Record the visible reason and outcome without claiming a game result that was not shown."
   }
-] as const;
+] as const satisfies readonly {
+  readonly id: string;
+  readonly icon: IconName;
+  readonly title: string;
+  readonly description: string;
+  readonly prompt: string;
+}[];
 
 /**
  * Every reason the launch may not start, in one place.
@@ -534,11 +541,7 @@ function VisualPlaytestLaunchCockpit({
           "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         dataAttributes: { "data-playtesting-visual-submit": "true" }
       },
-      React.createElement(
-        "span",
-        { "aria-hidden": true, className: "text-lg leading-none" },
-        "🚀"
-      ),
+      React.createElement(Icon, { name: "rocket", size: 18 }),
       launchRecovery.pending
         ? "Starting visual playtest…"
         : primaryTarget === null
@@ -702,8 +705,8 @@ function VisualPlaytestLaunchCockpit({
             },
             React.createElement(
               "span",
-              null,
-              "🌐 ",
+              { className: "inline-flex items-center gap-1" },
+              React.createElement(Icon, { name: "globe", size: 12, className: MUTED_TEXT_CLASS }),
               React.createElement(
                 "code",
                 { className: "font-mono text-fg font-medium" },
@@ -712,8 +715,9 @@ function VisualPlaytestLaunchCockpit({
             ),
             React.createElement(
               "span",
-              null,
-              "🎮 Controls: ",
+              { className: "inline-flex items-center gap-1" },
+              React.createElement(Icon, { name: "gamepad", size: 12, className: MUTED_TEXT_CLASS }),
+              "Controls: ",
               React.createElement(
                 "span",
                 { className: "font-medium text-fg" },
@@ -724,8 +728,9 @@ function VisualPlaytestLaunchCockpit({
             ),
             React.createElement(
               "span",
-              null,
-              "⏱️ Timing: ",
+              { className: "inline-flex items-center gap-1" },
+              React.createElement(Icon, { name: "clock", size: 12, className: MUTED_TEXT_CLASS }),
+              "Timing: ",
               React.createElement(
                 "span",
                 { className: "font-medium text-fg" },
@@ -864,8 +869,9 @@ function VisualPlaytestLaunchCockpit({
             },
             React.createElement(
               "span",
-              { className: "text-sm font-semibold text-fg" },
-              preset.icon + " " + preset.title
+              { className: "flex items-center gap-1.5 text-sm font-semibold text-fg" },
+              React.createElement(Icon, { name: preset.icon, size: 16 }),
+              preset.title
             ),
             React.createElement(
               "span",
@@ -1130,11 +1136,11 @@ export function PlaytestingRunDashboard({
                   : undefined,
               "data-playtesting-open-dialog": "true"
             },
-            React.createElement(
-              "span",
-              { "aria-hidden": true, className: "text-lg leading-none" },
-              "▶"
-            ),
+            React.createElement(Icon, {
+              name: "play",
+              size: 16,
+              className: "text-accent"
+            }),
             // The visible word has to say what the button does. "Play" alone
             // could have meant play the game, and the button's accessible name
             // said something else, so a sighted reader and a screen reader
@@ -1206,7 +1212,7 @@ export function PlaytestingRunDashboard({
                   onClick: () => setSelectedMode(AUTONOMOUS_VISUAL_MODE),
                   "data-playtesting-tab": AUTONOMOUS_VISUAL_MODE
                 },
-                React.createElement("span", null, "🌐"),
+                React.createElement(Icon, { name: "globe", size: 16 }),
                 React.createElement(
                   "span",
                   null,
@@ -1233,7 +1239,7 @@ export function PlaytestingRunDashboard({
                   onClick: () => setSelectedMode(ADAPTER_ACCELERATED_MODE),
                   "data-playtesting-tab": ADAPTER_ACCELERATED_MODE
                 },
-                React.createElement("span", null, "⚡"),
+                React.createElement(Icon, { name: "bolt", size: 16 }),
                 React.createElement("span", null, "Adapter Simulation")
               )
             ),

@@ -289,10 +289,11 @@ function RoleRow({
   // so the control says why instead of offering a priority the router never
   // routes to -- which is how a provider came to be reported as the
   // orchestrator's provider while every orchestrator request failed.
-  const cannotServeReason = assignment.canServe
-    ? undefined
-    : (assignment.cannotServeReason ??
-      "This provider cannot serve this role.");
+  const cannotServeReason =
+    assignment.canServe === false
+      ? (assignment.cannotServeReason ??
+        "This provider cannot serve this role.")
+      : undefined;
   const modelReason =
     blockedReason ??
     cannotServeReason ??

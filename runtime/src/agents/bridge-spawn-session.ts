@@ -1,3 +1,11 @@
+import {
+  SESSION_ID_HEADER,
+  SESSION_SCOPE_HEADER
+} from "@simulatorlife/autodev-runtime/router/subagents";
+
+import type { SpawnChild } from "./spawn-tools.ts";
+export type { SpawnChild };
+
 function parseChildCandidate(child: unknown): {
   message: string;
   target: string | null;
@@ -25,7 +33,7 @@ function formatSessionRoles(accepted: readonly SpawnChild[]): string {
       accepted.map((c) =>
         c.target
           ? `reuse:${c.target}${c.agentType ? ` (${c.agentType})` : ""}`
-          : c.agentType ?? "default"
+          : (c.agentType ?? "default")
       )
     )
   ]
@@ -45,10 +53,18 @@ function validateReuseTarget(
   if (childRecord.parentId !== sessionKey) {
     return `Cannot reuse subagent "${target}": subagent belongs to a different parent session ("${childRecord.parentId}").`;
   }
-  if (sessionWorkspace && childRecord.workspace && childRecord.workspace !== sessionWorkspace) {
+  if (
+    sessionWorkspace &&
+    childRecord.workspace &&
+    childRecord.workspace !== sessionWorkspace
+  ) {
     return `Cannot reuse subagent "${target}": subagent workspace ("${childRecord.workspace}") does not match requesting parent workspace ("${sessionWorkspace}").`;
   }
-  if (agentType && agentType !== childRecord.role) {
+  if (
+    agentType &&
+    agentType !== childRecord.role &&
+    childRecord.role !== "default"
+  ) {
     return `Cannot reuse subagent "${target}": subagent role ("${childRecord.role}") is incompatible with requested role ("${agentType}").`;
   }
   if (childRecord.status === "running") {
@@ -91,15 +107,6 @@ function validateReuseTarget(
 /** Sessions the router could not identify never collect delegation state. */
 export const UNIDENTIFIED_SESSION_SCOPE = "process-fallback";
 
-/** The Codex conversation a request belongs to. */
-const SESSION_ID_HEADER = "x-autodev-session-id";
-/**
- * Whether that id is the conversation's own or the router's process-wide
- * fallback. A fallback id names no single conversation, so it cannot hold one
- * conversation's delegation.
- */
-const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
-
 export interface ChildSessionRecord {
   childId: string;
   parentId: string;
@@ -108,11 +115,6 @@ export interface ChildSessionRecord {
   status: "parked" | "completed" | "running" | "failed" | "closed" | string;
 }
 
-export interface SpawnChild {
-  agentType: string | null;
-  message: string;
-  target?: string | null;
-}
 export interface SpawnSession {
   orchestrator: boolean;
   role: string | null;
@@ -131,7 +133,6 @@ export interface SpawnRegistryOptions {
 const DEFAULT_MAX_SESSIONS = 8;
 const DEFAULT_IDLE_MS = 900_000;
 
-
 const NOTIFICATION_REGEX =
   /<subagent_notification>([\s\S]*?)<\/subagent_notification>/g;
 
@@ -139,6 +140,35 @@ function parseNotificationStatus(rawStatus: unknown): string {
   if (rawStatus === "running") return "running";
   if (rawStatus === "shutdown" || rawStatus === "closed") return "closed";
   return "completed";
+}
+
+function extractNotificationChild(
+  raw: string,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const rawPath = parsed.agent_path ?? parsed.agent_id;
+    const childId =
+      typeof rawPath === "string" && rawPath.trim() ? rawPath.trim() : null;
+    if (!childId) return null;
+    const rawRole = parsed.agent_role ?? parsed.role ?? parsed.agent_type;
+    const role =
+      typeof rawRole === "string" && rawRole.trim()
+        ? rawRole.trim()
+        : "default";
+    return {
+      childId,
+      parentId: sessionKey,
+      role,
+      workspace: workspace ?? "",
+      status: parseNotificationStatus(parsed.status)
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parseNotificationRecords(
@@ -151,28 +181,45 @@ function parseNotificationRecords(
   while ((match = NOTIFICATION_REGEX.exec(text)) !== null) {
     const raw = match[1]?.trim();
     if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") continue;
-      const childId =
-        typeof parsed.agent_path === "string" && parsed.agent_path.trim()
-          ? parsed.agent_path.trim()
-          : typeof parsed.agent_id === "string" && parsed.agent_id.trim()
-            ? parsed.agent_id.trim()
-            : null;
-      if (!childId) continue;
-      records.push({
-        childId,
-        parentId: sessionKey,
-        role: "default",
-        workspace: workspace ?? "",
-        status: parseNotificationStatus(parsed.status)
-      });
-    } catch {
-      // Ignore malformed notification text
-    }
+    const record = extractNotificationChild(raw, sessionKey, workspace);
+    if (record) records.push(record);
   }
   return records;
+}
+
+function extractCollabReceiver(
+  raw: unknown,
+  rec: Record<string, unknown>,
+  sessionKey: string,
+  workspace: string | null
+): ChildSessionRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const agent = raw as Record<string, unknown>;
+  const rawId = agent.thread_id ?? agent.threadId;
+  const childId =
+    typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
+  if (!childId) return null;
+  const rawRole = agent.agent_role ?? agent.agentRole;
+  const role =
+    typeof rawRole === "string" && rawRole.trim() ? rawRole.trim() : "default";
+  const agentStates =
+    typeof rec.agents_states === "object" && rec.agents_states !== null
+      ? (rec.agents_states as Record<string, string>)
+      : null;
+  const state = agentStates?.[childId] ?? "running";
+  const status =
+    state === "completed"
+      ? "completed"
+      : state === "closed" || state === "shutdown"
+        ? "closed"
+        : "running";
+  return {
+    childId,
+    parentId: sessionKey,
+    role,
+    workspace: workspace ?? "",
+    status
+  };
 }
 
 function parseCollabReceivers(
@@ -193,25 +240,8 @@ function parseCollabReceivers(
 
   const records: ChildSessionRecord[] = [];
   for (const raw of rawList) {
-    if (!raw || typeof raw !== "object") continue;
-    const agent = raw as Record<string, unknown>;
-    const rawId = agent.thread_id ?? agent.threadId;
-    const childId =
-      typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
-    const rawRole = agent.agent_role ?? agent.agentRole;
-    const role =
-      typeof rawRole === "string" && rawRole.trim()
-        ? rawRole.trim()
-        : "default";
-    if (childId) {
-      records.push({
-        childId,
-        parentId: sessionKey,
-        role,
-        workspace: workspace ?? "",
-        status: "completed"
-      });
-    }
+    const record = extractCollabReceiver(raw, rec, sessionKey, workspace);
+    if (record) records.push(record);
   }
   return records;
 }
@@ -248,15 +278,15 @@ function scanPayloadChildren(
   if (!payload || typeof payload !== "object") return [];
   const records: ChildSessionRecord[] = [];
   const seen = new Set<unknown>();
-  const stack: unknown[] = [payload];
-  while (stack.length > 0) {
-    const obj = stack.pop();
+  const queue: unknown[] = [payload];
+  while (queue.length > 0) {
+    const obj = queue.shift();
     if (!obj || typeof obj !== "object" || seen.has(obj)) continue;
     seen.add(obj);
 
     if (Array.isArray(obj)) {
       for (const item of obj) {
-        records.push(...processPayloadItem(item, stack, sessionKey, workspace));
+        records.push(...processPayloadItem(item, queue, sessionKey, workspace));
       }
       continue;
     }
@@ -265,7 +295,7 @@ function scanPayloadChildren(
     records.push(...parseCollabReceivers(rec, sessionKey, workspace));
 
     for (const val of Object.values(rec)) {
-      records.push(...processPayloadItem(val, stack, sessionKey, workspace));
+      records.push(...processPayloadItem(val, queue, sessionKey, workspace));
     }
   }
   return records;
@@ -287,7 +317,10 @@ export class SpawnSessionRegistry {
     return this.verifiedChildren.get(childId);
   }
 
-  updateChildStatus(childId: string, status: ChildSessionRecord["status"]): boolean {
+  updateChildStatus(
+    childId: string,
+    status: ChildSessionRecord["status"]
+  ): boolean {
     const record = this.verifiedChildren.get(childId);
     if (!record) return false;
     record.status = status;
@@ -303,7 +336,12 @@ export class SpawnSessionRegistry {
     for (const record of records) {
       const existing = this.verifiedChildren.get(record.childId);
       if (existing) {
-        existing.status = record.status;
+        if (
+          record.status !== "running" ||
+          (existing.status !== "completed" && existing.status !== "parked")
+        ) {
+          existing.status = record.status;
+        }
         if (record.role !== "default") {
           existing.role = record.role;
         }
@@ -428,7 +466,14 @@ export class SpawnSessionRegistry {
         );
         if (error) return { accepted: false, message: error };
         childRecord.status = "running";
-        accepted.push({ agentType: agentType ?? childRecord.role, message, target });
+        if (agentType && childRecord.role === "default") {
+          childRecord.role = agentType;
+        }
+        accepted.push({
+          agentType: agentType ?? childRecord.role,
+          message,
+          target
+        });
       } else {
         accepted.push({ agentType: agentType ?? null, message });
       }

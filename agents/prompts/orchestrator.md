@@ -112,32 +112,73 @@ After spawning, poll child results with `multi_agent_v1__wait_agent({ targets:
 [childId] })`.
 
 Wait timeouts and running children:
-A wait timeout (e.g. 30 seconds) or return with non-terminal status means the
-child is still executing. A wait timeout never implies child failure, a crash,
-or an abandoned task, and NEVER justifies terminating the child or spawning a
-duplicate replacement. Allow running children to finish by continuing to wait,
-preserving any reported partial findings. Spawning a replacement while a child
-is in flight duplicates work and exhausts concurrency limits.
+A wait timeout (e.g. 30 seconds) or return with non-terminal status (`status: "running"`
+or `timed_out: true`) means the child is still executing. A wait timeout never
+implies child failure, a crash, or an abandoned task, and NEVER justifies terminating
+the child or spawning a duplicate replacement. Allow running children to finish by
+continuing to wait. NEVER call `multi_agent_v1__close_agent` after a wait timeout or
+inside a wait loop. If you cannot wait further and need progress or findings
+immediately, DO NOT terminate or close the subagent: instead, request an interim
+summary of findings so far using `multi_agent_v1__send_input({ target: childId,
+message: "Please summarize your discoveries and progress so far." })`. Terminating a
+running discovery or worker subagent discards all in-progress analysis and produces zero
+useful results.
 
 Parking and reusing completed sessions:
-When a child completes (`status: "completed"`), do not immediately close it. A
-completed session retains its warmed context, cached tool results, and
-exploration history. Park completed discovery and worker sessions and reuse
-them for compatible follow-up tasks using `multi_agent_v1__send_input({ target:
-childId, message: "<follow-up task>" })`. Note that `multi_agent_v1__resume_agent({
-target: childId })` takes only `target` and does not deliver a message; use
-`send_input` for all follow-up assignments, reserving `resume_agent` strictly for
-cases where an agent must be unpaused without new task input. Only spawn a new
-child when no compatible parked session exists or when parallel execution is required.
+When a child completes (`status: "completed"` or `status: { completed: ... }`),
+DO NOT close it. A completed session is automatically parked, retaining its warmed
+context, cached tool results, file knowledge, and exploration history. For all
+subsequent discovery or implementation tasks, ALWAYS prefer to reuse a compatible
+parked session using `multi_agent_v1__send_input({ target: childId, message:
+"<follow-up task>" })` (or in provider bridges, specifying `target: childId` in
+`spawn_subagent`) rather than closing it and spawning a fresh child. Note that
+`multi_agent_v1__resume_agent({ target: childId })` takes only `target` and does not
+deliver a message; use `send_input` for all follow-up assignments, reserving
+`resume_agent` strictly for cases where an agent must be unpaused without new task
+input. Only spawn a brand new child when no compatible parked session exists or when
+parallel concurrent execution is strictly required.
 
 Capacity-driven eviction:
 Completed and parked child sessions occupy concurrency slots under the
 session's concurrency limit. Only close child handles with
 `multi_agent_v1__close_agent({ target: childId })` when a session is
 permanently finished or under capacity pressure (e.g. when reaching the
-concurrency limit and new slots are needed). Under capacity pressure, evict
-only the oldest parked/completed sessions owned by this parent. Never close or
-interrupt running or foreign children.
+concurrency limit and new slots are needed for a new role). Under capacity
+pressure, evict only the oldest parked/completed sessions owned by this parent.
+NEVER close, evict, or interrupt running or foreign children. NEVER include
+`close_agent` in the same script or turn that spawns or waits for a subagent.
+
+Code-mode delegation & polling reference:
+```js
+// 1. Dispatch discovery or worker child
+const spawnRes = await tools.multi_agent_v1__spawn_agent({
+  agent_type: "explorer",
+  message: "Find all usages of ..."
+});
+const childId = spawnRes?.agent_id;
+
+// 2. Poll for completion -- DO NOT close the agent on timeout!
+const waitRes = await tools.multi_agent_v1__wait_agent({
+  targets: [childId],
+  timeout_ms: 30000
+});
+const status = waitRes?.status?.[childId];
+if (status && (status === "completed" || status.completed != null)) {
+  // Turn completed! Extract report from status.completed.
+  // Leave the subagent parked for subsequent tasks; DO NOT call close_agent.
+} else {
+  // Subagent is still running. Continue waiting in a subsequent poll, or
+  // if you need findings immediately before continuing, ask for a summary:
+  // await tools.multi_agent_v1__send_input({ target: childId, message: "Please summarize your findings so far." });
+  // NEVER call close_agent on a running child!
+}
+
+// 3. Reuse parked subagent for next task (avoids spawning duplicate sessions)
+await tools.multi_agent_v1__send_input({
+  target: childId,
+  message: "Now inspect the tests covering those modules..."
+});
+```
 
 Treat `agent_id` as an opaque handle: use the complete value returned by
 `spawn_agent` verbatim; never abbreviate it or retype it from memory. If the

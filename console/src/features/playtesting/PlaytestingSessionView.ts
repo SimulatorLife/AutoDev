@@ -11,6 +11,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Icon } from "../../components/icons/Icon.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
@@ -71,6 +72,7 @@ const DISABLED_STEP_BUTTON_CLASS =
   "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed";
 const STEP_BUTTON_CLASS =
   "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition";
+const STEP_BUTTON_INNER_CLASS = "inline-flex items-center gap-1";
 const RAISED_PANEL_CLASS =
   "rounded-lg border border-border bg-surface-raised p-3";
 const SURFACE_PANEL_CLASS = "rounded-lg border border-border bg-surface p-3";
@@ -1456,9 +1458,10 @@ function spectatorCockpitPanels(
         "p",
         {
           className:
-            "text-xs font-semibold text-accent uppercase tracking-wider"
+            "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider"
         },
-        "🎯 Planned Intention"
+        React.createElement(Icon, { name: "target", size: 14 }),
+        "Planned Intention"
       ),
       React.createElement(
         "p",
@@ -1475,9 +1478,10 @@ function spectatorCockpitPanels(
         "p",
         {
           className:
-            "text-xs font-semibold text-accent uppercase tracking-wider"
+            "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider"
         },
-        "🔮 Predicted Visible Effect"
+        React.createElement(Icon, { name: "eye", size: 14 }),
+        "Predicted Visible Effect"
       ),
       React.createElement(
         "p",
@@ -1494,9 +1498,10 @@ function spectatorCockpitPanels(
         "p",
         {
           className:
-            "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+            "flex items-center gap-1.5 text-xs font-semibold text-fg-muted uppercase tracking-wider"
         },
-        "⚡ Executed Action & Tactical Reason"
+        React.createElement(Icon, { name: "bolt", size: 14 }),
+        "Executed Action & Tactical Reason"
       ),
       React.createElement(
         "p",
@@ -1513,9 +1518,10 @@ function spectatorCockpitPanels(
         "p",
         {
           className:
-            "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+            "flex items-center gap-1.5 text-xs font-semibold text-fg-muted uppercase tracking-wider"
         },
-        "🕹️ Visible Controls & Phase"
+        React.createElement(Icon, { name: "gamepad", size: 14 }),
+        "Visible Controls & Phase"
       ),
       React.createElement(
         "p",
@@ -1640,8 +1646,12 @@ function spectatorTelemetryStrip(
           ),
           React.createElement(
             "p",
-            { className: "mt-1 font-mono text-xs font-semibold text-fg" },
-            "💰 " + String(bankroll) + " Gold"
+            {
+              className:
+                "mt-1 flex items-center gap-1.5 font-mono text-xs font-semibold text-fg"
+            },
+            React.createElement(Icon, { name: "coins", size: 14 }),
+            String(bankroll) + " Gold"
           )
         ),
     React.createElement(
@@ -1724,7 +1734,11 @@ function visualGameSpectatorStage(
       React.createElement(
         "div",
         { className: "flex items-center gap-3" },
-        React.createElement("span", { className: "text-2xl" }, "🏎️"),
+        React.createElement(Icon, {
+          name: "flag",
+          size: 24,
+          className: "text-accent"
+        }),
         React.createElement(
           "div",
           null,
@@ -1753,11 +1767,14 @@ function visualGameSpectatorStage(
           "span",
           {
             className:
-              "rounded-full bg-accent/15 px-3 py-1 text-xs font-semibold text-accent"
+              "inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-semibold text-accent"
           },
           episode.executionProvenance.mode === "adapter-accelerated"
-            ? "⚡ Fast Engine Simulation"
-            : "🌐 Autonomous Visual AI Player"
+            ? React.createElement(Icon, { name: "bolt", size: 14 })
+            : React.createElement(Icon, { name: "globe", size: 14 }),
+          episode.executionProvenance.mode === "adapter-accelerated"
+            ? "Fast Engine Simulation"
+            : "Autonomous Visual AI Player"
         ),
         React.createElement(PlaytestingSessionLiveWatch, {
           isLive: isNonTerminal
@@ -1930,7 +1947,12 @@ function visualGameSpectatorStage(
                   className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
-                "⏮ Step 0"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  React.createElement(Icon, { name: "chevronsLeft", size: 12 }),
+                  "Step 0"
+                )
               )
             : React.createElement(
                 NavigationLink,
@@ -1942,7 +1964,12 @@ function visualGameSpectatorStage(
                   ),
                   className: STEP_BUTTON_CLASS
                 },
-                "⏮ Step 0"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  React.createElement(Icon, { name: "chevronsLeft", size: 12 }),
+                  "Step 0"
+                )
               ),
           prevStep === null
             ? React.createElement(
@@ -1951,7 +1978,12 @@ function visualGameSpectatorStage(
                   className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
-                "◀ Prev Step"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  React.createElement(Icon, { name: "chevronLeft", size: 12 }),
+                  "Prev Step"
+                )
               )
             : React.createElement(
                 NavigationLink,
@@ -1963,7 +1995,12 @@ function visualGameSpectatorStage(
                   ),
                   className: STEP_BUTTON_CLASS
                 },
-                "◀ Prev Step"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  React.createElement(Icon, { name: "chevronLeft", size: 12 }),
+                  "Prev Step"
+                )
               )
         ),
         React.createElement(
@@ -1984,7 +2021,12 @@ function visualGameSpectatorStage(
                   className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
-                "Next Step ▶"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  "Next Step",
+                  React.createElement(Icon, { name: "chevronRight", size: 12 })
+                )
               )
             : React.createElement(
                 NavigationLink,
@@ -1996,7 +2038,12 @@ function visualGameSpectatorStage(
                   ),
                   className: STEP_BUTTON_CLASS
                 },
-                "Next Step ▶"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  "Next Step",
+                  React.createElement(Icon, { name: "chevronRight", size: 12 })
+                )
               ),
           currentStep === lastStep
             ? React.createElement(
@@ -2005,7 +2052,12 @@ function visualGameSpectatorStage(
                   className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
-                "⏭ Last Step"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  "Last Step",
+                  React.createElement(Icon, { name: "chevronsRight", size: 12 })
+                )
               )
             : React.createElement(
                 NavigationLink,
@@ -2017,7 +2069,12 @@ function visualGameSpectatorStage(
                   ),
                   className: STEP_BUTTON_CLASS
                 },
-                "⏭ Last Step"
+                React.createElement(
+                  "span",
+                  { className: STEP_BUTTON_INNER_CLASS },
+                  "Last Step",
+                  React.createElement(Icon, { name: "chevronsRight", size: 12 })
+                )
               )
         )
       )
@@ -2039,7 +2096,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "div",
           { className: "flex items-center gap-2" },
-          React.createElement("span", { className: "text-lg" }, "🧠"),
+          React.createElement(Icon, { name: "brain", size: 18 }),
           React.createElement(
             "h4",
             { className: "text-sm font-semibold text-fg" },
@@ -2058,9 +2115,14 @@ function visualGameSpectatorStage(
             "div",
             {
               className:
-                "rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
+                "flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
             },
-            "⚠️ Observed warnings: " + currentFacts.visibleWarnings.join(", ")
+            React.createElement(Icon, {
+              name: "alertTriangle",
+              size: 14,
+              className: "text-warning shrink-0"
+            }),
+            "Observed warnings: " + currentFacts.visibleWarnings.join(", ")
           )
         : null
     ),
@@ -2108,7 +2170,7 @@ function aiGameplayCriticScorecard(
       React.createElement(
         "div",
         { className: "flex items-center gap-2.5" },
-        React.createElement("span", { className: "text-xl" }, "🧠"),
+        React.createElement(Icon, { name: "brain", size: 20 }),
         React.createElement(
           "h3",
           { className: "text-sm font-semibold text-fg" },

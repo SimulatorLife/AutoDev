@@ -12,6 +12,7 @@ import {
   FilterSearchField
 } from "../../components/filters/FilterBar.ts";
 import { SECONDARY_BUTTON_CLASS } from "../../components/forms/Button.ts";
+import { Icon } from "../../components/icons/Icon.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
@@ -256,7 +257,14 @@ export function PlaytestingSessionsWorkspace({
                   "data-playtesting-layout": option,
                   onClick: () => changeLayout(option)
                 },
-                option === "list" ? "☷ List" : "▦ Grid"
+                React.createElement(
+                  "span",
+                  { className: "inline-flex items-center gap-1.5" },
+                  option === "list"
+                    ? React.createElement(Icon, { name: "list", size: 14 })
+                    : React.createElement(Icon, { name: "grid", size: 14 }),
+                  option === "list" ? "List" : "Grid"
+                )
               )
             )
           ),

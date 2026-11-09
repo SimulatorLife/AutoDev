@@ -94,6 +94,6 @@ export function bridgeDelegationInstruction(options: {
     "```json",
     delegationCall(reach),
     "```",
-    "One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation. Compatible completed subagents can be parked and reused for follow-up tasks by specifying `target: \"<child_id>\" ` instead of `agent_type`."
+    'One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation. Compatible completed subagents can be parked and reused for follow-up tasks by specifying `target: "<child_id>" ` instead of `agent_type`. Do not close or terminate running discovery/worker subagents; allow them to finish or prompt them for a summary of findings so far.'
   ].join("\n\n");
 }

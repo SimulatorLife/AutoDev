@@ -31,7 +31,18 @@ const ANTIGRAVITY_USER_AGENT = "antigravity/1.5.3 darwin/arm64";
 const CODEX_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const ANTHROPIC_OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_BRIDGE_HEALTH_URL =
-  process.env.CODEX_ROUTER_CLAUDE_HEALTH_URL ?? "http://127.0.0.1:4101/health";
+  process.env.CODEX_ROUTER_CLAUDE_HEALTH_URL ?? "http://127.0.0.1:4000/health";
+
+export const MINIMAX_CONFIGURED_MODELS = [
+  { model: "MiniMax-M3", displayName: "MiniMax M3" },
+  { model: "MiniMax-M3.1-Flash-Preview", displayName: "MiniMax M3.1 Flash" },
+  { model: "MiniMax-M2.7", displayName: "MiniMax M2.7" }
+] as const;
+
+export const CLAUDE_CONFIGURED_MODELS = [
+  { model: "claude-opus-5-5", displayName: "Claude Opus 5.5" },
+  { model: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5" }
+] as const;
 
 const ANTIGRAVITY_FLASH_TIERED_VARIANTS = [
   "gemini-3.8-flash-low",
@@ -148,25 +159,35 @@ function cliSearchEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * Parse `mmx quota --output json` stdout into a canonical `ControlApiProviderQuota`.
+ * Parse `mmx quota --output json` stdout or direct `/v1/token_plan/remains` response
+ * into a canonical `ControlApiProviderQuota`.
  */
 export function parseMinimaxQuotaOutput(
-  raw: string,
-  nowMs = Date.now()
+  raw: string | unknown,
+  nowMs = Date.now(),
+  source = "mmx quota --output json"
 ): ControlApiProviderQuota | null {
-  const startIndex = raw.indexOf("{");
-  const endIndex = raw.lastIndexOf("}");
-  if (startIndex === -1 || endIndex <= startIndex) return null;
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.slice(startIndex, endIndex + 1));
-  } catch {
-    return null;
+  if (typeof raw === "string") {
+    const startIndex = raw.indexOf("{");
+    const endIndex = raw.lastIndexOf("}");
+    if (startIndex === -1 || endIndex <= startIndex) return null;
+    try {
+      parsed = JSON.parse(raw.slice(startIndex, endIndex + 1));
+    } catch {
+      return null;
+    }
+  } else {
+    parsed = raw;
   }
   if (!isRecord(parsed) || !Array.isArray(parsed.model_remains)) {
     return null;
   }
-  const entry = parsed.model_remains.find(isRecord);
+  const entry =
+    parsed.model_remains.find(
+      (m): m is Record<string, unknown> =>
+        isRecord(m) && m.model_name === "general"
+    ) ?? parsed.model_remains.find(isRecord);
   if (!entry) return null;
 
   const windows: ControlApiQuotaWindow[] = [];
@@ -214,23 +235,21 @@ export function parseMinimaxQuotaOutput(
   return {
     provider: "minimax",
     status: "ok",
-    source: "mmx quota --output json",
+    source,
     updatedAt: new Date(nowMs).toISOString(),
     plan: "Coding Plan",
     summaryStatus,
     windows,
-    models: [
-      {
-        model: "MiniMax-M2.7",
-        displayName: "MiniMax M2.7",
-        pool: null,
-        status: summaryStatus,
-        usedPercent: primary.usedPercent,
-        remainingPercent: primary.remainingPercent,
-        resetsAt: primary.resetsAt,
-        windows
-      }
-    ]
+    models: MINIMAX_CONFIGURED_MODELS.map((cfg) => ({
+      model: cfg.model,
+      displayName: cfg.displayName,
+      pool: null,
+      status: summaryStatus,
+      usedPercent: primary.usedPercent,
+      remainingPercent: primary.remainingPercent,
+      resetsAt: primary.resetsAt,
+      windows
+    }))
   };
 }
 
@@ -643,13 +662,26 @@ export function parseClaudeOAuthUsage(
     });
   }
   if (windows.length === 0) return null;
+  const summaryStatus = combineStatuses(windows.map((w) => w.status));
+  const primary = windows[0]!;
   return {
     provider: "claude",
     status: "ok",
     source: "anthropic-oauth-usage",
     updatedAt: new Date(nowMs).toISOString(),
-    summaryStatus: combineStatuses(windows.map((w) => w.status)),
-    windows
+    plan: "Claude Pro Plan",
+    summaryStatus,
+    windows,
+    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
+      model: cfg.model,
+      displayName: cfg.displayName,
+      pool: null,
+      status: primary.status,
+      usedPercent: primary.usedPercent,
+      remainingPercent: primary.remainingPercent,
+      resetsAt: primary.resetsAt,
+      windows
+    }))
   };
 }
 
@@ -707,8 +739,19 @@ export function parseClaudeRateLimitEvent(
     status: "ok",
     source: "claude-cli-rate-limit-event",
     updatedAt: new Date(nowMs).toISOString(),
+    plan: "Claude Pro Plan",
     summaryStatus: status,
-    windows: [win]
+    windows: [win],
+    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
+      model: cfg.model,
+      displayName: cfg.displayName,
+      pool: null,
+      status,
+      usedPercent: win.usedPercent,
+      remainingPercent: win.remainingPercent,
+      resetsAt: win.resetsAt,
+      windows: [win]
+    }))
   };
 }
 
@@ -882,15 +925,86 @@ export function clearProviderQuotaCacheForTests(): void {
   quotaCache.clear();
 }
 
+export async function readMinimaxAuth(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): Promise<{ token: string; baseUrl: string } | null> {
+  const envKey = env.MINIMAX_API_KEY?.trim();
+  if (envKey) {
+    return {
+      token: envKey,
+      baseUrl: env.MINIMAX_API_BASE_URL?.trim() || "https://api.minimax.io"
+    };
+  }
+  const configPath = path.join(home, ".mmx", "config.json");
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (isRecord(parsed)) {
+      if (isRecord(parsed.oauth)) {
+        const accessToken =
+          typeof parsed.oauth.access_token === "string"
+            ? parsed.oauth.access_token.trim()
+            : "";
+        if (accessToken) {
+          const resourceUrl =
+            typeof parsed.oauth.resource_url === "string" &&
+            parsed.oauth.resource_url.trim()
+              ? parsed.oauth.resource_url.trim()
+              : "https://api.minimax.io";
+          return { token: accessToken, baseUrl: resourceUrl };
+        }
+      }
+      if (typeof parsed.api_key === "string" && parsed.api_key.trim()) {
+        return {
+          token: parsed.api_key.trim(),
+          baseUrl: "https://api.minimax.io"
+        };
+      }
+    }
+  } catch {
+    // Config file not present or unreadable
+  }
+  return null;
+}
+
 async function discoverMinimaxQuota(
   nowMs: number
 ): Promise<ControlApiProviderQuota | null> {
+  const auth = await readMinimaxAuth().catch(() => null);
+  if (auth) {
+    try {
+      const response = await fetch(`${auth.baseUrl}/v1/token_plan/remains`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(QUOTA_DISCOVERY_TIMEOUT_MS)
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as unknown;
+        const parsed = parseMinimaxQuotaOutput(
+          payload,
+          nowMs,
+          "minimax-token-plan-api"
+        );
+        if (parsed) return parsed;
+      }
+    } catch {
+      // Direct REST API failed; try CLI fallback below
+    }
+  }
+
   try {
-    const { stdout } = await execFileAsync(findMiniMaxBinary() ?? "mmx", ["quota", "--output", "json"], {
-      timeout: QUOTA_DISCOVERY_TIMEOUT_MS,
-      env: cliSearchEnv()
-    });
-    return parseMinimaxQuotaOutput(stdout, nowMs);
+    const { stdout } = await execFileAsync(
+      findMiniMaxBinary() ?? "mmx",
+      ["quota", "--output", "json"],
+      {
+        timeout: QUOTA_DISCOVERY_TIMEOUT_MS,
+        env: cliSearchEnv()
+      }
+    );
+    return parseMinimaxQuotaOutput(stdout, nowMs, "mmx quota --output json");
   } catch {
     return null;
   }
@@ -1033,6 +1147,167 @@ async function discoverCopilotQuota(
   }
 }
 
+export interface ClaudePlanMetadata {
+  readonly plan: string;
+  readonly billingType?: string | null;
+  readonly rateLimitTier?: string | null;
+  readonly displayName?: string | null;
+}
+
+export async function readClaudePlanMetadata(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): Promise<ClaudePlanMetadata | null> {
+  const claudeJsonPath = path.join(home, ".claude.json");
+  try {
+    const raw = await readFile(claudeJsonPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (isRecord(parsed) && isRecord(parsed.oauthAccount)) {
+      const account = parsed.oauthAccount;
+      const orgType =
+        typeof account.organizationType === "string"
+          ? account.organizationType.trim()
+          : "";
+      const billingType =
+        typeof account.billingType === "string"
+          ? account.billingType.trim()
+          : null;
+      const rateLimitTier =
+        typeof account.organizationRateLimitTier === "string"
+          ? account.organizationRateLimitTier.trim()
+          : null;
+      const displayName =
+        typeof account.displayName === "string"
+          ? account.displayName.trim()
+          : null;
+      if (orgType === "claude_pro" || billingType === "stripe_subscription") {
+        return {
+          plan: "Claude Pro Plan",
+          billingType,
+          rateLimitTier,
+          displayName
+        };
+      }
+      if (orgType) {
+        return {
+          plan: orgType
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase()),
+          billingType,
+          rateLimitTier,
+          displayName
+        };
+      }
+    }
+  } catch {
+    // .claude.json not present or unreadable
+  }
+
+  // Fallback to macOS Keychain
+  try {
+    const { stdout } = await execFileAsync(
+      "security",
+      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+      { timeout: 2_500 }
+    );
+    const creds = JSON.parse(stdout.trim()) as unknown;
+    if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
+      const oauth = creds.claudeAiOauth;
+      const subType =
+        typeof oauth.subscriptionType === "string"
+          ? oauth.subscriptionType.trim()
+          : "";
+      const rateLimitTier =
+        typeof oauth.rateLimitTier === "string"
+          ? oauth.rateLimitTier.trim()
+          : null;
+      if (subType === "pro") {
+        return {
+          plan: "Claude Pro Plan",
+          billingType: null,
+          rateLimitTier,
+          displayName: null
+        };
+      }
+      if (subType) {
+        return {
+          plan: `Claude ${subType.charAt(0).toUpperCase()}${subType.slice(1)} Plan`,
+          billingType: null,
+          rateLimitTier,
+          displayName: null
+        };
+      }
+    }
+  } catch {
+    // Keychain lookup failed
+  }
+  return null;
+}
+
+export async function readPersistedClaudeRateLimit(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): Promise<Record<string, unknown> | null> {
+  const codeHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const filePath = path.join(codeHome, "run", "claude-rate-limit.json");
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Missing or invalid
+  }
+  return null;
+}
+
+export function buildClaudeSubscriptionQuota(
+  planMeta: ClaudePlanMetadata,
+  nowMs = Date.now()
+): ControlApiProviderQuota {
+  const windows: ControlApiQuotaWindow[] = [
+    {
+      id: "claude-5h",
+      label: "5-hour limit",
+      kind: "five_hour",
+      status: "available",
+      usedPercent: 0,
+      remainingPercent: 100,
+      resetsAt: null
+    },
+    {
+      id: "claude-weekly",
+      label: "Weekly limit",
+      kind: "weekly",
+      status: "available",
+      usedPercent: 0,
+      remainingPercent: 100,
+      resetsAt: null
+    }
+  ];
+  const primary = windows[0]!;
+  return {
+    provider: "claude",
+    status: "ok",
+    source: "claude-plan-subscription",
+    updatedAt: new Date(nowMs).toISOString(),
+    plan: planMeta.plan,
+    summaryStatus: "available",
+    windows,
+    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
+      model: cfg.model,
+      displayName: cfg.displayName,
+      pool: null,
+      status: "available",
+      usedPercent: primary.usedPercent,
+      remainingPercent: primary.remainingPercent,
+      resetsAt: primary.resetsAt,
+      windows
+    }))
+  };
+}
+
 async function discoverClaudeQuota(
   nowMs: number
 ): Promise<ControlApiProviderQuota | null> {
@@ -1052,33 +1327,58 @@ async function discoverClaudeQuota(
   }
 
   try {
+    const persisted = await readPersistedClaudeRateLimit();
+    if (persisted) {
+      const parsedEvent = parseClaudeRateLimitEvent(persisted, nowMs);
+      if (parsedEvent) return parsedEvent;
+    }
+  } catch {
+    // Ignore persisted read errors.
+  }
+
+  try {
     const { stdout } = await execFileAsync(
       "security",
       ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
       { timeout: 3_000 }
     );
     const creds = JSON.parse(stdout.trim()) as unknown;
-    if (!isRecord(creds) || !isRecord(creds.claudeAiOauth)) return null;
-    const oauth = creds.claudeAiOauth;
-    const accessToken =
-      typeof oauth.accessToken === "string" ? oauth.accessToken.trim() : "";
-    const expiresAt =
-      typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
-    if (!accessToken || (expiresAt > 0 && expiresAt <= nowMs)) return null;
-    const response = await fetch(ANTHROPIC_OAUTH_USAGE_URL, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "anthropic-beta": "oauth-2025-04-20",
-        Accept: "application/json"
-      },
-      signal: AbortSignal.timeout(QUOTA_DISCOVERY_TIMEOUT_MS)
-    });
-    if (!response.ok) return null;
-    const payload = await response.json();
-    return parseClaudeOAuthUsage(payload, nowMs);
+    if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
+      const oauth = creds.claudeAiOauth;
+      const accessToken =
+        typeof oauth.accessToken === "string" ? oauth.accessToken.trim() : "";
+      const expiresAt =
+        typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
+      if (accessToken && (expiresAt === 0 || expiresAt > nowMs)) {
+        const response = await fetch(ANTHROPIC_OAUTH_USAGE_URL, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "anthropic-beta": "oauth-2025-04-20",
+            Accept: "application/json"
+          },
+          signal: AbortSignal.timeout(QUOTA_DISCOVERY_TIMEOUT_MS)
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          const parsed = parseClaudeOAuthUsage(payload, nowMs);
+          if (parsed) return parsed;
+        }
+      }
+    }
   } catch {
-    return null;
+    // OAuth usage endpoint unavailable or forbidden
   }
+
+  try {
+    const planMeta = await readClaudePlanMetadata();
+    if (planMeta) {
+      return buildClaudeSubscriptionQuota(planMeta, nowMs);
+    }
+  } catch {
+    // Plan metadata unreadable
+  }
+
+  return null;
 }
 
 export async function discoverProviderQuota(

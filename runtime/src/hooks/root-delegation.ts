@@ -87,9 +87,7 @@ function buildRecoveryContext(recovery: string): string {
     "`collabAgentToolCall` whose `senderThreadId` matches your session id, " +
     "collect the `receiverThreadIds`. Wait on each id with " +
     "`multi_agent_v1__wait_agent({ targets: [<id>], timeout_ms: 30000 })`. " +
-    "If the wait times out or the child is still running, leave it running. " +
-    "If the child is terminal, preserve its results, and close dead or evicted " +
-    "terminal handles with `multi_agent_v1__close_agent({ target: <id> })`. " +
+    "If the wait times out or the child is still running, leave it running (never close, terminate, or interrupt a running child; if you need findings immediately, prompt for an interim summary via `multi_agent_v1__send_input`). Completed children must be parked and retained for reuse, not closed. Close dead (errored/interrupted/shutdown) terminal handles or evict oldest parked handles under capacity pressure with `multi_agent_v1__close_agent({ target: <id> })`. " +
     "Do not infer child ids from global task listings, telemetry, or any source " +
     "other than your own session's spawn history.\n";
   const codeBlock = recovery

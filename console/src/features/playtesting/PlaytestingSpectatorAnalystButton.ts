@@ -4,6 +4,7 @@ import type { ControlApiPlaytestingAnalysisDispatchResponse } from "@simulatorli
 import React, { useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import { Icon } from "../../components/icons/Icon.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   type PlaytestingScope
@@ -85,7 +86,7 @@ export function PlaytestingSpectatorAnalystButton({
         className: "inline-flex items-center gap-1.5 rounded-lg shadow-sm",
         dataAttributes: { "data-playtesting-spectator-analyze": episodeId }
       },
-      React.createElement("span", { "aria-hidden": true }, "🔍"),
+      React.createElement(Icon, { name: "search", size: 14 }),
       pending
         ? "Dispatching Analysis…"
         : dispatchResult

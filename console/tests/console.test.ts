@@ -77,7 +77,6 @@ import {
   type AutoSubmitSelectFieldProps
 } from "../src/components/forms/AutoSubmitSelectField.ts";
 import { SUBMIT_ON_CHANGE_SCRIPT } from "../src/components/forms/submit-on-change.ts";
-import type { SelectFieldProps } from "../src/components/forms/SelectField.ts";
 import {
   ICON_PATHS,
   NAV_ICONS,
@@ -469,12 +468,14 @@ test("the icon set holds no glyph that nothing renders", () => {
       recursive: true
     })) {
       const file = join(consoleRoot, dir, relative.toString());
-      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      if (!/\.tsx?$/u.test(file) || !statSync(file).isFile()) continue;
       if (file.endsWith(join("icons", "Icon.ts"))) continue;
       const source = readFileSync(file, "utf8");
       // Match the property, not any occurrence of the word: a section name like
       // "Tools" also appears in prose, in a route path, and in a test id.
-      for (const match of source.matchAll(/\bname:\s*["'`]([\w]+)["'`]/gu)) {
+      for (const match of source.matchAll(
+        /\b(?:name|icon)[:=]\s*["'`]([\w]+)["'`]/gu
+      )) {
         const name = match[1];
         if (name !== undefined) usage.add(name);
       }
@@ -492,6 +493,52 @@ test("the icon set holds no glyph that nothing renders", () => {
   // against `IconName`, so the compiler already rejects a glyph that is not
   // declared. That is why only the dead direction needs a test.
   assert.ok(Object.keys(ICON_PATHS).length > 0, "the icon set is not empty");
+});
+
+test("the Console UI contains no emojis", () => {
+  // Backlog contract: the Console UI must never contain raw emojis.
+  // Visual presentation is owned by the shared inline SVG icon set (`Icon.ts`),
+  // keeping weights consistent with the typography and themes without pictograms.
+  const consoleRoot = join(import.meta.dirname, "..");
+  const hasEmoji = (text: string): boolean => {
+    for (const char of text) {
+      const code = char.codePointAt(0);
+      if (code === undefined) continue;
+      if (
+        (code >= 0x1_f3_00 && code <= 0x1_fa_d6) ||
+        (code >= 0x1_f6_00 && code <= 0x1_f6_4f) ||
+        (code >= 0x1_f6_80 && code <= 0x1_f6_ff) ||
+        code === 0x26_a0 ||
+        code === 0x26_a1 ||
+        code === 0x27_28
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const offenders: string[] = [];
+
+  for (const dir of ["src", "app"]) {
+    for (const relative of readdirSync(join(consoleRoot, dir), {
+      recursive: true
+    })) {
+      const file = join(consoleRoot, dir, relative.toString());
+      if (!/\.tsx?$/u.test(file) || !statSync(file).isFile()) continue;
+      const lines = readFileSync(file, "utf8").split("\n");
+      for (const [index, line] of lines.entries()) {
+        if (hasEmoji(line)) {
+          offenders.push(`${dir}/${relative}:${index + 1}: ${line.trim()}`);
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `The Console UI must not contain any emojis; use Icon component instead:\n${offenders.join("\n")}`
+  );
 });
 
 test("missing evidence is reported in one word, from one constant", () => {
@@ -20965,17 +21012,11 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
     assert.ok(prioritySelectElement, "Role row must render priority select");
     assert.equal(prioritySelectElement.type, AutoSubmitSelectField);
 
-    const renderedPriority = AutoSubmitSelectField(prioritySelectElement.props);
-    let prioritySubmissions = 0;
-    renderedPriority.props.onChange?.({
-      currentTarget: {
-        form: { requestSubmit: () => prioritySubmissions++ }
-      }
-    } as unknown as React.ChangeEvent<HTMLSelectElement>);
-    assert.equal(
-      prioritySubmissions,
-      1,
-      "priority change must trigger form requestSubmit"
+    const priorityMarkup = renderToStaticMarkup(prioritySelectElement);
+    assert.match(
+      priorityMarkup,
+      /data-submit-on-change="true"/u,
+      "priority select must be marked for page-level auto-submit"
     );
 
     const roleModelElement = formChildren.find(
@@ -20989,17 +21030,11 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
     const modelSelectElement = modelSelectFn(roleModelElement.props);
     assert.equal(modelSelectElement.type, AutoSubmitSelectField);
 
-    const renderedModel = AutoSubmitSelectField(modelSelectElement.props);
-    let modelSubmissions = 0;
-    renderedModel.props.onChange?.({
-      currentTarget: {
-        form: { requestSubmit: () => modelSubmissions++ }
-      }
-    } as unknown as React.ChangeEvent<HTMLSelectElement>);
-    assert.equal(
-      modelSubmissions,
-      1,
-      "model change must trigger form requestSubmit"
+    const modelMarkup = renderToStaticMarkup(modelSelectElement);
+    assert.match(
+      modelMarkup,
+      /data-submit-on-change="true"/u,
+      "model select must be marked for page-level auto-submit"
     );
   }
 
@@ -21093,17 +21128,11 @@ test("MemoryView wires single workspace selector to auto-submit GET on change wi
     React.ComponentProps<typeof AutoSubmitSelectField>
   >;
   assert.equal(workspaceSelect.type, AutoSubmitSelectField);
-  const renderedSelect = AutoSubmitSelectField(workspaceSelect.props);
-  let submissions = 0;
-  renderedSelect.props.onChange?.({
-    currentTarget: {
-      form: { requestSubmit: () => submissions++ }
-    }
-  } as unknown as React.ChangeEvent<HTMLSelectElement>);
-  assert.equal(
-    submissions,
-    1,
-    "workspace selection change must call requestSubmit"
+  const workspaceMarkup = renderToStaticMarkup(workspaceSelect);
+  assert.match(
+    workspaceMarkup,
+    /data-submit-on-change="true"/u,
+    "workspace selection change must mark select for auto-submit"
   );
 });
 

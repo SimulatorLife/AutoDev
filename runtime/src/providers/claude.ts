@@ -20,11 +20,14 @@
  * out from under the running bridge.
  */
 import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
+import { homedir } from "node:os";
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
@@ -927,7 +930,37 @@ function* translateAssistantEvent(
   yield { kind: "message_stop" };
 }
 
-let latestClaudeRateLimitInfo: JsonRecord | null = null;
+function claudeRateLimitFile(): string {
+  const codeHome =
+    process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
+  return path.join(codeHome, "run", "claude-rate-limit.json");
+}
+
+function loadPersistedClaudeRateLimitInfo(): JsonRecord | null {
+  try {
+    const raw = readFileSync(claudeRateLimitFile(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as JsonRecord;
+    }
+  } catch {
+    // File missing or unreadable
+  }
+  return null;
+}
+
+function persistClaudeRateLimitInfo(info: JsonRecord): void {
+  try {
+    const targetFile = claudeRateLimitFile();
+    mkdirSync(path.dirname(targetFile), { recursive: true });
+    writeFileSync(targetFile, JSON.stringify(info, null, 2), "utf8");
+  } catch (error) {
+    writeErrorLine(`Failed to persist Claude rate limit info: ${String(error)}`);
+  }
+}
+
+let latestClaudeRateLimitInfo: JsonRecord | null =
+  loadPersistedClaudeRateLimitInfo();
 
 /**
  * Translates one parsed stream-json line, mutating `state` and yielding the
@@ -946,6 +979,7 @@ function* translateClaudeStreamLine(
         ...(event.rate_limit_info as JsonRecord),
         observedAt: new Date().toISOString()
       };
+      persistClaudeRateLimitInfo(latestClaudeRateLimitInfo);
     }
     const rateError = rateLimitEventError(event);
     if (rateError !== null) throw rateError;

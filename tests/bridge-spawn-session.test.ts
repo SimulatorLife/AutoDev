@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   openSpawnSession,
   SpawnSessionRegistry,
-  UNIDENTIFIED_SESSION_SCOPE} from "@simulatorlife/autodev-runtime/agents";
+  UNIDENTIFIED_SESSION_SCOPE
+} from "@simulatorlife/autodev-runtime/agents";
 
 const registry = (
   overrides: Record<string, unknown> = {}
@@ -155,13 +156,21 @@ test("reusing an existing parked session records target and surfaces reuse in ro
   });
   r.open("s-reuse", { orchestrator: true, workspace: "/test/workspace" });
   const res = r.record("s-reuse", [
-    { target: "child-parked-123", agent_type: "worker", message: "apply second edit wave" }
+    {
+      target: "child-parked-123",
+      agent_type: "worker",
+      message: "apply second edit wave"
+    }
   ]);
   assert.equal(res.accepted, true);
   assert.equal(res.count, 1);
   assert.equal(res.roles, "reuse:child-parked-123 (worker)");
   assert.deepEqual(r.close("s-reuse"), [
-    { target: "child-parked-123", agentType: "worker", message: "apply second edit wave" }
+    {
+      target: "child-parked-123",
+      agentType: "worker",
+      message: "apply second edit wave"
+    }
   ]);
   // Reused child is marked running
   assert.equal(r.getChildSession("child-parked-123")?.status, "running");
@@ -174,7 +183,10 @@ test("negative: reusing arbitrary or unverified child identifier is rejected", (
     { target: "unverified-child-999", message: "attempt unverified reuse" }
   ]);
   assert.equal(res.accepted, false);
-  assert.match(res.message ?? "", /not a verified subagent owned by this session/);
+  assert.match(
+    res.message ?? "",
+    /not a verified subagent owned by this session/
+  );
 });
 
 test("negative: reusing child owned by a different parent is rejected", () => {
@@ -208,7 +220,10 @@ test("negative: reusing child from a different workspace is rejected", () => {
     { target: "child-diff-ws", message: "attempt cross-workspace reuse" }
   ]);
   assert.equal(res.accepted, false);
-  assert.match(res.message ?? "", /subagent workspace.*does not match requesting parent workspace/);
+  assert.match(
+    res.message ?? "",
+    /subagent workspace.*does not match requesting parent workspace/
+  );
 });
 
 test("negative: reusing child with incompatible role is rejected", () => {
@@ -222,10 +237,17 @@ test("negative: reusing child with incompatible role is rejected", () => {
   });
   r.open("parent-role", { orchestrator: true, workspace: "/test/workspace" });
   const res = r.record("parent-role", [
-    { target: "child-explorer", agent_type: "worker", message: "attempt role mismatch" }
+    {
+      target: "child-explorer",
+      agent_type: "worker",
+      message: "attempt role mismatch"
+    }
   ]);
   assert.equal(res.accepted, false);
-  assert.match(res.message ?? "", /subagent role.*is incompatible with requested role/);
+  assert.match(
+    res.message ?? "",
+    /subagent role.*is incompatible with requested role/
+  );
 });
 
 test("negative: reusing child that is currently running is rejected", () => {
@@ -237,12 +259,18 @@ test("negative: reusing child that is currently running is rejected", () => {
     workspace: "/test/workspace",
     status: "running"
   });
-  r.open("parent-running", { orchestrator: true, workspace: "/test/workspace" });
+  r.open("parent-running", {
+    orchestrator: true,
+    workspace: "/test/workspace"
+  });
   const res = r.record("parent-running", [
     { target: "child-running", message: "attempt concurrent reuse" }
   ]);
   assert.equal(res.accepted, false);
-  assert.match(res.message ?? "", /subagent is currently running and cannot accept follow-up input/);
+  assert.match(
+    res.message ?? "",
+    /subagent is currently running and cannot accept follow-up input/
+  );
 });
 
 test("openSpawnSession scans turn payload to discover and verify spawned children for reuse", () => {
@@ -266,7 +294,7 @@ test("openSpawnSession scans turn payload to discover and verify spawned childre
         content: [
           {
             type: "input_text",
-            text: "<subagent_notification>\n{\"agent_path\":\"child-from-payload-1\",\"status\":{\"completed\":\"Found all files\"}}\n</subagent_notification>"
+            text: '<subagent_notification>\n{"agent_path":"child-from-payload-1","status":{"completed":"Found all files"}}\n</subagent_notification>'
           }
         ]
       }
@@ -290,8 +318,112 @@ test("openSpawnSession scans turn payload to discover and verify spawned childre
 
   // Follow-up reuse succeeds without manual registerChildSession
   const res = r.record("parent-turn-123", [
-    { target: "child-from-payload-1", agent_type: "explorer", message: "investigate line 40" }
+    {
+      target: "child-from-payload-1",
+      agent_type: "explorer",
+      message: "investigate line 40"
+    }
   ]);
   assert.equal(res.accepted, true);
   assert.equal(res.roles, "reuse:child-from-payload-1 (explorer)");
+});
+
+test("newly spawned child from CollabAgentToolCall starts as running until notification", () => {
+  const [r] = registry();
+  const headers = {
+    "x-autodev-session-id": "parent-active-1",
+    "x-autodev-session-scope": "session"
+  };
+  const payload = {
+    input: [
+      {
+        type: "CollabAgentToolCall",
+        tool: "spawn_agent",
+        sender_thread_id: "parent-active-1",
+        receiver_agents: [
+          { thread_id: "child-running-1", agent_role: "explorer" }
+        ]
+      }
+    ]
+  };
+
+  openSpawnSession(headers, r, {
+    orchestrator: true,
+    role: "orchestrator",
+    workspace: "/workspace/repo",
+    payload
+  });
+
+  const child = r.getChildSession("child-running-1");
+  assert.ok(child, "child must be discovered");
+  assert.equal(
+    child?.status,
+    "running",
+    "spawned child must start running, not completed"
+  );
+
+  // Attempting to reuse a running subagent is rejected
+  const res = r.record("parent-active-1", [
+    {
+      target: "child-running-1",
+      agent_type: "explorer",
+      message: "do more work"
+    }
+  ]);
+  assert.equal(res.accepted, false);
+  assert.match(res.message ?? "", /subagent is currently running/);
+});
+
+test("notification with agent_role sets role and completed child with default role can adopt requested role on reuse", () => {
+  const [r] = registry();
+  const headers = {
+    "x-autodev-session-id": "parent-adopt-1",
+    "x-autodev-session-scope": "session"
+  };
+  const payload = {
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: '<subagent_notification>\n{"agent_path":"child-notif-role","agent_role":"explorer","status":{"completed":"Done!"}}\n</subagent_notification>'
+          },
+          {
+            type: "input_text",
+            text: '<subagent_notification>\n{"agent_path":"child-generic-role","status":{"completed":"Done!"}}\n</subagent_notification>'
+          }
+        ]
+      }
+    ]
+  };
+
+  openSpawnSession(headers, r, {
+    orchestrator: true,
+    role: "orchestrator",
+    workspace: "/workspace/repo",
+    payload
+  });
+
+  const child1 = r.getChildSession("child-notif-role");
+  assert.ok(child1);
+  assert.equal(child1?.role, "explorer");
+  assert.equal(child1?.status, "completed");
+
+  const child2 = r.getChildSession("child-generic-role");
+  assert.ok(child2);
+  assert.equal(child2?.role, "default");
+  assert.equal(child2?.status, "completed");
+
+  // child2 with default role can be reused as a worker and adopts worker
+  const res = r.record("parent-adopt-1", [
+    {
+      target: "child-generic-role",
+      agent_type: "worker",
+      message: "implement step 1"
+    }
+  ]);
+  assert.equal(res.accepted, true);
+  assert.equal(res.roles, "reuse:child-generic-role (worker)");
+  assert.equal(child2?.role, "worker");
 });

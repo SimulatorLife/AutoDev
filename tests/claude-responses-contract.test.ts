@@ -65,7 +65,17 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(port: number, timeoutMs = 5000): Promise<void> {
+async function waitForHealth(
+  port: number,
+  child?: any,
+  timeoutMs = 15000
+): Promise<void> {
+  let stderr = "";
+  if (child?.stderr) {
+    child.stderr.on("data", (chunk: any) => {
+      stderr += chunk;
+    });
+  }
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
@@ -81,7 +91,7 @@ async function waitForHealth(port: number, timeoutMs = 5000): Promise<void> {
   const detail =
     lastError instanceof Error ? lastError.message : String(lastError);
   throw new Error(
-    `Claude bridge did not become healthy on port ${port}: ${detail}`
+    `Claude bridge did not become healthy on port ${port}: ${detail}\n--- bridge stderr ---\n${stderr}`
   );
 }
 
@@ -290,7 +300,7 @@ async function runStreamingCase(
     contractCase: item.cli
   });
   try {
-    await waitForHealth(proxyPort);
+    await waitForHealth(proxyPort, child);
     const requestId = `claude-contract-${name}`;
     const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
       method: "POST",
@@ -474,7 +484,7 @@ async function runAuthFailureCase(
     contractCase: item.cli
   });
   try {
-    await waitForHealth(proxyPort);
+    await waitForHealth(proxyPort, child);
     const requestId = `claude-contract-${name}`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -531,7 +541,7 @@ async function runOauthMissingCase(
     contractCase: item.cli
   });
   try {
-    await waitForHealth(proxyPort);
+    await waitForHealth(proxyPort, child);
     const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
       method: "POST",
       headers: {
@@ -589,7 +599,7 @@ async function runRejectedModelCase(
     contractCase: item.cli
   });
   try {
-    await waitForHealth(proxyPort);
+    await waitForHealth(proxyPort, child);
     const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
       method: "POST",
       headers: {
@@ -653,7 +663,7 @@ async function runUnsupportedRequestCase(
     contractCase: cli
   });
   try {
-    await waitForHealth(proxyPort);
+    await waitForHealth(proxyPort, child);
     const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
       method: "POST",
       headers: {

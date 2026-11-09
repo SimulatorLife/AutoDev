@@ -18,6 +18,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
+import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * One provider's overall usability, as a single verdict.
@@ -241,7 +242,7 @@ function quotaToneClass(status: ControlApiQuotaStatus): string {
     case "unlimited":
       return "text-fg-secondary";
     default:
-      return "text-fg-muted";
+      return MUTED_TEXT_CLASS;
   }
 }
 
@@ -429,14 +430,16 @@ export function ProviderQuotaInlineSummary({
           cooldown.resetsAt ?? cooldown.until,
           nowMs
         );
+        const text = `${label}: Cooling down${reset ? ` (${reset})` : ""}`;
         return React.createElement(
           "span",
           {
             key: pool,
             className: "truncate text-warning",
+            title: text,
             "data-provider-quota-pool": `${provider.id}:${pool}`
           },
-          `${label}: Cooling down${reset ? ` (${reset})` : ""}`
+          text
         );
       })
     );

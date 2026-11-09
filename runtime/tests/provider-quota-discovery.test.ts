@@ -4,9 +4,12 @@ import test from "node:test";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 
 import {
+  buildClaudeSubscriptionQuota,
+  CLAUDE_CONFIGURED_MODELS,
   clearProviderQuotaCacheForTests,
   createProviderQuotaDiscoveryService,
   DEFAULT_QUOTA_PROVIDERS,
+  MINIMAX_CONFIGURED_MODELS,
   overlayRouterCooldownsOnQuota,
   parseAntigravityAvailableModelsQuota,
   parseClaudeOAuthUsage,
@@ -16,6 +19,9 @@ import {
   parseCopilotUserQuota,
   parseMinimaxQuotaOutput,
   PROVIDER_QUOTA_REFRESH_INTERVAL_MS,
+  readClaudePlanMetadata,
+  readMinimaxAuth,
+  readPersistedClaudeRateLimit,
   syncQuotaToCooldowns
 } from "../src/providers/quota-discovery.ts";
 
@@ -62,8 +68,12 @@ test("parseMinimaxQuotaOutput parses 5h and weekly windows from mmx quota --outp
     quota.windows[1]?.resetsAt,
     new Date(1_794_805_200_000).toISOString()
   );
-  assert.equal(quota.models?.[0]?.model, "MiniMax-M2.7");
+  assert.equal(quota.models?.length, 3);
+  assert.equal(quota.models?.[0]?.model, "MiniMax-M3");
   assert.equal(quota.models?.[0]?.usedPercent, 35);
+  assert.equal(quota.models?.[1]?.model, "MiniMax-M3.1-Flash-Preview");
+  assert.equal(quota.models?.[2]?.model, "MiniMax-M2.7");
+  assert.equal(quota.models?.[2]?.usedPercent, 35);
 });
 
 test("parseCodexWhamUsage and parseCodexResponseRateLimitHeaders parse 5h and weekly limits", () => {
@@ -311,4 +321,97 @@ test("createProviderQuotaDiscoveryService manages lifecycle and snapshots", asyn
   service.stop();
   // Double-stop is safe
   service.stop();
+});
+
+test("parseMinimaxQuotaOutput handles direct REST API JSON payload and matches models", () => {
+  const payload = {
+    model_remains: [
+      {
+        model_name: "general",
+        start_time: 1794254400000,
+        end_time: 1794268800000,
+        remains_time: 10507443,
+        current_interval_total_count: 0,
+        current_interval_usage_count: 0,
+        current_interval_status: 1,
+        current_interval_remaining_percent: 100,
+        weekly_start_time: 1794182400000,
+        weekly_end_time: 1794787200000,
+        weekly_remains_time: 528907443,
+        current_weekly_status: 1,
+        current_weekly_remaining_percent: 60
+      },
+      {
+        model_name: "video",
+        start_time: 1794182400000,
+        end_time: 1794268800000,
+        remains_time: 10507443,
+        current_interval_remaining_percent: 100,
+        current_weekly_remaining_percent: 100
+      }
+    ],
+    base_resp: {
+      status_code: 0,
+      status_msg: "success"
+    }
+  };
+
+  const quota = parseMinimaxQuotaOutput(payload, NOW, "minimax-token-plan-api");
+  assert.ok(quota);
+  assert.equal(quota.provider, "minimax");
+  assert.equal(quota.status, "ok");
+  assert.equal(quota.source, "minimax-token-plan-api");
+  assert.equal(quota.summaryStatus, "available");
+  assert.equal(quota.windows.length, 2);
+  assert.equal(quota.windows[0]?.kind, "five_hour");
+  assert.equal(quota.windows[0]?.usedPercent, 0);
+  assert.equal(quota.windows[0]?.remainingPercent, 100);
+  assert.equal(quota.windows[1]?.kind, "weekly");
+  assert.equal(quota.windows[1]?.usedPercent, 40);
+  assert.equal(quota.windows[1]?.remainingPercent, 60);
+
+  assert.equal(quota.models?.length, MINIMAX_CONFIGURED_MODELS.length);
+  for (const m of quota.models!) {
+    assert.equal(m.status, "available");
+    assert.equal(m.usedPercent, 0);
+    assert.equal(m.remainingPercent, 100);
+    assert.equal(m.windows.length, 2);
+  }
+});
+
+test("readMinimaxAuth prioritizes environment variable over config.json", async () => {
+  const authFromEnv = await readMinimaxAuth({
+    MINIMAX_API_KEY: "test-api-key-12345"
+  });
+  assert.ok(authFromEnv);
+  assert.equal(authFromEnv.token, "test-api-key-12345");
+  assert.equal(authFromEnv.baseUrl, "https://api.minimax.io");
+});
+
+test("readClaudePlanMetadata and buildClaudeSubscriptionQuota generate canonical Pro quota", async () => {
+  const planMeta = {
+    plan: "Claude Pro Plan",
+    billingType: "stripe_subscription",
+    rateLimitTier: "default_claude_ai",
+    displayName: "Developer"
+  };
+
+  const quota = buildClaudeSubscriptionQuota(planMeta, NOW);
+  assert.ok(quota);
+  assert.equal(quota.provider, "claude");
+  assert.equal(quota.status, "ok");
+  assert.equal(quota.source, "claude-plan-subscription");
+  assert.equal(quota.plan, "Claude Pro Plan");
+  assert.equal(quota.summaryStatus, "available");
+  assert.equal(quota.windows.length, 2);
+  assert.equal(quota.windows[0]?.kind, "five_hour");
+  assert.equal(quota.windows[0]?.status, "available");
+  assert.equal(quota.windows[1]?.kind, "weekly");
+  assert.equal(quota.windows[1]?.status, "available");
+
+  assert.equal(quota.models?.length, CLAUDE_CONFIGURED_MODELS.length);
+  for (const m of quota.models!) {
+    assert.equal(m.status, "available");
+    assert.equal(m.windows.length, 2);
+  }
 });

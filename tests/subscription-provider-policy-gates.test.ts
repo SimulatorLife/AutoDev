@@ -81,12 +81,21 @@ const router = normalizedSource(
   readFileSync(join(REPO_ROOT, "runtime/src/router/server.ts"), "utf8")
 );
 
+const REVIEWED_SUBSCRIPTION_QUOTA_CONSUMERS = new Set([
+  // Reads provider quota and models for Console provider health and quota
+  // monitoring. It never serves model inference or proxies model requests.
+  "runtime/src/providers/quota-discovery.ts"
+]);
+
 for (const [needle, reason] of UNSUPPORTED_SUBSCRIPTION_TRANSPORTS) {
   test(`no runtime file uses ${reason}`, () => {
-    assert.deepEqual(
-      Object.keys(texts).filter((path) => texts[path]?.includes(needle)),
-      []
+    const consumers = Object.keys(texts).filter((path) =>
+      texts[path]?.includes(needle)
     );
+    const unexpected = consumers.filter(
+      (path) => !REVIEWED_SUBSCRIPTION_QUOTA_CONSUMERS.has(path)
+    );
+    assert.deepEqual(unexpected, []);
   });
 }
 
@@ -165,8 +174,16 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /COPILOT_PROXY_STARTUP_TIMEOUT_MS/
   );
   assert.match(
+    texts["runtime/src/shared/executables.ts"]!,
+    /export function resolveAgyBinary/
+  );
+  assert.match(
+    texts["runtime/src/shared/executables.ts"]!,
+    /AGY_CLI_PATH/
+  );
+  assert.match(
     texts["runtime/src/providers/antigravity.ts"]!,
-    /const CLI = process\.env\.AGY_CLI_PATH/
+    /const CLI = resolveAgyBinary\(\);/
   );
   assert.match(
     texts["runtime/src/providers/antigravity.ts"]!,

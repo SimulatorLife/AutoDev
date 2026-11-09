@@ -104,7 +104,8 @@
     "./shared/service-lifecycle": "./src/shared/service-lifecycle.ts",
     "./shared/tool-names": "./src/shared/tool-names.ts",
     "./telemetry": "./src/telemetry/index.ts",
-    "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts"
+    "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts",
+    "./shared/skill-reads": "./src/shared/skill-reads.ts"
   },
   "scripts": {
     "autodev": "node src/cli/autodev.ts",

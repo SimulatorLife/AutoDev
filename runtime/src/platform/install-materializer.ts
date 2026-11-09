@@ -136,6 +136,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/responses-continuation.ts",
   "runtime/src/shared/responses-item-ids.ts",
   "runtime/src/shared/tool-names.ts",
+  "runtime/src/shared/skill-reads.ts",
   "runtime/src/shared/service-lifecycle.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/index.ts",

@@ -1098,7 +1098,7 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
   // the router identified the conversation the turn belongs to.
   assert.match(
     source,
-    /openSpawnSession\(request\.headers, spawnSessions, \{\s*orchestrator: isOrchestratorRole\(agentRole\)\s*\}\)/s
+    /openSpawnSession\(request\.headers, spawnSessions, \{\s*orchestrator: isOrchestratorRole\(agentRole\)/s
   );
   // The collected batch becomes one exec call appended to the turn's output.
   assert.match(

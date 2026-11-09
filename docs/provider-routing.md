@@ -602,8 +602,11 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   them on `/control/providers` (`provider.quota` and `provider.health.quota`),
   overlaying active router pool/provider cooldowns and synchronizing exhausted
   windows or pools into `COOLDOWNS`:
-  - **MiniMax:** `mmx quota --output json` (5-hour token interval and weekly
-    limits).
+  - **MiniMax:** Direct REST API query to `https://api.minimax.io/v1/token_plan/remains`
+    using `MINIMAX_API_KEY` or the OAuth token in `~/.mmx/config.json`, with
+    fallback to `mmx quota --output json`. Maps 5-hour interval and weekly limits
+    across configured models (`MiniMax-M3`, `MiniMax-M3.1-Flash-Preview`, `MiniMax-M2.7`).
+    `mmx` is not required as an npm or package dependency.
   - **Codex:** ChatGPT `/backend-api/wham/usage` and live `x-codex-*` upstream
     response rate-limit headers (5-hour primary and weekly secondary windows).
   - **Antigravity:** Google Cloud Code `v1internal:fetchAvailableModels` using
@@ -611,9 +614,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
     `third_party` (Claude) subprovider quota pools and per-model quotas.
   - **Copilot:** `gh api /copilot_internal/user` (`premium_interactions` and
     `chat` snapshots).
-  - **Claude:** Claude bridge `/health` `rateLimitInfo` captured from live
-    `rate_limit_event` stream events, with fallback to Anthropic OAuth
-    `/api/oauth/usage`.
+  - **Claude:** Claude bridge `/health` (port 4000) `rateLimitInfo` captured from live
+    `rate_limit_event` stream events, persisted across bridge restarts at
+    `$CODEX_HOME/run/claude-rate-limit.json`, with subscription plan discovery from
+    `~/.claude.json` / macOS Keychain (`subscriptionType: "pro"` -> Claude Pro Plan)
+    and fallback to Anthropic OAuth `/api/oauth/usage`. Maps rolling 5-hour session and
+    weekly windows across configured models (`claude-opus-5-5`, `claude-sonnet-5-5`).
 
   In the Console UI, inline quota bars and reset countdowns render in each
   provider's `Status` cell on `/providers` and in each model's row on
