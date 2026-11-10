@@ -569,6 +569,53 @@ export function transcriptSegments(input: unknown): string[] {
   return segments;
 }
 
+/** What the prompt says about the part of the conversation it left out. */
+export function transcriptOmissionMarker(dropped: number): string {
+  return `[${dropped} earlier message${dropped === 1 ? "" : "s"} of this conversation left out to keep it within the site's limit]`;
+}
+
+/** Room the omission marker needs, so the transcript can be sized around it. */
+const OMISSION_MARKER_BYTES = 200;
+
+/**
+ * The conversation, shortened to what a site's limit allows.
+ *
+ * A conversation grows with every tool result, and a chat that is new has to
+ * carry all of it: the prompt a site gets is the whole conversation. The
+ * limit is on the whole prompt, and the tool reference is not what fills it
+ * -- the tool results are. So what is left out is the middle of the
+ * conversation: the task and the most recent turns are what the next call
+ * needs, and the turns between them are the ones a later turn is least
+ * likely to read. The model is told that they are gone, rather than left to
+ * find a conversation with a hole in it.
+ */
+export function compactTranscript(
+  segments: readonly string[],
+  budgetBytes: number
+): { readonly text: string; readonly dropped: number } {
+  const joined = segments.join("\n\n");
+  if (segments.length === 0 || Buffer.byteLength(joined) <= budgetBytes)
+    return { text: joined, dropped: 0 };
+  const first = segments[0]!;
+  let size = Buffer.byteLength(first);
+  const kept: string[] = [];
+  for (let index = segments.length - 1; index >= 1; index -= 1) {
+    const segment = segments[index]!;
+    const cost = Buffer.byteLength(segment) + 2;
+    if (size + cost + OMISSION_MARKER_BYTES > budgetBytes) break;
+    size += cost;
+    kept.unshift(segment);
+  }
+  const dropped = segments.length - 1 - kept.length;
+  // Nothing was left out: the conversation fits once the head is counted
+  // against the limit, or the first message alone is larger than it is.
+  if (dropped <= 0) return { text: joined, dropped: 0 };
+  return {
+    text: [first, transcriptOmissionMarker(dropped), ...kept].join("\n\n"),
+    dropped
+  };
+}
+
 /** Rolling digests of every prefix of `segments`: entry `i` covers `segments[0..i]`. */
 export function prefixDigests(segments: readonly string[]): string[] {
   const digests: string[] = [];

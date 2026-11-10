@@ -145,6 +145,10 @@ export function opencliVersionDrift(input: {
   readonly manifest: string;
   /** The contents of `pnpm-workspace.yaml`. */
   readonly workspace: string;
+  /** The contents of `pnpm-lock.yaml`, when the repository has one. */
+  readonly lockfile?: string;
+  /** The sha256 of the patch file the repository holds. */
+  readonly patchHash?: string;
 }): OpencliVersionDrift[] {
   const drift: OpencliVersionDrift[] = [];
   let manifest: { dependencies?: Record<string, unknown> } = {};
@@ -198,5 +202,118 @@ export function opencliVersionDrift(input: {
       found: patchPath,
       reason: "the patched dependency does not point at the patch file"
     });
+
+  // The lockfile records the hash of the patch it installed, so it says
+  // which patch the bridge is really running: a patch file that was edited
+  // and not installed leaves the repository describing code the site never
+  // serves.
+  drift.push(
+    ...lockfilePatchDrift({
+      ...(input.lockfile === undefined ? {} : { lockfile: input.lockfile }),
+      ...(input.patchHash === undefined ? {} : { patchHash: input.patchHash }),
+      key: expectedKey,
+      path: expectedPath
+    })
+  );
   return drift;
+}
+
+/**
+ * What the lockfile says about the patch that was installed.
+ *
+ * The lockfile records the hash of the patch file it installed, so it says
+ * which patch the bridge is really running: a patch file that was edited and
+ * not installed leaves the repository describing code the site never serves.
+ */
+function lockfilePatchDrift(input: {
+  readonly lockfile?: string;
+  readonly patchHash?: string;
+  readonly key: string;
+  readonly path: string;
+}): OpencliVersionDrift[] {
+  if (input.lockfile === undefined || input.patchHash === undefined) return [];
+  const drift: OpencliVersionDrift[] = [];
+  const entry = parseLockfilePatchedDependencies(input.lockfile).get(input.key);
+  if (entry === undefined)
+    return [
+      {
+        file: "pnpm-lock.yaml",
+        expected: input.key,
+        found: "no entry",
+        reason: "the lockfile installs no patch for the pinned version"
+      }
+    ];
+  if (entry.hash !== input.patchHash)
+    drift.push({
+      file: "pnpm-lock.yaml",
+      expected: input.patchHash,
+      found: entry.hash,
+      reason:
+        "the lockfile installs a different patch than the repository holds"
+    });
+  if (entry.path !== input.path)
+    drift.push({
+      file: "pnpm-lock.yaml",
+      expected: input.path,
+      found: entry.path,
+      reason: "the lockfile points at another patch file"
+    });
+  return drift;
+}
+
+/** One `patchedDependencies` entry of a pnpm lockfile. */
+export interface LockfilePatchEntry {
+  /** The sha256 pnpm recorded for the patch file. */
+  readonly hash: string;
+  /** The path the workspace's patch is at. */
+  readonly path: string;
+}
+
+/** One entry of the lockfile's block: an indented key and nothing else. */
+const LOCKFILE_PATCHED_ENTRY = /^[ \t]+['"]?([^'":\s]+)['"]?:[ \t]*$/u;
+/** One field of that entry: its hash or the path it is at. */
+const LOCKFILE_PATCHED_FIELD = /^[ \t]+(hash|path):[ \t]*(\S+)[ \t]*$/u;
+
+/**
+ * The `patchedDependencies` entries of a pnpm lockfile.
+ *
+ * The lockfile keeps the hash of the patch file it installed, which is the
+ * sha256 of that file's bytes: it says which patch the running code came
+ * from, so the patch in the repository can be checked against it.
+ */
+export function parseLockfilePatchedDependencies(
+  lockfile: string
+): Map<string, LockfilePatchEntry> {
+  const entries = new Map<string, LockfilePatchEntry>();
+  const lines = lockfile.split("\n");
+  let inBlock = false;
+  let key: string | null = null;
+  let hash: string | null = null;
+  let patchPath: string | null = null;
+  const flush = (): void => {
+    if (key !== null && hash !== null && patchPath !== null)
+      entries.set(key, { hash, path: patchPath });
+    key = null;
+    hash = null;
+    patchPath = null;
+  };
+  for (const line of lines) {
+    if (!inBlock) {
+      if (PATCHED_DEPENDENCIES_BLOCK.test(line)) inBlock = true;
+      continue;
+    }
+    if (TOP_LEVEL_LINE.test(line)) break;
+    const entry = LOCKFILE_PATCHED_ENTRY.exec(line);
+    if (entry?.[1]) {
+      flush();
+      key = entry[1].trim();
+      continue;
+    }
+    const field = LOCKFILE_PATCHED_FIELD.exec(line);
+    if (!field?.[1] || !field[2]) continue;
+    if (field[1] === "hash") hash = field[2].trim();
+    else patchPath = field[2].trim();
+  }
+  flush();
+  return entries;
 }

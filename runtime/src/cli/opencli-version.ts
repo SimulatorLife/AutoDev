@@ -15,6 +15,7 @@
  * patched.
  */
 
+import { createHash } from "node:crypto";
 import {
   existsSync,
   readdirSync,
@@ -41,6 +42,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 const root = resolveRuntimeSourceRoot(import.meta.dirname);
 const manifestPath = path.join(root, "runtime", "package.json");
 const workspacePath = path.join(root, "pnpm-workspace.yaml");
+const lockfilePath = path.join(root, "pnpm-lock.yaml");
 
 function readManifest(): string {
   return readFileSync(manifestPath, "utf8");
@@ -48,6 +50,25 @@ function readManifest(): string {
 
 function readWorkspace(): string {
   return readFileSync(workspacePath, "utf8");
+}
+
+function readLockfile(): string | undefined {
+  return existsSync(lockfilePath)
+    ? readFileSync(lockfilePath, "utf8")
+    : undefined;
+}
+
+/**
+ * The hash of the patch the repository holds.
+ *
+ * It is the sha256 of the patch file's bytes, which is what pnpm records in
+ * the lockfile: the two together say whether the code the bridge runs is the
+ * patch in this repository. A repository without the patch file has no hash.
+ */
+function patchHash(): string {
+  const file = path.join(root, opencliPatchFileName());
+  if (!existsSync(file)) return "";
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
 /**
@@ -108,9 +129,13 @@ function write(): void {
 }
 
 function check(): boolean {
+  const lockfile = readLockfile();
+  const hash = patchHash();
   const drift = opencliVersionDrift({
     manifest: readManifest(),
-    workspace: readWorkspace()
+    workspace: readWorkspace(),
+    ...(lockfile === undefined ? {} : { lockfile }),
+    ...(hash === "" ? {} : { patchHash: hash })
   });
   const patchFile = path.join(root, opencliPatchFileName());
   if (!existsSync(patchFile))
@@ -130,7 +155,7 @@ function check(): boolean {
     });
   if (drift.length === 0) {
     writeLine(
-      `opencli ${OPENCLI_VERSION}: manifest, patch key and patch file agree`
+      `opencli ${OPENCLI_VERSION}: manifest, patch key, patch file and lockfile agree`
     );
     return true;
   }

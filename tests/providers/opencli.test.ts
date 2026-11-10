@@ -24,6 +24,7 @@ import {
   attachedPromptMessage,
   CHATGPT_MODELS,
   compactCodeModeDescription,
+  compactTranscript,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -1567,6 +1568,106 @@ test("a Gemini prompt still too long once compacted is refused before opencli ru
     );
     assert.equal(runs.requests.length, 0);
   });
+});
+
+test("a conversation that outgrew the site is shortened, and says what it left out", async () => {
+  // The prompt a new chat gets is the whole conversation, and the
+  // conversation grows with every tool result. A root session that had run
+  // dozens of tools sent 169 KB of transcript to ChatGPT on every new chat
+  // (session 01a1c6a9-dc62-7a10-ac7e-a20047d5489d), and the model read all
+  // of it before it said anything.
+  const filler = "x".repeat(20_000);
+  const input = [
+    userMessage("Plan the work."),
+    ...Array.from({ length: 12 }, (_, index) =>
+      userMessage(`step ${index}: ${filler}`)
+    ),
+    userMessage("the last thing the model said")
+  ];
+  await withBridge(
+    [{ response: "ok", conversation_id: "c-long" }],
+    async (baseUrl, runs) => {
+      const response = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input
+      });
+      assert.equal(response.status, 200);
+      const prompt = runs.prompts[0]!;
+      assert.ok(
+        Buffer.byteLength(prompt) <= 120_000,
+        `the prompt was ${Buffer.byteLength(prompt)} bytes`
+      );
+      assert.match(prompt, /Plan the work\./u);
+      assert.match(prompt, /the last thing the model said/u);
+      assert.match(
+        prompt,
+        /earlier message[s]? of this conversation left out/u
+      );
+      assert.doesNotMatch(prompt, /step 0:/u);
+    }
+  );
+});
+
+test("a conversation is not shortened when the tool reference is what is too long", async () => {
+  // A built-in tool's declaration is kept whole, so a reference can be over
+  // the limit on its own. Shortening the conversation would not make the
+  // prompt fit, and the conversation is what the turn is.
+  const exec = {
+    type: "custom",
+    name: "exec",
+    description: [
+      "Run JavaScript code to orchestrate/compose tool calls",
+      "",
+      "### `exec_command`",
+      `Runs a command in a PTY. ${"x".repeat(150_000)}`,
+      ""
+    ].join("\n")
+  };
+  await withBridge(
+    [{ response: "ok", conversation_id: "c-big-reference" }],
+    async (baseUrl, runs) => {
+      const response = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [exec],
+        input: [
+          userMessage("Plan the work."),
+          userMessage("the second message")
+        ]
+      });
+      assert.equal(response.status, 200);
+      const prompt = runs.prompts[0]!;
+      assert.match(prompt, /the second message/u);
+      assert.doesNotMatch(prompt, /left out to keep it within/u);
+    }
+  );
+});
+
+test("a conversation is left alone when it fits", () => {
+  const segments = ["one", "two", "three"];
+  const compacted = compactTranscript(segments, 100_000);
+  assert.equal(compacted.dropped, 0);
+  assert.equal(compacted.text, "one\n\ntwo\n\nthree");
+});
+
+test("the middle of a conversation is what is left out", () => {
+  const segments = ["the task", "old".repeat(100), "old".repeat(100), "recent"];
+  const compacted = compactTranscript(segments, 400);
+  assert.equal(compacted.dropped, 2);
+  assert.match(compacted.text, /^the task/u);
+  assert.match(
+    compacted.text,
+    /2 earlier messages of this conversation left out/u
+  );
+  assert.match(compacted.text, /recent$/u);
+  assert.doesNotMatch(compacted.text, /old/u);
+});
+
+test("a single message larger than the budget is not cut", () => {
+  // The task is what the model works from: a conversation that is one
+  // message is the task, and there is nothing to leave out.
+  const compacted = compactTranscript(["x".repeat(500)], 100);
+  assert.equal(compacted.dropped, 0);
+  assert.equal(compacted.text.length, 500);
 });
 
 test("the installed opencli accepts every flag the site specs pass", async () => {

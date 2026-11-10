@@ -71,6 +71,7 @@ import {
   attachedPromptFileName,
   CHATGPT_MODELS,
   compactCodexTools,
+  compactTranscript,
   OPENCLI_SITE_SPECS,
   type OpencliChatScope,
   OpencliCommandError,
@@ -110,10 +111,15 @@ const MAX_ARGV_PROMPT_BYTES = 100_000;
  * A site's page takes an attachment of any size, so this bound is not the
  * page's: it is the model's. A root orchestrator's tool reference carries
  * every MCP tool's declaration, and the prompt that carried 280 KB of it
- * took the model 85 seconds to say anything at all. The reference is
- * compressed rather than the conversation: the conversation is what the turn
- * is, and the reference is a listing the model can read the rest of from
- * inside `exec`.
+ * took the model 85 seconds to say anything at all.
+ *
+ * What fills a long prompt is usually not the reference but the
+ * conversation: a session that has run dozens of tools carries hundreds of
+ * kilobytes of tool results, and a chat that is new has to carry all of it.
+ * The reference is narrowed first, because a listing the model can read the
+ * rest of from inside `exec` is the cheapest thing to give up; the
+ * conversation is shortened only when narrowing the reference was not enough,
+ * and the model is told what was left out.
  */
 const MAX_ATTACHED_PROMPT_BYTES = 120_000;
 /** opencli's own exit code for a timed-out command. */
@@ -913,29 +919,50 @@ export function createOpencliBridge(
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
     const agentRole = resolveAgentRole(request.headers);
     const orchestrator = isOrchestratorRole(agentRole);
-    const renderFirst = (reference: readonly CodexTool[]) =>
-      renderOpencliPrompt(
-        typeof payload.instructions === "string" ? payload.instructions : "",
-        reference,
-        segments.join("\n\n"),
-        orchestrator ? roleInstructions(agentRole) : null
-      );
+    const instructions =
+      typeof payload.instructions === "string" ? payload.instructions : "";
+    const role = orchestrator ? roleInstructions(agentRole) : null;
+    const renderFirst = (
+      reference: readonly CodexTool[],
+      transcript: string
+    ): string => renderOpencliPrompt(instructions, reference, transcript, role);
     // A site that takes its prompt on the command line gets MCP tools named
     // rather than documented when the full reference would not fit; a site
     // that takes it as an attachment gets the same treatment when the model
     // would spend a minute reading the reference. Either way the model reads
     // the rest of a tool's description from `ALL_TOOLS` before calling it.
-    let fullPrompt = renderFirst(tools);
+    let reference = tools;
+    let fullPrompt = renderFirst(reference, segments.join("\n\n"));
     const promptLimit = spec.attachesPrompt
       ? MAX_ATTACHED_PROMPT_BYTES
       : MAX_ARGV_PROMPT_BYTES;
     for (const detail of ["summaries", "names"] as const) {
       if (Buffer.byteLength(fullPrompt) <= promptLimit) break;
-      const compact = renderFirst(compactCodexTools(tools, detail));
+      const narrowed = compactCodexTools(tools, detail);
+      const compact = renderFirst(narrowed, segments.join("\n\n"));
       writeErrorLine(
         `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; MCP tools listed by ${detail === "names" ? "name only" : "name and summary"} (${Buffer.byteLength(compact)} bytes)`
       );
       fullPrompt = compact;
+      reference = narrowed;
+    }
+    // The tool reference is not what fills a long prompt: the conversation is.
+    // A chat that is new has to carry all of it, so when the reference has
+    // been narrowed as far as it goes and the prompt still does not fit, the
+    // middle of the conversation is what is left out. A head that is over the
+    // limit on its own is the reference's doing, and shortening the
+    // conversation would not make the prompt fit.
+    if (Buffer.byteLength(fullPrompt) > promptLimit) {
+      const head = Buffer.byteLength(renderFirst(reference, ""));
+      if (head <= promptLimit) {
+        const compacted = compactTranscript(segments, promptLimit - head);
+        if (compacted.dropped > 0) {
+          fullPrompt = renderFirst(reference, compacted.text);
+          writeErrorLine(
+            `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; ${compacted.dropped} earlier message(s) left out to fit the site's limit`
+          );
+        }
+      }
     }
     const prompt = resume
       ? renderOpencliContinuation(

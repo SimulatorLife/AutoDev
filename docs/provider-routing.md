@@ -2487,6 +2487,31 @@ single list; the route patterns and the site registry in
   exactly one it can use ("file input is missing or ambiguous"). That refusal
   was the largest single cause of failed opencli turns, and it was terminal:
   the turn died even though nothing had been sent.
+- **The file input is found where the page keeps it, and the page is given
+  time to show it.** The prompt reaches ChatGPT as an attachment, so the turn
+  needs the page to show a file input to attach it through. The page does not
+  always keep that input where the adapter looked first -- it may sit beside
+  the composer, or in the portal the attach menu opens -- and it mounts the
+  input a moment after the composer itself is there. The patched adapter
+  (`patches/@jackwener__opencli@2.0.3.patch`) searches every place the page
+  keeps one, in order, and asks again for a few seconds while the page is
+  still rendering; a page that shows more than one eligible input has one
+  chosen, deterministically, instead of the turn being refused. When there is
+  still none, the reason says how many inputs the page had and how many of
+  them accept the file, so the failure is diagnosable instead of a bare
+  "file input is missing". A session whose every root turn died that way
+  (`01a1c6a9-dc62-7a10-ac7e-a20047d5489d`) is the case this fixes.
+- **A long conversation is shortened for the model.** The prompt a new chat
+  gets is the whole conversation, and the conversation grows with every tool
+  result: a root session that had run dozens of tools sent 169 KB of
+  transcript to ChatGPT on every new chat. The prompt is bounded for the
+  model as well as for the page -- narrowing the tool reference first, since
+  a listing the model can read the rest of from inside `exec` is the
+  cheapest thing to give up, and shortening the conversation only when that
+  was not enough. What is left out is the middle of the conversation: the
+  task and the most recent turns are what the next call needs, and the model
+  is told that the rest is gone rather than left to find a conversation with
+  a hole in it.
 - **Interrupts, steering and queued messages.** An interrupted turn records
   nothing, so the agent's ledger entry still names its chat; Codex's next
   request (the interrupted message, its `<turn_aborted>` marker and the new

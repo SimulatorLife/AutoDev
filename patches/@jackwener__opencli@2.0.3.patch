@@ -70,32 +70,130 @@ index 976208d..8912e38 100644
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT');
 diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
-index 05a28f7..61b7534 100644
+index 05a28f7..9a2efdf 100644
 --- a/clis/chatgpt/utils.js
 +++ b/clis/chatgpt/utils.js
-@@ -2695,8 +2695,19 @@ export async function uploadChatGPTFiles(page, filePaths) {
-         const local = Array.from(scope.querySelectorAll('input[type="file"]')).filter(acceptsFiles);
-         const inputs = local.length ? local : Array.from(document.querySelectorAll('input[type="file"]'))
-             .filter(node => acceptsFiles(node) && !node.closest('form, [role="dialog"], [data-project-home-sources-surface]'));
+@@ -2670,6 +2670,87 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
+     };
+ `;
+ 
++/**
++ * How long the page is given to show a file input it has not mounted yet.
++ */
++const FILE_INPUT_WAIT_SECONDS = 8;
++
++/**
++ * The file input a prompt is attached through.
++ *
++ * The composer is where the input belongs, but the page does not always keep
++ * it there: it may sit beside the composer in the same container, or in the
++ * portal the attach menu opens, and it appears a moment after the composer
++ * itself does. Every place the page keeps one is searched, in that order, and
++ * the search is repeated until the page has had a few seconds to mount it --
++ * a single lookup found nothing on a page that was still rendering, and the
++ * turn died there, because the attachment was the only way the prompt could
++ * reach the site.
++ */
++async function findChatGPTFileInput(page, filePaths) {
++    const path = await import('node:path');
++    let last = null;
++    for (let waited = 0; waited <= FILE_INPUT_WAIT_SECONDS; waited += 1) {
++        last = requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
++            ${buildComposerLocatorScript()}
++            const composer = findComposer();
++            const scope = composer?.closest('form');
++            if (!scope) return { ok: false, reason: 'active composer form not found', seen: 0, eligible: 0 };
++            document.querySelectorAll('[data-opencli-file-input]').forEach(node => node.removeAttribute('data-opencli-file-input'));
++            document.querySelectorAll('[data-opencli-file-scope]').forEach(node => node.removeAttribute('data-opencli-file-scope'));
++            scope.setAttribute('data-opencli-file-scope', '1');
++            const fileTypes = ${JSON.stringify(filePaths.map(file => ({ ext: path.default.extname(file).toLowerCase(), mime: mimeFromFilePath(file) })))};
++            const acceptsFiles = node => {
++                if (node.disabled || node.hasAttribute('capture') || (fileTypes.length > 1 && !node.multiple)) return false;
++                const accept = (node.getAttribute('accept') || '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
++                return !accept.length || fileTypes.every(file => accept.some(type => type === '*/*' || type === file.ext || type === file.mime || type.endsWith('/*') && file.mime.startsWith(type.slice(0, -1))));
++            };
++            const onPage = Array.from(document.querySelectorAll('input[type="file"]'));
++            const eligible = onPage.filter(acceptsFiles);
++            const inScope = Array.from(scope.querySelectorAll('input[type="file"]')).filter(acceptsFiles);
++            // The container the composer sits in: the page keeps the attach
++            // control beside the composer as often as inside its form, and a
++            // form that is a child of the body has no container of its own.
++            const container = scope.parentElement && scope.parentElement !== document.body ? scope.parentElement : null;
++            const inContainer = container ? Array.from(container.querySelectorAll('input[type="file"]')).filter(acceptsFiles) : [];
++            // Anywhere else on the page, except the surfaces that belong to
++            // another conversation (a project's own file list) and the dialogs
++            // that are not the composer.
++            const elsewhere = eligible.filter(node => !node.closest('[data-project-home-sources-surface]')
++                && !(node.closest('[role="dialog"]') && !node.closest('[role="dialog"]').contains(composer)));
++            const inputs = inScope.length ? inScope : (inContainer.length ? inContainer : elsewhere);
++            if (inputs.length === 0) return { ok: false, reason: 'file input is missing', seen: onPage.length, eligible: eligible.length };
++            // A page that shows more than one eligible file input is ordinary:
++            // the composer keeps its own input, a re-render leaves a stale one
++            // behind, and the file dialog keeps one of its own. Refusing to
++            // attach the file killed the turn, and the turn was the only way
++            // the prompt could reach the site, so the input is chosen instead
++            // of demanded: the one the page still shows, and otherwise the
++            // first of them.
++            const shown = inputs.filter(node => {
++                if (node.closest('[hidden], [aria-hidden="true"]')) return false;
++                const style = getComputedStyle(node);
++                return style.display !== 'none' && style.visibility !== 'hidden';
++            });
++            (shown.length ? shown : inputs)[0].setAttribute('data-opencli-file-input', '1');
++            ${CHATGPT_ATTACHMENT_CARD_JS}
++            scope.querySelectorAll('[role="group"][aria-label], [data-composer-attachments] button[aria-label], [data-composer-attachments] [role="button"][aria-label]').forEach(node => attachmentCard(node, scope).setAttribute('data-opencli-existing-file', '1'));
++            return { ok: true };
++        })()`)), 'chatgpt file input targeting');
++        if (last?.ok) return last;
++        if (waited < FILE_INPUT_WAIT_SECONDS) await page.sleep(1);
++    }
++    const reason = last?.reason || 'file input is missing';
++    const seen = Number(last?.seen || 0);
++    const eligible = Number(last?.eligible || 0);
++    return {
++        ok: false,
++        reason: seen > 0
++            ? `${reason} (${eligible} of ${seen} file input(s) on the page accept this file)`
++            : reason,
++    };
++}
++
+ /** Attach documents to the active composer and verify new, ready attachment chips. */
+ export async function uploadChatGPTFiles(page, filePaths) {
+     const path = await import('node:path');
+@@ -2677,30 +2758,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
+     if (!prepared.ok) return prepared;
+     const names = prepared.paths.map(file => path.default.basename(file));
+     if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
+-    const target = requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
+-        ${buildComposerLocatorScript()}
+-        const composer = findComposer();
+-        const scope = composer?.closest('form');
+-        if (!scope) return { ok: false, reason: 'active composer form not found' };
+-        document.querySelectorAll('[data-opencli-file-input]').forEach(node => node.removeAttribute('data-opencli-file-input'));
+-        // A portal input is allowed only when it is the sole eligible input on the page.
+-        document.querySelectorAll('[data-opencli-file-scope]').forEach(node => node.removeAttribute('data-opencli-file-scope'));
+-        scope.setAttribute('data-opencli-file-scope', '1');
+-        const fileTypes = ${JSON.stringify(prepared.paths.map(file => ({ ext: path.default.extname(file).toLowerCase(), mime: mimeFromFilePath(file) })))};
+-        const acceptsFiles = node => {
+-            if (node.disabled || node.hasAttribute('capture') || (fileTypes.length > 1 && !node.multiple)) return false;
+-            const accept = (node.getAttribute('accept') || '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+-            return !accept.length || fileTypes.every(file => accept.some(type => type === '*/*' || type === file.ext || type === file.mime || type.endsWith('/*') && file.mime.startsWith(type.slice(0, -1))));
+-        };
+-        const local = Array.from(scope.querySelectorAll('input[type="file"]')).filter(acceptsFiles);
+-        const inputs = local.length ? local : Array.from(document.querySelectorAll('input[type="file"]'))
+-            .filter(node => acceptsFiles(node) && !node.closest('form, [role="dialog"], [data-project-home-sources-surface]'));
 -        if (inputs.length !== 1) return { ok: false, reason: 'file input is missing or ambiguous' };
 -        inputs[0].setAttribute('data-opencli-file-input', '1');
-+        if (inputs.length === 0) return { ok: false, reason: 'file input is missing' };
-+        // A page that shows more than one eligible file input is ordinary: the
-+        // composer keeps its own input, a re-render leaves a stale one behind,
-+        // and the file dialog keeps one of its own. Refusing to attach the
-+        // file killed the turn, and the turn was the only way the prompt could
-+        // reach the site, so the input is chosen instead of demanded: the one
-+        // the page still shows, and otherwise the first of them.
-+        const shown = inputs.filter(node => {
-+            if (node.closest('[hidden], [aria-hidden="true"]')) return false;
-+            const style = getComputedStyle(node);
-+            return style.display !== 'none' && style.visibility !== 'hidden';
-+        });
-+        (shown.length ? shown : inputs)[0].setAttribute('data-opencli-file-input', '1');
-         ${CHATGPT_ATTACHMENT_CARD_JS}
-         scope.querySelectorAll('[role="group"][aria-label], [data-composer-attachments] button[aria-label], [data-composer-attachments] [role="button"][aria-label]').forEach(node => attachmentCard(node, scope).setAttribute('data-opencli-existing-file', '1'));
-         return { ok: true };
-@@ -3697,3 +3708,42 @@ export async function getChatGPTImageAssets(page, urls) {
+-        ${CHATGPT_ATTACHMENT_CARD_JS}
+-        scope.querySelectorAll('[role="group"][aria-label], [data-composer-attachments] button[aria-label], [data-composer-attachments] [role="button"][aria-label]').forEach(node => attachmentCard(node, scope).setAttribute('data-opencli-existing-file', '1'));
+-        return { ok: true };
+-    })()`)), 'chatgpt file input targeting');
++    const target = await findChatGPTFileInput(page, prepared.paths);
+     if (!target.ok) return target;
+     let uploaded = false;
+     if (typeof page.setFileInput === 'function') {
+@@ -3697,3 +3755,42 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
