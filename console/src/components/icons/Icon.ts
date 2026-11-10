@@ -104,6 +104,16 @@ export const ICON_PATHS = {
     "M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"
   ],
   close: ["M18 6 6 18", "m6 6 12 12"],
+  // The tick that marks a chosen state, and the mark that says a link leaves
+  // the Console. Both are strokes on the same grid as everything else, so a
+  // checked box and an external link read as the same family as the close
+  // mark above rather than as two glyphs borrowed from a font.
+  check: ["M20 6 9 17l-5-5"],
+  externalLink: [
+    "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+    "M15 3h6v6",
+    "M10 14 21 3"
+  ],
   refresh: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
   spinner: ["M21 12a9 9 0 1 1-6.22-8.56"],
   play: ["m5 3 14 9-14 9V3z"],
@@ -248,6 +258,57 @@ export function Icon({
         : { role: "img", "aria-label": label })
     },
     ...ICON_PATHS[name].map((d) => React.createElement("path", { key: d, d }))
+  );
+}
+
+/**
+ * A word with an icon beside it.
+ *
+ * This is the one way the Console puts a mark next to a label, and it exists
+ * because the composition itself is a decision: the mark's size, the gap
+ * between it and the word, and the side it sits on. Written out at each call
+ * site, those three things drift -- a chevron at 12px in one row and 16px in
+ * the next, a gap of 1 in one place and 1.5 in another -- and a reader cannot
+ * tell a deliberate difference from a copy that was edited once and forgotten.
+ *
+ * The icon comes first or last by what it means, not by habit. A mark that
+ * points the way ("next", "opens in a new tab") follows the word, because the
+ * word is what the operator reads and says; a mark that qualifies the word
+ * ("this one is chosen") leads it.
+ *
+ * The icon is decorative: the word beside it is the accessible name, so the
+ * mark is hidden from assistive technology rather than announced a second
+ * time. A control whose *only* content is an icon does not come through here
+ * -- it takes `Icon` directly and names itself with `label`.
+ */
+export interface IconLabelProps {
+  /** The mark that stands for the action. */
+  readonly icon: IconName;
+  /** The word the operator reads. */
+  readonly label: string;
+  /** Which side of the word the mark sits on. */
+  readonly position?: "before" | "after";
+  /** The mark's size in pixels. */
+  readonly size?: number | undefined;
+  readonly className?: string | undefined;
+}
+
+export function IconLabel({
+  icon,
+  label,
+  position = "after",
+  size = 12,
+  className
+}: IconLabelProps): React.JSX.Element {
+  const mark = React.createElement(Icon, { name: icon, size });
+  return React.createElement(
+    "span",
+    {
+      className: `inline-flex items-center gap-1${className === undefined ? "" : ` ${className}`}`
+    },
+    ...(position === "before" ? [mark] : []),
+    label,
+    ...(position === "after" ? [mark] : [])
   );
 }
 

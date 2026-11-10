@@ -235,6 +235,31 @@ export function StatusDot({
   });
 }
 
+export interface LiveDotProps {
+  readonly className?: string | undefined;
+}
+
+/**
+ * A decorative dot for a live state.
+ *
+ * The icon set is a stroke set, so a dot drawn on that grid would be a ring
+ * rather than a mark, and a filled glyph borrowed from a font would be exactly
+ * the thing this product does not do. The Console's own answer is a CSS circle
+ * -- the same shape `StatusDot` draws -- minus the announcement: this dot sits
+ * beside a word that already says what it means ("Following live"), so naming
+ * it would only repeat it.
+ */
+export function LiveDot({
+  className
+}: LiveDotProps): React.JSX.Element {
+  return React.createElement("span", {
+    className: `inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent${
+      className === undefined ? "" : ` ${className}`
+    }`,
+    "aria-hidden": "true"
+  });
+}
+
 export function StatusBadge({
   status,
   label,
