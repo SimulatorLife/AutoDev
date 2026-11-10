@@ -1208,7 +1208,7 @@ holds the subagent roles (explorer, worker, validator, playtester), so a
 provider the operator enabled for subagents with no role of its own for that
 tier serves it: reading the tier's rank from the tier's own role alone left
 such a provider enabled for subagents and never asked, while the Console
-reported it as enabled for them. A tier the operator *did* speak for keeps
+reported it as enabled for them. A tier the operator _did_ speak for keeps
 that answer: `Default: Disabled` keeps the provider out of the default tier
 whatever its subagent role says.
 
@@ -2338,10 +2338,13 @@ single list; the route patterns and the site registry in
     `xhigh`, opencli's alias for it, because an id ending `-high` reads as an
     effort variant under Antigravity's id convention. The model is an account
     setting: the bridge runs `chatgpt model <level>` before a turn only when
-    the turn asks for a different level than it last selected. Switching
-    drives the composer's picker with native input, which needs the
-    browser's opencli window visible and uncovered ("Native input requires a
-    visible browser page").
+    the turn asks for a different level than it last selected, and only once
+    per bridge rather than once per turn. Switching drives the composer's
+    picker with native input, which needs the browser's opencli window
+    visible and uncovered ("Native input requires a visible browser page");
+    the patched adapter falls through to the site's own settings API when
+    the picker is out of reach, and a switch that still cannot be made
+    leaves the turn at the level the site has instead of failing it.
   - `opencli-gemini-<model>`: whatever `opencli gemini models` lists for the
     account (`3.8-flash`, `3.1-pro`, `4-argon-complex-tasks`, ...), read from
     the site by the bridge's `GET /v1/models` and kept five minutes; each
@@ -2871,7 +2874,7 @@ preference.
 ### Measuring a provider hop
 
 Affinity keeps a turn's tool results with the provider that asked for them. It
-does not keep the *agent* on one provider for the life of its session: the
+does not keep the _agent_ on one provider for the life of its session: the
 routing tiers, the cooldowns and the operator's own switches all move an agent
 from one provider to another, and when that happens the agent's work moved with
 it.
