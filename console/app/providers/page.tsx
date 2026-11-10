@@ -10,9 +10,7 @@ import {
   isControlFailure,
   readControlRefusal
 } from "../../src/lib/control-failure.ts";
-import {
-  controlApiFailureCode
-} from "../../src/lib/server/control-api.ts";
+import { controlApiFailureCode } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,

@@ -67,32 +67,36 @@ test(
   }
 );
 
-test("a caller may still state its own deadline for the workspace approval read", {
-  timeout: 30_000
-}, async () => {
-  const result = await fetchWorkspacePlaytestApproval(WORKSPACE_ID, CONFIG, {
-    maxRetries: 0,
-    timeoutMs: 200,
-    fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (!signal) return;
-        const abortError = new Error("This operation was aborted");
-        abortError.name = "AbortError";
-        signal.addEventListener("abort", () => reject(abortError), {
-          once: true
-        });
-      })) as typeof globalThis.fetch
-  });
+test(
+  "a caller may still state its own deadline for the workspace approval read",
+  {
+    timeout: 30_000
+  },
+  async () => {
+    const result = await fetchWorkspacePlaytestApproval(WORKSPACE_ID, CONFIG, {
+      maxRetries: 0,
+      timeoutMs: 200,
+      fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          const abortError = new Error("This operation was aborted");
+          abortError.name = "AbortError";
+          signal.addEventListener("abort", () => reject(abortError), {
+            once: true
+          });
+        })) as typeof globalThis.fetch
+    });
 
-  assert.equal(result.kind, "unreachable");
-  assert.equal(
-    result.kind === "unreachable" ? result.timedOut : undefined,
-    true,
-    "and it names the deadline rather than the service being down"
-  );
-  assert.ok(
-    PLAYTESTING_CONTROL_API_TIMEOUT_MS > 5000,
-    "the playtesting budget must outlast the generic Control API deadline"
-  );
-});
+    assert.equal(result.kind, "unreachable");
+    assert.equal(
+      result.kind === "unreachable" ? result.timedOut : undefined,
+      true,
+      "and it names the deadline rather than the service being down"
+    );
+    assert.ok(
+      PLAYTESTING_CONTROL_API_TIMEOUT_MS > 5000,
+      "the playtesting budget must outlast the generic Control API deadline"
+    );
+  }
+);

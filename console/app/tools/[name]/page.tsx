@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import React from "react";
 
 import { canonicalToolIdentity } from "../../../src/features/tools/tool-identity.ts";
-import { ToolUsagePanel } from "../../../src/features/tools/ToolUsagePanel.ts";
 import { ToolDetailView } from "../../../src/features/tools/ToolDetailView.ts";
+import { ToolUsagePanel } from "../../../src/features/tools/ToolUsagePanel.ts";
 import {
   catalogueDetailOutcome,
   type CatalogueObservation

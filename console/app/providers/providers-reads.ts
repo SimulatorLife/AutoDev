@@ -80,8 +80,7 @@ export interface ProvidersSurfaceReadsWithVersions extends ProvidersSurfaceReads
  * The reads of a surface that asked for the model catalog and the provider
  * CLI versions.
  */
-export interface ProvidersSurfaceReadsWithModelsAndVersions
-  extends ProvidersSurfaceReadsWithModels {
+export interface ProvidersSurfaceReadsWithModelsAndVersions extends ProvidersSurfaceReadsWithModels {
   readonly providerVersions: ControlApiResult<ControlApiProviderVersionsResponse>;
 }
 
@@ -142,23 +141,18 @@ export async function readProvidersSurface(
     ...controlOptions,
     timeoutMs: controlOptions.timeoutMs ?? PROVIDERS_CONTROL_API_TIMEOUT_MS
   };
-  const [
-    providers,
-    models,
-    modelDiscovery,
-    providerVersions,
-    runtime
-  ] = await Promise.all([
-    fetchProviders(config, budget),
-    includeModels === true
-      ? fetchModels(config, budget)
-      : Promise.resolve(null),
-    fetchProviderModelDiscovery(config, budget),
-    includeProviderVersions === true
-      ? fetchProviderVersions(config, budget)
-      : Promise.resolve(null),
-    fetchRuntime(config, budget)
-  ]);
+  const [providers, models, modelDiscovery, providerVersions, runtime] =
+    await Promise.all([
+      fetchProviders(config, budget),
+      includeModels === true
+        ? fetchModels(config, budget)
+        : Promise.resolve(null),
+      fetchProviderModelDiscovery(config, budget),
+      includeProviderVersions === true
+        ? fetchProviderVersions(config, budget)
+        : Promise.resolve(null),
+      fetchRuntime(config, budget)
+    ]);
   return {
     providers,
     models,

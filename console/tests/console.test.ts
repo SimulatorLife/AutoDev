@@ -199,9 +199,9 @@ import {
   PromptsView,
   ProviderDetailView,
   ProvidersView,
+  providerUsageView,
   resolveActiveTabId,
   resolveMemoryPage,
-  providerUsageView,
   resolveProviderStatus,
   SECTION_HEADING_CLASS,
   SkillsView,
@@ -212,8 +212,8 @@ import {
   TabNav,
   TAG_SHAPE,
   ToolDetailView,
-  toolUsageView,
   ToolsView,
+  toolUsageView,
   UsageView,
   withControlFailure,
   WorkspacesView
@@ -3769,7 +3769,7 @@ test("no column is narrower than its own header", () => {
           }
         ],
         approvals: new Map(),
-          revision: "a".repeat(64),
+        revision: "a".repeat(64),
         catalogStatus: "valid"
       })
     ),
@@ -20720,7 +20720,13 @@ function changedSelect(
       form:
         options.form === false
           ? null
-          : { requestSubmit: () => (submissions += 1) }
+          : {
+              // `requestSubmit()` returns nothing in the DOM, and the count is
+              // read through `submissions()` rather than through the call.
+              requestSubmit: () => {
+                submissions += 1;
+              }
+            }
     },
     submissions: () => submissions
   };
@@ -22706,6 +22712,22 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("app", "error.ts"),
       "Next.js route-level error boundary rendering the shared dark-mode error view with in-place retry."
+    ],
+    [
+      join("src", "features", "usage", "use-usage-telemetry.ts"),
+      "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
+    ],
+    [
+      join("src", "features", "providers", "ProviderUsagePanel.ts"),
+      "Reads one provider's usage aggregation from the Console's own Usage route and renders only what that route confirmed; the provider page's own reads stay server-owned."
+    ],
+    [
+      join("src", "features", "tools", "ToolUsagePanel.ts"),
+      "Reads one tool's usage aggregation from the Console's own Usage route and renders only what that route confirmed; the tool page's own reads stay server-owned."
+    ],
+    [
+      join("src", "features", "workspaces", "WorkspaceRequestTelemetry.ts"),
+      "Reads the workspace request breakdown once for the whole table from the Console's own Usage route; the workspaces page's own reads stay server-owned."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

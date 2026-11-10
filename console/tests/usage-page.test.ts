@@ -4,6 +4,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import UsagePage from "../app/usage/page.ts";
+import { clearUsageTelemetryCacheForTests } from "../src/lib/server/usage-telemetry.ts";
 
 const usageToken = "usage-page-test-token";
 const traceSpanId = "0123456789abcdef";
@@ -103,12 +104,17 @@ function withUsageConfig(): () => void {
   const oldFetch = globalThis.fetch;
   process.env.AUTODEV_OPENLIT_USAGE_TOKEN = usageToken;
   process.env.AUTODEV_OPENLIT_USAGE_URL = "http://openlit.test";
+  // The Usage telemetry cache is process-wide, so a read that a previous test
+  // answered would otherwise answer this one -- and this file's tests each
+  // stub a different response for the same selection.
+  clearUsageTelemetryCacheForTests();
   return () => {
     if (oldToken === undefined) delete process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
     else process.env.AUTODEV_OPENLIT_USAGE_TOKEN = oldToken;
     if (oldUrl === undefined) delete process.env.AUTODEV_OPENLIT_USAGE_URL;
     else process.env.AUTODEV_OPENLIT_USAGE_URL = oldUrl;
     globalThis.fetch = oldFetch;
+    clearUsageTelemetryCacheForTests();
   };
 }
 

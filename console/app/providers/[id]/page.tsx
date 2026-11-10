@@ -2,14 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import {
-  ProviderDetailView
-} from "../../../src/features/providers/ProviderDetailView.ts";
+import { ProviderDetailView } from "../../../src/features/providers/ProviderDetailView.ts";
 import { ProviderUsagePanel } from "../../../src/features/providers/ProviderUsagePanel.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
-import {
-  controlApiFailureCode
-} from "../../../src/lib/server/control-api.ts";
+import { controlApiFailureCode } from "../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
