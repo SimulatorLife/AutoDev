@@ -1196,9 +1196,21 @@ request depends on the tier it routes through
 
 - `orchestrator` governs the orchestrator tier;
 - `default` and `smart` govern the tier of the same name;
-- `subagent` governs every other subagent tier (such as `browser-tester`), and
-  its `Disabled` switches the provider off for all subagent traffic, direct
-  concrete requests included.
+- `subagent` governs the traffic of every subagent tier the operator has not
+  given a role of its own (such as `browser-tester`), and its `Disabled`
+  switches the provider off for all subagent traffic, direct concrete requests
+  included.
+
+One assignment governs both a provider's rank in a tier and whether it is
+enabled for the role, and a tier the operator has said nothing about is
+governed by the role that governs the traffic through it. The `default` tier
+holds the subagent roles (explorer, worker, validator, playtester), so a
+provider the operator enabled for subagents with no role of its own for that
+tier serves it: reading the tier's rank from the tier's own role alone left
+such a provider enabled for subagents and never asked, while the Console
+reported it as enabled for them. A tier the operator *did* speak for keeps
+that answer: `Default: Disabled` keeps the provider out of the default tier
+whatever its subagent role says.
 
 `providerGroups` in `config/model-routing.json` is only the default ranking.
 `RoutingPolicy.effectiveProviderGroups` overlays the operator's assignments: a
@@ -1210,6 +1222,13 @@ additionally admits only providers whose execution-contract `delegation` is
 not `none`, however they are ranked. `GET /control/providers` (`tiers`,
 `priorities`) and the router status report these effective groups, so the
 Console's Routing priority panel shows the order in force.
+
+A provider that cannot serve a tier is dropped before the chain runs, without
+a word: it is switched off, its role is disabled, or its model is. The
+refusal that follows names the providers the chain tried and, since
+`RoutingPolicy.excludedProviders`, the ones it never asked and why -- an
+operator who had enabled a provider for the role could otherwise not see why
+it was never used.
 
 Before this, the priorities were persisted and reported but never read:
 order came from the config alone, and the `default`/`smart` assignments
@@ -2326,8 +2345,8 @@ single list; the route patterns and the site registry in
   - `opencli-gemini-<model>`: whatever `opencli gemini models` lists for the
     account (`3.8-flash`, `3.1-pro`, `4-argon-complex-tasks`, ...), read from
     the site by the bridge's `GET /v1/models` and kept five minutes; each
-    turn passes `--model`. opencli 2.0.2 is patched
-    (`patches/@jackwener__opencli@2.0.2.patch`) so `--model` accepts every
+    turn passes `--model`. opencli 2.0.3 is patched
+    (`patches/@jackwener__opencli@2.0.3.patch`) so `--model` accepts every
     id its own `models` lists (it rejected `4-argon-complex-tasks`) and so a
     selection whose read-back is empty is not reported as failed: the picker
     now shows only the variant ("Flash"), never the version.
@@ -2589,7 +2608,40 @@ single list; the route patterns and the site registry in
 - **Reply normalisation.** Each site spec's `reply` strips what the adapter
   adds around the model's text (opencli's `gemini ask` prefixes every reply
   with `💬 `), so the decoration never reaches Codex.
-- **Sites.** MiniMax is not served: opencli 2.0.2's `minimax` adapter has only
+- **A turn that never reached the site is a refusal, not an outage.** A site
+  can fail before the prompt reaches it: the tab had no composer, the page
+  showed no file input, the site session was held by another command. The
+  provider is healthy in every one of those cases and holds nothing of the
+  turn. The bridge reports them as the typed refusal the router already knows
+  (`provider_request_unsupported`), in the plain path and in the stream, and
+  the router reads the error a failed response carries: a refusal leaves the
+  provider serving, and only a provider that failed the request is cooled
+  down. Cooling a provider for a browser tab that was not ready yet pushed
+  every other agent off a working route, and the session ended with a refusal
+  that named none of the providers that were excluded.
+- **A daemon of another version is replaced, not fatal.** opencli's daemon is
+  shared machine-wide on one port, so the CLI the repository pins can meet the
+  daemon a global install left running. The CLI's own remedy is to stop the
+  daemon by hand; the bridge owns the CLI it runs, so it stops the daemon and
+  runs the command again instead of failing the turn.
+- **The prompt a site is given is bounded.** A site that takes its prompt on
+  the command line takes at most 100 KB, and one that takes it as an
+  attachment is bounded the same way for the model: a root orchestrator's tool
+  reference carried 280 KB of MCP declarations and took the model 85 seconds
+  to answer. The reference is compressed -- the MCP tools listed by name and
+  summary, then by name -- and the built-in tools keep their declarations. The
+  conversation itself is never cut. The nested functions a code-mode tool
+  exposes are named where the model looks first: a model that could not find
+  `multi_agent_v1__spawn_agent` in a ten-kilobyte description reported the
+  delegation tools as unavailable.
+- **One version.** opencli is patched, so the version appears in the Runtime
+  manifest, the pnpm workspace's `patchedDependencies` key, the patch file's
+  name and the lockfile. `runtime/src/shared/opencli-version.ts` is the one
+  place it is written down; `node runtime/src/cli/opencli-version.ts --check`
+  refuses to leave the four apart (`--write` puts them back together), and
+  `tests/opencli-version.test.ts` asserts the repository agrees, including
+  that the installed package is the pinned one.
+- **Sites.** MiniMax is not served: opencli 2.0.3's `minimax` adapter has only
   a `music` command, no chat. Adding a site is one `OPENCLI_PROVIDER_SITES`
   entry plus its `OPENCLI_SITE_SPECS` entry (turn commands and model list),
   route, catalog, and contract entry; the load-time check refuses a site

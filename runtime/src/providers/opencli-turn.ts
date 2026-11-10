@@ -127,7 +127,7 @@ const JSON_FORMAT = ["-f", "json"] as const;
 
 /**
  * ChatGPT's selectable models and intelligence levels, as `opencli chatgpt
- * model` names them (opencli 2.0.2's `CHATGPT_MODEL_TARGETS`; the command also
+ * model` names them (opencli 2.0.3's `CHATGPT_MODEL_TARGETS`; the command also
  * takes aliases such as `thinking` for `advanced`, which are not separate
  * models). ChatGPT has no model-list command, so this is the list.
  */
@@ -202,7 +202,7 @@ function firstRow(rows: JsonRecord[]): JsonRecord {
 }
 
 /**
- * Every served site's adapter contract, checked against opencli 2.0.2.
+ * Every served site's adapter contract, checked against opencli 2.0.3.
  *
  * Both sites continue a conversation, so a turn after the first sends only
  * what the site has not seen. Without that, every request re-sends the whole

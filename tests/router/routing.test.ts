@@ -662,6 +662,105 @@ test("a disabled tier assignment removes the provider from that tier only", () =
   );
 });
 
+test("a provider enabled for subagents serves the tier their subagents run in", () => {
+  // The `default` tier holds the subagent roles (explorer, worker, validator),
+  // and the operator's `subagent` role is the one that says "use this
+  // provider for subagent work". Reading the tier's rank from the tier's own
+  // role alone left such a provider enabled for subagents and never asked:
+  // the Console reported it as enabled for them and no subagent ever reached
+  // it.
+  const policy = assignmentTestPolicy();
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
+    priority: 1,
+    model: "opencli-gemini-3.8-flash"
+  });
+  // A priority is a group, not a place in front of the group: P1 is the tier's
+  // first group, which the configured providers are in as well.
+  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
+    ["claude", "opencli-gemini"],
+    ["copilot"]
+  ]);
+  assert.deepEqual(
+    new Set(
+      policy
+        .roleCandidates("explorer", seeded(1))
+        .map(({ provider }) => provider)
+    ),
+    new Set(["claude", "copilot", "opencli-gemini"])
+  );
+  // The tier's own role still governs it when the operator sets one.
+  policy.setProviderAssignment("opencli-gemini", "default", {
+    priority: 3,
+    model: "opencli-gemini-3.8-flash"
+  });
+  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
+    ["claude"],
+    ["copilot"],
+    ["opencli-gemini"]
+  ]);
+  // And a role disabled for the tier keeps the provider out of it, while the
+  // subagent role still governs the tiers that have no role of their own.
+  policy.setProviderAssignment(
+    "opencli-gemini",
+    "default",
+    DISABLED_ASSIGNMENT
+  );
+  assert.equal(
+    policy
+      .effectiveProviderGroups("default", "subagent")
+      .flat()
+      .includes("opencli-gemini"),
+    false
+  );
+  assert.ok(
+    policy
+      .effectiveProviderGroups("browser-tester", "subagent")
+      .flat()
+      .includes("opencli-gemini")
+  );
+});
+
+test("the providers a tier cannot use are named, and why", () => {
+  // A provider that is switched off, or disabled for the role, never becomes
+  // a candidate, and the refusal that follows named only the providers that
+  // were tried. An operator who had enabled a provider for the role could not
+  // see why it was never asked.
+  const policy = assignmentTestPolicy();
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
+    priority: 1,
+    model: "opencli-gemini-3.8-flash"
+  });
+  assert.deepEqual(policy.excludedProviders("default", "subagent"), []);
+  policy.setProviderAssignment(
+    "opencli-gemini",
+    "subagent",
+    DISABLED_ASSIGNMENT
+  );
+  assert.deepEqual(policy.excludedProviders("default", "subagent"), [
+    { provider: "opencli-gemini", reason: "its subagent role is disabled" }
+  ]);
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
+    priority: 1,
+    model: "opencli-gemini-3.8-flash"
+  });
+  policy.setProviderAssignment(
+    "opencli-gemini",
+    "default",
+    DISABLED_ASSIGNMENT
+  );
+  assert.deepEqual(policy.excludedProviders("default", "subagent"), [
+    { provider: "opencli-gemini", reason: "its default role is disabled" }
+  ]);
+  // A provider the operator never configured is not excluded from a tier: it
+  // was never in it.
+  assert.deepEqual(
+    policy
+      .excludedProviders("default", "subagent")
+      .filter(({ provider }) => provider === "minimax"),
+    []
+  );
+});
+
 test("the orchestrator tier admits only providers that can delegate, however they are ranked", (t) => {
   // Every shipped provider can delegate; this contract says MiniMax cannot.
   t.after(useNonDelegatingContract("minimax"));

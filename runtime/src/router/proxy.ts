@@ -2145,7 +2145,8 @@ export function exhaustionBody({
   model,
   requestId,
   lastResortAttempts,
-  deadlineReached
+  deadlineReached,
+  excluded
 }: {
   subject: string;
   summary: CooldownSummary[];
@@ -2155,6 +2156,8 @@ export function exhaustionBody({
   requestId: string;
   lastResortAttempts: number;
   deadlineReached: boolean;
+  /** The providers that never became candidates, and why. */
+  excluded?: ReadonlyArray<{ provider: string; reason: string }>;
 }): Record<string, unknown> {
   const now = Date.now();
   const retryAfterMs = summary.reduce(
@@ -2176,6 +2179,13 @@ export function exhaustionBody({
   const described = summary.map((entry) =>
     describeCandidate(entry, seen.get(entry.provider), now)
   );
+  // The providers that never became candidates are named too: a refusal that
+  // lists only the providers it tried reads as though the others had never
+  // been configured, and an operator who had enabled one for the role could
+  // not see why it was never asked.
+  const notAsked = (excluded ?? []).map(
+    (entry) => `${entry.provider}: ${entry.reason}`
+  );
   const action = everyCandidateMisconfigured
     ? "fix_configuration"
     : noneCanServe
@@ -2196,7 +2206,7 @@ export function exhaustionBody({
       ? `No candidate can serve ${subject}.`
       : `No available provider completed ${subject}.`;
   return errorBody(
-    `${reason} ${described.join("; ")}. ${guidance}`,
+    `${reason} ${[...described, ...notAsked].join("; ")}. ${guidance}`,
     "router_provider_exhausted",
     {
       code: "router_provider_exhausted",
@@ -2218,6 +2228,7 @@ export function exhaustionBody({
         selectionDeadlineReached: deadlineReached,
         providers: summary,
         failures,
+        excluded: excluded ?? [],
         now: new Date(now).toISOString()
       }
     }
@@ -3997,6 +4008,16 @@ function finalizeFallbackFailure(
   // be refused again.
   const observed = failures.observed;
   const noneCanServe = noCandidateCanServe(summary, observed);
+  // The providers the operator configured that this request never asked: they
+  // are named in the refusal, so a provider that was switched off or disabled
+  // for the role does not look like one that was never configured.
+  const tier =
+    ctx.providerRole === "orchestrator"
+      ? ROUTING_CONFIG.orchestrator.tier
+      : ROUTING_POLICY.tierForRole(ctx.role);
+  const excluded = tier
+    ? ROUTING_POLICY.excludedProviders(tier, ctx.providerRole)
+    : [];
   sendJson(
     response,
     exhaustedByUsage(summary, observed) || noneCanServe ? 400 : 503,
@@ -4008,7 +4029,8 @@ function finalizeFallbackFailure(
       model: ctx.modelName,
       requestId: ctx.requestId,
       lastResortAttempts,
-      deadlineReached
+      deadlineReached,
+      excluded
     }),
     exhaustionHeaders({ summary, observed, requestId: ctx.requestId })
   );

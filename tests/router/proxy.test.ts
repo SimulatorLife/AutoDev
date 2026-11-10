@@ -38,7 +38,8 @@ import {
 import {
   noteOrchestratorSession,
   resetSubagentTelemetry,
-  subagentProviderForSession} from "@simulatorlife/autodev-runtime/router/subagents";
+  subagentProviderForSession
+} from "@simulatorlife/autodev-runtime/router/subagents";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
@@ -1297,6 +1298,49 @@ test("a route that refused the request is named as such, not as a provider that 
   );
 });
 
+test("a refusal names the providers that were never asked, and why", () => {
+  // A provider that is switched off, or disabled for the role, never becomes
+  // a candidate, and the refusal named only the providers that were tried:
+  // an operator who had enabled one for the role could not see why it was
+  // never asked.
+  const summary: CooldownSummary[] = [
+    {
+      provider: "minimax",
+      model: "MiniMax-M3",
+      state: "transient",
+      failureClass: "quota_exhausted",
+      resetsAt: null,
+      retryAfterMs: 30_000,
+      detail: null
+    }
+  ];
+  const body = exhaustionBody({
+    subject: "role explorer",
+    summary,
+    failures: ["minimax: quota exhausted"],
+    observed: new Map([["minimax", "quota_exhausted"]]),
+    model: "autodev/explorer",
+    requestId: "req-excluded",
+    lastResortAttempts: 0,
+    deadlineReached: false,
+    excluded: [
+      {
+        provider: "opencli-chatgpt",
+        reason: "its subagent role is disabled"
+      }
+    ]
+  });
+  const message = (body as any).error.message as string;
+  assert.match(message, /minimax: quota_exhausted/u);
+  assert.match(message, /opencli-chatgpt: its subagent role is disabled/u);
+  assert.deepEqual((body as any).error.details.excluded, [
+    {
+      provider: "opencli-chatgpt",
+      reason: "its subagent role is disabled"
+    }
+  ]);
+});
+
 test("a route that refused does not make a request another route could serve un-retryable", () => {
   // Codex was out of usage; the two routes that could have served the request
   // refused it. Codex will serve it once its window resets, so the request
@@ -1470,7 +1514,6 @@ test(
   }
 );
 
-
 test(
   "proxyRoleResponse records subagent session and sticks to that provider across multi-turn requests",
   { concurrency: false },
@@ -1515,7 +1558,9 @@ test(
         null,
         session
       );
-      const responseCalls1 = contactedUrls.filter((u) => u.endsWith("/responses"));
+      const responseCalls1 = contactedUrls.filter((u) =>
+        u.endsWith("/responses")
+      );
       assert.equal(responseCalls1.length, 1);
       const firstUrl = responseCalls1[0];
       const firstProvider = subagentProviderForSession(
@@ -1548,7 +1593,9 @@ test(
         null,
         session
       );
-      const responseCalls2 = contactedUrls.filter((u) => u.endsWith("/responses"));
+      const responseCalls2 = contactedUrls.filter((u) =>
+        u.endsWith("/responses")
+      );
       assert.equal(responseCalls2.length, 1);
       assert.equal(
         responseCalls2[0],

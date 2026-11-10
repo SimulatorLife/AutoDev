@@ -188,14 +188,16 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     provider: "opencli-chatgpt",
     pattern: OPENCLI_CHATGPT_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4004/v1",
-    healthUrl: "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
+    healthUrl:
+      "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
     envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
   },
   {
     provider: "opencli-gemini",
     pattern: OPENCLI_GEMINI_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4004/v1",
-    healthUrl: "http://127.0.0.1:4004/health/liveliness?provider=opencli-gemini",
+    healthUrl:
+      "http://127.0.0.1:4004/health/liveliness?provider=opencli-gemini",
     envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
   }
 ];
@@ -1086,20 +1088,45 @@ export class RoutingPolicy {
    * The Console assigns each provider four roles. `orchestrator` governs the
    * orchestrator tier. `default` and `smart` are routing roles that govern the
    * tier of the same name. `subagent` is the agent execution role: it governs
-   * every other subagent tier (such as `browser-tester`), and its `disabled`
-   * also switches the provider off for all subagent traffic -- which
-   * `isProviderEnabledForRole` already enforces.
+   * the traffic of every subagent tier the operator has not given a role of
+   * its own (such as `browser-tester`), and its `disabled` also switches the
+   * provider off for all subagent traffic -- which `isProviderEnabledForRole`
+   * already enforces.
+   *
+   * A tier the operator has said nothing about is governed by the role that
+   * governs the traffic through it, so a provider the operator enabled for
+   * subagents serves the tier their subagents run in.
+   *
+   * One assignment governs both the rank and the enablement. Reading the rank
+   * from the tier's role and the enablement from the `subagent` role made the
+   * two disagree: a provider whose subagent role was disabled was dropped
+   * from every tier without a word, and a provider the operator had enabled
+   * for subagents never reached the tier their subagents run in -- while the
+   * Console reported it as enabled for them.
    */
   tierAssignment(
     provider: string,
     tier: string,
     role: ProviderRole
   ): ProviderRoleAssignment | undefined {
-    if (role === "orchestrator")
-      return this.assignmentFor(provider, "orchestrator");
-    if (tier === "default" || tier === "smart")
-      return this.assignmentFor(provider, tier);
-    return this.assignmentFor(provider, "subagent");
+    return this.assignmentFor(provider, this.governingRole(provider, tier, role));
+  }
+
+  /**
+   * The role whose assignment governs a provider on a tier.
+   *
+   * The tier's own role governs it when the operator set one; the role that
+   * governs the traffic through the tier governs it otherwise.
+   */
+  private governingRole(
+    provider: string,
+    tier: string,
+    role: ProviderRole
+  ): ProviderRole {
+    if (role === "orchestrator") return "orchestrator";
+    const tierRole = tier === "default" || tier === "smart" ? tier : null;
+    if (tierRole && this.assignmentFor(provider, tierRole)) return tierRole;
+    return "subagent";
   }
 
   /**
@@ -1202,6 +1229,69 @@ export class RoutingPolicy {
       }
     }
     return { disabled, cannotDelegate, servable };
+  }
+
+  /**
+   * The providers a tier cannot use, and why each one is out.
+   *
+   * A provider that is switched off, whose governing role is disabled, or
+   * whose model is switched off never becomes a candidate: it is dropped
+   * before the chain runs, without a word. The chain's refusal then names
+   * only the providers it tried, which reads as though the others had never
+   * been configured -- and an operator who had enabled a provider for a role
+   * could not see why it was never asked.
+   *
+   * Only providers the operator has configured are named. A provider that
+   * belongs to no tier is not excluded from it; it was never in it.
+   */
+  excludedProviders(
+    tier: string,
+    role: ProviderRole
+  ): Array<{ provider: string; reason: string }> {
+    const excluded: Array<{ provider: string; reason: string }> = [];
+    const servable = new Set(this.providerPriority(tier, () => 0, role));
+    for (const provider of this.providerIds()) {
+      if (servable.has(provider)) continue;
+      const assignments = this.roleAssignments.get(provider) ?? {};
+      if (Object.keys(assignments).length === 0) continue;
+      if (!this.isProviderEnabled(provider)) {
+        excluded.push({
+          provider,
+          reason: "the provider is switched off"
+        });
+        continue;
+      }
+      const governing = this.tierAssignment(provider, tier, role);
+      const governingRole = this.governingRole(provider, tier, role);
+      if (governing?.priority === "disabled") {
+        excluded.push({
+          provider,
+          reason: `its ${governingRole} role is disabled`
+        });
+        continue;
+      }
+      const roleAssignment = this.assignmentFor(provider, role);
+      if (roleAssignment?.priority === "disabled") {
+        excluded.push({
+          provider,
+          reason: `its ${role} role is disabled`
+        });
+        continue;
+      }
+      const model = governing?.model ?? this.configuredModel(provider, tier);
+      if (model && !this.isModelEnabled(model)) {
+        excluded.push({
+          provider,
+          reason: `its model ${model} is switched off`
+        });
+        continue;
+      }
+      excluded.push({
+        provider,
+        reason: "it has no priority for this tier"
+      });
+    }
+    return excluded;
   }
 
   roleForModel(model: unknown): string | null {
