@@ -30,6 +30,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_SITES,
   type OpencliSite
@@ -239,8 +241,27 @@ export const OPENCLI_SITE_SPECS: Readonly<
     attachesPrompt: true,
     models: () => Promise.resolve([...CHATGPT_MODELS]),
     turn: async (invocation, exec) => {
-      if (invocation.selectModel)
-        await exec(["chatgpt", "model", invocation.siteModel, ...JSON_FORMAT]);
+      if (invocation.selectModel) {
+        try {
+          await exec([
+            "chatgpt",
+            "model",
+            invocation.siteModel,
+            ...JSON_FORMAT
+          ]);
+        } catch (error) {
+          // The site's intelligence level is a preference, not the turn. The
+          // picker needs a visible page, so a switch fails whenever the tab
+          // is in the background -- which is how a machine runs when nobody
+          // is watching it -- and a turn must not die of that: the site
+          // keeps the level it has, the way Gemini's does when its model
+          // picker is out of reach. A failure here is not the provider
+          // being broken, and must not be reported as one.
+          writeErrorLine(
+            `opencli chatgpt could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
+          );
+        }
+      }
       const reply = replyFromRow(
         firstRow(
           await exec([

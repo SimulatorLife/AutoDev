@@ -46,6 +46,10 @@ async function chatgptAdapter(): Promise<{
     page: unknown,
     filePaths: readonly string[]
   ) => Promise<UploadResult>;
+  selectChatGPTModel: (
+    page: unknown,
+    model: string
+  ) => Promise<{ Status: string; Model: string }>;
 } | null> {
   let entry: string;
   try {
@@ -67,6 +71,10 @@ async function chatgptAdapter(): Promise<{
       page: unknown,
       filePaths: readonly string[]
     ) => Promise<UploadResult>;
+    selectChatGPTModel: (
+      page: unknown,
+      model: string
+    ) => Promise<{ Status: string; Model: string }>;
   };
 }
 
@@ -160,5 +168,97 @@ test("a page that never shows a file input says what it saw", async () => {
     );
   } finally {
     file.cleanup();
+  }
+});
+
+/**
+ * A page whose tab is not the visible one: the browser can read it, but it
+ * cannot click it.
+ */
+function fakeBackgroundTab(before: string, after: string) {
+  const calls = { nativeClick: 0, api: 0 };
+  let model = before;
+  const page = {
+    async evaluate(script: string): Promise<unknown> {
+      if (script.includes("ambiguousReasoning"))
+        return { model, label: model, ambiguousReasoning: false };
+      if (script.includes("hasComposer"))
+        return { hasComposer: true, isLoggedIn: true, hasLoginGate: false };
+      if (script.includes("aria-expanded"))
+        return { found: true, open: false, x: 10, y: 10 };
+      if (script.includes("oai-last-model-config")) {
+        // The site's own settings API was told the level.
+        model = after;
+        return true;
+      }
+      if (script.includes("window.location.href"))
+        return "https://chatgpt.com/c/6af38b5e-0900-83e9-b45a-b06db95875e1";
+      return true;
+    },
+    async nativeClick(): Promise<void> {
+      calls.nativeClick += 1;
+      throw new Error(
+        "Native input requires a visible browser page; input was not dispatched."
+      );
+    },
+    async nativeKeyPress(): Promise<void> {
+      throw new Error(
+        "Native input requires a visible browser page; input was not dispatched."
+      );
+    },
+    async getCookies(): Promise<
+      Array<{ name: string; value: string; domain: string }>
+    > {
+      return [
+        {
+          name: "__Secure-next-auth.session-token",
+          value: "session-token",
+          domain: "chatgpt.com"
+        }
+      ];
+    },
+    async goto(): Promise<void> {},
+    async wait(): Promise<void> {},
+    async sleep(): Promise<void> {}
+  };
+  return { page, calls };
+}
+
+test("the model is switched through the site's own API when the picker cannot be clicked", async () => {
+  const adapter = await chatgptAdapter();
+  if (adapter === null) return;
+  const { selectChatGPTModel } = adapter;
+  const site = fakeBackgroundTab("balanced", "advanced");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (url.includes("/api/auth/session"))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ accessToken: "access-token" })
+      };
+    site.calls.api += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true })
+    };
+  }) as typeof globalThis.fetch;
+  try {
+    const result = await selectChatGPTModel(site.page, "advanced");
+    assert.equal(result.Status, "Success");
+    assert.equal(
+      site.calls.nativeClick,
+      1,
+      "the picker was tried before the site's own API"
+    );
+    assert.equal(
+      site.calls.api,
+      1,
+      "the level was set through the site's settings API"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

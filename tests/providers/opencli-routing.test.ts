@@ -716,6 +716,39 @@ test("a turn that could not get the site's tab is refused, not an outage", async
   );
 });
 
+test("a turn whose ChatGPT model could not be switched still runs", async () => {
+  // The site's intelligence level is a preference, not the turn. The picker
+  // needs a visible page, so the switch fails whenever the tab is in the
+  // background -- which is how a machine runs when nobody is watching it --
+  // and the turn must not die of that, nor cool the provider down for it.
+  let switched = 0;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (request.args[1] === "model") {
+          switched += 1;
+          throw new OpencliCommandError(
+            "Native input requires a visible browser page; input was not dispatched.",
+            "COMMAND_EXEC",
+            1
+          );
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnRequest("switch", MODEL.chatgpt, "switch-thread")
+      });
+      assert.equal(response.status, 200);
+      assert.equal(switched, 1, "the model switch was attempted");
+    }
+  );
+});
+
 test("a turn that failed before the prompt was sent is run again", async () => {
   let attempts = 0;
   await withBridge(

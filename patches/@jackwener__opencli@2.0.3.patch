@@ -70,10 +70,31 @@ index 976208d..8912e38 100644
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT');
 diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
-index 05a28f7..9a2efdf 100644
+index 05a28f7..f5d55cb 100644
 --- a/clis/chatgpt/utils.js
 +++ b/clis/chatgpt/utils.js
-@@ -2670,6 +2670,87 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
+@@ -691,7 +691,19 @@ export async function selectChatGPTModel(page, model) {
+     if (before.model === target.key) {
+         return { Status: 'Already selected', Model: target.label };
+     }
+-    if (await selectModernChatGPTIntelligence(page, target)) {
++    // The picker needs a visible page: a tab in the background cannot be
++    // clicked, and a machine nobody is watching runs exactly that way. The
++    // site can also be told its level through its own settings API, which
++    // needs no visible page, so the native path being out of reach is not
++    // fatal -- the API path below does the same thing. A picker that is
++    // there but broken is still an error.
++    let selected = false;
++    try {
++        selected = await selectModernChatGPTIntelligence(page, target);
++    } catch (error) {
++        if (!/Native input requires a visible browser page/i.test(String(error?.message || error))) throw error;
++    }
++    if (selected) {
+         return { Status: 'Success', Model: target.label };
+     }
+     const apiResult = await setChatGPTModelConfig(page, target);
+@@ -2670,6 +2682,87 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
      };
  `;
  
@@ -161,7 +182,7 @@ index 05a28f7..9a2efdf 100644
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2758,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
+@@ -2677,30 +2770,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -193,7 +214,7 @@ index 05a28f7..9a2efdf 100644
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3755,42 @@ export async function getChatGPTImageAssets(page, urls) {
+@@ -3697,3 +3767,42 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }

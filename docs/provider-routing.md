@@ -2512,6 +2512,16 @@ single list; the route patterns and the site registry in
   task and the most recent turns are what the next call needs, and the model
   is told that the rest is gone rather than left to find a conversation with
   a hole in it.
+- **The site's intelligence level cannot fail the turn.** ChatGPT's model
+  picker is opened with a native click, and a tab in the background cannot be
+  clicked: the switch failed with "Native input requires a visible browser
+  page" whenever the operator was not looking at the tab, which is how a
+  machine runs when nobody is watching it. The patched adapter falls through
+  to the site's own settings API, which needs no visible page, and the
+  bridge treats a switch that still cannot be made as what it is -- a
+  preference the site could not take, not a broken provider: the turn runs at
+  the level the site has, the way Gemini's does when its model picker is out
+  of reach.
 - **Interrupts, steering and queued messages.** An interrupted turn records
   nothing, so the agent's ledger entry still names its chat; Codex's next
   request (the interrupted message, its `<turn_aborted>` marker and the new
