@@ -635,6 +635,27 @@ function unavailableGitChanges(
 }
 
 /**
+ * A counted Git metric.
+ *
+ * The Git widgets answer from a metric query, and their `observed` flag
+ * means "the query matched a data point" rather than "the source answered
+ * the question". The two are the same for a widget whose query always
+ * returns a row, and they are not the same for a metric query: a query that
+ * succeeded and matched nothing is a count of zero, not an absence of
+ * evidence. Reading it as absent sends the reader after a capture the
+ * source made and reported as empty -- and it is why a scoped view whose
+ * filter matched no commit rendered every Git panel as unobserved.
+ *
+ * A query that did not succeed is the unobserved case, and it is the only
+ * one.
+ */
+function gitCount(widget: OpenLITWidgetResult | undefined): number | null {
+  if (!widget?.querySucceeded) return null;
+  if (!widget.observed || widget.rows.length === 0) return 0;
+  return observedMetric(widget);
+}
+
+/**
  * One bounded breakdown of counts by category.
  *
  * An empty breakdown is only read as "no rows at all" when the total it
@@ -729,7 +750,7 @@ function gitChangeMetrics(
   }
 
   const commitsWidget = widgets.get("git-commits");
-  const commits = observedCount(commitsWidget);
+  const commits = gitCount(commitsWidget);
   const status: UsageGitChangeMetrics["status"] =
     commitsWidget?.querySucceeded === true
       ? commits === null
@@ -760,17 +781,15 @@ function gitChangeMetrics(
     partial: partialCommits === null ? null : partialCommits > 0,
     breakdownsPartial,
     commits,
-    filesChanged: observedCount(widgets.get("git-files-changed")),
-    filesAdded: observedCount(widgets.get("git-files-added")),
-    filesDeleted: observedCount(widgets.get("git-files-deleted")),
+    filesChanged: gitCount(widgets.get("git-files-changed")),
+    filesAdded: gitCount(widgets.get("git-files-added")),
+    filesDeleted: gitCount(widgets.get("git-files-deleted")),
     linesAdded:
-      partialCommits === null
-        ? null
-        : observedCount(widgets.get("git-lines-added")),
+      partialCommits === null ? null : gitCount(widgets.get("git-lines-added")),
     linesRemoved:
       partialCommits === null
         ? null
-        : observedCount(widgets.get("git-lines-removed")),
+        : gitCount(widgets.get("git-lines-removed")),
     partialCommits,
     commitsByWorkspace: breakdownRows(
       widgets.get("git-commits-by-workspace"),

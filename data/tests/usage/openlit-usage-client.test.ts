@@ -590,6 +590,12 @@ test("OpenLITUsageClient does not claim compaction metrics for provider or skill
 });
 
 test("Git Usage distinguishes a source-confirmed zero from no observed metric", async () => {
+  // The Git widgets answer from a metric query, and their `observed` flag
+  // means "the query matched a data point" rather than "the source answered
+  // the question". A query that succeeded and matched nothing is a count of
+  // zero, and reading it as an absence of evidence is what made a scoped
+  // view whose filter matched no commit render every Git panel as
+  // unobserved.
   const noObservation = structuredClone(partialPayload);
   const commits = noObservation.widgets.find(
     (widget) => widget.key === "git-commits"
@@ -613,10 +619,40 @@ test("Git Usage distinguishes a source-confirmed zero from no observed metric", 
     serviceToken: "secret",
     fetchImpl: async () => response(noObservation)
   });
-  const unobserved = await client.query(supportedSelection);
+  const matchedNothing = await client.query(supportedSelection);
+  assert.equal(matchedNothing.kind, "ok");
+  if (matchedNothing.kind === "ok") {
+    assert.equal(matchedNothing.data.metrics.gitChanges.status, "observed");
+    assert.equal(matchedNothing.data.metrics.gitChanges.commits, 0);
+    assert.deepEqual(
+      matchedNothing.data.metrics.gitChanges.commitsByWorkspace,
+      []
+    );
+  }
+
+  // A query the source could not answer is the unobserved case.
+  const failed = structuredClone(partialPayload);
+  for (const id of [
+    "git-commits",
+    "git-commits-by-workspace",
+    "git-commits-by-provider",
+    "git-commits-by-agent"
+  ]) {
+    const widget = failed.widgets.find((candidate) => candidate.key === id);
+    assert.ok(widget);
+    widget.querySucceeded = false;
+    widget.observed = false;
+    widget.rows = [];
+  }
+  const failedClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(failed)
+  });
+  const unobserved = await failedClient.query(supportedSelection);
   assert.equal(unobserved.kind, "ok");
   if (unobserved.kind === "ok") {
-    assert.equal(unobserved.data.metrics.gitChanges.status, "not-observed");
+    assert.equal(unobserved.data.metrics.gitChanges.status, "unavailable");
     assert.equal(unobserved.data.metrics.gitChanges.commits, null);
   }
 
