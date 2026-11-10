@@ -814,6 +814,33 @@ node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor
 node runtime/node_modules/@jackwener/opencli/dist/src/main.js chatgpt status
 ```
 
+**What an opencli change has to refresh.** An opencli change lives in three
+places, and each one is live at a different moment:
+
+- The **site adapter** (`clis/<site>/…` inside the `@jackwener/opencli`
+  package) runs in the CLI process the bridge spawns for a turn, not in the
+  daemon: the adapter drives the page with `page.evaluate`, so the script it
+  runs is the one the just-spawned CLI holds. The bridge resolves that package
+  through the installed tree's `node_modules` link, and Node caches the
+  resolution for the life of the process — a link that moves under a running
+  bridge does not move that bridge. A patch to the adapter is live only for
+  processes started after the link moved.
+- The **daemon** (opencli's browser session, shared machine-wide on one port)
+  runs the package's `dist/`. A patch that touches only `clis/` leaves that
+  tree identical, so the daemon needs no restart — and it cannot notice it is
+  stale either: its health reports `daemonVersion`, the package version, which
+  a patch does not change, so the bridge's stale-daemon recovery (which
+  replaces a daemon of another version) never fires for a patched package.
+- The **bridge's own code** (`runtime/src/providers/opencli*.ts`) runs from the
+  copy the installer writes to `$CODEX_HOME/src/providers/`, the file
+  `run-codex-opencli-proxy.sh` executes. It is live only after the installer
+  has written that copy and the proxy has been reloaded.
+
+So after a patch: `pnpm install` re-applies the patch and moves the link (live
+for processes started afterwards), `bash scripts/install.sh` deploys the
+bridge's own code and reloads the proxy, and `opencli daemon stop` is needed
+only when the patch touched `dist/` as well.
+
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash
