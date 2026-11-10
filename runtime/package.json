@@ -91,6 +91,7 @@
     "./shared/error-message": "./src/shared/error-message.ts",
     "./shared/executables": "./src/shared/executables.ts",
     "./shared/execution-contract": "./src/shared/execution-contract.ts",
+    "./shared/opencli-version": "./src/shared/opencli-version.ts",
     "./shared/output": "./src/shared/output.ts",
     "./shared/provider-http": "./src/shared/provider-http.ts",
     "./shared/provider-limits": "./src/shared/provider-limits.ts",
@@ -117,7 +118,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@jackwener/opencli": "2.0.2",
+    "@jackwener/opencli": "2.0.3",
     "@letta-ai/trajectory": "^0.4.3",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",

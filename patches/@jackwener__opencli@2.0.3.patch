@@ -1,5 +1,5 @@
 diff --git a/cli-manifest.json b/cli-manifest.json
-index b66b50b6f44b18eb7f83b891f66c0e1f762bd8af..667f2fbf22fc99212d840809ac8c453eb1a00fd5 100644
+index 4b294f1..e78e720 100644
 --- a/cli-manifest.json
 +++ b/cli-manifest.json
 @@ -12172,6 +12172,12 @@
@@ -26,7 +26,7 @@ index b66b50b6f44b18eb7f83b891f66c0e1f762bd8af..667f2fbf22fc99212d840809ac8c453e
      "defaultFormat": "plain",
      "type": "js",
 diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
-index 976208dca661fbb87a02335cc87606f5c1a534bb..8912e3831460200e9f358122657c3ff29bea68d2 100644
+index 976208d..8912e38 100644
 --- a/clis/chatgpt/ask-file.js
 +++ b/clis/chatgpt/ask-file.js
 @@ -11,7 +11,9 @@ import {
@@ -70,10 +70,32 @@ index 976208dca661fbb87a02335cc87606f5c1a534bb..8912e3831460200e9f358122657c3ff2
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT');
 diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
-index e715672a7f59cc525abd97ceec07341b4e159438..5e0f5af834e44cd7edd871e90bd0b1bc95f98228 100644
+index 05a28f7..61b7534 100644
 --- a/clis/chatgpt/utils.js
 +++ b/clis/chatgpt/utils.js
-@@ -3697,3 +3697,42 @@ export async function getChatGPTImageAssets(page, urls) {
+@@ -2695,8 +2695,19 @@ export async function uploadChatGPTFiles(page, filePaths) {
+         const local = Array.from(scope.querySelectorAll('input[type="file"]')).filter(acceptsFiles);
+         const inputs = local.length ? local : Array.from(document.querySelectorAll('input[type="file"]'))
+             .filter(node => acceptsFiles(node) && !node.closest('form, [role="dialog"], [data-project-home-sources-surface]'));
+-        if (inputs.length !== 1) return { ok: false, reason: 'file input is missing or ambiguous' };
+-        inputs[0].setAttribute('data-opencli-file-input', '1');
++        if (inputs.length === 0) return { ok: false, reason: 'file input is missing' };
++        // A page that shows more than one eligible file input is ordinary: the
++        // composer keeps its own input, a re-render leaves a stale one behind,
++        // and the file dialog keeps one of its own. Refusing to attach the
++        // file killed the turn, and the turn was the only way the prompt could
++        // reach the site, so the input is chosen instead of demanded: the one
++        // the page still shows, and otherwise the first of them.
++        const shown = inputs.filter(node => {
++            if (node.closest('[hidden], [aria-hidden="true"]')) return false;
++            const style = getComputedStyle(node);
++            return style.display !== 'none' && style.visibility !== 'hidden';
++        });
++        (shown.length ? shown : inputs)[0].setAttribute('data-opencli-file-input', '1');
+         ${CHATGPT_ATTACHMENT_CARD_JS}
+         scope.querySelectorAll('[role="group"][aria-label], [data-composer-attachments] button[aria-label], [data-composer-attachments] [role="button"][aria-label]').forEach(node => attachmentCard(node, scope).setAttribute('data-opencli-existing-file', '1'));
+         return { ok: true };
+@@ -3697,3 +3708,42 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
@@ -117,7 +139,7 @@ index e715672a7f59cc525abd97ceec07341b4e159438..5e0f5af834e44cd7edd871e90bd0b1bc
 +    }
 +}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..bd911d5c74637bdbb40c86eb06058bfc2ef10219 100644
+index 4ffdfc9..bd911d5 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
 @@ -4,6 +4,12 @@ import {
@@ -225,7 +247,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..bd911d5c74637bdbb40c86eb06058bfc
      },
  });
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b112726c70ac1 100644
+index 46bb556..47693b0 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@
@@ -234,7 +256,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b1127
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
-@@ -2537,7 +2537,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2604,7 +2604,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -247,7 +269,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b1127
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2590,6 +2594,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,6 +2661,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -256,7 +278,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b1127
                  return structuredCandidate;
              }
              continue;
-@@ -2607,6 +2613,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2680,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -265,7 +287,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b1127
              return transcriptCandidate;
          }
      }
-@@ -2770,7 +2778,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +2845,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -278,7 +300,7 @@ index 606e1670b11edcc066e97207b26d3f6ddc9d6c49..2f83d703a1a4fb2188059bf0b56b1127
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2778,3 +2790,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +2857,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

@@ -5,9 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@jackwener/opencli@2.0.2':
-    hash: ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed
-    path: patches/@jackwener__opencli@2.0.2.patch
+  '@jackwener/opencli@2.0.3':
+    hash: bd0f00083b3c755fe7786f3c026d9086dfe0720ed63b407ebbefef358674bb98
+    path: patches/@jackwener__opencli@2.0.3.patch
 
 importers:
 
@@ -216,8 +216,8 @@ importers:
   runtime:
     dependencies:
       '@jackwener/opencli':
-        specifier: 2.0.2
-        version: 2.0.2(patch_hash=ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed)
+        specifier: 2.0.3
+        version: 2.0.3(patch_hash=bd0f00083b3c755fe7786f3c026d9086dfe0720ed63b407ebbefef358674bb98)
       '@letta-ai/trajectory':
         specifier: ^0.4.3
         version: 0.4.3
@@ -606,8 +606,8 @@ packages:
     resolution: {integrity: sha512-WMz71T1JS624nWj2n2fnYAuPovhv7EUhk69R6i9dsVyzxt5eM3bjwvgk9L+APE1TRscGysAVMANkB0jh0LQZrQ==}
     engines: {node: 20 || >=22}
 
-  '@jackwener/opencli@2.0.2':
-    resolution: {integrity: sha512-+O+S+FQikiVunP/alMG//ww9D1lpgA24+C6ifyyzI4rZVT6GEJVqaiGZWbyI2i/Hcocs4l1K6gnNt+3Yaf2wtw==}
+  '@jackwener/opencli@2.0.3':
+    resolution: {integrity: sha512-CkmardXwEYYh80sIMXNL0I8LtdLJNGMhSA+E9v2eFn16AhariIjtJjOsMZZuM7j/i5Kt60rIPKa/cHPFMmVxeA==}
     engines: {node: '>=20.18.1'}
     hasBin: true
 
@@ -3149,8 +3149,8 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.29.1:
-    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   unicorn-magic@0.3.0:
@@ -3624,7 +3624,7 @@ snapshots:
     dependencies:
       '@isaacs/balanced-match': 4.0.1
 
-  '@jackwener/opencli@2.0.2(patch_hash=ff793c4a8f796bdf88160e661e645038309a90ea2f785727b4b4f790099abbed)':
+  '@jackwener/opencli@2.0.3(patch_hash=bd0f00083b3c755fe7786f3c026d9086dfe0720ed63b407ebbefef358674bb98)':
     dependencies:
       '@mozilla/readability': 0.6.0
       acorn: 8.19.0
@@ -3633,7 +3633,7 @@ snapshots:
       js-yaml: 4.3.2
       turndown: 7.2.5
       turndown-plugin-gfm: 1.0.2
-      undici: 7.29.1
+      undici: 7.30.1
       ws: 8.22.1
     transitivePeerDependencies:
       - bufferutil
@@ -6347,7 +6347,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.29.1: {}
+  undici@7.30.1: {}
 
   unicorn-magic@0.3.0: {}
 

@@ -17,6 +17,8 @@
     "validate:actionlint": "actionlint",
     "validate:shell": "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +",
     "autodev": "node runtime/src/cli/autodev.ts",
+    "opencli:version": "node runtime/src/cli/opencli-version.ts",
+    "opencli:version:check": "node runtime/src/cli/opencli-version.ts --check",
     "install:codex": "bash scripts/install.sh",
     "validate:inventory": "AUTODEV_ENFORCE_INVENTORY=1 node --test tests/inventory/repository-inventory.test.ts",
     "lint": "eslint . --cache --max-warnings=0 --report-unused-disable-directives",
