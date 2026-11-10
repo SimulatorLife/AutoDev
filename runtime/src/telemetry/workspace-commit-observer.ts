@@ -35,6 +35,7 @@
  */
 
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import { type RecordGitCommitOptions } from "../router/telemetry.ts";
@@ -75,7 +76,13 @@ export interface WorkspaceCommitObserverOptions {
    * pipeline is required to drop.
    */
   readonly workspaceKey: string;
-  /** Absolute path of the repository being watched. */
+  /**
+   * Absolute path of the directory the agent works in.
+   *
+   * It does not have to be the root of the checkout: the observer resolves
+   * the repository that contains it, and measures every commit from that
+   * root.
+   */
   readonly repositoryRoot: string;
   /** Injected clock for deterministic tests. */
   readonly clock?: () => number;
@@ -234,6 +241,30 @@ function isUnbornHeadStderr(stderr: string): boolean {
   return false;
 }
 
+/**
+ * Resolve the repository root that contains the given directory.
+ *
+ * A session's workspace is the directory the agent works in, which is not
+ * always the root of the checkout it commits into. Measuring from a
+ * subdirectory is not equivalent to measuring from the root: `diff.relative`
+ * makes git report only the paths under the current directory, so a commit
+ * that touched anything above it would be measured as smaller than it is.
+ * Git knows the root, so git is asked for it.
+ *
+ * Returns null when the directory is not inside a repository, in which case
+ * the caller keeps the directory it was given and lets the ordinary
+ * repository checks report the failure.
+ */
+async function readRepositoryTopLevel(
+  directory: string,
+  runGit: RunGit
+): Promise<string | null> {
+  const result = await runGit(directory, ["rev-parse", "--show-toplevel"]);
+  if (result.exitCode !== 0) return null;
+  const toplevel = result.stdout.trim();
+  return toplevel ? path.resolve(toplevel) : null;
+}
+
 async function readHead(
   repositoryRoot: string,
   runGit: RunGit
@@ -360,6 +391,22 @@ export function createWorkspaceCommitObserver(
 
   let initialized = false;
   let baselineHead: string | null = null;
+  // The directory the session works in is not necessarily the repository
+  // root: an agent whose workspace is a subdirectory of the checkout commits
+  // into the repository above it. Measuring from the subdirectory is not
+  // equivalent -- `diff.relative` makes git report only the paths under the
+  // current directory, which would undercount the files and lines of every
+  // commit that touched anything outside it. The repository root is
+  // therefore resolved once, from the directory the caller supplied, and
+  // every measurement is taken from there.
+  let resolvedRepositoryRoot: string | null = null;
+  const resolveRepositoryRoot = async (): Promise<string> => {
+    if (resolvedRepositoryRoot !== null) return resolvedRepositoryRoot;
+    const toplevel = await readRepositoryTopLevel(repositoryRoot, runGit);
+    // eslint-disable-next-line require-atomic-updates -- chain serializes all observer state transitions.
+    resolvedRepositoryRoot = toplevel ?? repositoryRoot;
+    return resolvedRepositoryRoot;
+  };
   // A serialized queue so concurrent observe() / initialize() calls on
   // the same observer run in submission order without racing their own
   // state. The chain is kept non-rejecting so a single failure does not
@@ -368,11 +415,12 @@ export function createWorkspaceCommitObserver(
   let chain: Promise<unknown> = Promise.resolve();
 
   const runInitialize = async (): Promise<WorkspaceCommitBaseline> => {
-    const { head, error } = await readHead(repositoryRoot, runGit);
+    const root = await resolveRepositoryRoot();
+    const { head, error } = await readHead(root, runGit);
     if (error) {
       throw new Error(
         `workspace-commit-observer: cannot read HEAD at ${JSON.stringify(
-          repositoryRoot
+          root
         )}: ${error}`
       );
     }
@@ -380,22 +428,23 @@ export function createWorkspaceCommitObserver(
     initialized = true;
     return {
       workspaceKey: safeKey,
-      repositoryRoot,
+      repositoryRoot: root,
       head,
       observedAt: clock()
     };
   };
 
   const runObserve = async (): Promise<WorkspaceCommitObservation> => {
+    const root = await resolveRepositoryRoot();
     if (!initialized) {
       // First observation is a baseline; capture HEAD now and report
       // zero new commits. The caller has not yet given us a turn-end
       // signal, so there is nothing to enumerate yet.
-      const { head, error } = await readHead(repositoryRoot, runGit);
+      const { head, error } = await readHead(root, runGit);
       if (error) {
         return {
           workspaceKey: safeKey,
-          repositoryRoot,
+          repositoryRoot: root,
           isBaseline: true,
           baselineHead: null,
           currentHead: null,
@@ -413,7 +462,7 @@ export function createWorkspaceCommitObserver(
       initialized = true;
       return {
         workspaceKey: safeKey,
-        repositoryRoot,
+        repositoryRoot: root,
         isBaseline: true,
         baselineHead: head,
         currentHead: head,
@@ -425,11 +474,11 @@ export function createWorkspaceCommitObserver(
       };
     }
 
-    const headRead = await readHead(repositoryRoot, runGit);
+    const headRead = await readHead(root, runGit);
     if (headRead.error) {
       return {
         workspaceKey: safeKey,
-        repositoryRoot,
+        repositoryRoot: root,
         isBaseline: false,
         baselineHead,
         currentHead: null,
@@ -449,7 +498,7 @@ export function createWorkspaceCommitObserver(
       // reading of `currentHead === baselineHead`.
       return {
         workspaceKey: safeKey,
-        repositoryRoot,
+        repositoryRoot: root,
         isBaseline: false,
         baselineHead,
         currentHead,
@@ -465,7 +514,7 @@ export function createWorkspaceCommitObserver(
       baselineHead === null
         ? (currentHead ?? "")
         : `${baselineHead}..${currentHead ?? ""}`;
-    const listed = await listCommitsInRange(repositoryRoot, range, runGit);
+    const listed = await listCommitsInRange(root, range, runGit);
 
     if (listed.length === 0) {
       // listCommitsInRange returns [] both for an empty range and for a
@@ -474,7 +523,7 @@ export function createWorkspaceCommitObserver(
       // range -- a real failure that must not silently advance.
       return {
         workspaceKey: safeKey,
-        repositoryRoot,
+        repositoryRoot: root,
         isBaseline: false,
         baselineHead,
         currentHead,
@@ -490,7 +539,7 @@ export function createWorkspaceCommitObserver(
     }
 
     const measured = await measureGitCommitChanges({
-      repositoryRoot,
+      repositoryRoot: root,
       commits: listed,
       runGit
     });
@@ -529,7 +578,7 @@ export function createWorkspaceCommitObserver(
       // measured and recorded.
       return {
         workspaceKey: safeKey,
-        repositoryRoot,
+        repositoryRoot: root,
         isBaseline: false,
         baselineHead: observationBaselineHead,
         currentHead,
@@ -551,7 +600,7 @@ export function createWorkspaceCommitObserver(
     if (lastListed) baselineHead = lastListed;
     return {
       workspaceKey: safeKey,
-      repositoryRoot,
+      repositoryRoot: root,
       isBaseline: false,
       baselineHead: observationBaselineHead,
       currentHead,

@@ -683,7 +683,13 @@ export class SubagentRegistry {
     string,
     SubagentSessionEntry
   >();
-  private readonly workspaceMetadataBySession = new Map<string, string>();
+  private readonly workspaceMetadataBySession = new Map<
+    string,
+    {
+      readonly metadata: string;
+      readonly workspacePath: string;
+    }
+  >();
   private readonly bridgeRequestContext = new Map<
     string,
     BridgeRequestContext
@@ -768,10 +774,10 @@ export class SubagentRegistry {
         ? workspaces
         : { [workspacePath]: {} };
     this.workspaceMetadataBySession.delete(sessionKey);
-    this.workspaceMetadataBySession.set(
-      sessionKey,
-      JSON.stringify({ workspaces: remembered })
-    );
+    this.workspaceMetadataBySession.set(sessionKey, {
+      metadata: JSON.stringify({ workspaces: remembered }),
+      workspacePath
+    });
     while (this.workspaceMetadataBySession.size > this.maxTrackedSessions) {
       const oldest = this.workspaceMetadataBySession.keys().next().value;
       if (oldest !== undefined) this.workspaceMetadataBySession.delete(oldest);
@@ -780,7 +786,25 @@ export class SubagentRegistry {
 
   getWorkspaceMetadata(sessionKey: string | null | undefined): string | null {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-    return this.workspaceMetadataBySession.get(sessionKey) ?? null;
+    return this.workspaceMetadataBySession.get(sessionKey)?.metadata ?? null;
+  }
+
+  /**
+   * The workspace directory a session is working in.
+   *
+   * The remembered turn metadata answers "which workspace is this session
+   * labelled with"; it is a JSON document, not a path, so it cannot be handed
+   * to anything that reads the filesystem. A consumer that needs to look at
+   * the workspace itself -- the Git commit observer reads the repository the
+   * agent committed into -- needs the directory, and it has to be the same
+   * directory the session's own metadata was resolved from, or the observer
+   * watches a different tree than the one the agent worked in.
+   */
+  getWorkspacePath(sessionKey: string | null | undefined): string | null {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    return (
+      this.workspaceMetadataBySession.get(sessionKey)?.workspacePath ?? null
+    );
   }
 
   noteOrchestratorSession(
@@ -1674,6 +1698,12 @@ export function getWorkspaceMetadata(
   sessionKey: string | null | undefined
 ): string | null {
   return getDefaultSubagentRegistry().getWorkspaceMetadata(sessionKey);
+}
+
+export function getWorkspacePath(
+  sessionKey: string | null | undefined
+): string | null {
+  return getDefaultSubagentRegistry().getWorkspacePath(sessionKey);
 }
 
 export function openBridgeSubagentUsage(input: {

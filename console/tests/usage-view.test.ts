@@ -164,6 +164,75 @@ test("Usage says when provider hops cannot answer the selected filters", () => {
   );
 });
 
+test("a panel whose signal cannot answer the selection is not reported as unobserved", () => {
+  // The source observed the signal; the selected filter is what rules it
+  // out. Reporting that as "not observed" tells the reader a capture is
+  // missing when it is there -- which is exactly how a working metric gets
+  // mistaken for a broken one.
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    providerHops: null,
+    providerHopRatePercent: null,
+    providerHopsOverTime: null,
+    providerHopsByRoute: null,
+    providerHopsByProvider: null,
+    providerHopsByRole: null,
+    providerHopsByWorkspace: null,
+    providerHopsByReason: null,
+    providerHopsUnsupportedFilters: ["provider"],
+    contextCompactions: null,
+    contextCompactionRatePercent: null,
+    contextCompactionsOverTime: null,
+    contextCompactionsByWorkspace: null,
+    contextCompactionsByModel: null,
+    contextCompactionsByAgent: null,
+    contextCompactionsByProvider: null,
+    contextCompactionsUnsupportedFilters: ["provider"]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.doesNotMatch(markup, /breakdown not observed/u);
+  assert.doesNotMatch(markup, /data not observed/u);
+  assert.match(
+    markup,
+    /Provider hop agent-role breakdown is unavailable for the selected provider filter/u
+  );
+  assert.match(
+    markup,
+    /Agent-role compaction breakdown is unavailable for the selected provider filter/u
+  );
+  assert.match(
+    markup,
+    /Requested-model compaction breakdown is unavailable for the selected provider filter/u
+  );
+  // The counts are ruled out by the selection, not missing from the source.
+  assert.match(markup, /Not applicable/u);
+});
+
+test("an unobserved signal is still reported as unobserved", () => {
+  // The opposite failure: a signal that really was not observed must not
+  // borrow the wording that belongs to a filter the signal cannot answer.
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    providerHops: null,
+    providerHopRatePercent: null,
+    providerHopsOverTime: null,
+    providerHopsByRoute: null,
+    providerHopsByProvider: null,
+    providerHopsByRole: null,
+    providerHopsByWorkspace: null,
+    providerHopsByReason: null,
+    providerHopsUnsupportedFilters: []
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.match(markup, /Provider hop agent-role breakdown not observed/u);
+});
+
 test("unobserved Git status alone does not make the Usage page look observed", () => {
   const metrics: UsageMetricsData = {
     ...observedMetrics,
@@ -332,7 +401,14 @@ test("UsageView fails compaction widgets closed for unsupported provider and ski
   assert.match(markup, /data-context-compaction-scope="not-applicable"/u);
   assert.match(markup, /provider and skill filters/u);
   assert.match(markup, /Context compaction data is unavailable/u);
-  assert.match(markup, /Compaction time-series data not observed/u);
+  // The panels say the selection rules the signal out. They do not claim the
+  // source never reported it -- that is a different fact, and reporting it
+  // as a missing capture sends the reader after a metric that is there.
+  assert.match(
+    markup,
+    /Compaction time-series data is unavailable for the selected provider and skill filters/u
+  );
+  assert.doesNotMatch(markup, /Compaction time-series data not observed/u);
 });
 
 test("UsageView shows the bounded recent-attempt table and preserves filters when opening a trace", () => {

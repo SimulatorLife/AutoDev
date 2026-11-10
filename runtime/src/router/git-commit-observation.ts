@@ -19,6 +19,7 @@ import {
   type WorkspaceCommitError,
   type WorkspaceCommitObserver
 } from "../telemetry/workspace-commit-observer.ts";
+import { getWorkspacePath } from "./subagents.ts";
 import type { RecordGitCommitOptions } from "./telemetry.ts";
 
 const OBSERVABLE_PHASES = new Set(["selected", "result"]);
@@ -94,13 +95,24 @@ export function createRouterWorkspaceGitCommitObserver(
   readonly phase: string;
   /** Canonical bounded workspace identity from the Router event. */
   readonly workspaceKey: string | null;
-  /** Actual source-resolved repository root, never the display-only cwd label. */
-  readonly repositoryRoot: string | null;
+  /**
+   * The session the event belongs to.
+   *
+   * The observer reads the workspace's repository, and the session is what
+   * knows which directory that is: the Router resolved it from the
+   * request's own structured workspace fields and remembered it. A session
+   * with no remembered workspace has no directory to read, and there is
+   * nothing to observe.
+   */
+  readonly sessionKey: string | null | undefined;
   readonly routerInstanceId: string;
 }) => Promise<void> {
   return (args) => {
     if (!OBSERVABLE_PHASES.has(args.phase)) return Promise.resolve();
-    const workspace = workspaceContext(args.workspaceKey, args.repositoryRoot);
+    const workspace = workspaceContext(
+      args.workspaceKey,
+      getWorkspacePath(args.sessionKey)
+    );
     if (!workspace) return Promise.resolve();
     const observer = observerFor(workspace);
     if (!observer) {

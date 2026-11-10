@@ -331,7 +331,13 @@ const routerEvents = new RouterEventRecorder({
     void observeRouterWorkspaceGitCommits({
       phase: event.phase,
       workspaceKey: event.workspace,
-      repositoryRoot: getWorkspaceMetadata(workspaceSessionKey),
+      // The observer reads the workspace's repository, and the session is
+      // what knows which directory that is. The remembered turn metadata is
+      // a JSON document rather than a path, and handing that over made the
+      // observer's directory check fail for every request -- so no commit
+      // was ever measured, and the Git metrics stayed empty no matter what
+      // the agents committed.
+      sessionKey: workspaceSessionKey,
       routerInstanceId: ROUTER_INSTANCE_ID
     });
     liveFeedEvents.record({

@@ -67,6 +67,7 @@ import {
 import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
   safeAutoDevAgentRole,
+  safeAutoDevSessionId,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
@@ -94,6 +95,17 @@ const ATTR_GEN_AI_TOKEN_TYPE = "gen_ai.token.type" as const;
 const ATTR_GEN_AI_ERROR_TYPE = "error.type" as const;
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
+/**
+ * The source-confirmed session a request belongs to.
+ *
+ * A session is the identity that makes a per-session view possible: it is
+ * the conversation a request is part of, and it is the one dimension the
+ * router knows that no breakdown can be reconstructed from afterwards. It
+ * is a span attribute rather than a metric dimension -- session ids are
+ * unbounded, so a dimension keyed on them would be a cardinality hazard --
+ * and it is bounded and opaque before it is published.
+ */
+export const ATTR_AUTODEV_SESSION_ID = "autodev.session.id" as const;
 export const METRIC_CONTEXT_COMPACTIONS = "autodev.context.compactions";
 export const METRIC_GIT_COMMITS = "autodev.git.commits";
 export const METRIC_GIT_FILES_CHANGED = "autodev.git.files_changed";
@@ -1090,6 +1102,14 @@ export interface LogicalRequestSpanOptions {
   memoryMode?: "jit" | "retrieval-only" | "disabled" | "invalid" | undefined;
   turnMetadataHeader?: string | null | undefined;
   compactionSignal?: ParsedCompactionSignal | null | undefined;
+  /**
+   * The source-confirmed session the request belongs to.
+   *
+   * The Router resolves it from the request's own session identity. The
+   * process-wide anonymous bucket is not a session and is not published, so
+   * an unrelated set of requests is never attributed to one conversation.
+   */
+  sessionId?: string | null | undefined;
 }
 
 type LogicalSpanAttributes = Record<string, string | number | boolean>;
@@ -1106,12 +1126,15 @@ function addAutoDevSpanContext(
   requestContext: {
     readonly workspace?: { readonly key?: string | null } | null | undefined;
     readonly role?: string | null | undefined;
+    readonly sessionId?: string | null | undefined;
   }
 ): void {
   const workspace = safeAutoDevWorkspaceKey(requestContext.workspace?.key);
   if (workspace) attributes[ATTR_AUTODEV_WORKSPACE] = workspace;
   const role = safeAutoDevAgentRole(requestContext.role);
   if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
+  const sessionId = safeAutoDevSessionId(requestContext.sessionId);
+  if (sessionId) attributes[ATTR_AUTODEV_SESSION_ID] = sessionId;
 }
 
 function addCompactionSpanAttributes(
@@ -1347,6 +1370,8 @@ export interface AttemptSpanOptions {
   attemptNumber: number;
   role?: string | null;
   workspace?: { key: string; cwd?: string | null } | null;
+  /** The source-confirmed session this attempt serves. */
+  sessionId?: string | null | undefined;
 }
 
 /**

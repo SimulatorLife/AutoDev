@@ -253,6 +253,49 @@ function formatDimension(value: string): string {
   return value.trim().length === 0 ? "Not attributed" : value;
 }
 
+/**
+ * The word a panel or card uses when the signal cannot answer the selection.
+ *
+ * "Not observed" is the Console's word for "the source reported nothing".
+ * A signal that cannot answer the selected filter is a different fact: the
+ * source reported it, and the selection is what rules it out. Giving both
+ * the same word sends the reader looking for a capture that is there, and
+ * hides the one thing that explains the missing panel.
+ */
+const NOT_APPLICABLE_LABEL = "Not applicable";
+
+/**
+ * A counted value, or why it is not counted.
+ *
+ * `unsupportedFilters` names the selected filters the signal does not
+ * carry. An empty list means the signal simply was not observed.
+ */
+function formatSignalCount(
+  value: number | null,
+  unsupportedFilters: readonly string[]
+): string {
+  if (value !== null) return formatCount(value);
+  return unsupportedFilters.length > 0
+    ? NOT_APPLICABLE_LABEL
+    : NOT_OBSERVED_LABEL;
+}
+
+/**
+ * The message a panel shows when it has nothing to draw.
+ *
+ * A signal that cannot answer the selected filter is not a signal that was
+ * not observed, so the panel says which of the two it is. The subject is
+ * the panel's own name, so the message names what is missing rather than
+ * repeating the section's explanation on every panel.
+ */
+function panelUnavailableMessage(
+  subject: string,
+  unsupportedFilters: readonly string[]
+): string {
+  if (unsupportedFilters.length === 0) return `${subject} not observed.`;
+  return `${subject} is unavailable for the selected ${unsupportedFilters.join(" and ")} filter${unsupportedFilters.length === 1 ? "" : "s"}.`;
+}
+
 const DEFAULT_SELECTION: UsageFilterSelection = {
   range: "24H",
   values: {}
@@ -1026,12 +1069,19 @@ function renderProviderHopMetrics(
         { columns: 2 },
         React.createElement(StatCard, {
           title: "Provider Hops",
-          value: formatCount(metrics.providerHops),
+          value: formatSignalCount(
+            metrics.providerHops,
+            providerHopUnsupportedFilters
+          ),
           subtitle: "Requests that changed the provider serving the agent"
         }),
         React.createElement(StatCard, {
           title: "Hops per Request",
-          value: formatCacheRate(metrics.providerHopRatePercent),
+          value:
+            metrics.providerHopRatePercent === null &&
+            providerHopUnsupportedFilters.length > 0
+              ? NOT_APPLICABLE_LABEL
+              : formatCacheRate(metrics.providerHopRatePercent),
           subtitle: "Provider hops / logical routed requests"
         })
       ),
@@ -1053,7 +1103,10 @@ function renderProviderHopMetrics(
                   valueText: formatCount(item.count)
                 })),
           label: "Provider hops by time bucket",
-          notObservedMessage: "Provider hop time-series data not observed.",
+          notObservedMessage: panelUnavailableMessage(
+            "Provider hop time-series data",
+            providerHopUnsupportedFilters
+          ),
           emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
           barClass: CHART_PALETTE.series3.bar,
           valueClass: CHART_PALETTE.series3.value
@@ -1080,7 +1133,10 @@ function renderProviderHopMetrics(
                     valueText: formatCount(item.count)
                   })),
             label: "Provider hops by the provider pair the agent moved between",
-            notObservedMessage: "Provider hop route breakdown not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Provider hop route breakdown",
+              providerHopUnsupportedFilters
+            ),
             emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series1.bar,
             valueClass: CHART_PALETTE.series1.value
@@ -1104,7 +1160,10 @@ function renderProviderHopMetrics(
                     valueText: formatCount(item.count)
                   })),
             label: "Provider hops by why the provider changed",
-            notObservedMessage: "Provider hop reason breakdown not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Provider hop reason breakdown",
+              providerHopUnsupportedFilters
+            ),
             emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series2.bar,
             valueClass: CHART_PALETTE.series2.value
@@ -1132,7 +1191,10 @@ function renderProviderHopMetrics(
                     valueText: formatCount(item.count)
                   })),
             label: "Provider hops by the provider that now serves the agent",
-            notObservedMessage: "Provider hop provider breakdown not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Provider hop provider breakdown",
+              providerHopUnsupportedFilters
+            ),
             emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series3.bar,
             valueClass: CHART_PALETTE.series3.value
@@ -1156,8 +1218,10 @@ function renderProviderHopMetrics(
                     valueText: formatCount(item.count)
                   })),
             label: "Provider hops by workspace",
-            notObservedMessage:
-              "Provider hop workspace breakdown not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Provider hop workspace breakdown",
+              providerHopUnsupportedFilters
+            ),
             emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series4.bar,
             valueClass: CHART_PALETTE.series4.value
@@ -1181,8 +1245,10 @@ function renderProviderHopMetrics(
                     valueText: formatCount(item.count)
                   })),
             label: "Provider hops by agent role",
-            notObservedMessage:
-              "Provider hop agent-role breakdown not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Provider hop agent-role breakdown",
+              providerHopUnsupportedFilters
+            ),
             emptyMessage: PROVIDER_HOP_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series5.bar,
             valueClass: CHART_PALETTE.series5.value
@@ -1356,12 +1422,19 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           }),
           React.createElement(StatCard, {
             title: "Context Compactions",
-            value: formatCount(metrics.contextCompactions),
+            value: formatSignalCount(
+              metrics.contextCompactions,
+              compactionUnsupportedFilters
+            ),
             subtitle: "Source-confirmed logical requests"
           }),
           React.createElement(StatCard, {
             title: "Compactions per Request",
-            value: formatCacheRate(metrics.contextCompactionRatePercent),
+            value:
+              metrics.contextCompactionRatePercent === null &&
+              compactionUnsupportedFilters.length > 0
+                ? NOT_APPLICABLE_LABEL
+                : formatCacheRate(metrics.contextCompactionRatePercent),
             subtitle: "Compactions / logical routed requests"
           })
         ),
@@ -1383,7 +1456,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                     valueText: formatCount(item.count)
                   })),
             label: "Source-confirmed context compactions by time bucket",
-            notObservedMessage: "Compaction time-series data not observed.",
+            notObservedMessage: panelUnavailableMessage(
+              "Compaction time-series data",
+              compactionUnsupportedFilters
+            ),
             emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
             barClass: CHART_PALETTE.series3.bar,
             valueClass: CHART_PALETTE.series3.value
@@ -1410,8 +1486,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                       valueText: formatCount(item.count)
                     })),
               label: "Source-confirmed context compactions by workspace",
-              notObservedMessage:
-                "Workspace compaction breakdown not observed.",
+              notObservedMessage: panelUnavailableMessage(
+                "Workspace compaction breakdown",
+                compactionUnsupportedFilters
+              ),
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
               barClass: CHART_PALETTE.series1.bar,
               valueClass: CHART_PALETTE.series1.value
@@ -1435,8 +1513,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                       valueText: formatCount(item.count)
                     })),
               label: "Source-confirmed context compactions by requested model",
-              notObservedMessage:
-                "Requested-model compaction breakdown not observed.",
+              notObservedMessage: panelUnavailableMessage(
+                "Requested-model compaction breakdown",
+                compactionUnsupportedFilters
+              ),
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
               barClass: CHART_PALETTE.series2.bar,
               valueClass: CHART_PALETTE.series2.value
@@ -1460,8 +1540,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                       valueText: formatCount(item.count)
                     })),
               label: "Source-confirmed context compactions by agent role",
-              notObservedMessage:
-                "Agent-role compaction breakdown not observed.",
+              notObservedMessage: panelUnavailableMessage(
+                "Agent-role compaction breakdown",
+                compactionUnsupportedFilters
+              ),
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
               barClass: CHART_PALETTE.series4.bar,
               valueClass: CHART_PALETTE.series4.value
@@ -1486,7 +1568,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                     })),
               label:
                 "Source-confirmed context compactions by the provider that served them",
-              notObservedMessage: "Provider compaction breakdown not observed.",
+              notObservedMessage: panelUnavailableMessage(
+                "Provider compaction breakdown",
+                compactionUnsupportedFilters
+              ),
               emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
               barClass: CHART_PALETTE.series5.bar,
               valueClass: CHART_PALETTE.series5.value

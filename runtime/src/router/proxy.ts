@@ -1416,6 +1416,14 @@ export interface AttemptTelemetryOptions {
   requestedModel?: string | null;
   role?: string | null;
   workspace?: { key: string; cwd?: string | null } | null;
+  /**
+   * The source-confirmed session this attempt serves.
+   *
+   * It is copied onto the attempt the same way the workspace and the role
+   * are, so a per-session view can read an attempt without joining across
+   * spans.
+   */
+  sessionId?: string | null;
 }
 
 async function authForRoute(
@@ -1564,7 +1572,8 @@ export async function fetchUpstream(
         selection: attemptTelemetry.selection,
         attemptNumber: attemptTelemetry.attemptNumber,
         role: attemptTelemetry.role ?? null,
-        workspace: attemptTelemetry.workspace ?? null
+        workspace: attemptTelemetry.workspace ?? null,
+        sessionId: attemptTelemetry.sessionId ?? null
       })
     : null;
   let upstream: Response;
@@ -2421,7 +2430,8 @@ export async function proxyConcreteResponse(
     workspace,
     subject: "concrete request",
     requestedModel: modelName,
-    turnMetadataHeader
+    turnMetadataHeader,
+    sessionId: session?.key ?? null
   });
 
   const disabledReason = ROUTING_POLICY.routeDisabledReason(
@@ -2615,7 +2625,8 @@ async function runConcreteAttempts(
         model: typeof payload.model === "string" ? payload.model : null,
         requestedModel: ctx.modelName,
         role: null,
-        workspace: ctx.workspace
+        workspace: ctx.workspace,
+        sessionId: session?.key ?? null
       }
     );
     if (!result.ok) {
@@ -3135,6 +3146,7 @@ export async function proxyFallbackChain(
     subject,
     requestedModel: modelName || null,
     turnMetadataHeader,
+    sessionId: session?.key ?? sessionKey ?? null,
     ...(isOrchestratorTurn
       ? {
           memoryMode: currentRouterMemoryMode({

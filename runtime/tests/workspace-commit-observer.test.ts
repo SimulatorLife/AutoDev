@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
 } from "@opentelemetry/sdk-metrics";
 
 import { resetRouterWorkspaceGitObserversForTest } from "../src/router/git-commit-observation.ts";
+import { rememberWorkspaceMetadata } from "../src/router/subagents.ts";
 import {
   flushTelemetryMetrics,
   METRIC_GIT_COMMITS,
@@ -69,7 +71,12 @@ async function withGitRepository<T>(
 
 function realRunGit(root: string): RunGit {
   return async (repositoryRoot, args) => {
-    if (repositoryRoot !== root) {
+    // git resolves the repository it is asked about, so the observer's
+    // repository root and the workspace directory it was given can be the
+    // same directory under two names (`/var` and `/private/var` on macOS).
+    // The double rejects a *different* directory, not a differently spelled
+    // one.
+    if (realpathSync(repositoryRoot) !== realpathSync(root)) {
       return { exitCode: -1, stdout: "" };
     }
     try {
@@ -601,11 +608,15 @@ test("Router selected/result events emit only commit-identity Git metrics", asyn
 
   await withGitRepository(async (root) => {
     const workspaceKey = "ws-test-commit-output";
+    const sessionKey = "session-commit-output";
+    // The Router remembers the session's workspace from the request's own
+    // structured fields; the observer then reads that workspace's repository.
+    rememberWorkspaceMetadata(sessionKey, root);
     const observe = (phase: "selected" | "result") =>
       observeRouterWorkspaceGitCommits({
         phase,
         workspaceKey,
-        repositoryRoot: root,
+        sessionKey,
         routerInstanceId: "router-commit-observer-test"
       });
 
@@ -651,5 +662,98 @@ test("Router selected/result events emit only commit-identity Git metrics", asyn
     const dimensions = JSON.stringify(point.attributes);
     assert.equal(dimensions.includes("agent.txt"), false);
     assert.equal(dimensions.includes("operator.txt"), false);
+  });
+});
+
+test("the Router observes the workspace the session works in, not the session's metadata", async () => {
+  resetRouterWorkspaceGitObserversForTest();
+  resetTrackedGitCommitsForTest();
+  metricExporter.reset();
+
+  await withGitRepository(async (root) => {
+    const workspaceKey = "ws-session-workspace";
+    const sessionKey = "session-workspace-path";
+    rememberWorkspaceMetadata(sessionKey, root);
+
+    const observe = (phase: "selected" | "result") =>
+      observeRouterWorkspaceGitCommits({
+        phase,
+        workspaceKey,
+        sessionKey,
+        routerInstanceId: "router-session-workspace-test"
+      });
+
+    await observe("selected");
+
+    await writeFile(join(root, "agent.txt"), "agent\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "agent"], {
+      env: gitCommitIdentityEnv({ role: "worker", provider: "codex" })
+    });
+
+    await observe("result");
+    await flushTelemetryMetrics();
+
+    const points = metricExporter
+      .getMetrics()
+      .flatMap((resource) => resource.scopeMetrics)
+      .flatMap((scope) => scope.metrics)
+      .filter((metric) => metric.descriptor.name === METRIC_GIT_COMMITS)
+      .flatMap(
+        (metric) =>
+          metric.dataPoints as unknown as readonly {
+            readonly attributes: Readonly<Record<string, unknown>>;
+            readonly value: number;
+          }[]
+      );
+
+    // The commit the agent actually made has to reach the counter. The
+    // Router used to hand the observer the session's remembered turn
+    // metadata -- a JSON document rather than a path -- so the observer's
+    // directory check rejected it and no commit was ever observed, leaving
+    // the Git panels empty for every commit the agents made.
+    const point = points.find(
+      (candidate) => candidate.attributes["autodev.workspace"] === workspaceKey
+    );
+    assert.ok(point, "the commit counter must be emitted for the workspace");
+    assert.equal(point.value, 1);
+    assert.equal(point.attributes["autodev.agent.role"], "worker");
+  });
+});
+
+test("a session with no remembered workspace observes nothing", async () => {
+  resetRouterWorkspaceGitObserversForTest();
+  resetTrackedGitCommitsForTest();
+  metricExporter.reset();
+
+  await withGitRepository(async (_root) => {
+    await observeRouterWorkspaceGitCommits({
+      phase: "selected",
+      workspaceKey: "ws-unknown-session",
+      sessionKey: "session-that-never-had-a-workspace",
+      routerInstanceId: "router-unknown-session-test"
+    });
+    await flushTelemetryMetrics();
+
+    const points = metricExporter
+      .getMetrics()
+      .flatMap((resource) => resource.scopeMetrics)
+      .flatMap((scope) => scope.metrics)
+      .filter((metric) => metric.descriptor.name === METRIC_GIT_COMMITS)
+      .flatMap(
+        (metric) =>
+          metric.dataPoints as unknown as readonly {
+            readonly attributes: Readonly<Record<string, unknown>>;
+            readonly value: number;
+          }[]
+      );
+
+    assert.equal(
+      points.some(
+        (point) =>
+          point.attributes["autodev.workspace"] === "ws-unknown-session"
+      ),
+      false
+    );
   });
 });

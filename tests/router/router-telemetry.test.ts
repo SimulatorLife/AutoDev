@@ -3351,3 +3351,74 @@ test(
     }
   }
 );
+
+test("a source-confirmed session is published on the request and its attempts", async () => {
+  installExporter();
+  const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  const logical = startLogicalRequestSpan({
+    requestId: "session-attribution-request",
+    role: "worker",
+    providerRole: "subagent",
+    workspace: { key: "session-workspace" },
+    subject: "session fixture",
+    requestedModel: "session-model",
+    sessionId
+  });
+  await withLogicalSpan(logical, async () => {
+    const attempt = startAttemptSpan({
+      provider: "session-provider",
+      model: "session-model",
+      selection: "primary",
+      attemptNumber: 1,
+      role: "worker",
+      workspace: { key: "session-workspace" },
+      sessionId
+    });
+    endAttemptSpan(attempt, { status: "ok", responseModel: "session-model" });
+  });
+  endLogicalRequestSpan(logical, { status: "ok" });
+
+  const spans = snapshotSpans();
+  const logicalSpans = findLogical(spans);
+  assert.equal(logicalSpans.length, 1);
+  assert.equal(logicalSpans[0]?.attributes["autodev.session.id"], sessionId);
+  const attempts = findAttemptSpans(spans);
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0]?.attributes["autodev.session.id"], sessionId);
+});
+
+test("an unidentified session is not published as a session identity", () => {
+  installExporter();
+  for (const sessionId of [
+    null,
+    undefined,
+    "",
+    "   ",
+    "unknown",
+    "process-scope",
+    "/Users/someone/workspace",
+    "https://example.test/session",
+    "x".repeat(129)
+  ]) {
+    const logical = startLogicalRequestSpan({
+      requestId: "session-attribution-rejected",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "session-workspace" },
+      subject: "session fixture",
+      requestedModel: "session-model",
+      sessionId
+    });
+    endLogicalRequestSpan(logical, { status: "ok" });
+  }
+
+  const logicalSpans = findLogical(snapshotSpans());
+  assert.equal(logicalSpans.length, 9);
+  for (const span of logicalSpans) {
+    assert.equal(
+      span.attributes["autodev.session.id"],
+      undefined,
+      "an unidentified session must not become a session identity"
+    );
+  }
+});
