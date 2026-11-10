@@ -626,9 +626,23 @@ test("root quality scripts validate all code workspaces", () => {
     const workspaceManifest = JSON.parse(
       readFileSync(new URL(`${workspace}/package.json`, repositoryRoot), "utf8")
     ) as { scripts: Record<string, string> };
+    // The contract is Node's recursive test discovery without shell globs.
+    // A workspace may preload a module first -- the Runtime preloads the
+    // state-isolation helper, because a test that persisted the routing
+    // policy without isolating its state file overwrote the live router's --
+    // but it may not narrow the discovery to a glob of files.
+    const testScript = workspaceManifest.scripts.test ?? "";
+    assert.doesNotMatch(
+      testScript,
+      /[*?[\]]/u,
+      `${workspace} must not select its tests with a shell glob`
+    );
     assert.equal(
-      workspaceManifest.scripts.test,
-      "node --test",
+      testScript
+        .replace(/^node\b/u, "")
+        .replace(/--import\s+\S+/u, "")
+        .trim(),
+      "--test",
       `${workspace} must use Node's recursive test discovery without shell globs`
     );
   }
