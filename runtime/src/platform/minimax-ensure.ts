@@ -11,7 +11,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -53,19 +53,6 @@ function resolveNode(env: NodeJS.ProcessEnv): string {
     );
   } catch {
     return "node";
-  }
-}
-
-export function isMiniMaxModel(input: string): boolean {
-  try {
-    const value: unknown = JSON.parse(input);
-    const model =
-      value && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>).model
-        : null;
-    return typeof model === "string" && MINIMAX_MODEL_PATTERN.test(model);
-  } catch {
-    return false;
   }
 }
 
@@ -135,7 +122,7 @@ export async function ensureMiniMaxProxy(
   options: MiniMaxEnsureOptions = resolveMiniMaxEnsureOptions(),
   deps: MiniMaxEnsureDeps = defaultDeps(options)
 ): Promise<number> {
-  if (!isMiniMaxModel(input)) return 0;
+  if (!isProviderRequestModel(input, "minimax")) return 0;
   if (await deps.probe()) return 0;
   if (!deps.nodeAvailable()) {
     writeErrorLine("MiniMax compatibility proxy requires Node.js.");

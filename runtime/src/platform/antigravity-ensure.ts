@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { ANTIGRAVITY_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -37,27 +37,6 @@ export interface AntigravityEnsureDeps {
 
 const DEFAULT_PORT = 4002;
 const DEFAULT_TIMEOUT_MS = 5000;
-
-/**
- * Whether this request is served by the agy CLI. The gate covers every id agy
- * lists -- Gemini plus its effort-suffixed Claude families -- so selecting
- * `claude-opus-5-5-high` here starts the proxy instead of silently leaving a
- * Gemini-only prefix test to decline it.
- */
-export function isAntigravityModel(input: string): boolean {
-  try {
-    const value: unknown = JSON.parse(input);
-    const candidate =
-      value && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>).model
-        : null;
-    const model =
-      typeof candidate === "string" ? candidate.trim().toLowerCase() : "";
-    return ANTIGRAVITY_MODEL_PATTERN.test(model);
-  } catch {
-    return false;
-  }
-}
 
 export function resolveAntigravityEnsureOptions(
   env: NodeJS.ProcessEnv = process.env
@@ -133,7 +112,7 @@ export async function ensureAntigravityProxy(
   options: AntigravityEnsureOptions = resolveAntigravityEnsureOptions(),
   deps: AntigravityEnsureDeps = defaultDeps(options)
 ): Promise<number> {
-  if (!isAntigravityModel(input)) return 0;
+  if (!isProviderRequestModel(input, "antigravity")) return 0;
   if (!deps.settingsValid()) {
     writeErrorLine(
       `Antigravity settings missing or AI Credit Overages is not disabled: ${options.settingsPath}`

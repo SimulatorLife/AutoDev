@@ -3,11 +3,11 @@ import test from "node:test";
 
 import {
   ensureMiniMaxProxy,
-  isMiniMaxModel,
   type MiniMaxEnsureDeps,
   type MiniMaxEnsureOptions,
   resolveMiniMaxEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/minimax-ensure";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 const MINIMAX_TEST_MODEL = "MiniMax-test-model";
 
@@ -47,11 +47,36 @@ function deps(overrides: Partial<MiniMaxEnsureDeps> = {}): MiniMaxEnsureDeps {
 
 test("MiniMax model gate claims every MiniMax model and no other provider", () => {
   assert.equal(
-    isMiniMaxModel(JSON.stringify({ model: MINIMAX_TEST_MODEL })),
+    isProviderRequestModel(
+      JSON.stringify({ model: MINIMAX_TEST_MODEL }),
+      "minimax"
+    ),
     true
   );
-  assert.equal(isMiniMaxModel('{"model":"minimax-m3"}'), false);
-  assert.equal(isMiniMaxModel('{"model":"sonnet"}'), false);
+  assert.equal(
+    isProviderRequestModel('{"model":"MiniMax-M3.1-Flash-Preview"}', "minimax"),
+    true
+  );
+  assert.equal(
+    isProviderRequestModel('{"model":"minimax-m3"}', "minimax"),
+    false
+  );
+  assert.equal(isProviderRequestModel('{"model":"sonnet"}', "minimax"), false);
+});
+
+test("MiniMax request matching preserves original case and whitespace", () => {
+  for (const model of [
+    " MiniMax-M3",
+    "MiniMax-M3 ",
+    "MINIMAX-M3",
+    "minimax-M3"
+  ]) {
+    assert.equal(
+      isProviderRequestModel(JSON.stringify({ model }), "minimax"),
+      false,
+      model
+    );
+  }
 });
 
 test("MiniMax resolver points fallback execution at the typed provider module", () => {

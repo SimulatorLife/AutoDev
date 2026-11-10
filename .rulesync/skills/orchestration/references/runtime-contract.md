@@ -46,6 +46,8 @@ finish by waiting on them, collecting any intermediate partial findings
 reported. Spawning a replacement while a child is in flight duplicates work,
 wastes tokens, and exhausts concurrency slots.
 
+Be sure to give running children enough time to finish. A child may be reading files, running commands, or synthesizing results. If the parent needs to proceed urgently, prompt the child for an interim progress summary rather than closing it. Some model-providers operate much slower than others, and some tasks are inherently long-running. Prefer to let subagents finish their work rather than terminating them prematurely.
+
 ### Parking and session reuse
 
 A child whose status is `completed` has finished its current turn. Instead of
@@ -57,7 +59,7 @@ and duplicate initialization. Note that `resume_agent` accepts only `target` and
 does not deliver new task input; always use `send_input` to deliver follow-up work,
 using `resume_agent` only where unpausing without new instructions is genuinely required.
 
-Never terminate, close, or discard running discovery or worker subagents. A wait
+Generally, do not terminate, close, or discard running discovery or worker subagents. A wait
 timeout (`timed_out: true` or `status: "running"`) indicates that the child is actively
 executing commands, reading files, or synthesizing results. Closing an in-flight child
 destroys its analysis and returns no useful results. Orchestrators must allow running

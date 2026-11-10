@@ -60,6 +60,12 @@ test("the dispatch script's entry point runs the ensure", () => {
   assert.match(outcome.stderr, /Antigravity settings missing/u);
 });
 
+test("the entry point recognizes normalized Antigravity Claude model requests", () => {
+  const outcome = runEnsure(" CLAUDE-OPUS-5-5-HIGH ");
+  assert.equal(outcome.status, 1, outcome.stderr);
+  assert.match(outcome.stderr, /Antigravity settings missing/u);
+});
+
 test("a request for another model is declined without touching the bridge", () => {
   const outcome = runEnsure("gpt-5");
 

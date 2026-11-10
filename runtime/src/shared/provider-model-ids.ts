@@ -58,6 +58,30 @@ export const CLAUDE_MODEL_PATTERN =
 export const MINIMAX_MODEL_PATTERN = /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/;
 
 /**
+ * Whether a lifecycle request names a model served by the given provider.
+ * Preserve each provider's request normalization independently of routing.
+ */
+export function isProviderRequestModel(
+  input: string,
+  provider: "antigravity" | "claude" | "minimax"
+): boolean {
+  try {
+    const request: unknown = JSON.parse(input);
+    if (!request || typeof request !== "object" || Array.isArray(request))
+      return false;
+    const model = (request as Record<string, unknown>).model;
+    if (typeof model !== "string") return false;
+
+    if (provider === "antigravity")
+      return ANTIGRAVITY_MODEL_PATTERN.test(model.trim().toLowerCase());
+    if (provider === "claude") return CLAUDE_MODEL_PATTERN.test(model.trim());
+    return MINIMAX_MODEL_PATTERN.test(model);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The web chat sites the opencli bridge serves, each as its own provider.
  *
  * opencli drives a site's own web chat through the user's signed-in browser.

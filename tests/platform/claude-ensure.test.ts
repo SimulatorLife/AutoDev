@@ -6,9 +6,9 @@ import {
   type ClaudeEnsureDeps,
   type ClaudeEnsureOptions,
   ensureClaudeBridge,
-  isClaudeModel,
   resolveClaudeEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/claude-ensure";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 function options(
   overrides: Partial<ClaudeEnsureOptions> = {}
@@ -44,10 +44,36 @@ function deps(overrides: Partial<ClaudeEnsureDeps> = {}): ClaudeEnsureDeps {
 }
 
 test("Claude model gate is strict for known aliases", () => {
-  assert.equal(isClaudeModel('{"model":"sonnet"}'), true);
-  assert.equal(isClaudeModel('{"model":"claude-3-7-sonnet"}'), true);
-  assert.equal(isClaudeModel('{"model":"MiniMax-M3"}'), false);
-  assert.equal(isClaudeModel("{}"), false);
+  assert.equal(isProviderRequestModel('{"model":"sonnet"}', "claude"), true);
+  assert.equal(
+    isProviderRequestModel('{"model":"claude-3-7-sonnet"}', "claude"),
+    true
+  );
+  assert.equal(
+    isProviderRequestModel('{"model":"MiniMax-M3"}', "claude"),
+    false
+  );
+  assert.equal(isProviderRequestModel("{}", "claude"), false);
+});
+
+test("Claude request matching trims whitespace without changing case", () => {
+  assert.equal(
+    isProviderRequestModel('{"model":"  sonnet  "}', "claude"),
+    true
+  );
+  assert.equal(
+    isProviderRequestModel('{"model":" claude-opus-5-5 "}', "claude"),
+    true
+  );
+  assert.equal(isProviderRequestModel('{"model":" SONNET "}', "claude"), false);
+  assert.equal(
+    isProviderRequestModel('{"model":" Claude-opus-5-5 "}', "claude"),
+    false
+  );
+  assert.equal(
+    isProviderRequestModel('{"model":"claude-opus-5-5-high"}', "claude"),
+    false
+  );
 });
 
 // The gate shares CLAUDE_MODEL_PATTERN with the router's claude route, which
@@ -75,7 +101,7 @@ test("Claude model gate accepts exactly the ids the claude route accepts", () =>
     "MiniMax-M3"
   ]) {
     assert.equal(
-      isClaudeModel(JSON.stringify({ model })),
+      isProviderRequestModel(JSON.stringify({ model }), "claude"),
       route.test(model),
       `${model} must agree between the lifecycle gate and the claude route`
     );

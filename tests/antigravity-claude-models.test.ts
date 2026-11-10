@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { isAntigravityModel } from "@simulatorlife/autodev-runtime/platform/antigravity-ensure";
-import { isClaudeModel } from "@simulatorlife/autodev-runtime/platform/claude-ensure";
 import {
   type RoutingConfig,
   RoutingPolicy,
   validateRoutingConfig
 } from "@simulatorlife/autodev-runtime/router/routing";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 const ROUTING_CONFIG = JSON.parse(
   readFileSync(new URL("../config/model-routing.json", import.meta.url), "utf8")
@@ -58,8 +57,55 @@ test("Anthropic's own Claude ids keep routing to the Claude bridge", () => {
 // gate either, or a stale request would still boot an unrelated bridge.
 test("a mistyped Claude id belongs to no provider at all", () => {
   assert.equal(policy.routeForModel("claude-opus-5.5"), null);
-  assert.equal(isAntigravityModel('{"model":"claude-opus-5.5"}'), false);
-  assert.equal(isClaudeModel('{"model":"claude-opus-5.5"}'), false);
+  assert.equal(
+    isProviderRequestModel('{"model":"claude-opus-5.5"}', "antigravity"),
+    false
+  );
+  assert.equal(
+    isProviderRequestModel('{"model":"claude-opus-5.5"}', "claude"),
+    false
+  );
+});
+
+test("request model identification rejects malformed envelopes for every provider", () => {
+  const malformed = [
+    "",
+    "{",
+    "null",
+    "[]",
+    '"sonnet"',
+    "42",
+    "{}",
+    '{"model":null}',
+    '{"model":12}',
+    '{"model":false}',
+    '{"model":[]}',
+    '{"model":{}}'
+  ];
+  for (const provider of ["antigravity", "claude", "minimax"] as const) {
+    for (const input of malformed) {
+      assert.equal(
+        isProviderRequestModel(input, provider),
+        false,
+        provider + ": " + input
+      );
+    }
+  }
+});
+
+test("Antigravity trims and lowercases models without claiming Claude bridge ids", () => {
+  for (const model of [
+    " GEMINI-3.8-FLASH-HIGH ",
+    " CLAUDE-OPUS-5-5-HIGH ",
+    " claude-sonnet-5-5-medium "
+  ]) {
+    const request = JSON.stringify({ model });
+    assert.equal(isProviderRequestModel(request, "antigravity"), true, model);
+    assert.equal(isProviderRequestModel(request, "claude"), false, model);
+  }
+  const claudeRequest = JSON.stringify({ model: " claude-opus-5-5 " });
+  assert.equal(isProviderRequestModel(claudeRequest, "claude"), true);
+  assert.equal(isProviderRequestModel(claudeRequest, "antigravity"), false);
 });
 
 // The two lifecycle gates must stay disjoint: the same request has to start
@@ -72,8 +118,11 @@ test("the antigravity and claude lifecycle gates never both claim a model", () =
     "sonnet",
     "MiniMax-M3"
   ]) {
-    const agy = isAntigravityModel(JSON.stringify({ model }));
-    const claude = isClaudeModel(JSON.stringify({ model }));
+    const agy = isProviderRequestModel(
+      JSON.stringify({ model }),
+      "antigravity"
+    );
+    const claude = isProviderRequestModel(JSON.stringify({ model }), "claude");
     assert.ok(
       agy === false || claude === false,
       `${model} must start at most one bridge`

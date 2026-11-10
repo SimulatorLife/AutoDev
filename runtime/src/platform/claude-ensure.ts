@@ -11,7 +11,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { CLAUDE_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { readClaudeOAuthToken } from "../providers/claude-credential.ts";
 import { httpHealthProbe } from "./health-probe.ts";
@@ -44,19 +44,6 @@ const DEFAULT_TIMEOUT_MS = 5000;
 
 function keychainToken(env: NodeJS.ProcessEnv): string {
   return readClaudeOAuthToken(env);
-}
-
-export function isClaudeModel(input: string): boolean {
-  try {
-    const value: unknown = JSON.parse(input);
-    const model =
-      value && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>).model
-        : null;
-    return typeof model === "string" && CLAUDE_MODEL_PATTERN.test(model.trim());
-  } catch {
-    return false;
-  }
 }
 
 export function resolveClaudeEnsureOptions(
@@ -111,7 +98,7 @@ export async function ensureClaudeBridge(
   options: ClaudeEnsureOptions = resolveClaudeEnsureOptions(),
   deps: ClaudeEnsureDeps = defaultDeps(options)
 ): Promise<number> {
-  if (!isClaudeModel(input)) return 0;
+  if (!isProviderRequestModel(input, "claude")) return 0;
   if (await deps.probe()) return 0;
   if (!deps.tokenAvailable()) {
     writeErrorLine(
