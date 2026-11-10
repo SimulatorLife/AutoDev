@@ -571,7 +571,6 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
     assert.equal(unknownRes.status, 400);
 
     // 5. Wedged turn isolation: start a long-running turn on gemini
-    let turnDone = false;
     releaseTurn = () => {};
     const turnPromise = fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
@@ -581,8 +580,6 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
         tools: [EXEC_TOOL],
         input: [userMessage("start")]
       })
-    }).then(() => {
-      turnDone = true;
     });
 
     // Wait until gemini has entered the turn and exceeded wedgedTimeoutMs (50ms)
@@ -779,7 +776,7 @@ test("a background model listing does not take the site's tab from a turn", asyn
       assert.equal(first.status, 200);
       assert.equal(listings, 1);
 
-      const turn = fetch(`${baseUrl}/v1/responses`, {
+      const turnResponse = fetch(`${baseUrl}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: turnRequest("busy", MODEL.gemini, "busy-thread")
@@ -799,7 +796,7 @@ test("a background model listing does not take the site's tab from a turn", asyn
       );
 
       release?.();
-      assert.equal((await turn).status, 200);
+      assert.equal((await turnResponse).status, 200);
 
       // With the tab free again the background listing runs.
       await fetch(`${baseUrl}/v1/models?provider=opencli-gemini`);
@@ -826,7 +823,7 @@ test("a busy site reports itself busy rather than unavailable", async () => {
       }
     },
     async (baseUrl) => {
-      const turn = fetch(`${baseUrl}/v1/responses`, {
+      const turnResponse = fetch(`${baseUrl}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: turnRequest("busy", MODEL.gemini, "busy-thread")
@@ -847,7 +844,7 @@ test("a busy site reports itself busy rather than unavailable", async () => {
       assert.equal(body.queueDepth, 1);
 
       release?.();
-      assert.equal((await turn).status, 200);
+      assert.equal((await turnResponse).status, 200);
     }
   );
 });

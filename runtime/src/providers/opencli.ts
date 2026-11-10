@@ -261,7 +261,9 @@ export function processRunner(
           if (!child.killed) {
             try {
               child.kill("SIGKILL");
-            } catch {}
+            } catch {
+              /* the process is already gone */
+            }
           }
         }, 2000);
         if (typeof killTimer.unref === "function") killTimer.unref();
@@ -684,6 +686,22 @@ export interface OpencliBridge {
   readonly ledger: OpencliConversationLedger;
 }
 
+/** The milliseconds a turn has left of its budget. */
+function budgetLeft(deadline: number): number {
+  return deadline - Date.now();
+}
+
+/**
+ * The seconds a command may still run for, within the turn's budget.
+ *
+ * opencli takes its timeout in whole seconds, so the command is given the
+ * next second up: a turn with 995 ms left is given one second rather than
+ * none. A turn with no time left at all is refused instead, in `attemptTurn`.
+ */
+function remainingSeconds(deadline: number): number {
+  return Math.max(1, Math.ceil(budgetLeft(deadline) / 1000));
+}
+
 export function createOpencliBridge(
   options: OpencliBridgeOptions
 ): OpencliBridge {
@@ -707,7 +725,7 @@ export function createOpencliBridge(
    */
   function refreshSiteModels(
     site: OpencliSite,
-    options: { readonly background?: boolean } = {}
+    mode: { readonly background?: boolean } = {}
   ): Promise<void> {
     const inFlight = modelRefreshes.get(site);
     if (inFlight) return inFlight;
@@ -720,7 +738,7 @@ export function createOpencliBridge(
       );
     };
     const refresh = (
-      options.background === true
+      mode.background === true
         ? queues.runInBackground(site, list)
         : queues.run(site, list)
     )
@@ -935,23 +953,6 @@ export function createOpencliBridge(
    */
   function turnBudget(): number {
     return Date.now() + options.turnTimeoutSeconds * 1000;
-  }
-
-  /** The milliseconds a turn has left of its budget. */
-  function budgetLeft(deadline: number): number {
-    return deadline - Date.now();
-  }
-
-  /**
-   * The seconds a command may still run for, within the turn's budget.
-   *
-   * opencli takes its timeout in whole seconds, so the command is given the
-   * next second up: a turn with 995 ms left is given one second rather than
-   * none. A turn with no time left at all is refused instead, in
-   * `attemptTurn`.
-   */
-  function remainingSeconds(deadline: number): number {
-    return Math.max(1, Math.ceil(budgetLeft(deadline) / 1000));
   }
 
   async function attemptTurn(
