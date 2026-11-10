@@ -97,10 +97,7 @@ test("a version-managed Copilot CLI is found when PATH carries no nvm", (t) => {
   // The launchd PATH the bridge runs with: no version manager's bin
   // directory, so a PATH lookup alone finds nothing to spawn.
   assert.equal(
-    resolveCopilotBinary(
-      { PATH: join(fixture.home, "empty") },
-      fixture.home
-    ),
+    resolveCopilotBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
     newer
   );
   assert.notEqual(newer, older);
@@ -131,17 +128,11 @@ test("an explicit Codex CLI named as a command is resolved on PATH", (t) => {
   const directory = join(fixture.home, "bin");
   const binary = installExecutable(join(directory, "codex"));
   assert.equal(
-    resolveCodexBinary(
-      { CODEX_BIN: "codex", PATH: directory },
-      fixture.home
-    ),
+    resolveCodexBinary({ CODEX_BIN: "codex", PATH: directory }, fixture.home),
     binary
   );
   assert.equal(
-    findCodexBinary(
-      { CODEX_BIN: "codex", PATH: directory },
-      fixture.home
-    ),
+    findCodexBinary({ CODEX_BIN: "codex", PATH: directory }, fixture.home),
     binary
   );
 });
@@ -156,17 +147,11 @@ test("a version-managed Codex CLI is found when PATH carries no nvm", (t) => {
     join(fixture.home, ".nvm", "versions", "node", "v25.0.0", "bin", "codex")
   );
   assert.equal(
-    resolveCodexBinary(
-      { PATH: join(fixture.home, "empty") },
-      fixture.home
-    ),
+    resolveCodexBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
     newer
   );
   assert.equal(
-    findCodexBinary(
-      { PATH: join(fixture.home, "empty") },
-      fixture.home
-    ),
+    findCodexBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
     newer
   );
   assert.equal(findNvmBinary("codex", fixture.home), newer);
@@ -189,7 +174,10 @@ test("the MiniMax CLI is looked for in the environment it was handed", (t) => {
   // A machine with no MiniMax CLI installed: an empty PATH and a home with
   // nothing in it. The lookup must answer about that machine, so it must not
   // fall back on the Node this process happens to run under.
-  assert.equal(findMiniMaxBinary({ PATH: "", HOME: fixture.home }, fixture.home), null);
+  assert.equal(
+    findMiniMaxBinary({ PATH: "", HOME: fixture.home }, fixture.home),
+    null
+  );
 });
 
 test("a MiniMax CLI is found in the home it was asked about", (t) => {

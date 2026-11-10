@@ -1109,7 +1109,10 @@ export class RoutingPolicy {
     tier: string,
     role: ProviderRole
   ): ProviderRoleAssignment | undefined {
-    return this.assignmentFor(provider, this.governingRole(provider, tier, role));
+    return this.assignmentFor(
+      provider,
+      this.governingRole(provider, tier, role)
+    );
   }
 
   /**

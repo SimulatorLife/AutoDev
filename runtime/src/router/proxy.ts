@@ -853,9 +853,10 @@ export function reportedError(value: unknown): ProviderReportedError | null {
  * The event's own error is what the provider said went wrong; an event
  * without one says only that the turn failed.
  */
-function failedEventError(
-  parsed: { type?: string; [key: string]: unknown }
-): ProviderReportedError | null {
+function failedEventError(parsed: {
+  type?: string;
+  [key: string]: unknown;
+}): ProviderReportedError | null {
   const response = parsed.response as Record<string, unknown> | undefined;
   return reportedError(response?.error);
 }
