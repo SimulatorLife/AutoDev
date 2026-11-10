@@ -39,6 +39,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  PROVIDER_REQUEST_UNSUPPORTED_TYPE,
   sendJson,
   sendUnsupportedRequestFailure
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
@@ -103,6 +104,18 @@ const DEFAULT_TURN_TIMEOUT_SECONDS = 600;
  * on to a route that can serve it.
  */
 const MAX_ARGV_PROMPT_BYTES = 100_000;
+/**
+ * The largest prompt a site is given as an attachment.
+ *
+ * A site's page takes an attachment of any size, so this bound is not the
+ * page's: it is the model's. A root orchestrator's tool reference carries
+ * every MCP tool's declaration, and the prompt that carried 280 KB of it
+ * took the model 85 seconds to say anything at all. The reference is
+ * compressed rather than the conversation: the conversation is what the turn
+ * is, and the reference is a listing the model can read the rest of from
+ * inside `exec`.
+ */
+const MAX_ATTACHED_PROMPT_BYTES = 120_000;
 /** opencli's own exit code for a timed-out command. */
 const OPENCLI_TIMEOUT_EXIT_CODE = 75;
 const LIMIT_STATUS_CLASSES = new Set([
@@ -183,7 +196,7 @@ const UNSENT_RETRIES = 2;
  * find the input the last one could not.
  */
 const FAILED_BEFORE_SENDING =
-  /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer|file input is missing or ambiguous|file input not found|active composer form not found/u;
+  /requires an authenticated session with an active composer|requires a logged-in ChatGPT session with a visible composer|prompt was not sent|Could not find (?:Gemini|ChatGPT) composer|file input is missing|file input not found|active composer form not found/u;
 
 const THREAD_ID_PATTERN = /^[\w.-]{1,128}$/u;
 
@@ -218,6 +231,66 @@ function codexThread(
 
 function failedBeforeSending(error: OpencliCommandError): boolean {
   return FAILED_BEFORE_SENDING.test(error.message);
+}
+
+/**
+ * The opencli daemon another version left running.
+ *
+ * opencli's daemon is shared machine-wide on one port, so a CLI of a
+ * different version finds a daemon it cannot talk to and refuses the
+ * command: the stale daemon was not replaced and the turn died before it
+ * started. The CLI's own answer is to stop the daemon by hand; the bridge
+ * owns the CLI it runs, so it stops the daemon itself and runs the command
+ * again.
+ */
+const STALE_DAEMON = /stale daemon/iu;
+
+/**
+ * How a failed turn failed, as the router has to hear it.
+ *
+ * - `limit`: the site said the account is out of usage. The router cools the
+ *   provider down for as long as the site says.
+ * - `timeout`: the site did not answer in time. The request is not replayed
+ *   against the same route.
+ * - `not_sent`: the site never received the prompt -- the tab was not ready,
+ *   the page had no composer, the attachment could not be made. The provider
+ *   is healthy and nothing it holds was disturbed, so the turn is reported as
+ *   a refusal: the router moves on to a route that can serve it and the
+ *   provider is left serving the traffic it can serve. Cooling it down would
+ *   push every other agent away from a working route because one browser tab
+ *   was not ready yet.
+ * - `failed`: the site took the prompt and the turn failed. The provider
+ *   failed the request.
+ */
+type OpencliFailureKind = "limit" | "timeout" | "not_sent" | "failed";
+
+function failureKind(error: unknown): OpencliFailureKind {
+  const message = errorMessage(error);
+  const exitCode = error instanceof OpencliCommandError ? error.exitCode : null;
+  const limit = classifyCliLimit(message, exitCode);
+  if (limit && LIMIT_STATUS_CLASSES.has(limit.limitClass)) return "limit";
+  const code = error instanceof OpencliCommandError ? error.code : null;
+  if (code === "TIMEOUT" || exitCode === OPENCLI_TIMEOUT_EXIT_CODE)
+    return "timeout";
+  if (
+    error instanceof OpencliCommandError &&
+    (failedBeforeSending(error) || code === SITE_BUSY)
+  )
+    return "not_sent";
+  return "failed";
+}
+
+/**
+ * The error type a failed turn is reported under.
+ *
+ * The router reads the type to tell a refusal from a provider failure: a
+ * refusal moves the request to a route that can serve it and leaves the
+ * provider alone, a provider failure cools it down.
+ */
+function failureErrorType(kind: OpencliFailureKind): string {
+  if (kind === "not_sent") return PROVIDER_REQUEST_UNSUPPORTED_TYPE;
+  if (kind === "timeout") return "timeout_error";
+  return "opencli_proxy_error";
 }
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
 /** Keep-alive cadence on a streamed turn, well inside every idle timeout. */
@@ -535,6 +608,11 @@ class TurnStream {
    * A site limit ends the response incomplete with the declared limit, which
    * the router reads to cool the provider down; any other failure is a
    * `response.failed`, which Codex retries.
+   *
+   * The failure is typed the way the router reads a refusal: a turn whose
+   * prompt never reached the site is reported as one, so the router leaves the
+   * provider serving instead of cooling it down for a browser tab that was
+   * not ready.
    */
   fail(error: unknown): void {
     const message = errorMessage(error);
@@ -569,15 +647,15 @@ class TurnStream {
       }))
         this.emit(event, body);
     } else {
+      const kind = failureKind(error);
+      const code = error instanceof OpencliCommandError ? error.code : null;
       this.emit("response.failed", {
         type: "response.failed",
         response: {
           ...responseObject(this.responseId, this.model, "failed", []),
           error: {
-            type: "opencli_proxy_error",
-            ...(error instanceof OpencliCommandError
-              ? { code: error.code }
-              : {}),
+            type: failureErrorType(kind),
+            ...(code ? { code } : {}),
             message
           }
         }
@@ -622,6 +700,12 @@ class TurnStream {
  * router already knows -- "this route cannot serve this request" -- so the
  * chain moves on to a route that can serve it and opencli stays healthy
  * instead of being marked unavailable for being busy.
+ *
+ * A turn whose prompt never reached the site is the same kind of refusal. The
+ * tab was not ready, the page had no composer, the attachment could not be
+ * made: the site is working and holds nothing of this turn, and cooling it
+ * down would push every other agent away from a healthy route because one
+ * browser tab was not ready yet.
  */
 function sendFailure(response: ServerResponse, error: unknown): void {
   const message = errorMessage(error);
@@ -629,18 +713,14 @@ function sendFailure(response: ServerResponse, error: unknown): void {
   const code = error instanceof OpencliCommandError ? error.code : null;
   writeErrorLine(`opencli turn failed${code ? ` (${code})` : ""}: ${message}`);
   if (response.headersSent || response.destroyed) return;
-  if (code === SITE_BUSY) {
+  const kind = failureKind(error);
+  if (kind === "not_sent") {
     sendUnsupportedRequestFailure(response, PROVIDER, message);
     return;
   }
   const limit = classifyCliLimit(message, exitCode);
-  const timedOut = code === "TIMEOUT" || exitCode === OPENCLI_TIMEOUT_EXIT_CODE;
-  const status =
-    limit && LIMIT_STATUS_CLASSES.has(limit.limitClass)
-      ? 429
-      : timedOut
-        ? 408
-        : 503;
+  const timedOut = kind === "timeout";
+  const status = kind === "limit" ? 429 : timedOut ? 408 : 503;
   const headers = limitResponseHeaders(limit);
   const retryAfter = retryAfterSecondsFromLimit(limit);
   if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
@@ -841,15 +921,16 @@ export function createOpencliBridge(
         orchestrator ? roleInstructions(agentRole) : null
       );
     // A site that takes its prompt on the command line gets MCP tools named
-    // rather than documented when the full reference would not fit; the
-    // model reads one's details from `ALL_TOOLS` before calling it.
+    // rather than documented when the full reference would not fit; a site
+    // that takes it as an attachment gets the same treatment when the model
+    // would spend a minute reading the reference. Either way the model reads
+    // the rest of a tool's description from `ALL_TOOLS` before calling it.
     let fullPrompt = renderFirst(tools);
+    const promptLimit = spec.attachesPrompt
+      ? MAX_ATTACHED_PROMPT_BYTES
+      : MAX_ARGV_PROMPT_BYTES;
     for (const detail of ["summaries", "names"] as const) {
-      if (
-        spec.attachesPrompt ||
-        Buffer.byteLength(fullPrompt) <= MAX_ARGV_PROMPT_BYTES
-      )
-        break;
+      if (Buffer.byteLength(fullPrompt) <= promptLimit) break;
       const compact = renderFirst(compactCodexTools(tools, detail));
       writeErrorLine(
         `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; MCP tools listed by ${detail === "names" ? "name only" : "name and summary"} (${Buffer.byteLength(compact)} bytes)`
@@ -912,6 +993,10 @@ export function createOpencliBridge(
   function execFor(signal: AbortSignal, deadline: number): OpencliExec {
     const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
     const unsentRetryMs = options.unsentRetryMs ?? DEFAULT_UNSENT_RETRY_MS;
+    // One daemon belongs to one version: a command that met a daemon of
+    // another version stops it and runs again, and only the first such
+    // failure in a turn does so.
+    let daemonStopped = false;
     const attempt = async (
       args: readonly string[],
       unsentRetries = UNSENT_RETRIES
@@ -922,6 +1007,14 @@ export function createOpencliBridge(
         return await options.run({ args, signal });
       } catch (error) {
         if (!(error instanceof OpencliCommandError)) throw error;
+        if (STALE_DAEMON.test(error.message) && !daemonStopped) {
+          daemonStopped = true;
+          writeErrorLine(
+            "opencli found a daemon of another version; stopping it and running the command again"
+          );
+          await stopStaleDaemon(signal);
+          return attempt(args, unsentRetries);
+        }
         if (error.code === SESSION_BUSY && Date.now() + retryMs <= deadline) {
           writeErrorLine(`opencli site session busy; retrying in ${retryMs}ms`);
           await sleep(retryMs);
@@ -938,6 +1031,23 @@ export function createOpencliBridge(
       }
     };
     return attempt;
+  }
+
+  /**
+   * Stop the daemon opencli found, so the next command starts one of this
+   * version.
+   *
+   * The daemon is shared machine-wide, so the stop is the CLI's own remedy
+   * ("run manually: opencli daemon stop"). Doing it here keeps a version skew
+   * from failing the turn: the bridge runs the version the repository pins,
+   * and the daemon it inherits may be another one's.
+   */
+  async function stopStaleDaemon(signal: AbortSignal): Promise<void> {
+    try {
+      await options.run({ args: ["daemon", "stop"], signal });
+    } catch (error) {
+      writeErrorLine(`opencli daemon stop failed: ${errorMessage(error)}`);
+    }
   }
 
   /**

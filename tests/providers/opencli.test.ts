@@ -822,6 +822,7 @@ async function withBridge(
       if (request.args[1] === "models")
         return [{ model: "3.8-flash" }, { model: "3.1-pro" }];
       runs.requests.push(request);
+      if (request.args[0] === "daemon") return [];
       const fileIndex = request.args.indexOf("--file");
       if (request.args[1] === "ask" || request.args[1] === "ask-file")
         runs.prompts.push(
@@ -1269,6 +1270,90 @@ test("a failure after sending is not retried, so the prompt is never sent twice"
   );
 });
 
+test("a site that was not ready is a refusal, and the provider keeps serving", async () => {
+  // The prompt never reached the site: the tab had no composer. The provider
+  // is healthy and holds nothing of this turn, so the turn is refused rather
+  // than reported as a provider outage -- cooling the provider down would
+  // push every other agent away from a working route because one browser tab
+  // was not ready yet.
+  const notReady = new OpencliCommandError(
+    "ChatGPT ask-file requires an authenticated session with an active composer.",
+    "COMMAND_EXEC",
+    1
+  );
+  await withBridge([notReady, notReady, notReady], async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 400);
+    const body = (await reply.json()) as { error: { type: string } };
+    assert.equal(body.error.type, "provider_request_unsupported");
+  });
+});
+
+test("a streamed turn that never reached the site says so in the stream", async () => {
+  // The same refusal, in the stream: the router reads the error the turn
+  // failed with, and a route that cannot serve the request is not a provider
+  // that is down.
+  const bridge = createOpencliBridge({
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    sessionBusyRetryMs: 1,
+    unsentRetryMs: 1,
+    run: async () => {
+      throw new OpencliCommandError("file input is missing", "COMMAND_EXEC", 1);
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const response = await post(`http://127.0.0.1:${port}`, {
+      model: "opencli-chatgpt-balanced",
+      stream: true,
+      input: "hi"
+    });
+    assert.equal(response.status, 200);
+    const events = await response.text();
+    assert.match(events, /event: response\.failed/u);
+    assert.match(events, /"type":"provider_request_unsupported"/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a daemon of another version is stopped, and the command runs again", async () => {
+  // opencli's daemon is shared machine-wide, so the CLI of the version this
+  // repository pins can meet the daemon of another one. The CLI's own remedy
+  // is to stop the daemon by hand; the bridge owns the CLI it runs, so it
+  // does that itself instead of failing the turn.
+  await withBridge(
+    [
+      new OpencliCommandError(
+        "Stale daemon could not be replaced (A stale daemon (v2.0.3 ≠ v2.0.2) is running but did not shut down (graceful + SIGKILL both failed). Run manually: opencli daemon stop)",
+        "COMMAND_EXEC",
+        1
+      ),
+      { response: "done", conversation_id: "c1" }
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: "hi"
+      });
+      assert.equal(reply.status, 200);
+      assert.ok(
+        runs.requests.some((request) => request.args[0] === "daemon"),
+        "the stale daemon was not stopped"
+      );
+      assert.equal(runs.prompts.length, 2, "the turn ran the command twice");
+    }
+  );
+});
+
 test("a busy site session is waited out instead of failing the turn", async () => {
   await withBridge(
     [
@@ -1416,7 +1501,10 @@ test("a Gemini root whose full tool reference is too long starts with MCP tools 
       assert.match(prompt, /Plan the work\./u);
     }
   );
-  // ChatGPT takes the prompt as an attachment and keeps the full reference.
+  // ChatGPT takes the prompt as an attachment, so the page takes it whatever
+  // its size, but the model still has to read it: a 300 KB reference took the
+  // model 85 seconds to say anything. The reference is compressed for the
+  // model too, and the built-in tools keep their declarations.
   await withBridge(
     [{ response: "ok", conversation_id: "c-root" }],
     async (baseUrl, runs) => {
@@ -1426,8 +1514,15 @@ test("a Gemini root whose full tool reference is too long starts with MCP tools 
         input: [userMessage("Plan the work.")]
       });
       assert.equal(response.status, 200);
-      assert.match(
-        runs.prompts[0]!,
+      const prompt = runs.prompts[0]!;
+      assert.ok(
+        Buffer.byteLength(prompt) < Buffer.byteLength(exec.description),
+        `the attached prompt kept the whole reference: ${prompt.length}`
+      );
+      assert.match(prompt, /declare const tools: \{ exec_command\(/u);
+      assert.match(prompt, /- `mcp__codex_apps__github_tool_599`/u);
+      assert.doesNotMatch(
+        prompt,
         /declare const tools: \{ mcp__codex_apps__github_tool_599\(/u
       );
     }

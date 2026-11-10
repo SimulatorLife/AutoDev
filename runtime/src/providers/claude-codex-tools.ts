@@ -134,6 +134,33 @@ export function codexToolSurface(payload: unknown): CodexToolSurface {
 }
 
 /**
+ * A call-shaped identifier in a code-mode tool's description (`exec_command(`).
+ *
+ * Codex's tool names are snake_case, so only names with an underscore count.
+ */
+const NESTED_TOOL_CALL = /\b([a-z]\w*)\(/gu;
+
+/**
+ * The functions a code-mode tool's description declares on the `tools` global.
+ *
+ * A code-mode tool carries every nested tool as a declaration in its
+ * description, so the names are in there -- but a description of ten
+ * kilobytes is a poor place to look for them, and a model that cannot find
+ * `multi_agent_v1__spawn_agent` says the delegation tools do not exist. They
+ * are named where the model looks first.
+ */
+export function nestedToolNames(description: string): string[] {
+  return [
+    ...new Set(
+      Array.from(
+        description.matchAll(NESTED_TOOL_CALL),
+        (match) => match[1] ?? ""
+      ).filter((name) => name.includes("_"))
+    )
+  ].sort();
+}
+
+/**
  * The full reference for every mirrored tool, for the system prompt.
  *
  * Codex's tool descriptions are long -- `exec`'s carries the TypeScript
@@ -142,6 +169,11 @@ export function codexToolSurface(payload: unknown): CodexToolSurface {
  * names (`command` for `exec_command`'s `cmd`) until a call failed. The
  * system prompt is not truncated, so the reference lives there and the MCP
  * entries point to it.
+ *
+ * The nested functions are named in it as well. They are declared inside the
+ * description, which is where a model that cannot use the delegation tools
+ * does not look: it reads the reference, does not see them, and reports them
+ * as unavailable.
  */
 export function codexToolReference(tools: readonly CodexTool[]): string {
   return tools
@@ -150,7 +182,13 @@ export function codexToolReference(tools: readonly CodexTool[]): string {
         tool.kind === "custom"
           ? "Input: the tool's raw text, passed as the `input` string (for `exec`, JavaScript source with no markdown fences)."
           : `Arguments (JSON schema): ${JSON.stringify(tool.parameters ?? { type: "object", properties: {} })}`;
-      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}`;
+      const nested =
+        tool.kind === "custom" ? nestedToolNames(tool.description) : [];
+      const functions =
+        nested.length > 0
+          ? `\n\nFunctions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.`
+          : "";
+      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}${functions}`;
     })
     .join("\n\n");
 }

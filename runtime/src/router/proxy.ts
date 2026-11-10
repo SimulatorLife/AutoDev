@@ -17,6 +17,7 @@ import {
   classifyProviderFailure,
   INVALID_MODEL_PATTERN,
   isRequestRefusalClass,
+  type ProviderFailureClass,
   recordRouterEvent
 } from "@simulatorlife/autodev-runtime/router/events";
 import {
@@ -814,6 +815,84 @@ export function incompleteFromResponse(
   };
 }
 
+/**
+ * The error a provider reported with a failed response.
+ *
+ * A bridge answers 200 and then fails when the failure happens after the
+ * response's head has gone out, so the failure can only be read from the
+ * body of the stream. What the error carries is what tells the router what
+ * happened: a request the route cannot serve, a timeout, a limit the site
+ * named, or a provider failure.
+ */
+export interface ProviderReportedError {
+  readonly type: string | null;
+  readonly code: string | null;
+  readonly message: string | null;
+}
+
+/** The error of a failed response, as the provider reported it. */
+export function reportedError(value: unknown): ProviderReportedError | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return null;
+  const error = value as Record<string, unknown>;
+  const type = typeof error.type === "string" ? error.type : null;
+  const code =
+    typeof error.code === "string"
+      ? error.code
+      : typeof error.code === "number"
+        ? String(error.code)
+        : null;
+  const message = typeof error.message === "string" ? error.message : null;
+  if (!type && !code && !message) return null;
+  return { type, code, message };
+}
+
+/**
+ * The error a `response.failed` event carries, when it carries one.
+ *
+ * The event's own error is what the provider said went wrong; an event
+ * without one says only that the turn failed.
+ */
+function failedEventError(
+  parsed: { type?: string; [key: string]: unknown }
+): ProviderReportedError | null {
+  const response = parsed.response as Record<string, unknown> | undefined;
+  return reportedError(response?.error);
+}
+
+/**
+ * Keep the error a failed turn reported.
+ *
+ * The error is what says whether the provider is broken or the route cannot
+ * serve this request; without it every failure of a streamed turn read
+ * alike, and a route that never received the prompt was cooled down like a
+ * provider that had.
+ */
+function captureFailedEvent(
+  parsed: { type?: string; [key: string]: unknown },
+  setReportedError: (value: ProviderReportedError) => void
+): void {
+  const error = failedEventError(parsed);
+  if (error) setReportedError(error);
+}
+
+/**
+ * The failure class a failed response's own error names.
+ *
+ * A response that failed without saying why is an upstream error. One that
+ * says the route cannot serve this request is a refusal: the provider is
+ * healthy, so the router leaves it serving instead of cooling it down.
+ */
+export function classifyReportedFailure(
+  error: ProviderReportedError | null
+): ProviderFailureClass {
+  if (!error) return "upstream_error";
+  const body = JSON.stringify({ error });
+  if (providerRequestUnsupported(body)) return "unsupported_request";
+  const classified = classifyProviderFailure(200, body);
+  return classified === "request_error" ? "upstream_error" : classified;
+}
+
 export function responseFailureEvent(message: string): string {
   return `event: response.failed\ndata: ${JSON.stringify({
     type: "response.failed",
@@ -925,6 +1004,8 @@ export interface StreamWriteResult {
   incompleteReason: string | null;
   limit: ProviderLimit | null;
   inputRequired: boolean;
+  /** The error the provider reported with the failure, when it reported one. */
+  error: ProviderReportedError | null;
 }
 
 function applyParsedSseEvent(
@@ -941,6 +1022,7 @@ function applyParsedSseEvent(
   setTerminal: (value: "completed" | "failed") => void,
   setIncompleteReason: (value: string) => void,
   setReportedLimit: (value: ProviderLimit) => void,
+  setReportedError: (value: ProviderReportedError) => void,
   onResponseCompleted?: (response: Record<string, unknown>) => void
 ): void {
   switch (parsed.type) {
@@ -977,6 +1059,7 @@ function applyParsedSseEvent(
       break;
     }
     case "response.failed": {
+      captureFailedEvent(parsed, setReportedError);
       setTerminal("failed");
       break;
     }
@@ -1029,6 +1112,7 @@ function flushSseBuffer(args: {
   setTerminal: (value: "completed" | "failed") => void;
   setIncompleteReason: (value: string) => void;
   setReportedLimit: (value: ProviderLimit) => void;
+  setReportedError: (value: ProviderReportedError) => void;
   onResponseCompleted?: (response: Record<string, unknown>) => void;
   onConsumed: (toolCallDelta: number) => void;
   onBufferUpdated: (next: string) => void;
@@ -1056,6 +1140,7 @@ function flushSseBuffer(args: {
           args.setTerminal,
           args.setIncompleteReason,
           args.setReportedLimit,
+          args.setReportedError,
           args.onResponseCompleted
         )
     });
@@ -1078,6 +1163,7 @@ function flushSseBuffer(args: {
           args.setTerminal,
           args.setIncompleteReason,
           args.setReportedLimit,
+          args.setReportedError,
           args.onResponseCompleted
         )
     });
@@ -1208,6 +1294,7 @@ export async function writeResponseStream(
   };
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
+  let streamError: ProviderReportedError | null = null;
   let attemptUsage: ProviderUsage | null = null;
   let attemptResponseModel: string | null = null;
   const captureCompletedResponse = (
@@ -1257,6 +1344,9 @@ export async function writeResponseStream(
   const captureReportedLimit = (value: ProviderLimit): void => {
     reportedLimit = value;
   };
+  const captureReportedError = (value: ProviderReportedError): void => {
+    streamError = value;
+  };
   const captureToolCalls = (delta: number): void => {
     toolCalls += delta;
   };
@@ -1277,6 +1367,7 @@ export async function writeResponseStream(
       setTerminal: captureTerminal,
       setIncompleteReason: captureIncompleteReason,
       setReportedLimit: captureReportedLimit,
+      setReportedError: captureReportedError,
       onResponseCompleted: captureCompletedResponse,
       onConsumed: captureToolCalls,
       onBufferUpdated: captureBuffer
@@ -1313,6 +1404,7 @@ export async function writeResponseStream(
     clientDisconnected: terminal !== "completed" && clientGone(),
     incompleteReason,
     limit: reportedLimit,
+    error: streamError,
     inputRequired:
       incompleteReason === "input_required" ||
       incompleteReason === "requires_action"
@@ -1741,6 +1833,7 @@ function emptyBufferedResult(failed = false): StreamWriteResult {
     clientDisconnected: false,
     incompleteReason: null,
     limit: null,
+    error: null,
     inputRequired: false
   };
 }
@@ -1809,13 +1902,8 @@ function writeCodexBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const {
-    response,
-    result,
-    publicModel,
-    responseHeaders,
-    minimumInputTokens
-  } = context;
+  const { response, result, publicModel, responseHeaders, minimumInputTokens } =
+    context;
   // One pass over the body answers all three questions the buffered path used to
   // ask with three separate parses.
   const summary = summarizeBufferedSse(body);
@@ -1841,6 +1929,7 @@ function writeCodexBufferedResponse(
     failed: responseWasNotCompleted(parsed),
     clientDisconnected: false,
     ...incomplete,
+    error: reportedError(parsed.error),
     inputRequired: hasInputRequired(parsed, incomplete)
   };
 }
@@ -1864,13 +1953,8 @@ function writeJsonBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const {
-    response,
-    result,
-    publicModel,
-    responseHeaders,
-    minimumInputTokens
-  } = context;
+  const { response, result, publicModel, responseHeaders, minimumInputTokens } =
+    context;
   try {
     const parsed: unknown = JSON.parse(body);
     const responseObject =
@@ -1897,6 +1981,7 @@ function writeJsonBufferedResponse(
       toolCallIds,
       failed: responseWasNotCompleted(rewritten),
       clientDisconnected: false,
+      error: reportedError(rewritten.error),
       ...incomplete,
       inputRequired: hasInputRequired(rewritten, incomplete)
     };
@@ -3426,17 +3511,13 @@ function rejectFallbackChain(
   sendJson(
     response,
     400,
-    errorBody(
-      rejection.message,
-      "router_provider_exhausted",
-      {
-        code: "router_provider_exhausted",
-        retryable: false,
-        failureClass: rejection.failureClass,
-        model: modelName,
-        requestId
-      }
-    ),
+    errorBody(rejection.message, "router_provider_exhausted", {
+      code: "router_provider_exhausted",
+      retryable: false,
+      failureClass: rejection.failureClass,
+      model: modelName,
+      requestId
+    }),
     { "x-autodev-request-id": requestId }
   );
 }
@@ -3447,7 +3528,9 @@ function triedCandidates(
   return (provider: string) => attempted.has(provider);
 }
 
-export function stickyCooldownWaitWindowMs(isOrchestratorTurn: boolean): number {
+export function stickyCooldownWaitWindowMs(
+  isOrchestratorTurn: boolean
+): number {
   const configured = Number.parseInt(
     process.env.CODEX_ROUTER_STICKY_COOLDOWN_WAIT_MS ?? ""
   );
@@ -3635,8 +3718,10 @@ async function tryPrimaryRoute(
         waited &&
         !ctx.clientSignal?.aborted &&
         !ctx.response.headersSent &&
-        !COOLDOWNS.isCooling(route.provider, Date.now(), route.model)
-       && served(await tryCandidate(route, "primary"))) return true;
+        !COOLDOWNS.isCooling(route.provider, Date.now(), route.model) &&
+        served(await tryCandidate(route, "primary"))
+      )
+        return true;
     }
   }
   return tryPrimaryRoute(
@@ -4109,17 +4194,24 @@ async function handleCandidateSuccess(
     if (responseResult.failed) {
       const failureClass =
         responseResult.limit?.limitClass ??
-        (responseResult.incompleteReason ? "unavailable" : "upstream_error");
-      COOLDOWNS.cooldownProvider(
-        route.provider,
-        cooldownFor(
-          failureClass,
-          responseResult.limit,
-          route.model,
-          null,
-          route.provider
-        )
-      );
+        (responseResult.incompleteReason
+          ? "unavailable"
+          : classifyReportedFailure(responseResult.error));
+      // A route that cannot serve this request is not a broken provider: the
+      // prompt never reached it, the provider is healthy, and cooling it down
+      // pushes every other agent away from a working route. The refusal is
+      // reported, and the provider keeps serving the traffic it can serve.
+      if (failureClass !== "unsupported_request")
+        COOLDOWNS.cooldownProvider(
+          route.provider,
+          cooldownFor(
+            failureClass,
+            responseResult.limit,
+            route.model,
+            null,
+            route.provider
+          )
+        );
       recordRouterEvent({
         phase: "result",
         requestId: ctx.requestId,

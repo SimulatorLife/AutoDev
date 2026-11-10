@@ -1048,6 +1048,109 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   }
 });
 
+test("a streamed refusal does not cool the provider down, and a streamed failure does", async () => {
+  // A bridge answers 200 and then fails when the failure happens after the
+  // response's head has gone out, so the router reads the failure from the
+  // stream. What the failure carries decides what the router does with the
+  // provider: a route that never received the prompt is healthy, and cooling
+  // it down pushes every other agent away from a working route.
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+  };
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  process.env.MINIMAX_API_KEY = "test-provider-key";
+  const candidates = ["claude", "antigravity", "minimax", "copilot", "codex"];
+  const streamWith = (error: unknown): string =>
+    [
+      `data: ${JSON.stringify({
+        type: "response.created",
+        response: { id: "resp_1", object: "response", status: "in_progress" }
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        type: "response.failed",
+        response: {
+          id: "resp_1",
+          status: "failed",
+          ...(error ? { error } : {})
+        }
+      })}\n\n`
+    ].join("");
+
+  const runWith = async (error: unknown): Promise<void> => {
+    for (const provider of candidates) cooldowns.clear(provider);
+    globalThis.fetch = (async (url: any, options: any = {}) => {
+      const target = String(url);
+      if (target.endsWith("/health") || target.endsWith("/health/liveliness"))
+        return new Response("ok", { status: 200 });
+      if (target.endsWith("/responses"))
+        return new Response(streamWith(error), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      return originalFetch(url, options);
+    }) as typeof globalThis.fetch;
+    const server = createServer((request, response) => {
+      void handle(request, response);
+    });
+    await listenServer(server);
+    try {
+      const address = server.address() as AddressInfo;
+      const response = await originalFetch(
+        `http://127.0.0.1:${address.port}/v1/responses`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-codex-session-id": "refusal-test"
+          },
+          body: JSON.stringify({ model: "autodev/default", stream: true })
+        }
+      );
+      assert.equal(response.status, 200);
+      const events = await response.text();
+      assert.match(events, /response\.failed/u);
+    } finally {
+      await closeServer(server);
+    }
+  };
+
+  try {
+    await runWith({
+      type: "provider_request_unsupported",
+      message: "the site was not ready"
+    });
+    for (const provider of candidates)
+      assert.equal(
+        cooldowns.get(provider),
+        null,
+        `${provider} was cooled down for a route that could not serve the request`
+      );
+
+    await runWith({
+      type: "opencli_proxy_error",
+      message: "the site could not be read"
+    });
+    const cooled = candidates.filter(
+      (provider) => cooldowns.get(provider) !== null
+    );
+    assert.equal(
+      cooled.length,
+      1,
+      `a provider failure cools exactly one provider down, got ${cooled.join(", ")}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+});
+
 test("orchestrator alias falls back to another provider when the primary is unavailable and stays attributed to the orchestrator origin", async () => {
   const originalFetch = globalThis.fetch;
   const originalCredentials = {

@@ -44,6 +44,7 @@ import {
   type CodexTool,
   codexToolCallItem,
   codexToolReference,
+  nestedToolNames,
   renderCodexTranscript
 } from "./claude-codex-tools.ts";
 
@@ -506,12 +507,6 @@ const CONTINUATION_RULES =
 const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\`, and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
 
 /**
- * A call-shaped identifier in a code-mode tool's description (`exec_command(`).
- * Codex's tool names are snake_case, so only names with an underscore count.
- */
-const NESTED_TOOL_PATTERN = /\b([a-z]\w*)\(/gu;
-
-/**
  * Every tool by name, with the functions `exec` exposes: a reminder, not a
  * reference. The full reference is in the conversation's first message.
  */
@@ -525,16 +520,7 @@ export function toolIndex(tools: readonly CodexTool[]): string {
       const summary =
         newline === -1 ? description : description.slice(0, newline);
       const nested =
-        tool.kind === "custom"
-          ? [
-              ...new Set(
-                Array.from(
-                  tool.description.matchAll(NESTED_TOOL_PATTERN),
-                  (match) => match[1] ?? ""
-                ).filter((name) => name.includes("_"))
-              )
-            ]
-          : [];
+        tool.kind === "custom" ? nestedToolNames(tool.description) : [];
       return `- \`${tool.name}\`${summary ? `: ${summary}` : ""}${nested.length > 0 ? ` Functions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.` : ""}`;
     })
     .join("\n");
