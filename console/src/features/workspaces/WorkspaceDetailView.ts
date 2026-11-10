@@ -43,9 +43,9 @@ import {
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
 import {
-  type WorkspaceRequestReading,
-  workspaceRequestValue
-} from "./workspace-usage.ts";
+  WorkspaceRequestCell,
+  WorkspaceRequestTelemetryProvider
+} from "./WorkspaceRequestTelemetry.ts";
 import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
@@ -76,7 +76,6 @@ export interface WorkspaceDetailViewProps {
    * all; the three states it can carry are the three the list's Requests
    * column renders.
    */
-  readonly requests?: WorkspaceRequestReading | undefined;
   readonly controlFailed?: boolean | undefined;
   readonly refusal?:
     React.ComponentProps<typeof ControlFailureNotice>["refusal"] | undefined;
@@ -197,11 +196,9 @@ function LimitsPanel({
  * rather than an idle one.
  */
 function ConfigurationPanel({
-  workspace,
-  requests
+  workspace
 }: {
   readonly workspace: ControlApiWorkspaceRecord;
-  readonly requests: WorkspaceRequestReading | undefined;
 }): React.JSX.Element {
   return React.createElement(
     DetailGrid,
@@ -217,7 +214,15 @@ function ConfigurationPanel({
     React.createElement(
       DetailValue,
       { label: "Requests (24h)" },
-      workspaceRequestValue(requests)
+      // The same reading the list row shows, read by the browser and rendered
+      // by the same vocabulary, so the two surfaces cannot drift into
+      // different words for the same fact.
+      React.createElement(WorkspaceRequestTelemetryProvider, {
+        workspaceIds: [workspace.id],
+        children: React.createElement(WorkspaceRequestCell, {
+          workspaceId: workspace.id
+        })
+      })
     )
   );
 }
@@ -336,7 +341,6 @@ export function WorkspaceDetailView({
   approvalUnavailable,
   visualTargets,
   visualTargetsUnavailable,
-  requests,
   controlFailed,
   refusal,
   revision = null,
@@ -614,7 +618,7 @@ export function WorkspaceDetailView({
           catalogStatus,
           returnTo: workspacePath(workspace.id)
         }),
-        React.createElement(ConfigurationPanel, { workspace, requests })
+        React.createElement(ConfigurationPanel, { workspace })
       )
     ),
     React.createElement(

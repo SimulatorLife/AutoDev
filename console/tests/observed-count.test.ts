@@ -226,7 +226,6 @@ function renderWorkspaces(
     React.createElement(WorkspacesView, {
       workspaces,
       approvals,
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })

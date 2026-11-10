@@ -12,10 +12,10 @@ import {
 import {
   type ConsoleUsageResult,
   loadOpenLITTrace,
-  loadOpenLITUsage,
   type UsageSearchParams,
   usageSelectionFromSearchParams
 } from "../../src/lib/server/openlit-usage.ts";
+import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
 import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
 import {
   ConsolePageShell,
@@ -171,7 +171,7 @@ export default async function UsagePage({
         : undefined;
   const hasTraceSelection = rawSpanId !== undefined;
   const [result, traceResult] = await Promise.all([
-    loadOpenLITUsage(selection),
+    readUsageTelemetry(selection),
     hasTraceSelection
       ? loadOpenLITTrace(selectedSpanId ?? "")
       : Promise.resolve(undefined)

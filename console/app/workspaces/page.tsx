@@ -19,7 +19,6 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
-import { readWorkspaceRequests } from "./_requests.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -109,13 +108,13 @@ export default async function WorkspacesPage({
   }
   const workspaces = result.data.workspaces;
   const workspaceIds = workspaces.map((workspace) => workspace.id);
-  // The Control API reads and the Usage read are answered separately, in that
-  // order, for the same reason the Providers detail page does it: the Usage
-  // read is a twenty-four hour telemetry aggregation, and run beside the
-  // Control API fan-out it competes with those reads for the host until one
-  // of them is reported as a failure that did not happen.
+  // The Usage read is not here at all. It is a twenty-four hour telemetry
+  // aggregation, it is the most expensive read the Console makes, and it
+  // answers a question about the rows rather than about the page: the
+  // browser reads it once for the whole table and the rows fill in when it
+  // answers. The page itself is about the workspace catalogue, and the
+  // Control API answers that in milliseconds.
   const approvals = await readApprovals(workspaceIds, config);
-  const requests = await readWorkspaceRequests(workspaceIds);
   const saveOutcome = workspaceSaveOutcomeFromQuery(resolvedSearchParams.save);
   // A refused write leaves the control based on the revision it was filled
   // from, so the operator's edit is not silently paired with a catalog that
@@ -138,7 +137,6 @@ export default async function WorkspacesPage({
     React.createElement(WorkspacesView, {
       workspaces,
       approvals,
-      requests,
       revision: basedOn ?? result.data.revision,
       catalogStatus: result.data.catalogStatus,
       reconciliation: result.data.reconciliation,

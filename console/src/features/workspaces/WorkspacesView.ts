@@ -43,9 +43,9 @@ import {
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
 import {
-  type WorkspaceRequestLookup,
-  workspaceRequestValue
-} from "./workspace-usage.ts";
+  WorkspaceRequestCell,
+  WorkspaceRequestTelemetryProvider
+} from "./WorkspaceRequestTelemetry.ts";
 import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 
 /**
@@ -104,12 +104,17 @@ function workspaceApprovalOf(
  * every row. A workspace the breakdown does not report reads as unobserved
  * rather than zero when the breakdown was truncated, and a measured zero stays
  * a measured zero -- the two are different claims about the same cell.
+ *
+ * That read is the browser's rather than the page's. It is the most
+ * expensive read the Console makes and it answers a historical question, so
+ * it has no place on the path that renders the catalogue: the rows are on
+ * screen with their numbers still to come, and each one says so until the
+ * breakdown arrives.
  */
 
 export interface WorkspacesViewProps {
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
-  readonly requests: WorkspaceRequestLookup;
   /**
    * The revision the canonical catalog was read at.
    *
@@ -143,7 +148,6 @@ export interface WorkspacesViewProps {
 export function WorkspacesView({
   workspaces,
   approvals,
-  requests,
   revision,
   catalogStatus,
   reconciliation,
@@ -264,7 +268,12 @@ export function WorkspacesView({
       // 15px -- the same header measuring 35.5px on every other page and
       // 50.5px here.
       weight: 136,
-      cell: (ws) => workspaceRequestValue(requests.get(ws.id))
+      // The count is read in the browser, once for the whole table, and the
+      // row asks the shared reading for its own number. The cell starts in
+      // the pending state rather than in a zero: a number that has not
+      // arrived is not a measurement of no requests.
+      cell: (ws) =>
+        React.createElement(WorkspaceRequestCell, { workspaceId: ws.id })
     }
   ];
 
@@ -321,15 +330,18 @@ export function WorkspacesView({
         },
         "Configured Workspaces"
       ),
-      React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(
-        DataTable,
-        {
-          data: workspaces,
-          columns,
-          keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
-          emptyMessage: "No workspace entries are configured."
-        }
-      )
+      React.createElement(WorkspaceRequestTelemetryProvider, {
+        workspaceIds: workspaces.map((workspace) => workspace.id),
+        children: React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(
+          DataTable,
+          {
+            data: workspaces,
+            columns,
+            keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
+            emptyMessage: "No workspace entries are configured."
+          }
+        )
+      })
     )
   );
 }

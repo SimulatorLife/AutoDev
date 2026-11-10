@@ -8,7 +8,8 @@ import { ROUTER_STALE_SECONDS } from "../../lib/router-staleness.ts";
 import {
   isLocalWholePageDestination,
   navigateToWholePage,
-  warmUpWholePage
+  warmUpWholePage,
+  type WholePageRouter
 } from "./whole-page-navigation.ts";
 
 type NavigationLinkProps = Omit<
@@ -99,12 +100,79 @@ export function clearPrefetchCacheForTests(): void {
 }
 
 /**
+ * How long a pointer has to rest on a link before the link warms it.
+ *
+ * The Console's rail is fourteen links, and a pointer crossing it enters
+ * every link it passes. Each entry used to warm that destination's whole
+ * page: fourteen full page reads for a pointer that was only passing
+ * through, each one a server render of a route the operator may never
+ * open.
+ *
+ * The delay is the difference between a pointer that is travelling and a
+ * pointer that has arrived. The destination the pointer settles on is the
+ * one the operator is about to open, and it is warmed when they arrive.
+ */
+export const PREFETCH_INTENT_DELAY_MS = 200;
+
+/**
+ * The warm-up the pointer is heading towards.
+ *
+ * One pending warm-up at a time, shared by every link: the pointer has one
+ * destination at a time, and the last link it entered is the one it is
+ * heading towards. A second intent replaces the first rather than adding
+ * to it.
+ */
+let pendingWarmUp: { readonly timer: ReturnType<typeof setTimeout> } | null =
+  null;
+
+function cancelPendingWarmUp(): void {
+  if (pendingWarmUp === null) return;
+  clearTimeout(pendingWarmUp.timer);
+  pendingWarmUp = null;
+}
+
+/**
+ * Warm the destination the pointer settled on.
+ *
+ * The delay is the whole point: it is what turns a sweep across the rail
+ * into one warm-up instead of fourteen. A click does not wait for it --
+ * the click asks for the destination's page itself, and asks for it at
+ * once -- so a pointer that arrives and clicks is not delayed by the
+ * delay.
+ */
+export function scheduleWholePageWarmUp(
+  router: WholePageRouter | null,
+  destination: string,
+  delayMs: number = PREFETCH_INTENT_DELAY_MS
+): void {
+  cancelPendingWarmUp();
+  if (router === null) return;
+  if (!destination) return;
+  const timer = setTimeout(() => {
+    pendingWarmUp = null;
+    // The cooldown is consulted when the warm-up happens rather than when
+    // the intent was signalled: a destination that was never warmed was
+    // never asked for, and the router would still answer for it.
+    if (!shouldPrefetch(destination)) return;
+    warmUpWholePage(router, destination);
+  }, delayMs);
+  pendingWarmUp = { timer };
+}
+
+/** Forget the pending warm-up; the tests need a clean slate. */
+export function clearPendingWarmUpForTests(): void {
+  cancelPendingWarmUp();
+}
+
+/**
  * A link that routes in place.
  *
  * The link warms its destination on a pointer, touch or keyboard intent, so
  * that the dashboard does not start a request for every visible resource when
- * it opens. The warm-up is a **full** prefetch, and the kind is the whole
- * point.
+ * it opens. The warm-up waits for the intent to settle, so a pointer
+ * crossing the rail warms the destination it came to rest on rather than
+ * every destination it passed. The warm-up is a **full** prefetch, and the
+ * kind is the whole point.
  *
  * A partial prefetch answers with the route's loading state rather than with
  * the page. The navigation then finds that answer waiting for it, applies the
@@ -149,9 +217,12 @@ export function NavigationLink({
   const prefetch = React.useCallback((): void => {
     if (!router) return;
     const destination = toHrefString(href);
-    if (destination && shouldPrefetch(destination)) {
-      warmUpWholePage(router, destination);
-    }
+    if (!destination) return;
+    // The warm-up waits for the pointer to settle on this link. A sweep
+    // across the rail enters every link it passes, and warming each of
+    // them is a whole page read for a destination the operator may never
+    // open.
+    scheduleWholePageWarmUp(router, destination);
   }, [href, router]);
 
   const { onClick } = props;

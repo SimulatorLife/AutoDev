@@ -1,8 +1,7 @@
 import type {
   ToolCatalogCoverage,
   ToolCatalogItem,
-  ToolCatalogValidity,
-  ToolUsageEvidence
+  ToolCatalogValidity
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -67,9 +66,16 @@ export interface ToolDetailViewProps {
    * reaches this tool, the second says nobody looked.
    */
   readonly executionContractObserved: boolean;
-  readonly usage: ToolUsageEvidence;
-  readonly usageLink: string;
-  readonly usageUnavailable: boolean;
+  /**
+   * The tool's historical use evidence.
+   *
+   * The evidence is a panel of its own rather than three props on this
+   * view, because it is read in the browser after the page has rendered:
+   * the usage telemetry read is the most expensive read the Console makes,
+   * and a page that waited for it would wait for it on every navigation. The
+   * panel renders the evidence, or says that it has not arrived yet.
+   */
+  readonly usagePanel: React.ReactNode;
   /**
    * The list state the operator arrived with.
    *
@@ -171,87 +177,6 @@ function EditSurfaceLink({
   return React.createElement("span", { className: "text-sm" }, content);
 }
 
-function formatCount(value: number | null): string {
-  return value === null
-    ? NOT_OBSERVED_LABEL
-    : new Intl.NumberFormat("en-US").format(value);
-}
-
-function usageSection(
-  usage: ToolUsageEvidence,
-  usageLink: string,
-  usageUnavailable: boolean
-): React.JSX.Element {
-  // All three outcomes end with the same way through to the Usage telemetry
-  // surface -- that is the one thing an operator can do about all of them -- so
-  // the link is built once instead of being re-spelled per branch, where three
-  // copies could drift and two of them would be wrong without anything saying so.
-  const openUsage = React.createElement(
-    NavigationLink,
-    {
-      href: usageLink,
-      className: `text-xs ${ACTION_LINK_CLASS}`
-    },
-    "Open Usage →"
-  );
-  if (usageUnavailable) {
-    return React.createElement(
-      "div",
-      { className: "flex flex-col gap-2" },
-      React.createElement(StatusBadge, {
-        status: "unavailable",
-        label: "Usage telemetry unavailable"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_META_CLASS },
-        "The dedicated read-only Usage telemetry path returned an error; per-tool use/error evidence stays unobserved."
-      ),
-      openUsage
-    );
-  }
-  if (!usage.observed) {
-    return React.createElement(
-      "div",
-      { className: "flex flex-col gap-2" },
-      React.createElement(StatusBadge, {
-        status: NOT_OBSERVED_STATUS,
-        label: "No recorded tool calls"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_META_CLASS },
-        "No calls were observed for this tool through the dedicated read-only Usage path; the count is not rendered as zero."
-      ),
-      openUsage
-    );
-  }
-  return React.createElement(
-    "div",
-    { className: "flex flex-col gap-3" },
-    React.createElement(
-      "dl",
-      { className: "flex items-center gap-3" },
-      React.createElement(
-        FieldBox,
-        { label: "Calls (24h)" },
-        formatCount(usage.calls)
-      ),
-      React.createElement(
-        FieldBox,
-        { label: "Errors (24h)" },
-        usage.errors === null ? NOT_OBSERVED_LABEL : formatCount(usage.errors)
-      )
-    ),
-    React.createElement(
-      "p",
-      { className: MUTED_META_CLASS },
-      "Errors are reported only when the canonical Usage telemetry path exposes per-tool error counts. The Tools catalog never invents a value."
-    ),
-    openUsage
-  );
-}
-
 function coverageBanner(
   coverage: ToolCatalogCoverage,
   validity: ToolCatalogValidity,
@@ -336,9 +261,7 @@ export function ToolDetailView({
   coverage,
   validity,
   executionContractObserved,
-  usage,
-  usageLink,
-  usageUnavailable,
+  usagePanel,
   listFilters
 }: ToolDetailViewProps): React.JSX.Element {
   // The list state the operator arrived with. A detail page opened directly
@@ -465,7 +388,7 @@ export function ToolDetailView({
         { className: SECTION_HEADING_CLASS },
         "Historical use"
       ),
-      usageSection(usage, usageLink, usageUnavailable)
+      usagePanel
     )
   );
 }

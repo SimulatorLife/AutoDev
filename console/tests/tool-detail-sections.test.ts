@@ -6,6 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ToolDetailView } from "../src/features/tools/ToolDetailView.ts";
+import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 
 /**
  * Every other detail view marks its panels with `data-section` --
@@ -47,9 +48,10 @@ test("every tools detail section carries a stable hook and some content", () => 
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: null, errors: null, observed: false },
-      usageLink: "/usage",
-      usageUnavailable: false
+      usagePanel: toolUsageView({
+        state: { kind: "not-observed" },
+        usageLink: "/usage"
+      })
     })
   );
 
@@ -98,9 +100,10 @@ test("a tool with no description still renders its section", () => {
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: null, errors: null, observed: false },
-      usageLink: "/usage",
-      usageUnavailable: false
+      usagePanel: toolUsageView({
+        state: { kind: "not-observed" },
+        usageLink: "/usage"
+      })
     })
   );
   for (const name of SECTIONS) {

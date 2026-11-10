@@ -3,18 +3,13 @@ import { notFound } from "next/navigation";
 import React from "react";
 
 import {
-  type ProviderUsageSource,
-  summarizeProviderUsage
-} from "../../../src/features/providers/provider-usage.ts";
-import {
-  ProviderDetailView,
-  ProviderUsagePanel
+  ProviderDetailView
 } from "../../../src/features/providers/ProviderDetailView.ts";
+import { ProviderUsagePanel } from "../../../src/features/providers/ProviderUsagePanel.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode
 } from "../../../src/lib/server/control-api.ts";
-import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
@@ -40,39 +35,6 @@ export async function generateMetadata({
   return { title: `${id} · Providers` };
 }
 
-/**
- * The page's own usage read.
- *
- * The page awaits this read instead of handing it to a content component. A
- * read the page awaits answers in one piece: the page's model and the content
- * that read confirmed arrive together, so a navigation to this page has a
- * whole page to apply. A read handed to a content component behind a boundary
- * answers in two pieces -- the page's model now, its content later -- and the
- * navigation's commit waits on the second piece, so the address bar stays
- * where it was.
- */
-async function readProviderUsage(
-  providerId: string
-): Promise<ProviderUsageSource> {
-  try {
-    const result = await loadOpenLITUsage({
-      range: "7D",
-      values: { provider: [providerId] }
-    });
-    if (result.kind === "not-configured") return { kind: "not-configured" };
-    if (result.kind === "ok") {
-      return {
-        kind: "available",
-        attemptsByProvider: result.data.metrics.attemptsByProvider,
-        attemptErrorsByProvider: result.data.metrics.attemptErrorsByProvider
-      };
-    }
-    return { kind: "unavailable" };
-  } catch {
-    return { kind: "unavailable" };
-  }
-}
-
 export default async function ProviderDetailPage({
   params,
   searchParams
@@ -92,12 +54,12 @@ export default async function ProviderDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
-  // The Control API reads are answered before the telemetry read starts, not
-  // beside it. The usage panel reads a seven-day telemetry aggregation, which
-  // is the slowest thing this page asks for by an order of magnitude; run
-  // together with the Control API fan-out it competes with those reads for
-  // the host, and the page then reports a Control API failure for a Control
-  // API that answered every request.
+  // There is no telemetry read here at all. The usage panel's seven-day
+  // aggregation is the slowest thing this page would otherwise ask for by an
+  // order of magnitude, and it answers a question about one panel rather
+  // than about the page, so the browser reads it and the panel fills in when
+  // it answers. The page itself is about the provider, and the Control API
+  // answers that in milliseconds.
   const {
     providers: providersResult,
     models: modelsResult,
@@ -108,7 +70,6 @@ export default async function ProviderDetailPage({
     includeModels: true,
     includeProviderVersions: true
   });
-  const usageSource = await readProviderUsage(id);
   if (providersResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -149,10 +110,7 @@ export default async function ProviderDetailPage({
         versionsResult.kind === "ok"
           ? { status: "available", data: versionsResult.data }
           : { status: "unavailable", message: versionsResult.message },
-      usagePanel: React.createElement(ProviderUsagePanel, {
-        provider,
-        summary: summarizeProviderUsage(usageSource, provider.id)
-      }),
+      usagePanel: React.createElement(ProviderUsagePanel, { provider }),
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       controlFailed: isControlFailure(query.control)
     })

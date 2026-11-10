@@ -25,10 +25,8 @@ import {
   liveAgentCount,
   liveAgentRoleBreakdown
 } from "../src/features/live-agent-count.ts";
-import {
-  ProviderDetailView,
-  ProviderUsagePanel
-} from "../src/features/providers/ProviderDetailView.ts";
+import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
+import { providerUsageView } from "../src/features/providers/provider-usage-view.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 
 const NO_CONVERGENCE = {
@@ -244,9 +242,9 @@ test("agent, provider, and model views render counts from one Runtime projection
 
   const providerDetailMarkup = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
-      usagePanel: React.createElement(ProviderUsagePanel, {
+      usagePanel: providerUsageView({
         provider: PROVIDER,
-        summary: { status: "not-observed" }
+        reading: { status: "not-observed" }
       }),
       provider: PROVIDER,
       tiers: [],

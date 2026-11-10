@@ -1,13 +1,13 @@
-import type { UsageWorkspaceRequestBreakdown } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import type { UsageWorkspaceRequestSource } from "../usage/usage-api.ts";
 
 /**
  * What the Usage telemetry says about one workspace's logical requests.
  *
- * The three readings are three different claims and the Console keeps them
+ * The four readings are four different claims and the Console keeps them
  * apart:
  *
  * - `observed` is a measured count, including a measured zero.
@@ -15,38 +15,27 @@ import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
  *   workspace: the request breakdown was never observed, or it was truncated
  *   before this workspace appeared in it.
  * - `unavailable` is a source that could not be reached or read at all.
+ * - `pending` is a reading that has not been made yet: the surface is
+ *   waiting for the answer and has none.
  *
  * Collapsing `not-observed` into `observed` with a zero is the failure this
  * type exists to prevent: an unmeasured workspace would then look like a
- * quiet one.
+ * quiet one. `pending` is kept apart for the same reason, and it is the
+ * reason a zero is never rendered for a workspace whose number is on its
+ * way: a zero is a measurement, and a number that has not arrived is not a
+ * measurement of anything.
  */
 export type WorkspaceRequestReading =
   | { readonly kind: "observed"; readonly count: number }
   | { readonly kind: "not-observed" }
-  | { readonly kind: "unavailable" };
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "pending" };
 
 /** Each workspace's request reading, keyed by workspace id. */
 export type WorkspaceRequestLookup = ReadonlyMap<
   string,
   WorkspaceRequestReading
 >;
-
-/**
- * What the Usage source could tell this page about request counts.
- *
- * The three states are the three the readings above can express, kept
- * separate at the boundary so no caller has to infer one from another: a
- * source that was never read is not a source that observed nothing, and a
- * source that read fine but reported no breakdown is not a source that read
- * fine and observed zero requests in every workspace.
- */
-export type WorkspaceRequestSource =
-  | { readonly kind: "unavailable" }
-  | { readonly kind: "not-observed" }
-  | {
-      readonly kind: "observed";
-      readonly breakdown: UsageWorkspaceRequestBreakdown;
-    };
 
 /**
  * Resolve one workspace's logical-request count from the Usage breakdown.
@@ -60,7 +49,7 @@ export type WorkspaceRequestSource =
  * are not counted in any of them.
  */
 export function workspaceRequestReading(
-  source: WorkspaceRequestSource,
+  source: UsageWorkspaceRequestSource,
   workspaceId: string
 ): WorkspaceRequestReading {
   if (source.kind !== "observed") return { kind: source.kind };
@@ -86,7 +75,7 @@ export function workspaceRequestReading(
  * surface affordable.
  */
 export function workspaceRequestLookup(
-  source: WorkspaceRequestSource,
+  source: UsageWorkspaceRequestSource,
   workspaceIds: readonly string[]
 ): WorkspaceRequestLookup {
   const readings = new Map<string, WorkspaceRequestReading>();
@@ -100,10 +89,15 @@ export function workspaceRequestLookup(
  * The rendered Requests value.
  *
  * A count is rendered as a number, and everything else is rendered as the
- * reason there is no number: the source could not be read, or it answered
- * without reporting this workspace. The list row and the workspace detail
- * render this same value, so the two surfaces cannot drift into different
- * vocabularies for the same fact.
+ * reason there is no number: the source could not be read, it answered
+ * without reporting this workspace, or the reading has not arrived yet. The
+ * list row and the workspace detail render this same value, so the two
+ * surfaces cannot drift into different vocabularies for the same fact.
+ *
+ * The pending reading carries `aria-busy`, so assistive technology is told
+ * that the cell is still being filled in. That is the difference between a
+ * number that is on its way and a number that will never arrive, and it is
+ * the difference the reader would otherwise have to guess at.
  */
 export function workspaceRequestValue(
   reading: WorkspaceRequestReading | undefined
@@ -126,6 +120,17 @@ export function workspaceRequestValue(
         "data-workspace-requests": "unavailable"
       },
       "Unavailable"
+    );
+  }
+  if (reading.kind === "pending") {
+    return React.createElement(
+      "span",
+      {
+        className: MUTED_META_CLASS,
+        "data-workspace-requests": "pending",
+        "aria-busy": "true"
+      },
+      "Pending"
     );
   }
   return React.createElement(

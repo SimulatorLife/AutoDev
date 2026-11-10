@@ -4,7 +4,6 @@ import React from "react";
 
 import { workspaceSaveOutcomeFromQuery } from "../../../../src/features/workspaces/configuration.ts";
 import { isWorkspaceId } from "../../../../src/features/workspaces/paths.ts";
-import { workspaceRequestReading } from "../../../../src/features/workspaces/workspace-usage.ts";
 import { WorkspaceDetailView } from "../../../../src/features/workspaces/WorkspaceDetailView.ts";
 import {
   isControlFailure,
@@ -23,7 +22,6 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../../../_console.ts";
-import { readWorkspaceRequestSource } from "../../_requests.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -64,12 +62,15 @@ export default async function WorkspaceDetailPage({
   if (!isWorkspaceId(id)) notFound();
 
   const query = (await searchParams) ?? {};
-  const [workspacesResult, approvalResult, visualTargetsResult, requestSource] =
+  // The Usage read is not among these. It is a twenty-four hour telemetry
+  // aggregation that answers a question about one cell rather than about the
+  // page, and it is the most expensive read the Console makes; the browser
+  // reads it and the cell fills in when it answers.
+  const [workspacesResult, approvalResult, visualTargetsResult] =
     await Promise.all([
       fetchWorkspaces(config),
       fetchWorkspacePlaytestApproval(id, config),
-      fetchWorkspaceVisualPlaytestTargets(id, config),
-      readWorkspaceRequestSource()
+      fetchWorkspaceVisualPlaytestTargets(id, config)
     ]);
 
   if (workspacesResult.kind !== "ok") {
@@ -131,7 +132,6 @@ export default async function WorkspaceDetailPage({
               code: controlApiFailureCode(visualTargetsResult),
               message: visualTargetsResult.message
             },
-      requests: workspaceRequestReading(requestSource, id),
       controlFailed: isControlFailure(query.control),
       refusal: readControlRefusal(query.refusal),
       revision: basedOn ?? workspacesResult.data.revision,

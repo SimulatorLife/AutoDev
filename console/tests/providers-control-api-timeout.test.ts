@@ -50,11 +50,14 @@ test(
       includeProviderVersions: true
     });
 
+    // The response stub deliberately supplies only a schema marker. Reaching
+    // contract validation proves that the transport completed without hitting
+    // the generic deadline; this test does not exercise response schemas.
     for (const [label, result] of Object.entries(reads)) {
       assert.equal(
         result?.kind,
-        "ok",
-        `a Providers read that answers after the generic Control API deadline must not be reported as a Control API failure (${label}): ` +
+        "invalid-response",
+        `a Providers read that answers after the generic Control API deadline must reach response validation rather than time out (${label}): ` +
           JSON.stringify(result)
       );
     }

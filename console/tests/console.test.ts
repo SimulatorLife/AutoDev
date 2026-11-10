@@ -128,7 +128,6 @@ import {
 } from "../src/features/evaluations/evaluations-url.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderStatusBadge } from "../src/features/providers/provider-status.ts";
-import { ProviderUsagePanel } from "../src/features/providers/ProviderDetailView.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
@@ -202,6 +201,7 @@ import {
   ProvidersView,
   resolveActiveTabId,
   resolveMemoryPage,
+  providerUsageView,
   resolveProviderStatus,
   SECTION_HEADING_CLASS,
   SkillsView,
@@ -212,6 +212,7 @@ import {
   TabNav,
   TAG_SHAPE,
   ToolDetailView,
+  toolUsageView,
   ToolsView,
   UsageView,
   withControlFailure,
@@ -2331,7 +2332,6 @@ test("a path wraps between its segments and never inside one", () => {
         }
       ],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })
@@ -3769,8 +3769,7 @@ test("no column is narrower than its own header", () => {
           }
         ],
         approvals: new Map(),
-        requests: new Map(),
-        revision: "a".repeat(64),
+          revision: "a".repeat(64),
         catalogStatus: "valid"
       })
     ),
@@ -6543,7 +6542,6 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
         }
       ],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })
@@ -6603,7 +6601,6 @@ test("WorkspacesView reports measured availability and a broken role scope inste
         }
       ],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })
@@ -16119,9 +16116,9 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   const claude = PROVIDERS_FIXTURE.providers[0]!;
   const markup = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
-      usagePanel: React.createElement(ProviderUsagePanel, {
+      usagePanel: providerUsageView({
         provider: claude,
-        summary: { status: "observed", attempts: 42, failures: 3 }
+        reading: { status: "observed", attempts: 42, failures: 3 }
       }),
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: claude,
@@ -16204,9 +16201,9 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
 
   const withoutModels = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
-      usagePanel: React.createElement(ProviderUsagePanel, {
+      usagePanel: providerUsageView({
         provider: PROVIDERS_FIXTURE.providers[1]!,
-        summary: { status: "not-observed" }
+        reading: { status: "not-observed" }
       }),
       modelDiscovery: {
         status: "unavailable",
@@ -16259,9 +16256,9 @@ test("ProviderDetailView reads an absent provider route without throwing", async
   const render = (provider: ControlApiProviderRecord): string =>
     renderToStaticMarkup(
       React.createElement(ProviderDetailView, {
-        usagePanel: React.createElement(ProviderUsagePanel, {
+        usagePanel: providerUsageView({
           provider,
-          summary: { status: "not-observed" }
+          reading: { status: "not-observed" }
         }),
         modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
         provider,
@@ -16410,9 +16407,9 @@ test("Providers surfaces report unconfirmed changes without optimistic state", (
       controlFailed: true
     }),
     React.createElement(ProviderDetailView, {
-      usagePanel: React.createElement(ProviderUsagePanel, {
+      usagePanel: providerUsageView({
         provider: PROVIDERS_FIXTURE.providers[0]!,
-        summary: { status: "not-observed" }
+        reading: { status: "not-observed" }
       }),
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: PROVIDERS_FIXTURE.providers[0]!,
@@ -17568,9 +17565,10 @@ test("ToolDetailView renders source authority, edit surface, and unobserved hist
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: null, errors: null, observed: false },
-      usageLink: "/usage",
-      usageUnavailable: false
+      usagePanel: toolUsageView({
+        state: { kind: "not-observed" },
+        usageLink: "/usage"
+      })
     })
   );
   assert.match(markup, /data-tool-name="mcp__lsp__lsp_goto_definition"/);
@@ -17608,9 +17606,10 @@ test("ToolDetailView publishes one owner for the catalog's coverage and validity
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: null, errors: null, observed: false },
-      usageLink: "/usage",
-      usageUnavailable: false
+      usagePanel: toolUsageView({
+        state: { kind: "not-observed" },
+        usageLink: "/usage"
+      })
     })
   );
   assert.equal(
@@ -17654,9 +17653,10 @@ test("every detail view titles its resource with the one canonical entity title"
         coverage: "complete",
         validity: "valid",
         executionContractObserved: true,
-        usage: { calls: null, errors: null, observed: false },
-        usageLink: "/usage",
-        usageUnavailable: false
+        usagePanel: toolUsageView({
+          state: { kind: "not-observed" },
+          usageLink: "/usage"
+        })
       })
     ],
     [
@@ -17789,9 +17789,10 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: 12, errors: null, observed: true },
-      usageLink: "/usage",
-      usageUnavailable: false
+      usagePanel: toolUsageView({
+        state: { kind: "observed", calls: 12 },
+        usageLink: "/usage"
+      })
     })
   );
   assert.match(
@@ -17819,9 +17820,10 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
       coverage: "complete",
       validity: "valid",
       executionContractObserved: true,
-      usage: { calls: null, errors: null, observed: false },
-      usageLink: "/usage",
-      usageUnavailable: true
+      usagePanel: toolUsageView({
+        state: { kind: "unavailable" },
+        usageLink: "/usage"
+      })
     })
   );
   assert.match(unavailableMarkup, /Usage telemetry unavailable/);

@@ -65,10 +65,8 @@ export function usePlaytestingActiveRuns({
   runsRef.current = runs;
 
   const watching = isWatching(runs);
-  // The poll loop outlives any single render, so it asks these through refs
-  // rather than closing over one render's values.
-  const watchingRef = useRef(watching);
-  watchingRef.current = watching;
+  // The poll loop outlives any single render, so it asks this through a ref
+  // rather than closing over one render's value.
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const refresh = useCallback(() => {
@@ -172,7 +170,15 @@ export function usePlaytestingActiveRuns({
       poll,
       // Read live rather than captured: the loop asks after each poll, so a
       // terminal batch or a paused view ends the chain on the next turn.
-      shouldContinue: () => !pausedRef.current && watchingRef.current,
+      //
+      // The answer is read from the runs the poll just merged rather than
+      // from the rendered watch state. The rendered state only changes when
+      // React renders, and the loop asks the question in the same turn as
+      // the poll that changed it, so the rendered state is still the
+      // previous one at that moment. The merged runs are the answer the
+      // poll itself produced, and they are current the moment they exist.
+      shouldContinue: () =>
+        !pausedRef.current && isWatching(runsRef.current),
       delayFor: () => nextPollDelayMs(failures.current)
     });
     loop.start();
@@ -181,11 +187,17 @@ export function usePlaytestingActiveRuns({
       loop.stop();
       controller.abort();
     };
-    // `watching` and `paused` drive the cadence; nonce forces an immediate
-    // re-read after a manual refresh. Re-running the effect on a `watching`
-    // change is what stops the loop, so the loop reads those two through refs
-    // instead of capturing this render's values.
-  }, [nonce, paused, watching, workspaceId]);
+    // `paused` and `nonce` drive the cadence; nonce forces an immediate
+    // re-read after a manual refresh. `paused` stays a dependency because
+    // resuming has to restart a loop that stopped while it was paused.
+    //
+    // `watching` is not one. The watch state flips whenever a poll changes
+    // it, and re-running the effect on that flip tore the loop down and
+    // built a new one -- aborting the request in flight and starting the
+    // whole cadence over, on every poll that changed what was being
+    // watched. The loop reads the watch state through the runs it merged
+    // instead, so it continues on its own.
+  }, [nonce, paused, workspaceId]);
 
   return {
     state: { runs, freshness, lastFailure, lastUpdatedAt },

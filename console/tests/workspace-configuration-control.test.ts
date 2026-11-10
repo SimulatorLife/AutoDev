@@ -35,7 +35,6 @@ function listMarkup(revision: string | null = REVISION): string {
     React.createElement(WorkspacesView, {
       workspaces: [WORKSPACE],
       approvals: new Map(),
-      requests: new Map(),
       revision,
       catalogStatus: revision === null ? "unavailable" : "valid"
     })

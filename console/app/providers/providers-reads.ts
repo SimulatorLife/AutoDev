@@ -137,12 +137,10 @@ export async function readProvidersSurface(
   config: ControlApiConfig,
   options: ProvidersSurfaceReadOptions = {}
 ): Promise<ProvidersSurfaceReads> {
+  const { includeModels, includeProviderVersions, ...controlOptions } = options;
   const budget: FetchControlApiOptions = {
-    fetchImpl: options.fetchImpl,
-    signal: options.signal,
-    maxRetries: options.maxRetries,
-    retryDelayMs: options.retryDelayMs,
-    timeoutMs: options.timeoutMs ?? PROVIDERS_CONTROL_API_TIMEOUT_MS
+    ...controlOptions,
+    timeoutMs: controlOptions.timeoutMs ?? PROVIDERS_CONTROL_API_TIMEOUT_MS
   };
   const [
     providers,
@@ -152,11 +150,11 @@ export async function readProvidersSurface(
     runtime
   ] = await Promise.all([
     fetchProviders(config, budget),
-    options.includeModels === true
+    includeModels === true
       ? fetchModels(config, budget)
       : Promise.resolve(null),
     fetchProviderModelDiscovery(config, budget),
-    options.includeProviderVersions === true
+    includeProviderVersions === true
       ? fetchProviderVersions(config, budget)
       : Promise.resolve(null),
     fetchRuntime(config, budget)

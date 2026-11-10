@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { UsageWorkspaceRequestBreakdown } from "@simulatorlife/autodev-core";
@@ -7,8 +8,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   type WorkspaceRequestLookup,
-  workspaceRequestLookup
+  workspaceRequestLookup,
+  workspaceRequestValue
 } from "../src/features/workspaces/workspace-usage.ts";
+import { workspaceRequestReadings } from "../src/features/workspaces/WorkspaceRequestTelemetry.ts";
 import { WorkspaceDetailView } from "../src/features/workspaces/WorkspaceDetailView.ts";
 import { WorkspacesView } from "../src/features/workspaces/WorkspacesView.ts";
 
@@ -29,7 +32,30 @@ function lookup(
   return workspaceRequestLookup(source, workspaceIds);
 }
 
-function renderWorkspaces(requests: WorkspaceRequestLookup): string {
+/**
+ * The telemetry answer the browser holds.
+ *
+ * The island reads the breakdown in the browser, so the answer it holds is
+ * the payload the endpoint answers with, and the readings it resolves are
+ * the rows' own.
+ */
+function readyTelemetry(
+  source: Parameters<typeof workspaceRequestLookup>[0]
+): ReturnType<typeof workspaceRequestReadings> {
+  return workspaceRequestReadings(
+    {
+      status: "ready",
+      payload: {
+        schema: "autodev-console-usage-v1",
+        scope: "workspace-requests",
+        source
+      }
+    },
+    [WORKSPACE_ID, OTHER_WORKSPACE_ID]
+  );
+}
+
+function renderWorkspaces(): string {
   return renderToStaticMarkup(
     React.createElement(WorkspacesView, {
       workspaces: [
@@ -51,7 +77,6 @@ function renderWorkspaces(requests: WorkspaceRequestLookup): string {
         }
       ],
       approvals: new Map(),
-      requests,
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })
@@ -137,41 +162,126 @@ test("a source that read but reported no breakdown is not observed", () => {
   assert.deepEqual(readings.get(OTHER_WORKSPACE_ID), { kind: "not-observed" });
 });
 
-test("the Requests column renders the count and the two kinds of absence", () => {
-  const markup = renderWorkspaces(
-    lookup({
-      kind: "observed",
-      breakdown: breakdown([
-        { workspace: WORKSPACE_ID, count: 7 },
-        { workspace: OTHER_WORKSPACE_ID, count: 0 }
-      ])
-    })
+test("the Requests cell renders the count and the two kinds of absence", () => {
+  const observed = renderToStaticMarkup(
+    workspaceRequestValue({ kind: "observed", count: 7 })
   );
+  assert.match(observed, /data-workspace-requests="observed"/u);
+  assert.match(observed, />7</u);
 
-  assert.match(markup, /data-workspace-requests="observed"/u);
-  assert.match(markup, />7</u);
-  // The measured zero is rendered as a zero, not as an absence.
-  assert.match(markup, /data-workspace-requests="observed"[^>]*>0</u);
-  assert.doesNotMatch(
-    markup,
-    /data-workspace-requests="not-observed"/u,
-    "a measured zero is not an absence"
+  const unavailable = renderToStaticMarkup(
+    workspaceRequestValue({ kind: "unavailable" })
   );
-});
-
-test("the Requests column says why there is no count", () => {
-  const unavailable = renderWorkspaces(lookup({ kind: "unavailable" }));
   assert.match(unavailable, /data-workspace-requests="unavailable"/u);
   assert.match(unavailable, />Unavailable</u);
 
-  const notObserved = renderWorkspaces(lookup({ kind: "not-observed" }));
+  const notObserved = renderToStaticMarkup(
+    workspaceRequestValue({ kind: "not-observed" })
+  );
   assert.match(notObserved, /data-workspace-requests="not-observed"/u);
   assert.match(notObserved, />Not observed</u);
 });
 
-function renderDetail(
-  requests: Parameters<typeof WorkspaceDetailView>[0]["requests"]
-): string {
+test("a reading that has not arrived is pending, and pending is not zero", () => {
+  // The read happens in the browser, so the cell has a state in which it has
+  // no number yet. That state is its own state: rendering it as a zero would
+  // report a measurement of no requests that nobody made.
+  const pending = renderToStaticMarkup(
+    workspaceRequestValue({ kind: "pending" })
+  );
+
+  assert.match(pending, /data-workspace-requests="pending"/u);
+  assert.match(pending, /aria-busy="true"/u);
+  assert.doesNotMatch(pending, />0</u);
+});
+
+test("the rows are pending until the breakdown arrives", () => {
+  const pending = workspaceRequestReadings(
+    { status: "pending" },
+    [WORKSPACE_ID, OTHER_WORKSPACE_ID]
+  );
+
+  assert.deepEqual(pending.get(WORKSPACE_ID), { kind: "pending" });
+  assert.deepEqual(pending.get(OTHER_WORKSPACE_ID), { kind: "pending" });
+});
+
+test("a read that failed leaves every row unavailable, not empty", () => {
+  // A source the Console could not read is a source that reported nothing.
+  // The rows must say so rather than render a zero.
+  const unavailable = workspaceRequestReadings(
+    { status: "unavailable" },
+    [WORKSPACE_ID, OTHER_WORKSPACE_ID]
+  );
+
+  assert.deepEqual(unavailable.get(WORKSPACE_ID), { kind: "unavailable" });
+  assert.deepEqual(unavailable.get(OTHER_WORKSPACE_ID), { kind: "unavailable" });
+});
+
+test("the breakdown the endpoint answered with resolves every row", () => {
+  const readings = readyTelemetry({
+    kind: "observed",
+    breakdown: breakdown([{ workspace: WORKSPACE_ID, count: 7 }])
+  });
+
+  assert.deepEqual(readings.get(WORKSPACE_ID), {
+    kind: "observed",
+    count: 7
+  });
+  assert.deepEqual(readings.get(OTHER_WORKSPACE_ID), {
+    kind: "observed",
+    count: 0
+  });
+});
+
+test("the list renders the pending state until the answer arrives", () => {
+  const markup = renderWorkspaces();
+
+  // The page's own content is not waiting on the telemetry read, so the rows
+  // are on screen with their numbers still to come.
+  assert.match(markup, /data-workspace-requests="pending"/u);
+  assert.match(markup, /aria-busy="true"/u);
+  assert.doesNotMatch(
+    markup,
+    /data-workspace-requests="observed"/u,
+    "a row renders no measurement before the measurement arrives"
+  );
+});
+
+test("the workspaces page does not await a Usage read", () => {
+  // The page's own subject is the workspace catalogue, and the catalogue is
+  // answered in milliseconds while the Usage telemetry read is answered in
+  // minutes. The read belongs to the browser, and a page that awaited it
+  // would hold every navigation to /workspaces for the length of a telemetry
+  // fan-out.
+  const source = readFileSync(
+    new URL("../app/workspaces/page.tsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.doesNotMatch(
+    source,
+    /readWorkspaceRequest|loadOpenLITUsage|readUsageTelemetry/u,
+    "the page starts a Usage read the navigation then waits for"
+  );
+});
+
+test("the workspace detail page does not await a Usage read", () => {
+  const source = readFileSync(
+    new URL(
+      "../app/workspaces/[owner]/[repository]/page.tsx",
+      import.meta.url
+    ),
+    "utf8"
+  );
+
+  assert.doesNotMatch(
+    source,
+    /readWorkspaceRequest|loadOpenLITUsage|readUsageTelemetry/u,
+    "the page starts a Usage read the navigation then waits for"
+  );
+});
+
+function renderDetail(): string {
   return renderToStaticMarkup(
     React.createElement(WorkspaceDetailView, {
       workspace: {
@@ -183,29 +293,17 @@ function renderDetail(
         runtime: { status: "not-observed" }
       },
       approval: null,
-      visualTargets: null,
-      requests
+      visualTargets: null
     })
   );
 }
 
 test("the workspace detail shows the same aggregate usage the list shows", () => {
-  const markup = renderDetail({ kind: "observed", count: 12 });
+  const markup = renderDetail();
 
-  // The detail page renders the value the list renders, from the same
-  // reading, so the two surfaces cannot drift into different vocabularies
-  // for the same fact.
+  // The detail renders the value the list renders, from the same reading, so
+  // the two surfaces cannot drift into different vocabularies for the same
+  // fact.
   assert.match(markup, /Requests \(24h\)/u);
-  assert.match(markup, /data-workspace-requests="observed"/u);
-  assert.match(markup, />12</u);
-});
-
-test("the workspace detail says why there is no aggregate usage count", () => {
-  const unavailable = renderDetail({ kind: "unavailable" });
-  assert.match(unavailable, /data-workspace-requests="unavailable"/u);
-  assert.match(unavailable, />Unavailable</u);
-
-  const notObserved = renderDetail({ kind: "not-observed" });
-  assert.match(notObserved, /data-workspace-requests="not-observed"/u);
-  assert.match(notObserved, />Not observed</u);
+  assert.match(markup, /data-workspace-requests="pending"/u);
 });

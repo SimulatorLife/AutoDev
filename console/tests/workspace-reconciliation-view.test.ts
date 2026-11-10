@@ -59,7 +59,6 @@ test("the workspaces list renders the Runtime's verdict on the canonical catalog
     React.createElement(WorkspacesView, {
       workspaces: [workspace("SimulatorLife/AutoDev")],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid",
       reconciliation: reconciliation("converged")
@@ -79,7 +78,6 @@ test("a catalog the runtime has not observed is not rendered as converged", () =
     React.createElement(WorkspacesView, {
       workspaces: [workspace("SimulatorLife/AutoDev")],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid",
       reconciliation: reconciliation("not-observed")
@@ -99,7 +97,6 @@ test("the workspace's own page renders the same verdict as the list", () => {
     React.createElement(WorkspaceDetailView, {
       workspace: workspace("SimulatorLife/AutoDev"),
       approval: null,
-      requests: undefined,
       revision: "a".repeat(64),
       catalogStatus: "valid",
       reconciliation: reconciliation("converged")
@@ -115,7 +112,6 @@ test("a surface with no reconciliation renders no panel rather than an empty one
     React.createElement(WorkspacesView, {
       workspaces: [workspace("SimulatorLife/AutoDev")],
       approvals: new Map(),
-      requests: new Map(),
       revision: "a".repeat(64),
       catalogStatus: "valid"
     })

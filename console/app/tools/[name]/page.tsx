@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { filterToolCatalogUsage } from "../../../src/features/tools/tool-usage.ts";
+import { canonicalToolIdentity } from "../../../src/features/tools/tool-identity.ts";
+import { ToolUsagePanel } from "../../../src/features/tools/ToolUsagePanel.ts";
 import { ToolDetailView } from "../../../src/features/tools/ToolDetailView.ts";
 import {
   catalogueDetailOutcome,
@@ -12,7 +13,6 @@ import {
   controlApiFailureCode,
   fetchTools
 } from "../../../src/lib/server/control-api.ts";
-import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
@@ -108,19 +108,12 @@ export default async function ToolDetailPage({
     );
   }
 
-  // The catalogue read and the Usage read are answered separately, in that
-  // order. The Usage read is a twenty-four hour telemetry aggregation, and
-  // run beside the Control API read it competes with it for the host until
-  // one of them is reported as a failure that did not happen.
+  // There is no Usage read here. The twenty-four hour telemetry aggregation
+  // is the most expensive read the Console makes, and it answers a question
+  // about one panel rather than about the page, so the browser reads it and
+  // the panel fills in when it answers. The page is about the catalogue
+  // entry, and the Control API answers that in milliseconds.
   const result = await fetchTools(config);
-  const usageResult = await loadOpenLITUsage({
-    range: "24H",
-    values: {},
-    customRange: {
-      startDate: first(sp.startDate),
-      endDate: first(sp.endDate)
-    }
-  });
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -170,11 +163,6 @@ export default async function ToolDetailPage({
   }
   if (!tool) notFound();
 
-  const usage =
-    usageResult.kind === "ok"
-      ? filterToolCatalogUsage(usageResult.data, tool)
-      : { calls: null, errors: null, observed: false };
-
   return React.createElement(
     ConsolePageShell,
     { section },
@@ -183,10 +171,15 @@ export default async function ToolDetailPage({
       coverage: result.data.coverage,
       validity: result.data.validity,
       executionContractObserved: result.data.executionContractObserved,
-      usage,
-      usageLink: result.data.usageLink,
-      usageUnavailable:
-        usageResult.kind !== "ok" && usageResult.kind !== "not-configured",
+      usagePanel: React.createElement(ToolUsagePanel, {
+        // The catalogue owns the identity of a tool, and the telemetry store
+        // only knows the names it happened to record, so the matching names
+        // travel with the panel rather than being invented in the browser.
+        identities: canonicalToolIdentity(tool),
+        usageLink: result.data.usageLink,
+        startDate: first(sp.startDate),
+        endDate: first(sp.endDate)
+      }),
       // The list the operator came from. The detail route is a path, so the
       // narrowing travels beside it as a query and the breadcrumb returns
       // them to the list they were reading.

@@ -59,10 +59,6 @@ import {
   resolveModelQuota,
   resolveProviderQuota
 } from "./provider-status.ts";
-import {
-  providerUsagePath,
-  type ProviderUsageSummary
-} from "./provider-usage.ts";
 import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
@@ -888,99 +884,6 @@ export function ProviderQuotaLimitsPanel({
           )
         )
       : null
-  );
-}
-
-const PROVIDER_USAGE_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 0
-});
-
-export function ProviderUsagePanel({
-  provider,
-  summary
-}: {
-  readonly provider: ControlApiProviderRecord;
-  readonly summary: ProviderUsageSummary;
-}): React.JSX.Element {
-  const status =
-    summary.status === "observed"
-      ? "valid"
-      : summary.status === NOT_OBSERVED_STATUS
-        ? NOT_OBSERVED_STATUS
-        : "unavailable";
-  const label =
-    summary.status === "observed"
-      ? "Observed"
-      : summary.status === NOT_OBSERVED_STATUS
-        ? "Not observed"
-        : summary.status === "not-configured"
-          ? "Not configured"
-          : "Unavailable";
-  let evidence: React.ReactNode;
-  if (summary.status === "observed") {
-    evidence = React.createElement(
-      DetailGrid,
-      { columns: 2 },
-      React.createElement(
-        DetailValue,
-        { label: "Physical attempts · last 7 days" },
-        PROVIDER_USAGE_COUNT_FORMATTER.format(summary.attempts)
-      ),
-      React.createElement(
-        DetailValue,
-        { label: "Failed attempts · last 7 days" },
-        summary.failures === null
-          ? NOT_OBSERVED_LABEL
-          : PROVIDER_USAGE_COUNT_FORMATTER.format(summary.failures)
-      )
-    );
-  } else {
-    evidence = React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS, "data-provider-usage-message": true },
-      summary.status === "not-configured"
-        ? "Usage telemetry credentials are not configured; provider-attempt counts are unavailable."
-        : summary.status === NOT_OBSERVED_STATUS
-          ? "Provider-attempt telemetry was not observed in the last 7 days."
-          : "Usage telemetry could not be read; provider-attempt counts remain unavailable."
-    );
-  }
-
-  return React.createElement(
-    "section",
-    {
-      className: DETAIL_PANEL_CLASS,
-      "data-section": "provider-usage",
-      "data-provider-usage-status": summary.status
-    },
-    React.createElement(
-      "div",
-      { className: "mb-3 flex flex-wrap items-center justify-between gap-3" },
-      React.createElement(
-        "div",
-        { className: "flex flex-wrap items-center gap-2" },
-        React.createElement(
-          "h3",
-          { className: SECTION_HEADING_CLASS },
-          "Usage · last 7 days"
-        ),
-        React.createElement(StatusBadge, { status, label })
-      ),
-      React.createElement(
-        NavigationLink,
-        {
-          href: providerUsagePath(provider.id),
-          className: "text-xs text-accent underline underline-offset-2"
-        },
-        "Open scoped Usage →"
-      )
-    ),
-    React.createElement(
-      "p",
-      { className: `mb-3 ${MUTED_META_CLASS}` },
-      "Provider attempts are physical attempts. Logical routed requests are not attributed to a single provider."
-    ),
-    evidence
   );
 }
 

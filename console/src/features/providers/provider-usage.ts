@@ -1,15 +1,5 @@
-import type { UsageMetricsData } from "@simulatorlife/autodev-core";
-
 import { NOT_OBSERVED_STATUS } from "../../components/status/StatusBadge.ts";
-
-export type ProviderUsageSource =
-  | { readonly kind: "not-configured" }
-  | { readonly kind: "unavailable" }
-  | {
-      readonly kind: "available";
-      readonly attemptsByProvider: UsageMetricsData["attemptsByProvider"];
-      readonly attemptErrorsByProvider: UsageMetricsData["attemptErrorsByProvider"];
-    };
+import type { UsageProviderAttemptSource } from "../usage/usage-api.ts";
 
 export type ProviderUsageSummary =
   | { readonly status: "not-configured" }
@@ -20,6 +10,20 @@ export type ProviderUsageSummary =
       readonly attempts: number;
       readonly failures: number | null;
     };
+
+/**
+ * What the provider's usage panel shows.
+ *
+ * The summary is the measured answer, and the pending state is the answer
+ * that has not arrived yet. The pending state is its own state rather than
+ * one of the summary's, because a panel that is still waiting must not look
+ * like a panel that measured nothing: the summary's states are all claims
+ * about what the source did or did not report, and none of them is a claim
+ * about a read that has not happened.
+ */
+export type ProviderUsageReading =
+  | { readonly status: "pending" }
+  | ProviderUsageSummary;
 
 function countForProvider(
   rows: readonly { readonly provider: string; readonly count: number }[] | null,
@@ -42,7 +46,7 @@ function countForProvider(
  * view instead of being attributed to this provider.
  */
 export function summarizeProviderUsage(
-  source: ProviderUsageSource,
+  source: UsageProviderAttemptSource,
   provider: string
 ): ProviderUsageSummary {
   if (source.kind === "not-configured") return { status: "not-configured" };
