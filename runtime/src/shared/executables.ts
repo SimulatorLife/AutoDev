@@ -253,6 +253,13 @@ export function findAgyBinary(
  * The quota reader runs `mmx` by name and lets the shell resolve it, so the
  * PATH lookup is the same answer it gets; the `~/.local/bin` fallback only
  * adds a copy the login shell would have found but a bare process would not.
+ *
+ * Every branch reads the environment it was handed, and the lookup answers
+ * about *that* environment: a caller that asks about a machine with no CLI
+ * installed must not be handed a path on this one. The last branch is the
+ * one that could break that rule -- the Node that runs this process keeps its
+ * own bin directory, and `mmx` installed beside it is found there -- so it is
+ * consulted only for this machine's home, and never for another one.
  */
 export function findMiniMaxBinary(
   env: NodeJS.ProcessEnv = process.env,
@@ -269,8 +276,10 @@ export function findMiniMaxBinary(
   if (fromPath) return fromPath;
   const fromNvm = findNvmBinary("mmx", home);
   if (fromNvm) return fromNvm;
-  const nodeDirCandidate = path.join(path.dirname(process.execPath), "mmx");
-  if (isExecutable(nodeDirCandidate)) return nodeDirCandidate;
+  if (home === homedir()) {
+    const nodeDirCandidate = path.join(path.dirname(process.execPath), "mmx");
+    if (isExecutable(nodeDirCandidate)) return nodeDirCandidate;
+  }
   const local = path.join(home, ".local", "bin", "mmx");
   return isExecutable(local) ? local : null;
 }
