@@ -2014,8 +2014,14 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
   const yaml = readFileSync(new URL("pnpm-workspace.yaml", repositoryRoot), "utf8");
   const manifests = new Map<string, Manifest>();
   const baseline = ["core", "data", "runtime", "console"];
+  const registered = yaml
+    .split("\n")
+    .map((line) => /^\s*-\s*([a-z][a-z0-9-]*)\s*$/u.exec(line)?.[1])
+    .filter((folder): folder is string => folder !== undefined);
   for (const folder of baseline) {
-    assert.ok(yaml.split("\n").some((line) => line.trim() === "- " + folder));
+    assert.ok(registered.includes(folder), "Missing baseline workspace: " + folder);
+  }
+  for (const folder of registered) {
     const manifest = JSON.parse(
       readFileSync(new URL(folder + "/package.json", repositoryRoot), "utf8")
     ) as Manifest;
