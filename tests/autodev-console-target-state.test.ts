@@ -966,7 +966,7 @@ test("git change metrics are defined with exact counting and cardinality rules",
     migration,
     /The 90-day live Data snapshot reported 91 commits, 91 files changed/u
   );
-  assert.match(migration, /withholds total lines added\\/removed while preserving measured file counts/u);
+  assert.match(migration, /withholds total lines added\/removed while preserving measured file counts/u);
   assert.match(migration, /cumulative temporality/u);
 });
 
