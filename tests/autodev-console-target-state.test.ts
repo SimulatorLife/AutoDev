@@ -1988,7 +1988,7 @@ test("unified AutoDev target enforces workspace modularity and Cockatiel adoptio
   const target = readFileSync(targetStatePath, "utf8");
   for (const invariant of [
     "independently testable, loosely coupled, replaceable workspaces",
-    "one atomic change",
+    "One atomic change",
     "Workspace independence and replaceability requirements",
     "a directed, acyclic dependency graph",
     "public package contracts",
