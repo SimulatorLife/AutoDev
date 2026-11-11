@@ -445,6 +445,56 @@ test("OpenLITUsageClient keeps a compaction with no published provider out of ev
   ]);
 });
 
+test("provider hops preserve an unattributed workspace bucket", async () => {
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "provider-hops-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [
+    { g0: "repo-a", hops: "2" },
+    { g0: "", hops: "1" }
+  ];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query({ range: "7D", values: {} });
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.providerHopsByWorkspace, [
+    { name: "repo-a", count: 2 },
+    { name: "", count: 1 }
+  ]);
+});
+
+test("provider hops preserve an unattributed workspace bucket", async () => {
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "provider-hops-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [
+    { g0: "repo-a", hops: "2" },
+    { g0: "", hops: "1" }
+  ];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query({ range: "7D", values: {} });
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.providerHopsByWorkspace, [
+    { name: "repo-a", count: 2 },
+    { name: "", count: 1 }
+  ]);
+});
+
 test("OpenLITUsageClient reports a truncated workspace breakdown as partial", async () => {
   // The source's row limit truncated the breakdown, so a workspace missing
   // from it is not reported rather than measured at zero.

@@ -390,6 +390,71 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /toBeLessThanOrEqual\(USAGE_QUERY_CONCURRENCY\)/u
   );
   assert.match(usageSchedulerTests, /starts\)\.toEqual\(Array\.from/u);
+  const usageSessionRoute = readFileSync(
+    join(dir, "src/client/src/app/api/autodev/usage/session/route.ts"),
+    "utf8"
+  );
+  assert.match(
+    usageSessionRoute,
+    /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1"/u
+  );
+  assert.match(usageSessionRoute, /runUsageQuery\(\(\) => adapter\.listSpans/u);
+  assert.match(usageSessionRoute, /key: "autodev\.session\.id"[\s\S]*?value: sessionId/u);
+  assert.match(usageSessionRoute, /limit: SESSION_SPAN_LIMIT/u);
+  assert.match(usageSessionRoute, /SESSION_SPAN_LIMIT = 200/u);
+  assert.doesNotMatch(
+    usageSessionRoute,
+    /SELECT\s|sessionId\s*[:,]\s*sessionId|spanAttributes\s*:/u,
+    "the session lookup must not use raw SQL, echo the session ID, or return raw span attributes"
+  );
+  for (const attribute of [
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_read.input_tokens",
+    "gen_ai.usage.cost",
+    "autodev.request_kind",
+    "autodev.compaction.provider",
+    "autodev.hop.route",
+    "autodev.hop.from",
+    "autodev.hop.to",
+    "autodev.hop.reason"
+  ]) {
+    assert.ok(
+      usageSessionRoute.includes(attribute),
+      `patch 77 must whitelist ${attribute} in the session span summary`
+    );
+  }
+  const usageSessionTests = readFileSync(
+    join(dir, "src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts"),
+    "utf8"
+  );
+  assert.match(usageSessionTests, /autodev-openlit-session-usage-v1/u);
+  assert.match(usageSessionTests, /autodev\.session\.id/u);
+  assert.match(usageSessionTests, /private prompt content/u);
+  assert.match(usageSessionTests, /status: "unavailable"/u);
+  assert.match(usageSessionTests, /meta: \{ truncated: true \}/u);
+  const middlewareAuth = readFileSync(
+    join(dir, "src/client/src/middleware/check-auth.ts"),
+    "utf8"
+  );
+  assert.match(
+    middlewareAuth,
+    /pathname === "\/api\/autodev\/usage\/session"/u,
+    "the fixed session route must reach its own dedicated Usage bearer check"
+  );
+  const usageApiSource = readFileSync(
+    join(dir, "src/client/src/lib/autodev/usage-api.ts"),
+    "utf8"
+  );
+  const usageVariableIds = usageApiSource.slice(
+    usageApiSource.indexOf("USAGE_VARIABLE_IDS"),
+    usageApiSource.indexOf("] as const")
+  );
+  assert.doesNotMatch(
+    usageVariableIds,
+    /"session"/u,
+    "session IDs must not become Usage filter dimensions"
+  );
   const usageRouteTests = readFileSync(
     join(dir, "src/client/src/__tests__/app/api/autodev/usage/route.test.ts"),
     "utf8"

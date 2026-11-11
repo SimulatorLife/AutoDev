@@ -150,6 +150,34 @@ test("Usage shows provider hops with both providers, the reason and where they h
   assert.match(markup, /Provider Hops by Agent Role/u);
 });
 
+test("Usage labels hops without source workspace attribution explicitly", () => {
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    providerHopsByWorkspace: [{ name: "", count: 236 }]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.match(markup, /Not attributed/u);
+  assert.match(markup, /Provider hops by workspace/u);
+  assert.match(markup, /236/u);
+});
+
+test("Usage labels hops without source workspace attribution explicitly", () => {
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    providerHopsByWorkspace: [{ name: "", count: 236 }]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.match(markup, /Not attributed/u);
+  assert.match(markup, /Provider Hops by Workspace/u);
+  assert.match(markup, /236/u);
+});
+
 test("Usage says when provider hops cannot answer the selected filters", () => {
   const metrics: UsageMetricsData = {
     ...observedMetrics,

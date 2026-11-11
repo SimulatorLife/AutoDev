@@ -1,4 +1,9 @@
-const ATTR_VALUE_MAX_LENGTH = 64;
+// Canonical owner/repository keys share the metric label's 100-character
+// bound. A path-derived basename stays at 64 so an arbitrary directory name
+// is not promoted into a broader telemetry attribute.
+const MAX_PATH_WORKSPACE_LABEL_LENGTH = 64;
+const MAX_CANONICAL_WORKSPACE_KEY_LENGTH = 100;
+const CANONICAL_WORKSPACE_KEY_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/u;
 const URI_VALUE_PATTERN = /^(?:file|https?):\/\//iu;
 const AGENT_ROLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -14,9 +19,13 @@ const AUTODEV_AGENT_ROLE_ATTRIBUTE = "autodev.agent.role";
 export function safeAutoDevWorkspaceKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const key = value.trim();
+  const canonicalWorkspaceKey = CANONICAL_WORKSPACE_KEY_PATTERN.test(key);
+  const maxLength = canonicalWorkspaceKey
+    ? MAX_CANONICAL_WORKSPACE_KEY_LENGTH
+    : MAX_PATH_WORKSPACE_LABEL_LENGTH;
   if (
     !key ||
-    key.length > ATTR_VALUE_MAX_LENGTH ||
+    key.length > maxLength ||
     key.toLowerCase() === "unknown" ||
     key.toLowerCase() === "unattributed" ||
     key.startsWith("/") ||

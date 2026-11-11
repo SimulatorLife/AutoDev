@@ -4115,7 +4115,8 @@ async function fetchCandidate(
         model: route.model,
         requestedModel: ctx.modelName,
         role: ctx.effectiveRole,
-        workspace: ctx.workspace
+        workspace: ctx.workspace,
+        sessionId: ctx.session?.key ?? ctx.sessionKey ?? null
       }
     );
   } catch (error) {

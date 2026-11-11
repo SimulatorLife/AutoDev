@@ -3352,6 +3352,59 @@ test(
   }
 );
 
+test(
+  "the routed provider attempt inherits its source-confirmed session identity",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp-session-attempt",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      })) as typeof fetch;
+    installExporter();
+    setDefaultProviderHopTracker(new ProviderHopTracker());
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [route("claude", "LITELLM_API_KEY")],
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: sessionId,
+          session: { key: sessionId, scope: "identified" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "session-attempt-request",
+        null,
+        { key: "session-workspace" }
+      );
+
+      const spans = snapshotSpans();
+      const logical = findLogical(spans);
+      const attempts = findAttemptSpans(spans);
+      assert.equal(logical.length, 1);
+      assert.equal(attempts.length, 1);
+      assert.equal(logical[0]?.attributes["autodev.session.id"], sessionId);
+      assert.equal(attempts[0]?.attributes["autodev.session.id"], sessionId);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+      setDefaultProviderHopTracker(null);
+    }
+  }
+);
+
 test("a source-confirmed session is published on the request and its attempts", async () => {
   installExporter();
   const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";

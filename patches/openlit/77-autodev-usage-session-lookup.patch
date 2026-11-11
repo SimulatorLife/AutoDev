@@ -1,0 +1,553 @@
+diff --git a/src/client/src/middleware/check-auth.ts b/src/client/src/middleware/check-auth.ts
+index a881f58f..530d933b 100644
+--- a/src/client/src/middleware/check-auth.ts
++++ b/src/client/src/middleware/check-auth.ts
+@@ -117,6 +117,7 @@ export default function checkAuth(next: NextMiddleware) {
+ 			// validates AUTODEV_OPENLIT_USAGE_TOKEN before querying telemetry.
+ 			if (
+ 				pathname === "/api/autodev/usage" ||
++				pathname === "/api/autodev/usage/session" ||
+ 				/^\/api\/autodev\/usage\/span\/[^/]+$/u.test(pathname)
+ 			) {
+ 				return continueWithoutClientTenant();
+diff --git a/src/client/src/app/api/autodev/usage/session/route.ts b/src/client/src/app/api/autodev/usage/session/route.ts
+new file mode 100644
+--- /dev/null
++++ b/src/client/src/app/api/autodev/usage/session/route.ts
+@@ -0,0 +1,261 @@
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import type {
++	NormalizedSpan,
++	OpenLITQuery,
++} from "@/lib/platform/connectors/datasource/types";
++import {
++	isUsageServiceRequestAuthorized,
++	parseUsageSelection,
++	parseUsageTraceSpanId,
++	isUsageTraceId,
++	usageTimeRange,
++} from "@/lib/autodev/usage-api";
++import { runUsageQuery } from "@/lib/autodev/usage-query-scheduler";
++
++export const runtime = "nodejs";
++
++const SERVICE_TOKEN = process.env.AUTODEV_OPENLIT_USAGE_TOKEN ?? "";
++const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1" as const;
++const SESSION_SPAN_LIMIT = 200;
++const MAX_REQUEST_BYTES = 16_384;
++const MAX_LABEL_LENGTH = 128;
++const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
++const RESERVED_SESSION_IDS = new Set([
++	"unknown",
++	"unattributed",
++	"process-fallback",
++	"process-scope",
++]);
++
++type UsageSpanStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
++
++interface SessionSpanSummary {
++	readonly spanId: string;
++	readonly traceId: string;
++	readonly parentSpanId: string | null;
++	readonly operationName: string;
++	readonly timestamp: string;
++	readonly durationNs: number;
++	readonly statusCode: UsageSpanStatus;
++	readonly provider: string | null;
++	readonly requestedModel: string | null;
++	readonly role: string | null;
++	readonly workspace: string | null;
++	readonly inputTokens: number | null;
++	readonly outputTokens: number | null;
++	readonly cacheReadInputTokens: number | null;
++	readonly costUsd: number | null;
++	readonly requestKind: string | null;
++	readonly compactionProvider: string | null;
++	readonly hopRoute: string | null;
++	readonly hopFrom: string | null;
++	readonly hopTo: string | null;
++	readonly hopReason: string | null;
++}
++
++interface SessionUsageResponse {
++	readonly schema: typeof SESSION_USAGE_SCHEMA;
++	readonly status: "observed" | "unavailable";
++	readonly partial: boolean;
++	readonly spans: readonly SessionSpanSummary[];
++}
++
++function response(
++	status: number,
++	body: SessionUsageResponse | { readonly error: { readonly code: string } },
++): Response {
++	return Response.json(body, {
++		status,
++		headers: { "cache-control": "no-store" },
++	});
++}
++
++function unavailable(): Response {
++	return response(503, {
++		schema: SESSION_USAGE_SCHEMA,
++		status: "unavailable",
++		partial: false,
++		spans: [],
++	});
++}
++
++function parseSessionId(value: unknown): string | null {
++	if (typeof value !== "string" || !SESSION_ID_PATTERN.test(value)) return null;
++	return RESERVED_SESSION_IDS.has(value.toLowerCase()) ? null : value;
++}
++
++function safeLabel(value: unknown): string | null {
++	if (typeof value !== "string") return null;
++	const label = value.trim();
++	if (!label || /[\u0000-\u001f\u007f]/u.test(label)) return null;
++	return label.slice(0, MAX_LABEL_LENGTH);
++}
++
++function safeCount(value: unknown): number | null {
++	if (typeof value !== "string" || !value.trim()) return null;
++	const count = Number(value);
++	return Number.isSafeInteger(count) && count >= 0 ? count : null;
++}
++
++function safeCost(value: unknown): number | null {
++	if (typeof value !== "string" || !value.trim()) return null;
++	const cost = Number(value);
++	return Number.isFinite(cost) && cost >= 0 ? cost : null;
++}
++
++function spanSummary(
++	span: NormalizedSpan,
++	sessionId: string,
++): SessionSpanSummary | null {
++	const timestamp = new Date(span.timestamp);
++	const spanId = parseUsageTraceSpanId(span.spanId);
++	const traceId = isUsageTraceId(span.traceId) ? span.traceId : null;
++	const parentSpanId = span.parentSpanId
++		? parseUsageTraceSpanId(span.parentSpanId)
++		: null;
++	if (
++		span.serviceName !== "autodev-router" ||
++		span.spanAttributes["autodev.session.id"] !== sessionId ||
++		!spanId ||
++		!traceId ||
++		(span.parentSpanId !== "" && !parentSpanId) ||
++		!Number.isSafeInteger(span.durationNs) ||
++		span.durationNs < 0 ||
++		!Number.isFinite(timestamp.getTime())
++	) {
++		return null;
++	}
++	const rawOperation = safeLabel(span.spanAttributes["gen_ai.operation.name"]);
++	const operationName = rawOperation ?? safeLabel(span.name);
++	if (!operationName || typeof span.statusCode !== "string") return null;
++	const sourceStatus = span.statusCode.toUpperCase().replace(/^STATUS_CODE_/u, "");
++	const statusCode: UsageSpanStatus =
++		sourceStatus === "OK" || sourceStatus === "ERROR" || sourceStatus === "UNSET"
++			? sourceStatus
++			: "UNKNOWN";
++	const attributes = span.spanAttributes;
++	return {
++		spanId: spanId.toLowerCase(),
++		traceId: traceId.toLowerCase(),
++		parentSpanId: parentSpanId?.toLowerCase() ?? null,
++		operationName,
++		timestamp: timestamp.toISOString(),
++		durationNs: span.durationNs,
++		statusCode,
++		provider: safeLabel(attributes["gen_ai.provider.name"]),
++		requestedModel: safeLabel(attributes["autodev.requested_model"]),
++		role: safeLabel(attributes["autodev.agent.role"]),
++		workspace: safeLabel(attributes["autodev.workspace"]),
++		inputTokens: safeCount(attributes["gen_ai.usage.input_tokens"]),
++		outputTokens: safeCount(attributes["gen_ai.usage.output_tokens"]),
++		cacheReadInputTokens: safeCount(
++			attributes["gen_ai.usage.cache_read.input_tokens"],
++		),
++		costUsd: safeCost(attributes["gen_ai.usage.cost"]),
++		requestKind: safeLabel(attributes["autodev.request_kind"]),
++		compactionProvider: safeLabel(attributes["autodev.compaction.provider"]),
++		hopRoute: safeLabel(attributes["autodev.hop.route"]),
++		hopFrom: safeLabel(attributes["autodev.hop.from"]),
++		hopTo: safeLabel(attributes["autodev.hop.to"]),
++		hopReason: safeLabel(attributes["autodev.hop.reason"]),
++	};
++}
++
++export async function POST(request: Request): Promise<Response> {
++	if (!SERVICE_TOKEN) return unavailable();
++	if (!isUsageServiceRequestAuthorized(request.headers.get("authorization"), SERVICE_TOKEN)) {
++		return response(401, { error: { code: "autodev_usage_unauthorized" } });
++	}
++
++	const contentLength = Number(request.headers.get("content-length") ?? 0);
++	if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
++		return response(413, { error: { code: "autodev_usage_request_too_large" } });
++	}
++	let body: unknown;
++	try {
++		const bodyText = await request.text();
++		if (Buffer.byteLength(bodyText) > MAX_REQUEST_BYTES) {
++			return response(413, { error: { code: "autodev_usage_request_too_large" } });
++		}
++		body = JSON.parse(bodyText);
++	} catch {
++		return response(400, { error: { code: "autodev_usage_request_invalid" } });
++	}
++	if (!isRecord(body) || Object.keys(body).some((key) =>
++		!(["sessionId", "range", "customRange"] as const).includes(key as "sessionId" | "range" | "customRange")
++	)) {
++		return response(400, { error: { code: "autodev_usage_request_invalid" } });
++	}
++	const sessionId = parseSessionId(body.sessionId);
++	const selection = parseUsageSelection({
++		range: body.range,
++		values: {},
++		...(Object.hasOwn(body, "customRange") ? { customRange: body.customRange } : {}),
++	});
++	if (!sessionId || !selection) {
++		return response(400, { error: { code: "autodev_usage_session_request_invalid" } });
++	}
++
++	try {
++		const descriptor = await resolveTelemetrySourceDescriptor({ signal: "traces" });
++		const adapter = await getTelemetryAdapter({ signal: "traces", sourceId: descriptor.id });
++		const query: OpenLITQuery = {
++			signal: "traces",
++			timeRange: usageTimeRange(selection),
++			filters: [
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{
++					target: "attribute",
++					scope: "span",
++					key: "autodev.session.id",
++					op: "eq",
++					value: sessionId,
++				},
++			],
++			sort: [{ field: "Timestamp", direction: "desc" }],
++			limit: SESSION_SPAN_LIMIT,
++			offset: 0,
++			aiSelector: false,
++		};
++		const frame = await runUsageQuery(() => adapter.listSpans(query));
++		if (!Array.isArray(frame.rows)) return unavailable();
++		let partial = Boolean(frame.meta?.truncated) || frame.rows.length >= SESSION_SPAN_LIMIT;
++		const summaries = new Map<string, SessionSpanSummary>();
++		for (const span of frame.rows) {
++			const summary = spanSummary(span, sessionId);
++			if (!summary) {
++				partial = true;
++				continue;
++			}
++			if (summaries.has(summary.spanId)) partial = true;
++			summaries.set(summary.spanId, summary);
++		}
++		const spans = Array.from(summaries.values())
++			.sort((a, b) =>
++				Date.parse(b.timestamp) - Date.parse(a.timestamp) ||
++				a.spanId.localeCompare(b.spanId),
++			)
++			.slice(0, SESSION_SPAN_LIMIT);
++		return response(200, {
++			schema: SESSION_USAGE_SCHEMA,
++			status: "observed",
++			partial: partial || summaries.size > spans.length,
++			spans,
++		});
++	} catch {
++		return unavailable();
++	}
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts
+@@ -0,0 +1,270 @@
++/** @jest-environment node */
++
++export {};
++
++const mockResolveTelemetrySourceDescriptor = jest.fn();
++const mockGetTelemetryAdapter = jest.fn();
++const mockListSpans = jest.fn();
++
++jest.mock("@/lib/telemetry-source", () => ({
++	resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
++		mockResolveTelemetrySourceDescriptor(...args),
++	getTelemetryAdapter: (...args: unknown[]) => mockGetTelemetryAdapter(...args),
++}));
++
++const previousUsageToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "session-usage-test-token";
++const { POST } = require("@/app/api/autodev/usage/session/route") as {
++	POST: (request: Request) => Promise<Response>;
++};
++
++const SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
++const TRACE_ID = "0123456789abcdef0123456789abcdef";
++const SPAN_ID = "0123456789abcdef";
++const PARENT_SPAN_ID = "fedcba9876543210";
++
++function span(index = 0) {
++	return {
++		traceId: TRACE_ID,
++		spanId: index === 0 ? SPAN_ID : index.toString(16).padStart(16, "0"),
++		parentSpanId: PARENT_SPAN_ID,
++		name: "autodev.routed_request",
++		serviceName: "autodev-router",
++		timestamp: "2026-10-05T12:00:00.000Z",
++		durationNs: 1_250_000,
++		statusCode: "STATUS_CODE_OK",
++		statusMessage: "private status message",
++		spanAttributes: {
++			"autodev.session.id": SESSION_ID,
++			"gen_ai.operation.name": "chat",
++			"gen_ai.provider.name": "openai",
++			"autodev.requested_model": "gpt-6-luna",
++			"autodev.agent.role": "worker",
++			"autodev.workspace": "owner/repo",
++			"gen_ai.usage.input_tokens": "12",
++			"gen_ai.usage.output_tokens": "3",
++			"gen_ai.usage.cache_read.input_tokens": "2",
++			"gen_ai.usage.cost": "0.00042",
++			"autodev.request_kind": "compaction",
++			"autodev.compaction.provider": "openai",
++			"autodev.hop.route": "claude->openai",
++			"autodev.hop.from": "claude",
++			"autodev.hop.to": "openai",
++			"autodev.hop.reason": "fallback",
++			"gen_ai.prompt": "private prompt content",
++			"tool.arguments": "private tool arguments",
++		},
++		resourceAttributes: { "host.name": "private-host" },
++		events: [{ name: "private event", attributes: { body: "private event body" } }],
++	};
++}
++
++function request(body: unknown, token = "session-usage-test-token"): Request {
++	return new Request("http://openlit.local/api/autodev/usage/session", {
++		method: "POST",
++		headers: {
++			authorization: `Bearer ${token}`,
++			"content-type": "application/json",
++		},
++		body: JSON.stringify(body),
++	});
++}
++
++beforeEach(() => {
++	mockResolveTelemetrySourceDescriptor.mockReset();
++	mockResolveTelemetrySourceDescriptor.mockResolvedValue({ id: "source-1" });
++	mockGetTelemetryAdapter.mockReset();
++	mockGetTelemetryAdapter.mockResolvedValue({ listSpans: mockListSpans });
++	mockListSpans.mockReset();
++	mockListSpans.mockResolvedValue({ rows: [span()], meta: { truncated: false } });
++});
++
++afterAll(() => {
++	if (previousUsageToken === undefined) {
++		delete process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++	} else {
++		process.env.AUTODEV_OPENLIT_USAGE_TOKEN = previousUsageToken;
++	}
++});
++
++describe("fixed AutoDev historical session Usage endpoint", () => {
++	it("requires the dedicated Usage bearer credential", async () => {
++		const response = await POST(
++			request({ sessionId: SESSION_ID, range: "24H" }, "wrong-token"),
++		);
++		expect(response.status).toBe(401);
++		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++	});
++
++	it("rejects malformed and reserved session identifiers before querying", async () => {
++		for (const sessionId of [
++			"",
++			"contains spaces",
++			"../secret",
++			"_leading-underscore",
++			"x".repeat(129),
++			"unknown",
++			"UNATTRIBUTED",
++			"process-fallback",
++			"process-scope",
++		]) {
++			const response = await POST(request({ sessionId, range: "24H" }));
++			const body = JSON.stringify(await response.json());
++			expect(response.status).toBe(400);
++			if (sessionId) expect(body).not.toContain(sessionId);
++		}
++		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++	});
++
++	it("queries only the exact router session attribute and returns the fixed redacted v1 summary", async () => {
++		const response = await POST(
++			request({ sessionId: SESSION_ID, range: "7D" }),
++		);
++		const body = await response.json();
++
++		expect(response.status).toBe(200);
++		expect(body).toEqual({
++			schema: "autodev-openlit-session-usage-v1",
++			status: "observed",
++			partial: false,
++			spans: [
++				{
++					spanId: SPAN_ID,
++					traceId: TRACE_ID,
++					parentSpanId: PARENT_SPAN_ID,
++					operationName: "chat",
++					timestamp: "2026-10-05T12:00:00.000Z",
++					durationNs: 1_250_000,
++					statusCode: "OK",
++					provider: "openai",
++					requestedModel: "gpt-6-luna",
++					role: "worker",
++					workspace: "owner/repo",
++					inputTokens: 12,
++					outputTokens: 3,
++					cacheReadInputTokens: 2,
++					costUsd: 0.00042,
++					requestKind: "compaction",
++					compactionProvider: "openai",
++					hopRoute: "claude->openai",
++					hopFrom: "claude",
++					hopTo: "openai",
++					hopReason: "fallback",
++				},
++			],
++		});
++		const serialized = JSON.stringify(body);
++		for (const privateValue of [
++			SESSION_ID,
++			"private prompt content",
++			"private tool arguments",
++			"private status message",
++			"private-host",
++			"private event body",
++		]) {
++			expect(serialized).not.toContain(privateValue);
++		}
++		expect(Object.keys(body.spans[0]).sort()).toEqual([
++			"cacheReadInputTokens",
++			"compactionProvider",
++			"costUsd",
++			"durationNs",
++			"hopFrom",
++			"hopReason",
++			"hopRoute",
++			"hopTo",
++			"inputTokens",
++			"operationName",
++			"outputTokens",
++			"parentSpanId",
++			"provider",
++			"requestKind",
++			"requestedModel",
++			"role",
++			"spanId",
++			"statusCode",
++			"timestamp",
++			"traceId",
++			"workspace",
++		]);
++		expect(mockListSpans).toHaveBeenCalledWith({
++			signal: "traces",
++			timeRange: expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) }),
++			filters: [
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{
++					target: "attribute",
++					scope: "span",
++					key: "autodev.session.id",
++					op: "eq",
++					value: SESSION_ID,
++				},
++			],
++			sort: [{ field: "Timestamp", direction: "desc" }],
++			limit: 200,
++			offset: 0,
++			aiSelector: false,
++		});
++	});
++
++	it("distinguishes an observed empty result from an unavailable query", async () => {
++		mockListSpans.mockResolvedValueOnce({ rows: [], meta: { truncated: false } });
++		const empty = await POST(request({ sessionId: SESSION_ID, range: "24H" }));
++		expect(empty.status).toBe(200);
++		expect(await empty.json()).toEqual({
++			schema: "autodev-openlit-session-usage-v1",
++			status: "observed",
++			partial: false,
++			spans: [],
++		});
++
++		mockListSpans.mockRejectedValueOnce(new Error("private source failure"));
++		const failed = await POST(request({ sessionId: SESSION_ID, range: "24H" }));
++		const failedBody = await failed.json();
++		expect(failed.status).toBe(503);
++		expect(failedBody).toEqual({
++			schema: "autodev-openlit-session-usage-v1",
++			status: "unavailable",
++			partial: false,
++			spans: [],
++		});
++		const failedText = JSON.stringify(failedBody);
++		expect(failedText).not.toContain(SESSION_ID);
++		expect(failedText).not.toContain("private source failure");
++	});
++
++	it("caps results at 200 and marks source and result truncation partial", async () => {
++		mockListSpans.mockResolvedValueOnce({
++			rows: Array.from({ length: 205 }, (_, index) => span(index)),
++			meta: { truncated: false },
++		});
++		const overflow = await POST(request({ sessionId: SESSION_ID, range: "3M" }));
++		const overflowBody = await overflow.json();
++		expect(overflowBody.status).toBe("observed");
++		expect(overflowBody.partial).toBe(true);
++		expect(overflowBody.spans).toHaveLength(200);
++
++		mockListSpans.mockResolvedValueOnce({
++			rows: [span()],
++			meta: { truncated: true },
++		});
++		const sourceTruncated = await POST(
++			request({ sessionId: SESSION_ID, range: "24H" }),
++		);
++		expect((await sourceTruncated.json()).partial).toBe(true);
++	});
++
++	it("rejects an invalid range before querying", async () => {
++		const response = await POST(
++			request({ sessionId: SESSION_ID, range: "all" }),
++		);
++		expect(response.status).toBe(400);
++		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++	});
++});
