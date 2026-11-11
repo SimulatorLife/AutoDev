@@ -799,9 +799,9 @@ export function createOpencliBridge(
   // The site model each tab was last switched to by this bridge. A site whose
   // model is an account setting is switched only when a turn asks for another.
   const selectedModels = new Map<OpencliSite, string>();
-  // The thinking level each site was last asked for by this bridge. A site
-  // that is already at the level the turn asks for is not asked again: the
-  // switch costs the site a menu it has to open and close.
+  // The thinking level each site last answered at. A site that is already at
+  // the level the turn asks for is not asked again: the switch costs the site
+  // a menu it has to open and close.
   const selectedThinking = new Map<OpencliSite, string>();
   const modelLists = new Map<OpencliSite, { at: number; models: string[] }>();
 
@@ -1166,8 +1166,12 @@ export function createOpencliBridge(
           execFor(signal, deadline)
         );
         selectedModels.set(turn.site, turn.siteModel);
-        if (turn.siteThinking !== null)
-          selectedThinking.set(turn.site, turn.siteThinking);
+        // The site reports the level it answered at. A turn that asked for a
+        // level the site would not take answers at the level the site had, so
+        // the bridge keeps what it knew: the site's level did not change, and
+        // a later turn that asks for it again is the one that finds out
+        // whether the site will take it now.
+        if (reply.thinking) selectedThinking.set(turn.site, reply.thinking);
         return reply;
       });
     } finally {

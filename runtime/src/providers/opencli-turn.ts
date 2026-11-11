@@ -343,6 +343,11 @@ export const OPENCLI_SITE_SPECS: Readonly<
           ...JSON_FORMAT
         ]);
       let rows: JsonRecord[];
+      // The level the site ends up answering at. It is the level the turn
+      // asked for until the site refuses it: a site that answers at another
+      // level has not been put on the level that was asked for, and the
+      // bridge must not remember it as one.
+      let thinking: string | null = invocation.siteThinking;
       try {
         rows = await ask(invocation.siteModel, invocation.siteThinking);
       } catch (error) {
@@ -354,12 +359,14 @@ export const OPENCLI_SITE_SPECS: Readonly<
             `opencli gemini could not switch to ${invocation.siteThinking}: ${errorMessage(error)}`
           );
           rows = await ask(invocation.siteModel, null);
+          thinking = null;
         } else if (isGeminiModelSelectionFailure(error)) {
           // Gemini's model picker does not render in a hidden or covered
           // window, and opencli then cannot select any model -- before anything
           // is sent. A root turn failed outright that way; it is asked with the
           // model the site already has instead.
           rows = await ask(null, null);
+          thinking = null;
         } else throw error;
       }
       // The chat comes from the page `ask` answered on (its `url`), never from
@@ -372,7 +379,8 @@ export const OPENCLI_SITE_SPECS: Readonly<
         response: response.startsWith(GEMINI_REPLY_PREFIX)
           ? response.slice(GEMINI_REPLY_PREFIX.length)
           : response,
-        conversationId: geminiConversationId(row.url)
+        conversationId: geminiConversationId(row.url),
+        thinking
       });
     }
   }
@@ -843,6 +851,13 @@ export interface OpencliChatScope {
 export interface OpencliReply {
   readonly response: string;
   readonly conversationId: string | null;
+  /**
+   * The thinking level the site answered at, when the site has levels of its
+   * own. `null` means the turn did not establish one: the site was never asked
+   * for a level, or it declined the level it was asked for and answered at
+   * the level it had.
+   */
+  readonly thinking?: string | null;
 }
 
 export class OpencliCommandError extends Error {

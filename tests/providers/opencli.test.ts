@@ -281,7 +281,7 @@ test("a Gemini turn asks for the thinking level the operator chose", async () =>
       { response: "💬 answered", url: "https://gemini.google.com/app/abc" }
     ];
   };
-  await OPENCLI_SITE_SPECS.gemini.turn(
+  const reply = await OPENCLI_SITE_SPECS.gemini.turn(
     {
       prompt: "p",
       promptFile: "/unused",
@@ -296,6 +296,8 @@ test("a Gemini turn asks for the thinking level the operator chose", async () =>
   const ask = calls.find((args) => args[1] === "ask");
   assert.ok(ask);
   assert.equal(ask[ask.indexOf("--thinking") + 1], "high");
+  // The site took the level, so the reply says so.
+  assert.equal(reply.thinking, "high");
 });
 
 test("a Gemini turn whose thinking level could not be selected runs at the level the site has", async () => {
@@ -334,6 +336,78 @@ test("a Gemini turn whose thinking level could not be selected runs at the level
   assert.equal(asks[1]!.includes("--thinking"), false);
   // The model the turn asked for is kept: only the level was declined.
   assert.equal(asks[1]!.includes("--model"), true);
+  // The site answered at the level it had, not at the one that was asked for.
+  assert.equal(reply.thinking, null);
+});
+
+test("a Gemini turn whose level the site refused asks for the level again", async () => {
+  // The level the site refused is not the level the site is at. A bridge that
+  // remembered the refused level as applied would never ask for it again, and
+  // the site would answer every later turn at the level it had.
+  await withBridge(
+    [
+      new OpencliCommandError(
+        "Could not select thinking level 'high' in the Gemini web UI",
+        "ARGUMENT",
+        2
+      ),
+      { response: "💬 answered", url: "https://gemini.google.com/app/one" },
+      { response: "💬 answered", url: "https://gemini.google.com/app/two" }
+    ],
+    async (baseUrl, runs) => {
+      const first = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        reasoning: { effort: "high" },
+        input: [userMessage("first")]
+      });
+      assert.equal(first.status, 200);
+      const second = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        reasoning: { effort: "high" },
+        input: [userMessage("second")]
+      });
+      assert.equal(second.status, 200);
+      const asks = runs.requests.filter((request) => request.args[1] === "ask");
+      // The first turn asked for the level, the site refused it, and the
+      // retry that answered the turn did not ask again...
+      assert.equal(asks[0]!.args.includes("--thinking"), true);
+      assert.equal(asks[1]!.args.includes("--thinking"), false);
+      // ...so the next turn asks for the level once more.
+      assert.equal(asks[2]!.args.includes("--thinking"), true);
+      assert.equal(
+        asks[2]!.args[asks[2]!.args.indexOf("--thinking") + 1],
+        "high"
+      );
+    }
+  );
+});
+
+test("a Gemini turn at the level the site already has does not ask for it again", async () => {
+  // Asking for the level opens a menu on the site and closes it again: a
+  // bridge that asks every turn pays that on every turn.
+  await withBridge(
+    [
+      { response: "💬 answered", url: "https://gemini.google.com/app/one" },
+      { response: "💬 answered", url: "https://gemini.google.com/app/two" }
+    ],
+    async (baseUrl, runs) => {
+      const first = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        reasoning: { effort: "high" },
+        input: [userMessage("first")]
+      });
+      assert.equal(first.status, 200);
+      const second = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        reasoning: { effort: "high" },
+        input: [userMessage("second")]
+      });
+      assert.equal(second.status, 200);
+      const asks = runs.requests.filter((request) => request.args[1] === "ask");
+      assert.equal(asks[0]!.args.includes("--thinking"), true);
+      assert.equal(asks[1]!.args.includes("--thinking"), false);
+    }
+  );
 });
 
 test("every turn attaches its prompt under a fresh name the message names", () => {
@@ -369,8 +443,9 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
       },
       fresh.exec
     ),
-    // The adapter's speech-bubble decoration is not the model's.
-    { response: "PONG", conversationId: "0c7fc86c8c985ae2" }
+    // The adapter's speech-bubble decoration is not the model's. The turn
+    // asked for no level, so the reply establishes none.
+    { response: "PONG", conversationId: "0c7fc86c8c985ae2", thinking: null }
   );
   assert.deepEqual(fresh.calls, [
     [
