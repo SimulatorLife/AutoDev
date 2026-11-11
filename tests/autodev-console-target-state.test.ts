@@ -966,10 +966,7 @@ test("git change metrics are defined with exact counting and cardinality rules",
     migration,
     /The 90-day live Data snapshot reported 91 commits, 91 files changed/u
   );
-  assert.match(
-    migration,
-    /withholds total lines added\/removed while preserving measured file counts/u
-  );
+  assert.match(migration, /withholds total lines added\/removed while preserving measured file counts/u);
   assert.match(migration, /cumulative temporality/u);
 });
 
@@ -1955,3 +1952,110 @@ test("Console form interactions forbid document reload while preserving intentio
     "acceptance contract must guard no-document-reload invariant"
   );
 });
+
+// Documentation-structure assertions do not prove the runtime meets ACP, quota,
+// Cockatiel, or permission invariants. Those require executable adapter/fault tests.
+test("unified target has one source of authority and nonduplicated subsystem contracts", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  assert.match(doc, /^# AutoDev — Unified Target State$/mu);
+  const headings = doc.match(/^#{1,3} .+$/gmu) ?? [];
+  for (const heading of [
+    "## 4. Repository and module architecture",
+    "### Role-oriented execution and provider routing",
+    "### Resilience mechanics and provider cooldown policy",
+    "### Agent execution transport contract: ACP, MCP and Responses",
+    "### Dependency ownership and maintainability",
+    "### Latency, local delegation and OpenCLI",
+    "### Execution observability and experience",
+    "## 6. RuleSync and configuration authority",
+    "### Policy ownership and enforcement",
+    "## 10. Usage and telemetry contract"
+  ]) {
+    assert.equal(
+      headings.filter((entry) => entry === heading).length,
+      1,
+      "Missing or duplicated target-state section: " + heading
+    );
+  }
+  assert.equal(existsSync(new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)), false);
+});
+
+test("resilience and ACP gates have reviewable structural tables", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const policy = doc.slice(
+    doc.indexOf("### Resilience mechanics and provider cooldown policy"),
+    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses")
+  );
+  assert.match(policy, /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u);
+  for (const kind of ["transient", "hard", "probe", "config"]) {
+    assert.ok(policy.includes("| " + String.fromCharCode(96) + kind + String.fromCharCode(96) + " |"));
+  }
+  const acp = doc.slice(
+    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses"),
+    doc.indexOf("### Dependency ownership and maintainability")
+  );
+  for (const criterion of [
+    "Tool/child continuity",
+    "Sessions and recovery",
+    "Provider correctness",
+    "Observability and memory",
+    "Engineering decision"
+  ]) {
+    assert.ok(acp.includes("| " + criterion + " |"), "Missing ACP gate: " + criterion);
+  }
+});
+
+test("actual workspace package dependencies remain declared and acyclic", () => {
+  type Manifest = {
+    name: string;
+    main?: string;
+    exports?: unknown;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const yaml = readFileSync(new URL("pnpm-workspace.yaml", repositoryRoot), "utf8");
+  const manifests = new Map<string, Manifest>();
+  const baseline = ["core", "data", "runtime", "console"];
+  const registered = yaml
+    .split("\n")
+    .map((line) => /^\s*-\s*([a-z][a-z0-9-]*)\s*$/u.exec(line)?.[1])
+    .filter((folder): folder is string => folder !== undefined);
+  for (const folder of baseline) {
+    assert.ok(registered.includes(folder), "Missing baseline workspace: " + folder);
+  }
+  for (const folder of registered) {
+    const manifest = JSON.parse(
+      readFileSync(new URL(folder + "/package.json", repositoryRoot), "utf8")
+    ) as Manifest;
+    assert.ok(manifest.name.startsWith("@simulatorlife/autodev-"));
+    assert.ok(manifest.exports !== undefined || typeof manifest.main === "string");
+    manifests.set(manifest.name, manifest);
+  }
+  const dependencies = new Map<string, string[]>();
+  for (const [name, manifest] of manifests) {
+    const owned: string[] = [];
+    for (const [dependency, version] of Object.entries({
+      ...manifest.dependencies,
+      ...manifest.devDependencies
+    })) {
+      if (!dependency.startsWith("@simulatorlife/autodev-")) continue;
+      assert.ok(version.startsWith("workspace:"), "Expected a workspace protocol for " + dependency);
+      assert.ok(manifests.has(dependency), "Missing required workspace " + dependency);
+      owned.push(dependency);
+    }
+    dependencies.set(name, owned);
+  }
+  const active = new Set<string>();
+  const visited = new Set<string>();
+  const check = (name: string): void => {
+    if (visited.has(name)) return;
+    assert.ok(!active.has(name), "Workspace dependency cycle at " + name);
+    active.add(name);
+    for (const dependency of dependencies.get(name) ?? []) check(dependency);
+    active.delete(name);
+    visited.add(name);
+  };
+  for (const name of manifests.keys()) check(name);
+  assert.deepEqual(dependencies.get("@simulatorlife/autodev-core"), []);
+});
+
