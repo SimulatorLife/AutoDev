@@ -99,8 +99,23 @@ export interface OpencliInvocation {
    * for a different one than the bridge last selected.
    */
   readonly selectModel: boolean;
+  /**
+   * The thinking level the turn asks the site for, or null to leave the one
+   * it has. Gemini is the site with a thinking level of its own; ChatGPT's
+   * intelligence level is its model, so it has none.
+   */
+  readonly siteThinking: string | null;
   readonly timeoutSeconds: number;
 }
+
+/**
+ * The thinking levels Gemini's web UI offers.
+ *
+ * The site renamed them: it offered `standard` and `extended` when opencli
+ * was written, and offers `low`, `medium` and `high` now. A level the CLI
+ * cannot name is a level it cannot select.
+ */
+export const GEMINI_THINKING_LEVELS = Object.freeze(["low", "medium", "high"]);
 
 /**
  * Runs one opencli command and returns the rows of its JSON result. The
@@ -182,6 +197,20 @@ function isGeminiModelSelectionFailure(error: unknown): boolean {
   return (
     error instanceof OpencliCommandError &&
     GEMINI_MODEL_SELECTION_FAILURE.test(error.message)
+  );
+}
+
+/**
+ * Gemini's thinking level could not be selected: the site's picker moved, or
+ * it does not offer the level that was asked for.
+ */
+const GEMINI_THINKING_SELECTION_FAILURE =
+  /Could not select thinking level|--thinking must be one of/u;
+
+function isGeminiThinkingSelectionFailure(error: unknown): boolean {
+  return (
+    error instanceof OpencliCommandError &&
+    GEMINI_THINKING_SELECTION_FAILURE.test(error.message)
   );
 }
 
@@ -292,12 +321,16 @@ export const OPENCLI_SITE_SPECS: Readonly<
         .filter((model) => model !== "");
     },
     turn: async (invocation, exec) => {
-      const ask = (model: string | null) =>
+      const ask = (model: string | null, thinking: string | null) =>
         exec([
           "gemini",
           "ask",
           invocation.prompt,
           ...(model === null ? [] : ["--model", model]),
+          // The thinking level is a preference of the site's own account, not
+          // a different model: the level is asked for only when it differs
+          // from the one the site already has.
+          ...(thinking == null ? [] : ["--thinking", thinking]),
           // opencli opens the chat, stops a reply an interrupted turn left
           // running, and confirms the chat on the sending page right before
           // sending (AutoDev's patch): nothing that moves the tab between
@@ -311,14 +344,23 @@ export const OPENCLI_SITE_SPECS: Readonly<
         ]);
       let rows: JsonRecord[];
       try {
-        rows = await ask(invocation.siteModel);
+        rows = await ask(invocation.siteModel, invocation.siteThinking);
       } catch (error) {
-        // Gemini's model picker does not render in a hidden or covered
-        // window, and opencli then cannot select any model -- before anything
-        // is sent. A root turn failed outright that way; it is asked with the
-        // model the site already has instead.
-        if (!isGeminiModelSelectionFailure(error)) throw error;
-        rows = await ask(null);
+        // The thinking level is a preference, like the model: a site that
+        // cannot take it answers at the level it has, the way it answers at
+        // the model it has when its model picker cannot render.
+        if (isGeminiThinkingSelectionFailure(error)) {
+          writeErrorLine(
+            `opencli gemini could not switch to ${invocation.siteThinking}: ${errorMessage(error)}`
+          );
+          rows = await ask(invocation.siteModel, null);
+        } else if (isGeminiModelSelectionFailure(error)) {
+          // Gemini's model picker does not render in a hidden or covered
+          // window, and opencli then cannot select any model -- before anything
+          // is sent. A root turn failed outright that way; it is asked with the
+          // model the site already has instead.
+          rows = await ask(null, null);
+        } else throw error;
       }
       // The chat comes from the page `ask` answered on (its `url`), never from
       // a later `status`: with more than one Gemini tab open, `status` can

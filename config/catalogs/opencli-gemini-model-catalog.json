@@ -7,8 +7,16 @@
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Quick and efficient"
+        },
+        {
           "effort": "medium",
-          "description": "The site's own default"
+          "description": "Balanced depth"
+        },
+        {
+          "effort": "high",
+          "description": "Extra thorough"
         }
       ],
       "shell_type": "shell_command",
@@ -44,8 +52,16 @@
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Quick and efficient"
+        },
+        {
           "effort": "medium",
-          "description": "The site's own default"
+          "description": "Balanced depth"
+        },
+        {
+          "effort": "high",
+          "description": "Extra thorough"
         }
       ],
       "shell_type": "shell_command",
@@ -81,8 +97,16 @@
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Quick and efficient"
+        },
+        {
           "effort": "medium",
-          "description": "The site's own default"
+          "description": "Balanced depth"
+        },
+        {
+          "effort": "high",
+          "description": "Extra thorough"
         }
       ],
       "shell_type": "shell_command",
@@ -118,8 +142,16 @@
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Quick and efficient"
+        },
+        {
           "effort": "medium",
-          "description": "The site's own default"
+          "description": "Balanced depth"
+        },
+        {
+          "effort": "high",
+          "description": "Extra thorough"
         }
       ],
       "shell_type": "shell_command",

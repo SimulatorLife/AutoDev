@@ -6350,17 +6350,70 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
       // a stream cannot be taken back once it has started.
       assert.match(body, /half a result/);
       const served = response.headers.get("x-autodev-provider");
-      const provider = getRouterStatus().providers[served];
+      const servedModel = response.headers.get("x-autodev-model");
+      // The route that served is what has to cool down, and the route is not
+      // always the provider: a provider whose quota is pooled (antigravity)
+      // is cooled per pool, so that one pool going out does not take the
+      // other one offline with it. The provider-wide field is therefore not
+      // the contract the router keeps -- the route's own cooldown is, and
+      // asking for it resolves provider, model and pool in that order.
+      const routeCooldown = cooldowns.get(
+        served ?? "",
+        Date.now(),
+        servedModel
+      );
       assert.equal(
-        provider.cooldownKind,
+        routeCooldown?.kind,
         "hard",
         "an incomplete turn is still a provider failure"
       );
-      assert.equal(provider.cooldownResetsAt, resetsAt);
+      assert.equal(routeCooldown?.failureClass, "session_limit");
+      assert.equal(routeCooldown?.resetsAt, resetsAt);
+      const provider = getRouterStatus().providers[served ?? ""];
       assert.equal(provider.failures, 1);
     }
   );
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
+});
+
+test("a provider whose quota pool is cooling names the pool instead of reading as an outage", async () => {
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
+  const resetsAt = new Date(Date.now() + 5_400_000).toISOString();
+  try {
+    // Antigravity's Gemini models share one quota pool and its Claude models
+    // another, so the pool that ran out is the route that is out -- and the
+    // provider itself can still serve the other pool.
+    cooldowns.cooldownProvider("antigravity", {
+      failureClass: "quota_exhausted",
+      resetsAt,
+      structured: true,
+      scope: "pool",
+      model: "gemini-3.8-flash-medium"
+    });
+    const provider = getRouterStatus().providers.antigravity;
+    assert.equal(provider.cooldownKind, null);
+    assert.equal(provider.status, "ready");
+    // The route that is out is named, with the limit the provider reported.
+    assert.equal(provider.poolCooldowns?.first_party?.kind, "hard");
+    assert.equal(
+      provider.poolCooldowns?.first_party?.failureClass,
+      "quota_exhausted"
+    );
+    assert.equal(provider.poolCooldowns?.first_party?.resetsAt, resetsAt);
+    assert.equal(provider.poolCooldowns?.third_party, undefined);
+    // And the lookup the router itself makes follows the route, not the
+    // provider: the Gemini route is out and the Claude route is not.
+    assert.equal(
+      cooldowns.get("antigravity", Date.now(), "gemini-3.8-flash-medium")?.kind,
+      "hard"
+    );
+    assert.equal(
+      cooldowns.get("antigravity", Date.now(), "claude-opus-5-5-high"),
+      null
+    );
+  } finally {
+    for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
+  }
 });
 
 test("closes an abandoned stream as incomplete, carrying what it already forwarded", async () => {

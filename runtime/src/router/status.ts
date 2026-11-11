@@ -18,6 +18,10 @@ export interface RouterProviderRuntimeStatus {
   cooldownFailureClass?: string | null;
   cooldownUntil?: string | null;
   lastResortEligible?: boolean;
+  /** The quota pools of this provider that are cooling down. */
+  poolCooldowns?: Record<string, unknown>;
+  /** The models of this provider that are cooling down on their own. */
+  modelCooldowns?: Record<string, unknown>;
   limits?: Record<string, unknown>;
   effectiveLimits?: unknown;
   effectiveLimit?: unknown;
@@ -93,6 +97,8 @@ const PROVIDER_RUNTIME_KEYS = [
   "cooldownFailureClass",
   "cooldownUntil",
   "lastResortEligible",
+  "poolCooldowns",
+  "modelCooldowns",
   "limits",
   "effectiveLimits",
   "effectiveLimit",

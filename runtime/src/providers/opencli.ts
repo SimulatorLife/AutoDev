@@ -72,6 +72,7 @@ import {
   CHATGPT_MODELS,
   compactCodexTools,
   compactTranscript,
+  GEMINI_THINKING_LEVELS,
   OPENCLI_SITE_SPECS,
   type OpencliChatScope,
   OpencliCommandError,
@@ -749,6 +750,8 @@ function sendFailure(response: ServerResponse, error: unknown): void {
 interface PreparedTurn {
   readonly site: OpencliSite;
   readonly siteModel: string;
+  /** The thinking level the request asks the site for, or null for none. */
+  readonly siteThinking: string | null;
   readonly spec: OpencliSiteSpec;
   readonly model: string;
   readonly stream: boolean;
@@ -796,6 +799,10 @@ export function createOpencliBridge(
   // The site model each tab was last switched to by this bridge. A site whose
   // model is an account setting is switched only when a turn asks for another.
   const selectedModels = new Map<OpencliSite, string>();
+  // The thinking level each site was last asked for by this bridge. A site
+  // that is already at the level the turn asks for is not asked again: the
+  // switch costs the site a menu it has to open and close.
+  const selectedThinking = new Map<OpencliSite, string>();
   const modelLists = new Map<OpencliSite, { at: number; models: string[] }>();
 
   const modelRefreshes = new Map<OpencliSite, Promise<void>>();
@@ -874,6 +881,26 @@ export function createOpencliBridge(
     return (modelLists.get(site)?.models ?? []).map((siteModel) =>
       opencliModelId(provider, siteModel)
     );
+  }
+
+  /**
+   * The thinking level the request asks a site to answer at.
+   *
+   * Gemini is the site with a thinking level of its own (`low`, `medium`,
+   * `high`), and it is asked for one through the request's effort. ChatGPT's
+   * intelligence level is its model, so it has no effort of its own, and a
+   * level the site does not offer is not asked for at all: the turn answers
+   * at the level the site has rather than failing over a preference.
+   */
+  function siteThinking(site: OpencliSite, payload: JsonRecord): string | null {
+    if (site !== "gemini") return null;
+    const reasoning = payload.reasoning;
+    if (!reasoning || typeof reasoning !== "object" || Array.isArray(reasoning))
+      return null;
+    const effort = (reasoning as Record<string, unknown>).effort;
+    if (typeof effort !== "string") return null;
+    const value = effort.trim().toLowerCase();
+    return GEMINI_THINKING_LEVELS.includes(value) ? value : null;
   }
 
   function prepare(
@@ -985,6 +1012,7 @@ export function createOpencliBridge(
     return {
       site,
       siteModel: named.siteModel,
+      siteThinking: siteThinking(site, payload),
       spec,
       model,
       stream: payload.stream === true,
@@ -1125,6 +1153,11 @@ export function createOpencliBridge(
             conversationId,
             siteModel: turn.siteModel,
             selectModel: selectedModels.get(turn.site) !== turn.siteModel,
+            siteThinking:
+              turn.siteThinking !== null &&
+              selectedThinking.get(turn.site) !== turn.siteThinking
+                ? turn.siteThinking
+                : null,
             // What is left of the turn's budget, not the whole of it: a turn
             // that already waited for the site must not be given a command
             // timeout longer than the turn itself.
@@ -1133,6 +1166,8 @@ export function createOpencliBridge(
           execFor(signal, deadline)
         );
         selectedModels.set(turn.site, turn.siteModel);
+        if (turn.siteThinking !== null)
+          selectedThinking.set(turn.site, turn.siteThinking);
         return reply;
       });
     } finally {

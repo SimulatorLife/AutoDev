@@ -169,6 +169,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
         promptFile: "/tmp/x/turn.md",
         conversationId: null,
         siteModel: "advanced",
+        siteThinking: null,
         selectModel: false,
         timeoutSeconds: 300
       },
@@ -200,6 +201,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
       promptFile: "/tmp/x/turn.md",
       conversationId: "abc",
       siteModel: "advanced",
+      siteThinking: null,
       selectModel: false,
       timeoutSeconds: 300
     },
@@ -218,6 +220,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
       promptFile: "/tmp/x/turn.md",
       conversationId: null,
       siteModel: "xhigh",
+      siteThinking: null,
       selectModel: true,
       timeoutSeconds: 300
     },
@@ -257,6 +260,7 @@ test("Gemini is asked with its current model when its model picker cannot be rea
       promptFile: "/unused",
       conversationId: null,
       siteModel: "3.1-pro",
+      siteThinking: null,
       selectModel: true,
       timeoutSeconds: 60
     },
@@ -267,6 +271,69 @@ test("Gemini is asked with its current model when its model picker cannot be rea
   assert.equal(askCalls.length, 2);
   assert.ok(askCalls[0]!.includes("--model"));
   assert.equal(askCalls[1]!.includes("--model"), false);
+});
+
+test("a Gemini turn asks for the thinking level the operator chose", async () => {
+  const calls: string[][] = [];
+  const exec = async (args: readonly string[]) => {
+    calls.push([...args]);
+    return [
+      { response: "💬 answered", url: "https://gemini.google.com/app/abc" }
+    ];
+  };
+  await OPENCLI_SITE_SPECS.gemini.turn(
+    {
+      prompt: "p",
+      promptFile: "/unused",
+      conversationId: null,
+      siteModel: "3.1-pro",
+      siteThinking: "high",
+      selectModel: true,
+      timeoutSeconds: 60
+    },
+    exec
+  );
+  const ask = calls.find((args) => args[1] === "ask");
+  assert.ok(ask);
+  assert.equal(ask[ask.indexOf("--thinking") + 1], "high");
+});
+
+test("a Gemini turn whose thinking level could not be selected runs at the level the site has", async () => {
+  // The thinking level is a preference of the site's own account, like the
+  // model: a site that cannot take it answers at the level it has instead of
+  // failing the turn.
+  const calls: string[][] = [];
+  const exec = async (args: readonly string[]) => {
+    calls.push([...args]);
+    if (args[1] === "ask" && args.includes("--thinking"))
+      throw new OpencliCommandError(
+        "Could not select thinking level 'high' in the Gemini web UI",
+        "ARGUMENT",
+        2
+      );
+    return [
+      { response: "💬 answered", url: "https://gemini.google.com/app/abc" }
+    ];
+  };
+  const reply = await OPENCLI_SITE_SPECS.gemini.turn(
+    {
+      prompt: "p",
+      promptFile: "/unused",
+      conversationId: null,
+      siteModel: "3.1-pro",
+      siteThinking: "high",
+      selectModel: true,
+      timeoutSeconds: 60
+    },
+    exec
+  );
+  assert.equal(reply.response, "answered");
+  const asks = calls.filter((args) => args[1] === "ask");
+  assert.equal(asks.length, 2);
+  assert.equal(asks[0]!.includes("--thinking"), true);
+  assert.equal(asks[1]!.includes("--thinking"), false);
+  // The model the turn asked for is kept: only the level was declined.
+  assert.equal(asks[1]!.includes("--model"), true);
 });
 
 test("every turn attaches its prompt under a fresh name the message names", () => {
@@ -296,6 +363,7 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
         promptFile: "/unused",
         conversationId: null,
         siteModel: "3.1-pro",
+        siteThinking: null,
         selectModel: true,
         timeoutSeconds: 60
       },
@@ -331,6 +399,7 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
       promptFile: "/unused",
       conversationId: "0c7fc86c8c985ae2",
       siteModel: "3.1-pro",
+      siteThinking: null,
       selectModel: false,
       timeoutSeconds: 60
     },
@@ -752,6 +821,7 @@ test("a Gemini answer from another chat fails the turn", async () => {
         promptFile: "/unused",
         conversationId: "mine",
         siteModel: "3.1-pro",
+        siteThinking: null,
         selectModel: false,
         timeoutSeconds: 60
       },
@@ -1696,6 +1766,7 @@ test("the installed opencli accepts every flag the site specs pass", async () =>
           promptFile: "/tmp/turn.md",
           conversationId,
           siteModel: site === "chatgpt" ? "balanced" : "3.1-pro",
+          siteThinking: null,
           selectModel: true,
           timeoutSeconds: 60
         },

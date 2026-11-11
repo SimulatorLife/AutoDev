@@ -64,7 +64,8 @@ writeLine(
 // A provider that is enabled for the orchestrator and cannot serve it is a
 // different fault from one that is switched off: no enable switch will make it
 // delegate, so the operator needs a provider with a delegation path instead.
-const incapableOrchestratorProviders = routing.incapableOrchestratorProviders ?? [];
+const incapableOrchestratorProviders =
+  routing.incapableOrchestratorProviders ?? [];
 if (incapableOrchestratorProviders.length > 0) {
   writeLine(
     `Cannot delegate (enabled for the orchestrator, but no delegation path): ${incapableOrchestratorProviders.join(", ")}`
@@ -263,6 +264,36 @@ const formatLiveLimits = (
   return `live limits: [${custom.map(([key, value]) => `${key}: ${value}`).join(", ")}]`;
 };
 
+const describeScopedCooldowns = (
+  label: string,
+  cooldowns: Record<string, unknown> | undefined
+): string[] => {
+  if (!cooldowns) return [];
+  return Object.entries(cooldowns).map(([name, entry]) => {
+    const detail = asRecord(entry);
+    const kind = detail?.kind ? String(detail.kind) : "cooldown";
+    const resetsAt = detail?.resetsAt ? String(detail.resetsAt) : null;
+    return resetsAt
+      ? `${label} ${name}: ${kind}, resets ${resetsAt}`
+      : `${label} ${name}: ${kind}`;
+  });
+};
+
+/**
+ * The routes of a provider that are out, when the provider itself is not.
+ *
+ * A pooled provider (Antigravity) cools one quota pool at a time, and a
+ * rejected model cools one model: the provider keeps serving its other
+ * routes, so its own status still reads "ready" and the routes that are out
+ * are named here.
+ */
+const scopedCooldownDetailLines = (
+  state: RouterProviderRuntimeStatus
+): string[] => [
+  ...describeScopedCooldowns("pool cooldown", state.poolCooldowns),
+  ...describeScopedCooldowns("model cooldown", state.modelCooldowns)
+];
+
 /**
  * The indented explanation printed under a provider row: what it is cooling
  * down from, how its failure streaks stand, and any live limits in force. These
@@ -274,6 +305,7 @@ const providerDetailLines = (
   cooldown: ProviderCooldown
 ): string[] => {
   const details = cooldownDetailLines(cooldown);
+  details.push(...scopedCooldownDetailLines(state));
   if ((state.failureStreak ?? 0) > 0)
     details.push(`failure streak: ${state.failureStreak}`);
   if ((state.probeFailureStreak ?? 0) > 0)

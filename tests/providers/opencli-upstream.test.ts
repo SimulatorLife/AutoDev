@@ -262,3 +262,106 @@ test("the model is switched through the site's own API when the picker cannot be
     globalThis.fetch = originalFetch;
   }
 });
+
+/**
+ * The Gemini adapter AutoDev patches: how a thinking level reaches the site.
+ *
+ * The site renamed its levels: it offered `standard` and `extended` when
+ * opencli was written, and offers `low`, `medium` and `high` now. A level
+ * the CLI cannot name is a level it cannot select, and `--thinking` with a
+ * name the site does not use fails before the prompt is ever sent.
+ *
+ * The adapter is upstream code, patched in this repository
+ * (patches/@jackwener__opencli@2.0.3.patch), so it is tested against the
+ * installed package: the test fails when the patch and the installed adapter
+ * have drifted apart.
+ */
+async function geminiAdapter(): Promise<{
+  selectGeminiThinking: (
+    page: unknown,
+    thinkingValue: string
+  ) => Promise<string>;
+} | null> {
+  let entry: string;
+  try {
+    entry = require.resolve("@jackwener/opencli");
+  } catch {
+    // A tree without the package installed has nothing to test.
+    return null;
+  }
+  const file = resolve(
+    dirname(entry),
+    "..",
+    "..",
+    "clis",
+    "gemini",
+    "utils.js"
+  );
+  return (await import(pathToFileURL(file).href)) as {
+    selectGeminiThinking: (
+      page: unknown,
+      thinkingValue: string
+    ) => Promise<string>;
+  };
+}
+
+/**
+ * A page whose thinking submenu takes a moment to expand.
+ *
+ * The items of the submenu are in the DOM before it has expanded, and an
+ * item with no size cannot be clicked: the adapter has to wait for the level
+ * to be visible, not for a fixed half second.
+ */
+function fakeThinkingPage(options: {
+  readonly matched: string;
+  readonly hiddenProbes?: number;
+}) {
+  const calls = { probe: 0, selection: 0 };
+  const hidden = options.hiddenProbes ?? 0;
+  const page = {
+    async evaluate(script: string): Promise<unknown> {
+      if (script.includes("window.location.href"))
+        return "https://gemini.google.com/app/1";
+      if (script.includes("findModelPicker")) return { ok: true };
+      if (script.includes("thinkingToggle")) return true;
+      if (script.includes("candidatePatterns")) {
+        calls.selection += 1;
+        return options.matched;
+      }
+      calls.probe += 1;
+      return calls.probe > hidden;
+    },
+    async goto(): Promise<void> {},
+    async wait(): Promise<void> {},
+    async sleep(): Promise<void> {}
+  };
+  return { page, calls };
+}
+
+test("the thinking levels the site offers can be selected", async () => {
+  const adapter = await geminiAdapter();
+  if (adapter === null) return;
+  const { selectGeminiThinking } = adapter;
+  for (const level of ["low", "medium", "high"]) {
+    const site = fakeThinkingPage({ matched: `${level} Extra thorough` });
+    const matched = await selectGeminiThinking(site.page, level);
+    assert.equal(matched, `${level} Extra thorough`);
+    assert.equal(site.calls.selection, 1);
+  }
+});
+
+test("the level is waited for while the thinking submenu is still expanding", async () => {
+  const adapter = await geminiAdapter();
+  if (adapter === null) return;
+  const { selectGeminiThinking } = adapter;
+  const site = fakeThinkingPage({
+    matched: "High Extra thorough",
+    hiddenProbes: 3
+  });
+  const matched = await selectGeminiThinking(site.page, "high");
+  assert.equal(matched, "High Extra thorough");
+  assert.ok(
+    site.calls.probe > 1,
+    "the adapter looked again while the submenu was still empty"
+  );
+});

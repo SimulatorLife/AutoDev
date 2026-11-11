@@ -1,8 +1,8 @@
 diff --git a/cli-manifest.json b/cli-manifest.json
-index 4b294f1..e78e720 100644
+index 4b294f1..b65f368 100644
 --- a/cli-manifest.json
 +++ b/cli-manifest.json
-@@ -12172,6 +12172,12 @@
+@@ -12172,16 +12172,23 @@
          "required": false,
          "help": "Start a new chat first (true/false, default: false)"
        },
@@ -15,7 +15,10 @@ index 4b294f1..e78e720 100644
        {
          "name": "thinking",
          "type": "str",
-@@ -12181,7 +12187,8 @@
+         "default": null,
+         "required": false,
+-        "help": "Thinking level: standard or extended (omitted = leave unchanged)"
++        "help": "Thinking level: low, medium, high, standard or extended (omitted = leave unchanged)"
        }
      ],
      "columns": [
@@ -258,7 +261,7 @@ index 05a28f7..f5d55cb 100644
 +    }
 +}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9..bd911d5 100644
+index 4ffdfc9..c06a1a7 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
 @@ -4,6 +4,12 @@ import {
@@ -296,19 +299,43 @@ index 4ffdfc9..bd911d5 100644
          throw new ArgumentError(
              '--model "' + value + '" is not a valid canonical model id. ' +
              'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
-@@ -91,9 +99,10 @@ export const askCommand = cli({
+@@ -75,6 +83,22 @@ export const __test__ = {
+     validateAskModelValue,
+ };
+ 
++/**
++ * The thinking levels the Gemini web UI offers.
++ *
++ * The site renames them: it offered `standard` and `extended` when this
++ * adapter was written, and offers `low`, `medium` and `high` now. A level
++ * the CLI cannot name is a level it cannot select, and `--thinking` with a
++ * name the site does not use fails before the prompt is ever sent.
++ */
++export const GEMINI_THINKING_LEVELS = new Set([
++    'low',
++    'medium',
++    'high',
++    'standard',
++    'extended'
++]);
++
+ export const askCommand = cli({
+     site: 'gemini',
+     name: 'ask',
+@@ -91,9 +115,10 @@ export const askCommand = cli({
          { name: 'model', type: 'string', required: false, help: 'Gemini model to use (e.g. "2.5-flash"). Use "opencli gemini models" to list available values.' },
          { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait (default: 60)', default: 60 },
          { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
+-        { name: 'thinking', required: false, help: 'Thinking level: standard or extended (omitted = leave unchanged)', default: null },
 +        { name: 'conversation', type: 'string', required: false, help: 'Continue this conversation id; the prompt is sent only if the tab shows it' },
-         { name: 'thinking', required: false, help: 'Thinking level: standard or extended (omitted = leave unchanged)', default: null },
++        { name: 'thinking', required: false, help: 'Thinking level: low, medium, high, standard or extended (omitted = leave unchanged)', default: null },
      ],
 -    columns: ['response'],
 +    columns: ['response', 'url'],
      func: async (page, kwargs) => {
          const prompt = kwargs.prompt;
          const timeout = kwargs.timeout;
-@@ -103,7 +112,13 @@ export const askCommand = cli({
+@@ -103,7 +128,13 @@ export const askCommand = cli({
  
          // ── New chat (must happen before model/thinking selection) ──────
          const startFresh = normalizeBooleanFlag(kwargs.new);
@@ -323,7 +350,19 @@ index 4ffdfc9..bd911d5 100644
              await startNewGeminiChat(page);
  
          // ── Early validation: model format & thinking value ────────────
-@@ -256,20 +271,39 @@ export const askCommand = cli({
+@@ -119,9 +150,9 @@ export const askCommand = cli({
+         if (hasThinking) {
+             const thinkingRaw = String(kwargs.thinking ?? '').trim();
+             const thinkingValue = thinkingRaw.toLowerCase();
+-            if (thinkingValue !== 'standard' && thinkingValue !== 'extended') {
++            if (!GEMINI_THINKING_LEVELS.has(thinkingValue)) {
+                 throw new ArgumentError(
+-                    `--thinking must be 'standard' or 'extended', got '${thinkingRaw}'`,
++                    `--thinking must be one of ${[...GEMINI_THINKING_LEVELS].join(', ')}, got '${thinkingRaw}'`,
+                     'Run `opencli gemini models` to see available thinking levels.',
+                 );
+             }
+@@ -256,20 +287,39 @@ export const askCommand = cli({
              }
          }
  
@@ -365,8 +404,31 @@ index 4ffdfc9..bd911d5 100644
 +        return [{ response: `💬 ${response}`, url }];
      },
  });
+diff --git a/clis/gemini/models.js b/clis/gemini/models.js
+index 061c38c..557cbcc 100644
+--- a/clis/gemini/models.js
++++ b/clis/gemini/models.js
+@@ -158,9 +158,16 @@ function thinkingExtractionLogic() {
+       const extractAllThinkingValues = (menuItems) => {
+         const found = new Map();
+ 
++        // The site renames its thinking levels: it offered standard and
++        // extended when this adapter was written, and offers low, medium
++        // and high now. A level the CLI cannot name is a level it cannot
++        // select.
+         const THINKING_PATTERNS = [
+-          { value: 'standard', patterns: [/\\bstandard\\b/i, /标准/i], priority: 1 },
+-          { value: 'extended', patterns: [/\\bextended\\b/i, /扩展/i], priority: 2 },
++          { value: 'low', patterns: [/\\blow\\b/i, /低/i], priority: 1 },
++          { value: 'medium', patterns: [/\\bmedium\\b/i, /中/i], priority: 2 },
++          { value: 'high', patterns: [/\\bhigh\\b/i, /高/i], priority: 3 },
++          { value: 'standard', patterns: [/\\bstandard\\b/i, /标准/i], priority: 4 },
++          { value: 'extended', patterns: [/\\bextended\\b/i, /扩展/i], priority: 5 },
+         ];
+ 
+         for (const item of menuItems) {
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb556..47693b0 100644
+index 46bb556..8763c8c 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@
@@ -375,7 +437,188 @@ index 46bb556..47693b0 100644
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
-@@ -2604,7 +2604,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2072,10 +2072,18 @@ function clickThinkingToggleInMenuScript() {
+         'GEM-MENU-ITEM',
+       ];
+ 
++      // Every menu item the page shows, not the first selector's subset: the
++      // "Thinking level" entry is a menuitem while the models beside it are
++      // menuitemradio, so a selector that matched only the models left the
++      // toggle out of the list and the submenu never opened.
+       let menuItems = [];
++      const seenItems = new Set();
+       for (const sel of MENU_SELECTORS) {
+-        const items = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+-        if (items.length >= 2) { menuItems = items; break; }
++        for (const item of Array.from(document.querySelectorAll(sel)).filter(isVisible)) {
++          if (seenItems.has(item)) continue;
++          seenItems.add(item);
++          menuItems.push(item);
++        }
+       }
+ 
+       if (menuItems.length === 0) {
+@@ -2109,21 +2117,93 @@ function clickThinkingToggleInMenuScript() {
+  * already-open model-picker menu (after the thinking section has been
+  * expanded).  Closes the menu after selection (or on failure).
+  *
+- * @param {string} thinkingValue - 'standard' or 'extended'
++ * @param {string} thinkingValue - the site's thinking level ('low', 'medium', 'high')
+  * @returns a function string for page.evaluate() that returns the matched
+  *          label text, or empty string on failure
+  */
++/**
++ * The site's labels for a thinking level, and the patterns that find them.
++ *
++ * The site renames its thinking levels: it offered `standard` and `extended`
++ * when this adapter was written, and offers `low`, `medium` and `high` now.
++ * A level the CLI cannot name is a level it cannot select, and the selection
++ * fails before the prompt is ever sent.
++ */
++const GEMINI_THINKING_LABELS = {
++    low: ['\\blow\\b', '低'],
++    medium: ['\\bmedium\\b', '中'],
++    high: ['\\bhigh\\b', '高'],
++    standard: ['\\bstandard\\b', '标准', '標準'],
++    extended: ['\\bextended\\b', '扩展', '擴展', '拡張'],
++};
++
++/** How long the thinking submenu is given to expand and show its levels. */
++const THINKING_LEVEL_WAIT_MS = 5000;
++
++/**
++ * Browser evaluate script that reports whether the thinking level the caller
++ * asked for is on the page and has a size to click.
++ *
++ * The items of the submenu exist in the DOM before it has expanded, and an
++ * item with no size cannot be clicked: the wait for the level to be visible
++ * is what tells the selection that the menu is ready.
++ */
++function thinkingLevelVisibleScript(thinkingValue) {
++    const normalizedValue = String(thinkingValue || '').trim().toLowerCase();
++    const labelMap = JSON.stringify(GEMINI_THINKING_LABELS);
++    return `
++    (() => {
++      const LABEL_MAP = ${labelMap};
++      const labels = LABEL_MAP['${normalizedValue}'] || ['${normalizedValue}'];
++      const patterns = labels
++        .map((label) => { try { return new RegExp(label, 'i'); } catch (_) { return null; } })
++        .filter((re) => re !== null);
++
++      const isVisible = (el) => {
++        if (!(el instanceof HTMLElement) && !(el instanceof Element)) return false;
++        if (el.hidden || el.closest('[hidden]')) return false;
++        const ariaHidden = el.getAttribute('aria-hidden');
++        if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
++        if (el.closest('[aria-hidden="true"]')) return false;
++        const style = window.getComputedStyle(el);
++        if (style.display === 'none' || style.visibility === 'hidden') return false;
++        if (Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
++        const rect = el.getBoundingClientRect();
++        return rect.width > 0 && rect.height > 0;
++      };
++
++      const items = Array.from(document.querySelectorAll(
++        '[role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"], gem-menu-item, GEM-MENU-ITEM'
++      ));
++      return items.some((el) => {
++        if (!isVisible(el)) return false;
++        const text = (el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
++        if (!text) return false;
++        return patterns.length > 0
++          ? patterns.some((re) => re.test(text))
++          : labels.some((label) => text.includes(label));
++      });
++    })()
++    `;
++}
++
+ function selectThinkingInMenuScript(thinkingValue) {
+     const normalizedValue = String(thinkingValue || '').trim().toLowerCase();
+     if (!normalizedValue) return '(() => "")';
+-    const labelMap = JSON.stringify({
+-        standard: ['standard', '标准', '標準'],
+-        extended: ['extended', '扩展', '擴展', '拡張'],
+-    });
++    const labelMap = JSON.stringify(GEMINI_THINKING_LABELS);
+     return `
+     (() => {
+       const LABEL_MAP = ${labelMap};
+       const candidateLabels = LABEL_MAP['${normalizedValue}'] || ['${normalizedValue}'];
++      const candidatePatterns = candidateLabels.map((label) => {
++        try { return new RegExp(label, 'i'); } catch (_) { return null; }
++      }).filter((re) => re !== null);
++      const matchesLabel = (text) => {
++        if (candidatePatterns.length > 0) {
++          return candidatePatterns.some((re) => re.test(text));
++        }
++        return candidateLabels.some((label) => text.includes(label));
++      };
+ 
+       const isVisible = (el) => {
+         if (!(el instanceof HTMLElement)) return false;
+@@ -2151,7 +2231,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+       const matchesThinking = (node) => {
+         const combined = normalize(textOf(node));
+         if (!combined) return false;
+-        return candidateLabels.some((label) => combined.includes(label));
++        return matchesLabel(combined);
+       };
+ 
+       // Search inside visible menu containers first.
+@@ -2191,8 +2271,8 @@ function selectThinkingInMenuScript(thinkingValue) {
+       candidates.sort((a, b) => {
+         const aText = normalize(textOf(a));
+         const bText = normalize(textOf(b));
+-        const aExact = candidateLabels.some((l) => aText === l);
+-        const bExact = candidateLabels.some((l) => bText === l);
++        const aExact = candidateLabels.some((l) => aText === l || aText.startsWith(l + ' '));
++        const bExact = candidateLabels.some((l) => bText === l || bText.startsWith(l + ' '));
+         if (aExact && !bExact) return -1;
+         if (!aExact && bExact) return 1;
+         return 0;
+@@ -2228,7 +2308,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+  *  6. Close the menu.
+  *
+  * @param {object} page - Puppeteer page object
+- * @param {string} thinkingValue - 'standard' or 'extended'
++ * @param {string} thinkingValue - the site's thinking level ('low', 'medium', 'high')
+  * @returns {Promise<string>} matched label text, or empty string on failure
+  */
+ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2248,7 +2328,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
+ 
+     if (toggleClicked) {
+         // Step 4: Wait for the expanded thinking items to render.
+-        await page.wait(0.5);
++        //
++        // The submenu expands over about a second, and the items it holds
++        // have no size until it does: a fixed half second found a menu that
++        // was still empty and failed every level the site offers. Waiting
++        // for the level itself to be visible is what the wait is for.
++        const deadline = Date.now() + THINKING_LEVEL_WAIT_MS;
++        while (Date.now() < deadline) {
++            const ready = unwrapGeminiEvaluateResult(
++                await page
++                    .evaluate(thinkingLevelVisibleScript(thinkingValue))
++                    .catch(() => null),
++                'Gemini thinking level'
++            );
++            if (ready === true) break;
++            await page.wait(0.25);
++        }
+     }
+ 
+     // Step 5: Select the requested thinking level (also closes the menu).
+@@ -2260,7 +2355,6 @@ export async function selectGeminiThinking(page, thinkingValue) {
+         return matched;
+     }
+ 
+-    return '';
+ }
+ 
+ // ── Current model detection ─────────────────────────────────────────
+@@ -2604,7 +2698,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -388,7 +631,7 @@ index 46bb556..47693b0 100644
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,6 +2661,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,6 +2755,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -397,7 +640,7 @@ index 46bb556..47693b0 100644
                  return structuredCandidate;
              }
              continue;
-@@ -2674,6 +2680,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2774,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -406,7 +649,7 @@ index 46bb556..47693b0 100644
              return transcriptCandidate;
          }
      }
-@@ -2837,7 +2845,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +2939,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -419,7 +662,7 @@ index 46bb556..47693b0 100644
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +2857,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +2951,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

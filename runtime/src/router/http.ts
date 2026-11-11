@@ -1282,6 +1282,39 @@ function providerTierPriorities(provider: string): string[] {
   );
 }
 
+/**
+ * The routes of one provider that are out.
+ *
+ * A cooldown belongs to the route that failed, not to the provider: a pooled
+ * provider (Antigravity) cools one quota pool, and a rejected model cools one
+ * model. The provider-wide cooldown is therefore only non-null when the whole
+ * provider is out, and the routes that are out are named here -- otherwise a
+ * provider with one exhausted pool reads as "ready" and the traffic that
+ * vanished has nowhere to show up.
+ */
+function scopedProviderCooldowns(
+  provider: string,
+  now: number
+): Record<string, unknown> {
+  const pools = COOLDOWNS.getPoolCooldowns(provider, now);
+  const models = COOLDOWNS.getModelCooldowns(provider, now);
+  const serialize = (entries: Record<string, CooldownEntry>) =>
+    Object.fromEntries(
+      Object.entries(entries).map(([name, entry]) => [
+        name,
+        serializeProviderCooldown(entry, now)
+      ])
+    );
+  return {
+    ...(Object.keys(pools).length > 0
+      ? { poolCooldowns: serialize(pools) }
+      : {}),
+    ...(Object.keys(models).length > 0
+      ? { modelCooldowns: serialize(models) }
+      : {})
+  };
+}
+
 function routerProviderStatus(
   route: (typeof ROUTES)[number],
   now: number,
@@ -1347,6 +1380,7 @@ function routerProviderStatus(
           ? COOLDOWNS.allowsLastResort(cooldown, now)
           : true
       },
+      ...scopedProviderCooldowns(route.provider, now),
       active,
       inFlightRequests,
       cooldownUntil: coolingDown
