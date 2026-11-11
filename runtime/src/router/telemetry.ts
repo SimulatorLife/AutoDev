@@ -64,10 +64,10 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
+import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
   safeAutoDevAgentRole,
-  safeAutoDevSessionId,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 

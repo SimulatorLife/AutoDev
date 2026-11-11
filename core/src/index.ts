@@ -19,6 +19,7 @@ export * from "./skills/scope.ts";
 export * from "./skills/types.ts";
 export * from "./tools/types.ts";
 export * from "./usage/rules.ts";
+export * from "./usage/session-id.ts";
 export * from "./usage/types.ts";
 export * from "./validation/types.ts";
 export * from "./workspaces/health.ts";

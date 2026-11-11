@@ -133,6 +133,32 @@ test("Usage renders Git output without double-counting file subsets or hiding pa
   assert.match(markup, /Commits by agent role/u);
 });
 
+test("Usage keeps exact-session investigation outside URL filters and metric dimensions", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      selection: { range: "7D", values: {} }
+    })
+  );
+
+  assert.match(markup, /data-feature="usage-session-lookup"/u);
+  assert.match(markup, /method="post"/u);
+  assert.match(markup, /action="\/api\/usage\/session"/u);
+  assert.match(markup, /name="sessionId"/u);
+  assert.match(markup, /Session IDs are not listed as filter options/u);
+});
+
+test("Active Sessions does not present an historical session query", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      selection: { range: "ACTIVE_SESSIONS", values: {} }
+    })
+  );
+
+  assert.doesNotMatch(markup, /data-feature="usage-session-lookup"/u);
+});
+
 test("Usage shows provider hops with both providers, the reason and where they happened", () => {
   const markup = renderToStaticMarkup(
     React.createElement(UsageView, { metrics: observedMetrics })
@@ -161,19 +187,6 @@ test("Usage labels hops without source workspace attribution explicitly", () => 
 
   assert.match(markup, /Not attributed/u);
   assert.match(markup, /Provider hops by workspace/u);
-  assert.match(markup, /236/u);
-});
-
-test("Usage labels hops without source workspace attribution explicitly", () => {
-  const metrics: UsageMetricsData = {
-    ...observedMetrics,
-    providerHopsByWorkspace: [{ name: "", count: 236 }]
-  };
-  const markup = renderToStaticMarkup(
-    React.createElement(UsageView, { metrics })
-  );
-
-  assert.match(markup, /Not attributed/u);
   assert.match(markup, /Provider Hops by Workspace/u);
   assert.match(markup, /236/u);
 });
@@ -325,21 +338,44 @@ test("Usage active-session stats and detail use the shared section spacing", () 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v1",
+        schema: "autodev-usage-active-sessions-v2",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
-        activeSessions: 2,
+        activeSessions: 3,
+        identifiedSessionCount: 3,
         activeSubagentThreads: 1,
         inFlightRequests: 0,
-        perSessionIdentityAvailable: false
+        sessionIdentities: [
+          {
+            sessionId: "session-fixture-a",
+            state: "active",
+            lastActivityAt: 1_760_000_000_000
+          },
+          {
+            sessionId: "session-fixture-b",
+            state: "tool_wait",
+            lastActivityAt: 1_760_000_001_000
+          },
+          {
+            sessionId: "abc",
+            state: "resumed",
+            lastActivityAt: 1_760_000_002_000
+          }
+        ],
+        sessionIdentitiesPartial: false,
+        unattributedLiveActivityCount: 0
       }
     })
   );
 
   assert.match(
     markup,
-    /Active Sessions<\/h2><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">/u
+    /Active Sessions<\/h2><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="3">/u
   );
+  assert.match(markup, /session-…re-a/u);
+  assert.match(markup, /••••/u);
+  assert.doesNotMatch(markup, /session-fixture-a|>abc</u);
+  assert.match(markup, /Live Runtime sessions/u);
 });
 
 test("UsageView keeps scope filters but omits metrics until a snapshot is validated", () => {

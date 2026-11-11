@@ -1732,6 +1732,8 @@ export function requestSession(
   key: string;
   scope: "identified" | "process-fallback";
   thread: string | null;
+  /** The source session identity; a thread-only fallback is not a session ID. */
+  sessionId?: string;
 } {
   // Canonical Codex 0.154.0+ header takes precedence so a request that only
   // carries `session-id` (e.g. an auto_compact continuation that is
@@ -1769,7 +1771,13 @@ export function requestSession(
   const explicitSession =
     typeof value === "string" && Boolean(value.trim()) ? value.trim() : null;
   const sessionKey = explicitSession ?? thread;
-  if (sessionKey) return { key: sessionKey, scope: "identified", thread };
+  if (sessionKey)
+    return {
+      key: sessionKey,
+      scope: "identified",
+      thread,
+      ...(explicitSession ? { sessionId: explicitSession } : {})
+    };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
     scope: "process-fallback",

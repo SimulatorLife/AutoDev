@@ -7,10 +7,12 @@ import {
   type UsageCustomRange,
   type UsageFilterSelection,
   type UsageHistoricalTimeRange,
+  type UsageSessionQuerySelection,
   type UsageTimeRange,
   type UsageVariableId
 } from "@simulatorlife/autodev-core";
 import {
+  type OpenLITSessionResult,
   type OpenLITTraceResult,
   OpenLITUsageClient,
   type OpenLITUsageResult
@@ -44,6 +46,9 @@ export type ConsoleUsageResult =
 export type ConsoleTraceResult =
   { readonly kind: "not-configured" } | OpenLITTraceResult;
 
+export type ConsoleSessionUsageResult =
+  { readonly kind: "not-configured" } | OpenLITSessionResult;
+
 export function readOpenLITUsageConfig(
   env: OpenLITUsageEnvironment = process.env
 ): OpenLITUsageConfig | null {
@@ -73,6 +78,16 @@ export function loadOpenLITUsage(
   const config = readOpenLITUsageConfig(env);
   if (!config) return Promise.resolve({ kind: "not-configured" });
   return new OpenLITUsageClient(config).query(selection);
+}
+
+export function loadOpenLITSessionUsage(
+  sessionId: unknown,
+  selection: UsageSessionQuerySelection,
+  env: OpenLITUsageEnvironment = process.env
+): Promise<ConsoleSessionUsageResult> {
+  const config = readOpenLITUsageConfig(env);
+  if (!config) return Promise.resolve({ kind: "not-configured" });
+  return new OpenLITUsageClient(config).querySession(sessionId, selection);
 }
 
 export function loadOpenLITTrace(

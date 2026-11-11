@@ -21,6 +21,7 @@ import nodePath from "node:path";
 import {
   assertWorkspacePlaytestApproval,
   assertWorkspaceVisualPlaytestTargetApproval,
+  CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchRequest,
   type ControlApiAgentEnablementPatchResponse,
@@ -39,6 +40,7 @@ import {
   type ControlApiHookEventPatchResponse,
   type ControlApiHooksAppliedResponse,
   type ControlApiHooksResponse,
+  type ControlApiLiveSessions,
   type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
   type ControlApiMcpServerPatchRequest,
@@ -114,6 +116,7 @@ import {
   type ProviderRolePriority,
   type ReconciliationDiff,
   type ReconciliationStatus,
+  safeAutoDevSessionId,
   type WorkspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
@@ -3232,12 +3235,81 @@ function isControlApiLiveAgentCounts(value: unknown): boolean {
  * are validated here so a stale or incompatible Runtime fails closed into an
  * explicit unavailable state instead of quietly reporting zeros.
  */
+function isRouterAgentActivityState(value: unknown): boolean {
+  return (
+    value === "active" ||
+    value === "tool_wait" ||
+    value === "user_wait" ||
+    value === "subagent_wait" ||
+    value === "resumed"
+  );
+}
+
+function isControlApiLiveSessions(
+  value: unknown
+): value is ControlApiLiveSessions {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some(
+      (key) =>
+        ![
+          "identitiesObserved",
+          "identifiedSessionCount",
+          "partial",
+          "unattributedLiveActivityCount"
+        ].includes(key)
+    ) ||
+    !Array.isArray(value.identitiesObserved) ||
+    value.identitiesObserved.length > CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT ||
+    typeof value.identifiedSessionCount !== "number" ||
+    !Number.isSafeInteger(value.identifiedSessionCount) ||
+    value.identifiedSessionCount < value.identitiesObserved.length ||
+    typeof value.partial !== "boolean" ||
+    (value.partial &&
+      (value.identitiesObserved.length !==
+        CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT ||
+        value.identifiedSessionCount <= value.identitiesObserved.length)) ||
+    (!value.partial &&
+      value.identifiedSessionCount !== value.identitiesObserved.length) ||
+    typeof value.unattributedLiveActivityCount !== "number" ||
+    !Number.isSafeInteger(value.unattributedLiveActivityCount) ||
+    value.unattributedLiveActivityCount < 0
+  ) {
+    return false;
+  }
+  const sessionIds = new Set<string>();
+  let previousSessionId: string | null = null;
+  for (const candidate of value.identitiesObserved) {
+    if (
+      !isRecord(candidate) ||
+      Object.keys(candidate).some(
+        (key) => !["sessionId", "state", "lastActivityAt"].includes(key)
+      ) ||
+      typeof candidate.sessionId !== "string" ||
+      safeAutoDevSessionId(candidate.sessionId) !== candidate.sessionId ||
+      sessionIds.has(candidate.sessionId) ||
+      (previousSessionId !== null &&
+        candidate.sessionId <= previousSessionId) ||
+      !isRouterAgentActivityState(candidate.state) ||
+      typeof candidate.lastActivityAt !== "number" ||
+      !Number.isSafeInteger(candidate.lastActivityAt) ||
+      candidate.lastActivityAt < 0 ||
+      !Number.isFinite(new Date(candidate.lastActivityAt).getTime())
+    ) {
+      return false;
+    }
+    sessionIds.add(candidate.sessionId);
+    previousSessionId = candidate.sessionId;
+  }
+  return true;
+}
+
 function isControlApiRuntimeResponse(
   value: unknown
 ): value is ControlApiRuntimeResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-runtime-v2" &&
+    value.schema === "autodev-control-runtime-v3" &&
     typeof value.routerInstanceId === "string" &&
     isRecord(value.lifecycle) &&
     isRouterLifecycleState(value.lifecycle.state) &&
@@ -3246,7 +3318,10 @@ function isControlApiRuntimeResponse(
     typeof value.lifecycle.activeResponseRequests === "number" &&
     isConcurrencyStatus(value.concurrency) &&
     typeof value.inFlightRequestCount === "number" &&
-    (value.liveAgents === null || isControlApiLiveAgentCounts(value.liveAgents))
+    (value.liveAgents === null ||
+      isControlApiLiveAgentCounts(value.liveAgents)) &&
+    (value.liveSessions === null ||
+      isControlApiLiveSessions(value.liveSessions))
   );
 }
 

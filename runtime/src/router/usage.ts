@@ -1487,7 +1487,14 @@ export class UsageTracker {
   ): LiveAgentsProjection {
     const activityTracker = tracker ?? this.activityTracker;
     const directAgents: LiveAgentActivity[] = activityTracker
-      ? activityTracker.listLive({}, at)
+      ? activityTracker.listLive({}, at).map((activity) => {
+          // Per-session identity is reserved for the authenticated
+          // Control API projection. It must not leak into generic usage/live
+          // agent projections that feed counters, metrics, or status views.
+          const projection = { ...activity };
+          delete projection.sessionId;
+          return projection;
+        })
       : [];
 
     const allLiveAgents: ProjectedAgent[] = directAgents.map((a) => ({

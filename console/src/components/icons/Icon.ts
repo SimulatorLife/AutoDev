@@ -104,16 +104,6 @@ export const ICON_PATHS = {
     "M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"
   ],
   close: ["M18 6 6 18", "m6 6 12 12"],
-  // The tick that marks a chosen state, and the mark that says a link leaves
-  // the Console. Both are strokes on the same grid as everything else, so a
-  // checked box and an external link read as the same family as the close
-  // mark above rather than as two glyphs borrowed from a font.
-  check: ["M20 6 9 17l-5-5"],
-  externalLink: [
-    "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
-    "M15 3h6v6",
-    "M10 14 21 3"
-  ],
   refresh: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
   spinner: ["M21 12a9 9 0 1 1-6.22-8.56"],
   play: ["m5 3 14 9-14 9V3z"],
@@ -129,16 +119,8 @@ export const ICON_PATHS = {
     "M3 12h.01",
     "M3 18h.01"
   ],
-  grid: [
-    "M3 3h7v7H3z",
-    "M14 3h7v7h-7z",
-    "M14 14h7v7h-7z",
-    "M3 14h7v7H3z"
-  ],
-  search: [
-    "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z",
-    "m21 21-4.35-4.35"
-  ],
+  grid: ["M3 3h7v7H3z", "M14 3h7v7h-7z", "M14 14h7v7h-7z", "M3 14h7v7H3z"],
+  search: ["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "m21 21-4.35-4.35"],
   repeat: [
     "m17 1 4 4-4 4",
     "M3 11V9a4 4 0 0 1 4-4h14",
@@ -167,10 +149,7 @@ export const ICON_PATHS = {
     "M18 11h.01",
     "M2 6a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V6z"
   ],
-  clock: [
-    CIRCLE_24_PATH,
-    "M12 6v6l4 2"
-  ],
+  clock: [CIRCLE_24_PATH, "M12 6v6l4 2"],
   bolt: ["M13 2 3 14h9l-1 8 10-12h-9l1-8z"],
   trophy: [
     "M6 9H4.5a2.5 2.5 0 0 1 0-5H6",

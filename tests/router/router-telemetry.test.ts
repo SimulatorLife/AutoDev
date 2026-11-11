@@ -3254,7 +3254,11 @@ test(
           role: "worker",
           subject: "worker turn",
           sessionKey: "session-hop",
-          session: { key: "session-hop", scope: "identified" }
+          session: {
+            key: "session-hop",
+            scope: "identified",
+            sessionId: "session-hop"
+          }
         },
         { model: "autodev/worker", input: [], stream: false },
         false,
@@ -3322,7 +3326,11 @@ test(
             role: "worker",
             subject: "worker turn",
             sessionKey: "session-stay",
-            session: { key: "session-stay", scope: "identified" }
+            session: {
+              key: "session-stay",
+              scope: "identified",
+              sessionId: "session-stay"
+            }
           },
           { model: "autodev/worker", input: [], stream: false },
           false,
@@ -3378,7 +3386,7 @@ test(
           role: "worker",
           subject: "worker turn",
           sessionKey: sessionId,
-          session: { key: sessionId, scope: "identified" }
+          session: { key: sessionId, scope: "identified", sessionId }
         },
         { model: "autodev/worker", input: [], stream: false },
         false,
@@ -3438,7 +3446,89 @@ test("a source-confirmed session is published on the request and its attempts", 
   const attempts = findAttemptSpans(spans);
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0]?.attributes["autodev.session.id"], sessionId);
+
+  await flushTelemetryMetrics();
+  const metricAttributes: Array<Record<string, unknown>> = [];
+  for (const resource of telemetryMetricExporter.getMetrics()) {
+    for (const scope of resource.scopeMetrics) {
+      for (const metric of scope.metrics) {
+        for (const point of metric.dataPoints) {
+          metricAttributes.push(point.attributes);
+        }
+      }
+    }
+  }
+  assert.ok(
+    metricAttributes.length > 0,
+    "the routed operation records metrics"
+  );
+  for (const attributes of metricAttributes) {
+    assert.equal(
+      Object.hasOwn(attributes, "autodev.session.id"),
+      false,
+      "session identity is trace context, never a metric dimension"
+    );
+  }
 });
+
+test(
+  "a thread-only routing key is not published as a session identity",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp-thread-only-session",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      })) as typeof fetch;
+    installExporter();
+    setDefaultProviderHopTracker(new ProviderHopTracker());
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [route("claude", "LITELLM_API_KEY")],
+          role: "worker",
+          subject: "thread-only turn",
+          sessionKey: "thread-only-identity",
+          session: {
+            key: "thread-only-identity",
+            scope: "identified",
+            thread: "thread-only-identity"
+          }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "thread-only-session-request",
+        null,
+        null
+      );
+
+      const spans = snapshotSpans();
+      const routed = [...findLogical(spans), ...findAttemptSpans(spans)];
+      assert.equal(routed.length, 2);
+      for (const span of routed) {
+        assert.equal(
+          Object.hasOwn(span.attributes, "autodev.session.id"),
+          false,
+          "an internal thread key is not a source session ID"
+        );
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+      setDefaultProviderHopTracker(null);
+    }
+  }
+);
 
 test("an unidentified session is not published as a session identity", () => {
   installExporter();

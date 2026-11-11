@@ -1,3 +1,8 @@
+import {
+  CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
+  safeAutoDevSessionId
+} from "@simulatorlife/autodev-core";
+
 /**
  * Shared state machine for session/agent activity that spans request gaps.
  *
@@ -78,6 +83,9 @@ const LIVE_STATES = new Set([
   "resumed"
 ]);
 
+export type AgentActivityLiveState =
+  "active" | "tool_wait" | "user_wait" | "subagent_wait" | "resumed";
+
 // The kinds that represent an agent actually doing work, as opposed to
 // bookkeeping records (e.g. `subagent_slot`, a held concurrency admission)
 // that ride the same tracker for TTL/staleness reuse but must not inflate
@@ -106,6 +114,7 @@ interface ActivityRecord {
   subject: string;
   kind: string;
   tag: string | null;
+  sessionId: string | null;
   parentRequestId: string | null;
   state: string;
   provider: string | null;
@@ -121,12 +130,13 @@ interface ActivityRecord {
   settledRequestIds: Set<string>;
   lifecycleEventIds: Set<string>;
 }
-
 /** The read-only view of a record handed to callers. */
 interface AgentActivitySnapshot {
   subject: string;
   kind: string;
   tag: string | null;
+  /** Present only when a source explicitly supplied a validated session ID. */
+  sessionId?: string;
   state: string;
   provider: string | null;
   model: string | null;
@@ -138,8 +148,30 @@ interface AgentActivitySnapshot {
   updatedAt: number;
 }
 
+export interface AgentActivityLiveSessionIdentity {
+  readonly sessionId: string;
+  /** State and timestamp of the newest live activity record for this ID. */
+  readonly state: AgentActivityLiveState;
+  readonly lastActivityAt: number;
+}
+
+export interface AgentActivityLiveSessionsProjection {
+  /** Only source-confirmed IDs; this is not a completeness claim. */
+  readonly identitiesObserved: readonly AgentActivityLiveSessionIdentity[];
+  /** Exact number of unique validated live IDs before the list cap. */
+  readonly identifiedSessionCount: number;
+  /** True only when more than the tracker's fixed 100-ID limit was observed. */
+  readonly partial: boolean;
+  /**
+   * Count of live activity records without a validated ID, not a session
+   * count. A nonzero value means the overall live-session total is unknown.
+   */
+  readonly unattributedLiveActivityCount: number;
+}
+
 /** Options accepted by the tracker's mutators and filters. */
 interface AgentActivityOptions {
+  sessionId?: NullableText;
   requestId?: NullableText;
   provider?: NullableText;
   model?: NullableText;
@@ -156,11 +188,14 @@ interface AgentActivityOptions {
   hasActiveSubagents?: boolean | undefined;
 }
 
-/** A normalized lifecycle event, as accepted over the agent-events endpoint. */
-interface AgentLifecycleEvent extends AgentActivityOptions {
+/** Session IDs are attribution metadata, never activity filters or metric dimensions. */
+type AgentActivityFilter = Omit<AgentActivityOptions, "sessionId">;
+
+/** A normalized untrusted lifecycle event; session identity is router-owned. */
+type AgentLifecycleEvent = Omit<AgentActivityOptions, "sessionId"> & {
   state?: string | undefined;
   eventId?: unknown;
-}
+};
 
 const FILTER_FIELDS = [
   "tag",
@@ -201,6 +236,7 @@ function snapshotRecord(
     subject: rec.subject,
     kind: rec.kind,
     tag: rec.tag,
+    ...(rec.sessionId ? { sessionId: rec.sessionId } : {}),
     state: isStale(rec, at) ? "stale" : rec.state,
     provider: rec.provider,
     model: rec.model,
@@ -254,6 +290,7 @@ type RecordAttribution = Pick<
   | "workspace"
   | "tag"
   | "parentRequestId"
+  | "sessionId"
 >;
 
 /**
@@ -292,6 +329,7 @@ function reopenRecord(
   rec.workspace = attribution.workspace ?? rec.workspace;
   rec.tag = attribution.tag ?? rec.tag;
   rec.parentRequestId = attribution.parentRequestId ?? rec.parentRequestId;
+  rec.sessionId = attribution.sessionId;
   rec.requestId = requestId;
   rec.openRequestId = requestId;
   rec.settledRequestIds.clear();
@@ -323,11 +361,13 @@ export function createAgentActivityTracker({
     {
       kind = "session",
       tag = null,
-      parentRequestId = null
+      parentRequestId = null,
+      sessionId
     }: {
       kind?: string;
       tag?: string | null;
       parentRequestId?: string | null;
+      sessionId?: NullableText;
     } = {}
   ): ActivityRecord {
     let rec = subjects.get(subject);
@@ -336,6 +376,7 @@ export function createAgentActivityTracker({
         subject,
         kind,
         tag,
+        sessionId: safeAutoDevSessionId(sessionId),
         parentRequestId,
         state: "active",
         provider: null,
@@ -355,6 +396,8 @@ export function createAgentActivityTracker({
         lifecycleEventIds: new Set()
       };
       subjects.set(subject, rec);
+    } else if (sessionId !== undefined) {
+      rec.sessionId = safeAutoDevSessionId(sessionId);
     }
     return rec;
   }
@@ -379,7 +422,10 @@ export function createAgentActivityTracker({
    */
   function beginRequest(
     subject: string,
-    {
+    options: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    if (!subject) return null;
+    const {
       requestId = null,
       provider = null,
       model = null,
@@ -389,11 +435,18 @@ export function createAgentActivityTracker({
       kind = "session",
       tag = null,
       parentRequestId = null,
+      sessionId,
       timestamp
-    }: AgentActivityOptions = {}
-  ): AgentActivitySnapshot | null {
-    if (!subject) return null;
-    const rec = ensure(subject, { kind, tag, parentRequestId });
+    } = options;
+    const safeSessionId = safeAutoDevSessionId(sessionId);
+    const rec = ensure(subject, {
+      kind,
+      tag,
+      parentRequestId,
+      ...(Object.hasOwn(options, "sessionId")
+        ? { sessionId: safeSessionId }
+        : {})
+    });
     if (tag !== null && tag !== undefined) rec.tag = tag;
     if (parentRequestId !== null && parentRequestId !== undefined)
       rec.parentRequestId = parentRequestId;
@@ -414,7 +467,16 @@ export function createAgentActivityTracker({
         reopenRecord(
           rec,
           requestId,
-          { provider, model, role, origin, workspace, tag, parentRequestId },
+          {
+            provider,
+            model,
+            role,
+            origin,
+            workspace,
+            tag,
+            parentRequestId,
+            sessionId: safeSessionId
+          },
           at
         );
         return snapshotRecord(rec, at);
@@ -427,6 +489,9 @@ export function createAgentActivityTracker({
     if (role !== null) rec.role = role;
     if (origin !== null) rec.origin = origin;
     if (workspace !== null) rec.workspace = workspace;
+    // A new request must carry its own source-confirmed identity. Do not let
+    // a prior turn's session ID bleed onto this activity when a caller omits it.
+    rec.sessionId = safeSessionId;
     rec.requestId = requestId ?? rec.requestId;
     rec.openRequestId = requestId ?? rec.openRequestId;
     transition(rec, wasWaiting ? "resumed" : "active", timestamp);
@@ -569,16 +634,19 @@ export function createAgentActivityTracker({
       provider = null,
       model = null,
       role = null,
-      workspace = null
+      workspace = null,
+      sessionId
     }: AgentActivityOptions = {}
   ): AgentActivitySnapshot | null {
     if (!subject) return null;
-    const rec = ensure(subject, { kind, tag });
+    const rec = ensure(subject, { kind, tag, sessionId });
     if (provider !== null && provider !== undefined) rec.provider = provider;
     if (model !== null && model !== undefined) rec.model = model;
     if (role !== null && role !== undefined) rec.role = role;
     if (workspace !== null && workspace !== undefined)
       rec.workspace = workspace;
+    if (sessionId !== undefined)
+      rec.sessionId = safeAutoDevSessionId(sessionId);
     const at = instantOf(timestamp);
     if (rec.state === "subagent_wait") {
       rec.updatedAt = at;
@@ -676,7 +744,7 @@ export function createAgentActivityTracker({
 
   function matches(
     rec: ActivityRecord,
-    filter: AgentActivityOptions = {}
+    filter: AgentActivityFilter = {}
   ): boolean {
     if (Object.hasOwn(filter, "kind")) {
       if (rec.kind !== filter.kind) return false;
@@ -695,7 +763,7 @@ export function createAgentActivityTracker({
   }
 
   /** Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter. */
-  function countLive(filter: AgentActivityOptions = {}, at = now()): number {
+  function countLive(filter: AgentActivityFilter = {}, at = now()): number {
     sweep(at);
     let count = 0;
     for (const rec of subjects.values()) {
@@ -708,7 +776,7 @@ export function createAgentActivityTracker({
 
   /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
   function listLive(
-    filter: AgentActivityOptions = {},
+    filter: AgentActivityFilter = {},
     at = now()
   ): AgentActivitySnapshot[] {
     sweep(at);
@@ -721,9 +789,60 @@ export function createAgentActivityTracker({
     return live;
   }
 
+  /**
+   * Distinct session identities explicitly attached to live agent activity.
+   * It uses listLive's default agent kinds and excludes subagent-slot
+   * admission bookkeeping, whose tag is not a session identity.
+   * `identitiesObserved` contains only validated IDs; it does not claim that
+   * every live conversation has an ID. `unattributedLiveActivityCount` counts
+   * live activity records without one, not guessed or deduplicated sessions.
+   * `partial` is reserved for truncation of the identified list.
+   */
+  function listLiveSessions(at = now()): AgentActivityLiveSessionsProjection {
+    const grouped = new Map<string, AgentActivityLiveSessionIdentity>();
+    let unattributedLiveActivityCount = 0;
+    for (const activity of listLive({}, at)) {
+      const sessionId = safeAutoDevSessionId(activity.sessionId);
+      if (!sessionId) {
+        unattributedLiveActivityCount += 1;
+        continue;
+      }
+      const current = grouped.get(sessionId);
+      // Use the newest activity for the state summary. If records share a
+      // timestamp, lexical state order makes the result independent of map
+      // insertion order.
+      if (
+        !current ||
+        activity.updatedAt > current.lastActivityAt ||
+        (activity.updatedAt === current.lastActivityAt &&
+          activity.state < current.state)
+      ) {
+        grouped.set(sessionId, {
+          sessionId,
+          // listLive only returns LIVE_STATES. This summary deliberately does
+          // not widen to terminal/stale states which the source excludes.
+          state: activity.state as AgentActivityLiveState,
+          lastActivityAt: activity.updatedAt
+        });
+      }
+    }
+    const sorted = Array.from(grouped.values()).sort((a, b) =>
+      a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0
+    );
+    return {
+      identitiesObserved: sorted.slice(
+        0,
+        CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT
+      ),
+      identifiedSessionCount: sorted.length,
+      partial: sorted.length > CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
+      unattributedLiveActivityCount
+    };
+  }
+
   /** Count of subjects grouped by state, optionally filtered. */
   function countByState(
-    filter: AgentActivityOptions = {},
+    filter: AgentActivityFilter = {},
     at = now()
   ): Record<string, number> {
     sweep(at);
@@ -811,6 +930,7 @@ export function createAgentActivityTracker({
     hasLiveChildren,
     countLive,
     listLive,
+    listLiveSessions,
     countByState,
     distinctTags,
     snapshot,

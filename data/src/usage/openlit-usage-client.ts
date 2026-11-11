@@ -3,6 +3,7 @@ import {
   deriveProviderHopRatePercent,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
+  safeAutoDevSessionId,
   USAGE_VARIABLE_IDS,
   type UsageBreakdownCount,
   type UsageCompactionUnsupportedFilter,
@@ -12,6 +13,9 @@ import {
   type UsageGitChangeUnsupportedFilter,
   type UsageMetricsData,
   type UsageProviderHopUnsupportedFilter,
+  type UsageSessionEvidence,
+  type UsageSessionQuerySelection,
+  type UsageSessionSpanSummary,
   type UsageSnapshot,
   type UsageTimeBucketCount,
   type UsageTraceAttempt,
@@ -28,6 +32,10 @@ import {
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
+const SESSION_USAGE_API_PATH = "/api/autodev/usage/session";
+const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1";
+const MAX_SESSION_SPANS = 200;
+const MAX_SESSION_LABEL_LENGTH = 128;
 const NOT_APPLICABLE_KIND = "not-applicable" as const;
 
 /**
@@ -104,6 +112,9 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "estimated-cost"
 ];
 const USAGE_WIDGET_ID_SET = new Set<string>(USAGE_WIDGET_IDS);
+const OPENLIT_INVALID_RESPONSE_KIND = "invalid-response" as const;
+const OPENLIT_UNREACHABLE_KIND = "unreachable" as const;
+const OPENLIT_HTTP_ERROR_KIND = "http-error" as const;
 
 interface OpenLITRatio {
   readonly numerator: string;
@@ -143,18 +154,26 @@ export interface OpenLITUsageClientConfig {
 
 export type OpenLITUsageResult =
   | { readonly kind: "ok"; readonly data: UsageSnapshot }
-  | { readonly kind: "invalid-response" }
+  | { readonly kind: typeof OPENLIT_INVALID_RESPONSE_KIND }
   | { readonly kind: "unauthorized"; readonly status: number }
-  | { readonly kind: "http-error"; readonly status: number }
-  | { readonly kind: "unreachable" };
+  | { readonly kind: typeof OPENLIT_HTTP_ERROR_KIND; readonly status: number }
+  | { readonly kind: typeof OPENLIT_UNREACHABLE_KIND };
 
 export type OpenLITTraceResult =
   | { readonly kind: "ok"; readonly data: UsageTraceDetail }
   | { readonly kind: "invalid-span-id" }
   | { readonly kind: "not-found" }
   | { readonly kind: "unauthorized"; readonly status: number }
-  | { readonly kind: "http-error"; readonly status: number }
-  | { readonly kind: "unreachable" };
+  | { readonly kind: typeof OPENLIT_HTTP_ERROR_KIND; readonly status: number }
+  | { readonly kind: typeof OPENLIT_UNREACHABLE_KIND };
+
+export type OpenLITSessionResult =
+  | { readonly kind: "ok"; readonly data: UsageSessionEvidence }
+  | { readonly kind: "invalid-session-id" }
+  | { readonly kind: typeof OPENLIT_INVALID_RESPONSE_KIND }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "unauthorized"; readonly status: number }
+  | { readonly kind: typeof OPENLIT_HTTP_ERROR_KIND; readonly status: number };
 
 export class OpenLITUsageClient {
   readonly baseUrl: string;
@@ -201,14 +220,71 @@ export class OpenLITUsageClient {
           // A generic 404 (for example a not-yet-deployed trace route) is not
           // evidence that this span is absent from the telemetry source.
         }
-        return { kind: "http-error", status: 404 };
+        return { kind: OPENLIT_HTTP_ERROR_KIND, status: 404 };
       }
-      if (!response.ok) return { kind: "http-error", status: response.status };
+      if (!response.ok)
+        return { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
 
       const detail = parseOpenLITTraceDetail(await response.json());
-      return detail ? { kind: "ok", data: detail } : { kind: "unreachable" };
+      return detail
+        ? { kind: "ok", data: detail }
+        : { kind: OPENLIT_UNREACHABLE_KIND };
     } catch {
-      return { kind: "unreachable" };
+      return { kind: OPENLIT_UNREACHABLE_KIND };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async querySession(
+    sessionId: unknown,
+    selection: UsageSessionQuerySelection
+  ): Promise<OpenLITSessionResult> {
+    const validatedSessionId = safeAutoDevSessionId(sessionId);
+    if (!validatedSessionId) return { kind: "invalid-session-id" };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await this.fetchImpl(
+        `${this.baseUrl}${SESSION_USAGE_API_PATH}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.serviceToken}`,
+            Accept: "application/json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            sessionId: validatedSessionId,
+            range: selection.range,
+            ...(selection.range === "CUSTOM"
+              ? { customRange: selection.customRange }
+              : {})
+          }),
+          cache: "no-store",
+          signal: controller.signal
+        }
+      );
+      if (response.status === 401 || response.status === 403) {
+        return { kind: "unauthorized", status: response.status };
+      }
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        return response.ok
+          ? { kind: OPENLIT_INVALID_RESPONSE_KIND }
+          : { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
+      }
+      const parsed = parseOpenLITSessionUsage(body);
+      if (parsed?.status === "unavailable") return { kind: "unavailable" };
+      if (!response.ok)
+        return { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
+      if (!parsed) return { kind: OPENLIT_INVALID_RESPONSE_KIND };
+      return { kind: "ok", data: parsed.data };
+    } catch {
+      return { kind: "unavailable" };
     } finally {
       clearTimeout(timer);
     }
@@ -233,23 +309,200 @@ export class OpenLITUsageClient {
       );
       if (response.status === 401 || response.status === 403)
         return { kind: "unauthorized", status: response.status };
-      if (!response.ok) return { kind: "http-error", status: response.status };
+      if (!response.ok)
+        return { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
 
       let body: unknown;
       try {
         body = await response.json();
       } catch {
-        return { kind: "invalid-response" };
+        return { kind: OPENLIT_INVALID_RESPONSE_KIND };
       }
       const parsed = parseOpenLITUsageResponse(body);
-      if (!parsed) return { kind: "invalid-response" };
+      if (!parsed) return { kind: OPENLIT_INVALID_RESPONSE_KIND };
       return { kind: "ok", data: toUsageSnapshot(parsed, selection) };
     } catch {
-      return { kind: "unreachable" };
+      return { kind: OPENLIT_UNREACHABLE_KIND };
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+type ParsedSessionUsage =
+  | { readonly status: "unavailable" }
+  | { readonly status: "observed"; readonly data: UsageSessionEvidence };
+
+const SESSION_SPAN_KEYS = new Set([
+  "spanId",
+  "traceId",
+  "parentSpanId",
+  "operationName",
+  "timestamp",
+  "durationNs",
+  "statusCode",
+  "provider",
+  "requestedModel",
+  "role",
+  "workspace",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadInputTokens",
+  "costUsd",
+  "requestKind",
+  "compactionProvider",
+  "hopRoute",
+  "hopFrom",
+  "hopTo",
+  "hopReason"
+]);
+const SESSION_SPAN_LABEL_KEYS = [
+  "operationName",
+  "provider",
+  "requestedModel",
+  "role",
+  "workspace",
+  "requestKind",
+  "compactionProvider",
+  "hopRoute",
+  "hopFrom",
+  "hopTo",
+  "hopReason"
+] as const;
+const SESSION_SPAN_INTEGER_KEYS = [
+  "durationNs",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadInputTokens"
+] as const;
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function safeSessionLabel(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  const label = typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" &&
+    label.length > 0 &&
+    label.length <= MAX_SESSION_LABEL_LENGTH &&
+    !hasControlCharacter(label)
+    ? label
+    : undefined;
+}
+
+function sessionNumber(
+  value: unknown,
+  integer: boolean
+): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    (!integer || Number.isSafeInteger(value))
+    ? value
+    : undefined;
+}
+
+function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
+  if (
+    !isRecord(value) ||
+    value.schema !== SESSION_USAGE_SCHEMA ||
+    (value.status !== "observed" && value.status !== "unavailable") ||
+    typeof value.partial !== "boolean" ||
+    !Array.isArray(value.spans) ||
+    value.spans.length > MAX_SESSION_SPANS
+  )
+    return null;
+  if (value.status === "unavailable") {
+    return value.spans.length === 0 && !value.partial
+      ? { status: "unavailable" }
+      : null;
+  }
+
+  const spans: UsageSessionSpanSummary[] = [];
+  const spanIds = new Set<string>();
+  for (const candidate of value.spans) {
+    if (
+      !isRecord(candidate) ||
+      Object.keys(candidate).some((key) => !SESSION_SPAN_KEYS.has(key)) ||
+      Object.keys(candidate).length !== SESSION_SPAN_KEYS.size ||
+      typeof candidate.spanId !== "string" ||
+      !isOpenTelemetrySpanId(candidate.spanId) ||
+      spanIds.has(candidate.spanId) ||
+      typeof candidate.traceId !== "string" ||
+      !isOpenTelemetryTraceId(candidate.traceId) ||
+      (candidate.parentSpanId !== null &&
+        (typeof candidate.parentSpanId !== "string" ||
+          !isOpenTelemetrySpanId(candidate.parentSpanId))) ||
+      typeof candidate.timestamp !== "string" ||
+      !Number.isFinite(Date.parse(candidate.timestamp)) ||
+      typeof candidate.statusCode !== "string" ||
+      !TRACE_STATUS_CODES.has(candidate.statusCode as UsageTraceStatus)
+    )
+      return null;
+
+    const labels = Object.fromEntries(
+      SESSION_SPAN_LABEL_KEYS.map((key) => [
+        key,
+        safeSessionLabel(candidate[key])
+      ])
+    ) as Record<
+      (typeof SESSION_SPAN_LABEL_KEYS)[number],
+      string | null | undefined
+    >;
+    const counts = Object.fromEntries(
+      SESSION_SPAN_INTEGER_KEYS.map((key) => [
+        key,
+        sessionNumber(candidate[key], true)
+      ])
+    ) as Record<
+      (typeof SESSION_SPAN_INTEGER_KEYS)[number],
+      number | null | undefined
+    >;
+    const costUsd = sessionNumber(candidate.costUsd, false);
+    if (
+      Object.values(labels).includes(undefined) ||
+      typeof labels.operationName !== "string" ||
+      Object.values(counts).includes(undefined) ||
+      typeof counts.durationNs !== "number" ||
+      costUsd === undefined
+    )
+      return null;
+
+    spanIds.add(candidate.spanId);
+    spans.push({
+      spanId: candidate.spanId.toLowerCase(),
+      traceId: candidate.traceId.toLowerCase(),
+      parentSpanId:
+        typeof candidate.parentSpanId === "string"
+          ? candidate.parentSpanId.toLowerCase()
+          : null,
+      operationName: labels.operationName,
+      timestamp: new Date(candidate.timestamp).toISOString(),
+      durationNs: counts.durationNs,
+      statusCode: candidate.statusCode as UsageTraceStatus,
+      provider: labels.provider ?? null,
+      requestedModel: labels.requestedModel ?? null,
+      role: labels.role ?? null,
+      workspace: labels.workspace ?? null,
+      inputTokens: counts.inputTokens ?? null,
+      outputTokens: counts.outputTokens ?? null,
+      cacheReadInputTokens: counts.cacheReadInputTokens ?? null,
+      costUsd,
+      requestKind: labels.requestKind ?? null,
+      compactionProvider: labels.compactionProvider ?? null,
+      hopRoute: labels.hopRoute ?? null,
+      hopFrom: labels.hopFrom ?? null,
+      hopTo: labels.hopTo ?? null,
+      hopReason: labels.hopReason ?? null
+    });
+  }
+  return { status: "observed", data: { partial: value.partial, spans } };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

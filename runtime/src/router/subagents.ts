@@ -329,6 +329,8 @@ export interface BridgeRequestContext {
   role?: string | null | undefined;
   workspace?: string | null | undefined;
   sessionKey?: string | null | undefined;
+  /** Explicit caller session identity; unlike sessionKey, never thread fallback. */
+  sessionId?: string | null | undefined;
   finished?: { outcome: string; elapsedMs: number | null } | undefined;
   [key: string]: unknown;
 }
@@ -679,10 +681,7 @@ export class SubagentRegistry {
     string,
     OrchestratorSessionEntry
   >();
-  private readonly subagentSessions = new Map<
-    string,
-    SubagentSessionEntry
-  >();
+  private readonly subagentSessions = new Map<string, SubagentSessionEntry>();
   private readonly workspaceMetadataBySession = new Map<
     string,
     {
@@ -993,6 +992,7 @@ export class SubagentRegistry {
       role: "orchestrator",
       origin: "orchestrator",
       workspace: context.workspace ?? null,
+      sessionId: context.sessionId ?? null,
       tag: context.sessionKey ?? null
     });
     this.agentActivity.applyLifecycleEvent(subject, {
@@ -1142,6 +1142,7 @@ export class SubagentRegistry {
       workspace: entry.workspace,
       kind: "bridge_subagent",
       tag: context.sessionKey || entry.requestId,
+      sessionId: context.sessionId ?? null,
       parentRequestId: entry.requestId
     });
   }

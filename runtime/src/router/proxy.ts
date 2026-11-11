@@ -398,6 +398,8 @@ export interface RouterSession {
   key: string;
   scope: string;
   thread?: string | null;
+  /** The exact caller-supplied session ID; absent when only a thread ID exists. */
+  sessionId?: string;
 }
 
 /**
@@ -2528,7 +2530,7 @@ export async function proxyConcreteResponse(
     subject: "concrete request",
     requestedModel: modelName,
     turnMetadataHeader,
-    sessionId: session?.key ?? null
+    sessionId: session?.sessionId ?? null
   });
 
   const disabledReason = ROUTING_POLICY.routeDisabledReason(
@@ -2593,7 +2595,8 @@ export async function proxyConcreteResponse(
         ? "orchestrator"
         : null,
     origin: usageOrigin(null, route.provider),
-    workspace: workspace?.key ?? null
+    workspace: workspace?.key ?? null,
+    sessionId: session?.sessionId ?? null
   });
   const bridgeContext = {
     activitySubject,
@@ -2601,7 +2604,8 @@ export async function proxyConcreteResponse(
     model: modelName,
     role: null,
     workspace: workspace?.key ?? null,
-    sessionKey
+    sessionKey,
+    sessionId: session?.sessionId ?? null
   };
   noteBridgeRequest(requestId, bridgeContext);
   noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
@@ -2723,7 +2727,7 @@ async function runConcreteAttempts(
         requestedModel: ctx.modelName,
         role: null,
         workspace: ctx.workspace,
-        sessionId: session?.key ?? null
+        sessionId: session?.sessionId ?? null
       }
     );
     if (!result.ok) {
@@ -3135,6 +3139,7 @@ function beginCandidateRequest(
           ? "subagent"
           : usageOrigin(ctx.role, route.provider)),
     workspace: ctx.workspace?.key ?? null,
+    sessionId: ctx.session?.sessionId ?? null,
     tag:
       ctx.isKnownOrchestratorSession && !ctx.isOrchestratorTurn
         ? ctx.sessionKey
@@ -3155,7 +3160,8 @@ function emitFallbackBridgeContext(
     model: route.model,
     role: ctx.role ?? (ctx.origin === "orchestrator" ? "orchestrator" : null),
     workspace: ctx.workspace?.key ?? null,
-    sessionKey: ctx.sessionKey
+    sessionKey: ctx.sessionKey,
+    sessionId: ctx.session?.sessionId ?? null
   };
   noteBridgeRequest(ctx.requestId, bridgeContext);
   noteBridgeSession(ctx.sessionKey, {
@@ -3243,7 +3249,7 @@ export async function proxyFallbackChain(
     subject,
     requestedModel: modelName || null,
     turnMetadataHeader,
-    sessionId: session?.key ?? sessionKey ?? null,
+    sessionId: session?.sessionId ?? null,
     ...(isOrchestratorTurn
       ? {
           memoryMode: currentRouterMemoryMode({
@@ -4116,7 +4122,7 @@ async function fetchCandidate(
         requestedModel: ctx.modelName,
         role: ctx.effectiveRole,
         workspace: ctx.workspace,
-        sessionId: ctx.session?.key ?? ctx.sessionKey ?? null
+        sessionId: ctx.session?.sessionId ?? null
       }
     );
   } catch (error) {

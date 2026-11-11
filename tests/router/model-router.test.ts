@@ -3924,46 +3924,81 @@ test("requestSession derives identity from caller-supplied headers and payload f
       { headers: { "x-codex-session-id": "sess-header-1" } },
       {}
     ),
-    { key: "sess-header-1", scope: "identified", thread: null }
+    {
+      key: "sess-header-1",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-header-1"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
       { headers: { "x-session-id": "sess-header-2" } },
       {}
     ),
-    { key: "sess-header-2", scope: "identified", thread: null }
+    {
+      key: "sess-header-2",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-header-2"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
       { headers: { "x-conversation-id": "sess-header-3" } },
       {}
     ),
-    { key: "sess-header-3", scope: "identified", thread: null }
+    {
+      key: "sess-header-3",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-header-3"
+    }
   );
   assert.deepEqual(
     (requestSession as any)({ headers: {} }, { session_id: "sess-body-1" }),
-    { key: "sess-body-1", scope: "identified", thread: null }
+    {
+      key: "sess-body-1",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-body-1"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
       { headers: {} },
       { conversation_id: "sess-body-2" }
     ),
-    { key: "sess-body-2", scope: "identified", thread: null }
+    {
+      key: "sess-body-2",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-body-2"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
       { headers: {} },
       { metadata: { session_id: "sess-meta-1" } }
     ),
-    { key: "sess-meta-1", scope: "identified", thread: null }
+    {
+      key: "sess-meta-1",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-meta-1"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
       { headers: {} },
       { metadata: { conversation_id: "sess-meta-2" } }
     ),
-    { key: "sess-meta-2", scope: "identified", thread: null }
+    {
+      key: "sess-meta-2",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-meta-2"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
@@ -3971,7 +4006,12 @@ test("requestSession derives identity from caller-supplied headers and payload f
       {},
       JSON.stringify({ conversation_id: "sess-turn-metadata" })
     ),
-    { key: "sess-turn-metadata", scope: "identified", thread: null }
+    {
+      key: "sess-turn-metadata",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-turn-metadata"
+    }
   );
 
   // Whitespace-only or non-string identity is treated as absent rather than trusted as-is.
@@ -3998,7 +4038,12 @@ test("requestSession derives identity from caller-supplied headers and payload f
       { headers: { "x-codex-session-id": "sess-header" } },
       { session_id: "sess-body" }
     ),
-    { key: "sess-header", scope: "identified", thread: null }
+    {
+      key: "sess-header",
+      scope: "identified",
+      thread: null,
+      sessionId: "sess-header"
+    }
   );
 
   // Codex 0.154.0 names the thread as well; a subagent's differs from its session.
@@ -4014,7 +4059,8 @@ test("requestSession derives identity from caller-supplied headers and payload f
   assert.deepEqual(child, {
     key: "root-1",
     scope: "identified",
-    thread: "child-1"
+    thread: "child-1",
+    sessionId: "root-1"
   });
   assert.equal(
     (requestSession as any)(
@@ -4044,7 +4090,12 @@ test("requestSession derives identity from caller-supplied headers and payload f
       { headers: { "session-id": "root-canon-only" } },
       {}
     ),
-    { key: "root-canon-only", scope: "identified", thread: null }
+    {
+      key: "root-canon-only",
+      scope: "identified",
+      thread: null,
+      sessionId: "root-canon-only"
+    }
   );
   assert.deepEqual(
     (requestSession as any)(
@@ -4064,7 +4115,12 @@ test("requestSession derives identity from caller-supplied headers and payload f
       },
       {}
     ),
-    { key: "root-canon", scope: "identified", thread: null }
+    {
+      key: "root-canon",
+      scope: "identified",
+      thread: null,
+      sessionId: "root-canon"
+    }
   );
   // Alias headers remain accepted so already-remembered workspace metadata
   // continues to resolve for older callers.
@@ -4073,16 +4129,28 @@ test("requestSession derives identity from caller-supplied headers and payload f
       { headers: { "x-codex-session-id": "root-alias-only" } },
       {}
     ),
-    { key: "root-alias-only", scope: "identified", thread: null }
+    {
+      key: "root-alias-only",
+      scope: "identified",
+      thread: null,
+      sessionId: "root-alias-only"
+    }
   );
 
-  // Codex requests providing thread-id without session-id resolve to the thread identity.
-  assert.deepEqual(
-    (requestSession as any)(
-      { headers: { "thread-id": "root-thread-only" } },
-      {}
-    ),
-    { key: "root-thread-only", scope: "identified", thread: "root-thread-only" }
+  // A thread-only fallback remains useful for routing but is not a session ID.
+  const threadOnly = (requestSession as any)(
+    { headers: { "thread-id": "root-thread-only" } },
+    {}
+  );
+  assert.deepEqual(threadOnly, {
+    key: "root-thread-only",
+    scope: "identified",
+    thread: "root-thread-only"
+  });
+  assert.equal(
+    Object.hasOwn(threadOnly, "sessionId"),
+    false,
+    "a thread identity must not be mislabeled as a session identity"
   );
 });
 

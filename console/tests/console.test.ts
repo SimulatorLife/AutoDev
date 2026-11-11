@@ -16,6 +16,7 @@ import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
+  CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
   type ControlApiAgentDetailResponse,
   type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
@@ -4935,13 +4936,16 @@ test("a measured zero and an unreported counter stay different readings", () => 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v1",
+        schema: "autodev-usage-active-sessions-v2",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
         activeSessions: 0,
+        identifiedSessionCount: 0,
         activeSubagentThreads: 0,
         inFlightRequests: 0,
-        perSessionIdentityAvailable: false
+        sessionIdentities: [],
+        sessionIdentitiesPartial: false,
+        unattributedLiveActivityCount: 0
       }
     })
   );
@@ -4953,13 +4957,16 @@ test("a measured zero and an unreported counter stay different readings", () => 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v1",
+        schema: "autodev-usage-active-sessions-v2",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
         activeSessions: null,
+        identifiedSessionCount: null,
         activeSubagentThreads: null,
         inFlightRequests: null,
-        perSessionIdentityAvailable: false
+        sessionIdentities: null,
+        sessionIdentitiesPartial: null,
+        unattributedLiveActivityCount: null
       }
     })
   );
@@ -4972,7 +4979,7 @@ test("a measured zero and an unreported counter stay different readings", () => 
 
 test("live session state projects Runtime counters without inventing defaults", () => {
   const base = {
-    schema: "autodev-control-runtime-v2" as const,
+    schema: "autodev-control-runtime-v3" as const,
     routerInstanceId: "router-1",
     lifecycle: {
       state: "ready" as const,
@@ -4982,6 +4989,7 @@ test("live session state projects Runtime counters without inventing defaults", 
     },
     concurrency: {},
     inFlightRequestCount: 2,
+    liveSessions: null,
     liveAgents: null
   };
 
@@ -4989,26 +4997,65 @@ test("live session state projects Runtime counters without inventing defaults", 
   assert.deepEqual(
     activeSessionsFromRuntime({
       ...base,
-      concurrency: { activeSessions: 3, activeSubagentThreads: 1 }
+      concurrency: { activeSessions: 3, activeSubagentThreads: 1 },
+      liveSessions: {
+        identitiesObserved: [
+          { sessionId: "session-a", state: "active", lastActivityAt: 10 },
+          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20 },
+          { sessionId: "session-c", state: "resumed", lastActivityAt: 30 }
+        ],
+        identifiedSessionCount: 3,
+        partial: false,
+        unattributedLiveActivityCount: 0
+      }
     }),
     {
-      schema: "autodev-usage-active-sessions-v1",
+      schema: "autodev-usage-active-sessions-v2",
       lifecycle: "ready",
       lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
       activeSessions: 3,
+      identifiedSessionCount: 3,
       activeSubagentThreads: 1,
       inFlightRequests: 2,
-      perSessionIdentityAvailable: false
+      sessionIdentities: [
+        { sessionId: "session-a", state: "active", lastActivityAt: 10 },
+        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20 },
+        { sessionId: "session-c", state: "resumed", lastActivityAt: 30 }
+      ],
+      sessionIdentitiesPartial: false,
+      unattributedLiveActivityCount: 0
     }
   );
 
   // A counter the Runtime never measured is null, not 0.
+  const scalarWithoutIdentity = activeSessionsFromRuntime({
+    ...base,
+    concurrency: { activeSessions: 3 }
+  });
+  assert.equal(scalarWithoutIdentity.activeSessions, 3);
+  assert.equal(scalarWithoutIdentity.sessionIdentities, null);
+
   const unreported = activeSessionsFromRuntime({ ...base, concurrency: {} });
   assert.equal(unreported.activeSessions, null);
   assert.equal(unreported.activeSubagentThreads, null);
-  // The Runtime publishes a scalar count and no per-session identity, so the
-  // scope must say so instead of rendering an empty session list.
-  assert.equal(unreported.perSessionIdentityAvailable, false);
+  assert.equal(unreported.sessionIdentities, null);
+  assert.equal(unreported.identifiedSessionCount, null);
+
+  const partlyAttributed = activeSessionsFromRuntime({
+    ...base,
+    concurrency: { activeSessions: 3 },
+    liveSessions: {
+      identitiesObserved: [
+        { sessionId: "session-known", state: "active", lastActivityAt: 10 }
+      ],
+      identifiedSessionCount: 1,
+      partial: false,
+      unattributedLiveActivityCount: 2
+    }
+  });
+  assert.equal(partlyAttributed.identifiedSessionCount, 1);
+  assert.equal(partlyAttributed.activeSessions, 3);
+  assert.equal(partlyAttributed.unattributedLiveActivityCount, 2);
 });
 
 test("Usage URL filters preserve stock time ranges, custom dates, and server-only credentials", () => {
@@ -12177,7 +12224,7 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
       runtime: {
-        schema: "autodev-control-runtime-v2",
+        schema: "autodev-control-runtime-v3",
         routerInstanceId: "router-uuid-test",
         lifecycle: {
           state: "ready",
@@ -12187,6 +12234,7 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
         },
         concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
         inFlightRequestCount: 1,
+        liveSessions: null,
         liveAgents: {
           count: 1,
           byRole: { orchestrator: 1 },
@@ -15977,7 +16025,7 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE },
       runtime: {
-        schema: "autodev-control-runtime-v2",
+        schema: "autodev-control-runtime-v3",
         routerInstanceId: "router-fixture",
         lifecycle: {
           state: "ready",
@@ -15987,6 +16035,7 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
         },
         concurrency: {},
         inFlightRequestCount: 0,
+        liveSessions: null,
         liveAgents: {
           count: MODELS_FIXTURE.models.length,
           byRole: {},
@@ -16266,7 +16315,7 @@ test("ProviderDetailView reads an absent provider route without throwing", async
         orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
         models: null,
         runtime: {
-          schema: "autodev-control-runtime-v2",
+          schema: "autodev-control-runtime-v3",
           routerInstanceId: "router-fixture",
           lifecycle: {
             state: "ready",
@@ -16276,6 +16325,7 @@ test("ProviderDetailView reads an absent provider route without throwing", async
           },
           concurrency: {},
           inFlightRequestCount: 0,
+          liveSessions: null,
           liveAgents: {
             count: 0,
             byRole: {},
@@ -17269,10 +17319,10 @@ test("Console rejects provider and model responses that do not match the v2 cont
   assert.equal(models.kind, "ok");
 });
 
-test("Console rejects a runtime response that does not match the v2 contract", async () => {
+test("Console rejects a runtime response that does not match the v3 contract", async () => {
   const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
   const valid = {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -17282,6 +17332,7 @@ test("Console rejects a runtime response that does not match the v2 contract", a
     },
     concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
     inFlightRequestCount: 1,
+    liveSessions: null,
     liveAgents: {
       count: 2,
       byRole: { fixtureRole: 2 },
@@ -17301,6 +17352,30 @@ test("Console rejects a runtime response that does not match the v2 contract", a
       })
     ).kind,
     "ok"
+  );
+  const boundedLiveSessions = await fetchRuntime(config, {
+    fetchImpl: async () =>
+      Response.json({
+        ...valid,
+        liveSessions: {
+          identitiesObserved: Array.from(
+            { length: CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT },
+            (_, index) => ({
+              sessionId: `session-${String(index).padStart(3, "0")}`,
+              state: "active",
+              lastActivityAt: index
+            })
+          ),
+          identifiedSessionCount: CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT + 1,
+          partial: true,
+          unattributedLiveActivityCount: 0
+        }
+      })
+  });
+  assert.equal(
+    boundedLiveSessions.kind,
+    "ok",
+    "the Console accepts the Runtime's valid capped identity projection"
   );
   const withDenial = await fetchRuntime(config, {
     fetchImpl: async () =>
@@ -17377,7 +17452,72 @@ test("Console rejects a runtime response that does not match the v2 contract", a
     // A recorded denial is a real object; only its absence or nullness counts
     // as "no denial observed". Rejecting the object would discard evidence.
     { ...valid, concurrency: { lastDenial: "per_session_limit" } },
-    { ...valid, inFlightRequestCount: null }
+    { ...valid, inFlightRequestCount: null },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          { sessionId: "thread/unsafe", state: "active", lastActivityAt: 1 }
+        ],
+        identifiedSessionCount: 1,
+        partial: false,
+        unattributedLiveActivityCount: 0
+      }
+    },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          { sessionId: "session-b", state: "active", lastActivityAt: 1 },
+          { sessionId: "session-a", state: "active", lastActivityAt: 1 }
+        ],
+        identifiedSessionCount: 2,
+        partial: false,
+        unattributedLiveActivityCount: 0
+      }
+    },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          {
+            sessionId: "session-a",
+            state: "active",
+            lastActivityAt: Number.MAX_SAFE_INTEGER
+          }
+        ],
+        identifiedSessionCount: 1,
+        partial: false,
+        unattributedLiveActivityCount: 0
+      }
+    },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          {
+            sessionId: "session-a",
+            state: "active",
+            lastActivityAt: 1,
+            prompt: "must not cross the server boundary"
+          }
+        ],
+        identifiedSessionCount: 1,
+        partial: false,
+        unattributedLiveActivityCount: 0
+      }
+    },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          { sessionId: "session-a", state: "active", lastActivityAt: 1 }
+        ],
+        identifiedSessionCount: 2,
+        partial: true,
+        unattributedLiveActivityCount: 0
+      }
+    }
   ]) {
     assert.equal(
       (
@@ -17393,7 +17533,7 @@ test("Console rejects a runtime response that does not match the v2 contract", a
 
 test("AgentsView reports runtime counters as unobserved instead of zero", () => {
   const runtime = {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -17405,6 +17545,7 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
     // reporting zero, so the Console must not turn their absence into a zero.
     concurrency: {},
     inFlightRequestCount: 0,
+    liveSessions: null,
     liveAgents: null
   } as const;
   const markup = renderToStaticMarkup(
@@ -22714,6 +22855,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Next.js route-level error boundary rendering the shared dark-mode error view with in-place retry."
     ],
     [
+      join("src", "features", "usage", "SessionUsageLookup.ts"),
+      "Keeps one exact session ID in component state and sends it only in a same-origin POST for a bounded historical trace read; the ID stays out of the URL and metrics."
+    ],
+    [
       join("src", "features", "usage", "use-usage-telemetry.ts"),
       "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
     ],
@@ -23669,7 +23814,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
     fetchImpl: async () => Response.json(payload)
   });
   const runtime = {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -23684,6 +23829,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
       activeSessions: 0
     },
     inFlightRequestCount: 0,
+    liveSessions: null,
     liveAgents: null
   } satisfies ControlApiRuntimeResponse;
   assert.equal(

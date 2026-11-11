@@ -105,7 +105,8 @@ test("workspace and session resolution prefer explicit continuity metadata", () 
   assert.deepEqual(session, {
     key: "session-7",
     scope: "identified",
-    thread: null
+    thread: null,
+    sessionId: "session-7"
   });
   assert.equal(
     requestSession({ headers: {} } as any, {}).scope,
@@ -280,7 +281,8 @@ test("canonical Codex session-id header identifies metadata-less continuation an
     assert.deepEqual(session, {
       key: sessionKey,
       scope: "identified",
-      thread: null
+      thread: null,
+      sessionId: sessionKey
     });
 
     // Sanity: the same canonical-header-only request was previously returning

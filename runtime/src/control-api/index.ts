@@ -20,6 +20,7 @@ import {
   type ControlApiHookEventPatchResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveAgentCounts,
+  type ControlApiLiveSessions,
   type ControlApiMcpAppliedServer,
   type ControlApiMcpDeclaredServer,
   type ControlApiMcpRuntimeHealth,
@@ -767,6 +768,11 @@ export type ControlApiLiveAgentCountsSource = (
   now: number
 ) => ControlApiLiveAgentCounts;
 
+/** Canonical session identities derived from the same live activity source. */
+export type ControlApiLiveSessionsSource = (
+  now: number
+) => ControlApiLiveSessions;
+
 /**
  * The Runtime's observation of the MCP servers it has seen.
  *
@@ -787,6 +793,7 @@ export function setControlApiProviderCheckSource(
   providerCheckSource = source;
 }
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
+let liveSessionsSource: ControlApiLiveSessionsSource | null = null;
 let mcpObservationsSource: ControlApiMcpObservationsSource | null = null;
 let providerModelDiscoverySource:
   (() => ControlApiProviderModelsResponse) | null = null;
@@ -810,6 +817,13 @@ export function setControlApiLiveAgentCountsSource(
   source: ControlApiLiveAgentCountsSource | null
 ): void {
   liveAgentCountsSource = source;
+}
+
+/** Register the source-confirmed, bounded live-session projection. */
+export function setControlApiLiveSessionsSource(
+  source: ControlApiLiveSessionsSource | null
+): void {
+  liveSessionsSource = source;
 }
 
 /**
@@ -2046,12 +2060,13 @@ function skillsView(
 function runtimeView(now: number): Record<string, unknown> {
   const runtime = getDefaultRouterLifecycle();
   return {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: ROUTER_INSTANCE_ID,
     lifecycle: runtime.getLifecycleStatus(),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     inFlightRequestCount: runtime.activeRequestCount,
-    liveAgents: liveAgentCountsSource?.(now) ?? null
+    liveAgents: liveAgentCountsSource?.(now) ?? null,
+    liveSessions: liveSessionsSource?.(now) ?? null
   } satisfies ControlApiRuntimeResponse;
 }
 

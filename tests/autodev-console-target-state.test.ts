@@ -791,13 +791,15 @@ test("Usage Active Sessions is a runtime-scoped selection, not a time range", ()
   // Session identifiers stay out of metric dimensions.
   assert.match(body, /stay out of metric dimensions/u);
 
-  // The migration tracker records that the option now has a Runtime-backed
-  // implementation while keeping the missing identity evidence explicit.
+  // The migration tracker distinguishes source implementation from live
+  // deployment and keeps the historical attribution limit explicit.
   assert.match(
     migration,
     /Active Sessions is implemented as a distinct scope over the Runtime read-only/u
   );
-  assert.match(migration, /per-session identity remains unavailable/u);
+  assert.match(migration, /Runtime v3 source now exposes bounded live identities/u);
+  assert.match(migration, /OpenLIT patch 77 deployment and live acceptance are pending/u);
+  assert.match(migration, /236 of 251 90-day provider hops have no source-reported workspace/u);
 });
 
 test("Usage cost and unavailable evidence remain honest", () => {

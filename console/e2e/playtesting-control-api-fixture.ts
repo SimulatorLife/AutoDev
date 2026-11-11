@@ -5235,7 +5235,7 @@ function handleRuntimeFixture(
     return true;
   }
   sendJson(response, {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: "fixture-router",
     lifecycle: {
       state: "ready",
@@ -5254,6 +5254,7 @@ function handleRuntimeFixture(
       activeSessions: RUNTIME_ACTIVE_SESSIONS
     },
     inFlightRequestCount: RUNTIME_IN_FLIGHT_REQUESTS,
+    liveSessions: null,
     liveAgents: null
   });
   return true;

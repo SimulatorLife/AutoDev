@@ -19,6 +19,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   getControlApiAvailability,
   handleControlApiRequest,
+  setControlApiLiveSessionsSource,
   setControlApiProviderCheckSource,
   setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
@@ -33,6 +34,7 @@ import {
   refreshAllProviderQuotas
 } from "../providers/quota-discovery.ts";
 import {
+  agentActivity,
   checkProvider,
   codexState,
   handle,
@@ -218,6 +220,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             })
     )
   );
+  setControlApiLiveSessionsSource((now) => agentActivity.listLiveSessions(now));
   const closePlaytestingSafely = (): Promise<void> => {
     if (playtestingShutdown !== null) return playtestingShutdown;
     playtestingShutdown = shutdownDefaultPlaytestRunControl().catch(() => {
@@ -273,6 +276,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (cliVersions) setControlApiProviderCliVersionSource(null);
     quotaDiscovery?.stop();
     setControlApiProviderCheckSource(null);
+    setControlApiLiveSessionsSource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);

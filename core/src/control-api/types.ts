@@ -85,6 +85,9 @@ import type {
 } from "../workspaces/types.ts";
 import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
 
+/** Maximum number of source-confirmed live session identities returned by Runtime. */
+export const CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT = 100;
+
 /** Typed response contracts exposed by the AutoDev Control API. */
 export interface ControlApiError {
   readonly code: string;
@@ -183,18 +186,10 @@ export interface ControlApiProviderCooldown {
 }
 
 export type ControlApiQuotaWindowKind =
-  | "five_hour"
-  | "weekly"
-  | "daily"
-  | "monthly"
-  | "rolling";
+  "five_hour" | "weekly" | "daily" | "monthly" | "rolling";
 
 export type ControlApiQuotaStatus =
-  | "available"
-  | "warning"
-  | "exhausted"
-  | "unlimited"
-  | "unavailable";
+  "available" | "warning" | "exhausted" | "unlimited" | "unavailable";
 
 /** A single rate-limit or usage-quota window (e.g., 5-hour or weekly limit). */
 export interface ControlApiQuotaWindow {
@@ -255,7 +250,9 @@ export interface ControlApiProviderQuota {
 export interface ControlApiProviderHealth {
   readonly cooldown: ControlApiProviderCooldown | null;
   readonly poolCooldowns?: Readonly<Record<string, ControlApiProviderCooldown>>;
-  readonly modelCooldowns?: Readonly<Record<string, ControlApiProviderCooldown>>;
+  readonly modelCooldowns?: Readonly<
+    Record<string, ControlApiProviderCooldown>
+  >;
   readonly quota?: ControlApiProviderQuota | null;
   readonly failureStreak: number;
   readonly probeFailureStreak: number;
@@ -1769,7 +1766,7 @@ export interface ControlApiRoutingResponse {
 }
 
 export interface ControlApiRuntimeResponse {
-  readonly schema: "autodev-control-runtime-v2";
+  readonly schema: "autodev-control-runtime-v3";
   readonly routerInstanceId: string;
   /**
    * Every field here is emitted on every response by `getLifecycleStatus()`;
@@ -1808,6 +1805,39 @@ export interface ControlApiRuntimeResponse {
    * source; a measured empty map means the observed count is zero.
    */
   readonly liveAgents: ControlApiLiveAgentCounts | null;
+  /**
+   * Source-confirmed session identities on live AgentActivityTracker records.
+   * `null` means the Runtime did not register the source. `identitiesObserved`
+   * contains only IDs explicitly supplied and validated on activity records;
+   * it is not a claim that every live conversation was identified. The
+   * un-attributed field counts live activity records, not guessed sessions.
+   */
+  readonly liveSessions: ControlApiLiveSessions | null;
+}
+
+export type ControlApiLiveSessionState =
+  "active" | "tool_wait" | "user_wait" | "subagent_wait" | "resumed";
+
+export interface ControlApiLiveSessionIdentity {
+  readonly sessionId: string;
+  readonly state: ControlApiLiveSessionState;
+  /** Unix epoch milliseconds of the latest observed activity for this ID. */
+  readonly lastActivityAt: number;
+}
+
+export interface ControlApiLiveSessions {
+  /** Distinct validated identities, sorted by session ID and capped at 100. */
+  readonly identitiesObserved: readonly ControlApiLiveSessionIdentity[];
+  /** Exact unique identified-session count before the 100-row list cap. */
+  readonly identifiedSessionCount: number;
+  /** True only when more than 100 distinct identified sessions were observed. */
+  readonly partial: boolean;
+  /**
+   * Live agent-activity records lacking a valid ID; this is not a session
+   * count. If nonzero, the overall live-session total is unavailable even
+   * though `identifiedSessionCount` remains exact for known IDs.
+   */
+  readonly unattributedLiveActivityCount: number;
 }
 
 /** Runtime's current live agent records, not historical usage telemetry. */

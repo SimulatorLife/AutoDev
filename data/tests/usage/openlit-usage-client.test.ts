@@ -470,31 +470,6 @@ test("provider hops preserve an unattributed workspace bucket", async () => {
   ]);
 });
 
-test("provider hops preserve an unattributed workspace bucket", async () => {
-  const payload = structuredClone(partialPayload);
-  const widget = payload.widgets.find(
-    (candidate) => candidate.key === "provider-hops-by-workspace"
-  );
-  assert.ok(widget);
-  widget.rows = [
-    { g0: "repo-a", hops: "2" },
-    { g0: "", hops: "1" }
-  ];
-
-  const client = new OpenLITUsageClient({
-    baseUrl: "http://openlit.local",
-    serviceToken: "secret",
-    fetchImpl: async () => response(payload)
-  });
-  const result = await client.query({ range: "7D", values: {} });
-  assert.equal(result.kind, "ok");
-  if (result.kind !== "ok") return;
-  assert.deepEqual(result.data.metrics.providerHopsByWorkspace, [
-    { name: "repo-a", count: 2 },
-    { name: "", count: 1 }
-  ]);
-});
-
 test("OpenLITUsageClient reports a truncated workspace breakdown as partial", async () => {
   // The source's row limit truncated the breakdown, so a workspace missing
   // from it is not reported rather than measured at zero.
@@ -1240,5 +1215,123 @@ test("the Usage client waits longer than the OpenLIT service does", () => {
   assert.ok(
     REQUEST_TIMEOUT_MS >= OPENLIT_QUERY_TIMEOUT_MS * 1.5,
     "the client must leave room for the API's own fan-out and for the answer to travel back"
+  );
+});
+
+test("OpenLITUsageClient reads a bounded exact-session span view without metric dimensions", async () => {
+  const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async (input, init) => {
+      requestUrl = String(input);
+      requestInit = init;
+      return response({
+        schema: "autodev-openlit-session-usage-v1",
+        status: "observed",
+        partial: false,
+        spans: [
+          {
+            spanId: "0123456789abcdef",
+            traceId: "0123456789abcdef0123456789abcdef",
+            parentSpanId: null,
+            operationName: "chat",
+            timestamp: "2026-11-10T12:00:00.000Z",
+            durationNs: 1_000_000,
+            statusCode: "OK",
+            provider: "claude",
+            requestedModel: "autodev/orchestrator",
+            role: "orchestrator",
+            workspace: "SimulatorLife/AutoDev",
+            inputTokens: 12,
+            outputTokens: 3,
+            cacheReadInputTokens: 4,
+            costUsd: 0.001,
+            requestKind: "compaction",
+            compactionProvider: "claude",
+            hopRoute: null,
+            hopFrom: null,
+            hopTo: null,
+            hopReason: null
+          }
+        ]
+      });
+    }
+  });
+
+  const result = await client.querySession(sessionId, { range: "7D" });
+  assert.equal(result.kind, "ok");
+  assert.equal(requestUrl, "http://openlit.local/api/autodev/usage/session");
+  assert.equal(requestInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestInit?.body)), {
+    sessionId,
+    range: "7D"
+  });
+  assert.deepEqual(requestInit?.headers, {
+    Authorization: "Bearer session-secret",
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  });
+  assert.equal(requestInit?.cache, "no-store");
+  if (result.kind === "ok") {
+    assert.equal(result.data.spans[0]?.role, "orchestrator");
+    assert.equal(result.data.spans[0]?.hopRoute, null);
+    assert.equal(Object.hasOwn(result.data, "sessionId"), false);
+  }
+});
+
+test("OpenLITUsageClient rejects invalid session identities before network access", async () => {
+  let called = false;
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async () => {
+      called = true;
+      return response({});
+    }
+  });
+  const result = await client.querySession("process-fallback", {
+    range: "7D"
+  });
+  assert.deepEqual(result, { kind: "invalid-session-id" });
+  assert.equal(called, false);
+});
+
+test("OpenLITUsageClient distinguishes an observed empty session from an unavailable read", async () => {
+  const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  const emptyClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async () =>
+      response({
+        schema: "autodev-openlit-session-usage-v1",
+        status: "observed",
+        partial: false,
+        spans: []
+      })
+  });
+  const empty = await emptyClient.querySession(sessionId, { range: "24H" });
+  assert.equal(empty.kind, "ok");
+  if (empty.kind === "ok") assert.deepEqual(empty.data.spans, []);
+
+  const unavailableClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async () =>
+      response(
+        {
+          schema: "autodev-openlit-session-usage-v1",
+          status: "unavailable",
+          partial: false,
+          spans: []
+        },
+        503
+      )
+  });
+  assert.deepEqual(
+    await unavailableClient.querySession(sessionId, { range: "24H" }),
+    { kind: "unavailable" }
   );
 });

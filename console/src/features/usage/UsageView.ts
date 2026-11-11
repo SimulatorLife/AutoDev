@@ -1,4 +1,5 @@
 import {
+  CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
   USAGE_VARIABLE_IDS,
   type UsageActiveSessions,
   type UsageFilterOptions,
@@ -47,6 +48,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { SessionUsageLookup } from "./SessionUsageLookup.ts";
 
 /**
  * Observability Usage view.
@@ -175,6 +177,47 @@ function formatLifecycle(
  * under a heading that promises live sessions, and rendering zeros would report
  * an idle Runtime that was never actually observed.
  */
+type UsageActiveSessionIdentity = NonNullable<
+  UsageActiveSessions["sessionIdentities"]
+>[number];
+
+function redactedSessionLabel(sessionId: string): string {
+  if (sessionId.length <= 4) return "••••";
+  const prefixLength = Math.min(
+    8,
+    Math.max(2, Math.floor(sessionId.length / 2))
+  );
+  const suffixLength = Math.min(
+    4,
+    Math.max(1, Math.floor(sessionId.length / 4))
+  );
+  return `${sessionId.slice(0, prefixLength)}…${sessionId.slice(-suffixLength)}`;
+}
+
+const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
+  {
+    id: "session",
+    header: "Session",
+    weight: 120,
+    align: "tokens",
+    cell: (session) => redactedSessionLabel(session.sessionId)
+  },
+  {
+    id: "activity",
+    header: "Activity",
+    weight: 120,
+    cell: (session) => session.state.replaceAll("_", " ")
+  },
+  {
+    id: "last-activity",
+    header: "Last activity (UTC)",
+    weight: 180,
+    align: "tokens",
+    cell: (session) =>
+      instantLabel(new Date(session.lastActivityAt).toISOString())
+  }
+];
+
 function renderActiveSessionsScope(
   active: UsageActiveSessions | undefined
 ): React.JSX.Element {
@@ -212,11 +255,16 @@ function renderActiveSessionsScope(
       { className: PAGE_SECTION_STACK_CLASS },
       React.createElement(
         StatGrid,
-        { columns: 4 },
+        { columns: 3 },
         React.createElement(StatCard, {
           title: "Active Sessions",
           value: formatCount(active.activeSessions),
-          subtitle: "Runtime-reported live sessions"
+          subtitle: "Runtime concurrency count; identity list is separate"
+        }),
+        React.createElement(StatCard, {
+          title: "Identified Sessions",
+          value: formatCount(active.identifiedSessionCount),
+          subtitle: "Distinct source-confirmed IDs on live agent activity"
         }),
         React.createElement(StatCard, {
           title: "Active Subagent Threads",
@@ -234,17 +282,42 @@ function renderActiveSessionsScope(
           subtitle: "Runtime lifecycle state"
         })
       ),
-      React.createElement(
-        "div",
-        { className: LIST_PANEL_CLASS },
-        React.createElement(
-          "p",
-          { className: MUTED_BODY_CLASS },
-          active.perSessionIdentityAvailable
-            ? "Per-session detail is reported below."
-            : "The Runtime reports a live session count but no per-session identity yet, so no session list is shown. Absence of a list is not an absence of sessions."
-        )
-      )
+      active.sessionIdentitiesPartial
+        ? React.createElement(
+            "p",
+            { className: CALLOUT_WARNING_CLASS, role: "status" },
+            `The live session list reached its ${CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT}-session limit; the identified-session count remains exact.`
+          )
+        : null,
+      active.unattributedLiveActivityCount !== null &&
+        active.unattributedLiveActivityCount > 0
+        ? React.createElement(
+            "p",
+            { className: CALLOUT_WARNING_CLASS, role: "status" },
+            `${formatCount(active.unattributedLiveActivityCount)} live activity record${active.unattributedLiveActivityCount === 1 ? "" : "s"} had no source-confirmed session ID. These records are omitted from the identified list, not guessed into a session.`
+          )
+        : null,
+      active.sessionIdentities === null
+        ? React.createElement(
+            "p",
+            { className: MUTED_BODY_CLASS, role: "status" },
+            "The Runtime did not report per-session identity; no session list is shown."
+          )
+        : active.sessionIdentities.length === 0
+          ? React.createElement(
+              "p",
+              { className: MUTED_BODY_CLASS, role: "status" },
+              active.unattributedLiveActivityCount === 0
+                ? "No identified live sessions were observed."
+                : "No live session IDs were identified; see the unattributed activity count above."
+            )
+          : React.createElement(DataTable<UsageActiveSessionIdentity>, {
+              data: active.sessionIdentities,
+              columns: LIVE_SESSION_COLUMNS,
+              keyExtractor: (session) => session.sessionId,
+              emptyMessage: "No identified live sessions were observed.",
+              label: "Live Runtime sessions"
+            })
     )
   );
 }
@@ -1798,6 +1871,9 @@ export function UsageView({
       ),
       renderFilterControls(isActiveSessions, filterOptions, selectedValues)
     ),
+    isActiveSessions
+      ? null
+      : React.createElement(SessionUsageLookup, { selection }),
     !isActiveSessions && traceLookup
       ? renderTraceLookup(traceLookup, selection)
       : null,

@@ -25,8 +25,8 @@ import {
   liveAgentCount,
   liveAgentRoleBreakdown
 } from "../src/features/live-agent-count.ts";
-import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
 import { providerUsageView } from "../src/features/providers/provider-usage-view.ts";
+import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 
 const NO_CONVERGENCE = {
@@ -110,7 +110,7 @@ function runtime(
   liveAgents: ControlApiLiveAgentCounts | null
 ): ControlApiRuntimeResponse {
   return {
-    schema: "autodev-control-runtime-v2",
+    schema: "autodev-control-runtime-v3",
     routerInstanceId: "router-fixture",
     lifecycle: {
       state: "ready",
@@ -120,6 +120,7 @@ function runtime(
     },
     concurrency: {},
     inFlightRequestCount: 0,
+    liveSessions: null,
     liveAgents
   };
 }

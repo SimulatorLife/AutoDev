@@ -112,11 +112,15 @@
  * v30: the live agent counts split each provider's and each model's count by
  * role (`byProviderRole`, `byModelRole`), so a count can be read as the agents
  * it is made of rather than as a bare number.
+ * v31: `GET /control/runtime` publishes bounded `liveSessions` identities
+ * explicitly attributed by live AgentActivityTracker records, with list
+ * truncation and unattributed activity reported separately from the legacy
+ * concurrency `activeSessions` scalar.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 30
+  version: 31
 } as const;
 
 export type ControlApiContractResponse = {

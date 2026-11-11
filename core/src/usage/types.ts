@@ -1,3 +1,5 @@
+import type { ControlApiLiveSessionIdentity } from "../control-api/types.ts";
+
 /** Canonical, bounded filter axes shared by Console and Data adapters. */
 export const USAGE_VARIABLE_IDS = [
   "workspace",
@@ -186,23 +188,23 @@ export type UsageHistoricalTimeRange = Exclude<
  * reading the Console must never synthesize.
  */
 export interface UsageActiveSessions {
-  readonly schema: "autodev-usage-active-sessions-v1";
+  readonly schema: "autodev-usage-active-sessions-v2";
   readonly lifecycle: "ready" | "draining" | null;
   readonly lifecycleChangedAt: string | null;
-  /** Runtime-reported live session count; `null` when not observed. */
+  /** The Runtime concurrency active-session scalar; `null` when not observed. */
   readonly activeSessions: number | null;
+  /** Exact number of distinct source-confirmed IDs, even if the row list truncates. */
+  readonly identifiedSessionCount: number | null;
   /** Runtime-reported live subagent thread count; `null` when not observed. */
   readonly activeSubagentThreads: number | null;
   /** Runtime-reported in-flight provider requests; `null` when not observed. */
   readonly inFlightRequests: number | null;
-  /**
-   * Whether the Runtime currently reports per-session identity for this scope.
-   *
-   * False today: `/control/runtime` publishes a scalar `activeSessions` count
-   * and no per-session identity at all. The Console uses this to say why no
-   * session list is rendered rather than rendering an empty one.
-   */
-  readonly perSessionIdentityAvailable: boolean;
+  /** `null` means no Runtime identity source; `[]` is an observed empty list. */
+  readonly sessionIdentities: readonly ControlApiLiveSessionIdentity[] | null;
+  /** True only when the Runtime capped the returned identity list. */
+  readonly sessionIdentitiesPartial: boolean | null;
+  /** Live activity records without a validated session ID; not a session count. */
+  readonly unattributedLiveActivityCount: number | null;
 }
 
 export interface UsageCustomRange {
@@ -231,6 +233,17 @@ export type UsageFilterSelection =
         Exclude<UsageHistoricalTimeRange, "CUSTOM"> | "ACTIVE_SESSIONS";
       readonly values: UsageFilterValues;
       readonly customRange?: UsageCustomRange;
+    };
+
+/**
+ * The historical range for one explicitly supplied session identity.
+ * Session identity is a view scope, never a Usage filter variable.
+ */
+export type UsageSessionQuerySelection =
+  | { readonly range: "CUSTOM"; readonly customRange: UsageCustomRange }
+  | {
+      readonly range: Exclude<UsageHistoricalTimeRange, "CUSTOM">;
+      readonly customRange?: never;
     };
 
 export type UsageFilterOptions = Readonly<
@@ -359,6 +372,37 @@ export function isOpenTelemetrySpanId(value: unknown): value is string {
 }
 
 export type UsageTraceStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
+
+/** Whitelisted event-level facts for one exact, explicitly selected session. */
+export interface UsageSessionSpanSummary {
+  readonly spanId: string;
+  readonly traceId: string;
+  readonly parentSpanId: string | null;
+  readonly operationName: string;
+  readonly timestamp: string;
+  readonly durationNs: number;
+  readonly statusCode: UsageTraceStatus;
+  readonly provider: string | null;
+  readonly requestedModel: string | null;
+  readonly role: string | null;
+  readonly workspace: string | null;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly cacheReadInputTokens: number | null;
+  readonly costUsd: number | null;
+  readonly requestKind: string | null;
+  readonly compactionProvider: string | null;
+  readonly hopRoute: string | null;
+  readonly hopFrom: string | null;
+  readonly hopTo: string | null;
+  readonly hopReason: string | null;
+}
+
+/** A bounded, privacy-filtered trace view for one exact session, not a metric series. */
+export interface UsageSessionEvidence {
+  readonly partial: boolean;
+  readonly spans: readonly UsageSessionSpanSummary[];
+}
 
 /** Safe, bounded trace activity for the Usage history table. */
 export interface UsageTraceAttempt {

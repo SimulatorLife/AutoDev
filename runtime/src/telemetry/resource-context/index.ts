@@ -7,7 +7,6 @@ const CANONICAL_WORKSPACE_KEY_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/u;
 const URI_VALUE_PATTERN = /^(?:file|https?):\/\//iu;
 const AGENT_ROLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
-const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 export const AUTODEV_WORKSPACE_KEY_HEADER = "x-autodev-workspace-key";
 export const OTEL_RESOURCE_ATTRIBUTES_ENV = "OTEL_RESOURCE_ATTRIBUTES";
@@ -53,34 +52,6 @@ export function safeAutoDevAgentRole(value: unknown): string | null {
     return null;
   }
   return role;
-}
-
-/**
- * Validate a session identity before it becomes telemetry metadata.
- *
- * A session id is an identifier, not content: it names the conversation a
- * request belongs to, and it is what makes a per-session view possible at
- * all. It is bounded and opaque here so that a client cannot smuggle a path,
- * a URL or free text into a span attribute under the name of a session, and
- * so that the attribute never grows without limit.
- *
- * The process-wide anonymous bucket is not a session: it is every
- * unrelated request that arrived without an identity, so attributing it to
- * one would attribute them all to the same conversation.
- */
-export function safeAutoDevSessionId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const session = value.trim();
-  if (
-    !session ||
-    !SESSION_ID_PATTERN.test(session) ||
-    ["unknown", "unattributed", "process-fallback", "process-scope"].includes(
-      session.toLowerCase()
-    )
-  ) {
-    return null;
-  }
-  return session;
 }
 
 /**

@@ -50,17 +50,23 @@ export function activeSessionsFromRuntime(
   runtime: ControlApiRuntimeResponse
 ): UsageActiveSessions {
   const concurrency = runtime.concurrency;
+  const sessions = runtime.liveSessions;
+  const identifiedSessionCount = sessions?.identifiedSessionCount ?? null;
+  const unattributedLiveActivityCount =
+    sessions?.unattributedLiveActivityCount ?? null;
   return {
-    schema: "autodev-usage-active-sessions-v1",
+    schema: "autodev-usage-active-sessions-v2",
     lifecycle: runtime.lifecycle?.state ?? null,
     lifecycleChangedAt: runtime.lifecycle?.changedAt ?? null,
+    // Preserve the Runtime's concurrency scalar; the identified activity
+    // projection answers a separate question and must not replace it.
     activeSessions: observedCount(concurrency?.activeSessions),
+    identifiedSessionCount,
     activeSubagentThreads: observedCount(concurrency?.activeSubagentThreads),
     inFlightRequests: observedCount(runtime.inFlightRequestCount),
-    // The Runtime publishes a scalar count and no per-session identity, so the
-    // scope has no session list to render. Stating that here is what lets the
-    // view explain the absence instead of showing an empty table.
-    perSessionIdentityAvailable: false
+    sessionIdentities: sessions?.identitiesObserved ?? null,
+    sessionIdentitiesPartial: sessions?.partial ?? null,
+    unattributedLiveActivityCount
   };
 }
 

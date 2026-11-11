@@ -3,12 +3,14 @@ targets: ["*"]
 description: Survey the codebase for outstanding gaps, inconsistencies, and tooling/telemetry misses, and prioritize the next high-value improvement.
 ---
 
-What gaps, issues, inconsistencies, permission/tooling issues, telemetry issues/misses are still outstanding in the codebase? Organizational issues? Across all, what is the next priority for the best improvement/consistency/DRY/hardening for the codebase?
+What gaps, issues, inconsistencies, permission/tooling issues, telemetry issues/missing features are still outstanding for AutoDev? Organizational issues? Bugs? Gaps in the current state of the codebase from the goals/target-state?
 
-Consider the goals of the codebase:
+Across all, and considering the goals/target-state of the project, what is the next single/scoped priority for the best/necessary advancement/improvement/consistency/DRY/hardening/feature for the codebase/project?
+
+Once identified, implement the necessary changes to the codebase to achieve that next priority.
 
 1. Single idempotent install script
-2. Single, consistent entrypoint (codex) which all orchestrators, MCPs, permissions, agent-delegation routes.
+2. Single, consistent user-chat-entrypoint (ChatGPT application) and CLI (codex) which all orchestrators, MCPs, permissions, agent-delegation, etc. routes.
 3. Global/user-level MCPs, agents, and skills that can be pointed at a codebase and work on it end-to-end.
 4. Pointing the orchestrator to a workspace also allows for loading/using any local skills/MCPs/config in that codebase without conflicts with the user-level ones
 5. AutoDev has clean, organized, DRY, maintainable, well-named-file codebase organization.

@@ -48,7 +48,7 @@ test("missing or unsafe context cannot inherit stale AutoDev resource identity",
 });
 
 test("long canonical workspace keys remain bounded while path labels stay limited", () => {
-  const canonical = `owner/${"r".repeat(70)}`;
+  const canonical = `owner/${"r".repeat(94)}`;
   assert.ok(canonical.length > 64 && canonical.length <= 100);
   assert.equal(safeAutoDevWorkspaceKey(canonical), canonical);
   assert.equal(safeAutoDevWorkspaceKey("a".repeat(65)), null);
