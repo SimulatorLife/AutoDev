@@ -656,6 +656,19 @@ function gitCount(widget: OpenLITWidgetResult | undefined): number | null {
 }
 
 /**
+ * Read the partial-commit count without turning a malformed observed value
+ * into zero. Only a successful empty query is evidence that no partial diff
+ * was measured in the selected range.
+ */
+function observedPartialCommitCount(
+  widget: OpenLITWidgetResult | undefined
+): number | null {
+  if (!widget?.querySucceeded) return null;
+  if (!widget.observed && widget.rows.length === 0 && !widget.partial) return 0;
+  return observedCount(widget);
+}
+
+/**
  * One bounded breakdown of counts by category.
  *
  * An empty breakdown is only read as "no rows at all" when the total it
@@ -761,10 +774,7 @@ function gitChangeMetrics(
     return unavailableGitChanges(status, unsupportedFilters);
   }
   const partialWidget = widgets.get("git-partial-commits");
-  const observedPartialCommits = observedCount(partialWidget);
-  const partialCommits =
-    observedPartialCommits ??
-    (partialWidget?.querySucceeded === true ? 0 : null);
+  const partialCommits = observedPartialCommitCount(partialWidget);
   const lineTotalsComplete = partialCommits === 0;
   const breakdownIds: readonly UsageWidgetId[] = [
     "git-commits-by-workspace",

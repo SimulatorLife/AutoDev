@@ -686,6 +686,58 @@ test("Git Usage distinguishes a source-confirmed zero from no observed metric", 
   }
 });
 
+test("Git partial-diff query failures do not become a complete zero", async () => {
+  const malformed = structuredClone(partialPayload);
+  const partial = malformed.widgets.find(
+    (widget) => widget.key === "git-partial-commits"
+  );
+  assert.ok(partial);
+  partial.observed = true;
+  partial.rows = [{ partial_commits: "invalid" }];
+  partial.valuePath = "0.partial_commits";
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(malformed)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.gitChanges.status, "observed");
+  assert.equal(result.data.metrics.gitChanges.partialCommits, null);
+  assert.equal(result.data.metrics.gitChanges.partial, null);
+  assert.equal(result.data.metrics.gitChanges.linesAdded, null);
+  assert.equal(result.data.metrics.gitChanges.linesRemoved, null);
+  assert.equal(result.data.metrics.gitChanges.filesChanged, 4);
+});
+
+test("Git partial-diff truncation does not establish a complete zero", async () => {
+  const truncated = structuredClone(partialPayload);
+  const partial = truncated.widgets.find(
+    (widget) => widget.key === "git-partial-commits"
+  );
+  assert.ok(partial);
+  partial.observed = false;
+  partial.partial = true;
+  partial.rows = [];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(truncated)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.gitChanges.status, "observed");
+  assert.equal(result.data.metrics.gitChanges.partialCommits, null);
+  assert.equal(result.data.metrics.gitChanges.partial, null);
+  assert.equal(result.data.metrics.gitChanges.linesAdded, null);
+  assert.equal(result.data.metrics.gitChanges.linesRemoved, null);
+  assert.equal(result.data.metrics.gitChanges.filesChanged, 4);
+});
+
 test("Git Usage is not applicable to the live Active Sessions scope", async () => {
   const client = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
