@@ -1,0 +1,306 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 837cbba6..15bf1aa5 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -232,7 +232,8 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       .toMatchObject({ observed: true, rows: [{ commits: 3 }] });
+     expect(mockReadGitUsageWidgets).toHaveBeenCalledWith(
+       selection,
+-      expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) })
++      expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) }),
++      expect.any(Function)
+     );
+   });
+ 
+diff --git a/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts b/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts
+index 912729eb..7d833051 100644
+--- a/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts
++++ b/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts
+@@ -15,6 +15,8 @@ import {
+ } from "@/lib/autodev/usage-git-metrics";
+ import type { UsageSelection } from "@/lib/autodev/usage-api";
+ 
++const runImmediately = <T>(task: () => Promise<T>) => task();
++
+ const selection: UsageSelection = {
+ 	range: "7D",
+ 	values: { workspace: ["repo-a"], provider: ["codex"], agent: ["worker"] },
+@@ -110,7 +112,7 @@ describe("Usage Git metric query", () => {
+ 			point("autodev.git.lines_removed", 40),
+ 		]);
+ 
+-		const widgets = await readGitUsageWidgets(selection, range);
++		const widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		const widget = (key: string) =>
+ 			widgets.find((candidate) => candidate.key === key);
+ 		expect(widgets).toHaveLength(10);
+@@ -163,7 +165,7 @@ describe("Usage Git metric query", () => {
+ 			}),
+ 		);
+ 		adapterWith(rows);
+-		const widgets = await readGitUsageWidgets(selection, range);
++		const widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		const workspace = widgets.find(
+ 			(candidate) => candidate.key === "git-commits-by-workspace",
+ 		);
+@@ -179,7 +181,7 @@ describe("Usage Git metric query", () => {
+ 		mockResolveTelemetrySourceDescriptor.mockResolvedValue({
+ 			type: "prometheus",
+ 		});
+-		let widgets = await readGitUsageWidgets(selection, range);
++		let widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
+ 			true,
+ 		);
+@@ -190,14 +192,14 @@ describe("Usage Git metric query", () => {
+ 			id: "source",
+ 		});
+ 		mockGetTelemetryAdapter.mockResolvedValue({ capabilities: () => ({}) });
+-		widgets = await readGitUsageWidgets(selection, range);
++		widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
+ 			true,
+ 		);
+ 
+ 		adapterWith([point("autodev.git.commits", 1)]);
+ 		mockMetricCounterDeltas.mockRejectedValueOnce(new Error("no baseline"));
+-		widgets = await readGitUsageWidgets(selection, range);
++		widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
+ 			true,
+ 		);
+@@ -207,7 +209,7 @@ describe("Usage Git metric query", () => {
+ 			rows: [],
+ 			meta: { truncated: true },
+ 		});
+-		widgets = await readGitUsageWidgets(selection, range);
++		widgets = await readGitUsageWidgets(selection, range, runImmediately);
+ 		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
+ 			true,
+ 		);
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index 08f4195a..ae8f78a8 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -21,6 +21,7 @@ import {
+ 	type UsageSelection,
+ 	type UsageVariableId,
+ } from "@/lib/autodev/usage-api";
++import { runUsageQuery } from "@/lib/autodev/usage-query-scheduler";
+ 
+ export const runtime = "nodejs";
+ 
+@@ -183,14 +184,14 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 				let err: string | undefined;
+ 				if (seedWidget) {
+ 					try {
+-						({ data, err } = await runWidgetQuery(seedWidget, {
++						({ data, err } = await runUsageQuery(() => runWidgetQuery(seedWidget, {
+ 							filter: { timeLimit: usageTimeRange(selection) } as MetricParams,
+ 							sourceId: descriptor.id,
+ 							dashboardVariables: {
+ 								specs: DASHBOARD_VARIABLES,
+ 								state: { values: selectedValues },
+ 							},
+-						}));
++						})));
+ 					} catch {
+ 						err = "Widget query failed";
+ 					}
+@@ -228,7 +229,7 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 		),
+ 	);
+ 	const traceListPromise = readRecentAttempts(adapter, selection, timeRange);
+-	const gitWidgetsPromise = readGitUsageWidgets(selection, timeRange);
++	const gitWidgetsPromise = readGitUsageWidgets(selection, timeRange, runUsageQuery);
+ 	const [filterOptions, widgets, traceList, gitWidgets] = await Promise.all([
+ 		filterOptionsPromise,
+ 		widgetQueries,
+@@ -263,26 +264,28 @@ async function fetchFilterOptions(
+ 					return [spec.id, { supported: false, values: [] }] as const;
+ 				}
+ 				const results = await Promise.all(
+-					sources.map(({ serviceName, scope }) =>
+-						fetchVariableAllowedValues({
+-						adapter,
+-						signal: spec.signal,
+-						scope,
+-						key: spec.key,
+-						timeRange,
+-						filters: [
+-							{
+-								target: "attribute",
+-								scope: "resource",
+-								key: "service.name",
+-								op: "eq",
+-								value: serviceName,
+-							},
+-						],
+-						limit: 256,
+-						aiSelector: false,
+-					})
+-					),
++						sources.map(({ serviceName, scope }) =>
++							runUsageQuery(() =>
++								fetchVariableAllowedValues({
++									adapter,
++									signal: spec.signal,
++									scope,
++									key: spec.key,
++									timeRange,
++									filters: [
++										{
++											target: "attribute",
++											scope: "resource",
++											key: "service.name",
++											op: "eq",
++											value: serviceName,
++										},
++									],
++									limit: 256,
++									aiSelector: false,
++								}),
++							),
++						),
+ 				);
+ 				const supported = results.every((result) => result.supported);
+ 				const values = supported
+@@ -332,7 +335,7 @@ async function readRecentAttempts(
+ 	}
+ 
+ 	try {
+-		const frame = await adapter.listSpans({
++		const frame = await runUsageQuery(() => adapter.listSpans({
+ 			signal: "traces",
+ 			timeRange: { start: timeRange.start, end: timeRange.end },
+ 			filters,
+@@ -340,7 +343,7 @@ async function readRecentAttempts(
+ 			limit: RECENT_ATTEMPT_LIMIT,
+ 			offset: 0,
+ 			aiSelector: false,
+-		});
++		}));
+ 		const sourceRows = Array.isArray(frame.rows) ? frame.rows : [];
+ 		let partial = Boolean(frame.meta?.truncated) || sourceRows.length >= RECENT_ATTEMPT_LIMIT;
+ 		const attempts: UsageTraceAttempt[] = [];
+diff --git a/src/client/src/lib/autodev/usage-git-metrics.ts b/src/client/src/lib/autodev/usage-git-metrics.ts
+index 5ba220ff..35075158 100644
+--- a/src/client/src/lib/autodev/usage-git-metrics.ts
++++ b/src/client/src/lib/autodev/usage-git-metrics.ts
+@@ -8,6 +8,7 @@ import type {
+ 	OpenLITQuery,
+ } from "@/lib/platform/connectors/datasource/types";
+ import type { UsageSelection } from "@/lib/autodev/usage-api";
++import type { runUsageQuery } from "@/lib/autodev/usage-query-scheduler";
+ 
+ const METRIC_NAMES = [
+ 	"autodev.git.commits",
+@@ -103,6 +104,7 @@ export function buildGitMetricQuery(
+ export async function readGitUsageWidgets(
+ 	selection: UsageSelection,
+ 	range: { readonly start: Date; readonly end: Date },
++	query: typeof runUsageQuery,
+ ): Promise<readonly GitUsageWidget[]> {
+ 	const unavailable = unavailableWidgets();
+ 	if (
+@@ -127,9 +129,9 @@ export async function readGitUsageWidgets(
+ 		) {
+ 			return unavailable;
+ 		}
+-		const frame = await adapter.metricCounterDeltas(
++		const frame = await query(() => adapter.metricCounterDeltas!(
+ 			buildGitMetricQuery(selection, range),
+-		);
++		));
+ 		if (frame.meta?.truncated) return unavailable;
+ 		const observations = parseCounterObservations(frame.rows);
+ 		if (!observations) return unavailable;
+diff --git a/src/client/src/lib/autodev/usage-query-scheduler.ts b/src/client/src/lib/autodev/usage-query-scheduler.ts
+new file mode 100644
+--- /dev/null
++++ b/src/client/src/lib/autodev/usage-query-scheduler.ts
+@@ -0,0 +1,41 @@
++/**
++ * Process-wide FIFO scheduler for the fixed Usage API's ClickHouse reads.
++ * Keeping queued work here (rather than fanning out pool acquisitions) makes
++ * concurrent Usage requests share one conservative query concurrency budget.
++ */
++export const USAGE_QUERY_CONCURRENCY = 8;
++
++type QueryTask<T> = () => Promise<T>;
++type QueuedQuery = {
++	run: () => Promise<void>;
++};
++
++const queue: QueuedQuery[] = [];
++let active = 0;
++
++/** Run one Usage query in FIFO order, never starting more than eight at once. */
++export function runUsageQuery<T>(task: QueryTask<T>): Promise<T> {
++	return new Promise<T>((resolve, reject) => {
++		queue.push({
++			run: async () => {
++				try {
++					resolve(await task());
++				} catch (error) {
++					reject(error);
++				}
++			},
++		});
++		drain();
++	});
++}
++
++function drain(): void {
++	while (active < USAGE_QUERY_CONCURRENCY && queue.length > 0) {
++		const query = queue.shift()!;
++		active++;
++		void query.run().finally(() => {
++			active--;
++			drain();
++		});
++	}
++}
+diff --git a/src/client/src/__tests__/lib/autodev/usage-query-scheduler.test.ts b/src/client/src/__tests__/lib/autodev/usage-query-scheduler.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/client/src/__tests__/lib/autodev/usage-query-scheduler.test.ts
+@@ -0,0 +1,38 @@
++import {
++	runUsageQuery,
++	USAGE_QUERY_CONCURRENCY,
++} from "@/lib/autodev/usage-query-scheduler";
++
++describe("fixed Usage query scheduler", () => {
++	it("bounds overlapping Usage batches and starts queued reads in FIFO order", async () => {
++		let active = 0;
++		let peak = 0;
++		const starts: number[] = [];
++		let releaseFirstWave!: () => void;
++		const firstWave = new Promise<void>((resolve) => {
++			releaseFirstWave = resolve;
++		});
++		const tasks = Array.from({ length: 24 }, (_, index) => () =>
++			runUsageQuery(async () => {
++				starts.push(index);
++				active++;
++				peak = Math.max(peak, active);
++				if (index === USAGE_QUERY_CONCURRENCY - 1) releaseFirstWave();
++				if (index >= USAGE_QUERY_CONCURRENCY) await firstWave;
++				await Promise.resolve();
++				active--;
++				return index;
++			}),
++		);
++
++		const [firstBatch, overlappingBatch] = await Promise.all([
++			Promise.all(tasks.slice(0, 12).map((task) => task())),
++			Promise.all(tasks.slice(12).map((task) => task())),
++		]);
++
++		expect([...firstBatch, ...overlappingBatch]).toHaveLength(24);
++		expect(peak).toBeLessThanOrEqual(USAGE_QUERY_CONCURRENCY);
++		expect(peak).toBe(USAGE_QUERY_CONCURRENCY);
++		expect(starts).toEqual(Array.from({ length: 24 }, (_, index) => index));
++	});
++});

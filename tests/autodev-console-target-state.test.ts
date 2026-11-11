@@ -823,6 +823,10 @@ test("Usage cost and unavailable evidence remain honest", () => {
   assert.match(body, /one shared unavailable state/u);
   assert.match(
     body,
+    /one process-wide bounded queue shared across overlapping requests/u
+  );
+  assert.match(
+    body,
     /validates a bounded Usage snapshot through the same Data client\/parser/u
   );
   assert.match(
@@ -934,6 +938,7 @@ test("git change metrics are defined with exact counting and cardinality rules",
   // Partial measurement stays partial; missing stats are unavailable.
   assert.match(body, /reported as partial/u);
   assert.match(body, /unavailable, never zero/u);
+  assert.match(body, /make total lines added\/removed unavailable/u);
 
   // Rates require a shared scope/range.
   assert.match(body, /same scope and time range/u);
@@ -954,15 +959,11 @@ test("git change metrics are defined with exact counting and cardinality rules",
   );
   assert.match(
     migration,
-    /Runtime producer \+ v5 Usage consumer deployed; live metric samples observed/u
+    /current Usage response is unavailable; partial line totals now fail closed/u
   );
-  // The live sample is observed, so what remains open is narrower: a browser
-  // view scoped to a production workspace still has no source-confirmed
-  // AutoDev commit to show, because the observed sample came from the
-  // acceptance workspace.
   assert.match(
     migration,
-    /browser view scoped to a production workspace still has no source-confirmed AutoDev commit/u
+    /A 41-commit source-confirmed sample and matching ClickHouse cumulative-delta query were observed in an earlier deployment/u
   );
   assert.match(migration, /cumulative temporality/u);
 });

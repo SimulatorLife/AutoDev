@@ -26,11 +26,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { OPENLIT_QUERY_TIMEOUT_MS } from "@simulatorlife/autodev-data/usage";
+
 import { auditClientDependencies } from "./openlit-client-dependencies.ts";
 import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
-import {
-  OPENLIT_QUERY_TIMEOUT_MS
-} from "@simulatorlife/autodev-data/usage";
 import {
   clientSourceModules,
   deadPathLiterals,
@@ -303,7 +302,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
       `patch 54 must freeze ${widget} to its source-confirmed ${axis} axis`
     );
   }
-  assert.match(usageRoute, /readGitUsageWidgets\(selection, timeRange\)/u);
+  assert.match(
+    usageRoute,
+    /readGitUsageWidgets\(selection, timeRange, runUsageQuery\)/u
+  );
   assert.match(usageRoute, /widgets: \[\.\.\.widgets, \.\.\.gitWidgets\]/u);
   const gitMetricReader = readFileSync(
     join(dir, "src/client/src/lib/autodev/usage-git-metrics.ts"),
@@ -311,6 +313,11 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(gitMetricReader, /signal: "metrics"/u);
   assert.match(gitMetricReader, /metricCounterDeltas/u);
+  assert.match(
+    gitMetricReader,
+    /query\(\(\) => adapter\.metricCounterDeltas/u,
+    "patch 76 must schedule the Git metrics query through the same Usage queue"
+  );
   assert.doesNotMatch(
     gitMetricReader,
     /SELECT\s|otel_metrics_sum/u,
@@ -349,6 +356,40 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "compaction widgets must use OpenLIT's fixed structured queries; listSpans remains limited to the separate recent-attempt list"
   );
   assert.match(usageRoute, /async function readRecentAttempts\(/u);
+  assert.match(
+    usageRoute,
+    /import \{ runUsageQuery \} from "@\/lib\/autodev\/usage-query-scheduler"/u,
+    "patch 76 must use one process-wide Usage query scheduler"
+  );
+  assert.match(usageRoute, /runUsageQuery\(\(\) => runWidgetQuery/u);
+  assert.match(
+    usageRoute,
+    /runUsageQuery\(\(\) =>\s*fetchVariableAllowedValues/u
+  );
+  assert.match(usageRoute, /runUsageQuery\(\(\) => adapter\.listSpans/u);
+  assert.match(
+    usageRoute,
+    /readGitUsageWidgets\(selection, timeRange, runUsageQuery\)/u
+  );
+  const usageScheduler = readFileSync(
+    join(dir, "src/client/src/lib/autodev/usage-query-scheduler.ts"),
+    "utf8"
+  );
+  assert.match(usageScheduler, /USAGE_QUERY_CONCURRENCY = 8/u);
+  assert.match(usageScheduler, /queue\.shift\(\)/u);
+  const usageSchedulerTests = readFileSync(
+    join(
+      dir,
+      "src/client/src/__tests__/lib/autodev/usage-query-scheduler.test.ts"
+    ),
+    "utf8"
+  );
+  assert.match(usageSchedulerTests, /overlapping Usage batches/u);
+  assert.match(
+    usageSchedulerTests,
+    /toBeLessThanOrEqual\(USAGE_QUERY_CONCURRENCY\)/u
+  );
+  assert.match(usageSchedulerTests, /starts\)\.toEqual\(Array\.from/u);
   const usageRouteTests = readFileSync(
     join(dir, "src/client/src/__tests__/app/api/autodev/usage/route.test.ts"),
     "utf8"
@@ -1682,9 +1723,9 @@ function assertClickHouseRequestTimeoutStated(dir: string): void {
   assert.match(
     client,
     new RegExp(
-      `const CLICKHOUSE_REQUEST_TIMEOUT_MS = ${String(
-        OPENLIT_QUERY_TIMEOUT_MS
-      ).replace(/\B(?=(\d{3})+(?!\d))/gu, "_")};`,
+      `const CLICKHOUSE_REQUEST_TIMEOUT_MS = ${OPENLIT_QUERY_TIMEOUT_MS.toLocaleString(
+        "en-US"
+      ).replaceAll(",", "_")};`,
       "u"
     ),
     "the service's stated ceiling must be the number the Console's client is written against"

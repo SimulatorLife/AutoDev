@@ -136,6 +136,9 @@ export interface UsageGitChangeMetrics {
   readonly filesChanged: number | null;
   readonly filesAdded: number | null;
   readonly filesDeleted: number | null;
+  /**
+   * Exact range totals; unavailable when any observed commit has a partial diff.
+   */
   readonly linesAdded: number | null;
   readonly linesRemoved: number | null;
   readonly partialCommits: number | null;

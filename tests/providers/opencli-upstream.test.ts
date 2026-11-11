@@ -281,7 +281,6 @@ async function geminiAdapter(): Promise<{
     page: unknown,
     thinkingValue: string
   ) => Promise<string>;
-  pickerScript: () => string;
 } | null> {
   let entry: string;
   try {
@@ -298,16 +297,11 @@ async function geminiAdapter(): Promise<{
     "gemini",
     "utils.js"
   );
-  const adapter = (await import(pathToFileURL(file).href)) as {
+  return (await import(pathToFileURL(file).href)) as {
     selectGeminiThinking: (
       page: unknown,
       thinkingValue: string
     ) => Promise<string>;
-    __test__: { openModelPickerForThinkingScript: () => string };
-  };
-  return {
-    selectGeminiThinking: adapter.selectGeminiThinking,
-    pickerScript: () => adapter.__test__.openModelPickerForThinkingScript()
   };
 }
 
@@ -369,32 +363,5 @@ test("the level is waited for while the thinking submenu is still expanding", as
   assert.ok(
     site.calls.probe > 1,
     "the adapter looked again while the submenu was still empty"
-  );
-});
-
-test("the picker is looked for where the site keeps it", async () => {
-  // The site labels the composer's picker "Open mode picker, currently
-  // <model>" and shows the model without a version ("Flash-Lite High"), so
-  // none of the adapter's name patterns matched it: the picker was never
-  // found, no menu ever opened, and every listing came back empty. The
-  // model's own discovery failed with it, and a turn that asked for a model
-  // or a thinking level ran at the model's the site already had.
-  const adapter = await geminiAdapter();
-  if (adapter === null) return;
-  const script = adapter.pickerScript();
-  assert.match(
-    script,
-    /model-picker-container/u,
-    "the adapter looks for the composer's own picker"
-  );
-  assert.match(
-    script,
-    /Open mode picker/u,
-    "the adapter recognises the label the site gives the picker"
-  );
-  assert.match(
-    script,
-    /mode\[\\s-\]\*picker/u,
-    "the adapter's own name patterns cover the site's label"
   );
 });

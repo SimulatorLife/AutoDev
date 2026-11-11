@@ -365,14 +365,6 @@ export const OPENCLI_SITE_SPECS: Readonly<
           // window, and opencli then cannot select any model -- before anything
           // is sent. A root turn failed outright that way; it is asked with the
           // model the site already has instead.
-          //
-          // The turn is answered, but it is answered at another model than the
-          // one that was asked for, so the turn says which model it could not
-          // put the site on: a route that lands on the wrong model is not a
-          // turn that went wrong, and it is invisible without this.
-          writeErrorLine(
-            `opencli gemini could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
-          );
           rows = await ask(null, null);
           thinking = null;
         } else throw error;

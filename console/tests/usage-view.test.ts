@@ -92,8 +92,8 @@ const observedMetrics: UsageMetricsData = {
     filesChanged: 4,
     filesAdded: 2,
     filesDeleted: 1,
-    linesAdded: 20,
-    linesRemoved: 5,
+    linesAdded: null,
+    linesRemoved: null,
     partialCommits: 1,
     commitsByWorkspace: [{ name: "repo-a", count: 2 }],
     commitsByProvider: [{ name: "codex", count: 2 }],
@@ -125,6 +125,8 @@ test("Usage renders Git output without double-counting file subsets or hiding pa
   assert.match(markup, /Files Changed/u);
   assert.match(markup, /Subset of files changed/u);
   assert.match(markup, /Partial diff measurements were observed for 1 commit/u);
+  assert.match(markup, /line totals are unavailable/u);
+  assert.match(markup, /Not observed \/ Not observed/u);
   assert.match(markup, /reached its result limit/u);
   assert.match(markup, /Commits by workspace/u);
   assert.match(markup, /Commits by provider/u);

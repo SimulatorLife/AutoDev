@@ -765,6 +765,7 @@ function gitChangeMetrics(
   const partialCommits =
     observedPartialCommits ??
     (partialWidget?.querySucceeded === true ? 0 : null);
+  const lineTotalsComplete = partialCommits === 0;
   const breakdownIds: readonly UsageWidgetId[] = [
     "git-commits-by-workspace",
     "git-commits-by-provider",
@@ -784,12 +785,15 @@ function gitChangeMetrics(
     filesChanged: gitCount(widgets.get("git-files-changed")),
     filesAdded: gitCount(widgets.get("git-files-added")),
     filesDeleted: gitCount(widgets.get("git-files-deleted")),
-    linesAdded:
-      partialCommits === null ? null : gitCount(widgets.get("git-lines-added")),
-    linesRemoved:
-      partialCommits === null
-        ? null
-        : gitCount(widgets.get("git-lines-removed")),
+    // numstat cannot report line counts for binary or otherwise unsummarized
+    // diffs. A sum of the rows it could read is not the complete range total,
+    // and an all-binary range must not become a measured zero.
+    linesAdded: lineTotalsComplete
+      ? gitCount(widgets.get("git-lines-added"))
+      : null,
+    linesRemoved: lineTotalsComplete
+      ? gitCount(widgets.get("git-lines-removed"))
+      : null,
     partialCommits,
     commitsByWorkspace: breakdownRows(
       widgets.get("git-commits-by-workspace"),

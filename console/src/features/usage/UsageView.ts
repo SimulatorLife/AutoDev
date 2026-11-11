@@ -907,7 +907,7 @@ function renderGitChangeMetrics(
             role: "status",
             "data-git-change-output-partial": "true"
           },
-          `Partial diff measurements were observed for ${formatCount(metrics.partialCommits)} commit${metrics.partialCommits === 1 ? "" : "s"}; line totals may be incomplete.`
+          `Partial diff measurements were observed for ${formatCount(metrics.partialCommits)} commit${metrics.partialCommits === 1 ? "" : "s"}; line totals are unavailable because one or more diffs could not be fully summarized.`
         )
       : null,
     metrics.breakdownsPartial
@@ -937,7 +937,7 @@ function renderGitChangeMetrics(
       React.createElement(StatCard, {
         title: "Lines Added / Removed",
         value: `${formatCount(metrics.linesAdded)} / ${formatCount(metrics.linesRemoved)}`,
-        subtitle: "Git numstat; partial commits are labeled"
+        subtitle: "Git numstat; unavailable when any diff is partial"
       }),
       React.createElement(StatCard, {
         title: "Files Added",
