@@ -405,10 +405,37 @@ index 4ffdfc9..c06a1a7 100644
      },
  });
 diff --git a/clis/gemini/models.js b/clis/gemini/models.js
-index 061c38c..557cbcc 100644
+index 061c38c..41a3ce6 100644
 --- a/clis/gemini/models.js
 +++ b/clis/gemini/models.js
-@@ -158,9 +158,16 @@ function thinkingExtractionLogic() {
+@@ -47,6 +47,7 @@ function findModelPickerLogic() {
+         /mode[\\s-]*selector/i,
+         /model[\\s-]*selector/i,
+         /model[\\s-]*picker/i,
++        /mode[\\s-]*picker/i,
+         /选择模型/i,
+         /select[\\s-]+model/i,
+         /choose[\\s-]+model/i,
+@@ -59,6 +60,18 @@ function findModelPickerLogic() {
+           document.querySelectorAll('button, [role="button"]')
+         ).filter(isVisible);
+ 
++        // Method 0: the composer's own model picker.
++        //
++        // The site labels the button "Open mode picker, currently <model>",
++        // and the chip it shows carries the model without a version
++        // ("Flash-Lite"), so none of the name patterns below matched it: the
++        // picker was never found, no menu ever opened, and the site's models
++        // were never read.
++        const composerPicker = document.querySelector(
++          '.model-picker-container button, .pill-ui-logo-container.gem-menu-redesign button, button[aria-label^="Open mode picker"]'
++        );
++        if (composerPicker && isVisible(composerPicker)) return composerPicker;
++
+         // Method 1: Detect model/mode selector via aria-label patterns.
+         for (const button of buttons) {
+           const aria = normalize(button.getAttribute('aria-label') || '');
+@@ -158,9 +171,16 @@ function thinkingExtractionLogic() {
        const extractAllThinkingValues = (menuItems) => {
          const found = new Map();
  
@@ -427,8 +454,70 @@ index 061c38c..557cbcc 100644
          ];
  
          for (const item of menuItems) {
+@@ -371,6 +391,29 @@ export function readMenuModelsScript() {
+     `;
+ }
+ 
++/**
++ * How long the model picker is given to show its items.
++ */
++const MODEL_MENU_WAIT_MS = 5000;
++
++/**
++ * Script that reports whether the open model picker has shown its items.
++ *
++ * The picker renders its items after the click that opened it, and an item
++ * with no size cannot be read: the wait for the menu is for the items
++ * themselves, not for a fixed span of time.
++ */
++export function modelMenuHasItemsScript() {
++    return `
++    (() => {
++      ${sharedHelpers()}
++      ${menuEnumerationLogic()}
++
++      return findVisibleMenuItems().length >= 2;
++    })()
++    `;
++}
++
+ /**
+  * Script that clicks the "思考等级" / "Thinking level" toggle in the
+  * currently-open menu to expand thinking options.
+@@ -429,6 +472,7 @@ export const __test__ = {
+     pickModelPickerScript,
+     readMenuScript,
+     readMenuModelsScript,
++    modelMenuHasItemsScript,
+     clickThinkingToggleScript,
+     extractThinkingScript,
+ };
+@@ -469,8 +513,21 @@ export const modelsCommand = cli({
+             );
+         }
+ 
+-        // Step 2: Wait for React to render the menu.
+-        await page.wait(1.0);
++        // Step 2: Wait for the picker to show its items.
++        //
++        // The picker renders its items after the click that opened it, and an
++        // item with no size cannot be read: a fixed second found a menu that
++        // was still empty, and the listing came back with no models at all.
++        // The wait is for the items themselves.
++        const deadline = Date.now() + MODEL_MENU_WAIT_MS;
++        while (Date.now() < deadline) {
++            const ready = unwrapBrowserBridgeEnvelope(
++                await page.evaluate(modelMenuHasItemsScript()).catch(() => null),
++                'Gemini model menu'
++            );
++            if (ready === true) break;
++            await page.wait(0.25);
++        }
+ 
+         // Step 3: Read model entries from the open menu.
+         const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb556..8763c8c 100644
+index 46bb556..9cd2802 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@
@@ -437,7 +526,34 @@ index 46bb556..8763c8c 100644
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
-@@ -2072,10 +2072,18 @@ function clickThinkingToggleInMenuScript() {
+@@ -1969,6 +1969,7 @@ function openModelPickerForThinkingScript() {
+         /mode[\\s-]*selector/i,
+         /model[\\s-]*selector/i,
+         /model[\\s-]*picker/i,
++        /mode[\\s-]*picker/i,
+         /选择模型/i,
+         /select[\\s-]+model/i,
+         /choose[\\s-]+model/i,
+@@ -1983,6 +1984,18 @@ function openModelPickerForThinkingScript() {
+           document.querySelectorAll('button, [role="button"]')
+         ).filter(isVisible);
+ 
++        // Method 0: the composer's own model picker.
++        //
++        // The site labels the button "Open mode picker, currently <model>",
++        // and the chip it shows carries the model without a version
++        // ("Flash-Lite"), so none of the name patterns below matched it: the
++        // picker was never found, no menu ever opened, and the site's models
++        // were never read.
++        const composerPicker = document.querySelector(
++          '.model-picker-container button, .pill-ui-logo-container.gem-menu-redesign button, button[aria-label^="Open mode picker"]'
++        );
++        if (composerPicker && isVisible(composerPicker)) return composerPicker;
++
+         // Method 1: Detect model/mode selector via aria-label patterns.
+         for (const button of buttons) {
+           const aria = normalize(button.getAttribute('aria-label') || '');
+@@ -2072,10 +2085,18 @@ function clickThinkingToggleInMenuScript() {
          'GEM-MENU-ITEM',
        ];
  
@@ -458,7 +574,7 @@ index 46bb556..8763c8c 100644
        }
  
        if (menuItems.length === 0) {
-@@ -2109,21 +2117,93 @@ function clickThinkingToggleInMenuScript() {
+@@ -2109,21 +2130,93 @@ function clickThinkingToggleInMenuScript() {
   * already-open model-picker menu (after the thinking section has been
   * expanded).  Closes the menu after selection (or on failure).
   *
@@ -557,7 +673,7 @@ index 46bb556..8763c8c 100644
  
        const isVisible = (el) => {
          if (!(el instanceof HTMLElement)) return false;
-@@ -2151,7 +2231,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2151,7 +2244,7 @@ function selectThinkingInMenuScript(thinkingValue) {
        const matchesThinking = (node) => {
          const combined = normalize(textOf(node));
          if (!combined) return false;
@@ -566,7 +682,7 @@ index 46bb556..8763c8c 100644
        };
  
        // Search inside visible menu containers first.
-@@ -2191,8 +2271,8 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2191,8 +2284,8 @@ function selectThinkingInMenuScript(thinkingValue) {
        candidates.sort((a, b) => {
          const aText = normalize(textOf(a));
          const bText = normalize(textOf(b));
@@ -577,7 +693,7 @@ index 46bb556..8763c8c 100644
          if (aExact && !bExact) return -1;
          if (!aExact && bExact) return 1;
          return 0;
-@@ -2228,7 +2308,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2228,7 +2321,7 @@ function selectThinkingInMenuScript(thinkingValue) {
   *  6. Close the menu.
   *
   * @param {object} page - Puppeteer page object
@@ -586,7 +702,7 @@ index 46bb556..8763c8c 100644
   * @returns {Promise<string>} matched label text, or empty string on failure
   */
  export async function selectGeminiThinking(page, thinkingValue) {
-@@ -2248,7 +2328,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2248,7 +2341,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
  
      if (toggleClicked) {
          // Step 4: Wait for the expanded thinking items to render.
@@ -610,7 +726,7 @@ index 46bb556..8763c8c 100644
      }
  
      // Step 5: Select the requested thinking level (also closes the menu).
-@@ -2260,7 +2355,6 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2260,7 +2368,6 @@ export async function selectGeminiThinking(page, thinkingValue) {
          return matched;
      }
  
@@ -618,7 +734,34 @@ index 46bb556..8763c8c 100644
  }
  
  // ── Current model detection ─────────────────────────────────────────
-@@ -2604,7 +2698,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2299,6 +2406,7 @@ function getCurrentGeminiModelScript() {
+         /mode[\\s-]*selector/i,
+         /model[\\s-]*selector/i,
+         /model[\\s-]*picker/i,
++        /mode[\\s-]*picker/i,
+         /选择模型/i,
+         /select[\\s-]+model/i,
+         /choose[\\s-]+model/i,
+@@ -2313,6 +2421,18 @@ function getCurrentGeminiModelScript() {
+           document.querySelectorAll('button, [role="button"]')
+         ).filter(isVisible);
+ 
++        // Method 0: the composer's own model picker.
++        //
++        // The site labels the button "Open mode picker, currently <model>",
++        // and the chip it shows carries the model without a version
++        // ("Flash-Lite"), so none of the name patterns below matched it: the
++        // picker was never found, no menu ever opened, and the site's models
++        // were never read.
++        const composerPicker = document.querySelector(
++          '.model-picker-container button, .pill-ui-logo-container.gem-menu-redesign button, button[aria-label^="Open mode picker"]'
++        );
++        if (composerPicker && isVisible(composerPicker)) return composerPicker;
++
+         // Method 1: Detect model/mode selector via aria-label patterns.
+         for (const button of buttons) {
+           const aria = normalize(button.getAttribute('aria-label') || '');
+@@ -2604,7 +2724,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -631,7 +774,7 @@ index 46bb556..8763c8c 100644
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,6 +2755,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,6 +2781,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -640,7 +783,7 @@ index 46bb556..8763c8c 100644
                  return structuredCandidate;
              }
              continue;
-@@ -2674,6 +2774,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2800,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -649,7 +792,7 @@ index 46bb556..8763c8c 100644
              return transcriptCandidate;
          }
      }
-@@ -2837,7 +2939,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +2965,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -662,7 +805,7 @@ index 46bb556..8763c8c 100644
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +2951,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +2977,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

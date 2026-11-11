@@ -1,8 +1,7 @@
 # Codex agent and provider routing
 
 This is the canonical repository guide for choosing and invoking agents across
-the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts
-remain the source of truth for exact model settings; this document owns the
+the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts remain the source of truth for exact model settings; this document owns the
 routing policy, execution boundaries, and the setup needed to use the
 versioned local integration safely.
 
@@ -2372,13 +2371,19 @@ single list; the route patterns and the site registry in
     `--thinking` refused every level the site offers and the level could not
     be selected at all. The patch teaches the adapter the site's names, waits
     for the submenu to expand (its items have no size until it does), and
-    finds the "Thinking level" entry wherever the menu keeps it. The bridge
-    asks for the level the operator chose for the role, and only when it
-    differs from the one the site has; a level the site cannot take is a
-    preference it declined, so the turn answers at the level it has rather
-    than failing. ChatGPT has no thinking level of its own: its intelligence
-    level _is_ its model, so the catalog names the model's level and the
-    bridge switches the model instead.
+    finds the "Thinking level" entry wherever the menu keeps it. It also
+    finds the **picker** itself: the site labels the composer's picker "Open
+    mode picker, currently Flash-Lite High" and shows the model without a
+    version, so none of opencli's name patterns matched it, no menu ever
+    opened, and Gemini's models were never read -- which also failed the
+    model's own discovery, so a turn that asked for a model or a level ran at
+    the model the site already had, without saying so. The bridge asks for
+    the level the operator chose for the role, and only when it differs from
+    the one the site has; a level the site cannot take is a preference it
+    declined, so the turn answers at the level it has rather than failing,
+    and a model it cannot take is reported the same way. ChatGPT has no
+    thinking level of its own: its intelligence level _is_ its model, so the
+    catalog names the model's level and the bridge switches the model instead.
   - Each provider's discovery asks the bridge for its own list
     (`GET /v1/models?provider=<provider>`). Reading Gemini's list drives the
     browser and waits behind any turn using that tab, which outlasts the
