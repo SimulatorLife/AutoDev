@@ -39,6 +39,7 @@ The canonical top-level resources are:
 
 ```text
 Configure
+├── Overview
 ├── Agents
 ├── Providers
 ├── MCPs
@@ -386,7 +387,7 @@ Preserve target-specific overrides. Do not invent another AutoDev configuration 
 
 AutoDev-specific runtime state that RuleSync does not model—provider credentials, live health, pricing/catalog facts, routing/cooldown/concurrency state, scheduler/runtime policy—remains owned by typed AutoDev configuration/runtime APIs.
 
-Pinned RuleSync 16.30.2 does not preserve an Agent `enabled` field losslessly across its supported outputs. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
+RuleSync (as of 16.30.2) does not preserve an Agent `enabled` field losslessly across its supported outputs. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
 
 Conceptually:
 

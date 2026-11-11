@@ -97,7 +97,7 @@ defines its chain under the top-level
 
 The default order pins the primary provider and load-balances the rest:
 
-3. `orchestrator`: OpenAI/Codex Luna (pinned first), then Claude Opus, Copilot, and Gemini/Antigravity (randomized)
+3. `orchestrator`: OpenAI/Codex Luna, then Claude Opus, Copilot, and Gemini/Antigravity (randomized)
 
 Differences from a role request:
 
