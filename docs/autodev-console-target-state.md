@@ -293,6 +293,13 @@ console ──> core, data         # data: exported server-only read projections
 - A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
 - Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
 
+### Code organization and replacement boundaries
+
+- Organize by **domain ownership**, with well-named files whose responsibilities match their names. Keep modules cohesive, APIs explicit, dependencies directional, and shared contracts in `core/`; avoid giant mixed-purpose files, hidden cross-workspace imports and needless one-function wrappers.
+- Apply DRY to behavior and configuration, not merely repeated syntax: one owner for routing selection, failure classification, scope resolution, MCP/skill policy, telemetry event construction and typed validation. Remove dead adapters and duplicated implementations when a maintained dependency or shared module satisfies the same contract.
+- Make each executor, router, data adapter and Console client replaceable through typed public interfaces, deterministic contract tests and dependency-injected boundaries; replacing one must not require changing other domains' internals.
+- Keep package ownership, public exports, relevant test locations and subsystem dependencies discoverable in the repository. Static lint/import-boundary checks, unit tests and cross-workspace contract tests guard that structure.
+
 ## 5. Architecture and ownership
 
 ### Observability plane
@@ -354,6 +361,34 @@ Every mutable resource the Console writes publishes that view with its write, an
 Use desired/live/convergence interaction semantics similar to Argo CD where useful, but implement them through AutoDev Runtime/Control API rather than shipping OpenLIT's Controller daemon.
 
 
+### Single installation and lifecycle entrypoint
+
+**One supported install command** (`scripts/install.sh`, delegating to the typed `autodev install` implementation) reconciles AutoDev's user-level setup; provider-specific ensure/bootstrap helpers remain internal reusable steps, not separate manual installation workflows.
+
+- **Idempotent and declarative:** Repeated installs against unchanged desired state make no additional changes. A read-only `--check` reports drift, unmet prerequisites and required actions without writing. Applying changes is atomic where possible; interrupted operations preserve working prior configuration and recover on rerun.
+- **Complete but selective:** One invocation manages the declared global agent skills, MCPs, hooks, role projections, provider integrations, local executables and managed Runtime/Console services; optional providers are installed/activated only when selected and their prerequisites are satisfied.
+- **Non-destructive:** Preserve unrelated user/CLI configuration, custom skills/MCPs, authentication, and manually owned settings. Never overwrite secrets, active sessions or project-tracked files to force reconciliation; conflicts are reported and resolved through a documented owner/override decision.
+- **Verifiable convergence:** The installer checks required binaries, config generation, actual provider/agent tool access, permissions, service health and compatible Control API/Usage contracts; failures report partial/pending state and an actionable remedy, not success.
+- **Acceptance:** clean install, repeat install, `--check` drift/no-write, partial failure/recovery, optional-provider absence, existing user settings, and a second workspace produce deterministic results without duplicate registrations or services.
+
+### Unified user-chat and CLI execution entrypoints
+
+**ChatGPT application (through a supported, authorized integration)** and the **`codex` CLI** are alternative clients of **one AutoDev agent execution/control plane**, not separate orchestrators or permission systems. A ChatGPT application surface must not be assumed capable of invoking local CLIs/MCPs unless its actual integration supports them.
+
+```text
+ChatGPT application adapter (when supported) ─┐
+                                              ├─> AutoDev task/session boundary
+codex CLI / Codex agent client ───────────────┘      └─> role / workspace resolution
+                                                        └─> one router + grants + agent executor
+                                                            └─> tools, MCPs, skills, subagents
+                                                                 └─> Runtime state + OTel history
+```
+
+- Both clients resolve the same workspace, named agent roles, routing priorities, model quota/cooldown state, effective skills/MCPs, approval policy and runtime session identity. Provider/model and tool-loop details stay behind AutoDev execution adapters.
+- Task, parent/child, actor, workspace and session correlation survive across client handoff/resume, cancellation and tool results; the Runtime/Control API is the only action/state owner. A UI client never bypasses the router, role grants or safe fallbacks.
+- Authentication and authorization are verified for each client. A ChatGPT UI session or browser model subscription is **not** permission to run a local shell, read arbitrary repositories, or bypass user confirmation. Unsupported client capabilities report unavailable with the required setup; they are never silently emulated with unapproved local access.
+- Acceptance runs the same permitted task through each *supported* entrypoint and checks equivalent effective role configuration, tool/MCP exposure, permissions, execution results, lineage and telemetry. Differences in presentation do not create separate policies.
+
 ### Role-oriented execution and provider routing
 
 The orchestrator selects a **named task role and capability contract**, not a provider/model. The router chooses an eligible provider and execution transport using explicit operator priorities and observed state. The role mapping must be declared and validated, not guessed:
@@ -402,6 +437,20 @@ Provider authentication, subscription allowances, reset windows and model discov
 **Failure vs. outcome:** Provider failure classes include authentication, invalid model/configuration, transient upstream error, bridge probe failure, throttling, reported quota exhaustion, session limit and unsupported request. Execution outcomes are `success`, `failure`, `cancelled`, `partial` and `unknown`. A transport timeout after work might have begun is **unknown completion** until verified, not proof of provider failure or a safe-to-replay request.
 
 **Delegation contract:** Each child must have a parent/child identity, recorded spawn and completion/failure events, live state, tool/result association, resource/permission budget and observable Codex/Console status. A different transport/UI event format is acceptable only if these invariants and multi-turn continuation survive verified contract tests. Provider-private children cannot silently disappear from tracking.
+
+### Cross-provider agent delegation contract
+
+The model router is the **single allocation authority** for root and leaf execution across eligible providers. Every supported provider must receive a role-correct agent invocation, not an approximation based on its native CLI defaults.
+
+| Requirement | Observable behavior |
+| --- | --- |
+| Role and prompt | Named leaf agents receive the shared leaf-agent prompt plus their role-specific instructions and task/workspace context; no parent orchestration privileges or prompt leakage. |
+| Effective capabilities | Each attempt receives only its resolved, role-allowed skills, MCP servers/tools, permissions and hooks. Provider transport differences must not silently widen or remove required capabilities; incompatible providers are ineligible. |
+| Allocation and load | Provider and model selection obey capability eligibility, per-tier user priority, active session affinity, concurrent-agent limits, quota pools, reported reset windows, and provider health. Independent children may be distributed across distinct providers, with tracked per-child allocation. |
+| Recoverability | Recoverable errors/throttling may skip, wait, recheck or select another eligible provider as `5's routing/cooldown contract permits. A running child with possible side effects is reconciled/resumed before a change of provider; a failed spawn is not a completed child. |
+| Parent/child lifecycle | Spawn requested/admitted/rejected/started/completed/failed/cancelled events retain IDs, reason codes, role, actual provider/model, tool/skill grants and parent visibility. A refusal must not consume an invisible concurrency slot. |
+
+Validate equivalent **effective role grants, leaf prompts, tool execution, session continuity and failure outcomes** for each enabled backend—not merely that a provider advertises support. Provider-native delegation may be used only if it exposes the same ownership and observation contract.
 
 ### Resilience mechanics and provider cooldown policy
 
@@ -461,10 +510,13 @@ An ACP change's mapping and test evidence must be reviewed/approved by the **Aut
 | [`cockatiel`](https://github.com/connor4312/cockatiel) | Generic resilience **mechanics**; §5's resilience table and dependency-first parity rule own the complete policy. |
 | [`p-queue`](https://github.com/sindresorhus/p-queue) | Queue/concurrency primitives only if one existing component cannot meet cross-provider scheduling needs; no duplicate queues. |
 | `@jackwener/opencli` | Browser-backed model bridge, site/session serialization and accepted-turn idempotency. |
-| `@opentelemetry/*` | Official GenAI/MCP traces, metrics, logs, conventions and OTLP exporters. |
-| OpenLIT + ClickHouse | One historical telemetry ingress/query/storage foundation; AutoDev Console is the only operator UI. |
-| PostgreSQL + pgvector; `@letta-ai/trajectory` | Curated task-scoped memory and source-backed trajectory normalization; no second memory authority. |
+| `@opentelemetry/*` | **Instrumenting producers:** standard trace/span context, metrics, logs, GenAI/MCP semantics and authenticated OTLP export. AutoDev-owned spans identify logical tasks, physical attempts, tools and subagents without duplicating usage. |
+| OpenLIT + ClickHouse | **Historical telemetry:** authenticated OTLP receiver, durable time-series/trace storage and fixed, privacy-filtered queries. Not live agent state, configuration writes, a second Console, or another router. |
+| PostgreSQL + pgvector; `@letta-ai/trajectory` | **Experience:** scoped memory records, indexing/retrieval and source-backed trajectory normalization. Not agent routing, live session truth or a separate transcript authority. |
 | External agent harnesses | Allowed **only** as replaceable executors behind the agent port; never a second router, permission authority, Console or runtime control plane. |
+
+Supporting package ownership: `pnpm`/TypeScript/ESLint/Prettier own workspace linking, typechecking, lint and formatting; Next.js/React own the replaceable Console presentation; `@playwright/mcp` and Playwright own role-scoped browser testing. The Runtime/Control API owns authorization and effective capability projection; no observability or test package grants itself agent permissions.
+
 
 **Dependency qualification (auditable):** Validate compatible license, typed stable/documented public API, test coverage, supported Node/TypeScript versions, transitive security posture and patch-response process. Prefer evidence of commits or published releases **within the previous 30 days**; a mature low-churn package may qualify by documented maintained/security-support evidence and explicit approval. Pin/test package and lockfile versions; exercise upgrade and rollback on the contract suite, monitor vulnerabilities, and record why the package reduces ongoing code ownership. Reject an unmaintained or API-incompatible dependency even if it would initially reduce lines of code.
 
@@ -549,13 +601,30 @@ Historical behavior          ← OpenTelemetry / OpenLIT
 
 **Subagent/permissions projection parity:** Provider-native subagent generation is not proof of AutoDev cross-provider role parity. For each CLI, validate the native configuration fields and their supported project/global scope (which can differ among Codex, Claude, Copilot and Antigravity), approval semantics and effective tool/role behavior. A feature being supported by upstream Rulesync does not mean AutoDev has enabled it or that its outputs are losslessly equivalent.
 
+### User-level capabilities and workspace-local resolution
+
+AutoDev installs a **reusable user/global agent, MCP and skill catalogue** that can operate on any explicitly selected codebase. Entering a workspace also discovers its supported project-local skills, MCPs, rules, hooks and provider configuration, then forms **one invocation-scoped effective catalogue**.
+
+| Layer | Authority and composition |
+| --- | --- |
+| User/global | Rulesync-managed shared definitions and approved operator-local additions; globally available defaults, not unconditional tool grants to every agent. |
+| Workspace/local | Validated declarations from the chosen repository (including supported Rulesync and provider-native project files); additive capabilities and scoped instructions with source/revision provenance, not changes to user-global state. |
+| Role/agent | Named agent execution contract selects the allowed leaf prompt, capabilities and tool/MCP subset for the assigned role. |
+| Session/request | Approved workspace root, caller permissions, explicit denials, task-specific approvals and resource budgets restrict the role's grants further. |
+
+- **Resolution:** Identify the exact trusted workspace root and revision; load user and local sources separately; normalize provider-specific formats; apply deterministic namespace/precedence rules; validate; project to the selected backend. A same-name capability conflict must be visible and namespaced or explicitly resolved by the owner—never silently replace a global definition. Report source, effective scope and validation error in the Control API/Console.
+- **Security:** Local codebase config may contribute tools and instructions but may **not elevate** the operator/role's effective permissions, escape the workspace boundary, start unapproved MCP binaries, change global credentials or bypass an explicit deny. For tool permissions, effective access is constrained by the intersection of applicable operator, workspace, role and session policies; unsupported enforcement fails closed.
+- **Portability:** CLI adapters reconcile their native global/project configuration with this effective catalogue. Where a provider only supports global MCP registration, use an isolated invocation profile/tool filter instead of rewriting the user's registry. A backend unable to expose required local MCP/skills or enforce restrictions is ineligible for that assignment.
+- **Isolation:** Switching workspaces removes prior local capabilities and context from the new invocation, retains user-level defaults, and prevents cross-workspace prompt, secret, tool or memory leakage. Refresh invalidated local files deterministically without interrupting already-running sessions unexpectedly.
+- **Acceptance:** Test two repositories with overlapping skill/MCP names, local additions and denies, absent/untrusted project config, per-role tool restrictions, simultaneous child agents on different providers, and workspace switching. Compare each provider's *actual* tool/skill exposure and leaf behavior to the resolved manifest.
+
 ### Policy ownership and enforcement
 
 | Concern | Authoritative contract |
 | --- | --- |
 | Desired permissions and role capabilities | Rulesync where **losslessly representable**; explicit AutoDev/provider-native config otherwise. No contradictory writable copies or invented defaults. |
 | Runtime enforcement | Admission checks, effective role contracts, native CLI/OS/container sandbox, network/filesystem restrictions and role-filtered MCP tools. Prompts and documentation alone are never enforcement. |
-| ACP / external harness approvals | Map to the **same** reviewer and policy; nested children cannot gain authority. Unexpressible or unobserved restrictions fail closed; record denials/cancellation accurately. |
+| ACP / external harness approvals | Pi, acpx and other execution transports may **request or enforce** permissions but never define a separate policy authority: use the same AutoDev reviewer and Rulesync-derived effective policy. Nested children cannot gain authority; unsupported restrictions fail closed. |
 | Effective state | Source → deterministic projection → applied runtime → observed result (`converged`, `pending`, `error`). Every enabled executor must demonstrably enforce equivalent permissions/skills/agent roles; target-specific deviations must be explicit and approved. |
 
 
@@ -1076,6 +1145,26 @@ Use OpenLIT's compact time-scope, summary, and breakdown-chart patterns ([Costs 
 
 Cost is read only from OpenLIT's `gen_ai.usage.cost` attribute and is labeled as an estimate, not a provider bill: stock OpenLIT may compute it from a pricing catalog when no provider-reported amount exists. If no attempt carries a cost value, the Console reports `Not observed`; an empty aggregate is not a measured `$0`.
 
+### Operational coverage, attribution and freshness
+
+The single AutoDev Console combines **live Runtime/Control API state** with **historical OpenTelemetry → OpenLIT/ClickHouse evidence**. A configured, enabled, healthy, exposed, actively used and historically used capability are different facts; never present one as another.
+
+| Signal | Live truth / operator view | Historical evidence |
+| --- | --- | --- |
+| Root orchestrators and leaf agents | Active, queued, waiting, blocked and in-flight counts by role, workspace, actual provider/model and session; enforce the Runtime's concurrency accounting. | Agent lifecycle, duration, final outcomes and per-type counts from source-owned events. |
+| Delegation/spawning | Pending/accepted/rejected/started child attempts and parent-child state; explicit concurrency/permission/unsupported-provider refusals. | Successful, failed, denied and timed-out spawn attempts with reason, provider, role, and child linkage; count attempts separately from running children. |
+| Providers and models | Availability, active agents, effective routes, health, throttle/quota pool, reset time, limits and source freshness. | Logical requests versus physical attempts, success/error/throttle/fallback rates, latency distributions, token/cache usage, estimated cost and model/provider hops. |
+| Skills and tools | Canonical/effective eligible skills and tool capabilities per role/workspace; observed runtime availability when applicable. | Source-confirmed skill reads/uses/errors and tool invocation count, failures and latency; configuration/exposure alone is not usage evidence. |
+| MCP servers | Declared, enabled, allowed, connected/healthy, and currently in use by role/workspace; surface actual observed capability, not guessed readiness. | Source-confirmed server/tool calls, errors, latency and role/provider attribution; unobserved means unknown, not zero. |
+| Safety and operations | Permissions/approval requests, denials, cancellations, load, dropped capacity and live error states where Runtime exposes them. | Rejection/failure classes, retries, circuit/cooldown events, tool denials and recovery results without exposing sensitive inputs. |
+| Telemetry completeness | Last observation, producer/receiver health, observation timestamp, scope coverage and partial/unavailable status. | Last ingested event/lag and missing or unsupported source signals; never manufacture an empty successful history. |
+
+- **Freshness:** Live agent/provider counts refresh from Runtime at least on the existing five-second visible-view cadence and after relevant mutations; streaming updates may complement polling. Historical Usage refreshes on a bounded timer or explicit refresh against its selected time scope. Show timestamps, stale/partial/unavailable signals and loading without replacing last-known facts with invented zeros.
+- **Aggregation:** Preserve one logical task versus N attempts, and one spawn attempt versus N child lifecycle events. A metric has a source-defined numerator, denominator, time window, attribution scope and unknown-value behavior; avoid double-counting retries, nested agents, failed spawns, and tokens.
+- **Usability:** Filter and drill down by workspace, role/agent type, provider/model, outcome and relevant skill/MCP/tool **only where the producer actually knows that dimension**. Link source-confirmed live instances to their permitted session detail and historical observations to redacted traces. Missing dimensions fail closed rather than silently dropping filters.
+- **Evidence:** A dashboard widget is complete only when its source, refresh semantics, error/unavailable behavior, authentication boundary and a source-confirmed positive/zero/partial test are demonstrated; do not add fake panels or a second telemetry dashboard to fill gaps.
+
+
 ### Active Sessions
 
 The Usage scope selector gains an **Active Sessions** option that scopes the page to sessions running right now, instead of to a historical interval.
@@ -1284,6 +1373,15 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Package-cycle and public-export/import-boundary checks enforce the declared dependency graph. Each workspace passes isolated typecheck/tests; affected reverse dependents pass integration contracts. A replacement routing or Console adapter passes consumer-driven contract tests without edits to unrelated packages.
 - Deterministic plan execution and OpenCLI ledger recovery tests prevent unapproved operations and duplicate accepted browser turns. A representative benchmark reports completed task quality, p50/p95 latency and failure/side-effect rates.
 - Dependency evaluation and upgrades validate compatible open-source license, public API, maintenance/security evidence and contract parity; redundant generic resilience mechanisms are absent where Cockatiel covers them.
+
+### Installation, entrypoints, workspace composition and operational evidence
+
+- One repeatable installer and no-write `--check` pass clean/repeat/drift/partial-failure and existing-user-config tests; managed services, role projections and optional providers converge without duplicate registration or secret loss.
+- Both supported ChatGPT-application and `codex` CLI entrypoints resolve to one AutoDev task/session, router, effective grants, delegation and telemetry contract. If a ChatGPT app integration cannot securely execute/route locally, it must report that limitation rather than falsely claim parity.
+- User/global and repository-local definitions compose deterministically for two conflicting workspaces and different providers. Per-role/leaf skills, MCP tools, prompts, hooks and permissions match the effective manifest; a repository cannot expand user-level authority or contaminate another workspace.
+- Concurrent cross-provider subagents honor priority, quota, throttling, capacity, sticky sessions, denial and safe-fallback rules. Spawn requested/admitted/failed/completed accounting and root/leaf lineage match Runtime state and historical OTel evidence.
+- Usage and provider/agent resource views cover the operational signal matrix in `10, refresh with explicit freshness/source attribution, distinguish observed zero from missing evidence, and reconcile live counts with accurately scoped historical attempts.
+
 
 ### Fork/upgrades
 
