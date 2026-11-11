@@ -292,6 +292,8 @@ console ──> core, data         # data: exported server-only read projections
 - Each package documents owner/domain, public API and exports, dependencies, local typecheck/test/build commands and replacement contract in its package README. Maintain a root ownership/dependency map.
 - A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
 - Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
+- Keep modules cohesive and files named for their actual responsibilities; avoid oversized mixed-purpose files and one-function forwarding layers without architectural value.
+- Apply DRY to **behavior and configuration ownership**: one implementation for routing selection, failure classification, capability scope, MCP/skill policy, telemetry events and shared validation. Delete dead/duplicate adapters when a package or shared domain module satisfies the same contract.
 
 ## 5. Architecture and ownership
 
@@ -354,6 +356,47 @@ Every mutable resource the Console writes publishes that view with its write, an
 Use desired/live/convergence interaction semantics similar to Argo CD where useful, but implement them through AutoDev Runtime/Control API rather than shipping OpenLIT's Controller daemon.
 
 
+### Single installation and lifecycle entrypoint
+
+**One supported user-facing installation workflow** is the canonical way to configure, install, update and reconcile AutoDev. Its script name, command syntax, internal implementation and aliases may change without altering this contract. Provider-specific helpers may exist for diagnosis or recovery, but a complete supported installation must not require users to run them separately.
+
+- **Deterministic reconciliation:** Re-running unchanged desired configuration makes no writes or duplicate registrations. The installation workflow provides a **read-only verification mode** that reports local drift, prerequisites and pending changes without mutation, secret disclosure or authenticated provider calls.
+- **Installation scope:** Reconcile selected provider integrations, global agents/skills/MCPs/hooks, role projections, binaries and managed Runtime/Console services. Preserve unrelated user settings, credentials, sessions and project files; surface ownership conflicts instead of overwriting them.
+- **Failure and recovery:** Apply staged/atomic changes where supported; on interruption preserve or restore a working prior state, and make reruns safe. Report configured, converged, pending, failed, skipped and unavailable items separately.
+
+| Validation level | Required behavior |
+| --- | --- |
+| Read-only local verification | No-write verification of files, tool discovery, declarations, generated projections, manifest/config compatibility and managed service definitions; returns actionable drift/errors without presuming provider readiness. |
+| Local post-install | Verify actual generated configurations, executable discovery, installed service ownership and reachable **local** Runtime/Console health where running. |
+| Authenticated end-to-end smoke check (opt-in or explicitly required by deployment policy) | Exercise approved provider tool/MCP/permission behavior and compatible Control API/Usage responses only where credentials, consent and connectivity exist. Record each probe as `observed` (with evidence), `unavailable` (attempt failed), or `skipped` (not attempted/not authorized); never promote skipped checks to success. |
+
+**Acceptance:** A clean installation, idempotent repeat, read-only drift verification, optional-provider absence, existing user configuration, partial failure/recovery and two workspaces converge without duplicate services, modified secrets or false validation claims.
+
+### Unified user-chat and CLI execution entrypoints
+
+**Target:** The ChatGPT application and the `codex` CLI connect to **one AutoDev task/session, routing and permission boundary**. Both are first-class client goals; this target is **unmet** until an authorized ChatGPT integration has been demonstrated end to end. No existing ChatGPT interface should be assumed to invoke local CLIs or MCPs without a supported integration.
+
+```text
+ChatGPT client adapter (requires supported integration) ─┐
+                                                        ├─> AutoDev task/session boundary
+Codex CLI / agent client ────────────────────────────────┘      └─> role + workspace resolution
+                                                                  └─> router + effective grants
+                                                                       └─> executor / MCP / skills / children
+                                                                            └─> Runtime state + OTel history
+```
+
+| Client integration requirement | Evidence |
+| --- | --- |
+| Authenticated transport and capabilities | A supported client-to-AutoDev connector/protocol authenticates the actor, declares whether it can reach a local or remote Runtime, and rejects unsupported local shell/file/MCP access. A ChatGPT subscription alone is not an execution grant. |
+| Task creation | Workspace selection, role/task request, structured validation, task ID, server acknowledgement and explicit denial/error state. |
+| Activity and lifecycle | Source-owned progress, tool/child events, result, cancellation, reconnect and permission approvals use the same typed Runtime contracts as Codex. No second router or approval authority. |
+| Authorization | Workspace bounds and permissions are verified on the AutoDev server; the client cannot add privileges through prompts, untrusted fields or a local/remote connection. |
+| End-to-end acceptance | From **the ChatGPT application itself**, create an approved workspace task, receive tool/subagent updates, handle an approval/denial, cancel or resume as supported, and read the final outcome with correlated telemetry. Compare with the Codex CLI for equivalent effective role grants. |
+
+- **Cross-client identity:** Preserve AutoDev task ID, actor, workspace, parent/child lineage and auditable activity across a handoff. A ChatGPT conversation ID, Codex thread ID and native provider session ID are **not interchangeable**.
+- **Native continuation:** Reuse a provider session across clients only if its transport proves import/resume support. Otherwise begin a distinct, explicitly linked session with a source-backed handoff summary and prior approvals/side effects reconciled; do not pretend it is the same native conversation or replay a potentially mutating turn automatically.
+- **Unavailable integrations:** Report unsupported local execution, transport/approval limitations and missing credentials explicitly. This does not satisfy the ChatGPT integration acceptance criterion; it only prevents false capability claims.
+
 ### Role-oriented execution and provider routing
 
 The orchestrator selects a **named task role and capability contract**, not a provider/model. The router chooses an eligible provider and execution transport using explicit operator priorities and observed state. The role mapping must be declared and validated, not guessed:
@@ -403,6 +446,22 @@ Provider authentication, subscription allowances, reset windows and model discov
 
 **Delegation contract:** Each child must have a parent/child identity, recorded spawn and completion/failure events, live state, tool/result association, resource/permission budget and observable Codex/Console status. A different transport/UI event format is acceptable only if these invariants and multi-turn continuation survive verified contract tests. Provider-private children cannot silently disappear from tracking.
 
+### Cross-provider agent delegation contract
+
+The model router is the **single allocation authority** for root and leaf execution across eligible providers. Every supported provider must receive a role-correct agent invocation, not an approximation based on its native CLI defaults.
+
+| Requirement | Observable behavior |
+| --- | --- |
+| Role and prompt | Named leaf agents receive the shared leaf-agent prompt plus their role-specific instructions and task/workspace context; no parent orchestration privileges or prompt leakage. |
+| Effective capabilities | Resolve a typed per-role/per-task manifest: **required** tool/MCP/skill/hook capabilities constrain routing; **optional** capabilities may be omitted only with a recorded omission and unchanged permissions. Each attempt receives only its actually permitted grants. Providers missing a required capability or its enforcement are ineligible. |
+| Allocation and load | Provider and model selection obey capability eligibility, per-tier user priority, active session affinity, concurrent-agent limits, quota pools, reported reset windows, and provider health. Independent children may be distributed across distinct providers, with tracked per-child allocation. |
+| Recoverability | Only the [router selection order](#role-oriented-execution-and-provider-routing) and [cooldown policy](#resilience-mechanics-and-provider-cooldown-policy), not native CLI fallback defaults, authorize skip/wait/recheck/reroute. Reconcile a running child's possible side effects before hopping; a failed spawn is not a completed child. |
+| Parent/child lifecycle | Spawn requested/admitted/rejected/started/completed/failed/cancelled events retain IDs, reason codes, role, actual provider/model, tool/skill grants and parent visibility. A refusal must not consume an invisible concurrency slot. |
+
+**Capability decision:** The canonical role/task manifest identifies each capability by qualified ID and declares `required` or `optional`, tool-level restrictions, approval category and expected executor support. Missing/unenforceable required capabilities make a provider ineligible; optional omissions are recorded by ID and reason in Runtime's effective manifest and attempt evidence. A capability explicitly denied by policy is not made available by marking it optional.
+
+Validate equivalent **effective role grants, leaf prompts, tool execution, session continuity and failure outcomes** for each enabled backend—not merely advertised provider support. Provider-native delegation requires the same ownership and observation contract.
+
 ### Resilience mechanics and provider cooldown policy
 
 **Cockatiel owns generic retry, backoff, timeout, circuit-breaker, bulkhead and fallback mechanics. AutoDev owns failure classification, quota/reset evidence, cooldown scope, persistence and routing policy.**
@@ -424,6 +483,8 @@ Provider authentication, subscription allowances, reset windows and model discov
 ### Agent execution transport contract: ACP, MCP and Responses
 
 **ACP** controls a complete coding agent; **MCP** exposes tools to an agent; **Responses** exchanges model messages/tool calls with AutoDev's owning agent loop. They are complementary, not interchangeable.
+
+**ACP tradeoff:** A maintained ACP client such as `acpx/runtime` can replace per-agent CLI process supervision, session plumbing, streaming/event parsing, cancellation and permission-request transport. It also introduces an ACP adapter/protocol boundary, version compatibility and possible loss of provider-native Codex tool/child semantics. Prefer it only for complete ACP-capable agents whose measured parity and maintenance savings justify that boundary; retain direct CLI/Responses for model/tool-loop providers or unsupported native behaviors. ACP does not replace MCP, Rulesync, the model router or runtime permission enforcement.
 
 | Transport | Best fit | Required boundary |
 | --- | --- | --- |
@@ -461,10 +522,16 @@ An ACP change's mapping and test evidence must be reviewed/approved by the **Aut
 | [`cockatiel`](https://github.com/connor4312/cockatiel) | Generic resilience **mechanics**; §5's resilience table and dependency-first parity rule own the complete policy. |
 | [`p-queue`](https://github.com/sindresorhus/p-queue) | Queue/concurrency primitives only if one existing component cannot meet cross-provider scheduling needs; no duplicate queues. |
 | `@jackwener/opencli` | Browser-backed model bridge, site/session serialization and accepted-turn idempotency. |
-| `@opentelemetry/*` | Official GenAI/MCP traces, metrics, logs, conventions and OTLP exporters. |
-| OpenLIT + ClickHouse | One historical telemetry ingress/query/storage foundation; AutoDev Console is the only operator UI. |
-| PostgreSQL + pgvector; `@letta-ai/trajectory` | Curated task-scoped memory and source-backed trajectory normalization; no second memory authority. |
+| `@opentelemetry/*` | **Instrumenting producers:** standard trace/span context, metrics, logs, GenAI/MCP semantics and authenticated OTLP export. AutoDev-owned spans identify logical tasks, physical attempts, tools and subagents without duplicating usage. |
+| OpenLIT + ClickHouse | **Historical telemetry:** authenticated OTLP receiver, durable time-series/trace storage and fixed, privacy-filtered queries. Not live agent state, configuration writes, a second Console, or another router. |
+| PostgreSQL + pgvector; `@letta-ai/trajectory` | **Experience:** scoped memory records, indexing/retrieval and source-backed trajectory normalization. Not agent routing, live session truth or a separate transcript authority. |
 | External agent harnesses | Allowed **only** as replaceable executors behind the agent port; never a second router, permission authority, Console or runtime control plane. |
+| `pnpm`, TypeScript, ESLint, Prettier | Shared workspace dependencies, type safety, lint/import boundaries and formatting; no parallel build/toolchain policy per package. |
+| Next.js + React | AutoDev Console's replaceable frontend/rendering stack; reads and mutations honor the typed Control API boundaries. |
+| Playwright + `@playwright/mcp` | Browser acceptance and role-scoped test tools; test infrastructure cannot grant agent permissions. |
+
+
+
 
 **Dependency qualification (auditable):** Validate compatible license, typed stable/documented public API, test coverage, supported Node/TypeScript versions, transitive security posture and patch-response process. Prefer evidence of commits or published releases **within the previous 30 days**; a mature low-churn package may qualify by documented maintained/security-support evidence and explicit approval. Pin/test package and lockfile versions; exercise upgrade and rollback on the contract suite, monitor vulnerabilities, and record why the package reduces ongoing code ownership. Reject an unmaintained or API-incompatible dependency even if it would initially reduce lines of code.
 
@@ -549,13 +616,40 @@ Historical behavior          ← OpenTelemetry / OpenLIT
 
 **Subagent/permissions projection parity:** Provider-native subagent generation is not proof of AutoDev cross-provider role parity. For each CLI, validate the native configuration fields and their supported project/global scope (which can differ among Codex, Claude, Copilot and Antigravity), approval semantics and effective tool/role behavior. A feature being supported by upstream Rulesync does not mean AutoDev has enabled it or that its outputs are losslessly equivalent.
 
+### User-level capabilities and workspace-local resolution
+
+AutoDev discovers user-level agents, skills and MCPs plus trusted workspace-local rules, hooks, tools and configuration. It builds **one invocation-scoped effective catalogue** without changing global definitions or treating discovery as authorization.
+
+| Stage | Contract |
+| --- | --- |
+| 1. Discovery | Read global and selected workspace roots separately; record source, revision, resource kind and trusted root. Repository-declared MCP launch commands are **untrusted candidates**, not executable permissions. |
+| 2. Identity/conflict | Use stable qualified identities such as `user/skill/review` and `workspace/<id>/skill/review`. Same-named entries remain distinct; unqualified lookup succeeds only when exactly one eligible candidate exists. |
+| 3. Role/task eligibility | A typed manifest distinguishes **required** and **optional** capabilities, allowed tools, provider compatibility and approval categories. Local additions may become eligible through approved role policy without pre-existing global entries. |
+| 4. Execution grants | Enforce operator hard denies/limits, workspace restrictions, role/tool allowlists, session limits and required approvals at the **actual Runtime/CLI/OS boundary**. Discovered but ungranted entries cannot execute. |
+| 5. Projection/observation | Produce provider-specific invocation-scoped configuration and expose source, eligibility, grants, actual availability, omissions/denials and revisions through Control API/Console. |
+
+**Deterministic collision rules**
+
+| Case | Required decision |
+| --- | --- |
+| Same unqualified name in global and workspace scopes | Never silently shadow: require qualified reference or operator-approved binding to exactly one qualified resource. Until resolved, the unqualified name is **ambiguous/unavailable**. |
+| Two declarations with identical qualified identity in one scope | Reject as invalid before executing; no filesystem/load-order precedence. |
+| Explicit per-workspace binding | Save the selected qualified ID and expected source revision in AutoDev-owned workspace-scoped configuration. Other workspaces/global defaults remain unchanged; source revision changes invalidate the binding until revalidated. |
+| Explicit deny, untrusted launch or incompatible policy | Denial wins; no project file, prompt, ACP approval transport or provider fallback can turn it into an implicit grant. |
+
+- **Capability versus permission:** Installation/discovery is not eligibility or authorization. A local capability missing from global defaults can be added by a **reviewed workspace-scoped role assignment** if operator policy permits it. Execution also requires caller/session approval and enforcement; a hard deny cannot be approved away.
+- **Approval:** An eligible but approval-gated MCP executable/tool requires the configured AutoDev reviewer before launch/use. Revising the policy itself is a separate authorized configuration mutation; arbitrary workspace files cannot rewrite the reviewer or tool grants.
+- **Provider isolation:** Normalize native project formats without treating them as higher authority. For CLIs supporting only global MCP registration, use an invocation-isolated profile and tool filter. Reject a backend missing required capabilities or restrictions; report optional omissions explicitly.
+- **Workspace switching:** A new invocation loses the previous workspace's local tools, prompts, secrets and memory scope while retaining global defaults. Revision changes must not silently widen grants in active sessions.
+- **Acceptance:** Test colliding global/local names, duplicate identities, approved bindings and stale revisions, denied/untrusted MCP launch, optional versus required tools, simultaneous providers and workspace switching. Compare each provider's actual tool exposure and approval behavior with the effective manifest.
+
 ### Policy ownership and enforcement
 
 | Concern | Authoritative contract |
 | --- | --- |
-| Desired permissions and role capabilities | Rulesync where **losslessly representable**; explicit AutoDev/provider-native config otherwise. No contradictory writable copies or invented defaults. |
-| Runtime enforcement | Admission checks, effective role contracts, native CLI/OS/container sandbox, network/filesystem restrictions and role-filtered MCP tools. Prompts and documentation alone are never enforcement. |
-| ACP / external harness approvals | Map to the **same** reviewer and policy; nested children cannot gain authority. Unexpressible or unobserved restrictions fail closed; record denials/cancellation accurately. |
+| Desired permissions and role capabilities | Rulesync defines portable policy and agent configuration wherever losslessly supported; otherwise explicit AutoDev/provider-native configuration remains the named authority. Discovery is never a permission grant. |
+| Runtime and native enforcement | AutoDev enforces role admission, effective grants and MCP tool filters; the native agent/OS/container sandbox enforces file, network and process restrictions. Approvals and prompt text alone do not enforce restrictions. |
+| ACP / external harness approvals | `acpx` transports ACP permission requests/decisions; it is **not** the policy authority or sandbox. Pi may enforce the approved policy **inside its own agent runtime** when chosen as an executor but cannot override AutoDev. The same AutoDev reviewer handles approvals, and native enforcement must be verified. Children gain no additional authority; unsupported restrictions fail closed. |
 | Effective state | Source → deterministic projection → applied runtime → observed result (`converged`, `pending`, `error`). Every enabled executor must demonstrably enforce equivalent permissions/skills/agent roles; target-specific deviations must be explicit and approved. |
 
 
@@ -1076,6 +1170,29 @@ Use OpenLIT's compact time-scope, summary, and breakdown-chart patterns ([Costs 
 
 Cost is read only from OpenLIT's `gen_ai.usage.cost` attribute and is labeled as an estimate, not a provider bill: stock OpenLIT may compute it from a pricing catalog when no provider-reported amount exists. If no attempt carries a cost value, the Console reports `Not observed`; an empty aggregate is not a measured `$0`.
 
+### Operational coverage, attribution and freshness
+
+The single AutoDev Console combines **live Runtime/Control API state** with **historical OpenTelemetry → OpenLIT/ClickHouse evidence**. A configured, enabled, healthy, exposed, actively used and historically used capability are different facts; never present one as another.
+
+| Signal | Live truth / operator view | Historical evidence |
+| --- | --- | --- |
+| Root orchestrators and leaf agents | Runtime-observed active, queued, waiting, blocked and in-flight counts by role, workspace, actual provider/model and session; pending launches are **not** active agents. | Source-owned lifecycle, durations, terminal outcomes and root/leaf agent-type counts. |
+| Root-orchestrator launch | Root task attempted, admitted, denied, launched or failed-before-start; a rejected/root-start failure remains visible despite never creating an agent session. | Root launch attempts and failure reasons, linked to requesting client, workspace and provider, separate from terminal task outcome. |
+| Orchestrator-to-child delegation | Child spawn requested, admitted, denied, started, pending or failed-before-start; parent and child IDs remain linked. | Source-owned child-spawn success/failure/denial/timeout reasons, distinct from root launches and subsequent child completion outcomes. |
+| Providers and models | Availability, active agents, effective routes, health, throttle/quota pool, reset time, limits and source freshness. | Logical requests versus physical attempts, success/error/throttle/fallback rates, latency distributions, token/cache usage, estimated cost and model/provider hops. |
+| Skills and tools | Canonical/effective eligible skills and tool capabilities per role/workspace; observed runtime availability when applicable. | Source-confirmed skill reads/uses/errors and tool invocation count, failures and latency; configuration/exposure alone is not usage evidence. |
+| MCP servers | Distinguish **declared**, **enabled**, **role-exposed**, **connected/healthy** and **currently in use**. In use means Runtime has observed an **in-flight MCP tool invocation** for that server, attributed to an active task/role/workspace; mere registration, connection or session exposure does not qualify. | Source-confirmed completed MCP tool calls, errors, latency and role/provider attribution. If Runtime cannot observe in-flight calls, live usage is **Not observed**, not inactive. |
+| Safety and operations | Permissions/approval requests, denials, cancellations, load, dropped capacity and live error states where Runtime exposes them. | Rejection/failure classes, retries, circuit/cooldown events, tool denials and recovery results without exposing sensitive inputs. |
+| Telemetry completeness | Last observation, producer/receiver health, observation timestamp, scope coverage and partial/unavailable status. | Last ingested event/lag and missing or unsupported source signals; never manufacture an empty successful history. |
+
+- **Freshness:** While a view is visible, poll live Runtime agent/provider state at least every **five seconds** (or use an equivalent source-driven stream) and revalidate after mutations. Historical Usage widgets **automatically refresh at least once every 60 seconds while visible** unless explicitly paused; also offer manual refresh. Pause or back off when hidden, rate-limited or source-down rather than creating an unbounded retry loop. Always show observation and last-success timestamps. On refresh failure, label any retained last-known snapshot **stale** and surface the error/partial scope; never convert missing evidence to zero or silently show stale counts as current.
+- **Scope:** Active Sessions remains a live Runtime selection, not a historical timerange. Historical refresh never reconstructs active agents from recent spans or replaces authenticated Runtime evidence.
+- **Attempt semantics:** Track separate root-launch and child-spawn identities and stages: `attempted` (received), `admitted` or `rejected` (routing/permission decision), `started` or `failed_before_start` (executor result), and terminal `succeeded`/`failed`/`cancelled`/`unknown` (work outcome after start). Emit each stage at most once per attempt; a retry is a separately correlated attempt, not a duplicate logical task. Count launch success as **started / resolved launch attempts** (started + rejected + failed-before-start); exclude still-pending attempts and report pending/unknown explicitly. Terminal task success uses a separately named numerator/denominator and never treats missing terminal evidence as success.
+- **Aggregation:** Preserve one logical task versus N attempts, and one spawn attempt versus N child lifecycle events. A metric has a source-defined numerator, denominator, time window, attribution scope and unknown-value behavior; avoid double-counting retries, nested agents, failed spawns, and tokens.
+- **Usability:** Filter and drill down by workspace, role/agent type, provider/model, outcome and relevant skill/MCP/tool **only where the producer actually knows that dimension**. Link source-confirmed live instances to their permitted session detail and historical observations to redacted traces. Missing dimensions fail closed rather than silently dropping filters.
+- **Evidence:** Each dashboard signal requires a documented source, time scope, producer/consumer ownership, refresh and error semantics, authentication boundary, aggregation definition and source-backed cases for positive, observed zero, partial/truncated, source-down, authorization denied and stale last-known readings. Do not introduce sample data or another dashboard to conceal missing signals.
+
+
 ### Active Sessions
 
 The Usage scope selector gains an **Active Sessions** option that scopes the page to sessions running right now, instead of to a historical interval.
@@ -1162,7 +1279,7 @@ The browser uses same-origin TypeScript server routes/proxies. The private Contr
 
 The authenticated, read-only `GET /control/contracts` endpoint publishes the Control API compatibility revision shared by Core, Runtime, and Console. Increment that revision when the Console begins requiring a new Control API capability or path, or when an existing payload or authorization contract changes incompatibly. Development and production Console launchers must validate it before serving pages, in addition to validating the OpenLIT Usage response; a missing, stale, or malformed contract blocks startup rather than making every resource page discover incompatibility independently. Do not add legacy payload fallbacks.
 
-The Runtime installer owns the production Console release lifecycle: it materializes the Console LaunchAgent and launcher, confirms service ownership before touching the production artifact, builds into an isolated Next output directory, promotes only a completed build, then reloads and verifies the managed Console process after Runtime. The production launcher validates both backend contracts before serving. `--materialize-only` does not build or restart a live Console; direct `next start` is not a supported deployment path because it bypasses those guarantees.
+The Runtime installer owns the production Console release lifecycle: it materializes the Console LaunchAgent and launcher, confirms service ownership before touching the production artifact, builds into an isolated Next output directory, promotes only a completed build, then reloads and verifies the managed Console process after Runtime. The production launcher validates both backend contracts before serving. A materialization-only operation does not build or restart a live Console; starting the framework directly without the managed launcher is not a supported deployment path because it bypasses those guarantees.
 
 ### Single-user identity and security
 
@@ -1285,6 +1402,15 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Package-cycle and public-export/import-boundary checks enforce the declared dependency graph. Each workspace passes isolated typecheck/tests; affected reverse dependents pass integration contracts. A replacement routing or Console adapter passes consumer-driven contract tests without edits to unrelated packages.
 - Deterministic plan execution and OpenCLI ledger recovery tests prevent unapproved operations and duplicate accepted browser turns. A representative benchmark reports completed task quality, p50/p95 latency and failure/side-effect rates.
 - Dependency evaluation and upgrades validate compatible open-source license, public API, maintenance/security evidence and contract parity; redundant generic resilience mechanisms are absent where Cockatiel covers them.
+
+### Installation, entrypoints, workspace composition and operational evidence
+
+- The single supported installation workflow passes clean-install, repeat/idempotence, read-only drift-verification, partial-failure/recovery and existing-user-configuration tests; managed services, role projections and optional providers converge without duplicate registration or secret loss.
+- Both supported ChatGPT-application and `codex` CLI entrypoints resolve to one AutoDev task/session, router, effective grants, delegation and telemetry contract. If a ChatGPT app integration cannot securely execute/route locally, it must report that limitation rather than falsely claim parity.
+- User/global and repository-local definitions compose deterministically for two conflicting workspaces and different providers. Per-role/leaf skills, MCP tools, prompts, hooks and permissions match the effective manifest; a repository cannot expand user-level authority or contaminate another workspace.
+- Concurrent cross-provider subagents honor priority, quota, throttling, capacity, sticky sessions, denial and safe-fallback rules. Spawn requested/admitted/failed/completed accounting and root/leaf lineage match Runtime state and historical OTel evidence.
+- Usage and provider/agent views satisfy the [operational signal matrix](#operational-coverage-attribution-and-freshness): source-backed tests cover **positive, observed-zero, partial/truncated, source-down, denied and stale** states; both root-orchestrator launches and child-spawn attempts have distinct denominators and outcomes; MCP in-use state requires observed in-flight calls. Visible historical widgets auto-refresh within 60 seconds unless paused; live Runtime state refreshes within five seconds or by an equivalent stream. All views reconcile source timestamps, authorization, privacy, retry deduplication and missing evidence without fabricated zeros.
+
 
 ### Fork/upgrades
 
