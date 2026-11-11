@@ -48,6 +48,10 @@ wastes tokens, and exhausts concurrency slots.
 
 Be sure to give running children enough time to finish. A child may be reading files, running commands, or synthesizing results. If the parent needs to proceed urgently, prompt the child for an interim progress summary rather than closing it. Some model-providers operate much slower than others, and some tasks are inherently long-running. Prefer to let subagents finish their work rather than terminating them prematurely.
 
+### Efficient waits
+
+When several children are active and their results are needed, pass their IDs together to one `wait_agent` call; it returns when the first target reaches a final status. Then wait only for remaining children whose results are still needed. Choose a timeout that matches the work (minutes when appropriate) instead of issuing repeated short, fixed-interval polls. A timeout remains non-terminal and never permits closing or replacing a running child.
+
 ### Parking and session reuse
 
 A child whose status is `completed` has finished its current turn. Instead of

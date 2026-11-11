@@ -1,0 +1,27 @@
+{
+  "permission": {
+    "bash": {
+      "ccc *": "deny",
+      "git checkout *": "deny",
+      "git reset *": "deny",
+      "git stash *": "deny",
+      "git clean *": "deny",
+      "git rebase *": "deny",
+      "git-checkout *": "deny",
+      "git-reset *": "deny",
+      "git-stash *": "deny",
+      "git restore . *": "deny",
+      "git branch -D *": "deny",
+      "git branch --delete-force *": "deny",
+      "git push -f *": "deny",
+      "git push --force *": "deny",
+      "git push --force-with-lease *": "deny",
+      "sudo *": "deny",
+      "su *": "deny",
+      "doas *": "deny",
+      "dd *": "deny",
+      "mkfs *": "deny",
+      "fdisk *": "deny"
+    }
+  }
+}

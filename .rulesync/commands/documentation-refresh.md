@@ -1,10 +1,23 @@
 ---
 targets: ["*"]
-description: Refresh core documentation such as README, docs/ guides, and onboarding notes to reflect the current architecture.
+description: Review and refresh one document in the codebase to ensure it is accurate, up-to-date, and useful.
 ---
 
-# Refresh core documentation
+# Documentation Review and Improvement
 
-Focus on the project's primary documentation surfaces—README, docs/ guides, CHANGELOG entries, onboarding notes, and any top-level usage instructions—to ensure they accurately reflect the current architecture, features, and contributor workflow. Tighten quick-start steps, configuration references, and narrative explanations so new contributors and curious players can ramp up without wading through stale details. Expand or prune sections only where doing so improves accuracy, remove outdated callouts, and cross-link related guides when it boosts discoverability. Leave inline comments, docstrings, and API reference tidy-ups to their dedicated workflow. Keep edits practical, concise, and easy to review so the documentation remains welcoming and trustworthy.
+Review and improve **one documentation file** (README, guides, changelogs, onboarding notes, or usage instructions). Identify and fix **at least 5 distinct issues** across these categories:
 
-Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.
+1. **Verbosity:** Unnecessarily wordy content that can be simplified.
+2. **Missing details:** Important information needed for clarity, accuracy, or completeness.
+3. **Duplication:** Redundant content within or across documents.
+4. **Organization:** Poorly structured, grouped, or misplaced content.
+5. **Formatting:** Paragraphs better presented as lists or tables.
+6. **Ambiguity:** Unclear, contradictory, vague, or meaningless statements.
+7. **Accuracy:** Outdated, incorrect, or misleading information.
+8. **Usability:** Improve quick-start instructions, remove stale content, and cross-link related guides where useful.
+
+Verify against the current codebase, architecture, features, configuration, and contributor workflows.
+
+Keep changes **practical, concise, and easy to review**. Preserve important details. Exclude inline comments, docstrings, and API references from your edits; those have their own dedicated workflow.
+
+**Final review:** Confirm all identified issues are resolved, at least 5 meaningful improvements were made, and no important information was lost. Restore anything inadvertently omitted and flag unresolved inaccuracies.

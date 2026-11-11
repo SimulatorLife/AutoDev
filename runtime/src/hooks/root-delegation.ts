@@ -42,7 +42,11 @@ function shouldInjectOnce(input: HookInput, model: string): boolean {
   const hooksDir = path.join(codexHome(), "hooks");
   const stateFile = path.join(hooksDir, "root-delegation-state.json");
   const lockDir = path.join(hooksDir, "root-delegation-state.lock");
-  mkdirSync(hooksDir, { recursive: true });
+  try {
+    mkdirSync(hooksDir, { recursive: true });
+  } catch {
+    return true;
+  }
 
   // mkdir is the cross-process atomic claim. State holds only hashed turn keys
   // and timestamps; no prompt content, model input, or credentials are stored.
@@ -110,11 +114,24 @@ function shouldInjectOnce(input: HookInput, model: string): boolean {
         .slice(0, DEDUP_MAX_ENTRIES)
     );
     const temporary = `${stateFile}.${process.pid}.tmp`;
-    writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
-    renameSync(temporary, stateFile);
-    return !duplicate;
+    try {
+      writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
+      renameSync(temporary, stateFile);
+      return !duplicate;
+    } catch {
+      try {
+        rmSync(temporary, { force: true });
+      } catch {
+        // State cleanup is best effort; always fail open and emit root policy.
+      }
+      return true;
+    }
   } finally {
-    rmSync(lockDir, { recursive: true, force: true });
+    try {
+      rmSync(lockDir, { recursive: true, force: true });
+    } catch {
+      // A stale lock expires; never let state cleanup suppress root policy.
+    }
   }
 }
 

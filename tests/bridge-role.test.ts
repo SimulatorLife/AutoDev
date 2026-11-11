@@ -354,6 +354,9 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   );
   assert.match(runtimeContract, /Wait timeouts and running children/);
   assert.match(runtimeContract, /Parking and session reuse/);
+  assert.match(runtimeContract, /pass their IDs together to one `wait_agent` call/);
+  assert.match(runtimeContract, /returns when the first target reaches a final status/);
+  assert.match(runtimeContract, /minutes when appropriate.*repeated short/);
   assert.match(runtimeContract, /Never perform global cleanup/);
   // The dedicated runner remains restricted to trusted Runtime context.
   assert.match(

@@ -180,6 +180,77 @@ test("root delegation does not deduplicate when turn identity is incomplete", ()
   );
 });
 
+test("root delegation fails open when deduplication state cannot be created", () => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-state-error-"));
+  mkdirSync(
+    join(home, ".codex", "hooks", "root-delegation-state.json"),
+    { recursive: true }
+  );
+  try {
+    assert.match(
+      runHook(
+        "autodev/orchestrator",
+        "session-with-unwritable-state",
+        "turn-with-unwritable-state",
+        home
+      ),
+      /Root orchestrator bootstrap/
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("root delegation fails open when temporary state cleanup also fails", async () => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-temp-cleanup-"));
+  const codexHome = join(home, ".codex");
+  const hooksDir = join(codexHome, "hooks");
+  mkdirSync(hooksDir, { recursive: true });
+  const child = spawn(process.execPath, [hookModule], {
+    cwd: repositoryRoot,
+    env: {
+      ...process.env,
+      HOME: home,
+      CODEX_HOME: codexHome,
+      AUTODEV_REPO_ROOT: repositoryRoot
+    },
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  assert.ok(child.pid);
+  mkdirSync(join(hooksDir, `root-delegation-state.json.${child.pid}.tmp`));
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const completed = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(stderr))
+    );
+  });
+  child.stdin.end(
+    JSON.stringify({
+      model: "autodev/orchestrator",
+      session_id: "session-with-temp-cleanup-failure",
+      turn_id: "turn-with-temp-cleanup-failure"
+    })
+  );
+  try {
+    await completed;
+    const output = JSON.parse(stdout) as HookOutput;
+    assert.match(
+      output.hookSpecificOutput?.additionalContext ?? "",
+      /Root orchestrator bootstrap/
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("root delegation bounds retries when the lock cannot be inspected", () => {
   const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-bad-lock-"));
   const hooksDir = join(home, ".codex", "hooks");
@@ -231,6 +302,22 @@ test("root delegation injects the typed policy for autodev/orchestrator alias", 
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /orchestrator-test-1/);
   assert.ok(context.length < 9_500, `root hook context is ${context.length} chars`);
+});
+
+test("the root role enables the canonical skill referenced by the compact hook", () => {
+  const role = readFileSync(
+    join(repositoryRoot, "agents", "roles", "orchestrator.toml"),
+    "utf8"
+  );
+  const skill = readFileSync(
+    join(repositoryRoot, ".rulesync", "skills", "orchestration", "SKILL.md"),
+    "utf8"
+  );
+  assert.match(
+    role,
+    /name = "orchestration"\s*\nenabled = true/
+  );
+  assert.match(skill, /source of truth for orchestration policy/);
 });
 
 test("root delegation suppresses policy for leaf models", () => {
