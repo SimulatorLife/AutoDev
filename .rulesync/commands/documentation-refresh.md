@@ -18,6 +18,6 @@ Review and improve **one documentation file** (README, guides, changelogs, onboa
 
 Verify against the current codebase, architecture, features, configuration, and contributor workflows.
 
-Keep changes **practical, concise, and easy to review**. Preserve important details. Exclude inline comments, docstrings, and API references from your edits; those have their own dedicated workflow.
+Keep changes **practical, concise, and easy to review**. Preserve important details. Exclude inline comments, docstrings, and API references.
 
-**Final review:** Confirm all identified issues are resolved, at least 5 meaningful improvements were made, and no important information was lost. Restore anything inadvertently omitted and flag unresolved inaccuracies.
+**Final review:** Confirm all identified issues are resolved, meaningful improvements were made, and no important information was lost. Restore anything inadvertently omitted and flag unresolved inaccuracies.
