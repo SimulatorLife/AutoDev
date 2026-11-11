@@ -360,12 +360,12 @@ The orchestrator selects a **named task role and capability contract**, not a pr
 
 | Agent identity | Routing tier and policy |
 | --- | --- |
-| Root orchestrator | \`Orchestrator\`: its own model priority and session affinity. |
-| Named \`smart\` role when deliberately assigned smart-tier execution | \`Smart\`: distinct from the \`smart\` agent name itself. |
-| \`worker\`, \`explorer\`, \`validator\`, \`docs-researcher\`, \`browser-tester\` and other named children | \`Subagent\` unless their execution contract explicitly selects another supported tier. |
-| Default/root non-orchestrator work | \`Default\`. |
+| Root orchestrator | `Orchestrator`: its own model priority and session affinity. |
+| Named `smart` role when deliberately assigned smart-tier execution | `Smart`: distinct from the `smart` agent name itself. |
+| `worker`, `explorer`, `validator`, `docs-researcher`, `browser-tester` and other named children | `Subagent` unless their execution contract explicitly selects another supported tier. |
+| Default/root non-orchestrator work | `Default`. |
 
-\`Default\`, \`Smart\`, \`Orchestrator\` and \`Subagent\` are **provider-priority tiers**, not aliases for the named-agent catalogue. An unmapped or conflicting role/tier must fail validation; a concrete, explicitly selected provider/model request is not silently reinterpreted as a named role.
+`Default`, `Smart`, `Orchestrator` and `Subagent` are **provider-priority tiers**, not aliases for the named-agent catalogue. An unmapped or conflicting role/tier must fail validation; a concrete, explicitly selected provider/model request is not silently reinterpreted as a named role.
 
 ```text
 Task → named role + capabilities → validated routing tier
@@ -393,13 +393,13 @@ Task → named role + capabilities → validated routing tier
 
 | Backend type | Examples | Contract |
 | --- | --- | --- |
-| Complete autonomous coding-agent CLIs | \`codex\`, \`claude\`, \`agy\`, compatible agents | Own their agent/tool loop; integrate by native CLI or parity-proven ACP. Reuse supported subscription authentication and report source-owned account/quota facts. |
-| Tool-call-capable inference CLI | \`mmx\` | Can declare/return tool calls but does **not** provide the full autonomous file/shell tool loop; the owning agent harness executes tools. Avoid a duplicate harness. |
-| Browser-backed model CLI | \`opencli\` | Bridge model turns through authenticated browser sessions, with site queues, idempotency and an accepted-turn ledger. |
+| Complete autonomous coding-agent CLIs | `codex`, `claude`, `agy`, compatible agents | Own their agent/tool loop; integrate by native CLI or parity-proven ACP. Reuse supported subscription authentication and report source-owned account/quota facts. |
+| Tool-call-capable inference CLI | `mmx` | Can declare/return tool calls but does **not** provide the full autonomous file/shell tool loop; the owning agent harness executes tools. Avoid a duplicate harness. |
+| Browser-backed model CLI | `opencli` | Bridge model turns through authenticated browser sessions, with site queues, idempotency and an accepted-turn ledger. |
 
 Provider authentication, subscription allowances, reset windows and model discovery are backend-specific; do not assume that all CLIs share one quota/authentication model or automatically offer an API-compatible wire protocol.
 
-**Failure vs. outcome:** Provider failure classes include authentication, invalid model/configuration, transient upstream error, bridge probe failure, throttling, reported quota exhaustion, session limit and unsupported request. Execution outcomes are \`success\`, \`failure\`, \`cancelled\`, \`partial\` and \`unknown\`. A transport timeout after work might have begun is **unknown completion** until verified, not proof of provider failure or a safe-to-replay request.
+**Failure vs. outcome:** Provider failure classes include authentication, invalid model/configuration, transient upstream error, bridge probe failure, throttling, reported quota exhaustion, session limit and unsupported request. Execution outcomes are `success`, `failure`, `cancelled`, `partial` and `unknown`. A transport timeout after work might have begun is **unknown completion** until verified, not proof of provider failure or a safe-to-replay request.
 
 **Delegation contract:** Each child must have a parent/child identity, recorded spawn and completion/failure events, live state, tool/result association, resource/permission budget and observable Codex/Console status. A different transport/UI event format is acceptable only if these invariants and multi-turn continuation survive verified contract tests. Provider-private children cannot silently disappear from tracking.
 
@@ -409,10 +409,10 @@ Provider authentication, subscription allowances, reset windows and model discov
 
 | Kind | Eligibility and scope | Last resort | Persistence / recovery |
 | --- | --- | --- | --- |
-| \`transient\` | Recoverable failure or limit only inferred from prose; bounded escalating backoff on the affected route. | Eligible only when healthy alternatives are exhausted. | Ephemeral across restart; clears on expiry or scoped successful observation. |
-| \`hard\` | Provider-**reported** \`quota_exhausted\`/\`session_limit\`; preserve provider/model/quota-pool scope and reset deadline. | **Ineligible while a known reset time is in the future**; if the provider supplied no reset, bounded last-resort probing may be permitted. | Durable across restart with source, scope, deadline and recovery metadata; expire/revalidate by reported reset. |
-| \`probe\` | Failed bridge health check, not an account/model quota event; short bounded escalating suppression. | Eligible after regular candidates are exhausted. | Ephemeral; recheck bridge health independently without cooling unrelated routes. |
-| \`config\` | Invalid model disables **only that model**; authentication affects the credential/account/profile scope, not unrelated accounts. | Ineligible pending correction or explicit successful recheck. | Ephemeral suppression; persistent configuration errors remain visible until corrected, without unbounded retries. |
+| `transient` | Recoverable failure or limit only inferred from prose; bounded escalating backoff on the affected route. | Eligible only when healthy alternatives are exhausted. | Ephemeral across restart; clears on expiry or scoped successful observation. |
+| `hard` | Provider-**reported** `quota_exhausted`/`session_limit`; preserve provider/model/quota-pool scope and reset deadline. | **Ineligible while a known reset time is in the future**; if the provider supplied no reset, bounded last-resort probing may be permitted. | Durable across restart with source, scope, deadline and recovery metadata; expire/revalidate by reported reset. |
+| `probe` | Failed bridge health check, not an account/model quota event; short bounded escalating suppression. | Eligible after regular candidates are exhausted. | Ephemeral; recheck bridge health independently without cooling unrelated routes. |
+| `config` | Invalid model disables **only that model**; authentication affects the credential/account/profile scope, not unrelated accounts. | Ineligible pending correction or explicit successful recheck. | Ephemeral suppression; persistent configuration errors remain visible until corrected, without unbounded retries. |
 
 - Only corroborated structured provider evidence creates hard quota state; lexical guesses remain transient. A successful attempt clears only its own route/pool. Preserve distinct pools such as Antigravity first-party and third-party model families.
 - Provider-wide health is unavailable only if its global scope fails or **all** independent pools are exhausted; a single throttled model must not render other models unhealthy.
@@ -536,7 +536,7 @@ Preserve target-specific overrides. Do not invent another AutoDev configuration 
 
 AutoDev-specific runtime state that RuleSync does not model—provider credentials, live health, pricing/catalog facts, routing/cooldown/concurrency state, scheduler/runtime policy—remains owned by typed AutoDev configuration/runtime APIs.
 
-RuleSync (as of 16.30.2) does not preserve an Agent `enabled` field losslessly across its supported outputs. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
+When RuleSync cannot round-trip an Agent `enabled` field losslessly, Runtime owns named-role enablement and its revision generations; no generated role TOML or provider projection may invent unsupported fields. Runtime enforces disabled named-role aliases at admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
 
 Conceptually:
 

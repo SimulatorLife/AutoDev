@@ -1951,61 +1951,103 @@ test("Console form interactions forbid document reload while preserving intentio
   );
 });
 
-
-test("unified AutoDev target defines dependency, agent transport, permission and telemetry invariants", () => {
-  const target = readFileSync(targetStatePath, "utf8");
-  assert.match(target, /^# AutoDev — Unified Target State$/mu);
-  for (const invariant of [
-    "Role-oriented execution and provider routing",
-    "Agent execution transport contract: ACP, MCP and Responses",
-    "ACP equivalence gate",
-    "Codex-specific tools, session semantics or child visibility",
-    "Dependency ownership and maintainability",
-    "package.json",
-    "acpx/runtime",
-    "@agentclientprotocol/sdk",
-    "@modelcontextprotocol/sdk",
-    "cockatiel",
-    "OpenTelemetry",
-    "OpenLIT",
-    "ClickHouse",
-    "PostgreSQL",
-    "pgvector",
-    "Unified permissions and actual enforcement",
-    "Latency, local delegation and OpenCLI",
-    "Execution observability and experience"
+// Documentation-structure assertions do not prove the runtime meets ACP, quota,
+// Cockatiel, or permission invariants. Those require executable adapter/fault tests.
+test("unified target has one source of authority and nonduplicated subsystem contracts", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  assert.match(doc, /^# AutoDev — Unified Target State$/mu);
+  const headings = doc.match(/^#{1,3} .+$/gmu) ?? [];
+  for (const heading of [
+    "## 4. Repository and module architecture",
+    "### Role-oriented execution and provider routing",
+    "### Resilience mechanics and provider cooldown policy",
+    "### Agent execution transport contract: ACP, MCP and Responses",
+    "### Dependency ownership and maintainability",
+    "### Latency, local delegation and OpenCLI",
+    "### Execution observability and experience",
+    "## 6. RuleSync and configuration authority",
+    "### Policy ownership and enforcement",
+    "## 10. Usage and telemetry contract"
   ]) {
-    assert.ok(target.includes(invariant), "Missing unified target-state contract: " + invariant);
+    assert.equal(
+      headings.filter((entry) => entry === heading).length,
+      1,
+      "Missing or duplicated target-state section: " + heading
+    );
   }
-  assert.equal(
-    existsSync(new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)),
-    false,
-    "Superseded hybrid CLI target document must not remain alongside canonical target"
+  assert.equal(existsSync(new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)), false);
+});
+
+test("resilience and ACP gates have reviewable structural tables", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const policy = doc.slice(
+    doc.indexOf("### Resilience mechanics and provider cooldown policy"),
+    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses")
   );
-});
-
-test("unified AutoDev target enforces workspace modularity and Cockatiel adoption", () => {
-  const target = readFileSync(targetStatePath, "utf8");
-  for (const invariant of [
-    "independently testable, loosely coupled, replaceable workspaces",
-    "One atomic change",
-    "Workspace independence and replaceability requirements",
-    "a directed, acyclic dependency graph",
-    "public package contracts",
-    "dedicated **model-routing workspace**",
-    "ModelRouter",
-    "shared toolchain versions",
-    "Resilience mechanics and provider cooldown policy",
-    "cockatiel",
-    "replace equivalent AutoDev-owned generic implementations",
-    "`transient`",
-    "`hard`",
-    "`probe`",
-    "`config`",
-    "provider-, model- and quota-pool-scoped",
-    "Dependency-first parity rule",
-    "the bespoke equivalent **must be removed**"
+  assert.match(policy, /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u);
+  for (const kind of ["transient", "hard", "probe", "config"]) {
+    assert.ok(policy.includes("| " + String.fromCharCode(96) + kind + String.fromCharCode(96) + " |"));
+  }
+  const acp = doc.slice(
+    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses"),
+    doc.indexOf("### Dependency ownership and maintainability")
+  );
+  for (const criterion of [
+    "Tool/child continuity",
+    "Sessions and recovery",
+    "Provider correctness",
+    "Observability and memory",
+    "Engineering decision"
   ]) {
-    assert.ok(target.includes(invariant), "Missing modularity/resilience target: " + invariant);
+    assert.ok(acp.includes("| " + criterion + " |"), "Missing ACP gate: " + criterion);
   }
 });
+
+test("actual workspace package dependencies remain declared and acyclic", () => {
+  type Manifest = {
+    name: string;
+    main?: string;
+    exports?: unknown;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const yaml = readFileSync(new URL("pnpm-workspace.yaml", repositoryRoot), "utf8");
+  const manifests = new Map<string, Manifest>();
+  const baseline = ["core", "data", "runtime", "console"];
+  for (const folder of baseline) {
+    assert.ok(yaml.split("\n").some((line) => line.trim() === "- " + folder));
+    const manifest = JSON.parse(
+      readFileSync(new URL(folder + "/package.json", repositoryRoot), "utf8")
+    ) as Manifest;
+    assert.ok(manifest.name.startsWith("@simulatorlife/autodev-"));
+    assert.ok(manifest.exports !== undefined || typeof manifest.main === "string");
+    manifests.set(manifest.name, manifest);
+  }
+  const dependencies = new Map<string, string[]>();
+  for (const [name, manifest] of manifests) {
+    const owned: string[] = [];
+    for (const [dependency, version] of Object.entries({
+      ...manifest.dependencies,
+      ...manifest.devDependencies
+    })) {
+      if (!dependency.startsWith("@simulatorlife/autodev-")) continue;
+      assert.ok(version.startsWith("workspace:"), "Expected a workspace protocol for " + dependency);
+      assert.ok(manifests.has(dependency), "Missing required workspace " + dependency);
+      owned.push(dependency);
+    }
+    dependencies.set(name, owned);
+  }
+  const active = new Set<string>();
+  const visited = new Set<string>();
+  const check = (name: string): void => {
+    if (visited.has(name)) return;
+    assert.ok(!active.has(name), "Workspace dependency cycle at " + name);
+    active.add(name);
+    for (const dependency of dependencies.get(name) ?? []) check(dependency);
+    active.delete(name);
+    visited.add(name);
+  };
+  for (const name of manifests.keys()) check(name);
+  assert.deepEqual(dependencies.get("@simulatorlife/autodev-core"), []);
+});
+
