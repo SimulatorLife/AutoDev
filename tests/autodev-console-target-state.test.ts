@@ -1983,3 +1983,29 @@ test("unified AutoDev target defines dependency, agent transport, permission and
     "Superseded hybrid CLI target document must not remain alongside canonical target"
   );
 });
+
+test("unified AutoDev target enforces workspace modularity and Cockatiel adoption", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  for (const invariant of [
+    "independently testable, loosely coupled, replaceable workspaces",
+    "one atomic change",
+    "Workspace independence and replaceability requirements",
+    "a directed, acyclic dependency graph",
+    "public package contracts",
+    "dedicated **model-routing workspace**",
+    "ModelRouter",
+    "shared toolchain versions",
+    "Resilience mechanics and provider cooldown policy",
+    "cockatiel",
+    "replace equivalent AutoDev-owned generic implementations",
+    "`transient`",
+    "`hard`",
+    "`probe`",
+    "`config`",
+    "provider-, model- and quota-pool-scoped",
+    "Dependency-first parity rule",
+    "the bespoke equivalent **must be removed**"
+  ]) {
+    assert.ok(target.includes(invariant), "Missing modularity/resilience target: " + invariant);
+  }
+});

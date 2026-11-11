@@ -224,7 +224,9 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 
 ## 4. Repository and module architecture
 
-AutoDev is a **small, flat pnpm TypeScript monorepo**. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
+AutoDev is a **small, flat pnpm TypeScript monorepo** comprising **independently testable, loosely coupled, replaceable workspaces**. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
+
+**Why a monorepo:** One atomic change can update contracts and consumers across projects; shared code and dependencies remain discoverable and reusable; root-level TypeScript, formatting, lint, testing and CI standards stay consistent; onboarding and cross-workspace CI/CD remain straightforward; and AI assistants can inspect the relevant source, contracts, tests and configuration in one versioned checkout. A shared lockfile and workspace protocol minimize duplicate dependency versions and dependency-management drift. Workspace isolation must also make replacement of a Console frontend, model router, provider transport or persistence backend feasible **without** rewriting unrelated subsystems.
 
 ```text
 AutoDev/
@@ -243,7 +245,7 @@ AutoDev/
 └── rulesync.jsonc
 ```
 
-The four code workspaces are the intended durable boundaries:
+The four principal code workspaces are the baseline domain boundaries; their package APIs, not their physical co-location, define coupling:
 
 | Module   | Owns                                                                                                                                                    |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -251,6 +253,8 @@ The four code workspaces are the intended durable boundaries:
 | runtime/ | long-running execution, provider/router behavior, agents, MCPs, hooks, runtime health, reconciliation, Control API, and Console build/process lifecycle |
 | core/    | infrastructure-independent domain types/contracts and pure rules                                                                                        |
 | data/    | typed adapters/repositories for RuleSync, OpenLIT/ClickHouse, Memory, evaluations, workspace/configuration, and other persistent/external boundaries    |
+
+A dedicated **model-routing workspace** (for example `router/`) is appropriate when routing has a coherent API, independently testable selection/policy behavior, and enough separation from request serving to justify its own package. It may expose a replaceable `ModelRouter`/routing-engine interface with provider capability and failure contracts in `core/`. Keep providers, request serving, and orchestration insulated from a particular routing implementation. Do not introduce an otherwise empty package, duplicate a scheduler/control plane, or split packages merely to mirror directories; the target is **strong boundaries**, not a fixed workspace count.
 
 Inside console/, keep navigation resources as feature folders, including github/. Do not create agents/, skills/, mcps/, prompts/, etc. as separate packages merely because they are top-level UI resources.
 
@@ -279,7 +283,16 @@ Rules:
 - console/ owns the shared UI library until a real second UI consumer exists.
 - shared producer telemetry stays under runtime/src/telemetry/ unless multiple independent producers justify extraction.
 - .rulesync/, config/, .github/, and docs/ remain root concerns, not software workspaces.
-- all four code workspaces share root formatting/lint/test/TypeScript policy.
+- all four code workspaces share root formatting/lint/test/TypeScript policy; additional workspaces must obey the same rules.
+
+**Workspace independence and replaceability requirements**
+
+- Each workspace owns one coherent domain, a declared `package.json` with intentional public `exports`, its own typecheck/tests, and a minimal documented dependency surface. Cross-workspace imports use public package contracts (`workspace:*`), not relative/deep imports into internal files.
+- Preserve a directed, acyclic dependency graph: `core/` stays pure; `data/` adapts external persistence and configuration; `runtime/` composes orchestration, router, providers and Control API; `console/` uses stable typed read/control contracts, not router or database internals. Avoid mutual workspace dependencies and hidden singletons that prevent isolated tests or substitution.
+- Express swappable infrastructure through domain ports and adapters (routing, model transport, persistence, telemetry querying, Console frontend). A replacement must preserve typed contracts, effective permissions, user-visible behavior, telemetry and migration-safe state semantics; integration tests must run against alternative implementations where replacement is a design goal.
+- Keep all related changes in **one atomic repository change**, including API/contracts, affected workspace implementations, migrations, tests and documentation. Root tooling runs workspace-targeted checks plus affected cross-workspace integration tests; CI must detect dependency impacts and preserve the ability to validate the full monorepo.
+- Centralize shared toolchain versions, lockfile and configuration; avoid unnecessary duplicate dependencies, custom release pipelines or local forks. A contributor or AI assistant must be able to discover ownership, public APIs, dependency direction and relevant commands without tracing undocumented cross-package internals.
+- Add or extract a workspace when independent ownership, multiple consumers, test isolation or replaceability measurably improves maintainability. Consolidate boundaries that merely forward APIs or create needless indirection; replacing a dependency must not require rewriting the orchestrator, Console or unrelated workspaces.
 
 ## 5. Architecture and ownership
 
@@ -367,6 +380,23 @@ Task → role/capability contract → Runtime router
 - **Sessions and delegation:** Track root/leaf sessions, children, reused sessions, correlation and ownership. Preserve native Codex-visible child agents or provide a verified, explicit equivalent; provider-private child spawning must not become invisible activity. Enforce permission and capacity budgets across nested delegation.
 - **Outcomes:** Report `success`, `failure`, `cancelled`, `partial` and `unknown` distinctly. Capture evidence, validation status, actual side effects, retry provenance, and usable resumability without conflating request acceptance with completed work.
 
+### Resilience mechanics and provider cooldown policy
+
+**Use [`cockatiel`](https://github.com/connor4312/cockatiel) as the preferred installed TypeScript resilience dependency** for retry policies, bounded/exponential backoff with jitter, timeouts, circuit breakers, isolation and fallback mechanics. When its public APIs can preserve required behavior, **replace equivalent AutoDev-owned generic implementations** instead of retaining them beside the dependency. The rationale is fewer custom state machines, timers and retry loops, better-tested behavior and lower long-term maintenance cost. Keep custom code only for AutoDev's domain policy, persistence, provider evidence adapters and unmatched semantics.
+
+| Failure/cooldown kind | Non-negotiable domain behavior | Reusable mechanics |
+| --- | --- | --- |
+| `transient` | Classify recoverable failures; bounded attempts and cooldown/backoff without incorrectly marking permanent quota exhaustion. | Cockatiel retry/backoff/timeout/breaker primitives, with cancellation-aware execution. |
+| `hard` | A provider-confirmed `quota_exhausted` or `session_limit` uses its reported reset time (or a bounded safe fallback), is scoped to the affected provider/model/quota pool and persists appropriately across restarts. | Domain-owned reset deadline, scope and durable state; Cockatiel only for eligible post-reset retries/probes, **not** as the source of quota truth. |
+| `probe` | Short, bounded, escalating suppression of an unreachable bridge with independent rechecks and recovery; failed health checks must not poison unrelated pools. | Cockatiel backoff/timeout/circuit-breaker mechanics keyed at the correct scope. |
+| `config` | Authentication and invalid-model errors are classified separately; reject/disable only the affected route or model, with actionable operator feedback rather than retry storms. | Fail-fast or narrowly gated reprobes; do not use transient retry policy for known-invalid configuration. |
+
+- Keep AutoDev's **provider-, model- and quota-pool-scoped** state and failure vocabulary. Structured provider-reported limits and reset times override inferred text; a limited subprovider or model must not disable other available capacity.
+- Use one classification-to-policy mapping shared by probes, dispatch, retry/failover and health reporting. A library breaker alone must not decide provider priority, last-resort eligibility, quota resets, user-configured limits or session affinity.
+- Compose resilience policies without multiplying attempts across wrapper layers. Cancellation/client disconnect does not trigger a provider cooldown; an accepted or potentially side-effecting task is never blindly retried or rerouted.
+- Preserve bounded attempts, reset-time accuracy, expiry/recovery, persisted hard state, concurrency limits, observability and operator-facing status. Test each failure class and scope using injectable clocks, controlled failures, concurrent calls and restart simulations.
+- **Dependency-first parity rule:** If Cockatiel covers retry, timeout, backoff, breaker, bulkhead or fallback mechanics and the mapped contract passes tests, the bespoke equivalent **must be removed**. If a behavior cannot be expressed, document the specific gap and keep only the smallest domain-specific adapter—not a complete duplicate resilience framework.
+
 ### Agent execution transport contract: ACP, MCP and Responses
 
 These protocols solve different problems: **ACP** connects a client to a complete coding agent and its session/tool loop; **MCP** connects agents to tools; **OpenAI Responses** is an inference/tool-call interface used by the provider router. They are complementary; MCP support does not establish ACP support.
@@ -405,7 +435,7 @@ A failed gate means **retain the direct adapter** for that behavior. In particul
 | [`acpx`](https://github.com/openclaw/acpx) (`acpx/runtime`) | Preferred **reusable ACP client/session/CLI process layer** when the equivalence gate passes; not an alternative router or approval authority. |
 | [`@agentclientprotocol/sdk`](https://github.com/agentclientprotocol/typescript-sdk) | Typed ACP protocol adapter only if necessary; avoid a bespoke client protocol. |
 | `@modelcontextprotocol/sdk` | Shared MCP protocol/tools; preserve role-scoped exposure and delegated spawn contracts. |
-| [`cockatiel`](https://github.com/connor4312/cockatiel) | Candidate for **generic** timeouts, retries, backoff, circuit breakers; never replace domain-specific provider quota/reset/cooldown rules with generic breaker state. |
+| [`cockatiel`](https://github.com/connor4312/cockatiel) | **Preferred, dependency-first resilience mechanics**: retries, timeouts, backoff, circuit breakers, isolation and fallback. Replace custom generic equivalents after behavioral parity tests; retain only provider-specific classification, quota/reset, cooldown scopes and persistence outside the library. |
 | [`p-queue`](https://github.com/sindresorhus/p-queue) | Optional scheduler primitive only if necessary for cross-provider admission beyond existing session/site queues; do not duplicate queues. |
 | `@jackwener/opencli` | Browser-backed provider access; reuse its supported CLI/library interface, retaining per-site serialization, session idempotency and provider-specific bridge correctness. |
 | `@opentelemetry/*` | Official traces, metrics, logs, semantic conventions and OTLP exporters; no custom telemetry protocol. |
@@ -1223,7 +1253,8 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Role selection is provider-independent, and priority, capability, model/effort eligibility, account readiness, cooldown scope, quota reset, concurrency, session affinity, and persisted operator overrides steer every route correctly.
 - Direct CLI/Responses and ACP executors, when enabled, enforce identical effective permissions and report truthful completion, session, child, tool, provider-hop, usage and memory provenance facts.
 - ACP is used only when the **ACP equivalence gate** above is satisfied for the specific agent/role; Codex-native continuation and child visibility cannot silently disappear.
-- Dependency reuse is supported by package-managed, pinned, maintained open-source TypeScript libraries with validated API and license compatibility. No vendored snippets, shadow process managers, second routers, duplicate schedulers, alternate memory stores or telemetry stacks.
+- Dependency reuse is supported by package-managed, pinned, maintained open-source TypeScript libraries with validated API and license compatibility. Prefer Cockatiel for generic resilience mechanics and **remove equivalent custom retry/backoff/breaker code** when parity is proven; preserve transient/hard/probe/config classifications, reset-time and quota-pool semantics. No vendored snippets, shadow process managers, second routers, duplicate schedulers, alternate memory stores or telemetry stacks.
+- The flat pnpm monorepo supports atomic cross-project changes, discoverable public package APIs, independent workspace validation, shared dependency/toolchain management, and a directed dependency graph. A Console, routing engine, provider executor or storage adapter can be replaced through typed boundaries without modifying unrelated workspaces.
 - Browser-backed/model-only providers use the appropriate tool-loop bridge rather than pretending to be complete ACP agents. OpenCLI batching and optional local inference require measured improvements in completed task latency and quality.
 - Error recovery is idempotent when possible; indeterminate mutating turns are reconciled before retries or provider hops. Missing evidence remains unknown, not success or zero.
 
