@@ -292,13 +292,8 @@ console ──> core, data         # data: exported server-only read projections
 - Each package documents owner/domain, public API and exports, dependencies, local typecheck/test/build commands and replacement contract in its package README. Maintain a root ownership/dependency map.
 - A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
 - Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
-
-### Code organization and replacement boundaries
-
-- Organize by **domain ownership**, with well-named files whose responsibilities match their names. Keep modules cohesive, APIs explicit, dependencies directional, and shared contracts in `core/`; avoid giant mixed-purpose files, hidden cross-workspace imports and needless one-function wrappers.
-- Apply DRY to behavior and configuration, not merely repeated syntax: one owner for routing selection, failure classification, scope resolution, MCP/skill policy, telemetry event construction and typed validation. Remove dead adapters and duplicated implementations when a maintained dependency or shared module satisfies the same contract.
-- Make each executor, router, data adapter and Console client replaceable through typed public interfaces, deterministic contract tests and dependency-injected boundaries; replacing one must not require changing other domains' internals.
-- Keep package ownership, public exports, relevant test locations and subsystem dependencies discoverable in the repository. Static lint/import-boundary checks, unit tests and cross-workspace contract tests guard that structure.
+- Keep modules cohesive and files named for their actual responsibilities; avoid oversized mixed-purpose files and one-function forwarding layers without architectural value.
+- Apply DRY to **behavior and configuration ownership**: one implementation for routing selection, failure classification, capability scope, MCP/skill policy, telemetry events and shared validation. Delete dead/duplicate adapters when a package or shared domain module satisfies the same contract.
 
 ## 5. Architecture and ownership
 
@@ -363,31 +358,44 @@ Use desired/live/convergence interaction semantics similar to Argo CD where usef
 
 ### Single installation and lifecycle entrypoint
 
-**One supported install command** (`scripts/install.sh`, delegating to the typed `autodev install` implementation) reconciles AutoDev's user-level setup; provider-specific ensure/bootstrap helpers remain internal reusable steps, not separate manual installation workflows.
+**Canonical public install command:** `bash scripts/install.sh`. The shell entrypoint invokes the typed `autodev install` implementation; `pnpm run install:codex` is an alias for the same workflow, not another installer. Provider-specific `ensure-*` commands are callable for troubleshooting and recovery but must not be prerequisites for a successful supported installation.
 
-- **Idempotent and declarative:** Repeated installs against unchanged desired state make no additional changes. A read-only `--check` reports drift, unmet prerequisites and required actions without writing. Applying changes is atomic where possible; interrupted operations preserve working prior configuration and recover on rerun.
-- **Complete but selective:** One invocation manages the declared global agent skills, MCPs, hooks, role projections, provider integrations, local executables and managed Runtime/Console services; optional providers are installed/activated only when selected and their prerequisites are satisfied.
-- **Non-destructive:** Preserve unrelated user/CLI configuration, custom skills/MCPs, authentication, and manually owned settings. Never overwrite secrets, active sessions or project-tracked files to force reconciliation; conflicts are reported and resolved through a documented owner/override decision.
-- **Verifiable convergence:** The installer checks required binaries, config generation, actual provider/agent tool access, permissions, service health and compatible Control API/Usage contracts; failures report partial/pending state and an actionable remedy, not success.
-- **Acceptance:** clean install, repeat install, `--check` drift/no-write, partial failure/recovery, optional-provider absence, existing user settings, and a second workspace produce deterministic results without duplicate registrations or services.
+- **Deterministic reconciliation:** Re-running unchanged desired configuration makes no writes or duplicate registrations. `bash scripts/install.sh --check` reports local drift, prerequisites and pending changes **without mutation, secret disclosure or authenticated provider calls**.
+- **Installation scope:** Reconcile selected provider integrations, global agents/skills/MCPs/hooks, role projections, binaries and managed Runtime/Console services. Preserve unrelated user settings, credentials, sessions and project files; surface ownership conflicts instead of overwriting them.
+- **Failure and recovery:** Apply staged/atomic changes where supported; on interruption preserve or restore a working prior state, and make reruns safe. Report configured, converged, pending, failed, skipped and unavailable items separately.
+
+| Validation level | Required behavior |
+| --- | --- |
+| Local `--check` | No-write verification of files, tool discovery, declarations, generated projections, manifest/config compatibility and managed service definitions; returns actionable drift/errors without presuming provider readiness. |
+| Local post-install | Verify actual generated configurations, executable discovery, installed service ownership and reachable **local** Runtime/Console health where running. |
+| Authenticated end-to-end smoke check (opt-in or explicitly required by deployment policy) | Exercise approved provider tool/MCP/permission behavior and compatible Control API/Usage responses only where credentials, consent and connectivity exist. Record each probe as `observed` (with evidence), `unavailable` (attempt failed), or `skipped` (not attempted/not authorized); never promote skipped checks to success. |
+
+**Acceptance:** clean install, idempotent repeat, `--check` no-write/drift, optional-provider absence, existing user configuration, partial failure/recovery and two workspaces must converge without duplicate services, modified secrets or false validation claims.
 
 ### Unified user-chat and CLI execution entrypoints
 
-**ChatGPT application (through a supported, authorized integration)** and the **`codex` CLI** are alternative clients of **one AutoDev agent execution/control plane**, not separate orchestrators or permission systems. A ChatGPT application surface must not be assumed capable of invoking local CLIs/MCPs unless its actual integration supports them.
+**Target:** The ChatGPT application and the `codex` CLI connect to **one AutoDev task/session, routing and permission boundary**. Both are first-class client goals; this target is **unmet** until an authorized ChatGPT integration has been demonstrated end to end. No existing ChatGPT interface should be assumed to invoke local CLIs or MCPs without a supported integration.
 
 ```text
-ChatGPT application adapter (when supported) ─┐
-                                              ├─> AutoDev task/session boundary
-codex CLI / Codex agent client ───────────────┘      └─> role / workspace resolution
-                                                        └─> one router + grants + agent executor
-                                                            └─> tools, MCPs, skills, subagents
-                                                                 └─> Runtime state + OTel history
+ChatGPT client adapter (requires supported integration) ─┐
+                                                        ├─> AutoDev task/session boundary
+Codex CLI / agent client ────────────────────────────────┘      └─> role + workspace resolution
+                                                                  └─> router + effective grants
+                                                                       └─> executor / MCP / skills / children
+                                                                            └─> Runtime state + OTel history
 ```
 
-- Both clients resolve the same workspace, named agent roles, routing priorities, model quota/cooldown state, effective skills/MCPs, approval policy and runtime session identity. Provider/model and tool-loop details stay behind AutoDev execution adapters.
-- Task, parent/child, actor, workspace and session correlation survive across client handoff/resume, cancellation and tool results; the Runtime/Control API is the only action/state owner. A UI client never bypasses the router, role grants or safe fallbacks.
-- Authentication and authorization are verified for each client. A ChatGPT UI session or browser model subscription is **not** permission to run a local shell, read arbitrary repositories, or bypass user confirmation. Unsupported client capabilities report unavailable with the required setup; they are never silently emulated with unapproved local access.
-- Acceptance runs the same permitted task through each *supported* entrypoint and checks equivalent effective role configuration, tool/MCP exposure, permissions, execution results, lineage and telemetry. Differences in presentation do not create separate policies.
+| Client integration requirement | Evidence |
+| --- | --- |
+| Authenticated transport and capabilities | A supported client-to-AutoDev connector/protocol authenticates the actor, declares whether it can reach a local or remote Runtime, and rejects unsupported local shell/file/MCP access. A ChatGPT subscription alone is not an execution grant. |
+| Task creation | Workspace selection, role/task request, structured validation, task ID, server acknowledgement and explicit denial/error state. |
+| Activity and lifecycle | Source-owned progress, tool/child events, result, cancellation, reconnect and permission approvals use the same typed Runtime contracts as Codex. No second router or approval authority. |
+| Authorization | Workspace bounds and permissions are verified on the AutoDev server; the client cannot add privileges through prompts, untrusted fields or a local/remote connection. |
+| End-to-end acceptance | From **the ChatGPT application itself**, create an approved workspace task, receive tool/subagent updates, handle an approval/denial, cancel or resume as supported, and read the final outcome with correlated telemetry. Compare with the Codex CLI for equivalent effective role grants. |
+
+- **Cross-client identity:** Preserve AutoDev task ID, actor, workspace, parent/child lineage and auditable activity across a handoff. A ChatGPT conversation ID, Codex thread ID and native provider session ID are **not interchangeable**.
+- **Native continuation:** Reuse a provider session across clients only if its transport proves import/resume support. Otherwise begin a distinct, explicitly linked session with a source-backed handoff summary and prior approvals/side effects reconciled; do not pretend it is the same native conversation or replay a potentially mutating turn automatically.
+- **Unavailable integrations:** Report unsupported local execution, transport/approval limitations and missing credentials explicitly. This does not satisfy the ChatGPT integration acceptance criterion; it only prevents false capability claims.
 
 ### Role-oriented execution and provider routing
 
@@ -516,8 +524,11 @@ An ACP change's mapping and test evidence must be reviewed/approved by the **Aut
 | OpenLIT + ClickHouse | **Historical telemetry:** authenticated OTLP receiver, durable time-series/trace storage and fixed, privacy-filtered queries. Not live agent state, configuration writes, a second Console, or another router. |
 | PostgreSQL + pgvector; `@letta-ai/trajectory` | **Experience:** scoped memory records, indexing/retrieval and source-backed trajectory normalization. Not agent routing, live session truth or a separate transcript authority. |
 | External agent harnesses | Allowed **only** as replaceable executors behind the agent port; never a second router, permission authority, Console or runtime control plane. |
+| `pnpm`, TypeScript, ESLint, Prettier | Shared workspace dependencies, type safety, lint/import boundaries and formatting; no parallel build/toolchain policy per package. |
+| Next.js + React | AutoDev Console's replaceable frontend/rendering stack; reads and mutations honor the typed Control API boundaries. |
+| Playwright + `@playwright/mcp` | Browser acceptance and role-scoped test tools; test infrastructure cannot grant agent permissions. |
 
-Supporting package ownership: `pnpm`/TypeScript/ESLint/Prettier own workspace linking, typechecking, lint and formatting; Next.js/React own the replaceable Console presentation; `@playwright/mcp` and Playwright own role-scoped browser testing. The Runtime/Control API owns authorization and effective capability projection; no observability or test package grants itself agent permissions.
+
 
 
 **Dependency qualification (auditable):** Validate compatible license, typed stable/documented public API, test coverage, supported Node/TypeScript versions, transitive security posture and patch-response process. Prefer evidence of commits or published releases **within the previous 30 days**; a mature low-churn package may qualify by documented maintained/security-support evidence and explicit approval. Pin/test package and lockfile versions; exercise upgrade and rollback on the contract suite, monitor vulnerabilities, and record why the package reduces ongoing code ownership. Reject an unmaintained or API-incompatible dependency even if it would initially reduce lines of code.
