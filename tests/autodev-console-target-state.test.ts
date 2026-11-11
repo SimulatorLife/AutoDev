@@ -1950,3 +1950,36 @@ test("Console form interactions forbid document reload while preserving intentio
     "acceptance contract must guard no-document-reload invariant"
   );
 });
+
+
+test("unified AutoDev target defines dependency, agent transport, permission and telemetry invariants", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  assert.match(target, /^# AutoDev — Unified Target State$/mu);
+  for (const invariant of [
+    "Role-oriented execution and provider routing",
+    "Agent execution transport contract: ACP, MCP and Responses",
+    "ACP equivalence gate",
+    "Codex-specific tools, session semantics or child visibility",
+    "Dependency ownership and maintainability",
+    "package.json",
+    "acpx/runtime",
+    "@agentclientprotocol/sdk",
+    "@modelcontextprotocol/sdk",
+    "cockatiel",
+    "OpenTelemetry",
+    "OpenLIT",
+    "ClickHouse",
+    "PostgreSQL",
+    "pgvector",
+    "Unified permissions and actual enforcement",
+    "Latency, local delegation and OpenCLI",
+    "Execution observability and experience"
+  ]) {
+    assert.ok(target.includes(invariant), "Missing unified target-state contract: " + invariant);
+  }
+  assert.equal(
+    existsSync(new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)),
+    false,
+    "Superseded hybrid CLI target document must not remain alongside canonical target"
+  );
+});
