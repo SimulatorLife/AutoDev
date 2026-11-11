@@ -453,12 +453,14 @@ The model router is the **single allocation authority** for root and leaf execut
 | Requirement | Observable behavior |
 | --- | --- |
 | Role and prompt | Named leaf agents receive the shared leaf-agent prompt plus their role-specific instructions and task/workspace context; no parent orchestration privileges or prompt leakage. |
-| Effective capabilities | Each attempt receives only its resolved, role-allowed skills, MCP servers/tools, permissions and hooks. Provider transport differences must not silently widen or remove required capabilities; incompatible providers are ineligible. |
+| Effective capabilities | Resolve a typed per-role/per-task manifest: **required** tool/MCP/skill/hook capabilities constrain routing; **optional** capabilities may be omitted only with a recorded omission and unchanged permissions. Each attempt receives only its actually permitted grants. Providers missing a required capability or its enforcement are ineligible. |
 | Allocation and load | Provider and model selection obey capability eligibility, per-tier user priority, active session affinity, concurrent-agent limits, quota pools, reported reset windows, and provider health. Independent children may be distributed across distinct providers, with tracked per-child allocation. |
-| Recoverability | Recoverable errors/throttling may skip, wait, recheck or select another eligible provider as `5's routing/cooldown contract permits. A running child with possible side effects is reconciled/resumed before a change of provider; a failed spawn is not a completed child. |
+| Recoverability | Only the [router selection order](#role-oriented-execution-and-provider-routing) and [cooldown policy](#resilience-mechanics-and-provider-cooldown-policy), not native CLI fallback defaults, authorize skip/wait/recheck/reroute. Reconcile a running child's possible side effects before hopping; a failed spawn is not a completed child. |
 | Parent/child lifecycle | Spawn requested/admitted/rejected/started/completed/failed/cancelled events retain IDs, reason codes, role, actual provider/model, tool/skill grants and parent visibility. A refusal must not consume an invisible concurrency slot. |
 
-Validate equivalent **effective role grants, leaf prompts, tool execution, session continuity and failure outcomes** for each enabled backend—not merely that a provider advertises support. Provider-native delegation may be used only if it exposes the same ownership and observation contract.
+**Capability decision:** The canonical role/task manifest identifies each capability by qualified ID and declares `required` or `optional`, tool-level restrictions, approval category and expected executor support. Missing/unenforceable required capabilities make a provider ineligible; optional omissions are recorded by ID and reason in Runtime's effective manifest and attempt evidence. A capability explicitly denied by policy is not made available by marking it optional.
+
+Validate equivalent **effective role grants, leaf prompts, tool execution, session continuity and failure outcomes** for each enabled backend—not merely advertised provider support. Provider-native delegation requires the same ownership and observation contract.
 
 ### Resilience mechanics and provider cooldown policy
 
@@ -616,28 +618,38 @@ Historical behavior          ← OpenTelemetry / OpenLIT
 
 ### User-level capabilities and workspace-local resolution
 
-AutoDev installs a **reusable user/global agent, MCP and skill catalogue** that can operate on any explicitly selected codebase. Entering a workspace also discovers its supported project-local skills, MCPs, rules, hooks and provider configuration, then forms **one invocation-scoped effective catalogue**.
+AutoDev discovers user-level agents, skills and MCPs plus trusted workspace-local rules, hooks, tools and configuration. It builds **one invocation-scoped effective catalogue** without changing global definitions or treating discovery as authorization.
 
-| Layer | Authority and composition |
+| Stage | Contract |
 | --- | --- |
-| User/global | Rulesync-managed shared definitions and approved operator-local additions; globally available defaults, not unconditional tool grants to every agent. |
-| Workspace/local | Validated declarations from the chosen repository (including supported Rulesync and provider-native project files); additive capabilities and scoped instructions with source/revision provenance, not changes to user-global state. |
-| Role/agent | Named agent execution contract selects the allowed leaf prompt, capabilities and tool/MCP subset for the assigned role. |
-| Session/request | Approved workspace root, caller permissions, explicit denials, task-specific approvals and resource budgets restrict the role's grants further. |
+| 1. Discovery | Read global and selected workspace roots separately; record source, revision, resource kind and trusted root. Repository-declared MCP launch commands are **untrusted candidates**, not executable permissions. |
+| 2. Identity/conflict | Use stable qualified identities such as `user/skill/review` and `workspace/<id>/skill/review`. Same-named entries remain distinct; unqualified lookup succeeds only when exactly one eligible candidate exists. |
+| 3. Role/task eligibility | A typed manifest distinguishes **required** and **optional** capabilities, allowed tools, provider compatibility and approval categories. Local additions may become eligible through approved role policy without pre-existing global entries. |
+| 4. Execution grants | Enforce operator hard denies/limits, workspace restrictions, role/tool allowlists, session limits and required approvals at the **actual Runtime/CLI/OS boundary**. Discovered but ungranted entries cannot execute. |
+| 5. Projection/observation | Produce provider-specific invocation-scoped configuration and expose source, eligibility, grants, actual availability, omissions/denials and revisions through Control API/Console. |
 
-- **Resolution:** Identify the exact trusted workspace root and revision; load user and local sources separately; normalize provider-specific formats; apply deterministic namespace/precedence rules; validate; project to the selected backend. A same-name capability conflict must be visible and namespaced or explicitly resolved by the owner—never silently replace a global definition. Report source, effective scope and validation error in the Control API/Console.
-- **Security:** Local codebase config may contribute tools and instructions but may **not elevate** the operator/role's effective permissions, escape the workspace boundary, start unapproved MCP binaries, change global credentials or bypass an explicit deny. For tool permissions, effective access is constrained by the intersection of applicable operator, workspace, role and session policies; unsupported enforcement fails closed.
-- **Portability:** CLI adapters reconcile their native global/project configuration with this effective catalogue. Where a provider only supports global MCP registration, use an isolated invocation profile/tool filter instead of rewriting the user's registry. A backend unable to expose required local MCP/skills or enforce restrictions is ineligible for that assignment.
-- **Isolation:** Switching workspaces removes prior local capabilities and context from the new invocation, retains user-level defaults, and prevents cross-workspace prompt, secret, tool or memory leakage. Refresh invalidated local files deterministically without interrupting already-running sessions unexpectedly.
-- **Acceptance:** Test two repositories with overlapping skill/MCP names, local additions and denies, absent/untrusted project config, per-role tool restrictions, simultaneous child agents on different providers, and workspace switching. Compare each provider's *actual* tool/skill exposure and leaf behavior to the resolved manifest.
+**Deterministic collision rules**
+
+| Case | Required decision |
+| --- | --- |
+| Same unqualified name in global and workspace scopes | Never silently shadow: require qualified reference or operator-approved binding to exactly one qualified resource. Until resolved, the unqualified name is **ambiguous/unavailable**. |
+| Two declarations with identical qualified identity in one scope | Reject as invalid before executing; no filesystem/load-order precedence. |
+| Explicit per-workspace binding | Save the selected qualified ID and expected source revision in AutoDev-owned workspace-scoped configuration. Other workspaces/global defaults remain unchanged; source revision changes invalidate the binding until revalidated. |
+| Explicit deny, untrusted launch or incompatible policy | Denial wins; no project file, prompt, ACP approval transport or provider fallback can turn it into an implicit grant. |
+
+- **Capability versus permission:** Installation/discovery is not eligibility or authorization. A local capability missing from global defaults can be added by a **reviewed workspace-scoped role assignment** if operator policy permits it. Execution also requires caller/session approval and enforcement; a hard deny cannot be approved away.
+- **Approval:** An eligible but approval-gated MCP executable/tool requires the configured AutoDev reviewer before launch/use. Revising the policy itself is a separate authorized configuration mutation; arbitrary workspace files cannot rewrite the reviewer or tool grants.
+- **Provider isolation:** Normalize native project formats without treating them as higher authority. For CLIs supporting only global MCP registration, use an invocation-isolated profile and tool filter. Reject a backend missing required capabilities or restrictions; report optional omissions explicitly.
+- **Workspace switching:** A new invocation loses the previous workspace's local tools, prompts, secrets and memory scope while retaining global defaults. Revision changes must not silently widen grants in active sessions.
+- **Acceptance:** Test colliding global/local names, duplicate identities, approved bindings and stale revisions, denied/untrusted MCP launch, optional versus required tools, simultaneous providers and workspace switching. Compare each provider's actual tool exposure and approval behavior with the effective manifest.
 
 ### Policy ownership and enforcement
 
 | Concern | Authoritative contract |
 | --- | --- |
-| Desired permissions and role capabilities | Rulesync where **losslessly representable**; explicit AutoDev/provider-native config otherwise. No contradictory writable copies or invented defaults. |
-| Runtime enforcement | Admission checks, effective role contracts, native CLI/OS/container sandbox, network/filesystem restrictions and role-filtered MCP tools. Prompts and documentation alone are never enforcement. |
-| ACP / external harness approvals | Pi, acpx and other execution transports may **request or enforce** permissions but never define a separate policy authority: use the same AutoDev reviewer and Rulesync-derived effective policy. Nested children cannot gain authority; unsupported restrictions fail closed. |
+| Desired permissions and role capabilities | Rulesync defines portable policy and agent configuration wherever losslessly supported; otherwise explicit AutoDev/provider-native configuration remains the named authority. Discovery is never a permission grant. |
+| Runtime and native enforcement | AutoDev enforces role admission, effective grants and MCP tool filters; the native agent/OS/container sandbox enforces file, network and process restrictions. Approvals and prompt text alone do not enforce restrictions. |
+| ACP / external harness approvals | `acpx` transports ACP permission requests/decisions; it is **not** the policy authority or sandbox. Pi may enforce the approved policy **inside its own agent runtime** when chosen as an executor but cannot override AutoDev. The same AutoDev reviewer handles approvals, and native enforcement must be verified. Children gain no additional authority; unsupported restrictions fail closed. |
 | Effective state | Source → deterministic projection → applied runtime → observed result (`converged`, `pending`, `error`). Every enabled executor must demonstrably enforce equivalent permissions/skills/agent roles; target-specific deviations must be explicit and approved. |
 
 
