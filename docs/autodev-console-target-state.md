@@ -1247,8 +1247,8 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 ## 14. Documentation policy
 
-- This document is the only broad AutoDev Console/observability/configuration target-state authority.
-- autodev-console-migration.md owns current migration status/evidence and should stay concise/current rather than accumulating patch history.
+- This is the sole broad target-state authority for AutoDev's codebase: orchestration, providers, execution transports, configuration, permissions, memory, telemetry, Control API, Console, and dependency boundaries.
+- autodev-console-migration.md owns implementation status, gaps, cutover sequencing, and verification evidence; these are not normative target-state requirements.
 - local-setup.md owns operational commands, ports, environment variables, and local secret/bootstrap details.
 - memory-target-state.md owns detailed Memory architecture/telemetry/governance while deferring to this document on shared Console/OpenLIT UI rules.
 - [playtesting-target-state.md](playtesting-target-state.md) owns Playtesting's runner/adapter, analysis, human-calibration, session UI and source-reuse details while deferring here on navigation, Console design, resource ownership, evaluator semantics and controls.
@@ -1259,6 +1259,6 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 ## Final target
 
-AutoDev is a **single-user, dark-only, deliberately compact control and observability Console** built on a reduced OpenLIT telemetry foundation.
+AutoDev is a **TypeScript-first, provider-independent, subscription-capable agent platform** with role-based orchestration, safe direct CLI/Responses and parity-gated ACP execution, strict and observable permissions, durable routing and resource policy, and package-managed, maintained open-source dependencies rather than duplicated custom infrastructure.
 
-Retain OpenTelemetry ingestion, storage and querying alongside selected reusable components; use the **14 canonical AutoDev resources** as the product surface, with clear RuleSync/runtime ownership and distinct configuration, live state and historical telemetry.
+Its single-user, dark-only **AutoDev Console** is the sole compact product surface, with **14 canonical resources**. Rulesync owns portable desired agent configuration; Runtime/Control API owns live control; OpenTelemetry/OpenLIT/ClickHouse owns observed history; PostgreSQL/pgvector owns curated memory. No parallel authorities, operator dashboards, execution control planes, telemetry stores or shadow agent runtimes.
