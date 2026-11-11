@@ -474,6 +474,8 @@ Validate equivalent **effective role grants, leaf prompts, tool execution, sessi
 
 **ACP** controls a complete coding agent; **MCP** exposes tools to an agent; **Responses** exchanges model messages/tool calls with AutoDev's owning agent loop. They are complementary, not interchangeable.
 
+**ACP tradeoff:** A maintained ACP client such as `acpx/runtime` can replace per-agent CLI process supervision, session plumbing, streaming/event parsing, cancellation and permission-request transport. It also introduces an ACP adapter/protocol boundary, version compatibility and possible loss of provider-native Codex tool/child semantics. Prefer it only for complete ACP-capable agents whose measured parity and maintenance savings justify that boundary; retain direct CLI/Responses for model/tool-loop providers or unsupported native behaviors. ACP does not replace MCP, Rulesync, the model router or runtime permission enforcement.
+
 | Transport | Best fit | Required boundary |
 | --- | --- | --- |
 | Direct CLI / Responses | `mmx`: inference with tool/function calling but no autonomous shell/file agent loop; `opencli`: browser-backed inference; Codex-owned tool loops | The owning harness executes approved tools and normalizes streaming/results without duplicating an agent loop. |
