@@ -1,23 +1,19 @@
-# AutoDev Console Target State
+# AutoDev — Unified Target State
 
-> **Authority:** This is the single living source of truth for the AutoDev Console product model, OpenLIT fork boundary, observability/control architecture, RuleSync ownership, shared UI/design requirements, and acceptance contract.
+> **Authority:** Canonical requirements for AutoDev's agent runtime, Console, configuration, dependencies and security. Implementation status belongs in [the migration tracker](autodev-console-migration.md); operational details belong in [local-setup.md](local-setup.md).
 >
-> **Current implementation state:** [autodev-console-migration.md](autodev-console-migration.md).
+> **Problem:** AutoDev must orchestrate provider-independent agent roles across authenticated coding-agent CLIs, tool-call-capable inference CLIs and slow browser-backed models, while honoring priorities, quotas, cooldowns, permissions and sessions. Defining skills, hooks, MCPs and agents once, maintaining separate provider adapters, and minimizing costly remote turns must not require duplicate routing, transport or resilience frameworks.
 >
-> **Operational setup:** [local-setup.md](local-setup.md).
->
-> **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
->
-> **Last reviewed:** 2026-11-10 (bounded Usage query scheduling across overlapping reads, source-confirmed attribution for compactions and provider hops, and unavailable Git line totals when any diff is partial).
+> **Target:** A reliable, TypeScript-first monorepo with independently replaceable workspaces, package-managed maintained open-source dependencies, a single control plane and accurate operator observability. Detailed requirements below govern behavior, not implementation sequence.
 
 ## 1. Canonical-document contract
 
-Changes that alter Console product behavior, OpenLIT ownership, telemetry/control boundaries, RuleSync authority, resource semantics, UI behavior, or acceptance requirements must update this document in the same PR.
+Changes that alter AutoDev runtime, orchestration, provider transport/routing, dependency ownership, permissions, Console product behavior, telemetry/control boundaries, memory, or acceptance requirements must update this document in the same PR.
 
 Keep these concerns separate:
 
-- **This document:** durable target-state requirements and architectural decisions.
-- **autodev-console-migration.md:** observed current state, current gaps, cutover ordering, and current acceptance evidence.
+- **This document:** durable, implementation-independent requirements and architectural decisions.
+- **autodev-console-migration.md:** observed implementation status, gaps, cutover ordering, and verification evidence.
 - **local-setup.md:** commands, ports, environment variables, secrets materialization, and local/runtime operating instructions.
 - **Focused subsystem docs:** detailed subsystem design that does not redefine shared product/ownership rules.
 
@@ -228,14 +224,23 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 
 ## 4. Repository and module architecture
 
-AutoDev is a **small, flat pnpm TypeScript monorepo**. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
+AutoDev is a **small, flat pnpm TypeScript monorepo** with isolated, independently testable workspaces. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
+
+| Monorepo benefit | Architectural consequence |
+| --- | --- |
+| Atomic cross-project changes | Related contracts, producers, consumers, tests and documentation are merged together even when delivered through several commits. |
+| Reuse and discovery | Typed public package APIs and an ownership map expose reusable code without private cross-package imports. |
+| Consistent tooling, CI/CD and onboarding | One lockfile, root TypeScript/lint/format/test standards, workspace-local tests and dependency-aware CI. |
+| Better AI-assistant context | Source, contracts, tests, workspace READMEs and dependencies remain discoverable in one versioned checkout. |
+| Simplified dependency management | Centralized versions and package-manager workspace links; avoid redundant libraries, bespoke forks and duplicate tools. |
+| Replaceable implementations | Router, provider transports, Console UI and storage adapters depend on contracts rather than each other's internals. |
 
 ```text
 AutoDev/
 ├── console/                 # unified Next.js AutoDev UI
-├── runtime/                 # router, providers, agents, MCP runtime, hooks, Control API
-├── core/                    # shared domain contracts and pure business logic
-├── data/                    # RuleSync/OpenLIT/ClickHouse/config/persistence adapters
+├── runtime/                 # request serving, agents, providers, orchestration, Control API
+├── core/                    # pure domain types and portable contracts
+├── data/                    # typed configuration, persistence and telemetry adapters
 ├── .rulesync/               # canonical agent-facing configuration
 ├── config/                  # portable runtime/deployment configuration
 ├── .github/                 # CI and GitHub automation
@@ -247,43 +252,46 @@ AutoDev/
 └── rulesync.jsonc
 ```
 
-The four code workspaces are the intended durable boundaries:
+**Baseline package responsibilities** (additional packages are permitted when justified):
 
-| Module   | Owns                                                                                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| console/ | the single AutoDev UI, shared design system, navigation, and feature folders                                                                            |
-| runtime/ | long-running execution, provider/router behavior, agents, MCPs, hooks, runtime health, reconciliation, Control API, and Console build/process lifecycle |
-| core/    | infrastructure-independent domain types/contracts and pure rules                                                                                        |
-| data/    | typed adapters/repositories for RuleSync, OpenLIT/ClickHouse, Memory, evaluations, workspace/configuration, and other persistent/external boundaries    |
+| Workspace | Public responsibility |
+| --- | --- |
+| `core/` | Infrastructure-independent domain contracts, routing ports, types and pure business rules. |
+| `data/` | Typed repositories/adapters for Rulesync, OpenLIT/ClickHouse, memory, evaluations, workspaces and other external sources. |
+| `runtime/` | Orchestration, provider/CLI bridges, routing composition, runtime state, MCP, permissions, Control API and reconciliation. |
+| `console/` | Sole AutoDev UI and feature folders; typed API clients and read-only projections, not direct database or provider internals. |
 
-Inside console/, keep navigation resources as feature folders, including github/. Do not create agents/, skills/, mcps/, prompts/, etc. as separate packages merely because they are top-level UI resources.
+**Workspace extraction decision**
 
-Dependency direction:
+| Condition | Decision |
+| --- | --- |
+| One coherent domain, independently testable public API and genuine replacement/multiple-consumer value | A dedicated workspace is appropriate. |
+| Merely a navigation resource, one implementation file or a forwarding wrapper | Keep a feature module in its owning workspace; do not create a package per navigation resource. |
+| Routing becomes an independent policy engine with a stable contract | A dedicated **model-routing workspace** (`router/`) may own deterministic selection and state-transition policy. `core/` owns the `ModelRouter` port; `runtime/` still owns provider discovery, CLI processes, quota observations, durable cooldown storage and the Control API. |
+| The new package introduces cycles, private imports, a duplicate control plane or mostly passthroughs | Do not extract until its boundary can be made independent. |
+
+**Dependency direction** (arrows point to permitted imports; `router/` is optional):
 
 ```text
-console ───────┐
-               ├──> core
-runtime ───────┤
-               │
-console ───────┐
-               ├──> data ───> core
-runtime ───────┘
-
-core ──> no AutoDev module
+core       # no AutoDev dependencies
+data   ──> core
+router ──> core                # optional: pure model-routing policy
+runtime ──> core, data, router? # owns execution, state and Control API
+console ──> core, data         # data: exported server-only read projections
 ```
 
-Rules:
+- `console/` may import exported, read-only `data/` query/projection interfaces on the server, but never query databases through private modules, mutate canonical/runtime state or carry storage credentials in browser code. **console/ never bypasses the Control API** to mutate state; all writes, approval actions and live state changes use authenticated Control API routes.
+- core/ remains infrastructure-independent. It owns portable Control API contracts; Runtime and Console independently validate and authorize their boundaries. `data/` adapts sources without becoming another source of truth. `runtime/` owns mutation/reconciliation and composition.
+- Inside `console/`, **keep navigation resources as feature folders**. **Do not create agents/, skills/, mcps/, prompts/, etc. as separate packages** merely because they appear in navigation. The Console owns its shared UI library **until a real second UI consumer exists**.
+- Shared producer telemetry belongs under `runtime/src/telemetry/` until another independent producer justifies an extracted package. `.rulesync/`, `config/`, `.github/` and `docs/` remain root-owned configuration, not code workspaces. **all four code workspaces share root formatting/lint/test/TypeScript policy**; any additional workspace must use the same standards.
 
-- core/ remains infrastructure-independent.
-- core/ owns shared Control API request contracts used by Runtime and Console; each boundary
-  retains its own validation, authorization, and transport.
-- data/ adapts external/canonical sources; it does not become another source of truth.
-- runtime/ is the mutation/reconciliation authority.
-- console/ never bypasses the Control API to mutate canonical/runtime state.
-- console/ owns the shared UI library until a real second UI consumer exists.
-- shared producer telemetry stays under runtime/src/telemetry/ unless multiple independent producers justify extraction.
-- .rulesync/, config/, .github/, and docs/ remain root concerns, not software workspaces.
-- all four code workspaces share root formatting/lint/test/TypeScript policy.
+**Verifiable independence**
+
+- Package manifests declare `workspace:*` dependencies and explicit public `exports`; prohibit undeclared, relative and deep imports across workspace internals with TypeScript/import-boundary lint rules and CI. `workspace:*` alone does not enforce encapsulation.
+- A swappable port exposes versioned/compatible typed inputs, outcomes and error semantics, cancellation/lifecycle, authorization and telemetry contracts without leaking concrete adapter classes. Consumer-driven contract suites run against the incumbent and replacement adapter at the public boundary.
+- Each package documents owner/domain, public API and exports, dependencies, local typecheck/test/build commands and replacement contract in its package README. Maintain a root ownership/dependency map.
+- A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
+- Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
 
 ## 5. Architecture and ownership
 
@@ -345,6 +353,147 @@ Every mutable resource the Console writes publishes that view with its write, an
 
 Use desired/live/convergence interaction semantics similar to Argo CD where useful, but implement them through AutoDev Runtime/Control API rather than shipping OpenLIT's Controller daemon.
 
+
+### Role-oriented execution and provider routing
+
+The orchestrator selects a **named task role and capability contract**, not a provider/model. The router chooses an eligible provider and execution transport using explicit operator priorities and observed state. The role mapping must be declared and validated, not guessed:
+
+| Agent identity | Routing tier and policy |
+| --- | --- |
+| Root orchestrator | `Orchestrator`: its own model priority and session affinity. |
+| Named `smart` role when deliberately assigned smart-tier execution | `Smart`: distinct from the `smart` agent name itself. |
+| `worker`, `explorer`, `validator`, `docs-researcher`, `browser-tester` and other named children | `Subagent` unless their execution contract explicitly selects another supported tier. |
+| Default/root non-orchestrator work | `Default`. |
+
+`Default`, `Smart`, `Orchestrator` and `Subagent` are **provider-priority tiers**, not aliases for the named-agent catalogue. An unmapped or conflicting role/tier must fail validation; a concrete, explicitly selected provider/model request is not silently reinterpreted as a named role.
+
+```text
+Task → named role + capabilities → validated routing tier
+ → explicit selection / session affinity → eligibility / health / quotas
+ → configured per-tier priority and deterministic candidate ordering
+ → supported executor (Responses, native CLI or ACP)
+ → outcome + attempts + child sessions + evidence
+    ├── Runtime / Control API → Console (live control)
+    ├── OpenTelemetry → OpenLIT OTLP → ClickHouse → Usage (history)
+    └── Memory / trajectory → PostgreSQL + pgvector (experience)
+```
+
+**Selection order**
+
+| Order | Required behavior |
+| --- | --- |
+| 1. Explicit intent | Honor an explicit provider/model/effort selection or return a typed unsupported/unavailable error; never silently substitute another model. |
+| 2. Session continuity | Preserve the original backend for resumed root/child sessions; bounded waits may outlast short recoverable cooldowns. A mid-session hop needs a demonstrated continuation/safety contract. |
+| 3. Eligibility | Filter by role, declared capabilities, requested content/tool support, authentication, configured enablement, model routeability and sandbox/permission requirements. Unsupported content is a refusal, **not** a provider failure. |
+| 4. Live availability | Apply provider/model/quota-pool health, cooldown, session/concurrency capacity and known quota resets. Treat unavailable evidence as unknown, not healthy. |
+| 5. Priority/fallback | Apply operator per-tier priority and fallback groups; use a declared stable tie-breaker when priorities are equal. Never globally reorder providers instead of their per-tier preferences. |
+| 6. Retry or reroute | Use the cooldown last-resort rules below; reconcile the old attempt's session and side effects before retrying or hopping after an ambiguous result. |
+
+**CLI categories**
+
+| Backend type | Examples | Contract |
+| --- | --- | --- |
+| Complete autonomous coding-agent CLIs | `codex`, `claude`, `agy`, compatible agents | Own their agent/tool loop; integrate by native CLI or parity-proven ACP. Reuse supported subscription authentication and report source-owned account/quota facts. |
+| Tool-call-capable inference CLI | `mmx` | Can declare/return tool calls but does **not** provide the full autonomous file/shell tool loop; the owning agent harness executes tools. Avoid a duplicate harness. |
+| Browser-backed model CLI | `opencli` | Bridge model turns through authenticated browser sessions, with site queues, idempotency and an accepted-turn ledger. |
+
+Provider authentication, subscription allowances, reset windows and model discovery are backend-specific; do not assume that all CLIs share one quota/authentication model or automatically offer an API-compatible wire protocol.
+
+**Failure vs. outcome:** Provider failure classes include authentication, invalid model/configuration, transient upstream error, bridge probe failure, throttling, reported quota exhaustion, session limit and unsupported request. Execution outcomes are `success`, `failure`, `cancelled`, `partial` and `unknown`. A transport timeout after work might have begun is **unknown completion** until verified, not proof of provider failure or a safe-to-replay request.
+
+**Delegation contract:** Each child must have a parent/child identity, recorded spawn and completion/failure events, live state, tool/result association, resource/permission budget and observable Codex/Console status. A different transport/UI event format is acceptable only if these invariants and multi-turn continuation survive verified contract tests. Provider-private children cannot silently disappear from tracking.
+
+### Resilience mechanics and provider cooldown policy
+
+**Cockatiel owns generic retry, backoff, timeout, circuit-breaker, bulkhead and fallback mechanics. AutoDev owns failure classification, quota/reset evidence, cooldown scope, persistence and routing policy.**
+
+| Kind | Eligibility and scope | Last resort | Persistence / recovery |
+| --- | --- | --- | --- |
+| `transient` | Recoverable failure or limit only inferred from prose; bounded escalating backoff on the affected route. | Eligible only when healthy alternatives are exhausted. | Ephemeral across restart; clears on expiry or scoped successful observation. |
+| `hard` | Provider-**reported** `quota_exhausted`/`session_limit`; preserve provider/model/quota-pool scope and reset deadline. | **Ineligible while a known reset time is in the future**; if the provider supplied no reset, bounded last-resort probing may be permitted. | Durable across restart with source, scope, deadline and recovery metadata; expire/revalidate by reported reset. |
+| `probe` | Failed bridge health check, not an account/model quota event; short bounded escalating suppression. | Eligible after regular candidates are exhausted. | Ephemeral; recheck bridge health independently without cooling unrelated routes. |
+| `config` | Invalid model disables **only that model**; authentication affects the credential/account/profile scope, not unrelated accounts. | Ineligible pending correction or explicit successful recheck. | Ephemeral suppression; persistent configuration errors remain visible until corrected, without unbounded retries. |
+
+- Only corroborated structured provider evidence creates hard quota state; lexical guesses remain transient. A successful attempt clears only its own route/pool. Preserve distinct pools such as Antigravity first-party and third-party model families.
+- Provider-wide health is unavailable only if its global scope fails or **all** independent pools are exhausted; a single throttled model must not render other models unhealthy.
+- Scope each state to provider/account/model/quota pool as reported, publish kind, failure class, source, reset time, last-resort eligibility and cooldown scope, and restore durable hard deadlines after restart without resetting their clocks.
+- Cancellation or client disconnect never creates a provider cooldown. Request-content refusal is not a provider outage. A known configuration error returns a non-retryable, actionable result. Never multiply retries through nested wrappers or reroute a turn with unknown side effects without reconciliation.
+- **Dependency-first parity rule:** Where Cockatiel's public APIs satisfy the same bounded attempts, deadline, cancellation, scope and concurrency behavior, delete the superseded AutoDev-owned generic resilience mechanism. If a provider-specific behavior cannot be expressed, retain only a documented, tested policy adapter—not a second general-purpose retry framework.
+- Test the mapping with injected clocks, quota-window resets, independent pools/models, concurrent requests, cancellation, restart, recovery, last-resort selection and indeterminate mutating turns. Resilience library breaker state is never the authority for subscription limits or per-tier priority.
+
+### Agent execution transport contract: ACP, MCP and Responses
+
+**ACP** controls a complete coding agent; **MCP** exposes tools to an agent; **Responses** exchanges model messages/tool calls with AutoDev's owning agent loop. They are complementary, not interchangeable.
+
+| Transport | Best fit | Required boundary |
+| --- | --- | --- |
+| Direct CLI / Responses | `mmx`: inference with tool/function calling but no autonomous shell/file agent loop; `opencli`: browser-backed inference; Codex-owned tool loops | The owning harness executes approved tools and normalizes streaming/results without duplicating an agent loop. |
+| [`acpx/runtime`](https://github.com/openclaw/acpx) / ACP | Standalone ACP-compatible coding agents executing bounded **leaf** tasks | Reuse session/process/cancellation/permission transport; AutoDev retains routing, quota/cooldown, observability and authorization. |
+| [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) | Required adapter for an unsupported ACP agent | Use the public SDK instead of writing a second ACP transport. |
+| `@modelcontextprotocol/sdk` / MCP | Shared tools and controlled child delegation | Apply role-scoped MCP tool filtering; MCP support alone does not imply ACP. |
+
+**Transport selection:** ACP is preferred for independent complete agents when its documented public API reduces maintained custom code **and** every applicable equivalence gate below passes. Direct CLI/Responses is first-class when a provider is model-only, tool-call-capable without execution, or requires Codex-specific tool behavior. The root Codex orchestrator has a **separate, stronger gate**: it must additionally preserve root tool ownership, Responses continuation, native subagent lifecycle, existing role delegation, session resume, and all Console-visible state end to end. Passing a leaf ACP gate does not authorize moving the root orchestrator or replacing Codex's owning tool loop.
+
+**ACP equivalence gate**
+
+| Dimension | Required evidence |
+| --- | --- |
+| Role/configuration | Lossless Rulesync skills, MCP/hook/agent projections, role capability policy, models/effort and target overrides. |
+| Permissions | Real sandbox/network/tool enforcement, reviewer/approval flow, no shadow policy; reject unsupported restrictions. |
+| Tool/child continuity | A versioned mapping of Codex tool schemas, calls/results, streaming, spawn/completion, parent/child IDs, `/status` and Console child visibility, and Responses continuation to ACP events; no invisible child delegation. |
+| Sessions and recovery | Stable identity, resume/reconnect, cancellation, timeouts, process crash/restart, ownership, safe treatment of partial mutations. |
+| Provider correctness | Subscription/account evidence, model eligibility, quota-pool scope, cooldowns, priorities, capacity and sticky sessions. |
+| Observability and memory | Correct logical-request/physical-attempt attribution, child events, latency, token/cost unknowns, provenance and privacy. |
+| Engineering decision | **100% of required permission/child/session/conformance cases pass; no new unauthorized side effects.** Compare the same predefined tasks against direct CLI using success/quality, p50 and p95 end-to-end latency, code/API surface removed, upgrade effort and resource use. Non-inferiority tolerances and acceptable tradeoffs are declared *before* measurement. |
+
+An ACP change's mapping and test evidence must be reviewed/approved by the **AutoDev Runtime contract owner** in the PR, including contract/integration and fault-injection tests for native Codex tool/child visibility, multi-turn continuation, permissions and Console state. An “equivalent” event name without the same observable behavior is insufficient. If a gate fails, keep the direct executor; ACP does not itself guarantee Codex tool/session compatibility.
+
+### Dependency ownership and maintainability
+
+**Package-first:** Depend on actively maintained, compatible open-source TypeScript packages through `package.json` and documented public APIs. **Domain-glue only:** AutoDev owns role/routing policy, provider-specific evidence and its domain contracts, not generic protocol/process/retry frameworks. **One implementation:** Delete redundant custom code after proved parity; do not vendor snippets, duplicate a framework or depend on private upstream internals.
+
+| Dependency or platform | Domain / single owner |
+| --- | --- |
+| [Rulesync](https://github.com/dyoshikawa/rulesync) | Portable agent rules, skills, MCPs, hooks, prompts, permissions and provider configuration projections where lossless. |
+| [`acpx/runtime`](https://github.com/openclaw/acpx) | ACP agent sessions, client lifecycle and process transport once parity proven. |
+| [`@agentclientprotocol/sdk`](https://github.com/agentclientprotocol/typescript-sdk) | Typed ACP adapter protocol, only if needed beyond acpx. |
+| `@modelcontextprotocol/sdk` | MCP server/client protocol and tool contracts; Runtime applies role exposure. |
+| [`cockatiel`](https://github.com/connor4312/cockatiel) | Generic resilience **mechanics**; §5's resilience table and dependency-first parity rule own the complete policy. |
+| [`p-queue`](https://github.com/sindresorhus/p-queue) | Queue/concurrency primitives only if one existing component cannot meet cross-provider scheduling needs; no duplicate queues. |
+| `@jackwener/opencli` | Browser-backed model bridge, site/session serialization and accepted-turn idempotency. |
+| `@opentelemetry/*` | Official GenAI/MCP traces, metrics, logs, conventions and OTLP exporters. |
+| OpenLIT + ClickHouse | One historical telemetry ingress/query/storage foundation; AutoDev Console is the only operator UI. |
+| PostgreSQL + pgvector; `@letta-ai/trajectory` | Curated task-scoped memory and source-backed trajectory normalization; no second memory authority. |
+| External agent harnesses | Allowed **only** as replaceable executors behind the agent port; never a second router, permission authority, Console or runtime control plane. |
+
+**Dependency qualification (auditable):** Validate compatible license, typed stable/documented public API, test coverage, supported Node/TypeScript versions, transitive security posture and patch-response process. Prefer evidence of commits or published releases **within the previous 30 days**; a mature low-churn package may qualify by documented maintained/security-support evidence and explicit approval. Pin/test package and lockfile versions; exercise upgrade and rollback on the contract suite, monitor vulnerabilities, and record why the package reduces ongoing code ownership. Reject an unmaintained or API-incompatible dependency even if it would initially reduce lines of code.
+
+**No duplicate authorities:** Rulesync owns portable desired agent state; Runtime/Control API owns live routing/capacity/permissions and convergence; executors own transport; provider accounts own quota evidence; OpenTelemetry/OpenLIT owns historical observation; Memory owns curated experience.
+
+### Latency, local delegation and OpenCLI
+
+Optimize **successful end-to-end task completion at equal quality and safety**, not isolated model speed. Attribute queue time, CLI startup, browser submission/polling, generation, local tool execution, retries and recovery.
+
+- **Session/turn ledger:** Persist each OpenCLI site, session/conversation ID, logical request/turn ID, accepted/submitted/completed status and response correlation. Serialize each browser site's composer; deduplicate retries. If a turn was accepted but the response was lost, reconcile the ledger/browser state or resume before considering replay. Do not silently submit twice.
+- **Context:** Reuse authenticated sessions and retrieve only relevant skills and scoped memory once per task/context change. Respect provenance, retention, permission and context-window budgets.
+- **Deterministic local plan contract:** Strong-model plans contain ordered/bounded operations, allowlisted tool/arguments, explicit permission/resource budget, expected observations, checkpoints, validation/stop conditions and retry/escalation triggers. Execute safe approved steps locally, validate results, and replan remotely on unexpected effects or consequential uncertainty.
+- **Local-model option:** Add small function-calling inference only when deterministic handling is insufficient and a predefined benchmark shows lower completion latency **without lower correctness/safety**.
+- **Ownership:** An optimization never weakens the owning harness's tool authority, approvals, serialized browser state, session continuity or OTel provenance.
+
+### Execution observability and experience
+
+All transports normalize **the same** logical task, physical attempts, provider hops, child sessions and partial/unknown outcomes. Detailed telemetry metrics are defined in §10; memory provenance and retention belong to §9 and the focused Memory contract.
+
+| Fact | Single authoritative producer / consumer |
+| --- | --- |
+| Task, route, provider, attempt, retries and errors | Runtime routing/executor → live Control API and correlated OTel spans. |
+| Child lifecycle and tool results | Owning agent/executor → Runtime, parent-child IDs, Console and status; ACP events map to the same outcome contract. |
+| Tokens, cost and time | Owning provider evidence per attempt → OTel; missing values are **unknown**, not zero; never double-count parent/child or attempt/logical request. |
+| Historical usage | Standard OTel → authenticated OpenLIT OTLP → ClickHouse → Console Usage (one operator surface). |
+| Experience / trajectories | Approved, privacy-safe source references → PostgreSQL/pgvector and `@letta-ai/trajectory`; not a parallel transcript/memory store. |
+
+Live configuration and health remain Control API facts, not telemetry commands. Keep sensitive prompts, raw paths, secrets, user content and tool arguments out of metric dimensions.
+
 ## 6. RuleSync and configuration authority
 
 Use the pinned RuleSync tool as the source of truth for every agent-facing configuration surface it can represent **losslessly**.
@@ -387,7 +536,7 @@ Preserve target-specific overrides. Do not invent another AutoDev configuration 
 
 AutoDev-specific runtime state that RuleSync does not model—provider credentials, live health, pricing/catalog facts, routing/cooldown/concurrency state, scheduler/runtime policy—remains owned by typed AutoDev configuration/runtime APIs.
 
-RuleSync 43.8.0 supports provider-native subagent generation, but it does not provide a portable, lossless common Agent `enabled` field across its supported outputs. Target-specific flags such as Antigravity `mainAgent`/`subagent` and pool-specific `disabled` have different semantics and do not model AutoDev's common enablement control. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
+When RuleSync cannot round-trip an Agent `enabled` field losslessly, Runtime owns named-role enablement and its revision generations; no generated role TOML or provider projection may invent unsupported fields. Runtime enforces disabled named-role aliases at admission. Target-specific flags such as Antigravity `mainAgent`/`subagent` and quota-pool `disabled` do not substitute for portable role enablement. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
 
 Conceptually:
 
@@ -398,7 +547,17 @@ Actual runtime state         ← Runtime / Control API
 Historical behavior          ← OpenTelemetry / OpenLIT
 ```
 
-RuleSync 43.8.0 supports provider-native subagent generation for the configured Codex, Claude Code, Copilot, and Antigravity CLI targets; this does not establish lossless parity with AutoDev's role contract. Permission generation is also target-scope-dependent (project and global for Codex/Claude, project-only for Copilot, and global-only for Antigravity), and this repository does not currently enable the `subagents` or `permissions` features. Complete role and permission parity remains a migration gate, not an assumption; current field-level gaps belong in the migration tracker.
+**Subagent/permissions projection parity:** Provider-native subagent generation is not proof of AutoDev cross-provider role parity. For each CLI, validate the native configuration fields and their supported project/global scope (which can differ among Codex, Claude, Copilot and Antigravity), approval semantics and effective tool/role behavior. A feature being supported by upstream Rulesync does not mean AutoDev has enabled it or that its outputs are losslessly equivalent.
+
+### Policy ownership and enforcement
+
+| Concern | Authoritative contract |
+| --- | --- |
+| Desired permissions and role capabilities | Rulesync where **losslessly representable**; explicit AutoDev/provider-native config otherwise. No contradictory writable copies or invented defaults. |
+| Runtime enforcement | Admission checks, effective role contracts, native CLI/OS/container sandbox, network/filesystem restrictions and role-filtered MCP tools. Prompts and documentation alone are never enforcement. |
+| ACP / external harness approvals | Map to the **same** reviewer and policy; nested children cannot gain authority. Unexpressible or unobserved restrictions fail closed; record denials/cancellation accurately. |
+| Effective state | Source → deterministic projection → applied runtime → observed result (`converged`, `pending`, `error`). Every enabled executor must demonstrably enforce equivalent permissions/skills/agent roles; target-specific deviations must be explicit and approved. |
+
 
 ## 7. OpenLIT fork boundary
 
@@ -422,7 +581,7 @@ Retain or adapt:
 
 OpenLIT auto-pricing may persist a computed cost to a trace, but it must batch span updates into bounded, partition-pruned ClickHouse mutations. Never issue one `ALTER TABLE ... UPDATE` for each span: MergeTree mutations rewrite immutable parts, so per-span updates amplify writes and can saturate the local telemetry database. The maintained patch series owns this adaptation; OpenLIT remains the sole telemetry store and cost values keep their existing source/estimate semantics.
 
-The retained OpenLIT Memory page may exist only as a **temporary migration bridge**. The final Memory operator surface lives inside console/ and uses the same shell/design system as every other AutoDev resource.
+The Memory operator surface lives exclusively inside console/ and uses the shared design system; a separate OpenLIT Memory UI is not part of the AutoDev product.
 
 ### Remove from the AutoDev product/distribution
 
@@ -1116,7 +1275,15 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - `AUTODEV_GITHUB_REPOSITORY` validated against an enabled canonical workspace in `config/workspaces.json` (`enabled: true`) is required for observed runtime facts; unrecognized or disabled workspaces yield `invalid`. `AUTODEV_GITHUB_TOKEN` is optional for public repositories (accessible anonymously, though authenticated requests are preferred for stable rate limits) and required for private repositories (least-privilege with read-only Actions permission); missing credentials for private repositories, forbidden access, or rate-limited requests yield `unavailable`.
 - Workflows are capped at 100 with explicit partial status (`partial_result`) if more exist; run statistics are computed over a bounded recent-run sample (default 30 runs); `successRate` denominator is all sampled completed runs (in-progress excluded; non-success/missing conclusions in denominator; null when 0 completed runs in sample).
 - Dispatch, cancel, rerun, and schedule mutation controls remain explicitly unimplemented in both the Console resource and the Control API; tests must not relax this and must not introduce mutation routes.
-- Production-credential and browser acceptance for the read-only state/statistics path remains unobserved. A live unauthenticated read of public `SimulatorLife/AutoDev` confirmed that the workflow and run endpoints are available; the pinned Data, Runtime, and Console test suites continue to verify behavior against injected fetch adapters.
+- GitHub runtime facts must be verified from source-owned, authenticated or explicitly public evidence. Missing credentials or unobserved results remain unavailable; tests must not infer a healthy or zero state.
+
+
+### Agent execution, resilience and package boundaries
+
+- Contract tests cover the §5 selection-order table, all four named cooldown kinds and their last-resort/persistence scopes, session reuse, cancellations and unknown outcomes; ACP routes additionally pass the documented leaf or root parity gate.
+- Package-cycle and public-export/import-boundary checks enforce the declared dependency graph. Each workspace passes isolated typecheck/tests; affected reverse dependents pass integration contracts. A replacement routing or Console adapter passes consumer-driven contract tests without edits to unrelated packages.
+- Deterministic plan execution and OpenCLI ledger recovery tests prevent unapproved operations and duplicate accepted browser turns. A representative benchmark reports completed task quality, p50/p95 latency and failure/side-effect rates.
+- Dependency evaluation and upgrades validate compatible open-source license, public API, maintenance/security evidence and contract parity; redundant generic resilience mechanisms are absent where Cockatiel covers them.
 
 ### Fork/upgrades
 
@@ -1127,23 +1294,18 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - retained features no longer depend on removed tenancy/Rule Engine/OpenGround concepts;
 - storage/query/receiver behavior remains intact unless explicitly approved.
 
-### Migration/cutover
+### Replacement and convergence invariants
 
-- no production view relies on hard-coded sample usage/health/convergence values;
-- workspace imports use declared package contracts;
-- no legacy root implementation/facade returns;
-- RuleSync subagents/permissions switch only after lossless parity;
-- old OpenLIT AutoDev pages and temporary external Memory UI bridge are removed after Console parity;
-- a real producer is verified through authenticated OpenLIT before legacy router history/receiver paths are deleted;
-- obsolete sync/proxy/patch/dependency paths are removed after consumers disappear;
-- current-main CI/workflow evidence supports the migration gate.
-
-Do not remove an incumbent path until its replacement has end-to-end evidence. Do not keep permanent compatibility paths after cutover.
+- No operator view may depend on sample or fabricated health, usage, readiness or convergence data.
+- Provider configurations and role permissions are switched only with reproducible, lossless parity evidence; incumbent execution paths remain valid until their replacement satisfies all applicable acceptance criteria.
+- All enabled telemetry producers export through the authenticated OpenLIT OTLP receiver, with verifiable end-to-end ClickHouse ingestion and no duplicate historical telemetry authority.
+- Do not retain compatibility facades, duplicate UI routes, obsolete sync/proxy code or orphaned dependencies after all consumers have moved; do not remove a working path before an equivalent alternative is verified.
+- Tests must assert the desired contract and report implementation gaps without weakening security, correctness, performance or accessibility expectations.
 
 ## 14. Documentation policy
 
-- This document is the only broad AutoDev Console/observability/configuration target-state authority.
-- autodev-console-migration.md owns current migration status/evidence and should stay concise/current rather than accumulating patch history.
+- This is the sole broad target-state authority for AutoDev's codebase: orchestration, providers, execution transports, configuration, permissions, memory, telemetry, Control API, Console, and dependency boundaries.
+- autodev-console-migration.md owns implementation status, gaps, cutover sequencing, and verification evidence; these are not normative target-state requirements.
 - local-setup.md owns operational commands, ports, environment variables, and local secret/bootstrap details.
 - memory-target-state.md owns detailed Memory architecture/telemetry/governance while deferring to this document on shared Console/OpenLIT UI rules.
 - [playtesting-target-state.md](playtesting-target-state.md) owns Playtesting's runner/adapter, analysis, human-calibration, session UI and source-reuse details while deferring here on navigation, Console design, resource ownership, evaluator semantics and controls.
@@ -1154,6 +1316,6 @@ Do not remove an incumbent path until its replacement has end-to-end evidence. D
 
 ## Final target
 
-AutoDev is a **single-user, dark-only, deliberately compact control and observability Console** built on a reduced OpenLIT telemetry foundation.
+AutoDev is a **TypeScript-first, provider-independent, subscription-capable agent platform** with role-based orchestration, safe direct CLI/Responses and parity-gated ACP execution, strict and observable permissions, durable routing and resource policy, and package-managed, maintained open-source dependencies rather than duplicated custom infrastructure.
 
-Retain OpenTelemetry ingestion, storage and querying alongside selected reusable components; use the **14 canonical AutoDev resources** as the product surface, with clear RuleSync/runtime ownership and distinct configuration, live state and historical telemetry.
+Its single-user, dark-only **AutoDev Console** is the sole compact product surface, with **14 canonical resources**. Rulesync owns portable desired agent configuration; Runtime/Control API owns live control; OpenTelemetry/OpenLIT/ClickHouse owns observed history; PostgreSQL/pgvector owns curated memory. No parallel authorities, operator dashboards, execution control planes, telemetry stores or shadow agent runtimes.
