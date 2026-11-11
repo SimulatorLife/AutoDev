@@ -443,6 +443,17 @@ test("viewer reads control resources; MCP and Skills views contain configuration
         documentation: configured?.documentation ?? null
       });
     }
+    // Gemini's own usage page is what an operator needs for the opencli
+    // Gemini provider: its limits are the site's, and the account the bridge
+    // drives is the account the page shows.
+    const opencliGemini = (
+      providers.body.providers as Array<{
+        id: string;
+        links: { usage: string | null };
+      }>
+    ).find((provider) => provider.id === "opencli-gemini");
+    assert.ok(opencliGemini, "the opencli Gemini provider is listed");
+    assert.equal(opencliGemini.links.usage, "https://gemini.google.com/usage");
 
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
       actor: "viewer-a"

@@ -153,7 +153,7 @@
         "orchestrator": "opencli-gemini-4-argon-complex-tasks"
       },
       "links": {
-        "usage": "https://gemini.google.com/u/1/usage?pli=1",
+        "usage": "https://gemini.google.com/usage",
         "documentation": "https://github.com/jackwener/opencli"
       }
     },
