@@ -4,7 +4,7 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Canonical target
 
-- [`autodev-console-target-state.md`](autodev-console-target-state.md) — sole authority for the AutoDev Console product model, dark-only UI/design contract, OpenLIT fork boundary, RuleSync configuration ownership, observability/control-plane architecture, resource semantics, and acceptance criteria.
+- [`autodev-console-target-state.md`](autodev-console-target-state.md) — **sole AutoDev codebase target-state authority**: agent orchestration and CLI/ACP transport gates, dependency ownership/reuse, provider routing, Rulesync/permissions, OpenLIT/OpenTelemetry, memory, Control API, Console design/resource contracts and acceptance criteria.
 
 ## Focused operational/design docs
 
@@ -22,11 +22,11 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Documentation rules
 
-1. Update `autodev-console-target-state.md` in place when shared product/ownership/UI architecture changes.
+1. Update `autodev-console-target-state.md` in place for platform, dependency, agent/runtime, provider, permission, observability, Console, and shared ownership changes.
 2. Update `autodev-console-migration.md` for current migration state/evidence; do not accumulate patch-by-patch history in the target spec.
 3. Keep operational commands/secrets/ports in `local-setup.md` and focused subsystem details in their owning docs.
 4. Keep focused docs explicitly subordinate to the canonical target when scopes overlap.
-5. Delete completed ledgers and superseded target-state docs instead of retaining contradictory historical instructions in the active docs tree.
+5. Delete completed ledgers and superseded target-state docs (including standalone hybrid-agent/CLI target plans) instead of retaining contradictory guidance.
 6. Use repo-relative paths and avoid machine-specific absolute paths in normative documentation.
 7. Generated provider configuration, OpenLIT read models, and telemetry records are never competing configuration sources of truth.
 
