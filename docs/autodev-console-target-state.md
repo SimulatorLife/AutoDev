@@ -358,19 +358,19 @@ Use desired/live/convergence interaction semantics similar to Argo CD where usef
 
 ### Single installation and lifecycle entrypoint
 
-**Canonical public install command:** `bash scripts/install.sh`. The shell entrypoint invokes the typed `autodev install` implementation; `pnpm run install:codex` is an alias for the same workflow, not another installer. Provider-specific `ensure-*` commands are callable for troubleshooting and recovery but must not be prerequisites for a successful supported installation.
+**One supported user-facing installation workflow** is the canonical way to configure, install, update and reconcile AutoDev. Its script name, command syntax, internal implementation and aliases may change without altering this contract. Provider-specific helpers may exist for diagnosis or recovery, but a complete supported installation must not require users to run them separately.
 
-- **Deterministic reconciliation:** Re-running unchanged desired configuration makes no writes or duplicate registrations. `bash scripts/install.sh --check` reports local drift, prerequisites and pending changes **without mutation, secret disclosure or authenticated provider calls**.
+- **Deterministic reconciliation:** Re-running unchanged desired configuration makes no writes or duplicate registrations. The installation workflow provides a **read-only verification mode** that reports local drift, prerequisites and pending changes without mutation, secret disclosure or authenticated provider calls.
 - **Installation scope:** Reconcile selected provider integrations, global agents/skills/MCPs/hooks, role projections, binaries and managed Runtime/Console services. Preserve unrelated user settings, credentials, sessions and project files; surface ownership conflicts instead of overwriting them.
 - **Failure and recovery:** Apply staged/atomic changes where supported; on interruption preserve or restore a working prior state, and make reruns safe. Report configured, converged, pending, failed, skipped and unavailable items separately.
 
 | Validation level | Required behavior |
 | --- | --- |
-| Local `--check` | No-write verification of files, tool discovery, declarations, generated projections, manifest/config compatibility and managed service definitions; returns actionable drift/errors without presuming provider readiness. |
+| Read-only local verification | No-write verification of files, tool discovery, declarations, generated projections, manifest/config compatibility and managed service definitions; returns actionable drift/errors without presuming provider readiness. |
 | Local post-install | Verify actual generated configurations, executable discovery, installed service ownership and reachable **local** Runtime/Console health where running. |
 | Authenticated end-to-end smoke check (opt-in or explicitly required by deployment policy) | Exercise approved provider tool/MCP/permission behavior and compatible Control API/Usage responses only where credentials, consent and connectivity exist. Record each probe as `observed` (with evidence), `unavailable` (attempt failed), or `skipped` (not attempted/not authorized); never promote skipped checks to success. |
 
-**Acceptance:** clean install, idempotent repeat, `--check` no-write/drift, optional-provider absence, existing user configuration, partial failure/recovery and two workspaces must converge without duplicate services, modified secrets or false validation claims.
+**Acceptance:** A clean installation, idempotent repeat, read-only drift verification, optional-provider absence, existing user configuration, partial failure/recovery and two workspaces converge without duplicate services, modified secrets or false validation claims.
 
 ### Unified user-chat and CLI execution entrypoints
 
@@ -1279,7 +1279,7 @@ The browser uses same-origin TypeScript server routes/proxies. The private Contr
 
 The authenticated, read-only `GET /control/contracts` endpoint publishes the Control API compatibility revision shared by Core, Runtime, and Console. Increment that revision when the Console begins requiring a new Control API capability or path, or when an existing payload or authorization contract changes incompatibly. Development and production Console launchers must validate it before serving pages, in addition to validating the OpenLIT Usage response; a missing, stale, or malformed contract blocks startup rather than making every resource page discover incompatibility independently. Do not add legacy payload fallbacks.
 
-The Runtime installer owns the production Console release lifecycle: it materializes the Console LaunchAgent and launcher, confirms service ownership before touching the production artifact, builds into an isolated Next output directory, promotes only a completed build, then reloads and verifies the managed Console process after Runtime. The production launcher validates both backend contracts before serving. `--materialize-only` does not build or restart a live Console; direct `next start` is not a supported deployment path because it bypasses those guarantees.
+The Runtime installer owns the production Console release lifecycle: it materializes the Console LaunchAgent and launcher, confirms service ownership before touching the production artifact, builds into an isolated Next output directory, promotes only a completed build, then reloads and verifies the managed Console process after Runtime. The production launcher validates both backend contracts before serving. A materialization-only operation does not build or restart a live Console; starting the framework directly without the managed launcher is not a supported deployment path because it bypasses those guarantees.
 
 ### Single-user identity and security
 
@@ -1404,7 +1404,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 ### Installation, entrypoints, workspace composition and operational evidence
 
-- One repeatable installer and no-write `--check` pass clean/repeat/drift/partial-failure and existing-user-config tests; managed services, role projections and optional providers converge without duplicate registration or secret loss.
+- The single supported installation workflow passes clean-install, repeat/idempotence, read-only drift-verification, partial-failure/recovery and existing-user-configuration tests; managed services, role projections and optional providers converge without duplicate registration or secret loss.
 - Both supported ChatGPT-application and `codex` CLI entrypoints resolve to one AutoDev task/session, router, effective grants, delegation and telemetry contract. If a ChatGPT app integration cannot securely execute/route locally, it must report that limitation rather than falsely claim parity.
 - User/global and repository-local definitions compose deterministically for two conflicting workspaces and different providers. Per-role/leaf skills, MCP tools, prompts, hooks and permissions match the effective manifest; a repository cannot expand user-level authority or contaminate another workspace.
 - Concurrent cross-provider subagents honor priority, quota, throttling, capacity, sticky sessions, denial and safe-fallback rules. Spawn requested/admitted/failed/completed accounting and root/leaf lineage match Runtime state and historical OTel evidence.
