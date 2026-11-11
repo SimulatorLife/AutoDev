@@ -1,8 +1,7 @@
 # Codex agent and provider routing
 
 This is the canonical repository guide for choosing and invoking agents across
-the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts
-remain the source of truth for exact model settings; this document owns the
+the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts remain the source of truth for exact model settings; this document owns the
 routing policy, execution boundaries, and the setup needed to use the
 versioned local integration safely.
 
@@ -2372,13 +2371,19 @@ single list; the route patterns and the site registry in
     `--thinking` refused every level the site offers and the level could not
     be selected at all. The patch teaches the adapter the site's names, waits
     for the submenu to expand (its items have no size until it does), and
-    finds the "Thinking level" entry wherever the menu keeps it. The bridge
-    asks for the level the operator chose for the role, and only when it
-    differs from the one the site has; a level the site cannot take is a
-    preference it declined, so the turn answers at the level it has rather
-    than failing. ChatGPT has no thinking level of its own: its intelligence
-    level _is_ its model, so the catalog names the model's level and the
-    bridge switches the model instead.
+    finds the "Thinking level" entry wherever the menu keeps it. It also
+    finds the **picker** itself: the site labels the composer's picker "Open
+    mode picker, currently Flash-Lite High" and shows the model without a
+    version, so none of opencli's name patterns matched it, no menu ever
+    opened, and Gemini's models were never read -- which also failed the
+    model's own discovery, so a turn that asked for a model or a level ran at
+    the model the site already had, without saying so. The bridge asks for
+    the level the operator chose for the role, and only when it differs from
+    the one the site has; a level the site cannot take is a preference it
+    declined, so the turn answers at the level it has rather than failing,
+    and a model it cannot take is reported the same way. ChatGPT has no
+    thinking level of its own: its intelligence level _is_ its model, so the
+    catalog names the model's level and the bridge switches the model instead.
   - Each provider's discovery asks the bridge for its own list
     (`GET /v1/models?provider=<provider>`). Reading Gemini's list drives the
     browser and waits behind any turn using that tab, which outlasts the
@@ -2987,7 +2992,7 @@ installer is the only supported materialization path into
   deletion commands are forbidden.
 - Current user-level role projection: `agents/roles/*.toml`, rendered from
   the shared `base.md` + `leaf.md` prompt layers and materialized as managed
-  regular-file copies under `$CODEX_HOME/agents/`. These files remain a transitional input while RuleSync subagent/agent-role parity is completed; the target is canonical RuleSync ownership with Codex TOML as a generated projection, not a second editable authority. The role loader must receive
+  regular-file copies under `$CODEX_HOME/agents/`. These files remain a transitional input: RuleSync 43.8.0 generates native subagents for the configured targets, but that support does not encode AutoDev's complete cross-provider role contract losslessly. The target is canonical RuleSync ownership with Codex TOML as a generated projection, not a second editable authority. The role loader must receive
   regular files rather than symlinks; the installer replaces symlinks and
   verifies exact rendered content matches. Code-oriented roles (`default`,
   `explorer`, `worker`, `validator`, and `smart`) enable the `codegraphcontext`,
@@ -3207,7 +3212,7 @@ configured and validated.
 
 ### Cross-provider execution contract
 
-`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `runtime/src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: once RuleSync owns the corresponding agent/subagent semantics losslessly, generate/validate the runtime contract from that canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
+`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `runtime/src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: RuleSync 43.8.0 supports provider-native subagent output, but the remaining AutoDev role fields and runtime semantics still lack a proven lossless mapping. Once RuleSync owns those corresponding semantics losslessly, generate/validate the runtime contract from canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
 role fragment from `agents/prompts/roles/` and use this JSON only for
 capability metadata; the Claude bridge receives the rendered role TOML's
 instructions in Codex's own context. The installer deploys both beside the bridge runtime
@@ -3222,7 +3227,7 @@ route metadata: model-family patterns, local bridge URLs, health probes, and
 credential environment keys. The router derives its route table from that
 manifest and validates every provider entry. Native model capability metadata
 (such as supported reasoning levels) remains in `config/catalogs/`, while
-role MCP and skill exposure is currently projected through the native role TOMLs/execution contract, but the canonical target moves these RuleSync-supported agent-facing definitions into RuleSync and removes duplicate editable authority. Older installed routing files that lack the new `routes`
+role MCP and skill exposure is currently projected through the native role TOMLs/execution contract. RuleSync 43.8.0 supports native subagent generation, but AutoDev role fields and runtime behavior still require a lossless mapping before moving that authority into RuleSync and removing the duplicate editable input. Older installed routing files that lack the new `routes`
 block temporarily use the built-in migration defaults until the installer is
 rerun; the versioned source is the authoritative routing configuration.
 

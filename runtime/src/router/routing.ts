@@ -1323,7 +1323,7 @@ export class RoutingPolicy {
    * The configured AutoDev alias that names one executable Agent role.
    *
    * The execution contract defines Agent capabilities, but it cannot disable
-   * an Agent in pinned RuleSync 16.30.2. The Router's `roles` map is the
+   * an Agent in pinned RuleSync 43.8.0. The Router's `roles` map is the
    * authoritative source for names that can actually enter through
    * `autodev/<role>`; the orchestrator uses its dedicated alias.
    */

@@ -126,13 +126,14 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
       "Agents",
       "Hooks",
       "MCPs",
+      "Overview",
       "Permissions",
       "Prompts",
       "Providers",
       "Skills",
       "Tools"
     ],
-    "Configure must list exactly its eight canonical nav resources"
+    "Configure tree keeps canonical resources and the migration-tracked Overview target"
   );
   assert.deepEqual(
     groups.Observe.slice().sort(),
@@ -959,12 +960,13 @@ test("git change metrics are defined with exact counting and cardinality rules",
   );
   assert.match(
     migration,
-    /current Usage response is unavailable; partial line totals now fail closed/u
+    /p76 live; source-confirmed commit and diff totals observed; partial line totals fail closed/u
   );
   assert.match(
     migration,
-    /A 41-commit source-confirmed sample and matching ClickHouse cumulative-delta query were observed in an earlier deployment/u
+    /The 90-day live Data snapshot reported 91 commits, 91 files changed/u
   );
+  assert.match(migration, /withholds total lines added\\/removed while preserving measured file counts/u);
   assert.match(migration, /cumulative temporality/u);
 });
 

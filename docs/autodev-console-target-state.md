@@ -502,7 +502,7 @@ RuleSync-owned concerns include, as supported:
 
 - rules/instructions;
 - commands and prompt assets;
-- subagent/agent-role definitions;
+- provider-native subagent declarations (distinct from AutoDev's cross-provider role registry and Runtime semantics);
 - Agent Skills and supporting files;
 - MCP declarations and target-specific overrides;
 - hooks;
@@ -536,7 +536,7 @@ Preserve target-specific overrides. Do not invent another AutoDev configuration 
 
 AutoDev-specific runtime state that RuleSync does not model—provider credentials, live health, pricing/catalog facts, routing/cooldown/concurrency state, scheduler/runtime policy—remains owned by typed AutoDev configuration/runtime APIs.
 
-When RuleSync cannot round-trip an Agent `enabled` field losslessly, Runtime owns named-role enablement and its revision generations; no generated role TOML or provider projection may invent unsupported fields. Runtime enforces disabled named-role aliases at admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
+When RuleSync cannot round-trip an Agent `enabled` field losslessly, Runtime owns named-role enablement and its revision generations; no generated role TOML or provider projection may invent unsupported fields. Runtime enforces disabled named-role aliases at admission. Target-specific flags such as Antigravity `mainAgent`/`subagent` and quota-pool `disabled` do not substitute for portable role enablement. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
 
 Conceptually:
 
@@ -546,6 +546,8 @@ Generated provider configs   ← RuleSync projections
 Actual runtime state         ← Runtime / Control API
 Historical behavior          ← OpenTelemetry / OpenLIT
 ```
+
+**Subagent/permissions projection parity:** Provider-native subagent generation is not proof of AutoDev cross-provider role parity. For each CLI, validate the native configuration fields and their supported project/global scope (which can differ among Codex, Claude, Copilot and Antigravity), approval semantics and effective tool/role behavior. A feature being supported by upstream Rulesync does not mean AutoDev has enabled it or that its outputs are losslessly equivalent.
 
 ### Policy ownership and enforcement
 
