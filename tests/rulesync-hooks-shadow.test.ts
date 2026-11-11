@@ -178,27 +178,24 @@ test("target projections preserve their documented command losses", () => {
       groupedCommands(asObject(document("claudecode").hooks))
     ),
     copilot: new Set(commands(document("copilot"))),
-    "antigravity-cli": new Set(
-      groupedCommands(asObject(document("antigravity-cli").rulesync))
-    )
+    "antigravity-cli": new Set([
+      ...groupedCommands(asObject(document("antigravity-cli").rulesync)),
+      ...commands({
+        hooks: {
+          SessionStart: asObject(document("antigravity-cli").rulesync)
+            .SessionStart
+        }
+      })
+    ])
   };
   const expected: Record<(typeof targets)[number], Set<string>> = {
     codexcli: new Set(),
     claudecode: new Set(),
-    copilot: new Set(
-      sourceCommands.filter(
-        (command) => command !== "node ~/.codex/src/hooks/root-delegation.ts"
-      )
-    ),
-    "antigravity-cli": new Set(
-      sourceCommands.filter(
-        (command) =>
-          ![
-            "node ~/.codex/src/hooks/block-ccc-cli.ts",
-            "node ~/.codex/src/hooks/skill-read-telemetry.ts"
-          ].includes(command)
-      )
-    )
+    copilot: new Set(["node ~/.codex/src/hooks/session-start.ts"]),
+    "antigravity-cli": new Set([
+      "node ~/.codex/src/hooks/subagent-start.ts",
+      "node ~/.codex/src/hooks/root-delegation.ts"
+    ])
   };
   for (const target of targets)
     assert.deepEqual(
@@ -207,6 +204,39 @@ test("target projections preserve their documented command losses", () => {
       ),
       expected[target],
       target
+    );
+
+  const targetEvents: Record<(typeof targets)[number], Set<string>> = {
+    codexcli: new Set(Object.keys(asObject(document("codexcli").hooks))),
+    claudecode: new Set(Object.keys(asObject(document("claudecode").hooks))),
+    copilot: new Set(Object.keys(asObject(document("copilot").hooks))),
+    "antigravity-cli": new Set(
+      Object.keys(asObject(document("antigravity-cli").rulesync))
+    )
+  };
+  const expectedNativeEvents: Record<(typeof targets)[number], Set<string>> = {
+    codexcli: new Set([
+      "PreToolUse",
+      "SessionEnd",
+      "SessionStart",
+      "SubagentStart",
+      "UserPromptSubmit"
+    ]),
+    claudecode: new Set([
+      "PreToolUse",
+      "SessionEnd",
+      "SessionStart",
+      "SubagentStart",
+      "UserPromptSubmit"
+    ]),
+    copilot: new Set(["subagentStart", "userPromptSubmitted", "preToolUse"]),
+    "antigravity-cli": new Set(["SessionStart", "PreToolUse"])
+  };
+  for (const target of targets)
+    assert.deepEqual(
+      targetEvents[target],
+      expectedNativeEvents[target],
+      `${target} native events`
     );
 });
 
@@ -301,16 +331,68 @@ test("Codex and Claude get native memory capture without adding a Copilot hook",
 
 test("Copilot and Antigravity retain their documented parity limits", () => {
   const copilot = document("copilot");
-  assert.deepEqual(Object.keys(asObject(copilot.hooks)), [
-    "userPromptSubmitted"
+  const copilotHooks = hooksAt(copilot.hooks);
+  assert.deepEqual(Object.keys(copilotHooks), [
+    "subagentStart",
+    "userPromptSubmitted",
+    "preToolUse"
   ]);
   assert.deepEqual(commands(copilot), [
-    "node ~/.codex/src/hooks/root-delegation.ts"
+    "node ~/.codex/src/hooks/subagent-start.ts",
+    "node ~/.codex/src/hooks/root-delegation.ts",
+    "node ~/.codex/src/hooks/block-ccc-cli.ts",
+    "node ~/.codex/src/hooks/skill-read-telemetry.ts"
   ]);
+  assert.deepEqual(
+    copilotHooks.subagentStart?.map((hook) => hook.command),
+    ["node ~/.codex/src/hooks/subagent-start.ts"]
+  );
+  assert.deepEqual(
+    copilotHooks.userPromptSubmitted?.map((hook) => hook.command),
+    ["node ~/.codex/src/hooks/root-delegation.ts"]
+  );
+  assert.deepEqual(
+    copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
+    [
+      [
+        "(?i)exec[_ -]?command|bash",
+        "node ~/.codex/src/hooks/block-ccc-cli.ts"
+      ],
+      [
+        "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
+        "node ~/.codex/src/hooks/skill-read-telemetry.ts"
+      ]
+    ]
+  );
   const antigravity = document("antigravity-cli");
-  assert.deepEqual(Object.keys(asObject(antigravity.rulesync)), ["PreToolUse"]);
+  assert.deepEqual(Object.keys(asObject(antigravity.rulesync)), [
+    "SessionStart",
+    "PreToolUse"
+  ]);
   assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), [
     "node ~/.codex/src/hooks/block-ccc-cli.ts",
     "node ~/.codex/src/hooks/skill-read-telemetry.ts"
   ]);
+  assert.deepEqual(asObject(antigravity.rulesync).SessionStart, [
+    { type: "command", command: "node ~/.codex/src/hooks/session-start.ts" }
+  ]);
+  assert.deepEqual(
+    (asObject(antigravity.rulesync).PreToolUse as unknown[]).map((entry) => {
+      const group = asObject(entry);
+      return [
+        group.matcher,
+        (group.hooks as unknown[]).map((hook) => asObject(hook).command)
+      ];
+    }),
+    [
+      [
+        "(?i)exec[_ -]?command|bash",
+        ["node ~/.codex/src/hooks/block-ccc-cli.ts"]
+      ],
+      [
+        "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
+        ["node ~/.codex/src/hooks/skill-read-telemetry.ts"]
+      ]
+    ]
+  );
 });

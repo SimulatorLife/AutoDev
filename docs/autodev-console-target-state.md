@@ -353,7 +353,7 @@ RuleSync-owned concerns include, as supported:
 
 - rules/instructions;
 - commands and prompt assets;
-- subagent/agent-role definitions;
+- provider-native subagent declarations (distinct from AutoDev's cross-provider role registry and Runtime semantics);
 - Agent Skills and supporting files;
 - MCP declarations and target-specific overrides;
 - hooks;
@@ -387,7 +387,7 @@ Preserve target-specific overrides. Do not invent another AutoDev configuration 
 
 AutoDev-specific runtime state that RuleSync does not model—provider credentials, live health, pricing/catalog facts, routing/cooldown/concurrency state, scheduler/runtime policy—remains owned by typed AutoDev configuration/runtime APIs.
 
-RuleSync (as of 16.30.2) does not preserve an Agent `enabled` field losslessly across its supported outputs. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
+RuleSync 43.8.0 supports provider-native subagent generation, but it does not provide a portable, lossless common Agent `enabled` field across its supported outputs. Target-specific flags such as Antigravity `mainAgent`/`subagent` and pool-specific `disabled` have different semantics and do not model AutoDev's common enablement control. Therefore Agent enablement is not added to role TOML, generated provider files, or provider assignments: Runtime persists the disabled named-role aliases and their revision generations and enforces them at request admission. The dedicated orchestrator alias must not collide with any named role alias; Runtime configuration validation rejects collisions rather than letting two Agent controls govern one request identity. Only a request carrying a configured named AutoDev alias has that Agent identity; concrete provider/model requests remain governed by Providers and Models.
 
 Conceptually:
 
@@ -398,7 +398,7 @@ Actual runtime state         ← Runtime / Control API
 Historical behavior          ← OpenTelemetry / OpenLIT
 ```
 
-Lossless RuleSync subagent/permission parity is a migration gate, not an assumption. Current parity details belong in the migration tracker.
+RuleSync 43.8.0 supports provider-native subagent generation for the configured Codex, Claude Code, Copilot, and Antigravity CLI targets; this does not establish lossless parity with AutoDev's role contract. Permission generation is also target-scope-dependent (project and global for Codex/Claude, project-only for Copilot, and global-only for Antigravity), and this repository does not currently enable the `subagents` or `permissions` features. Complete role and permission parity remains a migration gate, not an assumption; current field-level gaps belong in the migration tracker.
 
 ## 7. OpenLIT fork boundary
 
