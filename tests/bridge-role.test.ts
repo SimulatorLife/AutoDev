@@ -337,23 +337,28 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   // producing a generic agent instead of the requested role.
   assert.match(orchestrator, /agent_type/);
   assert.match(orchestrator, /Promise\.all/);
-  // A batch uses one spawn call and settles each result independently.
-  assert.match(orchestrator, /single spawn call may dispatch a batch/);
+  // The provider-specific bootstrap keeps the concrete batched spawn pattern.
+  assert.match(orchestrator, /batched `await Promise\.allSettled/);
   assert.match(orchestrator, /Promise\.allSettled/);
   // The parent host may not list the role MCP, while the routed provider does.
-  assert.match(
-    orchestrator,
-    /Codex-native `multi_agent_v1` children inherit the root MCP set/
+  assert.match(orchestrator, /Root and child MCP capabilities can differ/);
+  assert.match(orchestrator, /do not infer exposure from root tools or telemetry/);
+  assert.match(orchestrator, /browser-tester.*Playwright/);
+  assert.match(orchestrator, /provider-bridge shim, not a Codex MCP server/);
+  // Provider-specific bootstrap stays here; generic child lifecycle belongs to
+  // the canonical orchestration runtime contract rather than a second prompt.
+  assert.doesNotMatch(orchestrator, /Wait timeouts and running children/);
+  assert.doesNotMatch(orchestrator, /Code-mode delegation & polling reference/);
+  const runtimeContract = read(
+    ".rulesync/skills/orchestration/references/runtime-contract.md"
   );
-  assert.match(orchestrator, /provider-native tools even when they are absent/);
-  assert.match(orchestrator, /roleMcpInjection/);
-  assert.match(orchestrator, /spawn_subagent/);
-  // Lifecycle handling follows spawning, rather than blocking the spawn call.
-  assert.match(orchestrator, /After spawning, poll child results/);
+  assert.match(runtimeContract, /Wait timeouts and running children/);
+  assert.match(runtimeContract, /Parking and session reuse/);
+  assert.match(runtimeContract, /Never perform global cleanup/);
   // The dedicated runner remains restricted to trusted Runtime context.
   assert.match(
     orchestrator,
-    /Playtester MCP requires a dedicated run-control credential/
+    /Playtest requires Runtime-bound authorization/
   );
 });
 
@@ -367,20 +372,17 @@ test("the orchestrator prompt tells the model to quote a spawn message so Markdo
 });
 
 test("the orchestrator preserves agent IDs verbatim across lifecycle calls", () => {
-  const prompt = read("agents/prompts/orchestrator.md");
   const runtimeContract = read(
     ".rulesync/skills/orchestration/references/runtime-contract.md"
   );
-  for (const guidance of [prompt, runtimeContract]) {
-    const normalized = guidance.replaceAll(/\s+/g, " ");
-    assert.match(normalized, /agent_id.*opaque handle/);
-    assert.match(normalized, /complete value .* verbatim/);
-    assert.match(normalized, /never abbreviate .* retype it from memory/);
-    assert.match(
-      normalized,
-      /recover the exact handle .* verified spawn history/
-    );
-  }
+  const normalized = runtimeContract.replaceAll(/\s+/g, " ");
+  assert.match(normalized, /agent_id.*opaque handle/);
+  assert.match(normalized, /complete value .* verbatim/);
+  assert.match(normalized, /never abbreviate .* retype it from memory/);
+  assert.match(
+    normalized,
+    /recover the exact handle .* verified spawn history/
+  );
 });
 
 test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {

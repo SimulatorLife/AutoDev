@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +26,97 @@ type HookInput = {
 };
 const NON_ROOT_MODEL =
   /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/;
+const DEDUP_TTL_MS = 15 * 60 * 1000;
+const DEDUP_MAX_ENTRIES = 1024;
+const LOCK_STALE_MS = 30 * 1000;
+
+function shouldInjectOnce(input: HookInput, model: string): boolean {
+  const sessionId =
+    typeof input.session_id === "string" ? input.session_id.trim() : "";
+  const turnId = typeof input.turn_id === "string" ? input.turn_id.trim() : "";
+  if (!sessionId || !turnId || !model) return true;
+
+  const key = createHash("sha256")
+    .update(JSON.stringify([sessionId, turnId, model]))
+    .digest("hex");
+  const hooksDir = path.join(codexHome(), "hooks");
+  const stateFile = path.join(hooksDir, "root-delegation-state.json");
+  const lockDir = path.join(hooksDir, "root-delegation-state.lock");
+  mkdirSync(hooksDir, { recursive: true });
+
+  // mkdir is the cross-process atomic claim. State holds only hashed turn keys
+  // and timestamps; no prompt content, model input, or credentials are stored.
+  const waitArray = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    if (Date.now() >= deadline) return true;
+    try {
+      mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return true;
+      let lockAge: number;
+      try {
+        lockAge = Date.now() - statSync(lockDir).mtimeMs;
+      } catch {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return true;
+        Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
+        continue;
+      }
+      if (lockAge > LOCK_STALE_MS) {
+        try {
+          rmSync(lockDir, { recursive: true, force: true });
+        } catch {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) return true;
+          Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
+        }
+        continue;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return true;
+      Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
+    }
+  }
+
+  try {
+    const now = Date.now();
+    let entries: Record<string, number> = {};
+    try {
+      const stored: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
+      if (
+        stored !== null &&
+        typeof stored === "object" &&
+        !Array.isArray(stored)
+      ) {
+        entries = Object.fromEntries(
+          Object.entries(stored).filter(
+            (entry): entry is [string, number] =>
+              typeof entry[1] === "number" &&
+              Number.isFinite(entry[1]) &&
+              now - entry[1] < DEDUP_TTL_MS
+          )
+        );
+      }
+    } catch {
+      // Missing or corrupt state starts a fresh bounded window.
+    }
+    const duplicate = Object.hasOwn(entries, key);
+    if (!duplicate) entries[key] = now;
+    const boundedEntries = Object.fromEntries(
+      Object.entries(entries)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, DEDUP_MAX_ENTRIES)
+    );
+    const temporary = `${stateFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
+    renameSync(temporary, stateFile);
+    return !duplicate;
+  } finally {
+    rmSync(lockDir, { recursive: true, force: true });
+  }
+}
 
 function parseInput(raw: string): HookInput {
   try {
@@ -47,61 +148,17 @@ function logInput(input: HookInput): void {
   }
 }
 
-async function recoveryScript(parentId: string): Promise<string> {
-  try {
-    const tools = await import("@simulatorlife/autodev-runtime/agents");
-    return tools.buildRecoveryScript(parentId, {
-      preserveParked: true,
-      maxCapacity: tools.resolveAuthoritativeCapacity()
-    });
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Format the parent-side recovery preflight in a form that is unambiguous
- * regardless of whether the orchestrator turn runs in Codex code mode (one
- * `exec` tool that takes raw JavaScript) or native function-call mode (named
- * tools the model invokes directly). A previous version injected only a
- * JavaScript snippet (`buildRecoveryScript` is a code-mode script); the model
- * could not find a native function named `multi_agent_v1__spawn_agent` in its
- * declared tool list and concluded the orchestration surface was unavailable.
- * The natural-language summary below is runtime-agnostic; the optional JS
- * block, when present, is labelled as code-mode-only.
- */
-function buildRecoveryContext(recovery: string): string {
-  const header =
+/** Keep this exceptional-path reminder compact; the orchestration skill owns the full procedure. */
+function buildRecoveryContext(parentId: string | null): string {
+  if (!parentId) return "";
+  return (
     "\n\n## Current-parent recovery preflight\n" +
-    "If a thread-limit or admission failure leaves orphaned child threads " +
-    "under your session, recover capacity before retrying. The recovery reads your " +
-    "spawn history, waits for each child, preserves running children (a wait " +
-    "timeout never implies child failure or justifies termination), collects and " +
-    "preserves finished or partial findings, and closes dead terminal handles. " +
-    "Completed children may be parked and reused for compatible follow-up tasks, " +
-    "or evicted (oldest-first) only when capacity pressure requires freeing slots " +
-    "for new work. Foreign and still-running children are never touched.\n\n" +
-    "If you have a `mcp__codex_app__read_thread` tool, call it with " +
-    "`{ threadId: <your session id>, turnLimit: 10, includeOutputs: false, " +
-    "maxOutputCharsPerItem: 2000 }` to get the recent items. For every " +
-    "`collabAgentToolCall` whose `senderThreadId` matches your session id, " +
-    "collect the `receiverThreadIds`. Wait on each id with " +
-    "`multi_agent_v1__wait_agent({ targets: [<id>], timeout_ms: 30000 })`. " +
-    "If the wait times out or the child is still running, leave it running (never close, terminate, or interrupt a running child; if you need findings immediately, prompt for an interim summary via `multi_agent_v1__send_input`). Completed children must be parked and retained for reuse, not closed. Close dead (errored/interrupted/shutdown) terminal handles or evict oldest parked handles under capacity pressure with `multi_agent_v1__close_agent({ target: <id> })`. " +
-    "Do not infer child ids from global task listings, telemetry, or any source " +
-    "other than your own session's spawn history.\n";
-  const codeBlock = recovery
-    ? "\nIf your runtime exposes a single `exec` tool that runs raw JavaScript " +
-      "(Codex code mode), the same steps are pre-bundled below as a " +
-      "reference script -- adapt the invocations to the surface your tools " +
-      "actually expose; do not assume the script runs as written.\n\n" +
-      "```js\n" +
-      recovery +
-      "\n```\n"
-    : "\nThe pre-bundled code-mode script was unavailable for this turn " +
-      "(the hook did not receive a parent session id or could not load the " +
-      "recovery helper). Use the natural-language steps above instead.\n";
-  return header + codeBlock;
+    `Current parent session: ${parentId}. Only after a capacity/admission failure, ` +
+    "follow the canonical orchestration recovery procedure against this parent's " +
+    "own spawn history. Preserve running children and useful partial results; " +
+    "close dead terminal handles or evict the oldest parked handles only when " +
+    "capacity requires it. Never inspect or clean up foreign sessions.\n"
+  );
 }
 
 export async function runRootDelegation(
@@ -111,6 +168,7 @@ export async function runRootDelegation(
   logInput(input);
   const model = typeof input.model === "string" ? input.model : "";
   if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
+  if (!shouldInjectOnce(input, model)) return 0;
 
   const root = repositoryRoot();
   const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
@@ -133,16 +191,14 @@ export async function runRootDelegation(
     typeof input.session_id === "string" && input.session_id.trim()
       ? input.session_id.trim()
       : null;
-  const recovery = parentId ? await recoveryScript(parentId) : "";
-
   const prompt = readFileSync(promptFile, "utf8").trim();
   const skill = existsSync(skillFile)
-    ? `\n\n## Canonical orchestration skill\n\n${readFileSync(skillFile, "utf8").trim()}`
-    : "\n\nCanonical orchestration skill is unavailable; report that capability failure instead of silently substituting a workflow.";
+    ? `\n\n## Canonical orchestration skill\n\nRead and follow the installed \`orchestration\` skill before substantial work. It is the sole authority for delegation, child lifecycle, recovery, workspace boundaries, and validation. Source: ${skillFile}. The hook points to the skill instead of copying its full body.`
+    : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;
   const codeSearch = existsSync(codeSearchFile)
     ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
     : "\n\nShared codebase navigation prompt is unavailable; report that capability failure instead of silently substituting a workflow.";
-  const recoveryContext = buildRecoveryContext(recovery);
+  const recoveryContext = buildRecoveryContext(parentId);
   process.stdout.write(
     JSON.stringify({
       systemMessage:
