@@ -1,3 +1,7 @@
+# Additional Conventions Beyond the Built-in Functions
+
+As this project's AI coding tool, you must follow the additional conventions below, in addition to the built-in functions.
+
 You have access to skills and tools; read them and use those applicable.
 
 Ensure to update any documentation and tests accordingly to your changes.

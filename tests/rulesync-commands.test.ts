@@ -320,9 +320,10 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
     "copilot",
     "claudecode",
     "codexcli",
-    "antigravity-cli"
+    "antigravity-cli",
+    "agentsmd"
   ]);
-  assert.deepEqual(config.features, ["skills", "hooks"]);
+  assert.deepEqual(config.features, ["skills", "hooks", "rules"]);
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
   assert.deepEqual(config.outputRoots, ["."]);
@@ -334,7 +335,7 @@ test("drift workflow runs the commands suite alongside the other RuleSync suites
   const workflow = readFileSync(driftWorkflowPath, "utf8");
   assert.match(
     workflow,
-    /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts/
+    /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts tests\/rulesync-rules\.test\.ts/
   );
   assert.match(workflow, /- "tests\/rulesync-\*\.test\.ts"/);
 });

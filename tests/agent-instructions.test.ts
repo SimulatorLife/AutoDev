@@ -7,11 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const agentsPath = join(repositoryRoot, "AGENTS.md");
+const rulesyncSourcePath = join(repositoryRoot, ".rulesync/rules/overview.md");
 
-test("AGENTS.md is the single regular repository instruction file", () => {
+test("AGENTS.md is the generated regular repository instruction file", () => {
   const stat = lstatSync(agentsPath);
   assert.equal(stat.isSymbolicLink(), false);
   assert.ok(readFileSync(agentsPath, "utf8").trim());
+  assert.ok(readFileSync(rulesyncSourcePath, "utf8").trim());
 });
 
 test("CLAUDE.md is a symlink to AGENTS.md", () => {
@@ -29,8 +31,7 @@ test("no other instruction copies exist", () => {
   for (const relativePath of [
     ".github/copilot-instructions.md",
     ".claude/CLAUDE.md",
-    "GEMINI.md",
-    ".rulesync/rules"
+    "GEMINI.md"
   ]) {
     assert.equal(
       lstatSafe(join(repositoryRoot, relativePath)),

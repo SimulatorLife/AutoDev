@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - ".rulesync/**"
+      - "AGENTS.md"
       - "rulesync.jsonc"
       - "tests/rulesync-*.test.ts"
       - ".nvmrc"
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - ".rulesync/**"
+      - "AGENTS.md"
       - "rulesync.jsonc"
       - "tests/rulesync-*.test.ts"
       - ".nvmrc"
@@ -47,8 +49,7 @@ jobs:
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
 
-      # Nothing Rulesync generates is tracked as a fixture. Every suite generates
-      # its projections from `.rulesync` into temporary roots with the pinned
-      # Rulesync and asserts them, so the canonical source stays the only copy.
+      # Provider projections are tested from temporary roots. Root AGENTS.md is
+      # the one tracked projection because all repository agents read that path.
       - name: Check Rulesync projections generated from the canonical source
-        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts
+        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts

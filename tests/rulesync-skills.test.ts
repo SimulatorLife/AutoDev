@@ -339,17 +339,17 @@ test("Copilot cloud setup generates repository skills after installing dependenc
   assert.match(workflow, /- "\.rulesync\/\*\*"/);
 });
 
-test("Rulesync config generates only repository skills and CI runs the Rulesync suite", () => {
+test("RuleSync project config and CI cover the repository projections", () => {
   const config = readJson(rulesyncConfigPath);
-  assert.deepEqual(config.targets, [...targets]);
-  assert.deepEqual(config.features, ["skills", "hooks"]);
+  assert.deepEqual(config.targets, [...targets, "agentsmd"]);
+  assert.deepEqual(config.features, ["skills", "hooks", "rules"]);
   assert.deepEqual(config.outputRoots, ["."]);
   assert.equal(config.delete, true);
   assert.equal(config.global, false);
   const workflow = readFileSync(driftWorkflowPath, "utf8");
   assert.match(
     workflow,
-    /run: node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts/
+    /run: node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts tests\/rulesync-rules\.test\.ts/
   );
   assert.equal(workflow.match(/- "tests\/rulesync-\*\.test\.ts"/g)?.length, 2);
   assert.doesNotMatch(workflow, /rulesync generate/);

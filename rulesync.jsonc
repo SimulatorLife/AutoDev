@@ -4,11 +4,13 @@
     "copilot",
     "claudecode",
     "codexcli",
-    "antigravity-cli"
+    "antigravity-cli",
+    "agentsmd"
   ],
   "features": [
     "skills",
-    "hooks"
+    "hooks",
+    "rules"
   ],
   "outputRoots": [
     "."
