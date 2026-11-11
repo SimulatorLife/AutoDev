@@ -167,6 +167,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
       {
         prompt: "ignored",
         promptFile: "/tmp/x/turn.md",
+        typed: false,
         conversationId: null,
         siteModel: "advanced",
         siteThinking: null,
@@ -199,6 +200,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
     {
       prompt: "ignored",
       promptFile: "/tmp/x/turn.md",
+      typed: false,
       conversationId: "abc",
       siteModel: "advanced",
       siteThinking: null,
@@ -218,6 +220,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
     {
       prompt: "ignored",
       promptFile: "/tmp/x/turn.md",
+      typed: false,
       conversationId: null,
       siteModel: "xhigh",
       siteThinking: null,
@@ -258,6 +261,7 @@ test("Gemini is asked with its current model when its model picker cannot be rea
     {
       prompt: "p",
       promptFile: "/unused",
+      typed: false,
       conversationId: null,
       siteModel: "3.1-pro",
       siteThinking: null,
@@ -285,6 +289,7 @@ test("a Gemini turn asks for the thinking level the operator chose", async () =>
     {
       prompt: "p",
       promptFile: "/unused",
+      typed: false,
       conversationId: null,
       siteModel: "3.1-pro",
       siteThinking: "high",
@@ -321,6 +326,7 @@ test("a Gemini turn whose thinking level could not be selected runs at the level
     {
       prompt: "p",
       promptFile: "/unused",
+      typed: false,
       conversationId: null,
       siteModel: "3.1-pro",
       siteThinking: "high",
@@ -435,6 +441,7 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
       {
         prompt: "the prompt",
         promptFile: "/unused",
+        typed: false,
         conversationId: null,
         siteModel: "3.1-pro",
         siteThinking: null,
@@ -472,6 +479,7 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
     {
       prompt: "only the delta",
       promptFile: "/unused",
+      typed: false,
       conversationId: "0c7fc86c8c985ae2",
       siteModel: "3.1-pro",
       siteThinking: null,
@@ -894,6 +902,7 @@ test("a Gemini answer from another chat fails the turn", async () => {
       {
         prompt: "delta",
         promptFile: "/unused",
+        typed: false,
         conversationId: "mine",
         siteModel: "3.1-pro",
         siteThinking: null,
@@ -1839,6 +1848,9 @@ test("the installed opencli accepts every flag the site specs pass", async () =>
         {
           prompt: "p",
           promptFile: "/tmp/turn.md",
+          // A continued ChatGPT turn is the typed one, so both ways a prompt
+          // reaches the site are checked against the CLI.
+          typed: site === "chatgpt" && conversationId !== null,
           conversationId,
           siteModel: site === "chatgpt" ? "balanced" : "3.1-pro",
           siteThinking: null,
@@ -1865,6 +1877,7 @@ test("the installed opencli accepts every flag the site specs pass", async () =>
       assert.ok(declared.has(flag), `opencli ${command} has no --${flag}`);
   }
   assert.ok(used.get("gemini ask")?.has("conversation"));
+  assert.ok(used.get("chatgpt ask-file")?.has("inline"));
 });
 
 test("opencli launcher loads the Router bridge key from the private CODEX_HOME env file", () => {

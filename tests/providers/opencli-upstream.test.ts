@@ -171,6 +171,34 @@ test("a page that never shows a file input says what it saw", async () => {
   }
 });
 
+test("inputs that all refuse the file are not waited on like a page still rendering", async () => {
+  // ChatGPT stops taking uploads once an account's allowance is spent: its
+  // file inputs are all there and none takes the file. Waiting does not bring
+  // one back, and every second waited holds the site's only tab.
+  const adapter = await chatgptAdapter();
+  if (adapter === null) return;
+  const { uploadChatGPTFiles } = adapter;
+  const file = promptFile();
+  try {
+    const refusing = fakePage([
+      { ok: false, reason: "file input is missing", seen: 4, eligible: 0 }
+    ]);
+    const refused = await uploadChatGPTFiles(refusing.page, [file.path]);
+    assert.equal(refused.ok, false);
+    assert.match(refused.reason ?? "", /0 of 4 file input\(s\)/u);
+    assert.equal(refusing.calls.input, 3);
+
+    // A page that shows no file input at all is given its whole wait.
+    const empty = fakePage([
+      { ok: false, reason: "file input is missing", seen: 0, eligible: 0 }
+    ]);
+    assert.equal((await uploadChatGPTFiles(empty.page, [file.path])).ok, false);
+    assert.equal(empty.calls.input, 9);
+  } finally {
+    file.cleanup();
+  }
+});
+
 /**
  * A page whose tab is not the visible one: the browser can read it, but it
  * cannot click it.

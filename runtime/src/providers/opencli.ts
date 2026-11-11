@@ -47,8 +47,7 @@ import {
   classifyCliLimit,
   limitPayload,
   limitResponseHeaders,
-  retryAfterSecondsFromLimit,
-  terminalIncompleteEvents
+  retryAfterSecondsFromLimit
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
   OPENCLI_PROVIDER_SITES,
@@ -86,7 +85,9 @@ import {
   prefixDigests,
   renderOpencliContinuation,
   renderOpencliPrompt,
-  transcriptSegments
+  transcriptSegments,
+  UPLOADS_EXHAUSTED,
+  uploadsRefused
 } from "./opencli-turn.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -123,6 +124,27 @@ const MAX_ARGV_PROMPT_BYTES = 100_000;
  * and the model is told what was left out.
  */
 const MAX_ATTACHED_PROMPT_BYTES = 120_000;
+/**
+ * The largest prompt a site that takes it as a file is given as typed text.
+ *
+ * ChatGPT allows an account a fixed number of uploads in a rolling window,
+ * and a bridge that uploads every turn's prompt spends it: 80 turns took the
+ * site out for the rest of three hours, twice in one afternoon. Most turns do
+ * not need the upload -- a follow-up carries one tool result, and nine in ten
+ * are under this size -- so a prompt that fits is typed into the composer and
+ * the upload is kept for the prompts that need it: a chat's first message,
+ * and a follow-up carrying a very large tool result. A 31 KB prompt was typed
+ * and answered in 35 seconds; nothing larger has been tried.
+ */
+const MAX_TYPED_PROMPT_BYTES = 32_000;
+/** The rolling window ChatGPT counts an account's uploads over. */
+const UPLOAD_WINDOW_MS = 3 * 60 * 60 * 1000;
+/**
+ * How long to leave a site that refuses uploads when the bridge has seen none
+ * of the uploads that spent the allowance (it was restarted, or the account
+ * was used elsewhere) and so cannot say when the window moves on.
+ */
+const UPLOAD_REFUSAL_RETRY_MS = 15 * 60 * 1000;
 /** opencli's own exit code for a timed-out command. */
 const OPENCLI_TIMEOUT_EXIT_CODE = 75;
 const LIMIT_STATUS_CLASSES = new Set([
@@ -168,6 +190,8 @@ export interface OpencliBridgeOptions {
   readonly modelListTtlMs?: number;
   /** How long a turn may run before the site is reported wedged (turnTimeoutSeconds + 30s by default). */
   readonly wedgedTimeoutMs?: number;
+  /** The clock, for a test that moves an upload window. */
+  readonly now?: () => number;
 }
 
 /** opencli's code for a site session another command still holds. */
@@ -238,6 +262,23 @@ function codexThread(
 
 function failedBeforeSending(error: OpencliCommandError): boolean {
   return FAILED_BEFORE_SENDING.test(error.message);
+}
+
+/**
+ * Whether running the command again could find the site ready.
+ *
+ * A page that was still loading is ready a moment later. A site that has
+ * stopped taking uploads is not: the same command is refused the same way,
+ * and each attempt holds the site's one tab away from every turn behind it.
+ * Six attempts at an upload the site would not take cost each failing turn
+ * two minutes, and the turns queued behind them their whole budget.
+ */
+function worthRunningAgain(error: OpencliCommandError): boolean {
+  return (
+    failedBeforeSending(error) &&
+    !uploadsRefused(error) &&
+    error.code !== UPLOADS_EXHAUSTED
+  );
 }
 
 /**
@@ -612,62 +653,38 @@ class TurnStream {
   }
 
   /**
-   * A site limit ends the response incomplete with the declared limit, which
-   * the router reads to cool the provider down; any other failure is a
-   * `response.failed`, which Codex retries.
+   * A failed turn is a `response.failed`, always before any output: a site's
+   * reply arrives whole, so nothing has been streamed when a turn fails.
+   * That is what lets the router ask its next candidate on the same stream.
    *
-   * The failure is typed the way the router reads a refusal: a turn whose
-   * prompt never reached the site is reported as one, so the router leaves the
-   * provider serving instead of cooling it down for a browser tab that was
-   * not ready.
+   * The failure says what kind it is. A site limit carries the declared
+   * limit, which the router reads to cool the provider down for as long as
+   * the site said. A turn whose prompt never reached the site is typed the
+   * way the router reads a refusal, so the provider is left serving instead
+   * of being cooled down for a browser tab that was not ready.
    */
   fail(error: unknown): void {
     const message = errorMessage(error);
     const exitCode =
       error instanceof OpencliCommandError ? error.exitCode : null;
-    const limit = classifyCliLimit(message, exitCode);
-    if (limit && LIMIT_STATUS_CLASSES.has(limit.limitClass)) {
-      const reasoningId = `rs_${turnId(10)}`;
-      const itemId = `msg_${turnId(10)}`;
-      this.emit(OUTPUT_ITEM_ADDED, {
-        type: OUTPUT_ITEM_ADDED,
-        output_index: 0,
-        item: { id: reasoningId, type: "reasoning", summary: [], content: [] }
-      });
-      this.emit(OUTPUT_ITEM_ADDED, {
-        type: OUTPUT_ITEM_ADDED,
-        output_index: 1,
-        item: {
-          id: itemId,
-          type: "message",
-          role: "assistant",
-          status: "in_progress",
-          content: []
+    const code = error instanceof OpencliCommandError ? error.code : null;
+    const declared = limitPayload(classifyCliLimit(message, exitCode));
+    const limit =
+      declared && LIMIT_STATUS_CLASSES.has(String(declared.class))
+        ? declared
+        : null;
+    this.emit("response.failed", {
+      type: "response.failed",
+      response: {
+        ...responseObject(this.responseId, this.model, "failed", []),
+        error: {
+          type: failureErrorType(failureKind(error)),
+          ...(code ? { code } : {}),
+          message,
+          ...(limit ? { limit } : {})
         }
-      });
-      for (const [event, body] of terminalIncompleteEvents({
-        responseId: this.responseId,
-        itemId,
-        reasoningId,
-        limit,
-        provider: PROVIDER
-      }))
-        this.emit(event, body);
-    } else {
-      const kind = failureKind(error);
-      const code = error instanceof OpencliCommandError ? error.code : null;
-      this.emit("response.failed", {
-        type: "response.failed",
-        response: {
-          ...responseObject(this.responseId, this.model, "failed", []),
-          error: {
-            type: failureErrorType(kind),
-            ...(code ? { code } : {}),
-            message
-          }
-        }
-      });
-    }
+      }
+    });
     this.end();
   }
 
@@ -1075,7 +1092,7 @@ export function createOpencliBridge(
           await sleep(retryMs);
           return attempt(args, unsentRetries);
         }
-        if (unsentRetries > 0 && failedBeforeSending(error)) {
+        if (unsentRetries > 0 && worthRunningAgain(error)) {
           writeErrorLine(
             `opencli site was not ready (${error.message}); retrying in ${unsentRetryMs}ms`
           );
@@ -1105,19 +1122,82 @@ export function createOpencliBridge(
     }
   }
 
+  interface TurnBudget {
+    /** When the turn stops waiting for the site's tab. */
+    readonly waitUntil: number;
+    /** When the turn must be done, set once it first takes the tab. */
+    deadline: number | null;
+  }
+
   /**
-   * The turn's own budget: the whole turn, every command in it, has this long.
+   * A turn waits for the tab for as long as it may then hold it.
    *
-   * It is drawn once, when the turn is accepted, and shared by the commands
-   * that run it. A turn that continues a chat in a new one runs a second
-   * command, and that second command draws on what is left of the same budget
-   * rather than on a fresh one -- otherwise a turn could hold the site's single
-   * browser tab for twice its timeout, which is longer than the site is
-   * reported wedged, and the site would answer "unavailable" while it was
-   * working.
+   * The two are separate allowances. Counted as one, a turn that waited eight
+   * minutes behind other agents was given the two minutes that were left and
+   * timed out on a site that was answering -- and the wait, which is the
+   * site's other users, was charged to the turn as if the site had failed it.
+   * The time a turn holds the tab is still bounded by its own timeout, which
+   * is what the wedged check measures.
    */
-  function turnBudget(): number {
-    return Date.now() + options.turnTimeoutSeconds * 1000;
+  function turnBudget(): TurnBudget {
+    return {
+      waitUntil: Date.now() + options.turnTimeoutSeconds * 1000,
+      deadline: null
+    };
+  }
+
+  /** The turn's deadline, started the first time it takes the site's tab. */
+  function deadlineOnTab(budget: TurnBudget): number {
+    if (budget.deadline === null) {
+      if (Date.now() > budget.waitUntil)
+        throw new OpencliCommandError(
+          "the site's tab was busy for the whole of the turn",
+          SITE_BUSY,
+          null
+        );
+      budget.deadline = Date.now() + options.turnTimeoutSeconds * 1000;
+    }
+    return budget.deadline;
+  }
+
+  const now = options.now ?? Date.now;
+  // When each site last took an upload, oldest first, within the window the
+  // site counts them over: what says when a spent allowance starts to return.
+  const uploads = new Map<OpencliSite, number[]>();
+
+  function recordUpload(site: OpencliSite): void {
+    const horizon = now() - UPLOAD_WINDOW_MS;
+    uploads.set(site, [
+      ...(uploads.get(site) ?? []).filter((at) => at > horizon),
+      now()
+    ]);
+  }
+
+  /**
+   * The site would not take the upload a prompt this long needs.
+   *
+   * It is the site's rate limit and is reported as one, with the time the
+   * window moves past the oldest upload the bridge made in it: the router
+   * cools the provider down until then and serves the turn from another
+   * route, instead of handing every retry back to a site that refuses it.
+   */
+  function uploadsExhausted(
+    site: OpencliSite,
+    promptBytes: number,
+    cause: OpencliCommandError
+  ): OpencliCommandError {
+    const horizon = now() - UPLOAD_WINDOW_MS;
+    const oldest = (uploads.get(site) ?? []).find((at) => at > horizon);
+    const resetsAt = new Date(
+      oldest === undefined
+        ? now() + UPLOAD_REFUSAL_RETRY_MS
+        : oldest + UPLOAD_WINDOW_MS
+    ).toISOString();
+    return new OpencliCommandError(
+      `${site} upload rate limit reached: the site is not taking file uploads (${cause.message}) and this ${promptBytes}-byte prompt is too long to type; resets at ${resetsAt}`,
+      UPLOADS_EXHAUSTED,
+      cause.exitCode
+    );
   }
 
   async function attemptTurn(
@@ -1125,8 +1205,13 @@ export function createOpencliBridge(
     prompt: string,
     conversationId: string | null,
     signal: AbortSignal,
-    deadline: number
+    budget: TurnBudget
   ): Promise<OpencliReply> {
+    const promptBytes = Buffer.byteLength(prompt);
+    // A prompt that fits is typed; only one too long to type is uploaded.
+    const typed =
+      turn.spec.attachesPrompt && promptBytes <= MAX_TYPED_PROMPT_BYTES;
+    const uploading = turn.spec.attachesPrompt && !typed;
     const directory = mkdtempSync(
       path.join(options.tempRoot ?? tmpdir(), "autodev-opencli-")
     );
@@ -1135,9 +1220,9 @@ export function createOpencliBridge(
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, prompt, { mode: 0o600 });
       return await queues.run(turn.site, async () => {
-        // A turn that waited for the site can arrive with its budget spent.
-        // There is nothing left to give the site then, and a command with no
-        // time left would hold the tab without answering.
+        // A turn that waited for the site as long as it may hold it is
+        // refused; one that has already held it has only what is left.
+        const deadline = deadlineOnTab(budget);
         if (budgetLeft(deadline) <= 0)
           throw new OpencliCommandError(
             "the site's tab was busy for the whole of the turn",
@@ -1146,25 +1231,37 @@ export function createOpencliBridge(
           );
         // Decided inside the site's queue: the model a site last answered
         // with is what its tab shows now.
-        const reply = await turn.spec.turn(
-          {
-            prompt,
-            promptFile,
-            conversationId,
-            siteModel: turn.siteModel,
-            selectModel: selectedModels.get(turn.site) !== turn.siteModel,
-            siteThinking:
-              turn.siteThinking !== null &&
-              selectedThinking.get(turn.site) !== turn.siteThinking
-                ? turn.siteThinking
-                : null,
-            // What is left of the turn's budget, not the whole of it: a turn
-            // that already waited for the site must not be given a command
-            // timeout longer than the turn itself.
-            timeoutSeconds: remainingSeconds(deadline)
-          },
-          execFor(signal, deadline)
-        );
+        const reply = await turn.spec
+          .turn(
+            {
+              prompt,
+              promptFile,
+              typed,
+              conversationId,
+              siteModel: turn.siteModel,
+              selectModel: selectedModels.get(turn.site) !== turn.siteModel,
+              siteThinking:
+                turn.siteThinking !== null &&
+                selectedThinking.get(turn.site) !== turn.siteThinking
+                  ? turn.siteThinking
+                  : null,
+              // What is left of the turn's budget, not the whole of it: a
+              // turn that already held the site must not be given a command
+              // timeout longer than the turn itself.
+              timeoutSeconds: remainingSeconds(deadline)
+            },
+            execFor(signal, deadline)
+          )
+          .catch((error: unknown) => {
+            if (!(error instanceof OpencliCommandError)) throw error;
+            if (uploadsRefused(error))
+              throw uploadsExhausted(turn.site, promptBytes, error);
+            // A turn that failed after its prompt was sent spent the upload.
+            if (uploading && !failedBeforeSending(error))
+              recordUpload(turn.site);
+            throw error;
+          });
+        if (uploading) recordUpload(turn.site);
         selectedModels.set(turn.site, turn.siteModel);
         // The site reports the level it answered at. A turn that asked for a
         // level the site would not take answers at the level the site had, so
@@ -1188,23 +1285,28 @@ export function createOpencliBridge(
    * dropped and the turn runs once more as a new chat with the whole
    * conversation, so the session goes on rather than sticking.
    *
-   * Both attempts share one budget. The second one is only worth starting if
-   * that budget still has time in it: a turn that has already spent it has
-   * nothing left to give the site, and running it anyway would hold the site's
-   * tab past the point at which the site is reported wedged.
+   * Both attempts share one budget, which starts when the turn first takes
+   * the site's tab. The second one is only worth starting if that budget
+   * still has time in it: a turn that has already spent it has nothing left to
+   * give the site, and running it anyway would hold the site's tab past the
+   * point at which the site is reported wedged.
+   *
+   * A site that will not take the upload is not a chat that stopped opening:
+   * a new chat needs a larger upload still, so that failure is not retried
+   * here.
    */
   async function runTurn(
     turn: PreparedTurn,
     signal: AbortSignal
   ): Promise<OpencliReply> {
-    const deadline = turnBudget();
+    const budget = turnBudget();
     try {
       return await attemptTurn(
         turn,
         turn.prompt,
         turn.conversationId,
         signal,
-        deadline
+        budget
       );
     } catch (error) {
       if (
@@ -1213,10 +1315,10 @@ export function createOpencliBridge(
         turn.resumedFrom === null ||
         signal.aborted ||
         !(error instanceof OpencliCommandError) ||
-        (!failedBeforeSending(error) && error.code !== EMPTY_RESULT)
+        (!worthRunningAgain(error) && error.code !== EMPTY_RESULT)
       )
         throw error;
-      if (budgetLeft(deadline) <= 0)
+      if (budget.deadline !== null && budgetLeft(budget.deadline) <= 0)
         throw new OpencliCommandError(
           "the site's tab was busy for the whole of the turn",
           SITE_BUSY,
@@ -1231,7 +1333,7 @@ export function createOpencliBridge(
         turn.freshPrompt,
         null,
         signal,
-        deadline
+        budget
       );
     }
   }

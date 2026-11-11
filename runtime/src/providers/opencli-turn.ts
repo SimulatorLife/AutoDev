@@ -84,11 +84,53 @@ export function attachedPromptMessage(fileName: string): string {
   return `Read the attached file ${fileName} and respond exactly as it instructs.`;
 }
 
+/**
+ * The first line of a prompt that is typed into the composer: the marker the
+ * site's reply is paired by.
+ *
+ * The site renders a typed message's Markdown, so the bubble it shows is not
+ * the text that was sent, and opencli cannot pair the reply against the
+ * prompt. The marker is plain words that rendering leaves alone and is unique
+ * to the turn, so the bubble that starts with it is this turn's.
+ */
+export function typedPromptMarker(fileName: string): string {
+  return `Codex agent turn ${path.basename(fileName, path.extname(fileName))}.`;
+}
+
+/**
+ * ChatGPT's page refusing the attachment outright: it shows its file inputs
+ * and none of them takes the file.
+ *
+ * That is not a page that is still rendering. ChatGPT allows an account a
+ * fixed number of uploads in a rolling window (80 in three hours on the plan
+ * this was observed on) and, once they are spent, the input that takes any
+ * file is the one that stops taking it. A bridge that attached every turn's
+ * prompt spent the allowance in about an hour of an orchestrated session, and
+ * every turn for the rest of the window then died here.
+ */
+const UPLOADS_REFUSED =
+  /\b0 of \d+ file input\(s\) on the page accept this file/u;
+
+export function uploadsRefused(error: unknown): boolean {
+  return (
+    error instanceof OpencliCommandError && UPLOADS_REFUSED.test(error.message)
+  );
+}
+
+/** The bridge's code for a prompt that needs an upload the site will not take. */
+export const UPLOADS_EXHAUSTED = "UPLOADS_EXHAUSTED";
+
 export interface OpencliInvocation {
   /** The prompt as text, for a site that takes it on the command line. */
   readonly prompt: string;
   /** Where the prompt was written, for a site that takes it as an attachment. */
   readonly promptFile: string;
+  /**
+   * Whether a site that takes the prompt as a file types it into the composer
+   * instead of uploading it. A typed prompt spends none of the site's upload
+   * allowance; an uploaded one is for a prompt too long to type.
+   */
+  readonly typed: boolean;
   /** The site conversation to continue, or null to start a new one. */
   readonly conversationId: string | null;
   /** The site's own model name the turn asks (`advanced`, `3.1-pro`). */
@@ -126,7 +168,7 @@ export type OpencliExec = (args: readonly string[]) => Promise<JsonRecord[]>;
 
 export interface OpencliSiteSpec {
   readonly site: OpencliSite;
-  /** Whether the prompt travels as an attached file rather than as argv. */
+  /** Whether the prompt travels as a file (typed or uploaded) rather than as argv. */
   readonly attachesPrompt: boolean;
   /** The site models this account can be asked, as opencli names them. */
   models(exec: OpencliExec): Promise<string[]>;
@@ -214,6 +256,94 @@ function isGeminiThinkingSelectionFailure(error: unknown): boolean {
   );
 }
 
+const GEMINI_UNKNOWN_MODEL =
+  /Unknown model "([^"]+)"\. Available models: (.+?)\. Use "opencli gemini models"/u;
+const GEMINI_LIMITED_MODEL =
+  /^(.+)-limit-resets-([a-z]{3})-(\d{1,2})-(\d{3,4})-(am|pm)$/u;
+const MONTHS = Object.freeze([
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec"
+]);
+
+/**
+ * When a limited Gemini model says its limit resets, as an instant.
+ *
+ * The site states a local wall-clock time with no year ("Nov 9, 9:26 PM").
+ * A reset is soon -- the site's windows are days, not months -- so the year
+ * is the one that puts it within the weeks ahead: a January reset read in
+ * December is next year's. A time that has already passed is a label the
+ * page has not refreshed, and names no reset at all; reading it as next
+ * year's would cool the provider down for a year.
+ */
+const GEMINI_RESET_HORIZON_MS = 45 * 24 * 60 * 60 * 1000;
+
+function geminiLimitReset(
+  month: string,
+  day: string,
+  clock: string,
+  meridiem: string,
+  now: number
+): string | null {
+  const monthIndex = MONTHS.indexOf(month);
+  const hour12 = Number(clock.slice(0, -2));
+  const minute = Number(clock.slice(-2));
+  if (monthIndex === -1 || hour12 < 1 || hour12 > 12 || minute > 59)
+    return null;
+  const hour = (hour12 % 12) + (meridiem === "pm" ? 12 : 0);
+  const at = (year: number) =>
+    new Date(year, monthIndex, Number(day), hour, minute).getTime();
+  const year = new Date(now).getFullYear();
+  const reset = [at(year), at(year + 1)].find(
+    (candidate) =>
+      candidate >= now && candidate - now <= GEMINI_RESET_HORIZON_MS
+  );
+  return reset === undefined ? null : new Date(reset).toISOString();
+}
+
+/**
+ * The limit behind a Gemini model the site no longer lists under its name.
+ *
+ * opencli names a model by the picker's label and description. A model that
+ * is out of usage keeps its label but its description becomes "Limit resets
+ * Nov 9, 9:26 PM", so the id the route asks for is gone from the list and
+ * opencli answers "Unknown model" -- an outage by the look of it, when the
+ * site has said exactly what happened and when it ends. This reads it back
+ * as the usage limit it is, with the reset the site stated.
+ */
+export function geminiModelLimit(
+  error: unknown,
+  now = Date.now()
+): OpencliCommandError | null {
+  if (!(error instanceof OpencliCommandError)) return null;
+  const unknown = GEMINI_UNKNOWN_MODEL.exec(error.message);
+  if (!unknown) return null;
+  const requested = unknown[1] ?? "";
+  for (const listed of (unknown[2] ?? "").split(",")) {
+    const limited = GEMINI_LIMITED_MODEL.exec(listed.trim());
+    if (!limited) continue;
+    const [, family = "", month = "", day = "", clock = "", meridiem = ""] =
+      limited;
+    if (!requested.startsWith(`${family}-`)) continue;
+    const resetsAt = geminiLimitReset(month, day, clock, meridiem, now);
+    return new OpencliCommandError(
+      `Gemini usage limit reached for ${family}${resetsAt ? `; resets at ${resetsAt}` : ""}`,
+      "MODEL_LIMIT",
+      error.exitCode
+    );
+  }
+  return null;
+}
+
 /** The conversation a Gemini `/app/<id>` URL names, or null for any other page. */
 export function geminiConversationId(url: unknown): string | null {
   return typeof url === "string"
@@ -241,10 +371,13 @@ function firstRow(rows: JsonRecord[]): JsonRecord {
  * a Gemini worker turn was refused after ~25 tool calls once its prompt
  * passed the command-line limit.
  *
- * - ChatGPT takes the prompt as an attachment (`ask-file`), which keeps the
- *   reply detection reliable and whitespace exact, and names the conversation
- *   to continue with `--conversation`; the reply row carries its id. Its model
- *   is an account setting switched with `chatgpt model <level>`.
+ * - ChatGPT takes the prompt as a file (`ask-file`) and names the
+ *   conversation to continue with `--conversation`; the reply row carries its
+ *   id. The file is typed into the composer after a marker line (`--inline`,
+ *   AutoDev's patch) when the bridge says the prompt fits, and uploaded
+ *   otherwise: the site rations uploads, so they are kept for the prompts
+ *   too long to type. Its model is an account setting switched with
+ *   `chatgpt model <level>`.
  * - Gemini's `ask` takes the prompt on the command line, the model with
  *   `--model`, and the chat with `--conversation <id>` or `--new` (AutoDev's
  *   opencli patch), which it opens and confirms on the sending page right
@@ -296,9 +429,12 @@ export const OPENCLI_SITE_SPECS: Readonly<
           await exec([
             "chatgpt",
             "ask-file",
-            attachedPromptMessage(path.basename(invocation.promptFile)),
+            invocation.typed
+              ? typedPromptMarker(invocation.promptFile)
+              : attachedPromptMessage(path.basename(invocation.promptFile)),
             "--file",
             invocation.promptFile,
+            ...(invocation.typed ? ["--inline", "true"] : []),
             ...(invocation.conversationId
               ? ["--conversation", invocation.conversationId]
               : ["--new", "true"]),
@@ -375,7 +511,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
           );
           rows = await ask(null, null);
           thinking = null;
-        } else throw error;
+        } else throw geminiModelLimit(error) ?? error;
       }
       // The chat comes from the page `ask` answered on (its `url`), never from
       // a later `status`: with more than one Gemini tab open, `status` can

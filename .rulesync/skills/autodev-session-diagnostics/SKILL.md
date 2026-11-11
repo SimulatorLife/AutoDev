@@ -174,6 +174,14 @@ every event and looked like "the router logged nothing".
   moves a rollout to `$CODEX_HOME/archived_sessions/` when a session is
   archived, so a search of `sessions/` alone reports "no rollout found for that
   id" for a session the user has finished with. Read both roots.
+- **`0 of N file input(s) on the page accept this file` is ChatGPT's upload
+  allowance, not a broken page.** An account gets a fixed number of uploads in
+  a rolling window (80 in three hours, observed 2026-11-11); once spent, the
+  page keeps its file inputs and none takes a file. Count `opencli-chatgpt`
+  successes per hour in the router events before the first failure: a run
+  that ends at the allowance is this. The bridge types prompts up to 32 KB
+  and reports the rest as `UPLOADS_EXHAUSTED` (a `throttled` limit), so a
+  session that still dies of it is uploading more than it should.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.
 - **Never print tokens or paste prompts**; quote ids, counts, and timestamps.

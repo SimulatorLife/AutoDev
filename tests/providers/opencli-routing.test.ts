@@ -11,8 +11,10 @@ import {
   type OpencliRunRequest
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
+  geminiModelLimit,
   OpencliCommandError,
-  OpencliConversationLedger
+  OpencliConversationLedger,
+  typedPromptMarker
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 
 /**
@@ -626,6 +628,7 @@ async function withBridge(
   options: {
     readonly turnTimeoutSeconds: number;
     readonly modelListTtlMs?: number;
+    readonly now?: () => number;
     readonly run: (
       request: OpencliRunRequest,
       sites: FakeSites
@@ -641,6 +644,7 @@ async function withBridge(
     ...(options.modelListTtlMs === undefined
       ? {}
       : { modelListTtlMs: options.modelListTtlMs }),
+    ...(options.now === undefined ? {} : { now: options.now }),
     tempRoot,
     ledger: new OpencliConversationLedger(),
     sessionBusyRetryMs: 1,
@@ -878,6 +882,287 @@ test("a busy site reports itself busy rather than unavailable", async () => {
 
       release?.();
       assert.equal((await turnResponse).status, 200);
+    }
+  );
+});
+
+/** A turn whose prompt is too long to type: the site has to take it as a file. */
+function longTurnRequest(
+  marker: string,
+  thread: string,
+  stream = false
+): string {
+  return JSON.stringify({
+    model: MODEL.chatgpt,
+    tools: [EXEC_TOOL],
+    stream,
+    input: [userMessage(`${marker}: start ${"x".repeat(40_000)}`)],
+    client_metadata: { thread_id: thread }
+  });
+}
+
+/** opencli's refusal when ChatGPT's page shows file inputs and none takes the file. */
+function uploadRefusal(): OpencliCommandError {
+  return new OpencliCommandError(
+    "file input is missing (0 of 4 file input(s) on the page accept this file)",
+    "COMMAND_EXEC",
+    1
+  );
+}
+
+const postTurn = (baseUrl: string, body: string) =>
+  fetch(`${baseUrl}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body
+  });
+
+test("a ChatGPT prompt that fits is typed, and only a long one is uploaded", async () => {
+  // ChatGPT counts an account's uploads, and a bridge that uploaded every
+  // turn's prompt spent the allowance in an hour of an orchestrated session.
+  const asked: string[][] = [];
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (request.args[1] === "ask-file") asked.push([...request.args]);
+        return sites.run(request);
+      }
+    },
+    async (baseUrl, sites) => {
+      const short = await postTurn(
+        baseUrl,
+        turnRequest("typedone", MODEL.chatgpt, "typed-thread")
+      );
+      assert.equal(short.status, 200);
+      const long = await postTurn(
+        baseUrl,
+        longTurnRequest("uploadedone", "uploaded-thread")
+      );
+      assert.equal(long.status, 200);
+
+      const [typed, uploaded] = asked as [string[], string[]];
+      assert.equal(typed[typed.indexOf("--inline") + 1], "true");
+      // The message is the marker the reply is paired by, and it names the
+      // turn's own file, so no two turns share one.
+      assert.match(typed[2]!, /^Codex agent turn turn-[0-9a-f]{12}\.$/u);
+      assert.equal(
+        typed[2],
+        typedPromptMarker(typed[typed.indexOf("--file") + 1]!)
+      );
+      assert.ok(!uploaded.includes("--inline"));
+      assert.match(uploaded[2]!, /^Read the attached file turn-/u);
+      // Either way the site got the whole prompt.
+      assert.equal(sites.chatsWith("typedone").length, 1);
+      assert.equal(sites.chatsWith("uploadedone").length, 1);
+    }
+  );
+});
+
+test("a site that stopped taking uploads is a rate limit, asked once, and still serves typed turns", async () => {
+  let clock = Date.parse("2026-11-11T15:00:00.000Z");
+  let refusing = false;
+  let uploads = 0;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      now: () => clock,
+      run: async (request, sites) => {
+        if (
+          request.args[1] === "ask-file" &&
+          !request.args.includes("--inline")
+        ) {
+          uploads += 1;
+          if (refusing) throw uploadRefusal();
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      // The bridge's own upload, which the site's window is counted from.
+      assert.equal(
+        (await postTurn(baseUrl, longTurnRequest("one", "one-thread"))).status,
+        200
+      );
+      clock += 60 * 60 * 1000;
+      refusing = true;
+      uploads = 0;
+
+      const refused = await postTurn(
+        baseUrl,
+        longTurnRequest("two", "two-thread")
+      );
+      // The site's limit, not a page that was not ready: the router cools
+      // the provider down until the window moves on and serves the turn from
+      // another route. Six attempts at an upload the site would not take cost
+      // each failing turn two minutes of the site's only tab.
+      assert.equal(refused.status, 429);
+      assert.equal(uploads, 1, "a refused upload is not attempted again");
+      const body = (await refused.json()) as {
+        error: {
+          code: string;
+          message: string;
+          limit: { class: string; resets_at: string };
+        };
+      };
+      assert.equal(body.error.code, "UPLOADS_EXHAUSTED");
+      assert.equal(body.error.limit.class, "throttled");
+      // Three hours after the oldest upload the bridge made in the window.
+      assert.equal(body.error.limit.resets_at, "2026-11-11T18:00:00.000Z");
+
+      // A turn that needs no upload is still served.
+      const typed = await postTurn(
+        baseUrl,
+        turnRequest("three", MODEL.chatgpt, "three-thread")
+      );
+      assert.equal(typed.status, 200);
+    }
+  );
+});
+
+test("a refused upload fails a streamed turn before any output, with the limit the router cools down on", async () => {
+  const start = Date.parse("2026-11-11T15:00:00.000Z");
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      now: () => start,
+      run: async (request, sites) => {
+        if (
+          request.args[1] === "ask-file" &&
+          !request.args.includes("--inline")
+        )
+          throw uploadRefusal();
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const response = await postTurn(
+        baseUrl,
+        longTurnRequest("streamed", "streamed-thread", true)
+      );
+      assert.equal(response.status, 200);
+      const events = await response.text();
+      // Nothing was produced, so the turn ends as one failure the router
+      // can answer from another route, carrying the limit it cools down on.
+      assert.equal(events.match(/event: response\.failed/gu)?.length, 1);
+      assert.doesNotMatch(events, /response\.output_item\.added/u);
+      assert.match(events, /"code":"UPLOADS_EXHAUSTED"/u);
+      assert.match(events, /"limit":\{"class":"throttled"/u);
+      // The bridge saw none of the uploads that spent the allowance, so it
+      // cannot say when the window moves on: the site is asked again later.
+      assert.match(events, /"resets_at":"2026-11-11T15:15:00\.000Z"/u);
+    }
+  );
+});
+
+test("a turn that waited for the site's tab still has its whole time on it", async () => {
+  const timeouts: string[] = [];
+  let blocked = false;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 2,
+      run: async (request, sites) => {
+        if (request.args[1] === "ask-file") {
+          timeouts.push(
+            String(request.args[request.args.indexOf("--timeout") + 1])
+          );
+          if (!blocked) {
+            blocked = true;
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 1200);
+            });
+          }
+        }
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const first = postTurn(
+        baseUrl,
+        turnRequest("first", MODEL.chatgpt, "first-thread")
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const second = await postTurn(
+        baseUrl,
+        turnRequest("second", MODEL.chatgpt, "second-thread")
+      );
+      assert.equal(second.status, 200);
+      assert.equal((await first).status, 200);
+      // The wait behind the first turn is the site's other users, not this
+      // turn's time: charged to the turn, it left a turn that had waited
+      // eight minutes two minutes to be answered in, and it timed out on a
+      // site that was answering.
+      assert.deepEqual(timeouts, ["2", "2"]);
+    }
+  );
+});
+
+test("a Gemini model that is out of usage is its usage limit, with the site's reset", async () => {
+  const unknown = new OpencliCommandError(
+    'Unknown model "4-argon-complex-tasks". Available models: 3.5-flash-lite, 3.8-flash, 3.1-pro, 4-argon-limit-resets-nov-9-926-pm. Use "opencli gemini models" to see available values.',
+    "ARGUMENT",
+    2
+  );
+  const now = new Date(2026, 10, 9, 12, 0).getTime();
+  const limit = geminiModelLimit(unknown, now);
+  assert.ok(limit);
+  assert.match(
+    limit.message,
+    /^Gemini usage limit reached for 4-argon; resets at /u
+  );
+  assert.ok(
+    limit.message.endsWith(new Date(2026, 10, 9, 21, 26).toISOString())
+  );
+  // A December read of a January reset is next year's.
+  const january = geminiModelLimit(
+    new OpencliCommandError(
+      'Unknown model "4-argon-complex-tasks". Available models: 4-argon-limit-resets-jan-2-1000-am. Use "opencli gemini models" to see available values.',
+      "ARGUMENT",
+      2
+    ),
+    new Date(2026, 11, 30, 12, 0).getTime()
+  );
+  assert.ok(
+    january?.message.endsWith(new Date(2027, 0, 2, 10, 0).toISOString())
+  );
+  // A model the site simply does not have is still an unknown model.
+  assert.equal(
+    geminiModelLimit(
+      new OpencliCommandError(
+        'Unknown model "9-nope". Available models: 3.8-flash, 4-argon-limit-resets-nov-9-926-pm. Use "opencli gemini models" to see available values.',
+        "ARGUMENT",
+        2
+      ),
+      now
+    ),
+    null
+  );
+
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (request.args[1] === "ask") throw unknown;
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      const response = await postTurn(
+        baseUrl,
+        turnRequest(
+          "limited",
+          "opencli-gemini-4-argon-complex-tasks",
+          "g-thread"
+        )
+      );
+      assert.equal(response.status, 429);
+      const body = (await response.json()) as {
+        error: { limit: { class: string; resets_at: string | null } };
+      };
+      assert.equal(body.error.limit.class, "quota_exhausted");
+      // The label names a time that has passed: a page that has not
+      // refreshed, not a reset a year away.
+      assert.equal(body.error.limit.resets_at, null);
     }
   );
 });

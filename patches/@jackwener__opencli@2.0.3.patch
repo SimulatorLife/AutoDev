@@ -1,8 +1,22 @@
 diff --git a/cli-manifest.json b/cli-manifest.json
-index 4b294f1..b65f368 100644
+index 4b294f1db04d234f44a88729727093c2ac44f413..95bc4a672d185f1f1bec879be991de09628620da 100644
 --- a/cli-manifest.json
 +++ b/cli-manifest.json
-@@ -12172,16 +12172,23 @@
+@@ -5493,6 +5493,13 @@
+         "required": false,
+         "valueRequired": true,
+         "help": "Start a new chat inside a ChatGPT project ID or /g/g-p-<id> URL"
++      },
++      {
++        "name": "inline",
++        "type": "boolean",
++        "default": false,
++        "required": false,
++        "help": "Type the one text file after the prompt instead of attaching it; the prompt is the marker line the reply is paired by"
+       }
+     ],
+     "columns": [
+@@ -12172,16 +12179,23 @@
          "required": false,
          "help": "Start a new chat first (true/false, default: false)"
        },
@@ -29,10 +43,10 @@ index 4b294f1..b65f368 100644
      "defaultFormat": "plain",
      "type": "js",
 diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
-index 976208d..8912e38 100644
+index 976208dca661fbb87a02335cc87606f5c1a534bb..65cf3edc26146e1029ed2bcccbce22c22c2f39eb 100644
 --- a/clis/chatgpt/ask-file.js
 +++ b/clis/chatgpt/ask-file.js
-@@ -11,7 +11,9 @@ import {
+@@ -11,9 +11,12 @@ import {
      openChatGPTConversation,
      navigateToProject,
      parseChatGPTConversationId,
@@ -41,8 +55,19 @@ index 976208d..8912e38 100644
 +    stopStaleChatGPTReply,
      startNewChat,
      uploadChatGPTFiles,
++    waitForChatGPTInlineReply,
      waitForChatGPTResponse,
-@@ -73,12 +75,15 @@ export const askFileCommand = cli({
+ } from './utils.js';
+ 
+@@ -45,6 +48,7 @@ export const askFileCommand = cli({
+         { name: 'new', type: 'boolean', default: false, help: 'Start a new chat before sending' },
+         { name: 'conversation', valueRequired: true, help: 'Continue an existing ChatGPT conversation ID or /c/<id> URL' },
+         { name: 'project', valueRequired: true, help: 'Start a new chat inside a ChatGPT project ID or /g/g-p-<id> URL' },
++        { name: 'inline', type: 'boolean', default: false, help: 'Type the one text file after the prompt instead of attaching it; the prompt is the marker line the reply is paired by' },
+     ],
+     columns: ['conversation_id', 'conversation_url', 'attachments', 'response'],
+     func: async (page, kwargs) => {
+@@ -73,18 +77,48 @@ export const askFileCommand = cli({
              throw new ArgumentError('chatgpt ask-file cannot use --project and --conversation together');
          }
  
@@ -59,7 +84,40 @@ index 976208d..8912e38 100644
          } else {
              await ensureOnChatGPT(page);
          }
-@@ -103,7 +108,11 @@ export const askFileCommand = cli({
+ 
+         await ensureChatGPTComposer(page, 'ChatGPT ask-file requires an authenticated session with an active composer.');
+ 
++        // A typed turn: the file's text follows the prompt in the message
++        // itself. Nothing is uploaded, so the turn spends none of the site's
++        // upload allowance, which a caller that sends a file every turn runs
++        // out of.
++        if (normalizeBooleanFlag(kwargs.inline)) {
++            if (filePaths.length !== 1) {
++                throw new ArgumentError('chatgpt ask-file --inline takes exactly one text file');
++            }
++            const fs = await import('node:fs');
++            const body = fs.readFileSync(filePaths[0], 'utf8');
++            const baselineMessages = await getVisibleMessages(page, { textOnly: true });
++            if (expectedChat !== undefined)
++                await requireChatGPTChat(page, expectedChat);
++            const sent = await sendChatGPTMessage(page, `${prompt}\n\n${body}`);
++            if (!sent) {
++                throw new CommandExecutionError('Failed to send message to ChatGPT');
++            }
++            const responseText = await waitForChatGPTInlineReply(page, baselineMessages, prompt, timeout);
++            const currentUrl = await currentChatGPTUrl(page);
++            return [{
++                conversation_id: parseChatGPTConversationId(currentUrl) || '',
++                conversation_url: currentUrl,
++                attachments: 0,
++                response: responseText,
++            }];
++        }
++
+         // 1. Upload files into composer
+         let uploadResult;
+         try {
+@@ -103,7 +137,11 @@ export const askFileCommand = cli({
          const baselineCount = baselineMessages.length;
          const baselinePairCounts = getChatGPTResponsePairCounts(baselineMessages, prompt);
  
@@ -73,7 +131,7 @@ index 976208d..8912e38 100644
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT');
 diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
-index 05a28f7..f5d55cb 100644
+index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..ee7da97e1dcc5cc206d7b4c67a1434b1d5a3c92d 100644
 --- a/clis/chatgpt/utils.js
 +++ b/clis/chatgpt/utils.js
 @@ -691,7 +691,19 @@ export async function selectChatGPTModel(page, model) {
@@ -97,7 +155,7 @@ index 05a28f7..f5d55cb 100644
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2670,6 +2682,87 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
+@@ -2670,6 +2682,97 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
      };
  `;
  
@@ -105,6 +163,8 @@ index 05a28f7..f5d55cb 100644
 + * How long the page is given to show a file input it has not mounted yet.
 + */
 +const FILE_INPUT_WAIT_SECONDS = 8;
++/** How many lookups in a row may find inputs that all refuse the file. */
++const FILE_INPUT_REFUSED_POLLS = 3;
 +
 +/**
 + * The file input a prompt is attached through.
@@ -121,6 +181,7 @@ index 05a28f7..f5d55cb 100644
 +async function findChatGPTFileInput(page, filePaths) {
 +    const path = await import('node:path');
 +    let last = null;
++    let refused = 0;
 +    for (let waited = 0; waited <= FILE_INPUT_WAIT_SECONDS; waited += 1) {
 +        last = requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
 +            ${buildComposerLocatorScript()}
@@ -169,6 +230,13 @@ index 05a28f7..f5d55cb 100644
 +            return { ok: true };
 +        })()`)), 'chatgpt file input targeting');
 +        if (last?.ok) return last;
++        // File inputs that are all there and all refuse the file are not a
++        // page still rendering: the site has stopped taking uploads (its
++        // upload allowance is spent, and the general input goes with it).
++        // Waiting does not bring the input back, and each second waited is a
++        // second every other turn queues behind this tab.
++        refused = Number(last?.seen || 0) > 0 && Number(last?.eligible || 0) === 0 ? refused + 1 : 0;
++        if (refused >= FILE_INPUT_REFUSED_POLLS) break;
 +        if (waited < FILE_INPUT_WAIT_SECONDS) await page.sleep(1);
 +    }
 +    const reason = last?.reason || 'file input is missing';
@@ -185,7 +253,7 @@ index 05a28f7..f5d55cb 100644
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2770,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
+@@ -2677,30 +2780,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -217,7 +285,7 @@ index 05a28f7..f5d55cb 100644
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3767,42 @@ export async function getChatGPTImageAssets(page, urls) {
+@@ -3697,3 +3777,77 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
@@ -260,8 +328,43 @@ index 05a28f7..f5d55cb 100644
 +        throw new CommandExecutionError(`the ChatGPT tab shows chat ${shown ?? 'none'}, not ${expected ?? 'a new chat'}; prompt was not sent`);
 +    }
 +}
++
++/**
++ * The reply to a prompt that was typed into the composer rather than attached.
++ *
++ * The site renders a typed message's Markdown, so the bubble it shows is not
++ * the text that was sent, and a reply paired against the sent text is never
++ * found: the command waited out its timeout on a reply that had arrived. The
++ * message therefore opens with a marker line of plain words that rendering
++ * leaves alone. The bubble that starts with the marker is this turn's, and the
++ * reply is paired against that bubble's own text -- whatever the site made of
++ * the rest.
++ */
++export async function waitForChatGPTInlineReply(page, baselineMessages, marker, timeoutSeconds) {
++    const startTime = Date.now();
++    const markerKey = cleanPromptText(marker);
++    let shown = null;
++    while (shown === null && Date.now() - startTime < timeoutSeconds * 1000) {
++        await page.sleep(1);
++        const messages = await getVisibleMessages(page, { textOnly: true });
++        for (let index = messages.length - 1; index >= 0; index -= 1) {
++            const message = messages[index];
++            if (message?.Role === 'User' && cleanPromptText(message.Text).startsWith(markerKey)) {
++                shown = message.Text;
++                break;
++            }
++        }
++    }
++    if (shown === null) {
++        throw new CommandExecutionError('ChatGPT did not show the typed prompt; prompt was not sent');
++    }
++    const remaining = Math.max(1, timeoutSeconds - Math.ceil((Date.now() - startTime) / 1000));
++    return waitForChatGPTResponse(page, baselineMessages.length, shown, remaining, {
++        baselinePairCounts: getChatGPTResponsePairCounts(baselineMessages, shown),
++    });
++}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9..c06a1a7 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700ecc83b383 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
 @@ -4,6 +4,12 @@ import {
@@ -405,7 +508,7 @@ index 4ffdfc9..c06a1a7 100644
      },
  });
 diff --git a/clis/gemini/models.js b/clis/gemini/models.js
-index 061c38c..41a3ce6 100644
+index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c1073cde8 100644
 --- a/clis/gemini/models.js
 +++ b/clis/gemini/models.js
 @@ -47,6 +47,7 @@ function findModelPickerLogic() {
@@ -517,7 +620,7 @@ index 061c38c..41a3ce6 100644
          // Step 3: Read model entries from the open menu.
          const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb556..9cd2802 100644
+index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b193510aa2839 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@

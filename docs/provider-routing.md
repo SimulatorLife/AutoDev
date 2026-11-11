@@ -842,9 +842,10 @@ will in fact retry sooner; reporting only the ladder hid the window the provider
 had just given. When the retry lands on the reset within a minute the single time
 is enough and is stated once.
 
-The same shape appears as `error.limit` in a non-streamed failure body and as
-`response.incomplete_details.provider_limit` on a streamed one, so the router
-reads one shape wherever it finds it. `@simulatorlife/autodev-runtime/shared/provider-limits` is the single implementation imported by all
+The same shape appears as `error.limit` in a failure body -- a non-streamed
+one, or a stream's `response.failed` -- and as
+`response.incomplete_details.provider_limit` on a stream closed as incomplete,
+so the router reads one shape wherever it finds it. `@simulatorlife/autodev-runtime/shared/provider-limits` is the single implementation imported by all
 typed bridges, with `tests/provider-limits.test.ts` guarding the boundary.
 
 Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
@@ -895,6 +896,44 @@ therefore closed with a retryable `response.failed` and Codex replays it under
 its own `stream_max_retries`. Closing it as a finished incomplete turn instead
 stopped the orchestrator with "[Incomplete: The provider stopped unexpectedly
 ...]" after every network blip (observed 2026-09-24).
+
+### Falling back from a stream that failed before any output
+
+A bridge opens its stream at once and reports every later failure inside it,
+because a turn can outlast the router's wait for response headers. Read as an
+HTTP exchange that is a success, so no such failure could fall back: the
+router forwarded it, Codex retried, and the retry came back to the same
+provider -- every time, for a refusal, which sets no cooldown.
+
+A stream that has sent no output has told the client nothing it cannot be told
+again, so the router treats its failure as the candidate's, not the turn's:
+
+- **What counts as output.** Anything other than `response.created`,
+  `response.queued`, `response.in_progress` and the terminal events. Those
+  lifecycle events are forwarded as they arrive -- Codex accepts a second
+  `response.created` and a different response id on one stream (replayed
+  against Codex 0.167) -- so nothing is buffered and a healthy stream is not
+  delayed.
+- **What is withheld.** The terminal failure of a stream with no output:
+  `response.failed`, a `response.completed` whose status is not `completed`,
+  or the stream breaking off. The router records it as it would an HTTP
+  failure -- class, limit (`response.error.limit`), cooldown, router event --
+  and asks the next candidate, which answers on the same client stream.
+- **While the stream is held** between candidates, the router sends
+  `response.in_progress` every 15 seconds, which is what resets Codex's stream
+  idle timeout (an SSE comment does not). Sticky-cooldown and exhaustion waits
+  apply to a held stream exactly as they do before the response has started.
+- **When the chain runs out** the held stream ends with one `response.failed`
+  carrying the chain's account of every candidate, the same text a
+  non-streamed request gets as its error body.
+- **After output has started** nothing changes: the failure is the turn's and
+  is forwarded, since another provider's answer would be spliced onto half of
+  this one's.
+
+A bridge therefore fails a turn that produced nothing with a single
+`response.failed` and no output items; the incomplete-response epilogue above
+is for turns that had something to keep. `tests/router/stream-fallback.test.ts`
+guards the router side.
 
 ## Observability
 
@@ -2417,17 +2456,52 @@ single list; the route patterns and the site registry in
   sandbox with its approvals and hooks; prose becomes a message item. A call
   to an unknown tool or with non-JSON arguments is passed through as written
   so Codex's own error output tells the model what it got wrong.
-- **ChatGPT.** A turn runs `opencli chatgpt ask-file` with the prompt
-  attached as `turn.md` and a constant short message, and names the
-  conversation to continue with `--conversation <id>`; the reply row carries
-  the id. A prompt typed into the composer is rendered as Markdown in the user
-  bubble, which no longer equals the prompt opencli pairs replies against, and
-  opencli then waits out its timeout on a reply that already arrived; an
-  attachment also keeps indentation exact. Each turn attaches under a fresh
-  name (`turn-<random>.md`): ChatGPT renames an upload whose name it has seen
-  (`turn(20261106-183651).md`), and opencli matches its attachment chip only
-  by the uploaded name, so a reused name failed every later turn with "new
-  ready attachment chips did not appear".
+- **ChatGPT.** A turn runs `opencli chatgpt ask-file`, names the
+  conversation to continue with `--conversation <id>`, and reads the id from
+  the reply row. The prompt reaches the site one of two ways, by size:
+  - **Typed (up to 32 KB): `--inline true`.** AutoDev's patch types the
+    prompt file's text into the composer after a marker line
+    (`Codex agent turn turn-<random>.`). The site renders a typed message's
+    Markdown, so the bubble it shows no longer equals the prompt opencli pairs
+    replies against -- unpatched, opencli waits out its timeout on a reply
+    that already arrived. The marker is plain words that rendering leaves
+    alone and is unique to the turn: the bubble that starts with it is the
+    turn's, and the reply is paired against that bubble's own text. What the
+    model receives is the text as sent (underscores, runs of spaces and
+    fences were checked live).
+  - **Uploaded (over 32 KB):** the prompt is attached as `turn-<random>.md`
+    with a constant short message. Each turn attaches under a fresh name:
+    ChatGPT renames an upload whose name it has seen
+    (`turn(20261106-183651).md`), and opencli matches its attachment chip
+    only by the uploaded name, so a reused name failed every later turn with
+    "new ready attachment chips did not appear".
+
+  Typing is the default because **ChatGPT rations uploads**: an account gets
+  a fixed number in a rolling window (80 in three hours on the plan observed).
+  The bridge used to upload every turn's prompt, and an orchestrated session
+  spent the allowance in about an hour -- twice on 2026-11-11, each time
+  exactly 80 successful turns after the window opened (sessions
+  `01a1c878-f7d4-77a2-a80e-3878b72663b0`,
+  `01a1cc30-c0ce-7fa3-8489-70e37f81a4a1`). Nine follow-up prompts in ten are
+  under 32 KB, so uploads are now spent only on a chat's first message and on
+  a follow-up carrying a very large tool result.
+
+- **A site that has stopped taking uploads is a rate limit.** Once the
+  allowance is spent, ChatGPT's page still shows its file inputs but none of
+  them takes the file ("file input is missing (0 of 4 file input(s) on the
+  page accept this file)"). That is not a page still rendering, and it was
+  handled as one: three attempts in the chat, three more in a new chat, about
+  two minutes of the site's only tab per failing turn, then a
+  `response.failed` the router read as a refusal -- so the provider was never
+  cooled down, Codex's retries all came back to it, and the turns queued
+  behind spent their whole budget waiting ("the site's tab was busy for the
+  whole of the turn"). Now the adapter stops asking after three lookups that
+  find inputs and no taker, the bridge does not run the command again, and a
+  prompt too long to type ends the turn as `UPLOADS_EXHAUSTED`: a `throttled`
+  limit (HTTP 429, or `response.failed` with `error.limit` on a stream) whose `resets_at` is three hours after the oldest upload the bridge
+  made in the window -- or 15 minutes on, when the bridge saw none of them.
+  The router cools the provider down until then and serves the turn from
+  another route. Turns that fit in the composer never reach this path.
 - **Gemini.** `opencli gemini ask` takes the prompt on the command line, and
   the chat with `--conversation <id>` or `--new` (both AutoDev's opencli
   patch adds or extends; the patch also declares them in opencli's
@@ -2497,16 +2571,19 @@ single list; the route patterns and the site registry in
   harmless, and one moved during a reply can fail a turn but not misroute it.
 - **One budget per turn, and a busy site is not a broken site.** A site is one
   browser tab, so turns for it run one at a time and a turn that finds the tab
-  busy waits for it. A turn draws one budget when it is accepted, and every
-  command in that turn draws on the same one: the command opencli runs is given
-  the time the turn has left rather than the whole turn timeout, and a turn
+  busy waits for it. A turn has two allowances of the same length (the turn
+  timeout): one to wait for the tab, and one to hold it. The second starts
+  when the turn first takes the tab, and every command in the turn draws on
+  it: the command opencli runs is given the time the turn has left, and a turn
   that continues its chat in a new one runs its second command on what is left
-  rather than on a fresh timeout. A turn therefore cannot hold the tab longer
-  than its budget, so the site's liveliness endpoint
-  (`GET /health/liveliness?provider=<provider>`) reports it wedged only when a
-  command stopped answering -- a turn that is merely slow is reported as
-  `busy`, with HTTP 200. A turn that waited for the tab for longer than its
-  whole budget has nothing left to give the site: the bridge refuses it with
+  rather than on a fresh timeout. Counted as one budget from acceptance, a
+  turn that had waited eight minutes behind other agents was given the two
+  that were left and timed out on a site that was answering. A turn still
+  cannot hold the tab longer than its timeout, so the site's liveliness
+  endpoint (`GET /health/liveliness?provider=<provider>`) reports it wedged
+  only when a command stopped answering -- a turn that is merely slow is
+  reported as `busy`, with HTTP 200. A turn that waited for the tab for longer
+  than a whole turn timeout is not started: the bridge refuses it with
   the typed `provider_request_unsupported` refusal, so the router's chain moves
   on to a route that can serve the request while opencli stays healthy.
   Refusing is what a bridge does for a request it cannot serve; answering
@@ -2520,7 +2597,10 @@ single list; the route patterns and the site registry in
   inputs, and opencli refuses to attach the prompt when it cannot find
   exactly one it can use ("file input is missing or ambiguous"). That refusal
   was the largest single cause of failed opencli turns, and it was terminal:
-  the turn died even though nothing had been sent.
+  the turn died even though nothing had been sent. A page whose file inputs
+  are all there and all refuse the file is the exception -- the site has
+  stopped taking uploads, the next attempt is refused the same way, and it is
+  reported as the rate limit it is (above) instead of being run again.
 - **The file input is found where the page keeps it, and the page is given
   time to show it.** The prompt reaches ChatGPT as an attachment, so the turn
   needs the page to show a file input to attach it through. The page does not
@@ -2610,6 +2690,15 @@ single list; the route patterns and the site registry in
   not render in a hidden or covered window, and opencli then selects no model
   at all ("model discovery returned no selectable models"); such a turn is
   asked with the model Gemini already has rather than failing.
+- **A Gemini model that is out of usage is its usage limit.** opencli names
+  a Gemini model by the picker's label and description, and a model that is
+  out of usage has its description replaced by "Limit resets Nov 9, 9:26 PM":
+  the id the route asks for (`4-argon-complex-tasks`) disappears from the
+  list, `4-argon-limit-resets-nov-9-926-pm` appears, and opencli answers
+  `Unknown model` -- which read as an outage. The bridge reads it back as
+  `quota_exhausted` (`MODEL_LIMIT`, HTTP 429 or a stream's `error.limit`)
+  with the reset the site stated, taken in local time; a stated time that has
+  already passed is a label the page has not refreshed and names no reset.
 - **Per-site health isolation and live probe resilience.** Both opencli
   providers share the `:4004` bridge process, but each route probes its own
   site via `http://127.0.0.1:4004/health/liveliness?provider=<provider>`.
@@ -2638,10 +2727,11 @@ single list; the route patterns and the site registry in
   arrived by then (`UND_ERR_HEADERS_TIMEOUT`); the router's retry of such a
   turn once handed a ChatGPT root the whole transcript in a new chat, and it
   answered that `wait_agent`/`close_agent` did not exist (session
-  `01a1b2dc-a3fa-7191-ad54-1f090091b088`). A failure then ends the stream: a
-  site usage limit as an `incomplete` response carrying the declared limit
-  (which the router cools the provider down on), anything else as
-  `response.failed`, which Codex retries. Requests refused before the turn
+  `01a1b2dc-a3fa-7191-ad54-1f090091b088`). A failure then ends the stream with a
+  single `response.failed` and no output items, carrying its error type and,
+  for a site limit, the declared limit as `error.limit`: the router cools the
+  provider down on it where the class calls for that and answers the turn
+  from the next route on the same stream. Requests refused before the turn
   starts -- an unknown model, an image, an oversized Gemini prompt -- are still
   plain HTTP errors (`400`, `provider_request_unsupported`), and a
   non-streamed request still answers `429`/`408`/`503`. Images are refused as

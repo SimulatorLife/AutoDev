@@ -1009,18 +1009,76 @@ export interface StreamWriteResult {
   inputRequired: boolean;
   /** The error the provider reported with the failure, when it reported one. */
   error: ProviderReportedError | null;
+  /**
+   * The attempt failed before the provider sent any output, and the failure
+   * was not written to the client: the client's stream is still open and has
+   * been told nothing, so the next candidate can answer on it.
+   */
+  beforeOutput: boolean;
+}
+
+/** What the router has learned from one provider's stream so far. */
+interface SseStreamState {
+  sawCreated: boolean;
+  responseId: string | null;
+  itemId: string | null;
+  reasoningId: string | null;
+  text: string;
+  reasoning: string;
+  /** The provider has sent an event that carries, or opens, output. */
+  outputStarted: boolean;
+  /** Whether a failure before any output is kept from the client. */
+  readonly holdFailureBeforeOutput: boolean;
+  /**
+   * The stream ended in failure before any output and the failure was kept
+   * from the client: the client has been told nothing it cannot be un-told,
+   * so another provider can still answer on the same stream.
+   */
+  withheld: boolean;
+}
+
+/**
+ * The events a provider sends before it has anything to say, and the ones
+ * that end a response. Everything else a response stream carries is output.
+ */
+const NON_OUTPUT_EVENTS = new Set([
+  "response.created",
+  "response.queued",
+  "response.in_progress",
+  "response.completed",
+  "response.incomplete",
+  "response.failed"
+]);
+
+function isOutputEvent(type: unknown): boolean {
+  return (
+    typeof type === "string" &&
+    type.startsWith("response.") &&
+    !NON_OUTPUT_EVENTS.has(type)
+  );
+}
+
+/** A declared limit as the bridges write it into a response or an error. */
+function limitFromDeclared(declared: unknown): ProviderLimit | null {
+  if (!declared || typeof declared !== "object") return null;
+  const limit = declared as Record<string, unknown>;
+  if (!limit.class) return null;
+  return {
+    limitClass: String(
+      limit.class
+    ).toLowerCase() as ProviderLimit["limitClass"],
+    limitType: limit.type ? String(limit.type).toLowerCase() : null,
+    resetsAt: normalizeResetsAt(limit.resets_at),
+    source:
+      limit.source === LIMIT_SOURCE_REPORTED
+        ? LIMIT_SOURCE_REPORTED
+        : "inferred"
+  };
 }
 
 function applyParsedSseEvent(
   parsed: { type?: string; [key: string]: unknown },
-  streamState: {
-    sawCreated: boolean;
-    responseId: string | null;
-    itemId: string | null;
-    reasoningId: string | null;
-    text: string;
-    reasoning: string;
-  },
+  streamState: SseStreamState,
   toolCallIds: Set<string>,
   setTerminal: (value: "completed" | "failed") => void,
   setIncompleteReason: (value: string) => void,
@@ -1028,6 +1086,13 @@ function applyParsedSseEvent(
   setReportedError: (value: ProviderReportedError) => void,
   onResponseCompleted?: (response: Record<string, unknown>) => void
 ): void {
+  if (isOutputEvent(parsed.type)) streamState.outputStarted = true;
+  // A response that ends in failure before any output has told the client
+  // nothing: it is kept back, so the chain can ask the next provider.
+  const withholdFailure = (): void => {
+    if (streamState.holdFailureBeforeOutput && !streamState.outputStarted)
+      streamState.withheld = true;
+  };
   switch (parsed.type) {
     case "response.created": {
       streamState.sawCreated = true;
@@ -1063,30 +1128,30 @@ function applyParsedSseEvent(
     }
     case "response.failed": {
       captureFailedEvent(parsed, setReportedError);
+      // A bridge that could not start the turn for a limit says so in the
+      // failure, with the limit it would otherwise put in an incomplete
+      // response: the provider is cooled down for as long as it declared.
+      const failed = parsed.response as Record<string, unknown> | undefined;
+      const declared = limitFromDeclared(
+        (failed?.error as Record<string, unknown> | undefined)?.limit
+      );
+      if (declared) setReportedLimit(declared);
       setTerminal("failed");
+      withholdFailure();
       break;
     }
     case "response.completed": {
       const response = parsed.response as Record<string, unknown> | undefined;
       collectToolCallIds(response, toolCallIds);
       if (response) onResponseCompleted?.(response);
-      setTerminal(responseWasNotCompleted(response) ? "failed" : "completed");
+      const notCompleted = responseWasNotCompleted(response);
+      setTerminal(notCompleted ? "failed" : "completed");
       const details = response?.incomplete_details as
         Record<string, unknown> | undefined;
       if (details?.reason) setIncompleteReason(String(details.reason));
-      const declared = details?.provider_limit as
-        Record<string, unknown> | undefined;
-      if (declared?.class) {
-        setReportedLimit({
-          limitClass: String(declared.class).toLowerCase(),
-          limitType: declared.type ? String(declared.type).toLowerCase() : null,
-          resetsAt: normalizeResetsAt(declared.resets_at),
-          source:
-            declared.source === LIMIT_SOURCE_REPORTED
-              ? LIMIT_SOURCE_REPORTED
-              : "inferred"
-        });
-      }
+      const declared = limitFromDeclared(details?.provider_limit);
+      if (declared) setReportedLimit(declared);
+      if (notCompleted) withholdFailure();
       break;
     }
     default: {
@@ -1104,14 +1169,7 @@ function flushSseBuffer(args: {
   minimumInputTokens?: number;
   seenToolCalls: Set<string>;
   toolCallIds: Set<string>;
-  streamState: {
-    sawCreated: boolean;
-    responseId: string | null;
-    itemId: string | null;
-    reasoningId: string | null;
-    text: string;
-    reasoning: string;
-  };
+  streamState: SseStreamState;
   setTerminal: (value: "completed" | "failed") => void;
   setIncompleteReason: (value: string) => void;
   setReportedLimit: (value: ProviderLimit) => void;
@@ -1148,7 +1206,7 @@ function flushSseBuffer(args: {
         )
     });
     args.onConsumed(processed.toolCalls);
-    args.safeWrite(processed.output);
+    if (!args.streamState.withheld) args.safeWrite(processed.output);
     working = working.slice(end);
   }
   if (args.flush && working && args.isWritable()) {
@@ -1171,21 +1229,14 @@ function flushSseBuffer(args: {
         )
     });
     args.onConsumed(processed.toolCalls);
-    args.safeWrite(processed.output);
+    if (!args.streamState.withheld) args.safeWrite(processed.output);
     working = "";
   }
   args.onBufferUpdated(working);
 }
 
 function closeSseStream(args: {
-  streamState: {
-    sawCreated: boolean;
-    responseId: string | null;
-    itemId: string | null;
-    reasoningId: string | null;
-    text: string;
-    reasoning: string;
-  };
+  streamState: SseStreamState;
   reportedLimit: ProviderLimit | null;
   publicModel: string;
   incompleteReason: string | null;
@@ -1278,7 +1329,8 @@ export async function writeResponseStream(
   clientSignal: AbortSignal | null = null,
   replayable = false,
   attemptTelemetry?: { span?: Span; statusCode?: number },
-  minimumInputTokens?: number
+  minimumInputTokens?: number,
+  holdFailureBeforeOutput = false
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
@@ -1286,14 +1338,17 @@ export async function writeResponseStream(
   let toolCalls = 0;
   let buffer = "";
   let terminal: "completed" | "failed" | null = null;
-  const streamState = {
+  const streamState: SseStreamState & { model: string } = {
     sawCreated: false,
-    responseId: null as string | null,
+    responseId: null,
     model: publicModel,
-    itemId: null as string | null,
-    reasoningId: null as string | null,
+    itemId: null,
+    reasoningId: null,
     text: "",
-    reasoning: ""
+    reasoning: "",
+    outputStarted: false,
+    holdFailureBeforeOutput,
+    withheld: false
   };
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
@@ -1377,6 +1432,18 @@ export async function writeResponseStream(
     });
   };
   const closeIncomplete = (reason: string, message: string): void => {
+    // A stream that broke off before any output is the same to the client as
+    // one that failed before any: nothing was said, so nothing is written,
+    // and the next candidate may answer. A client that left is not waiting.
+    if (
+      holdFailureBeforeOutput &&
+      !streamState.outputStarted &&
+      !clientGone()
+    ) {
+      captureIncompleteReason(reason);
+      streamState.withheld = true;
+      return;
+    }
     // A stateless upstream can be replayed by the client, which is what
     // native Codex does when its stream drops: close with a retryable
     // response.failed rather than a finished turn that stops the agent.
@@ -1410,7 +1477,8 @@ export async function writeResponseStream(
     error: streamError,
     inputRequired:
       incompleteReason === "input_required" ||
-      incompleteReason === "requires_action"
+      incompleteReason === "requires_action",
+    beforeOutput: terminal !== "completed" && streamState.withheld
   });
 
   const keepAlive = setInterval(() => {
@@ -1420,9 +1488,11 @@ export async function writeResponseStream(
 
   if (!upstream.body) {
     clearInterval(keepAlive);
-    safeWrite(
-      responseFailureEvent("Upstream provider returned no response body.")
-    );
+    if (holdFailureBeforeOutput) streamState.withheld = true;
+    else
+      safeWrite(
+        responseFailureEvent("Upstream provider returned no response body.")
+      );
     response.removeListener("error", NOOP);
     return finalizeAttempt(streamResult());
   }
@@ -1796,7 +1866,8 @@ export async function writeSuccessfulResponse(
   resolvedModel: string,
   onHeartbeat: (() => void) | null = null,
   clientSignal: AbortSignal | null = null,
-  minimumInputTokens?: number
+  minimumInputTokens?: number,
+  holdFailureBeforeOutput = false
 ): Promise<StreamWriteResult> {
   const written = await writeProviderResponse(
     response,
@@ -1808,7 +1879,8 @@ export async function writeSuccessfulResponse(
     resolvedModel,
     onHeartbeat,
     clientSignal,
-    minimumInputTokens
+    minimumInputTokens,
+    holdFailureBeforeOutput
   );
   // Whoever asked for these calls gets their results: see tool-call-ownership.ts.
   TOOL_CALL_OWNERSHIP.record(written.toolCallIds, route.provider);
@@ -1837,7 +1909,8 @@ function emptyBufferedResult(failed = false): StreamWriteResult {
     incompleteReason: null,
     limit: null,
     error: null,
-    inputRequired: false
+    inputRequired: false,
+    beforeOutput: false
   };
 }
 
@@ -1858,7 +1931,8 @@ function finishBufferedAttempt(
 async function writeStreamedProviderResponse(
   context: ProviderResponseContext,
   onHeartbeat: (() => void) | null,
-  clientSignal: AbortSignal | null
+  clientSignal: AbortSignal | null,
+  holdFailureBeforeOutput: boolean
 ): Promise<StreamWriteResult> {
   const {
     response,
@@ -1869,12 +1943,17 @@ async function writeStreamedProviderResponse(
     minimumInputTokens
   } = context;
   const upstream = result.upstream;
-  response.writeHead(upstream.status, {
-    ...responseHeaders,
-    "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "close"
-  });
+  // A candidate that answers on a stream an earlier one left open (it failed
+  // before any output) finds the headers already sent. They name the first
+  // candidate asked; the router's events name the one that answered.
+  if (!response.headersSent)
+    response.writeHead(upstream.status, {
+      ...responseHeaders,
+      "content-type":
+        upstream.headers.get("content-type") ?? "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "close"
+    });
   const streamResult = await writeResponseStream(
     response,
     upstream,
@@ -1889,8 +1968,11 @@ async function writeStreamedProviderResponse(
         ? {}
         : { statusCode: result.attemptStatusCode })
     },
-    minimumInputTokens
+    minimumInputTokens,
+    holdFailureBeforeOutput
   );
+  // A stream whose failure was kept back stays open for the next candidate.
+  if (streamResult.beforeOutput) return streamResult;
   if (!response.writableEnded && !response.destroyed && !response.closed) {
     try {
       response.end();
@@ -1933,7 +2015,8 @@ function writeCodexBufferedResponse(
     clientDisconnected: false,
     ...incomplete,
     error: reportedError(parsed.error),
-    inputRequired: hasInputRequired(parsed, incomplete)
+    inputRequired: hasInputRequired(parsed, incomplete),
+    beforeOutput: false
   };
 }
 
@@ -1986,7 +2069,8 @@ function writeJsonBufferedResponse(
       clientDisconnected: false,
       error: reportedError(rewritten.error),
       ...incomplete,
-      inputRequired: hasInputRequired(rewritten, incomplete)
+      inputRequired: hasInputRequired(rewritten, incomplete),
+      beforeOutput: false
     };
   } catch {
     return writeRawBufferedResponse(context, body);
@@ -2003,7 +2087,8 @@ async function writeProviderResponse(
   resolvedModel: string,
   onHeartbeat: (() => void) | null,
   clientSignal: AbortSignal | null = null,
-  minimumInputTokens?: number
+  minimumInputTokens?: number,
+  holdFailureBeforeOutput = false
 ): Promise<StreamWriteResult> {
   const context: ProviderResponseContext = {
     response,
@@ -2021,7 +2106,12 @@ async function writeProviderResponse(
     }
   };
   if (wantsStream) {
-    return writeStreamedProviderResponse(context, onHeartbeat, clientSignal);
+    return writeStreamedProviderResponse(
+      context,
+      onHeartbeat,
+      clientSignal,
+      holdFailureBeforeOutput
+    );
   }
   let body: string;
   try {
@@ -2986,6 +3076,13 @@ type FallbackContext = {
   modelName: string;
   selectionDeadline: number;
   startedAt: number;
+  /**
+   * The client's stream is open and has been told nothing: a candidate
+   * failed before any output and its failure was kept back.
+   */
+  streamHeld: boolean;
+  /** Keeps a held stream alive between candidates. */
+  heldStreamKeepAlive: NodeJS.Timeout | null;
 };
 
 /**
@@ -3044,6 +3141,89 @@ class CandidateFailures {
       failureClass: this.classes.get(provider) ?? null
     }));
   }
+}
+
+/** How often a held stream is told the response is still in progress. */
+const HELD_STREAM_KEEP_ALIVE_MS = 15_000;
+
+/**
+ * Whether the client has been sent something that cannot be taken back.
+ *
+ * Headers alone are not that. A streamed candidate that fails before any
+ * output leaves the client holding an open stream that has said nothing, and
+ * the chain goes on exactly as if nothing had been sent -- the next candidate
+ * answers on the same stream.
+ */
+function clientCommitted(ctx: FallbackContext): boolean {
+  return ctx.response.headersSent && !ctx.streamHeld;
+}
+
+function stopHeldStreamKeepAlive(ctx: FallbackContext): void {
+  if (ctx.heldStreamKeepAlive) clearInterval(ctx.heldStreamKeepAlive);
+  ctx.heldStreamKeepAlive = null;
+}
+
+function writeToHeldStream(ctx: FallbackContext, chunk: string): void {
+  const { response } = ctx;
+  if (response.writableEnded || response.destroyed || response.closed) return;
+  try {
+    response.write(chunk);
+  } catch {
+    NOOP();
+  }
+}
+
+/**
+ * Keep the client's stream open, and alive, while the chain looks for
+ * another candidate.
+ *
+ * The keep-alive is an event, not an SSE comment: Codex's stream idle timeout
+ * (five minutes) counts events and never sees comments, and the next
+ * candidate may take that long to send its first one. `response.in_progress`
+ * is the Responses event for this state; Codex 0.167 was replayed a stream
+ * carrying several, with differing response ids and a second
+ * `response.created`, and completed the turn normally.
+ */
+function holdClientStream(ctx: FallbackContext): void {
+  ctx.streamHeld = true;
+  if (ctx.heldStreamKeepAlive) return;
+  ctx.heldStreamKeepAlive = setInterval(() => {
+    writeToHeldStream(
+      ctx,
+      `event: response.in_progress\ndata: ${JSON.stringify({
+        type: "response.in_progress",
+        response: {
+          id: `router_${ctx.requestId}`,
+          object: "response",
+          status: "in_progress",
+          model: ctx.modelName,
+          output: []
+        }
+      })}\n\n`
+    );
+  }, HELD_STREAM_KEEP_ALIVE_MS);
+  ctx.heldStreamKeepAlive.unref();
+}
+
+/** The client has been answered, or has left: the stream is no longer held. */
+function commitClientStream(ctx: FallbackContext): void {
+  stopHeldStreamKeepAlive(ctx);
+  ctx.streamHeld = false;
+}
+
+/**
+ * End a held stream with the failure the chain ended on.
+ *
+ * The stream is all the client has, so what would have been the HTTP error
+ * is its last event.
+ */
+function failHeldStream(ctx: FallbackContext, message: string): void {
+  stopHeldStreamKeepAlive(ctx);
+  if (!ctx.streamHeld) return;
+  ctx.streamHeld = false;
+  writeToHeldStream(ctx, responseFailureEvent(message));
+  if (!ctx.response.writableEnded && !ctx.response.destroyed)
+    ctx.response.end();
 }
 
 function recordFallbackSkip(
@@ -3307,7 +3487,9 @@ export async function proxyFallbackChain(
     activitySubject,
     modelName,
     selectionDeadline,
-    startedAt
+    startedAt,
+    streamHeld: false,
+    heldStreamKeepAlive: null
   };
   const state = {
     deadlineReached: false,
@@ -3431,6 +3613,11 @@ export async function proxyFallbackChain(
       logicalErrorMessage = "no candidate served the request";
     });
   } finally {
+    // Whatever ended the chain, a stream still held open is ended with it.
+    failHeldStream(
+      fbCtx,
+      `Router could not complete ${subject}: no provider answered.`
+    );
     const finalOutcome = logicalOutcome as "ok" | "error";
     endLogicalRequestSpan(logicalSpan, {
       status: finalOutcome,
@@ -3574,7 +3761,7 @@ function canWaitOutStickyCooldown(
   ) {
     return 0;
   }
-  if (ctx.clientSignal?.aborted || ctx.response.headersSent) return 0;
+  if (ctx.clientSignal?.aborted || clientCommitted(ctx)) return 0;
   if (cooldown.kind === "config") return 0;
   const windowMs = stickyCooldownWaitWindowMs(ctx.isOrchestratorTurn);
   if (windowMs <= 0) return 0;
@@ -3615,7 +3802,7 @@ async function waitOutStickyCooldown(
     elapsedMs: initialWaitMs
   });
   /* eslint-disable no-await-in-loop -- Sequential recheck of cooldown expiry on the sticky provider. */
-  while (!ctx.clientSignal?.aborted && !ctx.response.headersSent) {
+  while (!ctx.clientSignal?.aborted && !clientCommitted(ctx)) {
     const now = Date.now();
     const entry = COOLDOWNS.get(route.provider, now, route.model);
     const remainingCooldownMs = entry ? Math.max(0, entry.until - now) : 0;
@@ -3719,7 +3906,7 @@ async function tryPrimaryRoute(
     (firstOutcome === "fallback" || firstOutcome === "unavailable") &&
     ctx.preferredProvider !== null &&
     ctx.preferredProvider === route.provider &&
-    !ctx.response.headersSent &&
+    !clientCommitted(ctx) &&
     !ctx.clientSignal?.aborted &&
     !isRequestRefusalClass(failures.observed.get(route.provider))
   ) {
@@ -3735,7 +3922,7 @@ async function tryPrimaryRoute(
       if (
         waited &&
         !ctx.clientSignal?.aborted &&
-        !ctx.response.headersSent &&
+        !clientCommitted(ctx) &&
         !COOLDOWNS.isCooling(route.provider, Date.now(), route.model) &&
         served(await tryCandidate(route, "primary"))
       )
@@ -3915,7 +4102,7 @@ async function runExhaustionWait(
     waitMs > 0 &&
     waitMs <= windowMs &&
     !ctx.clientSignal?.aborted &&
-    !ctx.response.headersSent
+    !clientCommitted(ctx)
   ) {
     recordRouterEvent({
       phase: "exhaustion_wait",
@@ -3934,7 +4121,7 @@ async function runExhaustionWait(
     /* eslint-disable no-await-in-loop -- This wait is sequential by cooldown state. */
     while (
       !ctx.clientSignal?.aborted &&
-      !ctx.response.headersSent &&
+      !clientCommitted(ctx) &&
       !state.deadlineReached
     ) {
       const now = Date.now();
@@ -4025,20 +4212,31 @@ function finalizeFallbackFailure(
   const excluded = tier
     ? ROUTING_POLICY.excludedProviders(tier, ctx.providerRole)
     : [];
+  const body = exhaustionBody({
+    subject: ctx.subject,
+    summary,
+    failures: failures.entries,
+    observed,
+    model: ctx.modelName,
+    requestId: ctx.requestId,
+    lastResortAttempts,
+    deadlineReached,
+    excluded
+  });
+  // A chain that ran out with the client's stream held open has no status
+  // line left to answer with: the account of the chain is the stream's
+  // failure.
+  if (ctx.streamHeld) {
+    failHeldStream(
+      ctx,
+      String((body.error as { message?: unknown } | undefined)?.message ?? "")
+    );
+    return;
+  }
   sendJson(
     response,
     exhaustedByUsage(summary, observed) || noneCanServe ? 400 : 503,
-    exhaustionBody({
-      subject: ctx.subject,
-      summary,
-      failures: failures.entries,
-      observed,
-      model: ctx.modelName,
-      requestId: ctx.requestId,
-      lastResortAttempts,
-      deadlineReached,
-      excluded
-    }),
+    body,
     exhaustionHeaders({ summary, observed, requestId: ctx.requestId })
   );
 }
@@ -4065,6 +4263,7 @@ async function attemptCandidate(
         route,
         result,
         selection,
+        failures,
         attemptStartedAt
       );
     }
@@ -4196,9 +4395,12 @@ async function handleCandidateSuccess(
   route: Candidate,
   result: SuccessfulFetch,
   selection: string,
+  failures: CandidateFailures,
   attemptStartedAt: number
 ): Promise<"served" | "terminal" | "fallback"> {
   try {
+    // The candidate's own events keep the stream alive from here.
+    stopHeldStreamKeepAlive(ctx);
     const responseResult = await writeSuccessfulResponse(
       ctx.response,
       route,
@@ -4215,12 +4417,19 @@ async function handleCandidateSuccess(
         }
       },
       ctx.clientSignal,
-      bridgeMinimumInputTokens(route.provider, ctx.payload)
+      bridgeMinimumInputTokens(route.provider, ctx.payload),
+      // Only a streamed attempt can be left behind: a buffered one has
+      // answered the client by the time its failure is known.
+      ctx.wantsStream
     );
     if (responseResult.clientDisconnected) {
+      commitClientStream(ctx);
       recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
       return "terminal";
     }
+    // The stream is held open exactly when this attempt said nothing on it.
+    if (responseResult.beforeOutput) holdClientStream(ctx);
+    else commitClientStream(ctx);
     if (responseResult.failed) {
       const failureClass =
         responseResult.limit?.limitClass ??
@@ -4258,6 +4467,24 @@ async function handleCandidateSuccess(
         toolCalls: responseResult.toolCalls,
         selection
       });
+      // A streamed attempt that failed before any output told the client
+      // nothing, so it is a candidate that could not serve the request, like
+      // one that answered with an HTTP error: the next one is asked. Bridges
+      // open their stream at once and report every failure inside it, so
+      // without this no failure of theirs could ever fall back -- a site that
+      // refused a request was handed each of the client's retries again.
+      if (responseResult.beforeOutput) {
+        const detail = responseResult.error?.message ?? null;
+        failures.record(
+          route.provider,
+          failureClass === "unsupported_request" && detail
+            ? `cannot serve this request (${detail})`
+            : `failed before any output (${failureClass})`,
+          failureClass,
+          "failed"
+        );
+        return "fallback";
+      }
       getDefaultUsageTracker().activityTracker?.endRequest(
         ctx.activitySubject,
         {
@@ -4348,14 +4575,22 @@ function handleCandidateUpstreamFailure(
   });
   const decision = decideCandidateFailure(result.status ?? 500, result.body);
   if (decision.outcome === "terminal") {
-    ctx.response.writeHead(result.status ?? 500, {
-      "content-type": "application/json",
-      "x-autodev-provider": route.provider,
-      "x-autodev-model": route.model,
-      "x-autodev-request-id": ctx.requestId,
-      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
-    });
-    ctx.response.end(result.body);
+    if (ctx.streamHeld)
+      failHeldStream(
+        ctx,
+        providerErrorDetail(result.body ?? "") ??
+          `${route.provider} answered HTTP ${result.status ?? 500}.`
+      );
+    else {
+      ctx.response.writeHead(result.status ?? 500, {
+        "content-type": "application/json",
+        "x-autodev-provider": route.provider,
+        "x-autodev-model": route.model,
+        "x-autodev-request-id": ctx.requestId,
+        "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+      });
+      ctx.response.end(result.body);
+    }
     getDefaultUsageTracker().activityTracker?.endRequest(ctx.activitySubject, {
       requestId: ctx.requestId,
       outcome: "failure",
@@ -4426,7 +4661,7 @@ function handleCandidateTransportError(
     route.provider,
     cooldownFor(failureClass, null, route.model, null, route.provider)
   );
-  if (ctx.response.headersSent) {
+  if (clientCommitted(ctx)) {
     if (!ctx.response.writableEnded) {
       try {
         ctx.response.write(

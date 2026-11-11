@@ -1078,17 +1078,37 @@ test("a streamed refusal does not cool the provider down, and a streamed failure
       })}\n\n`
     ].join("");
 
-  const runWith = async (error: unknown): Promise<void> => {
+  const answered = [
+    `data: ${JSON.stringify({
+      type: "response.created",
+      response: { id: "resp_2", object: "response", status: "in_progress" }
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_2", status: "completed", output: [] }
+    })}\n\n`
+  ].join("");
+
+  // `failing` is how many of the providers asked answer with the failure;
+  // the ones asked after them answer the turn.
+  const runWith = async (
+    error: unknown,
+    failing: number,
+    ending: RegExp
+  ): Promise<void> => {
     for (const provider of candidates) cooldowns.clear(provider);
+    let asked = 0;
     globalThis.fetch = (async (url: any, options: any = {}) => {
       const target = String(url);
       if (target.endsWith("/health") || target.endsWith("/health/liveliness"))
         return new Response("ok", { status: 200 });
-      if (target.endsWith("/responses"))
-        return new Response(streamWith(error), {
+      if (target.endsWith("/responses")) {
+        asked += 1;
+        return new Response(asked > failing ? answered : streamWith(error), {
           status: 200,
           headers: { "content-type": "text/event-stream" }
         });
+      }
       return originalFetch(url, options);
     }) as typeof globalThis.fetch;
     const server = createServer((request, response) => {
@@ -1103,24 +1123,29 @@ test("a streamed refusal does not cool the provider down, and a streamed failure
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-codex-session-id": "refusal-test"
+            "x-codex-session-id": `refusal-test-${String(failing)}`
           },
           body: JSON.stringify({ model: "autodev/default", stream: true })
         }
       );
       assert.equal(response.status, 200);
       const events = await response.text();
-      assert.match(events, /response\.failed/u);
+      assert.match(events, ending);
     } finally {
       await closeServer(server);
     }
   };
 
   try {
-    await runWith({
-      type: "provider_request_unsupported",
-      message: "the site was not ready"
-    });
+    // Every route refuses: the turn fails, and nothing is cooled down.
+    await runWith(
+      {
+        type: "provider_request_unsupported",
+        message: "the site was not ready"
+      },
+      Number.POSITIVE_INFINITY,
+      /response\.failed/u
+    );
     for (const provider of candidates)
       assert.equal(
         cooldowns.get(provider),
@@ -1128,10 +1153,16 @@ test("a streamed refusal does not cool the provider down, and a streamed failure
         `${provider} was cooled down for a route that could not serve the request`
       );
 
-    await runWith({
-      type: "opencli_proxy_error",
-      message: "the site could not be read"
-    });
+    // One route fails before any output: it is cooled down, and the next
+    // route answers the turn on the same stream.
+    await runWith(
+      {
+        type: "opencli_proxy_error",
+        message: "the site could not be read"
+      },
+      1,
+      /response\.completed/u
+    );
     const cooled = candidates.filter(
       (provider) => cooldowns.get(provider) !== null
     );
