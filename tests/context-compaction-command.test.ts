@@ -30,7 +30,7 @@ test("command sources are metadata, not injected prompt text", () => {
   }
 });
 
-test("checkpoint output has exactly one complete wrapper and stable sections", () => {
+test("checkpoint wrapper and sections are stable", () => {
   assert.equal(openTags.length, 1);
   assert.equal(closeTags.length, 1);
   assert.ok(template);
@@ -120,7 +120,9 @@ test("regression scenarios are complete and consistent", () => {
 
 for (const [scenario, checks] of Object.entries(policyCases)) {
   test(`checkpoint retains ${scenario} safeguards`, () => {
-    for (const check of checks) assert.match(prompt, check);
+    for (const check of checks) {
+      assert.match(prompt, check);
+    }
   });
 }
 
