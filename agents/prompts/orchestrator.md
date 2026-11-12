@@ -54,6 +54,12 @@ delegation capability failure. The `runtime/src/agents/spawn-tools.ts` module bu
 the batched `await Promise.allSettled(...)` script that fans out across
 children and is the reference implementation.
 
+Waiting on children: wait on every outstanding child in one
+`multi_agent_v1__wait_agent` call with `timeout_ms` of at least 300000, and
+only wake early for a child's completion. Every wake is a full model turn --
+minutes on a web-chat provider -- so a 10-60s polling loop spends the time
+the children need and returns nothing new.
+
 ## Role-scoped MCP agents
 
 Root and child MCP capabilities can differ. For role-scoped MCP (`browser-tester` -> Playwright, `playtester` -> Playtest), verify a real call through the routed provider; do not infer exposure from root tools or telemetry, and never enable those servers at the root. Playtest requires Runtime-bound authorization, an approved target, and exact budgets; never pass credentials or invent run context. Use Console Play/Watch for the supported end-to-end workflow.

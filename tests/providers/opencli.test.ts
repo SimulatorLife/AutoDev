@@ -657,7 +657,7 @@ test("transcript entries name each rendered item's kind and the turn log totals 
   assert.equal(describeTranscriptBytes([]), "none");
 });
 
-test("the turn log line counts only the new items of a continued chat, and every item of a new one", () => {
+test("the turn log line counts only the new items of a continued chat, and every item of a new one, with where its time went", () => {
   const entries = transcriptEntries([
     userMessage("first"),
     { type: "custom_tool_call", name: "exec", call_id: "c", input: "x" },
@@ -673,22 +673,30 @@ test("the turn log line counts only the new items of a continued chat, and every
   const outputBytes = Buffer.byteLength(entries[2]!.text);
   const continued = opencliTurnLogLine(
     turn,
-    { prompt: "abcd", continued: true },
+    {
+      prompt: "abcd",
+      continued: true,
+      timing: { queuedMs: 4200, onSiteMs: 113_900 }
+    },
     1
   );
   assert.equal(
     continued,
-    `opencli chatgpt/gpt-5 turn: 1 tool call(s), 2 tool(s) offered, 4-byte prompt, continued conversation; new items: tool_output ${outputBytes} B in 1`
+    `opencli chatgpt/gpt-5 turn: 1 tool call(s), 2 tool(s) offered, 4-byte prompt, queued 4.2s, on site 113.9s, continued conversation; new items: tool_output ${outputBytes} B in 1`
   );
   // A chat that could not be continued sent the whole conversation instead.
   const restarted = opencliTurnLogLine(
     turn,
-    { prompt: "abcdefgh", continued: false },
+    {
+      prompt: "abcdefgh",
+      continued: false,
+      timing: { queuedMs: 0, onSiteMs: 61_000 }
+    },
     0
   );
   assert.match(
     restarted,
-    /^opencli chatgpt\/gpt-5 turn: 0 tool call\(s\), 2 tool\(s\) offered, 8-byte prompt; conversation items: /
+    /^opencli chatgpt\/gpt-5 turn: 0 tool call\(s\), 2 tool\(s\) offered, 8-byte prompt, queued 0\.0s, on site 61\.0s; conversation items: /
   );
   assert.match(restarted, /tool_output \d+ B in 1/);
   assert.match(restarted, /tool_call \d+ B in 1/);
@@ -1136,6 +1144,10 @@ test("a tool call goes to Codex and its output continues the same site conversat
       // The first prompt is the whole turn: rules, instructions, tools, and
       // the conversation, attached as a file in a new chat.
       assert.match(runs.prompts[0]!, /## How to respond/u);
+      // A round trip costs minutes, so the model is told to batch independent
+      // calls into one reply rather than spend a turn on each.
+      assert.match(runs.prompts[0]!, /await Promise\.all/u);
+      assert.match(runs.prompts[0]!, /never repeat a call whose result/u);
       assert.match(runs.prompts[0]!, /Be brief\./u);
       assert.match(runs.prompts[0]!, /### `exec`/u);
       assert.match(runs.prompts[0]!, /Which directory is this\?/u);
@@ -1753,7 +1765,9 @@ test("a Gemini root whose full tool reference is too long starts with MCP tools 
   // ChatGPT takes the prompt as an attachment, so the page takes it whatever
   // its size, but the model still has to read it: a 300 KB reference took the
   // model 85 seconds to say anything. The reference is compressed for the
-  // model too, and the built-in tools keep their declarations.
+  // model too, and the built-in tools keep their declarations. A reference
+  // that fits ChatGPT's typed limit only with MCP tools named is named, so
+  // the prompt is typed rather than spending one of the account's uploads.
   await withBridge(
     [{ response: "ok", conversation_id: "c-root" }],
     async (baseUrl, runs) => {
@@ -1769,7 +1783,12 @@ test("a Gemini root whose full tool reference is too long starts with MCP tools 
         `the attached prompt kept the whole reference: ${prompt.length}`
       );
       assert.match(prompt, /declare const tools: \{ exec_command\(/u);
-      assert.match(prompt, /- `mcp__codex_apps__github_tool_599`/u);
+      assert.match(
+        prompt,
+        /`mcp__codex_apps__github_tool_598`, `mcp__codex_apps__github_tool_599`/u
+      );
+      assert.match(prompt, /listed by name only/u);
+      assert.ok(Buffer.byteLength(prompt) <= 32_000, `${prompt.length}`);
       assert.doesNotMatch(
         prompt,
         /declare const tools: \{ mcp__codex_apps__github_tool_599\(/u
@@ -1816,6 +1835,52 @@ test("a Gemini prompt still too long once compacted is refused before opencli ru
     );
     assert.equal(runs.requests.length, 0);
   });
+});
+
+test("a Gemini chat too far behind for its command line starts a new chat that fits", async () => {
+  // A session whose turns went to another route while Gemini was down came
+  // back to its Gemini chat with the whole gap to catch up on: an
+  // opencli-gemini root was refused every turn with a 345 KB continuation
+  // while its compacted first prompt was 95 KB.
+  const filler = "x".repeat(20_000);
+  await withBridge(
+    [
+      { response: "💬 first", url: "https://gemini.google.com/app/old" },
+      { response: "💬 caught up", url: "https://gemini.google.com/app/new" }
+    ],
+    async (baseUrl, runs) => {
+      const input: JsonRecord[] = [userMessage("Plan the work.")];
+      const first = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        input
+      });
+      assert.equal(first.status, 200);
+      const { output } = (await first.json()) as { output: JsonRecord[] };
+      const behind = [
+        ...input,
+        ...output,
+        ...Array.from({ length: 8 }, (_, index) =>
+          userMessage(`step ${index}: ${filler}`)
+        ),
+        userMessage("the newest message")
+      ];
+      const second = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        input: behind
+      });
+      assert.equal(second.status, 200);
+      const asks = runs.requests.filter((request) => request.args[1] === "ask");
+      assert.equal(asks.length, 2);
+      // Not a continuation of the old chat...
+      assert.equal(asks[1]!.args.includes("--conversation"), false);
+      // ...but a new one, with the conversation shortened to fit.
+      const prompt = runs.prompts[1]!;
+      assert.ok(Buffer.byteLength(prompt) <= 100_000, `${prompt.length}`);
+      assert.match(prompt, /left out to keep it within the site's limit/u);
+      assert.match(prompt, /Plan the work\./u);
+      assert.match(prompt, /the newest message/u);
+    }
+  );
 });
 
 test("a conversation that outgrew the site is shortened, and says what it left out", async () => {

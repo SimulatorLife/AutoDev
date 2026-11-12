@@ -393,6 +393,8 @@ test("root delegation injects the typed policy and canonical sources for a paren
   assert.match(context, /\.rulesync\/skills\/orchestration\/SKILL\.md/);
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
+  // Every wake is a full model turn, so the root waits long, not in a loop.
+  assert.match(context, /`timeout_ms` of at least 300000/);
   assert.match(context, /parent-test-1/);
   assert.ok(
     context.length < 9_500,

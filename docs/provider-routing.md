@@ -700,7 +700,9 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   replayed `input` arrays to `MINIMAX_MAX_INPUT_CHARS` (default `3,000,000` JSON
   bytes, well inside MiniMax's `204,800`-token window) while preserving the
   initial setup prefix, `additional_tools` declarations, and `call_id` pairing
-  on the most recent suffix turns.
+  on the most recent suffix turns. If required input cannot fit, the adapter
+  returns a typed request-capability refusal for router fallback instead of
+  forwarding an oversized payload. Sizing uses serialized UTF-8 bytes.
 - **Every catalog model compacts at `auto_compact_token_limit`, at most 200k tokens.**
   Without the field Codex compacts at 90% of `context_window`, so 1M-window
   routes ran requests at 300k-900k input tokens: in 2026-11-09..11 rollouts,

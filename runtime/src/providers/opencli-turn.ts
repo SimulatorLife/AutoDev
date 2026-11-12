@@ -552,6 +552,7 @@ const RESPONSE_RULES = [
   "Reply in exactly one of two ways:",
   '1. To act, write one or more tool calls, each in exactly this form, with only the tool\'s input between the tags:\n\n<tool_call name="TOOL_NAME">\nINPUT\n</tool_call>\n\nFor a tool that takes raw text (such as `exec`, whose input is JavaScript source), INPUT is that text, with no Markdown fences. For a tool that takes JSON arguments, INPUT is one JSON object matching its schema. You may write a short note before the calls. Stop after the last call: do not invent its result.',
   "2. When the task is done, or you need nothing more from the tools, reply with your final answer as plain text and no tool_call tags.",
+  "Every reply is a full round trip through a web chat and costs minutes, so make each one do as much as it safely can. Put every independent read, search, and command the next step needs into one reply -- in `exec`, one script that runs them together (`await Promise.all([...])` over `tools.*`) and prints all their results. Read a whole file once instead of one range per reply, and never repeat a call whose result is already in the conversation. Stop only where a result decides what you do next.",
   "Never write a <tool_output> block yourself; only the agent produces those."
 ].join("\n\n");
 

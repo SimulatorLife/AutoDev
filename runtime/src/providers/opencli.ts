@@ -1018,10 +1018,26 @@ interface PreparedTurn {
 }
 
 /** A turn's reply, with the prompt that produced it and whether it continued a chat. */
+/**
+ * Where a turn's time went: waiting for one of the site's tabs, and holding
+ * one (driving the page and waiting for the model). Summed over both attempts
+ * of a turn that restarted its chat.
+ */
+export interface TurnTiming {
+  queuedMs: number;
+  onSiteMs: number;
+}
+
 interface TurnRun {
   readonly reply: OpencliReply;
   readonly prompt: string;
   readonly continued: boolean;
+  readonly timing: TurnTiming;
+}
+
+/** Milliseconds as seconds with one decimal, for the turn log. */
+function seconds(ms: number): string {
+  return (ms / 1000).toFixed(1);
 }
 
 /**
@@ -1038,11 +1054,15 @@ export function opencliTurnLogLine(
     readonly entries: readonly TranscriptEntry[];
     readonly seen: number;
   },
-  run: { readonly prompt: string; readonly continued: boolean },
+  run: {
+    readonly prompt: string;
+    readonly continued: boolean;
+    readonly timing: Readonly<TurnTiming>;
+  },
   calls: number
 ): string {
   const items = turn.entries.slice(run.continued ? turn.seen : 0);
-  return `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s), ${turn.tools.length} tool(s) offered, ${Buffer.byteLength(run.prompt)}-byte prompt${run.continued ? ", continued conversation; new items" : "; conversation items"}: ${describeTranscriptBytes(items)}`;
+  return `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s), ${turn.tools.length} tool(s) offered, ${Buffer.byteLength(run.prompt)}-byte prompt, queued ${seconds(run.timing.queuedMs)}s, on site ${seconds(run.timing.onSiteMs)}s${run.continued ? ", continued conversation; new items" : "; conversation items"}: ${describeTranscriptBytes(items)}`;
 }
 
 export interface OpencliBridge {
@@ -1218,7 +1238,7 @@ export function createOpencliBridge(
       site,
       thread: codexThread(request, payload)
     };
-    const resume = ledger.find(scope, prefixDigests(segments));
+    const recorded = ledger.find(scope, prefixDigests(segments));
     // A root orchestrator's policy is the one role Codex does not carry whole
     // (see roleSection), so it is added from the router's role header, as the
     // CLI bridges do. A leaf's role instructions arrive intact in the input.
@@ -1237,13 +1257,34 @@ export function createOpencliBridge(
       instructions,
       role
     );
-    const prompt = resume
+    const fits = (text: string) =>
+      spec.attachesPrompt || Buffer.byteLength(text) <= MAX_ARGV_PROMPT_BYTES;
+    const continuation = recorded
       ? renderOpencliContinuation(
           tools,
-          segments.slice(resume.seen).join("\n\n"),
+          segments.slice(recorded.seen).join("\n\n"),
           orchestrator
         )
-      : fullPrompt;
+      : null;
+    // A chat that fell behind -- the session's turns went to another route
+    // while this site was unavailable -- has the whole gap to catch up on,
+    // and a command line cannot carry it: an opencli-gemini root was refused
+    // every turn with a 345 KB continuation while its compacted first prompt
+    // was 95 KB. Such a turn starts a new chat with that first prompt.
+    const resume =
+      recorded &&
+      continuation !== null &&
+      !fits(continuation) &&
+      fits(fullPrompt)
+        ? null
+        : recorded;
+    if (recorded && resume === null) {
+      ledger.consume(scope, recorded.digest);
+      writeErrorLine(
+        `opencli ${site} chat ${recorded.conversationId} is ${Buffer.byteLength(continuation ?? "")} bytes behind; starting a new chat`
+      );
+    }
+    const prompt = resume && continuation !== null ? continuation : fullPrompt;
     if (
       !spec.attachesPrompt &&
       Buffer.byteLength(prompt) > MAX_ARGV_PROMPT_BYTES
@@ -1266,12 +1307,7 @@ export function createOpencliBridge(
       conversationId: resume?.conversationId ?? null,
       scope,
       resumedFrom: resume?.digest ?? null,
-      freshPrompt:
-        resume &&
-        (spec.attachesPrompt ||
-          Buffer.byteLength(fullPrompt) <= MAX_ARGV_PROMPT_BYTES)
-          ? fullPrompt
-          : null,
+      freshPrompt: resume && fits(fullPrompt) ? fullPrompt : null,
       entries,
       seen: resume?.seen ?? 0,
       tools
@@ -1527,7 +1563,8 @@ export function createOpencliBridge(
     prompt: string,
     conversationId: string | null,
     signal: AbortSignal,
-    budget: TurnBudget
+    budget: TurnBudget,
+    timing: TurnTiming
   ): Promise<OpencliReply> {
     const promptBytes = Buffer.byteLength(prompt);
     // A prompt that fits is typed; only one too long to type is uploaded.
@@ -1541,7 +1578,7 @@ export function createOpencliBridge(
       const promptFile = path.join(directory, attachedPromptFileName());
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, prompt, { mode: 0o600 });
-      return await tabs.run(turn.site, turn.siteModel, async () => {
+      const runOnTab = async (): Promise<OpencliReply> => {
         // Checked once the turn has a tab, counting the uploads the turns in
         // the site's other tabs are making, so concurrent turns cannot both
         // spend the final available upload. A refusal makes no opencli/site
@@ -1608,6 +1645,16 @@ export function createOpencliBridge(
         } finally {
           if (uploading) reserveUpload(turn.site, -1);
         }
+      };
+      const queuedAt = Date.now();
+      return await tabs.run(turn.site, turn.siteModel, async () => {
+        const startedAt = Date.now();
+        timing.queuedMs += startedAt - queuedAt;
+        try {
+          return await runOnTab();
+        } finally {
+          timing.onSiteMs += Date.now() - startedAt;
+        }
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -1638,18 +1685,21 @@ export function createOpencliBridge(
     signal: AbortSignal
   ): Promise<TurnRun> {
     const budget = turnBudget();
+    const timing: TurnTiming = { queuedMs: 0, onSiteMs: 0 };
     try {
       const reply = await attemptTurn(
         turn,
         turn.prompt,
         turn.conversationId,
         signal,
-        budget
+        budget,
+        timing
       );
       return {
         reply,
         prompt: turn.prompt,
-        continued: turn.conversationId !== null
+        continued: turn.conversationId !== null,
+        timing
       };
     } catch (error) {
       if (
@@ -1676,9 +1726,10 @@ export function createOpencliBridge(
         turn.freshPrompt,
         null,
         signal,
-        budget
+        budget,
+        timing
       );
-      return { reply, prompt: turn.freshPrompt, continued: false };
+      return { reply, prompt: turn.freshPrompt, continued: false, timing };
     }
   }
 

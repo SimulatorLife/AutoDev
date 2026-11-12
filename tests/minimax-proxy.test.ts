@@ -1204,18 +1204,20 @@ test("compactMinimaxInputItems bounds oversized input histories while preserving
   ];
 
   for (let i = 1; i <= 20; i += 1) {
-    items.push({
-      type: "custom_tool_call",
-      id: `ctc_${i}`,
-      call_id: `call_${i}`,
-      name: "exec",
-      input: `console.log(${i}); // ${"a".repeat(2_000)}`
-    });
-    items.push({
-      type: "custom_tool_call_output",
-      call_id: `call_${i}`,
-      output: `output_${i}_${"b".repeat(2_000)}`
-    });
+    items.push(
+      {
+        type: "custom_tool_call",
+        id: `ctc_${i}`,
+        call_id: `call_${i}`,
+        name: "exec",
+        input: `console.log(${i}); // ${"a".repeat(2000)}`
+      },
+      {
+        type: "custom_tool_call_output",
+        call_id: `call_${i}`,
+        output: `output_${i}_${"b".repeat(2000)}`
+      }
+    );
   }
 
   // Budget of 25,000 chars cannot fit all 20 turns (~80,000 chars)
@@ -1263,5 +1265,99 @@ test("compactMinimaxInputItems bounds oversized input histories while preserving
   assert.ok(
     callIds.has("call_20"),
     "the most recent tool call pair must be retained"
+  );
+});
+
+test("MiniMax refuses oversized indivisible input instead of silently forwarding it", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const developer = {
+    type: "message",
+    role: "developer",
+    content: [{ type: "input_text", text: "Keep the request intact" }]
+  };
+  const oversizedUser = {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "x".repeat(30_000) }]
+  };
+  const oversizedDeclaration = {
+    type: "additional_tools",
+    tools: [{ type: "custom", name: "exec", description: "x".repeat(30_000) }]
+  };
+  for (const input of [
+    [oversizedUser],
+    [developer, oversizedUser],
+    [
+      developer,
+      oversizedDeclaration,
+      { type: "message", role: "user", content: [] }
+    ]
+  ]) {
+    assert.throws(
+      () => compactMinimaxInputItems(input, 10_000),
+      /cannot be compacted without discarding required content/
+    );
+  }
+});
+
+test("MiniMax context guard uses serialized UTF-8 byte size", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const input = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "€".repeat(4000) }]
+    }
+  ];
+  assert.ok(JSON.stringify(input).length < 10_000);
+  assert.throws(
+    () => compactMinimaxInputItems(input, 10_000),
+    /cannot be compacted without discarding required content/
+  );
+});
+
+test("MiniMax outbound rewriting propagates an indivisible context refusal", async () => {
+  const { rewriteOutboundPayload, DEFAULT_MAX_MINIMAX_INPUT_CHARS } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const payload = {
+    model: "MiniMax-M3",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "x".repeat(DEFAULT_MAX_MINIMAX_INPUT_CHARS)
+          }
+        ]
+      }
+    ]
+  };
+  assert.throws(
+    () => rewriteOutboundPayload(payload),
+    /cannot be compacted without discarding required content/
+  );
+});
+
+test("MiniMax compacts multibyte history using actual JSON bytes", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const input = Array.from({ length: 10 }, (_, index) => ({
+    type: "message",
+    role: "user",
+    content: [
+      { type: "input_text", text: `turn-${index}: ${"€".repeat(1000)}` }
+    ]
+  }));
+  const compacted = compactMinimaxInputItems(input, 10_000) as typeof input;
+  assert.ok(Buffer.byteLength(JSON.stringify(compacted), "utf8") <= 10_000);
+  assert.deepEqual(compacted.at(-1), input.at(-1));
+  assert.ok(
+    compacted.some((item) =>
+      JSON.stringify(item).includes("Context window guard")
+    )
   );
 });

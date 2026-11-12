@@ -29,6 +29,7 @@ import {
   resolveAgentRole
 } from "@simulatorlife/autodev-runtime/agents";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { sendUnsupportedRequestFailure } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   type AgentEventReporter,
   resolveAgentEventReporter
@@ -82,6 +83,25 @@ function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
 
 export const DEFAULT_MAX_MINIMAX_INPUT_CHARS = 3_000_000;
 
+class MinimaxInputContextExceeded extends Error {
+  constructor(maxInputChars: number) {
+    super(
+      `MiniMax input exceeds the configured ${maxInputChars}-byte context guard and cannot be compacted without discarding required content.`
+    );
+    this.name = "MinimaxInputContextExceeded";
+  }
+}
+
+function enforceMinimaxInputBudget(
+  input: unknown,
+  maxInputChars: number
+): unknown {
+  if (Buffer.byteLength(JSON.stringify(input), "utf8") > maxInputChars) {
+    throw new MinimaxInputContextExceeded(maxInputChars);
+  }
+  return input;
+}
+
 function configuredMaxMinimaxInputChars(): number {
   const raw = Number.parseInt(process.env.MINIMAX_MAX_INPUT_CHARS ?? "");
   return Number.isFinite(raw) && raw > 0
@@ -113,25 +133,6 @@ function isEmptyAssistantMessageItem(item: unknown): boolean {
       typeof part.text === "string" &&
       part.text.trim().length === 0
   );
-}
-
-function estimateMinimaxValueChars(value: unknown): number {
-  if (value === null || value === undefined) return 4;
-  if (typeof value === "string") return value.length + 2;
-  if (typeof value === "number" || typeof value === "boolean") return 6;
-  if (Array.isArray(value)) {
-    let total = 2;
-    for (const child of value) total += estimateMinimaxValueChars(child) + 1;
-    return total;
-  }
-  if (isJsonRecord(value)) {
-    let total = 2;
-    for (const [key, child] of Object.entries(value)) {
-      total += key.length + 4 + estimateMinimaxValueChars(child);
-    }
-    return total;
-  }
-  return 0;
 }
 
 function isToolCallItem(item: unknown): item is JsonRecord {
@@ -173,30 +174,17 @@ function truncateOversizedToolOutput(
  * so failover from a long stateful CLI session does not exceed MiniMax's
  * context window (`invalid params, context window exceeds limit (2013)`).
  */
-export function compactMinimaxInputItems(
-  input: unknown,
-  maxInputChars: number = configuredMaxMinimaxInputChars()
-): unknown {
-  if (!Array.isArray(input) || input.length <= 1) return input;
-  const filtered = input.filter(
-    (item) =>
-      !isSyntheticBridgeReasoningItem(item) && !isEmptyAssistantMessageItem(item)
-  );
-  const working = filtered.length > 0 ? filtered : input;
-  const changedByFilter = working.length !== input.length;
-
-  const sizes = working.map(estimateMinimaxValueChars);
-  const totalChars = sizes.reduce((sum, n) => sum + n, 2);
-  if (totalChars <= maxInputChars) {
-    return changedByFilter ? working : input;
-  }
-
+function minimaxSetupPrefix(
+  items: unknown[],
+  sizes: number[],
+  maxInputChars: number
+): { prefixEnd: number; prefixChars: number } {
   const maxPrefixChars = Math.floor(maxInputChars * 0.15);
   let prefixEnd = 0;
   let prefixChars = 0;
   let sawFirstUser = false;
-  while (prefixEnd < working.length - 1) {
-    const item = working[prefixEnd];
+  while (prefixEnd < items.length - 1) {
+    const item = items[prefixEnd];
     const size = sizes[prefixEnd] ?? 0;
     const isSetup =
       isJsonRecord(item) &&
@@ -209,6 +197,39 @@ export function compactMinimaxInputItems(
     prefixChars += size;
     prefixEnd += 1;
   }
+  return { prefixEnd, prefixChars };
+}
+
+export function compactMinimaxInputItems(
+  input: unknown,
+  maxInputChars: number = configuredMaxMinimaxInputChars()
+): unknown {
+  if (!Array.isArray(input)) return input;
+  if (input.length <= 1) return enforceMinimaxInputBudget(input, maxInputChars);
+  const filtered = input.filter(
+    (item) =>
+      !isSyntheticBridgeReasoningItem(item) &&
+      !isEmptyAssistantMessageItem(item)
+  );
+  const working = filtered.length > 0 ? filtered : input;
+  const changedByFilter = working.length !== input.length;
+
+  const sizes = working.map(
+    (item) => Buffer.byteLength(JSON.stringify(item), "utf8") + 1
+  );
+  const totalChars = sizes.reduce((sum, n) => sum + n, 1);
+  if (totalChars <= maxInputChars) {
+    return enforceMinimaxInputBudget(
+      changedByFilter ? working : input,
+      maxInputChars
+    );
+  }
+
+  const { prefixEnd, prefixChars } = minimaxSetupPrefix(
+    working,
+    sizes,
+    maxInputChars
+  );
 
   const noticeReserveChars = 256;
   const maxSingleOutputChars = Math.max(
@@ -230,7 +251,7 @@ export function compactMinimaxInputItems(
     const size =
       candidate === working[i]
         ? (sizes[i] ?? 0)
-        : estimateMinimaxValueChars(candidate);
+        : Buffer.byteLength(JSON.stringify(candidate), "utf8") + 1;
     if (suffixStart < working.length && suffixChars + size > remainingBudget) {
       break;
     }
@@ -243,9 +264,7 @@ export function compactMinimaxInputItems(
   const prefixItems = working.slice(0, prefixEnd);
   const middleAdditionalTools = working
     .slice(prefixEnd, suffixStart)
-    .filter(
-      (item) => isJsonRecord(item) && item.type === "additional_tools"
-    );
+    .filter((item) => isJsonRecord(item) && item.type === "additional_tools");
   const rawSuffix = working
     .slice(suffixStart)
     .map((item) => truncateOversizedToolOutput(item, maxSingleOutputChars));
@@ -268,7 +287,10 @@ export function compactMinimaxInputItems(
     middleAdditionalTools.length -
     pairedSuffix.length;
   if (omittedCount <= 0) {
-    return [...prefixItems, ...middleAdditionalTools, ...pairedSuffix];
+    return enforceMinimaxInputBudget(
+      [...prefixItems, ...middleAdditionalTools, ...pairedSuffix],
+      maxInputChars
+    );
   }
 
   const guardNotice: JsonRecord = {
@@ -281,12 +303,10 @@ export function compactMinimaxInputItems(
       }
     ]
   };
-  return [
-    ...prefixItems,
-    ...middleAdditionalTools,
-    guardNotice,
-    ...pairedSuffix
-  ];
+  return enforceMinimaxInputBudget(
+    [...prefixItems, ...middleAdditionalTools, guardNotice, ...pairedSuffix],
+    maxInputChars
+  );
 }
 
 // Codex duplicates its turn metadata -- absolute workspace paths, git remote
@@ -1230,7 +1250,8 @@ function processOutboundPayload(
       freeformNames = collectFreeformToolNames(payload);
       reportExecutedToolCalls(agentEvents, payload);
       body = JSON.stringify(rewriteOutboundPayload(payload));
-    } catch {
+    } catch (error) {
+      if (error instanceof MinimaxInputContextExceeded) throw error;
       // Preserve malformed JSON unchanged.
     }
   }
@@ -1335,7 +1356,11 @@ async function forward(
       freeformNames
     );
   } catch (error) {
-    proxyError(response, error);
+    if (error instanceof MinimaxInputContextExceeded) {
+      sendUnsupportedRequestFailure(response, "minimax", error.message);
+    } else {
+      proxyError(response, error);
+    }
   } finally {
     request.removeListener("aborted", abortUpstream);
   }

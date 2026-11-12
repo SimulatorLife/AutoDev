@@ -364,14 +364,15 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..ee7da97e1dcc5cc206d7b4c67a1434b1
 +    });
 +}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700ecc83b383 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..fbba503e960f77f5b17a4f3aa9172b92488b1462 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
-@@ -4,6 +4,12 @@ import {
+@@ -4,6 +4,13 @@ import {
    GEMINI_DOMAIN,
    ensureGeminiPage,
    getCurrentGeminiModel,
 +  geminiChatIdOf,
++  geminiModelLimitError,
 +  getCurrentGeminiUrl,
 +  openGeminiConversation,
 +  requireGeminiNotBlocked,
@@ -380,7 +381,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
    readGeminiSnapshot,
    selectGeminiModel,
    selectGeminiThinking,
-@@ -53,7 +59,7 @@ function validateAskModelValue(value) {
+@@ -53,7 +60,7 @@ function validateAskModelValue(value) {
          );
      }
      // Reject short aliases like "pro", "flash", "flash-lite" that lack a version number.
@@ -389,7 +390,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
          throw new ArgumentError(
              '--model "' + value + '" is not accepted. ' +
              'Short aliases like "pro", "flash", or "flash-lite" are not supported. ' +
-@@ -61,8 +67,10 @@ function validateAskModelValue(value) {
+@@ -61,8 +68,10 @@ function validateAskModelValue(value) {
              'Use "opencli gemini models" to list available values.'
          );
      }
@@ -402,8 +403,11 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
          throw new ArgumentError(
              '--model "' + value + '" is not a valid canonical model id. ' +
              'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
-@@ -75,6 +83,22 @@ export const __test__ = {
+@@ -73,8 +82,25 @@ function validateAskModelValue(value) {
+ 
+ export const __test__ = {
      validateAskModelValue,
++    geminiModelLimitError,
  };
  
 +/**
@@ -425,7 +429,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
  export const askCommand = cli({
      site: 'gemini',
      name: 'ask',
-@@ -91,9 +115,10 @@ export const askCommand = cli({
+@@ -91,9 +117,10 @@ export const askCommand = cli({
          { name: 'model', type: 'string', required: false, help: 'Gemini model to use (e.g. "2.5-flash"). Use "opencli gemini models" to list available values.' },
          { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait (default: 60)', default: 60 },
          { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
@@ -438,7 +442,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
      func: async (page, kwargs) => {
          const prompt = kwargs.prompt;
          const timeout = kwargs.timeout;
-@@ -103,7 +128,13 @@ export const askCommand = cli({
+@@ -103,7 +130,13 @@ export const askCommand = cli({
  
          // ── New chat (must happen before model/thinking selection) ──────
          const startFresh = normalizeBooleanFlag(kwargs.new);
@@ -453,7 +457,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
              await startNewGeminiChat(page);
  
          // ── Early validation: model format & thinking value ────────────
-@@ -119,9 +150,9 @@ export const askCommand = cli({
+@@ -119,9 +152,9 @@ export const askCommand = cli({
          if (hasThinking) {
              const thinkingRaw = String(kwargs.thinking ?? '').trim();
              const thinkingValue = thinkingRaw.toLowerCase();
@@ -465,7 +469,19 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
                      'Run `opencli gemini models` to see available thinking levels.',
                  );
              }
-@@ -256,20 +287,39 @@ export const askCommand = cli({
+@@ -180,6 +213,11 @@ export const askCommand = cli({
+                     'Use "opencli gemini models" to see available values.'
+                 );
+             }
++            // A model the account is out of usage on stays in the picker with
++            // when its limit resets in place of its description: it is a usage
++            // limit, not a model the site does not have.
++            const limited = availableModels.find((m) => m?.model === modelValue && m.limit);
++            if (limited) throw geminiModelLimitError(modelValue, limited.limit);
+             await selectGeminiModel(page, modelValue);
+         }
+ 
+@@ -256,20 +294,39 @@ export const askCommand = cli({
              }
          }
  
@@ -508,9 +524,17 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..c06a1a752e7dcc4e2897b7c73fb0700e
      },
  });
 diff --git a/clis/gemini/models.js b/clis/gemini/models.js
-index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c1073cde8 100644
+index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..8c1ccd83c5fa92f4e2d0999a4c9a332fd78c4d0a 100644
 --- a/clis/gemini/models.js
 +++ b/clis/gemini/models.js
+@@ -1,6 +1,6 @@
+ import { cli, Strategy } from '@jackwener/opencli/registry';
+ import { CommandExecutionError } from '@jackwener/opencli/errors';
+-import { GEMINI_DOMAIN, ensureGeminiPage } from './utils.js';
++import { GEMINI_DOMAIN, ensureGeminiPage, geminiModelIdentityLogic } from './utils.js';
+ 
+ function isObjectRecord(value) {
+     return !!value && typeof value === 'object' && !Array.isArray(value);
 @@ -47,6 +47,7 @@ function findModelPickerLogic() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
@@ -538,7 +562,60 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -158,9 +171,16 @@ function thinkingExtractionLogic() {
+@@ -104,47 +117,12 @@ function findModelPickerLogic() {
+     `;
+ }
+ 
++/**
++ * Model identity for the page scripts: a model is named by its own name and
++ * version, whatever the site writes beside it (see geminiModelIdentityLogic).
++ */
+ function modelParsingLogic() {
+-    return `
+-      /**
+-       * Best-effort extraction of a canonical model id from display text.
+-       * Handles patterns like "3.1 flash-lite", "3.5 flash", "3.1 pro",
+-       * "2.5-flash-thinking", "gemini 3.0 pro experimental", and entries with
+-       * trailing Chinese descriptions (e.g. "3.1 Flash-Lite 极速回答").
+-       */
+-      const canonicalModelId = (raw) => {
+-        const text = normalize(raw);
+-        if (!text) return '';
+-
+-        // Remove leading decorative characters (e.g. checkmark icons).
+-        const cleaned = text.replace(/^[^a-z0-9]+/i, '').trim();
+-
+-        // Known model-version patterns: "X.Y variant" or "X.Y-variant".
+-        const versionRe = /^((?:gemini[\\s-]*)?(\\d+(?:\\.\\d+)?)(?:[\\s-]+(flash|pro|lite|ultra|nano|thinking|experimental))(?:[\\s-]*(flash|pro|lite|ultra|nano|thinking|experimental))?)/i;
+-        const match = cleaned.match(versionRe);
+-        if (match) {
+-          const version = match[2];
+-          let variant = (match[3] || '').toLowerCase();
+-          const extra = (match[4] || '').toLowerCase();
+-          if (extra) variant = variant + '-' + extra;
+-          return version + '-' + variant;
+-        }
+-
+-        // Fallback: if the text contains a version number and a known keyword.
+-        const fallbackRe = /(\\d+(?:\\.\\d+)?)\\s*(flash|pro|lite|ultra|nano|thinking|experimental)/i;
+-        const fallbackMatch = cleaned.match(fallbackRe);
+-        if (fallbackMatch) {
+-          return fallbackMatch[1] + '-' + fallbackMatch[2].toLowerCase();
+-        }
+-
+-        // For experimental / custom models: use a cleaned version of the label.
+-        if (/\\d+(?:\\.\\d+)?/.test(cleaned) && cleaned.length < 60) {
+-          return cleaned.replace(/\\s+/g, '-').replace(/[^a-z0-9.-]/g, '');
+-        }
+-
+-        return '';
+-      };
+-    `;
++    return geminiModelIdentityLogic();
+ }
+ 
+ function thinkingExtractionLogic() {
+@@ -158,9 +136,16 @@ function thinkingExtractionLogic() {
        const extractAllThinkingValues = (menuItems) => {
          const found = new Map();
  
@@ -557,7 +634,60 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c
          ];
  
          for (const item of menuItems) {
-@@ -371,6 +391,29 @@ export function readMenuModelsScript() {
+@@ -250,20 +235,16 @@ function readMenuAndCloseLogic() {
+ 
+       for (const item of menuItems) {
+         if (!item || (!(item instanceof HTMLElement) && !(item instanceof Element))) continue;
+-        const itemText = (item.textContent || '').replace(/\\s+/g, ' ').trim();
+-        const modelId = canonicalModelId(itemText);
+-        if (!modelId) continue;
+-        if (seen.has(modelId)) continue;
+-        seen.add(modelId);
++        const entry = geminiModelEntry(item);
++        if (!entry) continue;
++        if (seen.has(entry.model)) continue;
++        seen.add(entry.model);
+ 
+-        results.push({ model: modelId, thinkingValues: [] });
++        results.push({ model: entry.model, thinkingValues: [], limit: entry.limit });
+       }
+ 
+       // Guard: only thinking options, no model entries → bail out.
+-      const hasModelEntries = results.some((r) => {
+-        return /\\d+\\.\\d+/.test(r.model) || /flash|pro|lite/i.test(r.model);
+-      });
+-      if (!hasModelEntries) {
++      if (results.length === 0) {
+         try { document.body.click(); } catch (_) {}
+         return [];
+       }
+@@ -351,26 +332,44 @@ export function readMenuModelsScript() {
+ 
+       for (const item of menuItems) {
+         if (!item || (!(item instanceof HTMLElement) && !(item instanceof Element))) continue;
+-        const itemText = (item.textContent || '').replace(/\\s+/g, ' ').trim();
++        const entry = geminiModelEntry(item);
++        if (!entry) continue;
++        if (seen.has(entry.model)) continue;
++        seen.add(entry.model);
+ 
+-        const modelId = canonicalModelId(itemText);
+-        if (!modelId) continue;
+-        if (seen.has(modelId)) continue;
+-        seen.add(modelId);
+-
+-        results.push({ model: modelId, thinkingValues: [] });
++        results.push({ model: entry.model, thinkingValues: [], limit: entry.limit });
+       }
+ 
+-      const hasModelEntries = results.some((r) => {
+-        return /\\d+\\.\\d+/.test(r.model) || /flash|pro|lite/i.test(r.model);
+-      });
+-      if (!hasModelEntries) return [];
++      if (results.length === 0) return [];
+ 
+       return results;
+     })()
      `;
  }
  
@@ -587,7 +717,7 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c
  /**
   * Script that clicks the "思考等级" / "Thinking level" toggle in the
   * currently-open menu to expand thinking options.
-@@ -429,6 +472,7 @@ export const __test__ = {
+@@ -429,6 +428,7 @@ export const __test__ = {
      pickModelPickerScript,
      readMenuScript,
      readMenuModelsScript,
@@ -595,7 +725,16 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c
      clickThinkingToggleScript,
      extractThinkingScript,
  };
-@@ -469,8 +513,21 @@ export const modelsCommand = cli({
+@@ -446,7 +446,7 @@ export const modelsCommand = cli({
+     siteSession: 'persistent',
+     navigateBefore: false,
+     args: [],
+-    columns: ['model', 'thinkingValues'],
++    columns: ['model', 'thinkingValues', 'limit'],
+     func: async (page) => {
+         await ensureGeminiPage(page);
+ 
+@@ -469,8 +469,21 @@ export const modelsCommand = cli({
              );
          }
  
@@ -620,12 +759,12 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..41a3ce61694f8ca9bf8ee7577521ac4c
          // Step 3: Read model entries from the open menu.
          const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b193510aa2839 100644
+index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f644138da 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,4 +1,4 @@
 -import { CommandExecutionError, TimeoutError } from '@jackwener/opencli/errors';
-+import { CommandExecutionError, EmptyResultError, TimeoutError } from '@jackwener/opencli/errors';
++import { CliError, CommandExecutionError, EmptyResultError, EXIT_CODES, TimeoutError } from '@jackwener/opencli/errors';
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
@@ -829,15 +968,94 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
      }
  
      // Step 5: Select the requested thinking level (also closes the menu).
-@@ -2260,7 +2368,6 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2260,7 +2368,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
          return matched;
      }
  
 -    return '';
++}
++
++// ── AutoDev: Gemini model identity ─────────────────────────────────────
++/**
++ * Page-script source that names a Gemini model by its own name and version.
++ *
++ * The picker shows each model's name and version ("4 Argon", "3.1 Pro") in
++ * one element and a description in another, and the site rewords the
++ * description, moves it before or after the name, and replaces it with
++ * "Limit resets ..." while the account is out of usage on that model. An id
++ * read from the item's whole text followed every one of those changes
++ * (`4-argon-complex-tasks`, `code--analysis-4-argon`,
++ * `4-argon-limit-resets-nov-9-926-pm`), and every caller that named the model
++ * was told it did not exist. The id is read from the one text part that is a
++ * version and a name, and nothing else; a "Limit resets" part is reported
++ * beside it as the model's limit.
++ *
++ * Defines `geminiModelIdOf(text)` and `geminiModelEntry(item)`.
++ */
++export function geminiModelIdentityLogic() {
++    return `
++      const GEMINI_MODEL_NAME_RE = /^(?:gemini\\s+)?(\\d+(?:\\.\\d+)?)[\\s-]+([a-z]+(?:[\\s-][a-z]+)*)$/;
++      const GEMINI_MODEL_LIMIT_RE = /^limit resets\\b/i;
++      const geminiModelIdOf = (text) => {
++        const cleaned = String(text || '')
++          .replace(/\\s+/g, ' ')
++          .trim()
++          .toLowerCase()
++          .replace(/^[^a-z0-9]+/, '');
++        const match = GEMINI_MODEL_NAME_RE.exec(cleaned);
++        return match ? match[1] + '-' + match[2].replace(/[\\s-]+/g, '-') : '';
++      };
++      const geminiModelEntry = (item) => {
++        if (!item) return null;
++        const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
++        let model = '';
++        let limit = null;
++        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
++          const parent = node.parentElement;
++          if (parent && parent.closest('mat-icon, .material-icons, .google-symbols, script, style')) continue;
++          const text = String(node.nodeValue || '').replace(/\\s+/g, ' ').trim();
++          if (!text) continue;
++          if (!model) {
++            const id = geminiModelIdOf(text);
++            if (id) { model = id; continue; }
++          }
++          if (limit === null && GEMINI_MODEL_LIMIT_RE.test(text)) limit = text;
++        }
++        return model ? { model, limit } : null;
++      };
++    `;
++}
++
++/**
++ * The refusal for a model the account is out of usage on.
++ *
++ * The site keeps such a model in its picker, so it is no unknown model: it
++ * is a usage limit, under its own code and with the site's own text, which
++ * says when the limit resets.
++ */
++export function geminiModelLimitError(model, limit) {
++    return new CliError(
++        'MODEL_LIMIT',
++        `Gemini model "${model}" is out of usage: ${limit}`,
++        'Use another model until then. "opencli gemini models" shows each model\'s limit.',
++        EXIT_CODES.GENERIC_ERROR
++    );
  }
  
  // ── Current model detection ─────────────────────────────────────────
-@@ -2299,6 +2406,7 @@ function getCurrentGeminiModelScript() {
+@@ -2269,8 +2443,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
+  * Browser evaluate script that reads the currently selected model from the
+  * Gemini model-picker button and returns its canonical model ID.
+  *
+- * Uses the same canonicalModelId logic as discoverModelsScript so that
+- * the returned ID can be matched against discovered model entries.
++ * Reads the id the same way discovery names a model (geminiModelIdOf), so
++ * the returned ID can be matched against discovered model entries. The
++ * button's label says "Open mode picker, currently <model>".
+  *
+  * @returns a function string for page.evaluate()
+  */
+@@ -2299,6 +2474,7 @@ function getCurrentGeminiModelScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -845,7 +1063,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -2313,6 +2421,18 @@ function getCurrentGeminiModelScript() {
+@@ -2313,6 +2489,18 @@ function getCurrentGeminiModelScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -864,7 +1082,46 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2604,7 +2724,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2355,35 +2543,13 @@ function getCurrentGeminiModelScript() {
+         return null;
+       };
+ 
+-      const canonicalModelId = (raw) => {
+-        const text = normalize(raw);
+-        if (!text) return '';
+-        const cleaned = text.replace(/^[^a-z0-9]+/i, '').trim();
+-        const versionRe = /^((?:gemini[\\s-]*)?(\\d+(?:\\.\\d+)?)(?:[\\s-]+(flash|pro|lite|ultra|nano|thinking|experimental))(?:[\\s-]*(flash|pro|lite|ultra|nano|thinking|experimental))?)/i;
+-        const match = cleaned.match(versionRe);
+-        if (match) {
+-          const version = match[2];
+-          let variant = (match[3] || '').toLowerCase();
+-          const extra = (match[4] || '').toLowerCase();
+-          if (extra) variant = variant + '-' + extra;
+-          return version + '-' + variant;
+-        }
+-        const fallbackRe = /(\\d+(?:\\.\\d+)?)\\s*(flash|pro|lite|ultra|nano|thinking|experimental)/i;
+-        const fallbackMatch = cleaned.match(fallbackRe);
+-        if (fallbackMatch) {
+-          return fallbackMatch[1] + '-' + fallbackMatch[2].toLowerCase();
+-        }
+-        if (/\\d+(?:\\.\\d+)?/.test(cleaned) && cleaned.length < 60) {
+-          return cleaned.replace(/\\s+/g, '-').replace(/[^a-z0-9.-]/g, '');
+-        }
+-        return '';
+-      };
++      ${geminiModelIdentityLogic()}
+ 
+       const picker = findModelPicker();
+       if (!picker) return '';
+ 
+-      const combined = normalize(picker.textContent || '') + ' ' + normalize(picker.getAttribute('aria-label') || '');
+-      return canonicalModelId(combined);
++      const current = /currently\s+(.+)$/i.exec(String(picker.getAttribute('aria-label') || ''));
++      return geminiModelIdOf(current ? current[1] : '') || geminiModelIdOf(picker.textContent || '');
+     })()
+     `;
+ }
+@@ -2604,7 +2770,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -877,7 +1134,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,6 +2781,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,6 +2827,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -886,7 +1143,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
                  return structuredCandidate;
              }
              continue;
-@@ -2674,6 +2800,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2846,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -895,7 +1152,72 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
              return transcriptCandidate;
          }
      }
-@@ -2837,7 +2965,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2712,29 +2886,7 @@ function selectModelInMenuScript(modelId) {
+ 
+       const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+ 
+-      const canonicalModelId = (raw) => {
+-        const text = normalize(raw);
+-        if (!text) return '';
+-        const cleaned = text.replace(/^[^a-z0-9]+/i, '').trim();
+-        const versionRe = /^((?:gemini[\\s-]*)?(\\d+(?:\\.\\d+)?)(?:[\\s-]+(flash|pro|lite|ultra|nano|thinking|experimental))(?:[\\s-]*(flash|pro|lite|ultra|nano|thinking|experimental))?)/i;
+-        const match = cleaned.match(versionRe);
+-        if (match) {
+-          const version = match[2];
+-          let variant = (match[3] || '').toLowerCase();
+-          const extra = (match[4] || '').toLowerCase();
+-          if (extra) variant = variant + '-' + extra;
+-          return version + '-' + variant;
+-        }
+-        const fallbackRe = /(\\d+(?:\\.\\d+)?)\\s*(flash|pro|lite|ultra|nano|thinking|experimental)/i;
+-        const fallbackMatch = cleaned.match(fallbackRe);
+-        if (fallbackMatch) {
+-          return fallbackMatch[1] + '-' + fallbackMatch[2].toLowerCase();
+-        }
+-        if (/\\d+(?:\\.\\d+)?/.test(cleaned) && cleaned.length < 60) {
+-          return cleaned.replace(/\\s+/g, '-').replace(/[^a-z0-9.-]/g, '');
+-        }
+-        return '';
+-      };
++      ${geminiModelIdentityLogic()}
+ 
+       const MENU_SELECTORS = [
+         '[role="menu"] [role="menuitem"]',
+@@ -2771,10 +2923,12 @@ function selectModelInMenuScript(modelId) {
+       }
+ 
+       let matched = null;
++      let limit = null;
+       for (const item of menuItems) {
+-        const id = canonicalModelId(item.textContent || '');
+-        if (id === targetModelId) {
++        const entry = geminiModelEntry(item);
++        if (entry && entry.model === targetModelId) {
+           matched = item;
++          limit = entry.limit;
+           break;
+         }
+       }
+@@ -2783,6 +2937,10 @@ function selectModelInMenuScript(modelId) {
+         try { document.body.click(); } catch (_) {}
+         return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
+       }
++      if (limit) {
++        try { document.body.click(); } catch (_) {}
++        return { ok: false, limit };
++      }
+ 
+       try {
+         matched.click();
+@@ -2829,6 +2987,7 @@ export async function selectGeminiModel(page, modelId) {
+     // Find and click the matching menu item.
+     const raw = await page.evaluate(selectModelInMenuScript(modelId));
+     const result = unwrapGeminiEvaluateResult(raw, 'Gemini model selection');
++    if (result && result.limit) throw geminiModelLimitError(modelId, result.limit);
+     if (!result || !result.ok) {
+         throw new CommandExecutionError(
+             result?.reason || 'Failed to select Gemini model "' + modelId + '"'
+@@ -2837,7 +2996,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -908,7 +1230,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..9cd280272500d8ca147a9cd4dd8b1935
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +2977,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +3008,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }
