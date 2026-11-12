@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -629,6 +629,7 @@ async function withBridge(
     readonly turnTimeoutSeconds: number;
     readonly modelListTtlMs?: number;
     readonly now?: () => number;
+    readonly uploadLogPath?: string;
     readonly run: (
       request: OpencliRunRequest,
       sites: FakeSites
@@ -645,6 +646,9 @@ async function withBridge(
       ? {}
       : { modelListTtlMs: options.modelListTtlMs }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.uploadLogPath === undefined
+      ? {}
+      : { uploadLogPath: options.uploadLogPath }),
     tempRoot,
     ledger: new OpencliConversationLedger(),
     sessionBusyRetryMs: 1,
@@ -917,6 +921,22 @@ const postTurn = (baseUrl: string, body: string) =>
     body
   });
 
+async function uploadHealth(
+  baseUrl: string,
+  site: Site
+): Promise<{ uploadsUsed: number; nextResetAt: string | null }> {
+  const response = await fetch(`${baseUrl}/health?provider=opencli-${site}`);
+  assert.equal(response.status, 200);
+  const health = (await response.json()) as {
+    uploadsUsed: number;
+    nextResetAt: string | null;
+  };
+  return {
+    uploadsUsed: health.uploadsUsed,
+    nextResetAt: health.nextResetAt
+  };
+}
+
 test("a ChatGPT prompt that fits is typed, and only a long one is uploaded", async () => {
   // ChatGPT counts an account's uploads, and a bridge that uploaded every
   // turn's prompt spent the allowance in an hour of an orchestrated session.
@@ -955,6 +975,154 @@ test("a ChatGPT prompt that fits is typed, and only a long one is uploaded", asy
       // Either way the site got the whole prompt.
       assert.equal(sites.chatsWith("typedone").length, 1);
       assert.equal(sites.chatsWith("uploadedone").length, 1);
+    }
+  );
+});
+
+test("upload log and per-site health survive a fresh bridge using the same persistent file", async () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-uploads-"));
+  const uploadLogPath = join(stateRoot, "uploads.json");
+  const clock = Date.parse("2026-11-11T15:00:00.000Z");
+  let invocations = 0;
+  const options = () => ({
+    turnTimeoutSeconds: 30,
+    now: () => clock,
+    uploadLogPath,
+    run: async (request: OpencliRunRequest, sites: FakeSites) => {
+      if (
+        request.args[0] === "chatgpt" &&
+        request.args[1] === "ask-file" &&
+        !request.args.includes("--inline")
+      )
+        invocations++;
+      return sites.run(request);
+    }
+  });
+  try {
+    await withBridge(options(), async (baseUrl) => {
+      for (let index = 0; index < 2; index++) {
+        const response = await postTurn(
+          baseUrl,
+          longTurnRequest(`before-restart-${index}`, `before-${index}`)
+        );
+        assert.equal(response.status, 200);
+      }
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 2,
+        nextResetAt: "2026-11-11T18:00:00.000Z"
+      });
+      assert.deepEqual(await uploadHealth(baseUrl, "gemini"), {
+        uploadsUsed: 0,
+        nextResetAt: null
+      });
+      assert.equal(existsSync(uploadLogPath), true);
+    });
+
+    // A separate bridge instance must read persisted accounting. Each
+    // withBridge call creates and removes its own independent temp root.
+    await withBridge(options(), async (baseUrl) => {
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 2,
+        nextResetAt: "2026-11-11T18:00:00.000Z"
+      });
+      assert.equal(
+        (await postTurn(baseUrl, longTurnRequest("after-restart", "after")))
+          .status,
+        200
+      );
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 3,
+        nextResetAt: "2026-11-11T18:00:00.000Z"
+      });
+    });
+    assert.equal(invocations, 3);
+  } finally {
+    rmSync(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("spent upload allowance refuses before opencli, while typed turns and other sites remain available", async () => {
+  let clock = Date.parse("2026-11-11T15:00:00.000Z");
+  let invokedUploads = 0;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      now: () => clock,
+      run: async (request, sites) => {
+        if (
+          request.args[0] === "chatgpt" &&
+          request.args[1] === "ask-file" &&
+          !request.args.includes("--inline")
+        )
+          invokedUploads++;
+        return sites.run(request);
+      }
+    },
+    async (baseUrl) => {
+      for (let index = 0; index < 80; index++) {
+        const response = await postTurn(
+          baseUrl,
+          longTurnRequest(`allowance-${index}`, `allowance-thread-${index}`)
+        );
+        assert.equal(response.status, 200, `upload ${index + 1}`);
+      }
+      assert.equal(invokedUploads, 80);
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 80,
+        nextResetAt: "2026-11-11T18:00:00.000Z"
+      });
+
+      const denied = await postTurn(
+        baseUrl,
+        longTurnRequest("allowance-exhausted", "exhausted-thread")
+      );
+      assert.equal(denied.status, 429);
+      const error = (await denied.json()) as {
+        error: {
+          code: string;
+          limit: { class: string; resets_at: string };
+        };
+      };
+      assert.equal(error.error.code, "UPLOADS_EXHAUSTED");
+      assert.equal(error.error.limit.class, "throttled");
+      assert.equal(error.error.limit.resets_at, "2026-11-11T18:00:00.000Z");
+      assert.equal(
+        invokedUploads,
+        80,
+        "no opencli upload invocation after cap"
+      );
+
+      assert.equal(
+        (await postTurn(baseUrl, turnRequest("typed", MODEL.chatgpt, "typed")))
+          .status,
+        200
+      );
+      assert.equal(
+        (await postTurn(baseUrl, turnRequest("gemini", MODEL.gemini, "gemini")))
+          .status,
+        200
+      );
+      assert.deepEqual(await uploadHealth(baseUrl, "gemini"), {
+        uploadsUsed: 0,
+        nextResetAt: null
+      });
+
+      // At the rolling-window boundary, earlier uploads no longer count.
+      clock += 3 * 60 * 60 * 1000;
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 0,
+        nextResetAt: null
+      });
+      assert.equal(
+        (await postTurn(baseUrl, longTurnRequest("after-expiry", "new-window")))
+          .status,
+        200
+      );
+      assert.equal(invokedUploads, 81);
+      assert.deepEqual(await uploadHealth(baseUrl, "chatgpt"), {
+        uploadsUsed: 1,
+        nextResetAt: "2026-11-11T21:00:00.000Z"
+      });
     }
   );
 });

@@ -861,8 +861,8 @@ for that turn. It used to be discarded: the bridges emitted a bare
 `response.failed` and threw away every token they had already sent, leaving the
 parent with an error string in place of a partial result it could have acted on.
 
-All three CLI bridges now close such a turn as an _incomplete_ response instead,
-in this order:
+Once a CLI bridge has emitted an output item, it closes an interrupted turn
+as an _incomplete_ response instead, in this order:
 
 ```
 response.output_text.delta          (a truncation notice, appended to what the client already saw)
@@ -930,10 +930,16 @@ again, so the router treats its failure as the candidate's, not the turn's:
   is forwarded, since another provider's answer would be spliced onto half of
   this one's.
 
-A bridge therefore fails a turn that produced nothing with a single
-`response.failed` and no output items; the incomplete-response epilogue above
-is for turns that had something to keep. `tests/router/stream-fallback.test.ts`
-guards the router side.
+Each CLI bridge, including Antigravity, Claude, Copilot, and MiniMax, must
+close a streamed turn that failed **before its first output item** with one
+`response.failed`, with `response.error.type` describing the failure and
+`response.error.limit` containing the declared provider limit when applicable.
+Such a turn must emit no `response.output_item.added` event and no incomplete
+message or reasoning epilogue. The router can then try the next provider
+without mixing partial results. After an output item has been emitted, the
+bridge instead uses the incomplete-response epilogue above to preserve partial
+text; the router cannot switch providers for that turn.
+`tests/router/stream-fallback.test.ts` guards the router side.
 
 ## Observability
 
@@ -2468,7 +2474,12 @@ single list; the route patterns and the site registry in
     alone and is unique to the turn: the bubble that starts with it is the
     turn's, and the reply is paired against that bubble's own text. What the
     model receives is the text as sent (underscores, runs of spaces and
-    fences were checked live).
+    fences were checked live). **32 KB is the bridge's conservative routing
+    threshold, not a measured ChatGPT composer maximum.** The largest
+    recorded live typed prompt was 31 KB and was answered in 35 seconds;
+    larger typed prompts have not been tried. Compaction of MCP reference
+    declarations is an offline prompt-size optimization, not evidence that
+    the composer accepts larger typed prompts.
   - **Uploaded (over 32 KB):** the prompt is attached as `turn-<random>.md`
     with a constant short message. Each turn attaches under a fresh name:
     ChatGPT renames an upload whose name it has seen
@@ -2486,6 +2497,21 @@ single list; the route patterns and the site registry in
   under 32 KB, so uploads are now spent only on a chat's first message and on
   a follow-up carrying a very large tool result.
 
+  **Bridge-side upload accounting.** The bridge records successful prompt
+  attachments by site in a persistent upload log, retaining timestamps from
+  the three-hour rolling window across bridge restarts. An upload that would
+  exceed the observed ChatGPT allowance (80 per window) is rejected before
+  invoking opencli, with the same `UPLOADS_EXHAUSTED` rate-limit contract as a
+  site refusal. Typed prompts do not spend this allowance. Per-provider
+  `GET /health?provider=opencli-chatgpt` reports `uploadsUsed` (attachments
+  recorded within the window) and `nextResetAt` (the earliest recorded
+  attachment's expiry as an ISO timestamp, or `null` when none remain).
+  The accounting is per site: Gemini activity does not consume ChatGPT's
+  upload allowance. Window expiry is determined from the recorded timestamps,
+  not process uptime. These are locally observed uploads, not a live reading
+  of the account's quota; uploads from another client can still cause the
+  site to refuse an attachment earlier than expected.
+
 - **A site that has stopped taking uploads is a rate limit.** Once the
   allowance is spent, ChatGPT's page still shows its file inputs but none of
   them takes the file ("file input is missing (0 of 4 file input(s) on the
@@ -2498,8 +2524,9 @@ single list; the route patterns and the site registry in
   whole of the turn"). Now the adapter stops asking after three lookups that
   find inputs and no taker, the bridge does not run the command again, and a
   prompt too long to type ends the turn as `UPLOADS_EXHAUSTED`: a `throttled`
-  limit (HTTP 429, or `response.failed` with `error.limit` on a stream) whose `resets_at` is three hours after the oldest upload the bridge
-  made in the window -- or 15 minutes on, when the bridge saw none of them.
+  limit (HTTP 429, or `response.failed` with `error.limit` on a stream) whose
+  `resets_at` is three hours after the oldest upload the bridge recorded in
+  the window -- or 15 minutes on, when the bridge saw none of them.
   The router cools the provider down until then and serves the turn from
   another route. Turns that fit in the composer never reach this path.
 - **Gemini.** `opencli gemini ask` takes the prompt on the command line, and

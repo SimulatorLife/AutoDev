@@ -15,7 +15,15 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -137,8 +145,11 @@ const MAX_ATTACHED_PROMPT_BYTES = 120_000;
  * and answered in 35 seconds; nothing larger has been tried.
  */
 const MAX_TYPED_PROMPT_BYTES = 32_000;
+/** ChatGPT uploads observed available to this account in any three-hour window. */
+const CHATGPT_UPLOAD_ALLOWANCE = 80;
 /** The rolling window ChatGPT counts an account's uploads over. */
 const UPLOAD_WINDOW_MS = 3 * 60 * 60 * 1000;
+const UPLOAD_LOG_SCHEMA = "autodev-opencli-uploads-v1";
 /**
  * How long to leave a site that refuses uploads when the bridge has seen none
  * of the uploads that spent the allowance (it was restarted, or the account
@@ -157,6 +168,25 @@ function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Preserve instructions and transcript while shrinking only MCP references. */
+function compactForTypedChatgpt(
+  original: string,
+  tools: readonly CodexTool[],
+  transcript: string,
+  render: (tools: readonly CodexTool[], transcript: string) => string
+): string {
+  if (Buffer.byteLength(original) <= MAX_TYPED_PROMPT_BYTES) return original;
+  for (const detail of ["summaries", "names"] as const) {
+    const candidate = render(compactCodexTools(tools, detail), transcript);
+    if (Buffer.byteLength(candidate) > MAX_TYPED_PROMPT_BYTES) continue;
+    writeErrorLine(
+      `opencli chatgpt typed prompt: MCP ${detail} reduced ${Buffer.byteLength(original)} to ${Buffer.byteLength(candidate)} bytes`
+    );
+    return candidate;
+  }
+  return original;
+}
+
 export interface OpencliRunRequest {
   readonly args: readonly string[];
   readonly signal: AbortSignal;
@@ -172,6 +202,8 @@ export interface OpencliBridgeOptions {
   readonly authToken: string;
   readonly turnTimeoutSeconds: number;
   readonly ledger?: OpencliConversationLedger;
+  /** Persist the bridge's observed upload usage alongside its conversation ledger. */
+  readonly uploadLogPath?: string;
   /** Where per-turn prompt files are written; the OS temp dir by default. */
   readonly tempRoot?: string;
   /** How long to wait before re-trying a site session opencli reports busy. */
@@ -1008,6 +1040,17 @@ export function createOpencliBridge(
         }
       }
     }
+    // For ChatGPT, prefer a typed prompt to spending a file upload. The
+    // existing MCP-only reduction keeps role instructions and every transcript
+    // segment intact. If neither reduction fits the observed typed limit,
+    // retain the original prompt for its normal attachment path.
+    if (site === "chatgpt")
+      fullPrompt = compactForTypedChatgpt(
+        fullPrompt,
+        tools,
+        segments.join("\n\n"),
+        renderFirst
+      );
     const prompt = resume
       ? renderOpencliContinuation(
           tools,
@@ -1161,16 +1204,96 @@ export function createOpencliBridge(
   }
 
   const now = options.now ?? Date.now;
-  // When each site last took an upload, oldest first, within the window the
-  // site counts them over: what says when a spent allowance starts to return.
+  const uploadLogPath = options.uploadLogPath ?? null;
+  // The bridge's accounted uploads, oldest first, kept across restarts when a
+  // log path is supplied. This does not observe uploads made elsewhere.
   const uploads = new Map<OpencliSite, number[]>();
 
+  function recentUploads(site: OpencliSite): number[] {
+    const current = now();
+    const recorded = uploads.get(site) ?? [];
+    const recent = recorded.filter(
+      (at) => at > current - UPLOAD_WINDOW_MS && at <= current
+    );
+    if (recent.length !== recorded.length) uploads.set(site, recent);
+    return recent;
+  }
+
+  function uploadHealth(site: OpencliSite): {
+    uploadsUsed: number;
+    nextResetAt: string | null;
+  } {
+    const recent = recentUploads(site);
+    const oldest = recent[0];
+    return {
+      uploadsUsed: recent.length,
+      nextResetAt:
+        oldest === undefined
+          ? null
+          : new Date(oldest + UPLOAD_WINDOW_MS).toISOString()
+    };
+  }
+
+  function saveUploadLog(): void {
+    if (uploadLogPath === null) return;
+    try {
+      mkdirSync(path.dirname(uploadLogPath), { recursive: true, mode: 0o700 });
+      const temporary = `${uploadLogPath}.${process.pid}.tmp`;
+      writeFileSync(
+        temporary,
+        JSON.stringify({
+          schema: UPLOAD_LOG_SCHEMA,
+          sites: Object.fromEntries(
+            OPENCLI_SITES.map((site) => [site, recentUploads(site)])
+          )
+        }),
+        { mode: 0o600 }
+      );
+      renameSync(temporary, uploadLogPath);
+    } catch (error) {
+      writeErrorLine(
+        `opencli upload log could not be saved: ${errorMessage(error)}`
+      );
+    }
+  }
+
+  function loadUploadLog(): void {
+    if (uploadLogPath === null || !existsSync(uploadLogPath)) return;
+    try {
+      const saved: unknown = JSON.parse(readFileSync(uploadLogPath, "utf8"));
+      if (
+        !isRecord(saved) ||
+        saved.schema !== UPLOAD_LOG_SCHEMA ||
+        !isRecord(saved.sites)
+      )
+        return;
+      const horizon = now() - UPLOAD_WINDOW_MS;
+      for (const site of OPENCLI_SITES) {
+        const entries = saved.sites[site];
+        if (!Array.isArray(entries)) continue;
+        const recent = entries
+          .filter(
+            (at): at is number =>
+              typeof at === "number" &&
+              Number.isFinite(at) &&
+              at > horizon &&
+              at <= now()
+          )
+          .sort((a, b) => a - b);
+        uploads.set(site, recent);
+      }
+    } catch (error) {
+      writeErrorLine(
+        `opencli upload log could not be loaded: ${errorMessage(error)}`
+      );
+    }
+  }
+
+  loadUploadLog();
+
   function recordUpload(site: OpencliSite): void {
-    const horizon = now() - UPLOAD_WINDOW_MS;
-    uploads.set(site, [
-      ...(uploads.get(site) ?? []).filter((at) => at > horizon),
-      now()
-    ]);
+    uploads.set(site, [...recentUploads(site), now()]);
+    saveUploadLog();
   }
 
   /**
@@ -1184,19 +1307,18 @@ export function createOpencliBridge(
   function uploadsExhausted(
     site: OpencliSite,
     promptBytes: number,
-    cause: OpencliCommandError
+    cause: OpencliCommandError | null = null
   ): OpencliCommandError {
-    const horizon = now() - UPLOAD_WINDOW_MS;
-    const oldest = (uploads.get(site) ?? []).find((at) => at > horizon);
-    const resetsAt = new Date(
-      oldest === undefined
-        ? now() + UPLOAD_REFUSAL_RETRY_MS
-        : oldest + UPLOAD_WINDOW_MS
-    ).toISOString();
+    const resetsAt =
+      uploadHealth(site).nextResetAt ??
+      new Date(now() + UPLOAD_REFUSAL_RETRY_MS).toISOString();
+    const reason = cause
+      ? `the site is not taking file uploads (${cause.message})`
+      : `the bridge has accounted for ${CHATGPT_UPLOAD_ALLOWANCE} uploads in this rolling window`;
     return new OpencliCommandError(
-      `${site} upload rate limit reached: the site is not taking file uploads (${cause.message}) and this ${promptBytes}-byte prompt is too long to type; resets at ${resetsAt}`,
+      `${site} upload rate limit reached: ${reason} and this ${promptBytes}-byte prompt is too long to type; resets at ${resetsAt}`,
       UPLOADS_EXHAUSTED,
-      cause.exitCode
+      cause?.exitCode ?? null
     );
   }
 
@@ -1220,6 +1342,14 @@ export function createOpencliBridge(
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, prompt, { mode: 0o600 });
       return await queues.run(turn.site, async () => {
+        // Check inside the site's queue so concurrent turns cannot both spend
+        // the final available upload. A refusal makes no opencli/site call.
+        if (
+          uploading &&
+          turn.site === "chatgpt" &&
+          uploadHealth(turn.site).uploadsUsed >= CHATGPT_UPLOAD_ALLOWANCE
+        )
+          throw uploadsExhausted(turn.site, promptBytes);
         // A turn that waited for the site as long as it may hold it is
         // refused; one that has already held it has only what is left.
         const deadline = deadlineOnTab(budget);
@@ -1498,6 +1628,7 @@ export function createOpencliBridge(
             cachedModels && cachedModels.models.length > 0
           ),
           modelsCount: cachedModels?.models.length ?? 0,
+          ...uploadHealth(site),
           conversations: ledger.size
         });
         return;
@@ -1580,6 +1711,13 @@ if (IS_MAIN) {
           "opencli-conversations.json"
         )
     }),
+    uploadLogPath:
+      process.env.OPENCLI_UPLOAD_LOG_FILE?.trim() ||
+      path.join(
+        process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex"),
+        "run",
+        "opencli-uploads.json"
+      ),
     turnTimeoutSeconds: parseNonNegativeInteger(
       process.env.OPENCLI_TURN_TIMEOUT_SECONDS,
       DEFAULT_TURN_TIMEOUT_SECONDS
