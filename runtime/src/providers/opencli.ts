@@ -70,7 +70,6 @@ import {
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
 
 import { type ProviderRoute, ROUTES } from "../router/routing.ts";
-
 import {
   type CodexTool,
   codexToolCallEvents,
@@ -82,6 +81,7 @@ import {
   CHATGPT_MODELS,
   compactCodexTools,
   compactTranscript,
+  describeTranscriptBytes,
   GEMINI_THINKING_LEVELS,
   OPENCLI_SITE_SPECS,
   type OpencliChatScope,
@@ -96,6 +96,8 @@ import {
   prefixDigests,
   renderOpencliContinuation,
   renderOpencliPrompt,
+  transcriptEntries,
+  type TranscriptEntry,
   transcriptSegments,
   UPLOADS_EXHAUSTED,
   uploadsRefused
@@ -607,7 +609,8 @@ class SiteTabs {
             .finally(() => {
               running.delete(id);
               this.admit(site);
-            });
+            })
+            .catch(reject);
         }
       });
       this.admit(site);
@@ -1007,8 +1010,39 @@ interface PreparedTurn {
    * longer be opened; null for a fresh turn, or when it would not fit.
    */
   readonly freshPrompt: string | null;
-  readonly segments: string[];
+  /** The conversation's items as the prompt renders them. */
+  readonly entries: TranscriptEntry[];
+  /** How many leading items the continued chat has already seen; 0 for a fresh turn. */
+  readonly seen: number;
   readonly tools: ReturnType<typeof codexToolSurface>["tools"];
+}
+
+/** A turn's reply, with the prompt that produced it and whether it continued a chat. */
+interface TurnRun {
+  readonly reply: OpencliReply;
+  readonly prompt: string;
+  readonly continued: boolean;
+}
+
+/**
+ * The bridge log's line for a finished turn: the site and model, the calls it
+ * made, the prompt it sent, and what that prompt spent on each kind of
+ * conversation item -- only the new items for a continued chat, every item
+ * for a new one.
+ */
+export function opencliTurnLogLine(
+  turn: {
+    readonly site: string;
+    readonly siteModel: string;
+    readonly tools: readonly unknown[];
+    readonly entries: readonly TranscriptEntry[];
+    readonly seen: number;
+  },
+  run: { readonly prompt: string; readonly continued: boolean },
+  calls: number
+): string {
+  const items = turn.entries.slice(run.continued ? turn.seen : 0);
+  return `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s), ${turn.tools.length} tool(s) offered, ${Buffer.byteLength(run.prompt)}-byte prompt${run.continued ? ", continued conversation; new items" : "; conversation items"}: ${describeTranscriptBytes(items)}`;
 }
 
 export interface OpencliBridge {
@@ -1178,7 +1212,8 @@ export function createOpencliBridge(
     }
     const spec = OPENCLI_SITE_SPECS[site];
     const tools = codexToolSurface(payload).tools;
-    const segments = transcriptSegments(payload.input);
+    const entries = transcriptEntries(payload.input);
+    const segments = entries.map((entry) => entry.text);
     const scope: OpencliChatScope = {
       site,
       thread: codexThread(request, payload)
@@ -1237,7 +1272,8 @@ export function createOpencliBridge(
           Buffer.byteLength(fullPrompt) <= MAX_ARGV_PROMPT_BYTES)
           ? fullPrompt
           : null,
-      segments,
+      entries,
+      seen: resume?.seen ?? 0,
       tools
     };
   }
@@ -1600,16 +1636,21 @@ export function createOpencliBridge(
   async function runTurn(
     turn: PreparedTurn,
     signal: AbortSignal
-  ): Promise<OpencliReply> {
+  ): Promise<TurnRun> {
     const budget = turnBudget();
     try {
-      return await attemptTurn(
+      const reply = await attemptTurn(
         turn,
         turn.prompt,
         turn.conversationId,
         signal,
         budget
       );
+      return {
+        reply,
+        prompt: turn.prompt,
+        continued: turn.conversationId !== null
+      };
     } catch (error) {
       if (
         turn.conversationId === null ||
@@ -1630,13 +1671,14 @@ export function createOpencliBridge(
         `opencli ${turn.site} chat ${turn.conversationId} could not be continued (${error.message}); starting a new chat`
       );
       ledger.consume(turn.scope, turn.resumedFrom);
-      return attemptTurn(
+      const reply = await attemptTurn(
         { ...turn, conversationId: null, resumedFrom: null },
         turn.freshPrompt,
         null,
         signal,
         budget
       );
+      return { reply, prompt: turn.freshPrompt, continued: false };
     }
   }
 
@@ -1663,7 +1705,7 @@ export function createOpencliBridge(
     if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
     if (reply.conversationId) {
       const last = prefixDigests([
-        ...turn.segments,
+        ...turn.entries.map((entry) => entry.text),
         ...transcriptSegments(output)
       ]).at(-1);
       if (last) ledger.record(turn.scope, last, reply.conversationId);
@@ -1718,9 +1760,9 @@ export function createOpencliBridge(
       }
     };
     response.once("close", onClose);
-    let reply: OpencliReply;
+    let run: TurnRun;
     try {
-      reply = await runTurn(turn, controller.signal);
+      run = await runTurn(turn, controller.signal);
     } catch (error) {
       if (controller.signal.aborted) return;
       if (stream) {
@@ -1732,10 +1774,8 @@ export function createOpencliBridge(
       response.removeListener("close", onClose);
     }
 
-    const { output, calls } = finishTurn(turn, reply);
-    writeErrorLine(
-      `opencli ${turn.site}/${turn.siteModel} turn: ${calls} tool call(s), ${turn.tools.length} tool(s) offered, ${Buffer.byteLength(turn.prompt)}-byte prompt${turn.conversationId ? ", continued conversation" : ""}`
-    );
+    const { output, calls } = finishTurn(turn, run.reply);
+    writeErrorLine(opencliTurnLogLine(turn, run, calls));
     if (stream) stream.complete(output);
     else
       sendJson(

@@ -1,6 +1,6 @@
 {
   "schema": "autodev-claude-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) answered as a non-retryable 400 invalid_model, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event before any output answered as an HTTP 429 carrying the declared limit as error.limit and no stream at all (so the router can ask its next candidate), a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) answered as a non-retryable 400 invalid_model, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -641,6 +641,47 @@
           "message",
           "message"
         ]
+      }
+    },
+    "provider_limit_before_output": {
+      "request": {
+        "stream": true,
+        "model": "claude-subscription"
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "system",
+            "subtype": "init",
+            "tools": []
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
+          },
+          {
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+              "status": "rejected",
+              "rateLimitType": "weekly_quota",
+              "resetsAt": "2099-01-02T03:04:05Z"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 429,
+        "errorType": "rate_limit_error",
+        "limit": {
+          "class": "quota_exhausted",
+          "type": "weekly_quota",
+          "resets_at": "2099-01-02T03:04:05.000Z",
+          "source": "reported"
+        }
       }
     },
     "rate_limit_warning_allowed": {

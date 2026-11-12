@@ -634,6 +634,68 @@ async function runRejectedModelCase(
 }
 
 /**
+ * A rate limit the CLI reports before any output never opens the stream.
+ *
+ * The bridge writes nothing until the first real content, so a limit that
+ * arrives first is still an HTTP answer: a 429 carrying the declared limit as
+ * `error.limit`, with no `response.output_item.added` anywhere. That is what
+ * lets the router ask its next candidate instead of forwarding a failed turn.
+ */
+async function runPreOutputLimitCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
+  const fakeCli = join(temp, "fake-claude.py");
+  const proxyPort = await freePort();
+  await writeFile(fakeCli, buildFakeCliSource(), "utf8");
+  await chmod(fakeCli, 0o755);
+  const child = await startBridge({
+    proxyPort,
+    bearerToken: "",
+    fakeCli,
+    contractCase: item.cli
+  });
+  try {
+    await waitForHealth(proxyPort, child);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-agent-role": BRIDGE_ROLE,
+        "x-autodev-request-id": `claude-contract-${name}`
+      },
+      body: JSON.stringify({
+        input: [{ role: "user", content: PRIVACY_TOKEN }],
+        cwd: REPO_ROOT,
+        ...item.request
+      })
+    });
+    const body = await response.text();
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/json",
+      `${name}: answered before any stream opened`
+    );
+    assert.match(
+      response.headers.get("retry-after") ?? "",
+      /^\d+$/,
+      `${name}: retry hint`
+    );
+    assert.doesNotMatch(body, /response\.output_item\.added/);
+    assert.doesNotMatch(body, new RegExp(PRIVACY_TOKEN));
+    const payload = JSON.parse(body);
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.deepEqual(payload.error?.limit, item.expected.limit, `${name}: limit`);
+  } finally {
+    await stop(child);
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
+/**
  * A request the bridge cannot serve must be refused, and refused before the
  * CLI is started.
  *
@@ -730,6 +792,15 @@ test(
       assert.ok(
         authFailureCase && oauthMissingCase,
         "authentication contract cases must exist"
+      );
+      const preOutputLimit = contract.cases.provider_limit_before_output;
+      assert.ok(
+        preOutputLimit,
+        "a limit before any output must have a contract case"
+      );
+      await runPreOutputLimitCase(
+        "provider_limit_before_output",
+        preOutputLimit
       );
       await runAuthFailureCase("auth_token_failure", authFailureCase);
       for (const name of ["model_not_found_by_cli", "model_needs_newer_cli"]) {

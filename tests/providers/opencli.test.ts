@@ -19,15 +19,16 @@ import {
   createOpencliBridge,
   type OpencliRunRequest,
   opencliSiteSlots,
+  opencliTurnLogLine,
   routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
-import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   attachedPromptFileName,
   attachedPromptMessage,
   CHATGPT_MODELS,
   compactCodeModeDescription,
   compactTranscript,
+  describeTranscriptBytes,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -38,8 +39,10 @@ import {
   prefixDigests,
   replyFromRow,
   toolIndex,
+  transcriptEntries,
   transcriptSegments
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 import { resolveOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   OPENCLI_CHATGPT_MODEL_PATTERN,
@@ -629,6 +632,67 @@ test("parsed calls become the Responses item for the tool Codex offered", () => 
       arguments: "x"
     }
   );
+});
+
+test("transcript entries name each rendered item's kind and the turn log totals bytes per kind", () => {
+  const entries = transcriptEntries([
+    userMessage("first"),
+    { type: "message", role: "developer", content: "policy" },
+    { type: "reasoning", summary: [] },
+    { type: "additional_tools", tools: [] },
+    { type: "custom_tool_call", name: "exec", call_id: "c", input: "x" },
+    { type: "custom_tool_call_output", call_id: "c", output: "a".repeat(40) },
+    { type: "function_call_output", call_id: "d", output: "b".repeat(20) }
+  ]);
+  // Reasoning and the tool surface render to nothing and are not entries.
+  assert.deepEqual(
+    entries.map((entry) => entry.kind),
+    ["user", "developer", "tool_call", "tool_output", "tool_output"]
+  );
+  const outputBytes =
+    Buffer.byteLength(entries[3]!.text) + Buffer.byteLength(entries[4]!.text);
+  const described = describeTranscriptBytes(entries);
+  assert.match(described, new RegExp(`^tool_output ${outputBytes} B in 2, `));
+  assert.match(described, /developer \d+ B in 1/);
+  assert.equal(describeTranscriptBytes([]), "none");
+});
+
+test("the turn log line counts only the new items of a continued chat, and every item of a new one", () => {
+  const entries = transcriptEntries([
+    userMessage("first"),
+    { type: "custom_tool_call", name: "exec", call_id: "c", input: "x" },
+    { type: "custom_tool_call_output", call_id: "c", output: "result" }
+  ]);
+  const turn = {
+    site: "chatgpt",
+    siteModel: "gpt-5",
+    tools: [{}, {}],
+    entries,
+    seen: 2
+  };
+  const outputBytes = Buffer.byteLength(entries[2]!.text);
+  const continued = opencliTurnLogLine(
+    turn,
+    { prompt: "abcd", continued: true },
+    1
+  );
+  assert.equal(
+    continued,
+    `opencli chatgpt/gpt-5 turn: 1 tool call(s), 2 tool(s) offered, 4-byte prompt, continued conversation; new items: tool_output ${outputBytes} B in 1`
+  );
+  // A chat that could not be continued sent the whole conversation instead.
+  const restarted = opencliTurnLogLine(
+    turn,
+    { prompt: "abcdefgh", continued: false },
+    0
+  );
+  assert.match(
+    restarted,
+    /^opencli chatgpt\/gpt-5 turn: 0 tool call\(s\), 2 tool\(s\) offered, 8-byte prompt; conversation items: /
+  );
+  assert.match(restarted, /tool_output \d+ B in 1/);
+  assert.match(restarted, /tool_call \d+ B in 1/);
+  assert.match(restarted, /user \d+ B in 1/);
 });
 
 test("the conversation ledger resumes the longest recorded prefix until the turn succeeds", () => {

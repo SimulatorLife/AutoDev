@@ -1,6 +1,6 @@
 {
   "schema": "autodev-copilot-responses-contract-v1",
-  "description": "Offline JSONL inputs and expected boundary invariants for the incumbent Copilot Responses bridge. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
+  "description": "Offline JSONL inputs and expected boundary invariants for the incumbent Copilot Responses bridge. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture. A usage limit the CLI reports before any output is answered as an HTTP 429 carrying the declared limit as error.limit and no stream at all, so the router can ask its next candidate; one reported after partial text closes the stream as an incomplete response that keeps that text.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -345,6 +345,26 @@
         "outputTextPrefix": "partial answer",
         "completedStatus": "incomplete",
         "incompleteReason": "provider_limit",
+        "limit": {
+          "class": "quota_exhausted",
+          "type": "quota",
+          "resets_at": "2099-01-02T03:04:05.000Z",
+          "source": "inferred"
+        }
+      }
+    },
+    "provider_limit_before_output": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [],
+        "exitCode": 1,
+        "stderr": "Copilot usage limit reached; reset at 2099-01-02T03:04:05Z"
+      },
+      "expected": {
+        "status": 429,
+        "errorType": "copilot_proxy_error",
         "limit": {
           "class": "quota_exhausted",
           "type": "quota",

@@ -19,6 +19,7 @@ description: Evaluate AutoDev and recent sessions to improve usage/token/model e
 8. **Agent orchestration:** Unnecessary delegation, duplicated agent work, excessive context transfers, and inefficient coordination.
 9. **Model routing:** Inefficient model selection, unnecessary escalation/fallback, and avoidable usage or latency.
 10. **Workflow and code inefficiencies:** Redundant steps, repeated cross-session patterns, unnecessary custom logic, and underused existing tooling.
+11. **Model switching:** Unnecessary model switching, which causes the agent to re-read the whole session on the next message, which uses more usage and invalidates the context cache.
 
 ## 2. Procedure
 

@@ -879,7 +879,8 @@ for that turn. It used to be discarded: the bridges emitted a bare
 parent with an error string in place of a partial result it could have acted on.
 
 Once a CLI bridge has emitted an output item, it closes an interrupted turn
-as an _incomplete_ response instead, in this order:
+as an _incomplete_ response instead, in this order (a failure before the first
+output item never reaches this epilogue -- see the next section):
 
 ```
 response.output_text.delta          (a truncation notice, appended to what the client already saw)
@@ -916,8 +917,8 @@ stopped the orchestrator with "[Incomplete: The provider stopped unexpectedly
 
 ### Falling back from a stream that failed before any output
 
-A bridge opens its stream at once and reports every later failure inside it,
-because a turn can outlast the router's wait for response headers. Read as an
+A bridge that opens its stream at once -- opencli, whose turns can outlast the
+router's wait for response headers -- reports every later failure inside it. Read as an
 HTTP exchange that is a success, so no such failure could fall back: the
 router forwarded it, Codex retried, and the retry came back to the same
 provider -- every time, for a refusal, which sets no cooldown.
@@ -947,15 +948,32 @@ again, so the router treats its failure as the candidate's, not the turn's:
   is forwarded, since another provider's answer would be spliced onto half of
   this one's.
 
-Each CLI bridge, including Antigravity, Claude, Copilot, and MiniMax, must
-close a streamed turn that failed **before its first output item** with one
-`response.failed`, with `response.error.type` describing the failure and
-`response.error.limit` containing the declared provider limit when applicable.
-Such a turn must emit no `response.output_item.added` event and no incomplete
-message or reasoning epilogue. The router can then try the next provider
-without mixing partial results. After an output item has been emitted, the
-bridge instead uses the incomplete-response epilogue above to preserve partial
-text; the router cannot switch providers for that turn.
+Every bridge keeps a turn that failed **before its first output item** free of
+output, so the router can try the next provider without mixing partial
+results. How it says so depends on whether its stream is already open:
+
+- **Claude, Antigravity and Copilot** hold the response -- headers and the
+  `response.created` preamble alike -- until the CLI produces its first real
+  output (text, a reasoning step, a tool call), so a failure before that point
+  is still an HTTP answer: a 429 for a usage limit, carrying the declared
+  limit as `error.limit` plus `x-autodev-limit-*` and `Retry-After` headers,
+  and a 503 (or the bridge's typed 4xx/502) otherwise. No SSE is written, so
+  there is no `response.output_item.added` and no incomplete epilogue. The
+  router reads it as any HTTP failure and falls back.
+- **opencli** must open its stream at once (a site's reply arrives whole,
+  minutes later), so it reports the same failure inside the stream: one
+  `response.failed` whose `response.error` carries the failure `type` and,
+  for a site limit, the declared `limit` -- the case this section exists for.
+- **MiniMax** is a pass-through to MiniMax's own Responses API: it forwards
+  the upstream's status and events unchanged and adds no epilogue of its own.
+
+After an output item has been emitted, every CLI bridge instead uses the
+incomplete-response epilogue above to preserve partial text; the router cannot
+switch providers for that turn. The pre-output and post-output halves are
+pinned per bridge by the `provider_limit_before_output` and
+`provider_limit_incomplete` cases in `tests/fixtures/contracts/` (Claude,
+Copilot), by `tests/antigravity-stream-failure.test.ts` and the Antigravity
+contract fixture, and by `tests/providers/opencli-routing.test.ts`;
 `tests/router/stream-fallback.test.ts` guards the router side.
 
 ## Observability
@@ -2734,6 +2752,15 @@ single list; the route patterns and the site registry in
   chat that loads with no visible turns) and continuing fails before anything
   was sent, the entry is dropped and the turn runs once more as a new chat
   with the whole conversation, so the session does not stick on a dead chat.
+- **Turn log.** Each finished turn logs one line to the bridge log: the
+  calls the model made, the tools offered, the bytes of the prompt actually
+  sent, whether it continued a chat, and that prompt's bytes per kind of
+  conversation item (`user`, `assistant`, `developer`, `system`,
+  `tool_call`, `tool_output`) -- only the new items for a continued chat,
+  every item for a new one or for a chat that could not be continued, such
+  as `new items: tool_output 14210 B in 3, developer 1102 B in 1`. A large
+  delta therefore shows whether tool output, an injected message or the
+  turn's own messages filled it.
 - **Tab pool.** A site runs its turns in as many browser tabs as its route's
   `maxConcurrentRequests`, one turn per tab. With one tab per site, more than
   half of a ChatGPT turn's time (p50 114 s; 51 s of it the site actually

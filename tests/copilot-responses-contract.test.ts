@@ -121,6 +121,33 @@ function parseSse(text: string): Array<{ event: string; data: any }> {
   );
 }
 
+function assertPreOutputFailure(
+  name: string,
+  sse: Array<{ event: string; data: any }>,
+  expected: JsonRecord
+): void {
+  const failed = sse.filter(({ event }) => event === "response.failed");
+  assert.equal(failed.length, 1, `${name}: exactly one terminal failure`);
+  assert.equal(
+    sse.some(({ event }) => event === "response.output_item.added"),
+    false,
+    `${name}: no output was emitted before failure`
+  );
+  assert.equal(
+    sse.some(({ event }) => event === "response.completed"),
+    false,
+    `${name}: failure must not also complete`
+  );
+  assert.equal(failed[0]?.data?.response?.status, "failed");
+  assert.deepEqual(failed[0]?.data?.response?.output, []);
+  assert.equal(failed[0]?.data?.response?.error?.type, expected.failedType);
+  assert.match(
+    failed[0]?.data?.response?.error?.message ?? "",
+    /usage limit reached/
+  );
+  assert.deepEqual(failed[0]?.data?.response?.error?.limit, expected.limit);
+}
+
 test("SSE keep-alive comments do not enter the response event lifecycle", () => {
   const events = parseSse(
     ': bridge keep-alive\n\nevent: response.created\ndata: {"type":"response.created"}\n\n'
@@ -247,6 +274,10 @@ process.exitCode = fixture.exitCode ?? 0;
       `${name}: SSE lifecycle`
     );
     assert.equal(sse.at(-1)?.event, "[DONE]", `${name}: terminal sentinel`);
+    if (item.expected.failedType) {
+      assertPreOutputFailure(name, sse, item.expected);
+      return scrub(sse);
+    }
     const completed = sse.find(({ event }) => event === "response.completed")
       ?.data?.response;
     const completedText = completed.output_text;
@@ -384,10 +415,7 @@ test("Copilot orchestrator receives only its identified AutoDev spawn shim", () 
   const config = JSON.parse(args[configIndex + 1] ?? "{}");
   const shim = config.mcpServers.autodev_spawn;
   assert.equal(shim.type, "stdio");
-  assert.equal(
-    shim.command,
-    process.env.AUTODEV_NODE_BIN ?? process.execPath
-  );
+  assert.equal(shim.command, process.env.AUTODEV_NODE_BIN ?? process.execPath);
   assert.equal(shim.env.AUTODEV_SPAWN_SESSION, "copilot-session");
   assert.equal(
     copilotMcpArgs("worker").some((arg) => arg.includes("autodev_spawn")),
@@ -540,7 +568,9 @@ if (fixture.marker) writeFileSync(fixture.marker, "started");
 }
 
 test("a silent Copilot CLI is bounded by the startup timeout", async () => {
-  const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-startup-timeout-"));
+  const temp = await mkdtemp(
+    join(tmpdir(), "autodev-copilot-startup-timeout-")
+  );
   const fakeCli = join(temp, "fake-copilot.mjs");
   const proxyPort = await freePort();
   await writeFile(
@@ -574,8 +604,18 @@ test("a silent Copilot CLI is bounded by the startup timeout", async () => {
         cwd: REPO_ROOT
       })
     });
-    assert.equal(response.status, 503);
-    assert.match(await response.text(), /Copilot exited with SIGTERM/);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/event-stream");
+    const sse = parseSse(await response.text());
+    assert.deepEqual(
+      sse.map(({ event }) => event),
+      ["response.created", "response.failed", "[DONE]"]
+    );
+    const failed = sse[1]?.data?.response;
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.error?.type, "copilot_proxy_error");
+    assert.match(failed?.error?.message ?? "", /Copilot exited with SIGTERM/);
+    assert.deepEqual(failed?.output, []);
   } finally {
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));
@@ -583,14 +623,106 @@ test("a silent Copilot CLI is bounded by the startup timeout", async () => {
   }
 });
 
+/**
+ * A usage limit the CLI reports before any output never opens the stream.
+ *
+ * The bridge holds its SSE events until the CLI produces something, so a
+ * limit that arrives first is still an HTTP answer: a 429 carrying the
+ * declared limit as `error.limit`, with no `response.output_item.added`
+ * anywhere. That is what lets the router ask its next candidate instead of
+ * forwarding a failed turn.
+ */
+async function runPreOutputLimitCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-contract-"));
+  const fakeCli = join(temp, "fake-copilot.mjs");
+  const proxyPort = await freePort();
+  const fakeSource = `
+const fixture = JSON.parse(process.env.COPILOT_CONTRACT_CASE);
+for (const event of fixture.events ?? []) console.log(JSON.stringify(event));
+if (fixture.stderr) process.stderr.write(fixture.stderr);
+process.exitCode = fixture.exitCode ?? 0;
+`;
+  await writeFile(fakeCli, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await chmod(fakeCli, 0o755);
+  const child = spawn(process.execPath, [PROXY], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      AUTODEV_REPO_ROOT: REPO_ROOT,
+      CODEX_PROJECT_ROOT: REPO_ROOT,
+      COPILOT_BIN: fakeCli,
+      COPILOT_PROXY_HOST: "127.0.0.1",
+      COPILOT_PROXY_PORT: String(proxyPort),
+      COPILOT_PROXY_TIMEOUT_MS: "5000",
+      COPILOT_CONTRACT_CASE: JSON.stringify(item.cli)
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  try {
+    await waitForListening(child);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-request-id": `copilot-contract-${name}`
+      },
+      body: JSON.stringify({
+        model: "copilot",
+        input: [{ role: "user", content: "contract task" }],
+        cwd: REPO_ROOT,
+        ...item.request
+      })
+    });
+    const body = await response.text();
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/json",
+      `${name}: answered before any stream opened`
+    );
+    assert.match(
+      response.headers.get("retry-after") ?? "",
+      /^\d+$/,
+      `${name}: retry hint`
+    );
+    assert.doesNotMatch(body, /response\.output_item\.added/);
+    const payload = JSON.parse(body);
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.deepEqual(
+      payload.error?.limit,
+      item.expected.limit,
+      `${name}: limit`
+    );
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.once("exit", resolve));
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
+const NON_STREAM_CASES = new Set([
+  "image_content_refused",
+  "provider_limit_before_output"
+]);
+
 test("Copilot Responses contract fixture is exercised through the offline proxy boundary", async () => {
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();
   try {
     for (const [name, item] of cases) {
-      if (name === "image_content_refused") continue;
+      if (NON_STREAM_CASES.has(name)) continue;
       await runCase(name, item, telemetry);
     }
+    const preOutputLimit = contract.cases.provider_limit_before_output;
+    assert.ok(
+      preOutputLimit,
+      "a limit before any output must have a contract case"
+    );
+    await runPreOutputLimitCase("provider_limit_before_output", preOutputLimit);
     const unsupportedCase = contract.cases.image_content_refused;
     assert.ok(
       unsupportedCase,
@@ -607,4 +739,49 @@ test("Copilot Responses contract fixture is exercised through the offline proxy 
     before,
     "contract fixture must not be mutated"
   );
+});
+
+test("a Copilot CLI limit before any output fails once in SSE without adding output items", async () => {
+  const telemetry = await startTelemetryServer();
+  try {
+    await runCase(
+      "pre-output-limit",
+      {
+        cli: {
+          events: [],
+          exitCode: 1,
+          stderr: "Copilot usage limit reached; reset at 2099-01-02T03:04:05Z"
+        },
+        expected: {
+          status: 200,
+          eventTypes: ["response.created", "response.failed", "[DONE]"],
+          failedType: "copilot_proxy_error",
+          limit: {
+            class: "quota_exhausted",
+            type: "quota",
+            resets_at: "2099-01-02T03:04:05.000Z",
+            source: "inferred"
+          }
+        }
+      },
+      telemetry
+    );
+  } finally {
+    await new Promise<void>((resolve) =>
+      telemetry.server.close(() => resolve())
+    );
+  }
+});
+
+test("a Copilot CLI limit after an output item preserves the incomplete epilogue", async () => {
+  const telemetry = await startTelemetryServer();
+  try {
+    const afterOutput = contract.cases.provider_limit_incomplete;
+    assert.ok(afterOutput);
+    await runCase("post-output-limit", afterOutput, telemetry);
+  } finally {
+    await new Promise<void>((resolve) =>
+      telemetry.server.close(() => resolve())
+    );
+  }
 });

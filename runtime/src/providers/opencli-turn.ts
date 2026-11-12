@@ -778,18 +778,78 @@ export function renderOpencliContinuation(
   ].join("\n\n");
 }
 
+/** Who or what a rendered conversation item is: a message's role, or a tool call or its output. */
+export type TranscriptItemKind =
+  "user" | "assistant" | "developer" | "system" | "tool_call" | "tool_output";
+
+/** One conversation item as the prompt text it renders to. */
+export interface TranscriptEntry {
+  readonly kind: TranscriptItemKind;
+  readonly text: string;
+}
+
 /**
- * Each conversation item as the text it renders to, skipping items that render
- * to nothing (reasoning, the tool surface itself).
+ * The kind of an item `renderCodexTranscript` rendered to text. It renders
+ * only messages, tool calls and tool outputs, so a rendered item that is
+ * neither of the first two is a tool output.
  */
-export function transcriptSegments(input: unknown): string[] {
-  if (!Array.isArray(input)) return [renderCodexTranscript(input)];
-  const segments: string[] = [];
+function transcriptItemKind(item: unknown): TranscriptItemKind {
+  if (!isRecord(item)) return "user";
+  const type = typeof item.type === "string" ? item.type : "message";
+  if (type === "message")
+    return item.role === "assistant" ||
+      item.role === "developer" ||
+      item.role === "system"
+      ? item.role
+      : "user";
+  if (type === "custom_tool_call" || type === "function_call")
+    return "tool_call";
+  return "tool_output";
+}
+
+/**
+ * Each conversation item with the text it renders to, skipping items that
+ * render to nothing (reasoning, the tool surface itself).
+ */
+export function transcriptEntries(input: unknown): TranscriptEntry[] {
+  if (!Array.isArray(input))
+    return [{ kind: "user", text: renderCodexTranscript(input) }];
+  const entries: TranscriptEntry[] = [];
   for (const item of input) {
     const text = renderCodexTranscript([item]);
-    if (text) segments.push(text);
+    if (text) entries.push({ kind: transcriptItemKind(item), text });
   }
-  return segments;
+  return entries;
+}
+
+/** Each conversation item as the text it renders to. */
+export function transcriptSegments(input: unknown): string[] {
+  return transcriptEntries(input).map((entry) => entry.text);
+}
+
+/**
+ * The bytes a prompt spends on each kind of item, largest first, as
+ * `tool_output 14210 B in 3, developer 1102 B in 1`. The turn log carries it
+ * so a large prompt shows what filled it.
+ */
+export function describeTranscriptBytes(
+  entries: readonly TranscriptEntry[]
+): string {
+  const totals = new Map<
+    TranscriptItemKind,
+    { items: number; bytes: number }
+  >();
+  for (const entry of entries) {
+    const total = totals.get(entry.kind) ?? { items: 0, bytes: 0 };
+    total.items += 1;
+    total.bytes += Buffer.byteLength(entry.text);
+    totals.set(entry.kind, total);
+  }
+  if (totals.size === 0) return "none";
+  return [...totals]
+    .sort((a, b) => b[1].bytes - a[1].bytes || (a[0] < b[0] ? -1 : 1))
+    .map(([kind, { items, bytes }]) => `${kind} ${bytes} B in ${items}`)
+    .join(", ");
 }
 
 /** What the prompt says about the part of the conversation it left out. */

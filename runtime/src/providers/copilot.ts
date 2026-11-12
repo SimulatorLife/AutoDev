@@ -45,12 +45,9 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   classifyCliLimit,
-  isPoolScopableLimitClass,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   limitPayload,
-  limitResponseHeaders,
-  retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
@@ -1152,6 +1149,8 @@ class CopilotResponseStream {
   private partialText = "";
   private sequenceNumber = 0;
   private streamStarted = false;
+  private outputItemsStarted = false;
+  private emittedOutputItem = false;
   private clientClosed = false;
   private child: ChildProcess | undefined;
   private readonly keepAlive: NodeJS.Timeout;
@@ -1186,8 +1185,9 @@ class CopilotResponseStream {
       reportToolObservation(this.context.agentEvents, event);
       return;
     }
-    this.startStream();
     if (event.type === "text_delta") {
+      if (!event.text) return;
+      this.beginOutputItems();
       this.partialText += event.text;
       this.emit("response.output_text.delta", {
         type: "response.output_text.delta",
@@ -1207,7 +1207,7 @@ class CopilotResponseStream {
   }
 
   complete(result: RunCopilotResult): void {
-    this.startStream();
+    this.beginOutputItems();
     const reasoningText = this.activityParts.join("");
     const completedReasoning = {
       id: this.reasoningId,
@@ -1256,12 +1256,30 @@ class CopilotResponseStream {
     if (!this.isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
     const limit = classifyCliLimit(message, copilotErrorExitCode(error));
-    if (!this.streamStarted && !this.partialText) {
-      this.sendInitialFailure(message, limit);
-      return;
-    }
-    if (!this.streamStarted) {
+    if (!this.emittedOutputItem) {
       this.startStream();
+      const declaredLimit = limitPayload(limit);
+      this.emit("response.failed", {
+        type: "response.failed",
+        response: {
+          ...responsePayload(
+            this.context.payload.model,
+            "",
+            null,
+            this.responseId,
+            this.itemId,
+            [],
+            "failed"
+          ),
+          error: {
+            type: "copilot_proxy_error",
+            message,
+            ...(declaredLimit ? { limit: declaredLimit } : {})
+          }
+        }
+      });
+      this.endSse();
+      return;
     }
     this.emitIncompleteResponse(limit);
     this.endSse();
@@ -1286,6 +1304,13 @@ class CopilotResponseStream {
         output: []
       }
     });
+  }
+
+  private beginOutputItems(): void {
+    if (this.outputItemsStarted || !this.isWritable()) return;
+    this.startStream();
+    if (!this.isWritable()) return;
+    this.outputItemsStarted = true;
     this.emit(EVENT_OUTPUT_ITEM_ADDED, {
       type: EVENT_OUTPUT_ITEM_ADDED,
       output_index: 0,
@@ -1397,31 +1422,9 @@ class CopilotResponseStream {
     for (const [eventName, body] of events) this.emit(eventName, body);
   }
 
-  private sendInitialFailure(
-    message: string,
-    limit: ReturnType<typeof classifyCliLimit>
-  ): void {
-    const status =
-      limit && isPoolScopableLimitClass(limit.limitClass)
-        ? 429
-        : 503;
-    const headers = limitResponseHeaders(limit);
-    const retryAfter = retryAfterSecondsFromLimit(limit);
-    if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
-    const error: JsonRecord = { type: "copilot_proxy_error", message };
-    const declaredLimit = limitPayload(limit);
-    if (declaredLimit)
-      sendJson(
-        this.response,
-        status,
-        { error: { ...error, limit: declaredLimit } },
-        headers
-      );
-    else sendJson(this.response, status, { error }, headers);
-  }
-
   private emitActivity(text: string, key: string): void {
     if (!text || this.seenActivities.has(key) || !this.isWritable()) return;
+    this.beginOutputItems();
     this.seenActivities.add(key);
     this.activityParts.push(text);
     this.emit("response.reasoning_summary_text.delta", {
@@ -1443,7 +1446,8 @@ class CopilotResponseStream {
       this.pendingEvents.push(event);
       return;
     }
-    this.write(event);
+    if (this.write(event) && eventName === EVENT_OUTPUT_ITEM_ADDED)
+      this.emittedOutputItem = true;
   }
 
   private startStream(): void {
@@ -1462,11 +1466,13 @@ class CopilotResponseStream {
     }
   }
 
-  private write(event: string): void {
+  private write(event: string): boolean {
     try {
       this.response.write(event);
+      return true;
     } catch {
       // The peer may have already closed the connection; a racing write is not actionable.
+      return false;
     }
   }
 
