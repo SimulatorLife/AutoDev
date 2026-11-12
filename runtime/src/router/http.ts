@@ -1397,7 +1397,7 @@ function routerProviderStatus(
         : true,
       failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
       probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
-      configuredModels: ROUTING.providers[route.provider]?.models ?? {},
+      configuredModels: ROUTING_POLICY.effectiveModels(route.provider),
       capabilities: providerCapabilities(route.provider),
       attempts: state.attempts,
       successes: state.successes,

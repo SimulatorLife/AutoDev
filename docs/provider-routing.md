@@ -999,6 +999,9 @@ The router makes its effective choice visible in two ways:
   `cooldownFailureClass`, `cooldownResetsAt`, `cooldownUntil`, `cooldownRemainingMs`,
   `lastResortEligible`, `failureStreak`, and `probeFailureStreak` alongside the
   cooldown countdown, configured models, capabilities, and attempt/outcome counters.
+  `configuredModels` is the model each configured tier is routed to
+  (`RoutingPolicy.effectiveModels`): the Console assignment for the role that
+  governs the tier when the operator set one, else the routing config's.
 - The status payload exposes structured `routing` metadata (`status.routing`):
   `configSource` (`"default_codex_home"` or `"env_override"`), `configFileExists`,
   `orchestrator` (`alias`, `tier`, and pinned `reasoningEffort`), configured capability `roles`,
@@ -2453,7 +2456,11 @@ single list; the route patterns and the site registry in
     so `--model` accepts every id its own `models` lists and selects the
     item by that same id; and so a selection whose read-back is empty is not
     reported as failed: the picker now shows only the variant ("Flash"),
-    never the version.
+    never the version. A model the account is out of usage on stays in the
+    picker with "Limit resets ..." in place of its description: `models`
+    reports that text as the row's `limit`, and `ask --model` refuses the
+    model under `MODEL_LIMIT` with it, which the bridge reads back as a usage
+    limit with the reset the site named.
     Gemini is also the site with a **thinking level** of its own (`low`,
     `medium`, `high`, read from the site's own "Thinking level" submenu), and
     the site renamed them: opencli knew only `standard` and `extended`, so
@@ -2601,6 +2608,12 @@ single list; the route patterns and the site registry in
   is told to read a tool's full description from `ALL_TOOLS` inside `exec`
   before calling it, as Codex itself does for a subagent's deferred tools.
   Only a prompt still over 100 KB is refused as `provider_request_unsupported`.
+  A continuation is held to the same bound: a Gemini chat that fell behind --
+  the session's turns went to another route while Gemini was unavailable --
+  has the whole gap to send, and an opencli-gemini root was refused every
+  turn with a 105-345 KB continuation while its compacted first prompt was
+  95 KB. A continuation over the bound starts a new chat with that first
+  prompt instead, and the bridge log says how far behind the old chat was.
   ChatGPT attaches its prompt and keeps the full reference.
 - **Conversation continuity.** Codex re-sends the whole conversation each
   request. Without continuation the prompt grows with every tool output: a
@@ -2765,7 +2778,21 @@ single list; the route patterns and the site registry in
   every item for a new one or for a chat that could not be continued, such
   as `new items: tool_output 14210 B in 3, developer 1102 B in 1`. A large
   delta therefore shows whether tool output, an injected message or the
-  turn's own messages filled it.
+  turn's own messages filled it. The line also says where the turn's time
+  went -- `queued Ns` waiting for one of the site's tabs, `on site Ns` holding
+  one (driving the page and waiting for the model), summed over both attempts
+  of a turn that restarted its chat -- so tab contention and model latency
+  can be told apart.
+- **One round trip, as much work as it can carry.** A ChatGPT turn's p50 is
+  114 s, and 1130 of 1194 turns over two days made exactly one tool call, so a
+  40-step task took 40 round trips. The response rules tell the model that
+  every reply costs minutes: batch every independent read, search and command
+  the next step needs into one `exec` script (`await Promise.all([...])`),
+  read a file once, and never repeat a call whose result is in the
+  conversation. The root bootstrap (`agents/prompts/orchestrator.md`) likewise
+  makes a root wait on all its children in one `wait_agent` call of at least
+  300 s: a root polling at 10 s spent an Advanced-model turn, and one of the
+  site's tabs, on every wake.
 - **Tab pool.** A site runs its turns in as many browser tabs as its route's
   `maxConcurrentRequests`, one turn per tab. With one tab per site, more than
   half of a ChatGPT turn's time (p50 114 s; 51 s of it the site actually

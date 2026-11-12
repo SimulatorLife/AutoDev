@@ -4294,6 +4294,20 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   const selected = getRouterStatus();
   assert.equal(selected.providers.claude.status, "ready");
   assert.equal(selected.providers.claude.configuredModels.default, "sonnet");
+  // A Console assignment is what the router routes the tier to, so status
+  // reports it rather than the routing config's model.
+  routing.setProviderAssignment("claude", "default", {
+    priority: 1,
+    model: "claude-opus-5-5"
+  });
+  try {
+    assert.equal(
+      getRouterStatus().providers.claude.configuredModels.default,
+      "claude-opus-5-5"
+    );
+  } finally {
+    routing.clearProviderAssignment("claude", "default");
+  }
   assert.equal(selected.providers.claude.attempts, 1);
   assert.equal(selected.providers.claude.inFlightRequests, 1);
   assert.equal(selected.providers.claude.active, 0);

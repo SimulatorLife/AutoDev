@@ -1536,6 +1536,29 @@ export class RoutingPolicy {
     return providerModels?.[tier] || providerModels?.default;
   }
 
+  /**
+   * The model each of a provider's configured tiers is routed to: the
+   * operator's Console assignment for the role that governs the tier, else
+   * the routing config's. Status reported the config's alone, so a Console
+   * assignment of ChatGPT's Advanced level to every opencli-chatgpt tier
+   * read as `default: balanced` while every worker turn ran on Advanced.
+   */
+  effectiveModels(provider: string): Record<string, string> {
+    const models = this.config.providers[provider]?.models ?? {};
+    return Object.fromEntries(
+      Object.keys(models).map((tier) => [
+        tier,
+        this.tierAssignment(
+          provider,
+          tier,
+          tier === "orchestrator" ? "orchestrator" : "subagent"
+        )?.model ??
+          this.configuredModel(provider, tier) ??
+          ""
+      ])
+    );
+  }
+
   get orchestratorModel(): string {
     return this.configuredModel("codex", "orchestrator") ?? "gpt-6-luna";
   }
