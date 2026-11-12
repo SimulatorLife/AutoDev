@@ -4,7 +4,10 @@ import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { useUsageTelemetry } from "../usage/use-usage-telemetry.ts";
-import { type ProviderUsageReading, summarizeProviderUsage } from "./provider-usage.ts";
+import {
+  type ProviderUsageReading,
+  summarizeProviderUsage
+} from "./provider-usage.ts";
 import { providerUsageView } from "./provider-usage-view.ts";
 
 /**

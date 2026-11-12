@@ -22,8 +22,7 @@ export type ProviderUsageSummary =
  * about a read that has not happened.
  */
 export type ProviderUsageReading =
-  | { readonly status: "pending" }
-  | ProviderUsageSummary;
+  { readonly status: "pending" } | ProviderUsageSummary;
 
 function countForProvider(
   rows: readonly { readonly provider: string; readonly count: number }[] | null,

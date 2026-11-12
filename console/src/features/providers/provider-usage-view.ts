@@ -14,7 +14,10 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import { type ProviderUsageReading, providerUsagePath } from "./provider-usage.ts";
+import {
+  type ProviderUsageReading,
+  providerUsagePath
+} from "./provider-usage.ts";
 
 const PROVIDER_USAGE_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
