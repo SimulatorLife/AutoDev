@@ -50,7 +50,9 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   PROVIDER_REQUEST_UNSUPPORTED_TYPE,
   sendJson,
-  sendUnsupportedRequestFailure
+  sendSignInRequired,
+  sendUnsupportedRequestFailure,
+  signInRequiredBody
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   classifyCliLimit,
@@ -355,6 +357,18 @@ function codexThread(
   return null;
 }
 
+/**
+ * Whether opencli refused the command because the site's account is not
+ * signed in: opencli's `AUTH_REQUIRED`, or its `LOGIN_WALL` for a site that
+ * answered with its sign-in page.
+ */
+function signInRequired(error: unknown): error is OpencliCommandError {
+  return (
+    error instanceof OpencliCommandError &&
+    (error.code === "AUTH_REQUIRED" || error.code === "LOGIN_WALL")
+  );
+}
+
 function failedBeforeSending(error: OpencliCommandError): boolean {
   return FAILED_BEFORE_SENDING.test(error.message);
 }
@@ -404,10 +418,16 @@ const STALE_DAEMON = /stale daemon/iu;
  *   was not ready yet.
  * - `failed`: the site took the prompt and the turn failed. The provider
  *   failed the request.
+ * - `sign_in`: the site's account is not signed in (or, for Gemini, has no
+ *   Gemini app). Nothing was sent, and nothing will be until the operator
+ *   signs in, so the turn is answered as that (`sign_in_required`) rather
+ *   than as a refusal that would leave the provider reading healthy.
  */
-type OpencliFailureKind = "limit" | "timeout" | "not_sent" | "failed";
+type OpencliFailureKind =
+  "limit" | "timeout" | "not_sent" | "failed" | "sign_in";
 
 function failureKind(error: unknown): OpencliFailureKind {
+  if (signInRequired(error)) return "sign_in";
   const message = errorMessage(error);
   const exitCode = error instanceof OpencliCommandError ? error.exitCode : null;
   const limit = classifyCliLimit(message, exitCode);
@@ -916,16 +936,20 @@ class TurnStream {
       declared && LIMIT_STATUS_CLASSES.has(String(declared.class))
         ? declared
         : null;
+    const kind = failureKind(error);
     this.emit("response.failed", {
       type: "response.failed",
       response: {
         ...responseObject(this.responseId, this.model, "failed", []),
-        error: {
-          type: failureErrorType(failureKind(error)),
-          ...(code ? { code } : {}),
-          message,
-          ...(limit ? { limit } : {})
-        }
+        error:
+          kind === "sign_in"
+            ? signInRequiredBody(message).error
+            : {
+                type: failureErrorType(kind),
+                ...(code ? { code } : {}),
+                message,
+                ...(limit ? { limit } : {})
+              }
       }
     });
     this.end();
@@ -983,6 +1007,10 @@ function sendFailure(response: ServerResponse, error: unknown): void {
   const kind = failureKind(error);
   if (kind === "not_sent") {
     sendUnsupportedRequestFailure(response, PROVIDER, message);
+    return;
+  }
+  if (kind === "sign_in") {
+    sendSignInRequired(response, message);
     return;
   }
   const limit = classifyCliLimit(message, exitCode);
@@ -1107,6 +1135,20 @@ export function createOpencliBridge(
   // a menu it has to open and close.
   const selectedThinking = new Map<OpencliSite, string>();
   const modelLists = new Map<OpencliSite, { at: number; models: string[] }>();
+  /**
+   * The sites last found signed out, with opencli's message. A listing or a
+   * turn that finds the site signed out sets it, one that succeeds clears it,
+   * and while it is set the site's health and listing say so: a signed-out
+   * site waits for the operator, and its provider must not read Ready.
+   */
+  const signedOut = new Map<OpencliSite, string>();
+  function observeSignIn(site: OpencliSite, error: unknown): void {
+    if (signInRequired(error)) {
+      if (!signedOut.has(site))
+        writeErrorLine(`opencli ${site} needs signing in: ${error.message}`);
+      signedOut.set(site, error.message);
+    }
+  }
 
   const modelRefreshes = new Map<OpencliSite, Promise<void>>();
 
@@ -1143,14 +1185,17 @@ export function createOpencliBridge(
         // An empty list is the site's picker failing to render (a hidden or
         // covered window), not an account with no models: the last good
         // list stays, and the next listing asks again.
-        if (models.length > 0) modelLists.set(site, { at: Date.now(), models });
-        else
+        if (models.length > 0) {
+          modelLists.set(site, { at: Date.now(), models });
+          signedOut.delete(site);
+        } else
           writeErrorLine(
             `opencli ${site} listed no models; keeping the last list`
           );
         return undefined;
       })
       .catch((error: unknown) => {
+        observeSignIn(site, error);
         writeErrorLine(
           `opencli ${site} model list failed: ${errorMessage(error)}`
         );
@@ -1820,7 +1865,9 @@ export function createOpencliBridge(
     let run: TurnRun;
     try {
       run = await runTurn(turn, controller.signal);
+      signedOut.delete(turn.site);
     } catch (error) {
+      observeSignIn(turn.site, error);
       if (controller.signal.aborted) return;
       if (stream) {
         writeErrorLine(`opencli turn failed: ${errorMessage(error)}`);
@@ -1842,6 +1889,47 @@ export function createOpencliBridge(
       );
   }
 
+  /** `GET /v1/models`: every site's listed models, or one provider's. */
+  async function serveModels(
+    requested: string | null,
+    response: ServerResponse
+  ): Promise<void> {
+    const providers = OPENCLI_PROVIDERS.filter(
+      (provider) => requested === null || provider === requested
+    );
+    const lists = await Promise.all(providers.map(listModels));
+    // A signed-out site's last list is not what it can serve now: the
+    // listing says the site needs signing in, so discovery keeps the list
+    // it had and the provider reads as waiting for the operator.
+    const signIn = providers
+      .map((provider) => signedOut.get(OPENCLI_PROVIDER_SITES[provider]))
+      .find((message) => message !== undefined);
+    if (requested !== null && signIn !== undefined) {
+      sendSignInRequired(response, signIn);
+      return;
+    }
+    const ids = lists.flat();
+    // No list observed yet is not "this provider has no models": answer
+    // unavailable so discovery keeps what it had and asks again.
+    if (ids.length === 0) {
+      sendJson(response, 503, {
+        error: {
+          type: "opencli_proxy_error",
+          message: `no ${requested ?? "opencli"} model list has been read from the site yet`
+        }
+      });
+      return;
+    }
+    sendJson(response, 200, {
+      object: "list",
+      data: ids.map((id) => ({
+        id,
+        object: "model",
+        owned_by: opencliModel(id)?.provider ?? PROVIDER
+      }))
+    });
+  }
+
   async function handle(
     request: IncomingMessage,
     response: ServerResponse
@@ -1859,6 +1947,11 @@ export function createOpencliBridge(
           return;
         }
         const site = OPENCLI_PROVIDER_SITES[requested as OpencliProvider];
+        const signIn = signedOut.get(site);
+        if (signIn !== undefined) {
+          sendSignInRequired(response, signIn);
+          return;
+        }
         const activeSince = tabs.oldestActiveSince(site);
         const wedgedThresholdMs =
           options.wedgedTimeoutMs ?? options.turnTimeoutSeconds * 1000 + 30_000;
@@ -1913,34 +2006,7 @@ export function createOpencliBridge(
       return;
     }
     if (pathname === "/v1/models" && request.method === "GET") {
-      const requested = new URL(
-        request.url ?? "/",
-        "http://127.0.0.1"
-      ).searchParams.get("provider");
-      const providers = OPENCLI_PROVIDERS.filter(
-        (provider) => requested === null || provider === requested
-      );
-      const lists = await Promise.all(providers.map(listModels));
-      const ids = lists.flat();
-      // No list observed yet is not "this provider has no models": answer
-      // unavailable so discovery keeps what it had and asks again.
-      if (ids.length === 0) {
-        sendJson(response, 503, {
-          error: {
-            type: "opencli_proxy_error",
-            message: `no ${requested ?? "opencli"} model list has been read from the site yet`
-          }
-        });
-        return;
-      }
-      sendJson(response, 200, {
-        object: "list",
-        data: ids.map((id) => ({
-          id,
-          object: "model",
-          owned_by: opencliModel(id)?.provider ?? PROVIDER
-        }))
-      });
+      await serveModels(url.searchParams.get("provider"), response);
       return;
     }
     if (pathname !== "/v1/responses" || request.method !== "POST") {

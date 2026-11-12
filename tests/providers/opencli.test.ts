@@ -1432,6 +1432,74 @@ test("a provider's model listing answers from cache and 503s before any list is 
   }
 });
 
+test("a signed-out site reports sign-in required until it lists again", async () => {
+  // A Gemini tab signed in as an account without the Gemini app shows the
+  // landing page, and the adapter refuses it as AUTH_REQUIRED. The bridge
+  // used to answer its health check `ok` regardless, so the provider read
+  // Ready while every listing and turn failed.
+  let signedIn = false;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] !== "models") throw new Error("unexpected command");
+      if (!signedIn)
+        throw new OpencliCommandError(
+          "The Gemini app is not available to the signed-in Google account work@example.com",
+          "AUTH_REQUIRED",
+          77
+        );
+      return [{ model: "3.1-pro" }];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const listing = await fetch(`${base}/v1/models?provider=opencli-gemini`);
+    assert.equal(listing.status, 401);
+    const body = (await listing.json()) as {
+      error: { code: string; message: string };
+    };
+    assert.equal(body.error.code, "sign_in_required");
+    assert.match(body.error.message, /work@example\.com/u);
+
+    const health = await fetch(
+      `${base}/health/liveliness?provider=opencli-gemini`
+    );
+    assert.equal(health.status, 401);
+    assert.equal(
+      ((await health.json()) as { error: { code: string } }).error.code,
+      "sign_in_required"
+    );
+    // The other site is not signed out.
+    assert.equal(
+      (await fetch(`${base}/health/liveliness?provider=opencli-chatgpt`))
+        .status,
+      200
+    );
+
+    signedIn = true;
+    const relisted = (await (
+      await fetch(`${base}/v1/models?provider=opencli-gemini`)
+    ).json()) as { data: Array<{ id: string }> };
+    assert.deepEqual(
+      relisted.data.map(({ id }) => id),
+      ["opencli-gemini-3.1-pro"]
+    );
+    assert.equal(
+      (await fetch(`${base}/health/liveliness?provider=opencli-gemini`)).status,
+      200
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("the follow-up tool index names exec's nested functions", () => {
   const index = toolIndex([
     {
@@ -2061,12 +2129,12 @@ test("opencli launcher loads the Router bridge key from the private CODEX_HOME e
     writeFileSync(join(codexHome, "src", "providers", "opencli.ts"), "//\n");
     writeFileSync(
       join(codexHome, ".env"),
-      `CODEX_ROUTER_OPENCLI_API_KEY=${token}\n`,
+      `CODEX_ROUTER_OPENCLI_API_KEY=${token}\nOPENCLI_GEMINI_ACCOUNT=someone@example.com\n`,
       { mode: 0o600 }
     );
     writeFileSync(
       fakeNode,
-      '#!/bin/sh\nprintf "%s %s %s" "${CODEX_ROUTER_OPENCLI_API_KEY:-}" "$OPENCLI_PROXY_PORT" "$1" > "$OPENCLI_CAPTURE"\n',
+      '#!/bin/sh\nprintf "%s %s %s %s" "${CODEX_ROUTER_OPENCLI_API_KEY:-}" "$OPENCLI_PROXY_PORT" "${OPENCLI_GEMINI_ACCOUNT:-}" "$1" > "$OPENCLI_CAPTURE"\n',
       { mode: 0o700 }
     );
     chmodSync(fakeNode, 0o700);
@@ -2085,7 +2153,7 @@ test("opencli launcher loads the Router bridge key from the private CODEX_HOME e
     assert.ok(existsSync(capture));
     assert.equal(
       readFileSync(capture, "utf8"),
-      `${token} 4004 ${join(codexHome, "src", "providers", "opencli.ts")}`
+      `${token} 4004 someone@example.com ${join(codexHome, "src", "providers", "opencli.ts")}`
     );
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(token));
   } finally {

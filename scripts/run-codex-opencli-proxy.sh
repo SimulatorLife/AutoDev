@@ -8,6 +8,15 @@ if [[ -z "${CODEX_ROUTER_OPENCLI_API_KEY:-}" && -f "$codex_home/.env" ]]; then
     export CODEX_ROUTER_OPENCLI_API_KEY
   fi
 fi
+# The Google account opencli's Gemini commands run as (an email). Optional: a
+# browser signed in to several Google accounts otherwise opens Gemini as its
+# first one, which may be an account without the Gemini app.
+if [[ -z "${OPENCLI_GEMINI_ACCOUNT:-}" && -f "$codex_home/.env" ]]; then
+  OPENCLI_GEMINI_ACCOUNT="$(awk -F= '$1 == "OPENCLI_GEMINI_ACCOUNT" { value = substr($0, index($0, "=") + 1) } END { print value }' "$codex_home/.env")"
+  if [[ -n "$OPENCLI_GEMINI_ACCOUNT" ]]; then
+    export OPENCLI_GEMINI_ACCOUNT
+  fi
+fi
 if [[ -z "${CODEX_ROUTER_OPENCLI_API_KEY:-}" ]]; then
   echo "opencli bridge auth key is missing from $codex_home/.env; rerun the AutoDev installer." >&2
   exit 78

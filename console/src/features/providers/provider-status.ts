@@ -6,7 +6,9 @@ import {
   type ControlApiQuotaStatus,
   type ControlApiQuotaWindow,
   type ControlApiSubproviderQuota,
-  providerHealthReadiness
+  providerHealthReadiness,
+  providerSignInRequired,
+  SIGN_IN_REQUIRED_FAILURE_CLASS
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -51,7 +53,10 @@ export type ProviderStatus = {
  *
  * Health is checked last and reports `Not observed` until Runtime has observed
  * a successful provider request. A configured route with no successful
- * observation is not `Ready`.
+ * observation is not `Ready`. A provider whose account must be signed in
+ * again -- a web-chat site signed out in the browser it is driven through --
+ * reads `Sign-in required`: it is an action for the operator, not an outage
+ * that passes by itself.
  */
 export function resolveProviderStatus(
   provider: ControlApiProviderRecord
@@ -80,6 +85,19 @@ export function resolveProviderStatus(
       // badge ellipsizes; the full key stays on the hover title rather than
       // being cut to a name that no longer identifies the missing variable.
       title: `Missing ${provider.credential.envKey}`
+    };
+  }
+  if (providerSignInRequired(provider.health)) {
+    const check = provider.health?.lastCheck;
+    return {
+      tone: "invalid",
+      label: "Sign-in required",
+      title:
+        check &&
+        !check.ok &&
+        check.failureClass === SIGN_IN_REQUIRED_FAILURE_CLASS
+          ? `Action needed: ${check.detail}`
+          : "Action needed: the provider's account is signed out. Sign in to it in the browser it is driven through, then re-check."
     };
   }
   const readiness = providerHealthReadiness(provider.health);

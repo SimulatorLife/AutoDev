@@ -11,6 +11,17 @@ import { CONFIGURED_SMART_MODEL } from "@simulatorlife/autodev-runtime/router/ro
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 test("classifyProviderFailure accurately classifies status codes and error bodies", () => {
+  // A bridge whose account is signed out says so in a typed body; its message
+  // may mention availability, and is still a sign-in, streamed or not.
+  const signIn = JSON.stringify({
+    error: {
+      type: "authentication_error",
+      code: "sign_in_required",
+      message: "The Gemini app is not available to this account"
+    }
+  });
+  assert.equal(classifyProviderFailure(401, signIn), "sign_in_required");
+  assert.equal(classifyProviderFailure(200, signIn), "sign_in_required");
   assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");
   assert.equal(
     classifyProviderFailure(429, "session limit reached"),

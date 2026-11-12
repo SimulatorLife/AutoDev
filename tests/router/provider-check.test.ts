@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { providerHealthReadiness } from "@simulatorlife/autodev-core";
+import {
+  providerHealthReadiness,
+  providerSignInRequired
+} from "@simulatorlife/autodev-core";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
   checkProvider,
-  providerState
+  providerState,
+  recordProviderSignIn
 } from "@simulatorlife/autodev-runtime/router/http";
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 
@@ -211,4 +215,68 @@ test("a provider the Runtime does not know at all still fails the check", async 
     () => checkProvider("no-such-provider", null),
     /Unknown provider/u
   );
+});
+
+test("a bridge whose account is signed out fails its check as a sign-in", async () => {
+  // A web-chat bridge answers its health check with `sign_in_required` while
+  // the site is signed out in the browser it drives. That is an action for
+  // the operator, and the check says so instead of "the probe failed".
+  const originalFetch = globalThis.fetch;
+  const originalCredential = process.env[CREDENTIAL];
+  process.env[CREDENTIAL] = "test-bridge-key";
+  globalThis.fetch = (async () =>
+    Response.json(
+      {
+        error: {
+          type: "authentication_error",
+          code: "sign_in_required",
+          message: "Not logged in to copilot"
+        }
+      },
+      { status: 401 }
+    )) as typeof fetch;
+  COOLDOWNS.clear(PROVIDER);
+  try {
+    const result = await checkProvider(PROVIDER, null);
+    assert.equal(result.check.ok, false);
+    assert.equal(result.check.failureClass, "sign_in_required");
+    assert.equal(result.check.detail, "Not logged in to copilot");
+    assert.equal(providerSignInRequired(result.health), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCredential === undefined) delete process.env[CREDENTIAL];
+    else process.env[CREDENTIAL] = originalCredential;
+    COOLDOWNS.clear(PROVIDER);
+    providerState(PROVIDER).lastCheck = null;
+  }
+});
+
+test("a listing that finds the account signed out is health evidence until it lists again", () => {
+  const state = providerState(PROVIDER);
+  const saved = { ...state };
+  try {
+    state.lastSuccessAt = "2026-11-12T12:00:00.000Z";
+    state.lastFailure = null;
+    recordProviderSignIn(
+      PROVIDER,
+      "Not logged in to copilot",
+      "2026-11-12T13:00:00.000Z"
+    );
+    assert.equal(
+      providerState(PROVIDER).lastFailure?.class,
+      "sign_in_required"
+    );
+    // A later listing that succeeds withdraws the sign-in, and only it.
+    recordProviderSignIn(PROVIDER, null);
+    assert.equal(providerState(PROVIDER).lastFailure, null);
+    state.lastFailure = {
+      timestamp: "2026-11-12T13:00:00.000Z",
+      class: "upstream_error",
+      status: 502
+    };
+    recordProviderSignIn(PROVIDER, null);
+    assert.equal(providerState(PROVIDER).lastFailure?.class, "upstream_error");
+  } finally {
+    Object.assign(state, saved);
+  }
 });

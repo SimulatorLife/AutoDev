@@ -6,14 +6,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
-import type {
-  ControlApiLiveAgentCounts,
-  ControlApiProviderCheck,
-  ControlApiProviderCheckResponse,
-  ControlApiProviderCooldown,
-  ControlApiProviderHealth,
-  ControlApiProviderModelDiscovery,
-  ControlApiProviderQuota
+import {
+  type ControlApiLiveAgentCounts,
+  type ControlApiProviderCheck,
+  type ControlApiProviderCheckResponse,
+  type ControlApiProviderCooldown,
+  type ControlApiProviderHealth,
+  type ControlApiProviderModelDiscovery,
+  type ControlApiProviderQuota,
+  SIGN_IN_REQUIRED_FAILURE_CLASS
 } from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
@@ -131,6 +132,7 @@ import {
   LAST_RESORT_MAX_ATTEMPTS,
   PROBE_TIMEOUT_MS,
   probeProvider,
+  type ProviderProbeResult,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
   proxyRoleResponse,
@@ -693,6 +695,39 @@ const routerPersistence = new RouterPersistence({
   }
 });
 setDefaultPersistenceManager(routerPersistence);
+
+/**
+ * Record what a provider's model listing said about its account.
+ *
+ * A browser-driven bridge reads its models from the signed-in site, so the
+ * periodic listing is the first to find a site signed out -- usually long
+ * before a request is routed there. A listing that says so is a provider
+ * failure (`sign_in_required`), the same evidence a turn refused for it
+ * would leave, so the provider stops reading Ready while it waits for the
+ * operator. A listing that succeeds again withdraws that failure, and only
+ * that failure: it is not evidence the provider serves turns.
+ */
+export function recordProviderSignIn(
+  provider: string,
+  detail: string | null,
+  at: string = new Date().toISOString()
+): void {
+  const state = providerState(provider);
+  if (detail === null) {
+    if (state.lastFailure?.class !== SIGN_IN_REQUIRED_FAILURE_CLASS) return;
+    state.lastFailure = null;
+    state.lastFailureClass = null;
+  } else {
+    state.lastFailureAt = at;
+    state.lastFailureClass = SIGN_IN_REQUIRED_FAILURE_CLASS;
+    state.lastFailure = {
+      timestamp: at,
+      class: SIGN_IN_REQUIRED_FAILURE_CLASS,
+      status: 401
+    };
+  }
+  scheduleRouterStatePersist();
+}
 
 export function resetRouterTelemetry(): void {
   getDefaultRouterEventRecorder().clear();
@@ -1529,6 +1564,56 @@ const MISSING_ROUTE_FAILURE_CLASS = "missing_route";
  * evidence without increasing cooldown penalties or failure streaks. A
  * provider-declared quota or rate-limit cooldown remains in effect.
  */
+/** What one operator check found, from its probe and its model listing. */
+function providerCheckVerdict(
+  provider: string,
+  probe: ProviderProbeResult,
+  listing: ControlApiProviderModelDiscovery | null,
+  checkedFrom: string
+): ControlApiProviderCheck {
+  const at = new Date().toISOString();
+  if (!probe.ok) {
+    return {
+      at,
+      ok: false,
+      failureClass: probe.failureClass ?? PROBE_FAILURE_CLASS,
+      detail: probe.detail ?? "The provider's live probe failed."
+    };
+  }
+  // A bridge can answer its probe and only learn from the listing that its
+  // site is signed out: the listing is the first thing that reads the site.
+  const listedSignIn = providerState(provider).lastFailure;
+  if (
+    listedSignIn?.class === SIGN_IN_REQUIRED_FAILURE_CLASS &&
+    listedSignIn.timestamp >= checkedFrom
+  ) {
+    return {
+      at,
+      ok: false,
+      failureClass: SIGN_IN_REQUIRED_FAILURE_CLASS,
+      models: listing,
+      detail:
+        listing?.status === "stale" || listing?.status === "unavailable"
+          ? listing.reason
+          : "The provider's account must be signed in again."
+    };
+  }
+  return {
+    at,
+    ok: true,
+    failureClass: null,
+    models: listing,
+    detail:
+      listing === null
+        ? "The provider answered its live probe."
+        : listing.status === "observed"
+          ? `The provider answered its live probe and listed ${listing.models.length} model(s).`
+          : listing.status === "stale"
+            ? `The provider answered its live probe; its model listing failed (${listing.reason}), so its last listing is kept.`
+            : `The provider answered its live probe, but its model listing is unavailable: ${listing.reason}`
+  };
+}
+
 export async function checkProvider(
   provider: string,
   recheckModels: ProviderModelRecheck | null,
@@ -1564,35 +1649,14 @@ export async function checkProvider(
       health: controlApiProviderHealth(Date.now())[provider] ?? null
     };
   }
+  const checkedFrom = new Date().toISOString();
   const probe = await probeProvider(route);
-  let check: ControlApiProviderCheck;
   let listing: ControlApiProviderModelDiscovery | null = null;
   if (probe.ok) {
     COOLDOWNS.clearProbeFailures(provider);
     listing = recheckModels ? await recheckModels(provider) : null;
-    check = {
-      at: new Date().toISOString(),
-      ok: true,
-      failureClass: null,
-      models: listing,
-      detail:
-        listing === null
-          ? "The provider answered its live probe."
-          : listing.status === "observed"
-            ? `The provider answered its live probe and listed ${listing.models.length} model(s).`
-            : listing.status === "stale"
-              ? `The provider answered its live probe; its model listing failed (${listing.reason}), so its last listing is kept.`
-              : `The provider answered its live probe, but its model listing is unavailable: ${listing.reason}`
-    };
-  } else {
-    const failureClass = probe.failureClass ?? PROBE_FAILURE_CLASS;
-    check = {
-      at: new Date().toISOString(),
-      ok: false,
-      failureClass,
-      detail: probe.detail ?? "The provider's live probe failed."
-    };
   }
+  const check = providerCheckVerdict(provider, probe, listing, checkedFrom);
   providerState(provider).lastCheck = check;
   if (recheckQuota) {
     await recheckQuota(provider).catch(() => null);

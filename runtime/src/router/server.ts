@@ -40,6 +40,7 @@ import {
   handle,
   HOST,
   PORT,
+  recordProviderSignIn,
   refreshCodexState
 } from "./http.ts";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
@@ -189,7 +190,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   let playtestingShutdown: Promise<void> | null = null;
   const modelDiscovery = IS_MAIN
     ? createProviderModelDiscoveryService({
-        onSnapshotChanged: scheduleRouterStatePersist
+        onSnapshotChanged: scheduleRouterStatePersist,
+        onSignIn: recordProviderSignIn
       })
     : null;
   if (modelDiscovery) {

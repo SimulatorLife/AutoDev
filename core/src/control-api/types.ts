@@ -288,6 +288,8 @@ export interface ControlApiProviderCheck {
    * `probe_unavailable` is the live probe failing -- no credential, or the
    * bridge's health endpoint did not answer. `missing_route` is a provider
    * that is configured but has no route, so there was nothing to probe at all.
+   * `sign_in_required` is a bridge whose provider account must be signed in
+   * again (`SIGN_IN_REQUIRED_FAILURE_CLASS`).
    */
   readonly failureClass: string | null;
   /** What was checked, or why the check failed, in one sentence. */

@@ -805,7 +805,17 @@ its `node_modules` link, so launchd's `PATH` never decides which opencli runs
 (`OPENCLI_BIN` overrides it). Its pnpm `postinstall` (shell completions only)
 is not needed. What the installer cannot do is the browser side: install
 opencli's Browser Bridge Chrome extension and sign in to each site once, then
-confirm with:
+confirm with the commands below. When that browser is signed in to several
+Google accounts, name the one Gemini runs as -- an account that has the Gemini
+app -- in `$CODEX_HOME/.env`; otherwise Gemini opens as the browser's first
+account, and a Workspace account without the Gemini app leaves the provider
+reading `Sign-in required`:
+
+```bash
+echo 'OPENCLI_GEMINI_ACCOUNT=you@example.com' >> ~/.codex/.env
+```
+
+Then confirm with:
 
 ```bash
 node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor

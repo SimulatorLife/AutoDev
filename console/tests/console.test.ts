@@ -4083,6 +4083,85 @@ test("provider readiness never turns configuration without a success into Ready"
   );
 });
 
+test("a signed-out web-chat provider asks for a sign-in instead of reading Ready", () => {
+  // The opencli sites serve through the operator's own signed-in browser. A
+  // site signed out there -- or a Google account without the Gemini app --
+  // kept reading Ready on its earlier successes while every listing and turn
+  // failed, so nothing told the operator the one thing that fixes it.
+  const provider = (health: unknown) =>
+    ({
+      disabled: false,
+      route: {
+        pattern: "^opencli-gemini-[a-z0-9][a-z0-9.-]*$",
+        baseUrl: "http://127.0.0.1:4004/v1",
+        healthUrl: "http://127.0.0.1:4004/health/liveliness"
+      },
+      credential: { envKey: null, configured: true },
+      health
+    }) as unknown as Parameters<typeof resolveProviderStatus>[0];
+  const base = {
+    cooldown: null,
+    failureStreak: 0,
+    probeFailureStreak: 0,
+    lastCheck: null,
+    inFlightRequests: 0,
+    activeAgents: 0,
+    attempts: 3,
+    successes: 3,
+    failures: 0,
+    lastSuccessAt: "2026-11-12T12:00:00.000Z",
+    lastFailure: null
+  };
+
+  const listed = resolveProviderStatus(
+    provider({
+      ...base,
+      lastFailure: {
+        at: "2026-11-12T13:00:00.000Z",
+        failureClass: "sign_in_required",
+        status: 401
+      }
+    })
+  );
+  assert.equal(listed.label, "Sign-in required");
+  assert.equal(listed.tone, "invalid");
+  assert.match(listed.title ?? "", /^Action needed/u);
+
+  const checked = resolveProviderStatus(
+    provider({
+      ...base,
+      lastCheck: {
+        at: "2026-11-12T13:00:00.000Z",
+        ok: false,
+        failureClass: "sign_in_required",
+        detail:
+          "The Gemini app is not available to the signed-in Google account."
+      }
+    })
+  );
+  assert.equal(checked.label, "Sign-in required");
+  assert.equal(
+    checked.title,
+    "Action needed: The Gemini app is not available to the signed-in Google account."
+  );
+
+  // Signed in again and serving: the sign-in is history.
+  assert.equal(
+    resolveProviderStatus(
+      provider({
+        ...base,
+        lastSuccessAt: "2026-11-12T14:00:00.000Z",
+        lastFailure: {
+          at: "2026-11-12T13:00:00.000Z",
+          failureClass: "sign_in_required",
+          status: 401
+        }
+      })
+    ).label,
+    "Ready"
+  );
+});
+
 test("every provider verdict carries a re-check control that spins while it runs", () => {
   const unavailable = {
     id: "opencli-chatgpt",

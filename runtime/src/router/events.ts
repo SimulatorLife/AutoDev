@@ -1,5 +1,9 @@
+import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { providerRequestUnsupported } from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
+  providerRequestUnsupported,
+  providerSignInRequiredMessage
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
 
 export type ProviderFailureClass =
   | "session_limit"
@@ -10,6 +14,7 @@ export type ProviderFailureClass =
   | "unavailable"
   | "invalid_model"
   | "authentication"
+  | typeof SIGN_IN_REQUIRED_FAILURE_CLASS
   | "unsupported_request"
   | "upstream_error"
   | "request_error";
@@ -108,6 +113,10 @@ export function classifyProviderFailure(
   // A route that cannot serve this request is not a broken provider: the
   // router moves to the next candidate and leaves the provider healthy.
   if (providerRequestUnsupported(text)) return "unsupported_request";
+  // A provider whose account must be signed in again waits for the operator;
+  // its message may mention availability, so it is read before the patterns.
+  if (providerSignInRequiredMessage(text) !== null)
+    return SIGN_IN_REQUIRED_FAILURE_CLASS;
   // A model the provider rejects is the most specific diagnosis: its message
   // may still mention quotas or availability in passing.
   if (INVALID_MODEL_PATTERN.test(text)) return "invalid_model";

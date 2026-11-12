@@ -562,3 +562,115 @@ test("a Gemini model that is out of usage is refused as its usage limit", async 
     `Gemini usage limit reached for 4-argon; resets at ${new Date(2026, 10, 9, 21, 26).toISOString()}`
   );
 });
+
+interface GeminiPageUtils {
+  geminiAppUrl: (path?: string) => string;
+  isGeminiAppPath: (pathname: string) => boolean;
+  ensureGeminiPage: (page: unknown) => Promise<void>;
+}
+
+/** Run `body` with OPENCLI_GEMINI_ACCOUNT set to `account` (or unset). */
+async function withGeminiAccount<T>(
+  account: string | null,
+  body: () => Promise<T>
+): Promise<T> {
+  const previous = process.env.OPENCLI_GEMINI_ACCOUNT;
+  if (account === null) delete process.env.OPENCLI_GEMINI_ACCOUNT;
+  else process.env.OPENCLI_GEMINI_ACCOUNT = account;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.OPENCLI_GEMINI_ACCOUNT;
+    else process.env.OPENCLI_GEMINI_ACCOUNT = previous;
+  }
+}
+
+/**
+ * A Gemini tab that always shows `url` signed in as `email`: the landing page
+ * an account without the Gemini app is redirected to, whatever is opened.
+ */
+function geminiTab(url: string, email: string | null) {
+  const visited: string[] = [];
+  return {
+    visited,
+    page: {
+      evaluate: (script: string) => {
+        if (script === "window.location.href") return Promise.resolve(url);
+        if (script.includes("SignOutOptions"))
+          return Promise.resolve(
+            email === null ? { kind: "auth" } : { ok: true, name: "", email }
+          );
+        // The unusual-traffic probe: the page is not blocked.
+        return Promise.resolve(false);
+      },
+      goto: (target: string) => {
+        visited.push(target);
+        return Promise.resolve();
+      },
+      wait: () => Promise.resolve()
+    }
+  };
+}
+
+test("the Gemini app is opened as the configured Google account", async () => {
+  // A browser signed in to several Google accounts opens gemini.google.com/app
+  // as its first one. When that is a Workspace account without the Gemini app,
+  // the site shows its landing page -- no composer, no model picker -- and
+  // every listing failed as "model picker button was not found", which left
+  // the provider's model choices disabled in the Console.
+  const utils = await geminiModule<GeminiPageUtils>("utils.js");
+  if (utils === null) return;
+  await withGeminiAccount(null, async () => {
+    assert.equal(utils.geminiAppUrl(), "https://gemini.google.com/app");
+  });
+  await withGeminiAccount("someone@example.com", async () => {
+    assert.equal(
+      utils.geminiAppUrl(),
+      "https://gemini.google.com/app?authuser=someone%40example.com"
+    );
+    assert.equal(
+      utils.geminiAppUrl("/abc123"),
+      "https://gemini.google.com/app/abc123?authuser=someone%40example.com"
+    );
+  });
+  assert.equal(utils.isGeminiAppPath("/app"), true);
+  assert.equal(utils.isGeminiAppPath("/u/1/app/abc123"), true);
+  assert.equal(utils.isGeminiAppPath("/u/0/"), false);
+  assert.equal(utils.isGeminiAppPath("/"), false);
+});
+
+test("a Gemini tab that shows the landing page is a sign-in to fix, not a changed picker", async () => {
+  const utils = await geminiModule<GeminiPageUtils>("utils.js");
+  if (utils === null) return;
+  const tab = geminiTab("https://gemini.google.com/u/0/", "work@example.com");
+  const failure = await withGeminiAccount(null, () =>
+    utils.ensureGeminiPage(tab.page).then(
+      () => null,
+      (error: unknown) => error as Error & { code?: string }
+    )
+  );
+  assert.ok(failure, "the landing page is refused");
+  assert.equal(failure.code, "AUTH_REQUIRED");
+  assert.match(failure.message, /work@example\.com/u);
+  assert.match(failure.message, /OPENCLI_GEMINI_ACCOUNT/u);
+  assert.deepEqual(tab.visited, ["https://gemini.google.com/app"]);
+});
+
+test("a Gemini tab signed in as another account is reopened as the configured one", async () => {
+  const utils = await geminiModule<GeminiPageUtils>("utils.js");
+  if (utils === null) return;
+  const tab = geminiTab("https://gemini.google.com/app", "work@example.com");
+  const failure = await withGeminiAccount("someone@example.com", () =>
+    utils.ensureGeminiPage(tab.page).then(
+      () => null,
+      (error: unknown) => error as Error & { code?: string }
+    )
+  );
+  assert.deepEqual(tab.visited, [
+    "https://gemini.google.com/app?authuser=someone%40example.com"
+  ]);
+  // The browser is not signed in to the configured account, so the tab still
+  // shows the other one: that is a sign-in for the operator to make.
+  assert.equal(failure?.code, "AUTH_REQUIRED");
+  assert.match(failure?.message ?? "", /someone@example\.com/u);
+});

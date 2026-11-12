@@ -803,3 +803,53 @@ test("providers without verified provider-owned listings remain unavailable", as
   }
   service.stop();
 });
+
+test("a bridge listing refused for a signed-out account is reported as a sign-in", async () => {
+  const signIns: Array<[string, string | null]> = [];
+  let signedIn = false;
+  const service = new ProviderModelDiscoveryService({
+    providerIds: () => ["opencli-gemini"],
+    adapters: {
+      "opencli-gemini": {
+        source: "opencli-gemini bridge GET /v1/models",
+        discover: () =>
+          discoverBridgeModels(
+            opencliModelSource("opencli-gemini", {} as NodeJS.ProcessEnv),
+            async () =>
+              signedIn
+                ? Response.json({
+                    object: "list",
+                    data: [{ id: "opencli-gemini-3.1-pro", object: "model" }]
+                  })
+                : Response.json(
+                    {
+                      error: {
+                        type: "authentication_error",
+                        code: "sign_in_required",
+                        message: "Not logged in to gemini.google.com"
+                      }
+                    },
+                    { status: 401 }
+                  )
+          )
+      }
+    },
+    onSignIn: (provider, detail) => signIns.push([provider, detail])
+  });
+  try {
+    const refused = await service.refreshProvider("opencli-gemini");
+    assert.equal(refused?.status, "unavailable");
+    assert.match(
+      refused?.status === "unavailable" ? refused.reason : "",
+      /Not logged in/u
+    );
+    signedIn = true;
+    await service.refreshProvider("opencli-gemini");
+    assert.deepEqual(signIns, [
+      ["opencli-gemini", "Not logged in to gemini.google.com"],
+      ["opencli-gemini", null]
+    ]);
+  } finally {
+    service.stop();
+  }
+});

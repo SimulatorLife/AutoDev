@@ -8,6 +8,7 @@ import type {
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
+import { providerSignInRequiredMessage } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   OPENCLI_PROVIDERS,
   type OpencliProvider,
@@ -100,6 +101,21 @@ export interface ProviderModelDiscoveryOptions {
   /** First retry delay after a failed or empty listing; doubles to the refresh interval. */
   readonly retryBaseMs?: number;
   readonly onSnapshotChanged?: (() => void) | undefined;
+  /**
+   * What each listing said about the provider's account: the bridge's message
+   * when it reported the account must be signed in again, null when it listed
+   * models. The Router records it as provider health evidence.
+   */
+  readonly onSignIn?:
+    ((provider: string, detail: string | null) => void) | undefined;
+}
+
+/**
+ * A model listing a bridge refused because its provider account must be
+ * signed in again (`sign_in_required`).
+ */
+export class ProviderSignInRequiredError extends Error {
+  override readonly name = "ProviderSignInRequiredError";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -483,6 +499,12 @@ export async function discoverBridgeModels(
     }
   );
   if (!response.ok) {
+    const signIn = providerSignInRequiredMessage(
+      await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES).catch(
+        () => ""
+      )
+    );
+    if (signIn !== null) throw new ProviderSignInRequiredError(signIn);
     throw new Error(
       `${source.label} bridge model list returned HTTP ${response.status}.`
     );
@@ -822,6 +844,8 @@ export class ProviderModelDiscoveryService {
   private readonly now: () => Date;
   private readonly refreshIntervalMs: number;
   private readonly onSnapshotChanged: (() => void) | undefined;
+  private readonly onSignIn:
+    ((provider: string, detail: string | null) => void) | undefined;
   private readonly states = new Map<string, ControlApiProviderModelDiscovery>();
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private readonly retryBaseMs: number;
@@ -840,6 +864,7 @@ export class ProviderModelDiscoveryService {
       options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
     this.retryBaseMs = options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
     this.onSnapshotChanged = options.onSnapshotChanged;
+    this.onSignIn = options.onSignIn;
     for (const provider of this.providerIds()) {
       const persisted = persistedProviderModels.get(provider);
       if (persisted) {
@@ -1043,6 +1068,7 @@ export class ProviderModelDiscoveryService {
             return;
           }
           if (models.length === 0) unconfirmed += 1;
+          else this.onSignIn?.(provider, null);
           const observedAt = this.now().toISOString();
           this.states.set(provider, {
             status: "observed",
@@ -1056,38 +1082,57 @@ export class ProviderModelDiscoveryService {
         } catch (error) {
           if (this.stopped || signal.aborted) return;
           unconfirmed += 1;
-          const reason =
-            error instanceof Error
-              ? error.message
-              : "Provider model discovery failed.";
-          if (
-            previous &&
-            (previous.status === "observed" || previous.status === "stale")
-          ) {
-            this.states.set(provider, {
-              status: "stale",
-              source: adapter.source,
-              observedAt: previous.observedAt,
-              lastAttemptAt: attemptedAt,
-              reason,
-              models: previous.models
-            });
-            ROUTING_POLICY.setDiscoveredProviderModels(
-              provider,
-              previous.models
-            );
-            this.persistCurrentState(provider);
-          } else {
-            this.states.set(
-              provider,
-              unavailable(adapter.source, attemptedAt, reason)
-            );
-            ROUTING_POLICY.setDiscoveredProviderModels(provider, []);
-          }
+          this.recordListingFailure(
+            provider,
+            adapter,
+            previous,
+            attemptedAt,
+            error
+          );
         }
       })
     );
     return unconfirmed;
+  }
+
+  /**
+   * A listing that failed: the provider keeps its last listing as stale, or
+   * has none; a listing refused for a signed-out account is reported too.
+   */
+  private recordListingFailure(
+    provider: string,
+    adapter: ProviderModelDiscoveryAdapter,
+    previous: ControlApiProviderModelDiscovery | undefined,
+    attemptedAt: string,
+    error: unknown
+  ): void {
+    if (error instanceof ProviderSignInRequiredError)
+      this.onSignIn?.(provider, error.message);
+    const reason =
+      error instanceof Error
+        ? error.message
+        : "Provider model discovery failed.";
+    if (
+      previous &&
+      (previous.status === "observed" || previous.status === "stale")
+    ) {
+      this.states.set(provider, {
+        status: "stale",
+        source: adapter.source,
+        observedAt: previous.observedAt,
+        lastAttemptAt: attemptedAt,
+        reason,
+        models: previous.models
+      });
+      ROUTING_POLICY.setDiscoveredProviderModels(provider, previous.models);
+      this.persistCurrentState(provider);
+    } else {
+      this.states.set(
+        provider,
+        unavailable(adapter.source, attemptedAt, reason)
+      );
+      ROUTING_POLICY.setDiscoveredProviderModels(provider, []);
+    }
   }
 
   private persistCurrentState(provider: string): void {

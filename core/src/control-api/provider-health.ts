@@ -6,6 +6,51 @@ import type {
 
 export type ProviderHealthReadiness = "ready" | "unavailable" | "not-observed";
 
+/**
+ * The failure class of a provider whose account has to be signed in again.
+ *
+ * A browser-driven provider (the opencli web-chat sites) serves through the
+ * operator's own signed-in browser, so a signed-out site -- or a Google account
+ * without the Gemini app -- is not an outage the provider recovers from by
+ * itself: it waits for the operator. The bridge reports it under this code
+ * from its health endpoint, its model listing and its turns, and the Runtime
+ * records it under this class wherever it records a provider failure.
+ */
+export const SIGN_IN_REQUIRED_FAILURE_CLASS = "sign_in_required";
+
+/**
+ * Whether the provider is unavailable because its account must be signed in
+ * again: its health reads unavailable, and the evidence that decides it is a
+ * sign-in -- the active cooldown when there is one (it is the Runtime's live
+ * verdict), otherwise the newer of its last failure and a failed check. A
+ * provider that recovered since, or failed for another reason after, is not
+ * reported as needing a sign-in.
+ */
+export function providerSignInRequired(
+  health: ControlApiProviderHealth | null
+): boolean {
+  if (health === null || providerHealthReadiness(health) !== "unavailable")
+    return false;
+  if (health.cooldown !== null)
+    return health.cooldown.failureClass === SIGN_IN_REQUIRED_FAILURE_CLASS;
+  const failures = [
+    health.lastFailure === null
+      ? null
+      : {
+          at: timestamp(health.lastFailure.at),
+          failureClass: health.lastFailure.failureClass
+        },
+    health.lastCheck === null || health.lastCheck.ok
+      ? null
+      : {
+          at: timestamp(health.lastCheck.at),
+          failureClass: health.lastCheck.failureClass
+        }
+  ].filter((failure) => failure !== null);
+  const latest = failures.sort((a, b) => b.at - a.at)[0];
+  return latest?.failureClass === SIGN_IN_REQUIRED_FAILURE_CLASS;
+}
+
 function isFailureOtherPoolOnly(
   health: ControlApiProviderHealth,
   pools: readonly ControlApiSubproviderQuota[] | undefined

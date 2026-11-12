@@ -2883,9 +2883,32 @@ single list; the route patterns and the site registry in
   failure. Operator checks are observational: a failing probe records
   evidence without deepening cooldowns or incrementing failure streaks, and
   model listing failures are reported in `check.models` without failing the
-  provider health verdict. Cancelled turns escalate from `SIGTERM` to `SIGKILL`
+  provider health verdict -- except a sign-in (below), which does. Cancelled turns escalate from `SIGTERM` to `SIGKILL`
   after a 2-second grace period, preventing abandoned commands from holding
   the site session lock busy.
+- **A signed-out site is a sign-in to make, not an outage.** The sites are
+  driven through the operator's signed-in browser. When opencli refuses a
+  command as `AUTH_REQUIRED` (or `LOGIN_WALL`) -- the site's account is signed
+  out, or, for Gemini, the Google account has no Gemini app and
+  gemini.google.com shows its landing page -- the bridge remembers the site
+  as signed out until a listing or turn on it succeeds. Meanwhile its health
+  endpoint and `GET /v1/models?provider=<provider>` answer HTTP 401 with
+  `{ "error": { "type": "authentication_error", "code": "sign_in_required" } }`
+  (`sendSignInRequired` in `runtime/src/shared/provider-http.ts`), and a turn
+  refused for it fails the same way, streamed or not. The router records the
+  failure class `sign_in_required` (`SIGN_IN_REQUIRED_FAILURE_CLASS` in
+  `@simulatorlife/autodev-core`) from a probe, a turn, or the periodic model
+  listing (`recordProviderSignIn`), so the provider stops reading `Ready`
+  before any request is routed to it; a listing that succeeds again withdraws
+  it. An operator check whose listing finds the site signed out fails as
+  `sign_in_required` too. The Console shows `Sign-in required`.
+- **Gemini runs as a named Google account.** A browser signed in to several
+  Google accounts opens gemini.google.com/app as its first one. Setting
+  `OPENCLI_GEMINI_ACCOUNT=<email>` in `$CODEX_HOME/.env` (read by
+  `run-codex-opencli-proxy.sh`) makes opencli's Gemini adapter open the app
+  with `?authuser=<email>` and treat a tab showing another account as not
+  ready; the account is named by email, so it stays right however the
+  browser's sign-ins are ordered.
 - **Request refusals do not pollute provider health.** A request refused
   before the turn starts -- an oversized Gemini prompt on argv (over 100 KB),
   an unsupported capability, or an unknown model -- returns a 400 refusal

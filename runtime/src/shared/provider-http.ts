@@ -1,5 +1,7 @@
 import type { ServerResponse } from "node:http";
 
+import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
+
 import { writeErrorLine } from "./output.ts";
 import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
 
@@ -51,6 +53,63 @@ export function sendUnsupportedRequestFailure(
   sendJson(response, 400, {
     error: { type: PROVIDER_REQUEST_UNSUPPORTED_TYPE, message }
   });
+}
+
+/**
+ * Answer that the provider's account must be signed in again.
+ *
+ * A browser-driven bridge serves through the operator's signed-in browser, so
+ * a signed-out site is neither a broken provider nor a request it cannot
+ * serve: it is an action for the operator. The answer is typed
+ * (`sign_in_required`) so the router records it as exactly that, and the
+ * Console asks for the sign-in instead of reporting the provider Ready or
+ * merely Unavailable.
+ */
+export function sendSignInRequired(
+  response: ServerResponse,
+  message: string
+): void {
+  sendJson(response, 401, signInRequiredBody(message));
+}
+
+/** The error body of a sign-in-required answer, for a stream's failure event too. */
+export function signInRequiredBody(message: string): {
+  readonly error: {
+    readonly type: "authentication_error";
+    readonly code: typeof SIGN_IN_REQUIRED_FAILURE_CLASS;
+    readonly message: string;
+  };
+} {
+  return {
+    error: {
+      type: "authentication_error",
+      code: SIGN_IN_REQUIRED_FAILURE_CLASS,
+      message
+    }
+  };
+}
+
+/**
+ * The message of a provider body that reports its account must be signed in
+ * again, or null for any other body.
+ */
+export function providerSignInRequiredMessage(body: unknown): string | null {
+  if (
+    typeof body !== "string" ||
+    !body.includes(SIGN_IN_REQUIRED_FAILURE_CLASS)
+  )
+    return null;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const error = isRecord(parsed) ? parsed.error : null;
+    if (!isRecord(error) || error.code !== SIGN_IN_REQUIRED_FAILURE_CLASS)
+      return null;
+    return typeof error.message === "string" && error.message
+      ? error.message
+      : "The provider's account must be signed in again.";
+  } catch {
+    return null;
+  }
 }
 
 const CONTEXT_WINDOW_EXCEEDED_PATTERN =

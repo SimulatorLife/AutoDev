@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   type ControlApiProviderHealth,
-  providerHealthReadiness
+  providerHealthReadiness,
+  providerSignInRequired
 } from "../src/index.ts";
 
 function health(
@@ -447,5 +448,62 @@ test("a transient upstream failure is live only while the Runtime is still cooli
       })
     ),
     "unavailable"
+  );
+});
+
+test("a provider needs a sign-in only while a sign-in decides its verdict", () => {
+  const signIn = {
+    at: "2026-11-12T13:00:00.000Z",
+    failureClass: "sign_in_required",
+    status: 401
+  };
+  assert.equal(providerSignInRequired(null), false);
+  assert.equal(
+    providerSignInRequired(
+      health({ lastSuccessAt: "2026-11-12T12:00:00.000Z", lastFailure: signIn })
+    ),
+    true
+  );
+  // Serving again since: recovered.
+  assert.equal(
+    providerSignInRequired(
+      health({ lastSuccessAt: "2026-11-12T14:00:00.000Z", lastFailure: signIn })
+    ),
+    false
+  );
+  // A failed check after the sign-in failure for another reason decides it.
+  assert.equal(
+    providerSignInRequired(
+      health({
+        lastFailure: signIn,
+        lastCheck: {
+          at: "2026-11-12T13:30:00.000Z",
+          ok: false,
+          failureClass: "probe_unavailable",
+          detail: "Probe returned HTTP 503"
+        }
+      })
+    ),
+    false
+  );
+  // The live cooldown is the Runtime's current verdict.
+  assert.equal(
+    providerSignInRequired(
+      health({
+        lastFailure: {
+          at: "2026-11-12T13:30:00.000Z",
+          failureClass: "upstream_error",
+          status: 502
+        },
+        cooldown: {
+          kind: "probe",
+          failureClass: "sign_in_required",
+          until: "2026-11-12T13:31:00.000Z",
+          resetsAt: null,
+          lastResortEligible: false
+        }
+      })
+    ),
+    true
   );
 });

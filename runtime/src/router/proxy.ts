@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 
 import type { Span } from "@opentelemetry/api";
+import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
 import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
@@ -37,7 +38,10 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { providerRequestUnsupported } from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
+  providerRequestUnsupported,
+  providerSignInRequiredMessage
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
@@ -804,12 +808,19 @@ export async function probeProvider(
 
   const attemptProbe = async (
     timeoutMs: number
-  ): Promise<{ ok: boolean; status?: number; error?: unknown }> => {
+  ): Promise<{
+    ok: boolean;
+    status?: number;
+    body?: string;
+    error?: unknown;
+  }> => {
     try {
       const response = await fetch(route.healthUrl!, {
         signal: AbortSignal.timeout(timeoutMs)
       });
-      return { ok: response.ok, status: response.status };
+      if (response.ok) return { ok: true, status: response.status };
+      const body = await response.text().catch(() => "");
+      return { ok: false, status: response.status, body };
     } catch (error) {
       return { ok: false, error };
     }
@@ -828,6 +839,18 @@ export async function probeProvider(
     const second = await attemptProbe(PROBE_RETRY_TIMEOUT_MS);
     if (second.ok) return { ok: true, failureClass: null };
     first = second;
+  }
+
+  // A bridge whose provider account must be signed in again answers its
+  // health check with that: the provider is waiting for the operator, which
+  // is a different thing from a bridge that did not answer.
+  const signIn = providerSignInRequiredMessage(first.body);
+  if (signIn !== null) {
+    return {
+      ok: false,
+      failureClass: SIGN_IN_REQUIRED_FAILURE_CLASS,
+      detail: signIn
+    };
   }
 
   const detail = first.error

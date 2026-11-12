@@ -523,6 +523,65 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..fbba503e960f77f5b17a4f3aa9172b92
 +        return [{ response: `💬 ${response}`, url }];
      },
  });
+diff --git a/clis/gemini/auth.js b/clis/gemini/auth.js
+index 078b5011b1db68a2cbdfaff857518ad403ddaa27..6b88c3fd0f08bcb4e77597e98cc8abb527af9ab5 100644
+--- a/clis/gemini/auth.js
++++ b/clis/gemini/auth.js
+@@ -1,5 +1,6 @@
+ import { registerSiteAuthCommands } from '../_shared/site-auth.js';
+ import { probeGoogleAccount, waitForGoogleReturn } from '../_shared/google-account.js';
++import { geminiAppUrl } from './utils.js';
+ 
+ async function readIdentity(page) {
+   const result = await probeGoogleAccount(page, 'gemini.google.com');
+@@ -12,7 +13,7 @@ registerSiteAuthCommands({
+   loginUrl: 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2F',
+   columns: ['name'],
+   verify: async (page) => {
+-    await page.goto('https://gemini.google.com/app');
++    await page.goto(geminiAppUrl());
+     await page.wait(3);
+     return readIdentity(page);
+   },
+diff --git a/clis/gemini/deep-research.js b/clis/gemini/deep-research.js
+index 9e79f150d901a3ffa0f157a90ac8ebaa0aff7fad..b922f99db6bad373bea5978b388931f7955fbfc1 100644
+--- a/clis/gemini/deep-research.js
++++ b/clis/gemini/deep-research.js
+@@ -1,10 +1,10 @@
+ import { cli, Strategy } from '@jackwener/opencli/registry';
+ import { ArgumentError } from '@jackwener/opencli/errors';
+-import { GEMINI_DEEP_RESEARCH_DEFAULT_CONFIRM_LABELS, GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS, GEMINI_APP_URL, GEMINI_DOMAIN, getCurrentGeminiUrl, getLatestGeminiAssistantResponse, readGeminiSnapshot, resolveGeminiLabels, selectGeminiTool, sendGeminiMessage, startNewGeminiChat, waitForGeminiSubmission, waitForGeminiConfirmButton, } from './utils.js';
++import { GEMINI_DEEP_RESEARCH_DEFAULT_CONFIRM_LABELS, GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS, GEMINI_DOMAIN, getCurrentGeminiUrl, getLatestGeminiAssistantResponse, readGeminiSnapshot, resolveGeminiLabels, selectGeminiTool, sendGeminiMessage, startNewGeminiChat, waitForGeminiSubmission, waitForGeminiConfirmButton, } from './utils.js';
+ function isGeminiRootAppUrl(url) {
+     try {
+         const parsed = new URL(url);
+-        return parsed.origin + parsed.pathname.replace(/\/+$/, '') === GEMINI_APP_URL;
++        return parsed.hostname === GEMINI_DOMAIN && /^(?:\/u\/\d+)?\/app$/.test(parsed.pathname.replace(/\/+$/, ''));
+     }
+     catch {
+         return false;
+diff --git a/clis/gemini/detail.js b/clis/gemini/detail.js
+index 3d4a4439bf533495535ab57174c908a13316906b..dd6df6a71970e3699b00fff82ecfed2916265625 100644
+--- a/clis/gemini/detail.js
++++ b/clis/gemini/detail.js
+@@ -1,7 +1,7 @@
+ import { cli, Strategy } from '@jackwener/opencli/registry';
+ import { ArgumentError, EmptyResultError } from '@jackwener/opencli/errors';
+ import {
+-    GEMINI_APP_URL,
++    geminiAppUrl,
+     GEMINI_DOMAIN,
+     ensureGeminiPage,
+     getGeminiConversationList,
+@@ -34,7 +34,7 @@ async function resolveTargetUrl(page, query) {
+         raw.startsWith('/app/') ||
+         /^[a-f0-9]{16,}$/i.test(raw);
+     if (directId && looksLikeId) {
+-        return `${GEMINI_APP_URL}/${directId}`;
++        return geminiAppUrl(`/${directId}`);
+     }
+ 
+     const conversations = await getGeminiConversationList(page);
 diff --git a/clis/gemini/models.js b/clis/gemini/models.js
 index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..8c1ccd83c5fa92f4e2d0999a4c9a332fd78c4d0a 100644
 --- a/clis/gemini/models.js
@@ -759,16 +818,114 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..8c1ccd83c5fa92f4e2d0999a4c9a332f
          // Step 3: Read model entries from the open menu.
          const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f644138da 100644
+index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce00a59598 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
-@@ -1,4 +1,4 @@
+@@ -1,6 +1,34 @@
 -import { CommandExecutionError, TimeoutError } from '@jackwener/opencli/errors';
-+import { CliError, CommandExecutionError, EmptyResultError, EXIT_CODES, TimeoutError } from '@jackwener/opencli/errors';
++import { AuthRequiredError, CliError, CommandExecutionError, EmptyResultError, EXIT_CODES, TimeoutError } from '@jackwener/opencli/errors';
++import { GOOGLE_ACCOUNT_PROBE } from '../_shared/google-account.js';
  export const GEMINI_DOMAIN = 'gemini.google.com';
  export const GEMINI_APP_URL = 'https://gemini.google.com/app';
++/**
++ * The Google account Gemini runs as, from OPENCLI_GEMINI_ACCOUNT (an email),
++ * or null for the browser's default account.
++ *
++ * A browser signed in to several Google accounts serves gemini.google.com/app
++ * as its first account, and an account without the Gemini app (a Workspace
++ * account with Gemini turned off) is redirected to the marketing landing page:
++ * no composer, no model picker, nothing a command can drive. Google's
++ * `authuser` parameter names the account by email, which stays right however
++ * the browser's sign-ins are ordered.
++ */
++export function geminiAccount() {
++    const account = process.env.OPENCLI_GEMINI_ACCOUNT?.trim();
++    return account ? account : null;
++}
++/** A Gemini app URL (`path` under /app) opened as the configured account. */
++export function geminiAppUrl(path = '') {
++    const url = new URL(GEMINI_APP_URL + path);
++    const account = geminiAccount();
++    if (account)
++        url.searchParams.set('authuser', account);
++    return url.href;
++}
++/** Whether a pathname is the Gemini app (`/app`, `/u/<n>/app`, or under them). */
++export function isGeminiAppPath(pathname) {
++    return /^(?:\/u\/\d+)?\/app(?:\/|$)/.test(pathname);
++}
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
-@@ -1969,6 +1969,7 @@ function openModelPickerForThinkingScript() {
+ export const GEMINI_DEEP_RESEARCH_DEFAULT_CONFIRM_LABELS = [
+     'Start research',
+@@ -1149,22 +1177,53 @@ function clickGeminiConversationByTitleScript(query) {
+ function currentUrlScript() {
+     return 'window.location.href';
+ }
+-export async function isOnGemini(page) {
++/**
++ * Whether the tab shows the Gemini app as the configured account.
++ *
++ * Being on gemini.google.com is not enough: an account without the Gemini app
++ * is shown the landing page at the same host. When an account is configured
++ * and the page names a different signed-in one, the tab is not ours either.
++ * A page whose account control cannot be read is taken at its path, so a
++ * redesigned account control does not reload the tab under a running turn.
++ */
++export async function isOnGeminiApp(page) {
+     const url = await page.evaluate(currentUrlScript()).catch(() => '');
+     if (typeof url !== 'string' || !url)
+         return false;
++    let parsed;
+     try {
+-        const hostname = new URL(url).hostname;
+-        return hostname === GEMINI_DOMAIN || hostname.endsWith(`.${GEMINI_DOMAIN}`);
++        parsed = new URL(url);
+     }
+     catch {
+         return false;
+     }
++    const hostname = parsed.hostname;
++    if (hostname !== GEMINI_DOMAIN && !hostname.endsWith(`.${GEMINI_DOMAIN}`))
++        return false;
++    if (!isGeminiAppPath(parsed.pathname))
++        return false;
++    const account = geminiAccount();
++    if (!account)
++        return true;
++    const shown = await signedInGeminiAccount(page);
++    return shown === null || shown.toLowerCase() === account.toLowerCase();
++}
++/** The email of the Google account the Gemini tab is signed in as, or null when unreadable. */
++async function signedInGeminiAccount(page) {
++    const raw = await page.evaluate(GOOGLE_ACCOUNT_PROBE).catch(() => null);
++    const result = raw && typeof raw === 'object' && typeof raw.session === 'string' ? raw.data : raw;
++    return result && result.ok === true && typeof result.email === 'string' && result.email ? result.email : null;
+ }
+ export async function ensureGeminiPage(page) {
+-    if (!(await isOnGemini(page))) {
+-        await page.goto(GEMINI_APP_URL, { waitUntil: 'load', settleMs: 2500 });
++    if (!(await isOnGeminiApp(page))) {
++        await page.goto(geminiAppUrl(), { waitUntil: 'load', settleMs: 2500 });
+         await page.wait(1);
++        if (!(await isOnGeminiApp(page))) {
++            await requireGeminiNotBlocked(page);
++            const shown = await signedInGeminiAccount(page);
++            const account = geminiAccount();
++            throw new AuthRequiredError(GEMINI_DOMAIN, `The Gemini app is not available to ${shown ? `the signed-in Google account ${shown}` : 'the browser, which is not signed in to Google'}${account && shown && shown.toLowerCase() !== account.toLowerCase() ? ` (OPENCLI_GEMINI_ACCOUNT is ${account}, which the browser is not signed in to)` : ''}: gemini.google.com shows its landing page instead of the app. Sign in to Gemini in opencli's browser${account ? '' : ', or set OPENCLI_GEMINI_ACCOUNT to an account that has the Gemini app'}.`);
++        }
+     }
+     // Reused adapter tabs can be inactive after another site ran. Gemini's
+     // response animation then stays pending even when the model has finished.
+@@ -1225,7 +1284,7 @@ export async function startNewGeminiChat(page) {
+     await ensureGeminiPage(page);
+     const action = await page.evaluate(clickNewChatScript());
+     if (action === 'navigate') {
+-        await page.goto(GEMINI_APP_URL, { waitUntil: 'load', settleMs: 2500 });
++        await page.goto(geminiAppUrl(), { waitUntil: 'load', settleMs: 2500 });
+     }
+     await page.wait(1);
+     return action;
+@@ -1969,6 +2028,7 @@ function openModelPickerForThinkingScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -776,7 +933,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -1983,6 +1984,18 @@ function openModelPickerForThinkingScript() {
+@@ -1983,6 +2043,18 @@ function openModelPickerForThinkingScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -795,7 +952,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2072,10 +2085,18 @@ function clickThinkingToggleInMenuScript() {
+@@ -2072,10 +2144,18 @@ function clickThinkingToggleInMenuScript() {
          'GEM-MENU-ITEM',
        ];
  
@@ -816,7 +973,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
        }
  
        if (menuItems.length === 0) {
-@@ -2109,21 +2130,93 @@ function clickThinkingToggleInMenuScript() {
+@@ -2109,21 +2189,93 @@ function clickThinkingToggleInMenuScript() {
   * already-open model-picker menu (after the thinking section has been
   * expanded).  Closes the menu after selection (or on failure).
   *
@@ -915,7 +1072,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
  
        const isVisible = (el) => {
          if (!(el instanceof HTMLElement)) return false;
-@@ -2151,7 +2244,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2151,7 +2303,7 @@ function selectThinkingInMenuScript(thinkingValue) {
        const matchesThinking = (node) => {
          const combined = normalize(textOf(node));
          if (!combined) return false;
@@ -924,7 +1081,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
        };
  
        // Search inside visible menu containers first.
-@@ -2191,8 +2284,8 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2191,8 +2343,8 @@ function selectThinkingInMenuScript(thinkingValue) {
        candidates.sort((a, b) => {
          const aText = normalize(textOf(a));
          const bText = normalize(textOf(b));
@@ -935,7 +1092,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          if (aExact && !bExact) return -1;
          if (!aExact && bExact) return 1;
          return 0;
-@@ -2228,7 +2321,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2228,7 +2380,7 @@ function selectThinkingInMenuScript(thinkingValue) {
   *  6. Close the menu.
   *
   * @param {object} page - Puppeteer page object
@@ -944,7 +1101,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
   * @returns {Promise<string>} matched label text, or empty string on failure
   */
  export async function selectGeminiThinking(page, thinkingValue) {
-@@ -2248,7 +2341,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2248,7 +2400,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
  
      if (toggleClicked) {
          // Step 4: Wait for the expanded thinking items to render.
@@ -968,7 +1125,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
      }
  
      // Step 5: Select the requested thinking level (also closes the menu).
-@@ -2260,7 +2368,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2260,7 +2427,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
          return matched;
      }
  
@@ -1043,7 +1200,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
  }
  
  // ── Current model detection ─────────────────────────────────────────
-@@ -2269,8 +2443,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2269,8 +2502,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
   * Browser evaluate script that reads the currently selected model from the
   * Gemini model-picker button and returns its canonical model ID.
   *
@@ -1055,7 +1212,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
   *
   * @returns a function string for page.evaluate()
   */
-@@ -2299,6 +2474,7 @@ function getCurrentGeminiModelScript() {
+@@ -2299,6 +2533,7 @@ function getCurrentGeminiModelScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -1063,7 +1220,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -2313,6 +2489,18 @@ function getCurrentGeminiModelScript() {
+@@ -2313,6 +2548,18 @@ function getCurrentGeminiModelScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -1082,7 +1239,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2355,35 +2543,13 @@ function getCurrentGeminiModelScript() {
+@@ -2355,35 +2602,13 @@ function getCurrentGeminiModelScript() {
          return null;
        };
  
@@ -1121,7 +1278,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
      })()
      `;
  }
-@@ -2604,7 +2770,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2604,7 +2829,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -1134,7 +1291,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,6 +2827,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,6 +2886,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -1143,7 +1300,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
                  return structuredCandidate;
              }
              continue;
-@@ -2674,6 +2846,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2905,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -1152,7 +1309,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
              return transcriptCandidate;
          }
      }
-@@ -2712,29 +2886,7 @@ function selectModelInMenuScript(modelId) {
+@@ -2712,29 +2945,7 @@ function selectModelInMenuScript(modelId) {
  
        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
  
@@ -1183,7 +1340,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
  
        const MENU_SELECTORS = [
          '[role="menu"] [role="menuitem"]',
-@@ -2771,10 +2923,12 @@ function selectModelInMenuScript(modelId) {
+@@ -2771,10 +2982,12 @@ function selectModelInMenuScript(modelId) {
        }
  
        let matched = null;
@@ -1198,7 +1355,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
            break;
          }
        }
-@@ -2783,6 +2937,10 @@ function selectModelInMenuScript(modelId) {
+@@ -2783,6 +2996,10 @@ function selectModelInMenuScript(modelId) {
          try { document.body.click(); } catch (_) {}
          return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
        }
@@ -1209,7 +1366,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
  
        try {
          matched.click();
-@@ -2829,6 +2987,7 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2829,6 +3046,7 @@ export async function selectGeminiModel(page, modelId) {
      // Find and click the matching menu item.
      const raw = await page.evaluate(selectModelInMenuScript(modelId));
      const result = unwrapGeminiEvaluateResult(raw, 'Gemini model selection');
@@ -1217,7 +1374,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
      if (!result || !result.ok) {
          throw new CommandExecutionError(
              result?.reason || 'Failed to select Gemini model "' + modelId + '"'
-@@ -2837,7 +2996,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +3055,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -1230,7 +1387,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +3008,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +3067,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }
@@ -1293,7 +1450,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..709dbeac8cc17653432aa8a66c7d679f
 +/** Open a conversation by id on this page; refuse one that shows no turns. */
 +export async function openGeminiConversation(page, id) {
 +    await ensureGeminiPage(page);
-+    await page.goto(`${GEMINI_APP_URL}/${id}`, { waitUntil: 'load', settleMs: 2500 });
++    await page.goto(geminiAppUrl(`/${id}`), { waitUntil: 'load', settleMs: 2500 });
 +    await requireGeminiNotBlocked(page);
 +    const turns = await getGeminiVisibleTurns(page);
 +    if (!Array.isArray(turns) || turns.length === 0) {
