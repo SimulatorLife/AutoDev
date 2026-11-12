@@ -98,14 +98,17 @@ test("compaction sources stay in metadata", () => {
 
 test("compaction checkpoint sections are stable", () => {
   const headings = [...prompt.matchAll(/^## (.+)$/gmu)];
-  assert.deepEqual(headings.map((match) => match[1]), [
-    "Objective",
-    "Requirements",
-    "Decisions",
-    "Work State",
-    "Next Actions",
-    "References & Critical Facts"
-  ]);
+  assert.deepEqual(
+    headings.map((match) => match[1]),
+    [
+      "Objective",
+      "Requirements",
+      "Decisions",
+      "Work State",
+      "Next Actions",
+      "References & Critical Facts"
+    ]
+  );
   assert.match(prompt, /\(none\).*empty sections/u);
   assert.match(
     prompt,
