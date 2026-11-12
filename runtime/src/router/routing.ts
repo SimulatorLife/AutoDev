@@ -41,6 +41,8 @@ export interface RawRouteConfig {
   baseUrl: string;
   healthUrl?: string;
   envKey?: string | null;
+  /** Maximum simultaneous requests for this provider; absent means unlimited. */
+  maxConcurrentRequests?: number;
 }
 
 export interface ProviderRoute {
@@ -49,6 +51,8 @@ export interface ProviderRoute {
   baseUrl: string;
   healthUrl?: string;
   envKey?: string | null;
+  /** Maximum simultaneous requests for this provider; absent means unlimited. */
+  maxConcurrentRequests?: number;
 }
 
 /** External operator links for one provider; each is an absolute https URL. */
@@ -190,7 +194,8 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     baseUrl: "http://127.0.0.1:4004/v1",
     healthUrl:
       "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
-    envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
+    envKey: "CODEX_ROUTER_OPENCLI_API_KEY",
+    maxConcurrentRequests: 1
   },
   {
     provider: "opencli-gemini",
@@ -198,7 +203,8 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     baseUrl: "http://127.0.0.1:4004/v1",
     healthUrl:
       "http://127.0.0.1:4004/health/liveliness?provider=opencli-gemini",
-    envKey: "CODEX_ROUTER_OPENCLI_API_KEY"
+    envKey: "CODEX_ROUTER_OPENCLI_API_KEY",
+    maxConcurrentRequests: 1
   }
 ];
 
@@ -305,6 +311,15 @@ function validateRoutesBlock(
     )
       throw new Error(
         `Routing config provider ${provider} route envKey must be a string or null.`
+      );
+    if (
+      route.maxConcurrentRequests !== undefined &&
+      (typeof route.maxConcurrentRequests !== "number" ||
+        !Number.isSafeInteger(route.maxConcurrentRequests) ||
+        route.maxConcurrentRequests < 1)
+    )
+      throw new Error(
+        `Routing config provider ${provider} route maxConcurrentRequests must be a positive integer.`
       );
   }
 }
@@ -515,7 +530,10 @@ function buildRoutes(
         ? environment.CODEX_ROUTER_GPT_BASE_URL
         : route.baseUrl,
     ...(route.healthUrl === undefined ? {} : { healthUrl: route.healthUrl }),
-    ...(route.envKey === undefined ? {} : { envKey: route.envKey })
+    ...(route.envKey === undefined ? {} : { envKey: route.envKey }),
+    ...(route.maxConcurrentRequests === undefined
+      ? {}
+      : { maxConcurrentRequests: route.maxConcurrentRequests })
   }));
 }
 

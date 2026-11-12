@@ -2569,6 +2569,20 @@ single list; the route patterns and the site registry in
   (`CHAT_MISMATCH`) and is not recorded; a ChatGPT reply is also paired by a
   message unique to its turn. A tab moved between turns is therefore
   harmless, and one moved during a reply can fail a turn but not misroute it.
+- **Router admission avoids an occupied opencli tab when another route is available.**
+  Each opencli provider declares `maxConcurrentRequests: 1` in the routing
+  configuration, independently for ChatGPT and Gemini even though they share
+  the bridge port. The router reserves a per-provider request slot before
+  dispatch. A role fallback chain defers a saturated provider when another
+  eligible, non-cooling provider has room; if alternatives fail, or the chain
+  has only that provider, the request waits for its slot instead of failing
+  immediately. Direct concrete-model requests always remain on their chosen
+  provider and queue. Waiting requests can be cancelled without being sent.
+  Capacity is not a provider failure: it does not cool the provider, change
+  its health, or count live agents as active transport requests. The bridge
+  still serializes requests per browser site and retains its wait/turn budgets.
+  Provider-specific `/health` reports `busy` and `queueDepth` diagnostically;
+  a healthy occupied tab continues returning HTTP 200.
 - **One budget per turn, and a busy site is not a broken site.** A site is one
   browser tab, so turns for it run one at a time and a turn that finds the tab
   busy waits for it. A turn has two allowances of the same length (the turn

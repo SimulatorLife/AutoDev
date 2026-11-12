@@ -273,6 +273,75 @@ export const UPSTREAM_TRANSPORT_MAX_ATTEMPTS = positiveDuration(
 
 export const activeProviderRequests = new Map<string, number>();
 
+/** Admission for limited upstream providers, independent of live agent activity. */
+interface ProviderCapacityWaiter {
+  limit: number;
+  admit: () => void;
+}
+const providerCapacityWaiters = new Map<string, ProviderCapacityWaiter[]>();
+
+function wakeProviderCapacityWaiters(provider: string): void {
+  const waiters = providerCapacityWaiters.get(provider);
+  if (!waiters) return;
+  while (waiters.length > 0 && getActiveRequests(provider) < waiters[0]!.limit) {
+    waiters.shift()!.admit();
+  }
+  if (waiters.length === 0) providerCapacityWaiters.delete(provider);
+}
+
+function providerAtCapacity(route: ProviderRoute): boolean {
+  return route.maxConcurrentRequests !== undefined &&
+    getActiveRequests(route.provider) >= route.maxConcurrentRequests;
+}
+
+/** Reserve capacity before dispatch; cancellable FIFO waiting when all slots are held. */
+async function acquireProviderCapacity(
+  route: ProviderRoute,
+  signal: AbortSignal | null
+): Promise<(() => void) | null> {
+  if (signal?.aborted) return null;
+  const release = (): (() => void) => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      decrementActiveRequests(route.provider);
+    };
+  };
+  const limit = route.maxConcurrentRequests;
+  if (
+    limit === undefined ||
+    (!providerCapacityWaiters.has(route.provider) && !providerAtCapacity(route))
+  ) {
+    incrementActiveRequests(route.provider);
+    return release();
+  }
+  return new Promise((resolve) => {
+    const waiters = providerCapacityWaiters.get(route.provider) ?? [];
+    const onAbort = (): void => {
+      const index = waiters.indexOf(waiter);
+      if (index === -1) return;
+      waiters.splice(index, 1);
+      if (waiters.length === 0) providerCapacityWaiters.delete(route.provider);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(null);
+      wakeProviderCapacityWaiters(route.provider);
+    };
+    const waiter: ProviderCapacityWaiter = {
+      limit,
+      admit: () => {
+        signal?.removeEventListener("abort", onAbort);
+        incrementActiveRequests(route.provider);
+        resolve(release());
+      }
+    };
+    waiters.push(waiter);
+    providerCapacityWaiters.set(route.provider, waiters);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export function getActiveRequests(provider: string): number {
   return activeProviderRequests.get(provider) ?? 0;
 }
@@ -288,6 +357,7 @@ export function decrementActiveRequests(provider: string): void {
   } else {
     activeProviderRequests.set(provider, current - 1);
   }
+  wakeProviderCapacityWaiters(provider);
 }
 
 export function isClientDisconnectError(error: unknown): boolean {
@@ -2706,8 +2776,19 @@ export async function proxyConcreteResponse(
     requestId,
     sessionKey
   });
-  incrementActiveRequests(route.provider);
-
+  const releaseProviderCapacity = await acquireProviderCapacity(
+    route,
+    clientSignal
+  );
+  if (!releaseProviderCapacity) {
+    recordConcreteAbort(ctx);
+    endConcreteRequest(activitySubject, requestId, "failure");
+    endLogicalRequestSpan(logicalSpan, {
+      status: "error",
+      errorMessage: "client aborted before provider admission"
+    });
+    return;
+  }
   try {
     await withLogicalSpan(logicalSpan, async () => {
       await runConcreteAttempts(ctx, 0);
@@ -2721,7 +2802,7 @@ export async function proxyConcreteResponse(
       errorMessage: finalOutcome === "error" ? "provider request failed" : null,
       provider: finalOutcome === "ok" ? route.provider : null
     });
-    decrementActiveRequests(route.provider);
+    releaseProviderCapacity();
   }
 }
 
@@ -3532,6 +3613,35 @@ export async function proxyFallbackChain(
       return "unavailable";
     }
     COOLDOWNS.clearProbeFailures(route.provider);
+    // Contention is neither a provider failure nor a health downgrade. Try a
+    // ready peer first, but keep this candidate for the last-resort pass so a
+    // sole usable provider can queue behind the tab already using its slot.
+    if (
+      selection === "primary" &&
+      providerAtCapacity(route) &&
+      candidates.some(
+        (other) =>
+          other.provider !== route.provider &&
+          !attempted.has(other.provider) &&
+          ROUTING_POLICY.routeDisabledReason(other, fbCtx.providerRole) === null &&
+          !COOLDOWNS.isCooling(other.provider, Date.now(), other.model) &&
+          !providerAtCapacity(other)
+      )
+    ) {
+      skipped.push(route);
+      recordRouterEvent({
+        phase: "skipped",
+        requestId: fbCtx.requestId,
+        role: fbCtx.role,
+        origin: fbCtx.origin,
+        requestedModel: fbCtx.modelName,
+        provider: route.provider,
+        model: route.model,
+        workspace: fbCtx.workspace,
+        failureClass: "capacity"
+      });
+      return "unavailable";
+    }
     const outcome = await attemptCandidate(
       fbCtx,
       route,
@@ -4249,11 +4359,18 @@ async function attemptCandidate(
   _attempted: Set<string>
 ): Promise<"served" | "terminal" | "fallback"> {
   const attemptStartedAt = Date.now();
+  const releaseProviderCapacity = await acquireProviderCapacity(
+    route,
+    ctx.clientSignal
+  );
+  if (!releaseProviderCapacity) {
+    recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
+    return "terminal";
+  }
   _attempted.add(route.provider);
   recordFallbackSelected(ctx, route, selection);
   beginCandidateRequest(ctx, route);
   emitFallbackBridgeContext(ctx, route);
-  incrementActiveRequests(route.provider);
 
   try {
     const result = await fetchCandidate(ctx, route, selection);
@@ -4285,7 +4402,7 @@ async function attemptCandidate(
       error
     );
   } finally {
-    decrementActiveRequests(route.provider);
+    releaseProviderCapacity();
   }
 }
 
