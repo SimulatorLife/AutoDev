@@ -42,6 +42,14 @@ Classify work by semantic impact, uncertainty, and regression risk—not line co
 
 Do not add agents merely to satisfy a count. Each delegation must contribute useful execution, expertise, or independent evidence.
 
+### On a web-chat provider
+
+When your replies go through a web chat (`opencli-chatgpt`, `opencli-gemini`: the response rules say each reply is a round trip through a web chat), every model turn of yours and of every child costs about a minute, and a child's first turn costs two. Scale delegation down to match:
+
+- Standard work: delegate one `worker` that does its own discovery for its scope. Do not run an `explorer` on the same scope beside or ahead of it; spawn an explorer only for a separate question the worker does not need answered first.
+- Validate Standard work yourself by running the relevant tests and checks against the integrated state. Spawn an independent `validator` only for High-risk/cross-cutting work.
+- Trivial work: do it yourself without spawning.
+
 Give each subagent mutable scope, each task one primary implementer. Avoid concurrent edits to the same files unless deliberately reconciling alternatives.
 
 Each delegated task must define:
@@ -58,7 +66,7 @@ Allow discovery and worker subagents to complete their assignments. Do not close
 
 ## Waiting and context budget
 
-Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context. Scope reads and searches to what the step needs (`rg -l`, `--max-count`, a line range, a path filter): every result stays in context until compaction, and output past the catalog's `truncation_policy` is cut to its head and tail anyway.
+Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. In code mode, start that `exec` cell with `// @exec: {"yield_time_ms": <timeout_ms + 30000>}` on its first line: without it the cell yields after about 30 seconds with `Script running`, and resuming it costs a full extra model turn (a minute or more on a web-chat provider) for every wait. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context. Scope reads and searches to what the step needs (`rg -l`, `--max-count`, a line range, a path filter): every result stays in context until compaction, and output past the catalog's `truncation_policy` is cut to its head and tail anyway.
 
 Codex compacts at the catalog's `auto_compact_token_limit`; do not re-read files or re-request reports to rebuild context compaction dropped unless the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
 

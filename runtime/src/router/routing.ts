@@ -8,7 +8,8 @@ import {
   type ProviderAgentLimits,
   type ProviderRole,
   type ProviderRoleAssignment,
-  type RoutingPolicyState} from "@simulatorlife/autodev-core";
+  type RoutingPolicyState
+} from "@simulatorlife/autodev-core";
 import {
   providerInjectsRoleMcp,
   roleScopedMcp
@@ -836,6 +837,60 @@ export class RoutingPolicy {
     else next[role] = model.trim();
     if (Object.keys(next).length === 0) this.agentModels.delete(key);
     else this.agentModels.set(key, next);
+  }
+
+  /**
+   * Forget an operator model choice the provider said it does not have.
+   *
+   * A role assignment or agent-role preference can name a model id the
+   * provider later stops recognising: opencli renamed Gemini's models
+   * (`4-argon-complex-tasks` became `4-argon`), and the persisted orchestrator
+   * assignment kept the old id. Every request then picked that id, was refused
+   * as an unknown model, cooled the model down for a few minutes, and tried it
+   * again -- about twenty failed hops per session, each spending seconds
+   * before the router fell through to the next provider. The provider's
+   * refusal is the authority: the choice is cleared, so the role falls back to
+   * the tier's configured model. A configured model is never cleared here; a
+   * refusal of one is a provider fault the cooldown handles.
+   *
+   * Returns whether any choice named the model.
+   */
+  forgetRejectedModel(provider: unknown, model: unknown): boolean {
+    if (typeof provider !== "string" || typeof model !== "string") return false;
+    const key = this.providerKey(provider);
+    const modelId = model.trim();
+    if (!modelId || !Object.hasOwn(this.config.providers, key)) return false;
+    const configured = this.config.providers[key]?.models ?? {};
+    if (Object.values(configured).some((id) => id.trim() === modelId))
+      return false;
+    let forgot = false;
+    const assignments = this.roleAssignments.get(key);
+    if (assignments) {
+      for (const role of PROVIDER_ROLES) {
+        const assignment = assignments[role];
+        if (assignment?.model?.trim() !== modelId) continue;
+        assignments[role] = {
+          priority: assignment.priority,
+          model: null,
+          ...(assignment.reasoningEffort
+            ? { reasoningEffort: assignment.reasoningEffort }
+            : {})
+        };
+        forgot = true;
+      }
+    }
+    const preferences = this.agentModels.get(key);
+    if (preferences) {
+      const kept = Object.fromEntries(
+        Object.entries(preferences).filter(([, id]) => id.trim() !== modelId)
+      );
+      if (Object.keys(kept).length !== Object.keys(preferences).length) {
+        forgot = true;
+        if (Object.keys(kept).length === 0) this.agentModels.delete(key);
+        else this.agentModels.set(key, kept);
+      }
+    }
+    return forgot;
   }
 
   /**

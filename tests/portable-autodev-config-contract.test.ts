@@ -49,7 +49,26 @@ const EXPECTED_SKILLS = Object.freeze([
   "imagegen",
   "plugin-creator",
   "skill-creator",
-  "skill-installer"
+  "skill-installer",
+  // Plugin skills Codex Desktop lists even while their plugin is disabled.
+  "google-drive:google-docs",
+  "google-drive:google-drive",
+  "google-drive:google-drive-comments",
+  "google-drive:google-sheets",
+  "google-drive:google-slides",
+  "openai-developers:agents",
+  "openai-developers:devday-guide",
+  "openai-developers:openai-api-migration",
+  "openai-developers:openai-api-troubleshooting",
+  "openai-developers:openai-computer-use",
+  "openai-developers:openai-platform-api-key",
+  "openai-developers:setup",
+  "sites:sites",
+  "sites:sites-remix",
+  "visualize:visualize",
+  "work-pets:create-pet",
+  "work-pets:pets",
+  "work-pets:update-pet"
 ]);
 
 type PortableFixture = {

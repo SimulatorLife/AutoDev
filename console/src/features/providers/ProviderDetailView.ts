@@ -728,7 +728,9 @@ export function ProviderQuotaLimitsPanel({
               window.status === "unlimited"
                 ? "Unlimited"
                 : window.usedPercent === null
-                  ? window.status
+                  ? window.status === "unavailable"
+                    ? "Not reported"
+                    : window.status
                   : `${Math.round(window.usedPercent)}% used (${Math.round(
                       window.remainingPercent ?? 100 - window.usedPercent
                     )}% remaining)`;

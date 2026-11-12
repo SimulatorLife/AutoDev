@@ -28,6 +28,8 @@ const execFileAsync = promisify(execFile);
 const QUOTA_DISCOVERY_TIMEOUT_MS = 6000;
 const ANTIGRAVITY_FETCH_MODELS_URL =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+const ANTIGRAVITY_QUOTA_SUMMARY_URL =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 const ANTIGRAVITY_USER_AGENT = "antigravity/1.5.3 darwin/arm64";
 const CODEX_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const ANTHROPIC_OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -518,6 +520,153 @@ export function parseAntigravityAvailableModelsQuota(
     };
   }
   return result;
+}
+
+/** The quota summary's own window names, as the Console's window kinds. */
+const ANTIGRAVITY_SUMMARY_WINDOW_KINDS: Readonly<
+  Record<string, ControlApiQuotaWindowKind>
+> = { "5h": "five_hour", weekly: "weekly", daily: "daily", monthly: "monthly" };
+
+/**
+ * The Antigravity provider a quota-summary group meters, from the models the
+ * group names: `Claude and GPT models` (`Models within this group: Claude
+ * Opus, Claude Sonnet, GPT-OSS`) is `antigravity-claude-gpt`. Argon is named
+ * before Gemini because an Argon group is also a Gemini one.
+ */
+function antigravitySummaryGroupProvider(
+  group: Record<string, unknown>
+): AntigravityProvider | null {
+  const text = [group.displayName, group.description]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (text.includes("argon")) return "antigravity-argon";
+  if (text.includes("claude") || text.includes("gpt"))
+    return "antigravity-claude-gpt";
+  if (text.includes("gemini")) return "antigravity-gemini";
+  return null;
+}
+
+/**
+ * Parse Antigravity `v1internal:retrieveUserQuotaSummary` into each Antigravity
+ * provider's limit windows.
+ *
+ * The summary is where agy states its limits as limits: within each model
+ * group the models share a 5-hour limit and a weekly limit, each a bucket with
+ * its own remaining fraction and reset. It lists only the groups the account
+ * is metered on, so a provider it does not name keeps the windows
+ * `fetchAvailableModels` implies.
+ */
+export function parseAntigravityQuotaSummary(
+  payload: unknown,
+  nowMs = Date.now()
+): Partial<Record<AntigravityProvider, ControlApiQuotaWindow[]>> {
+  const result: Partial<Record<AntigravityProvider, ControlApiQuotaWindow[]>> =
+    {};
+  if (!isRecord(payload) || !Array.isArray(payload.groups)) return result;
+  for (const group of payload.groups) {
+    if (!isRecord(group) || !Array.isArray(group.buckets)) continue;
+    const provider = antigravitySummaryGroupProvider(group);
+    if (!provider) continue;
+    const windows = group.buckets.flatMap((bucket: unknown) => {
+      const window = antigravitySummaryWindow(provider, bucket, nowMs);
+      return window ? [window] : [];
+    });
+    if (windows.length > 0)
+      result[provider] = windows.sort(
+        (a, b) => windowOrder(a.kind) - windowOrder(b.kind)
+      );
+  }
+  return result;
+}
+
+/** One quota-summary bucket as a limit window, or null for one it cannot read. */
+function antigravitySummaryWindow(
+  provider: AntigravityProvider,
+  bucket: unknown,
+  nowMs: number
+): ControlApiQuotaWindow | null {
+  if (!isRecord(bucket) || bucket.disabled === true) return null;
+  const kind =
+    typeof bucket.window === "string"
+      ? ANTIGRAVITY_SUMMARY_WINDOW_KINDS[bucket.window]
+      : undefined;
+  if (!kind) return null;
+  const resetsAt = canonicalIso(bucket.resetTime);
+  // A bucket whose reset has passed since the reading is a fresh, unused
+  // window; proto3 JSON omits a zero remaining fraction.
+  const resetPassed = resetsAt !== null && Date.parse(resetsAt) <= nowMs;
+  let remainingFraction = 0;
+  if (resetPassed) remainingFraction = 1;
+  else if (
+    typeof bucket.remainingFraction === "number" &&
+    Number.isFinite(bucket.remainingFraction)
+  )
+    remainingFraction = Math.max(0, Math.min(1, bucket.remainingFraction));
+  const remainingPercent = clampPercent(remainingFraction * 100);
+  const usedPercent = clampPercent(100 - remainingPercent);
+  return {
+    id: `${provider}-${kind}`,
+    label: windowLabelFromKind(kind, "Usage limit"),
+    kind,
+    status: statusFromUsedPercent(usedPercent),
+    usedPercent,
+    remainingPercent,
+    resetsAt: resetPassed ? null : resetsAt
+  };
+}
+
+function windowOrder(kind: ControlApiQuotaWindowKind): number {
+  return ["five_hour", "daily", "weekly", "monthly", "rolling"].indexOf(kind);
+}
+
+/** Every Antigravity model group is metered by a 5-hour and a weekly limit. */
+const ANTIGRAVITY_LIMIT_KINDS = ["five_hour", "weekly"] as const;
+
+/**
+ * Each Antigravity provider's quota: its models from `fetchAvailableModels`,
+ * and its limit windows from the quota summary wherever the summary names the
+ * provider's group.
+ *
+ * Every provider carries both of its limits. A window neither read reports --
+ * the summary does not list the group, and the models imply only the window
+ * their next reset falls in -- is stated as not observed rather than left
+ * out, because a missing row reads as a limit the provider does not have.
+ */
+export function mergeAntigravityQuotas(
+  modelQuotas: Partial<Record<AntigravityProvider, ControlApiProviderQuota>>,
+  summaryWindows: Partial<Record<AntigravityProvider, ControlApiQuotaWindow[]>>,
+  nowMs = Date.now()
+): Partial<Record<AntigravityProvider, ControlApiProviderQuota>> {
+  const merged: Partial<Record<AntigravityProvider, ControlApiProviderQuota>> =
+    {};
+  for (const provider of ANTIGRAVITY_PROVIDERS) {
+    const fromModels = modelQuotas[provider];
+    const reported = summaryWindows[provider] ?? fromModels?.windows;
+    if (!reported) continue;
+    const windows = ANTIGRAVITY_LIMIT_KINDS.map(
+      (kind): ControlApiQuotaWindow =>
+        reported.find((window) => window.kind === kind) ?? {
+          id: `${provider}-${kind}`,
+          label: windowLabelFromKind(kind, "Usage limit"),
+          kind,
+          status: "unavailable",
+          usedPercent: null,
+          remainingPercent: null,
+          resetsAt: null
+        }
+    );
+    merged[provider] = {
+      provider,
+      status: "ok",
+      source: "antigravity-cloudcode-api",
+      updatedAt: new Date(nowMs).toISOString(),
+      models: fromModels?.models ?? [],
+      windows,
+      summaryStatus: combineStatuses(windows.map((w) => w.status))
+    };
+  }
+  return merged;
 }
 
 /**
@@ -1048,10 +1197,11 @@ async function readAntigravityCliAccessToken(): Promise<string | null> {
   }
 }
 
-async function fetchAntigravityModelsWithToken(
+function fetchAntigravityWithToken(
+  url: string,
   accessToken: string
 ): Promise<Response> {
-  return fetch(ANTIGRAVITY_FETCH_MODELS_URL, {
+  return fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -1069,7 +1219,10 @@ async function fetchAntigravityQuotas(
   try {
     let token = await readAntigravityCliAccessToken();
     if (!token) return {};
-    let response = await fetchAntigravityModelsWithToken(token);
+    let response = await fetchAntigravityWithToken(
+      ANTIGRAVITY_FETCH_MODELS_URL,
+      token
+    );
     if (response.status === 401 || response.status === 403) {
       // Trigger `agy models` once so the CLI refreshes its stored OAuth token.
       await execFileAsync(findAgyBinary() ?? "agy", ["models"], {
@@ -1078,11 +1231,26 @@ async function fetchAntigravityQuotas(
       }).catch(() => null);
       token = await readAntigravityCliAccessToken();
       if (!token) return {};
-      response = await fetchAntigravityModelsWithToken(token);
+      response = await fetchAntigravityWithToken(
+        ANTIGRAVITY_FETCH_MODELS_URL,
+        token
+      );
     }
     if (!response.ok) return {};
-    const payload = await response.json();
-    return parseAntigravityAvailableModelsQuota(payload, nowMs);
+    const modelQuotas = parseAntigravityAvailableModelsQuota(
+      await response.json(),
+      nowMs
+    );
+    // The limit windows are a separate read; without them each provider keeps
+    // the window its models imply.
+    const summary = await fetchAntigravityWithToken(
+      ANTIGRAVITY_QUOTA_SUMMARY_URL,
+      token
+    ).catch(() => null);
+    const summaryWindows = summary?.ok
+      ? parseAntigravityQuotaSummary(await summary.json(), nowMs)
+      : {};
+    return mergeAntigravityQuotas(modelQuotas, summaryWindows, nowMs);
   } catch {
     return {};
   }
@@ -1091,8 +1259,8 @@ async function fetchAntigravityQuotas(
 /**
  * How long one Antigravity quota read answers for all three Antigravity
  * providers. A refresh discovers each provider separately; one
- * `fetchAvailableModels` response carries all three, so the second and third
- * read the first's answer instead of asking the API again.
+ * `fetchAvailableModels` and quota-summary read carries all three, so the
+ * second and third read the first's answer instead of asking the API again.
  */
 const ANTIGRAVITY_QUOTA_SHARE_MS = 10_000;
 

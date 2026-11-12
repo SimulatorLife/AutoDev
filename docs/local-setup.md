@@ -517,6 +517,17 @@ that works for each:
   AutoDev: `imagegen`, `plugin-creator`, `skill-creator`,
   `skill-installer`. `openai-docs` is intentionally kept because Codex
   self-knowledge is directly relevant to this repository.
+- **Remote-installed plugin skills** need per-skill disables too. Codex
+  Desktop 0.167 lists the skills of plugins installed for the account
+  (`openai-curated-remote`) even when the portable source disables the
+  plugin: every agent on 2026-11-12 carried `openai-developers`, `sites`,
+  `visualize`, `google-drive`, and `work-pets` skills, about 6 KB of
+  context per thread. The account's `openai-templates` skills, which the
+  machine-local config disables by name, were absent. So the portable
+  source also disables each of those skills by `<plugin>:<skill>` name,
+  and `google-drive` and `work-pets` as plugins. An isolated `CODEX_HOME`
+  cannot reproduce this, because it has no account-installed plugins. Check
+  the next live rollout's `### Available skills` to confirm.
 - `[skills.bundled] enabled = false` is **not** used at user level
   because it would also suppress `openai-docs`. `agents/roles/browser-tester.toml`
   keeps that key because that role legitimately does not need

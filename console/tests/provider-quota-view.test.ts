@@ -61,6 +61,16 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
         usedPercent: 18,
         remainingPercent: 82,
         resetsAt: "2026-11-09T19:30:00.000Z"
+      },
+      // A limit the provider has but did not report this read.
+      {
+        id: "antigravity-gemini-weekly",
+        label: "Weekly limit",
+        kind: "weekly",
+        status: "unavailable",
+        usedPercent: null,
+        remainingPercent: null,
+        resetsAt: null
       }
     ],
     models: [
@@ -449,6 +459,7 @@ test("ProvidersView renders each Antigravity provider's own quota windows and ve
     /data-provider-quota="antigravity-claude-gpt"/u
   );
   assert.match(providersMarkup, /5h: 18% used/u);
+  assert.match(providersMarkup, /7d: not reported/u);
   assert.match(providersMarkup, /5h: 40% used/u);
   assert.match(providersMarkup, /7d: 100% used/u);
   assert.match(providersMarkup, /data-provider-quota="minimax"/u);

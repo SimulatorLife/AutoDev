@@ -21,6 +21,7 @@ import {
   type ProviderFailureClass,
   recordRouterEvent
 } from "@simulatorlife/autodev-runtime/router/events";
+import { scheduleRouterStatePersist } from "@simulatorlife/autodev-runtime/router/persistence";
 import {
   type Candidate,
   type OrchestratorCandidate,
@@ -38,6 +39,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,
   providerSignInRequiredMessage
@@ -705,6 +707,25 @@ export function cooldownFor(
     model,
     detail: body === null ? null : providerErrorDetail(body)
   };
+}
+
+/**
+ * Cool a failed route down. A provider that refused the route's model as
+ * unknown also clears the operator choice that named it (see
+ * `forgetRejectedModel`), so the next request takes the tier's configured
+ * model instead of the same refusal after every cooldown.
+ */
+function coolDownRoute(provider: string, options: CooldownOptions): void {
+  COOLDOWNS.cooldownProvider(provider, options);
+  if (
+    options.failureClass === "invalid_model" &&
+    ROUTING_POLICY.forgetRejectedModel(provider, options.model)
+  ) {
+    writeErrorLine(
+      `${provider} does not have model ${options.model}; cleared the operator choice that named it`
+    );
+    scheduleRouterStatePersist();
+  }
 }
 
 const MAX_UPSTREAM_DETAIL_CHARS = 300;
@@ -2981,7 +3002,7 @@ async function handleConcreteStatusFailure(
   recordConcreteResult(ctx, "failure", result.status ?? 500, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
   if (result.retryable)
-    COOLDOWNS.cooldownProvider(
+    coolDownRoute(
       route.provider,
       cooldownFor(failureClass, result.limit, modelName, result.body ?? null)
     );
@@ -3092,7 +3113,7 @@ async function handleConcreteTransportError(
   const failureClass = classifyProviderFailure(502, errorMessage(error));
   recordConcreteResult(ctx, "failure", 502, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
-  COOLDOWNS.cooldownProvider(
+  coolDownRoute(
     route.provider,
     cooldownFor(failureClass, null, modelName, null)
   );
@@ -3626,7 +3647,7 @@ export async function proxyFallbackChain(
     const probe = await probeProvider(route);
     if (!probe.ok) {
       if (probe.failureClass !== "missing_credential") {
-        COOLDOWNS.cooldownProvider(route.provider, {
+        coolDownRoute(route.provider, {
           failureClass: probe.failureClass ?? PROBE_FAILURE_CLASS
         });
       }
@@ -4587,7 +4608,7 @@ async function handleCandidateSuccess(
       // pushes every other agent away from a working route. The refusal is
       // reported, and the provider keeps serving the traffic it can serve.
       if (failureClass !== "unsupported_request")
-        COOLDOWNS.cooldownProvider(
+        coolDownRoute(
           route.provider,
           cooldownFor(failureClass, responseResult.limit, route.model, null)
         );
@@ -4664,7 +4685,7 @@ async function handleCandidateSuccess(
           : false
     });
   } catch (streamError) {
-    COOLDOWNS.cooldownProvider(
+    coolDownRoute(
       route.provider,
       cooldownFor("upstream_error", null, route.model, null)
     );
@@ -4739,7 +4760,7 @@ function handleCandidateUpstreamFailure(
     return "terminal";
   }
   if (decision.coolDown) {
-    COOLDOWNS.cooldownProvider(
+    coolDownRoute(
       route.provider,
       cooldownFor(failureClass, result.limit, route.model, result.body ?? null)
     );
@@ -4791,7 +4812,7 @@ function handleCandidateTransportError(
     elapsedMs: Date.now() - attemptStartedAt,
     selection
   });
-  COOLDOWNS.cooldownProvider(
+  coolDownRoute(
     route.provider,
     cooldownFor(failureClass, null, route.model, null)
   );

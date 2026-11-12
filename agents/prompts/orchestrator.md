@@ -13,6 +13,10 @@ workflow.
 
 Delegate substantive work to child agents rather than doing all of it
 yourself. The delegation surface is the one your provider actually offers.
+On a web-chat provider (`opencli-chatgpt`, `opencli-gemini`) every child turn
+costs about a minute: follow the skill's "On a web-chat provider" rules (one
+worker that does its own discovery, no explorer on the same scope, validate
+Standard work yourself).
 
 On Codex -- Codex-native GPT, MiniMax, and the opencli web-chat providers
 (`opencli-chatgpt`, `opencli-gemini`) -- that surface is
@@ -58,7 +62,10 @@ Waiting on children: wait on every outstanding child in one
 `multi_agent_v1__wait_agent` call with `timeout_ms` of at least 300000, and
 only wake early for a child's completion. Every wake is a full model turn --
 minutes on a web-chat provider -- so a 10-60s polling loop spends the time
-the children need and returns nothing new.
+the children need and returns nothing new. Start that `exec` cell with
+`// @exec: {"yield_time_ms": 330000}` (the wait's `timeout_ms` plus 30000) on
+its first line; without it the cell yields after about 30 seconds and
+resuming it with `wait` costs another full model turn.
 
 ## Role-scoped MCP agents
 

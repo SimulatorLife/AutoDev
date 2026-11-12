@@ -588,6 +588,14 @@ Six rules are load-bearing:
   `retryable: false`, `recommendedAction: "fix_configuration"`, no
   `retry-after`, and the provider's own explanation in the message. A `5xx`
   would only make Codex retry a request that cannot succeed.
+  When the rejected model is an operator choice (a role assignment's model or
+  an agent-role preference) rather than one the routing config names, the
+  router also clears that choice (`RoutingPolicy.forgetRejectedModel`) and
+  persists the change, so the role falls back to the tier's configured model.
+  A persisted orchestrator assignment once named
+  `opencli-gemini-4-argon-complex-tasks` after opencli renamed the model to
+  `4-argon`. Every root request then tried that id again after each
+  cooldown, about twenty failed hops per session.
 
 - **A hard cooldown needs corroboration.** `classifyProviderFailure` matches
   keywords, and bridges put CLI stderr tails into error messages, so one stray
@@ -634,13 +642,16 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
     `mmx` is not required as an npm or package dependency.
   - **Codex:** ChatGPT `/backend-api/wham/usage` and live `x-codex-*` upstream
     response rate-limit headers (5-hour primary and weekly secondary windows).
-  - **Antigravity:** Google Cloud Code `v1internal:fetchAvailableModels` using
-    the CLI's keychain/file OAuth token. One response yields a quota for each
-    Antigravity provider (`antigravity-gemini`, `antigravity-argon`,
-    `antigravity-claude-gpt`): each model reports its remaining fraction and
-    next reset, a reset more than a day out is the weekly window and a nearer
-    one the 5-hour window, and a provider's window reads its most-used model.
-    The three providers' discoveries share one API read per refresh.
+  - **Antigravity:** Google Cloud Code, using the CLI's keychain/file OAuth
+    token. `v1internal:retrieveUserQuotaSummary` states the limits: one group
+    per metered model family (e.g. "Claude and GPT models"), each with a
+    `5h` and a `weekly` bucket, and each group becomes the 5-hour and weekly
+    windows of its Antigravity provider (`antigravity-gemini`,
+    `antigravity-argon`, `antigravity-claude-gpt`). `fetchAvailableModels`
+    supplies each provider's per-model quotas, and the window of a provider
+    the summary does not list (one remaining fraction and next reset per
+    model; a reset more than a day out reads as weekly). The three
+    providers' discoveries share one read of each endpoint per refresh.
   - **Copilot:** `gh api /copilot_internal/user` (`premium_interactions` and
     `chat` snapshots).
   - **Claude:** Claude bridge `/health` (port 4000) `rateLimitInfo` captured from live

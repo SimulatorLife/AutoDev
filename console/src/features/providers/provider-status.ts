@@ -265,6 +265,7 @@ export function formatQuotaWindowCompact(
     const pct = Math.round(window.usedPercent);
     return `${label}: ${pct}% used${reset ? ` (${reset})` : ""}`;
   }
+  if (window.status === "unavailable") return `${label}: not reported`;
   return `${label}: ${window.status}${reset ? ` (${reset})` : ""}`;
 }
 

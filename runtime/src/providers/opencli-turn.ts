@@ -728,7 +728,7 @@ export function renderOpencliPrompt(
 const CONTINUATION_RULES =
   'Same rules as this chat\'s first message: to act, reply with <tool_call name="TOOL_NAME">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. Nothing about the machine is known except what tool results show, and your own chat tools (Python, file search) cannot see it.';
 
-const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\`, and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
+const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\` in an \`exec\` cell whose first line is \`// @exec: {"yield_time_ms": 330000}\` (so the cell waits the full \`timeout_ms\` of 300000 instead of yielding after 30 seconds), and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
 
 /**
  * Every tool by name, with the functions `exec` exposes: a reminder, not a

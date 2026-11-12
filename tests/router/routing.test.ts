@@ -770,3 +770,58 @@ test("the orchestrator tier admits only providers that can delegate, however the
     ["claude", "copilot", "opencli-gemini"]
   );
 });
+
+test("a model the provider rejected as unknown stops being an operator choice", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  const configured =
+    ROUTING_POLICY.config.providers["opencli-gemini"]?.models.orchestrator;
+  assert.ok(configured, "opencli-gemini has a configured orchestrator model");
+  const stale = "opencli-gemini-4-argon-complex-tasks";
+  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
+    priority: 1,
+    model: stale,
+    reasoningEffort: "medium"
+  });
+  policy.setAgentModel("opencli-gemini", "worker", stale);
+  const before = policy
+    .orchestratorCandidates(seeded(7))
+    .find((candidate) => candidate.provider === "opencli-gemini");
+  assert.equal(before?.model, stale);
+
+  assert.equal(policy.forgetRejectedModel("opencli-gemini", stale), true);
+
+  assert.deepEqual(policy.assignmentFor("opencli-gemini", "orchestrator"), {
+    priority: 1,
+    model: null,
+    reasoningEffort: "medium"
+  });
+  assert.equal(policy.agentModelFor("opencli-gemini", "worker"), undefined);
+  const after = policy
+    .orchestratorCandidates(seeded(7))
+    .find((candidate) => candidate.provider === "opencli-gemini");
+  assert.equal(after?.model, configured, "the tier's configured model serves");
+  assert.equal(policy.forgetRejectedModel("opencli-gemini", stale), false);
+});
+
+test("a configured model the provider refuses is left to the cooldown", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  const configured =
+    ROUTING_POLICY.config.providers["opencli-gemini"]!.models.orchestrator!;
+  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
+    priority: 1,
+    model: configured
+  });
+  assert.equal(policy.forgetRejectedModel("opencli-gemini", configured), false);
+  assert.equal(
+    policy.assignmentFor("opencli-gemini", "orchestrator")?.model,
+    configured
+  );
+});

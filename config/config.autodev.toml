@@ -223,6 +223,12 @@ enabled = false
 [plugins."visualize@openai-bundled"]
 enabled = false
 
+[plugins."google-drive@openai-curated-remote"]
+enabled = false
+
+[plugins."work-pets@openai-curated-remote"]
+enabled = false
+
 # Per-skill disables for the irrelevant Codex `.system/` skills. Each
 # `imagegen`, `plugin-creator`, `skill-creator`, and `skill-installer` is
 # noise for AutoDev; only `openai-docs` is kept.
@@ -240,6 +246,85 @@ enabled = false
 
 [[skills.config]]
 name = "skill-installer"
+enabled = false
+
+# Plugin skills that still reach every agent's skill list while their plugin
+# is disabled: Codex Desktop lists each cached plugin's `skills/` root
+# regardless of the plugin's `enabled` gate (observed on 0.167 for
+# openai-developers, sites, and visualize). They cost every thread about
+# 6 KB of context -- a minute of typing on a web-chat provider -- and none
+# serves AutoDev's work, so each is disabled by name.
+
+[[skills.config]]
+name = "google-drive:google-docs"
+enabled = false
+
+[[skills.config]]
+name = "google-drive:google-drive"
+enabled = false
+
+[[skills.config]]
+name = "google-drive:google-drive-comments"
+enabled = false
+
+[[skills.config]]
+name = "google-drive:google-sheets"
+enabled = false
+
+[[skills.config]]
+name = "google-drive:google-slides"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:agents"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:devday-guide"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:openai-api-migration"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:openai-api-troubleshooting"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:openai-computer-use"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:openai-platform-api-key"
+enabled = false
+
+[[skills.config]]
+name = "openai-developers:setup"
+enabled = false
+
+[[skills.config]]
+name = "sites:sites"
+enabled = false
+
+[[skills.config]]
+name = "sites:sites-remix"
+enabled = false
+
+[[skills.config]]
+name = "visualize:visualize"
+enabled = false
+
+[[skills.config]]
+name = "work-pets:create-pet"
+enabled = false
+
+[[skills.config]]
+name = "work-pets:pets"
+enabled = false
+
+[[skills.config]]
+name = "work-pets:update-pet"
 enabled = false
 
 [shell_environment_policy]

@@ -6804,6 +6804,87 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
   }
 });
 
+test("a model the provider does not have is cleared from the operator's assignment, so the next turn takes the configured model", async () => {
+  const others = DEFAULT_TIER.filter((provider) => provider !== "claude");
+  const retired = "claude-retired-model";
+  const requested: string[] = [];
+  try {
+    await withStubbedProviders(
+      (target: string, options: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (!target.startsWith("http://127.0.0.1:4000/")) return null;
+        const model = JSON.parse(String(options.body)).model;
+        requested.push(model);
+        return model === retired
+          ? jsonResponse(
+              {
+                error: {
+                  type: "invalid_request_error",
+                  code: "invalid_model",
+                  message: `Unknown model "${retired}".`
+                }
+              },
+              { status: 400 }
+            )
+          : jsonResponse({
+              id: "resp_configured",
+              status: "completed",
+              model,
+              output: []
+            });
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const post = () =>
+          realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "autodev/orchestrator",
+              stream: false
+            })
+          });
+
+        const refused = await post();
+        assert.equal(refused.status, 400);
+        assert.equal(
+          (await refused.json()).error.failureClass,
+          "invalid_model"
+        );
+        assert.deepEqual(routing.assignmentFor("claude", "orchestrator"), {
+          priority: 1,
+          model: null
+        });
+
+        // No cooldown wait and no second refusal: the tier's model serves.
+        cooldowns.clear("claude");
+        const served = await post();
+        assert.equal(served.status, 200);
+        assert.equal(requested.length, 2);
+        assert.equal(requested[0], retired);
+        assert.notEqual(requested[1], retired);
+      },
+      () => {
+        routing.setProviderAssignment("claude", "orchestrator", {
+          priority: 1,
+          model: retired
+        });
+        for (const provider of others) {
+          routing.setProviderAssignment(
+            provider,
+            "orchestrator",
+            DISABLED_ASSIGNMENT
+          );
+        }
+      }
+    );
+  } finally {
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
+    cooldowns.clear("claude");
+  }
+});
+
 /**
  * The providers the default tier can reach without a Codex credential on this
  * machine. Codex itself is switched off in these tests so the outcome does not

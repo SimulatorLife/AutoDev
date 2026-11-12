@@ -10,8 +10,10 @@ import {
   createProviderQuotaDiscoveryService,
   DEFAULT_QUOTA_PROVIDERS,
   MINIMAX_CONFIGURED_MODELS,
+  mergeAntigravityQuotas,
   overlayRouterCooldownsOnQuota,
   parseAntigravityAvailableModelsQuota,
+  parseAntigravityQuotaSummary,
   parseClaudeOAuthUsage,
   parseClaudeRateLimitEvent,
   parseCodexResponseRateLimitHeaders,
@@ -340,6 +342,141 @@ test("an Antigravity model's own quota entry outranks the tiered Flash entry", (
     10
   );
   assert.equal(quotas["antigravity-gemini"]?.summaryStatus, "exhausted");
+});
+
+test("the Antigravity quota summary gives each provider its 5-hour and weekly limits", () => {
+  // The shape `v1internal:retrieveUserQuotaSummary` returns: one group per
+  // metered model family, each with a 5-hour and a weekly bucket.
+  const summary = parseAntigravityQuotaSummary(
+    {
+      groups: [
+        {
+          displayName: "Claude and GPT models",
+          description:
+            "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+          buckets: [
+            {
+              bucketId: "3p-weekly",
+              window: "weekly",
+              resetTime: "2026-11-15T18:06:00Z",
+              remainingFraction: 0.4860588
+            },
+            {
+              bucketId: "3p-5h",
+              window: "5h",
+              resetTime: "2026-11-09T15:31:44Z",
+              remainingFraction: 0.9884
+            }
+          ]
+        },
+        {
+          displayName: "Gemini models",
+          buckets: [
+            // proto3 JSON omits a zero remaining fraction.
+            { window: "5h", resetTime: "2026-11-09T13:00:00Z" },
+            {
+              window: "weekly",
+              resetTime: "2026-11-08T00:00:00Z",
+              remainingFraction: 0
+            }
+          ]
+        },
+        {
+          displayName: "Gemini Argon",
+          buckets: [{ window: "5h", remainingFraction: 1, disabled: true }]
+        }
+      ]
+    },
+    NOW
+  );
+  assert.deepEqual(
+    summary["antigravity-claude-gpt"]?.map((w) => [
+      w.id,
+      w.kind,
+      w.label,
+      w.usedPercent,
+      w.resetsAt
+    ]),
+    [
+      [
+        "antigravity-claude-gpt-five_hour",
+        "five_hour",
+        "5-hour limit",
+        1.2,
+        "2026-11-09T15:31:44.000Z"
+      ],
+      [
+        "antigravity-claude-gpt-weekly",
+        "weekly",
+        "Weekly limit",
+        51.4,
+        "2026-11-15T18:06:00.000Z"
+      ]
+    ]
+  );
+  // An omitted fraction is a spent window; a weekly reset already past is a
+  // fresh one.
+  assert.deepEqual(
+    summary["antigravity-gemini"]?.map((w) => [w.kind, w.usedPercent]),
+    [
+      ["five_hour", 100],
+      ["weekly", 0]
+    ]
+  );
+  // A disabled bucket states no limit.
+  assert.equal(summary["antigravity-argon"], undefined);
+
+  const merged = mergeAntigravityQuotas(
+    parseAntigravityAvailableModelsQuota(
+      {
+        models: {
+          "claude-opus-5-5-high": {
+            quotaInfo: {
+              remainingFraction: 0.4860588,
+              resetTime: "2026-11-15T18:06:00Z"
+            }
+          },
+          "gemini-4-argon-high": {
+            quotaInfo: {
+              remainingFraction: 0.5,
+              resetTime: "2026-11-09T14:00:00Z"
+            }
+          }
+        }
+      },
+      NOW
+    ),
+    summary,
+    NOW
+  );
+  // The provider keeps its models and takes both windows from the summary.
+  assert.deepEqual(
+    merged["antigravity-claude-gpt"]?.windows.map((w) => w.kind),
+    ["five_hour", "weekly"]
+  );
+  assert.equal(merged["antigravity-claude-gpt"]?.summaryStatus, "available");
+  assert.ok(
+    merged["antigravity-claude-gpt"]?.models?.some(
+      (m) => m.model === "claude-opus-5-5-high"
+    )
+  );
+  // A group the summary names with no models listed still gets its windows.
+  assert.equal(merged["antigravity-gemini"]?.summaryStatus, "exhausted");
+  // A provider the summary does not name keeps the window its models imply,
+  // and states the limit nothing reported as not observed rather than
+  // dropping it.
+  assert.deepEqual(
+    merged["antigravity-argon"]?.windows.map((w) => [
+      w.kind,
+      w.status,
+      w.usedPercent
+    ]),
+    [
+      ["five_hour", "available", 50],
+      ["weekly", "unavailable", null]
+    ]
+  );
+  assert.equal(merged["antigravity-argon"]?.summaryStatus, "available");
 });
 
 test("syncQuotaToCooldowns cools only the exhausted Antigravity provider", () => {

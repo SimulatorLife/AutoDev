@@ -120,6 +120,78 @@
         {
           "name": "skill-installer",
           "enabled": false
+        },
+        {
+          "name": "google-drive:google-docs",
+          "enabled": false
+        },
+        {
+          "name": "google-drive:google-drive",
+          "enabled": false
+        },
+        {
+          "name": "google-drive:google-drive-comments",
+          "enabled": false
+        },
+        {
+          "name": "google-drive:google-sheets",
+          "enabled": false
+        },
+        {
+          "name": "google-drive:google-slides",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:agents",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:devday-guide",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:openai-api-migration",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:openai-api-troubleshooting",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:openai-computer-use",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:openai-platform-api-key",
+          "enabled": false
+        },
+        {
+          "name": "openai-developers:setup",
+          "enabled": false
+        },
+        {
+          "name": "sites:sites",
+          "enabled": false
+        },
+        {
+          "name": "sites:sites-remix",
+          "enabled": false
+        },
+        {
+          "name": "visualize:visualize",
+          "enabled": false
+        },
+        {
+          "name": "work-pets:create-pet",
+          "enabled": false
+        },
+        {
+          "name": "work-pets:pets",
+          "enabled": false
+        },
+        {
+          "name": "work-pets:update-pet",
+          "enabled": false
         }
       ]
     },
@@ -178,6 +250,12 @@
         "enabled": false
       },
       "visualize@openai-bundled": {
+        "enabled": false
+      },
+      "google-drive@openai-curated-remote": {
+        "enabled": false
+      },
+      "work-pets@openai-curated-remote": {
         "enabled": false
       }
     }
@@ -244,20 +322,56 @@
   ],
   "skillsConfigNames": [
     "ccc",
+    "google-drive:google-docs",
+    "google-drive:google-drive",
+    "google-drive:google-drive-comments",
+    "google-drive:google-sheets",
+    "google-drive:google-slides",
     "imagegen",
     "lsp-mcp-server",
+    "openai-developers:agents",
+    "openai-developers:devday-guide",
+    "openai-developers:openai-api-migration",
+    "openai-developers:openai-api-troubleshooting",
+    "openai-developers:openai-computer-use",
+    "openai-developers:openai-platform-api-key",
+    "openai-developers:setup",
     "orchestration",
     "plugin-creator",
+    "sites:sites",
+    "sites:sites-remix",
     "skill-creator",
-    "skill-installer"
+    "skill-installer",
+    "visualize:visualize",
+    "work-pets:create-pet",
+    "work-pets:pets",
+    "work-pets:update-pet"
   ],
   "skillsConfigNamesRequired": [
     "ccc",
+    "google-drive:google-docs",
+    "google-drive:google-drive",
+    "google-drive:google-drive-comments",
+    "google-drive:google-sheets",
+    "google-drive:google-slides",
     "imagegen",
     "lsp-mcp-server",
+    "openai-developers:agents",
+    "openai-developers:devday-guide",
+    "openai-developers:openai-api-migration",
+    "openai-developers:openai-api-troubleshooting",
+    "openai-developers:openai-computer-use",
+    "openai-developers:openai-platform-api-key",
+    "openai-developers:setup",
     "orchestration",
     "plugin-creator",
+    "sites:sites",
+    "sites:sites-remix",
     "skill-creator",
-    "skill-installer"
+    "skill-installer",
+    "visualize:visualize",
+    "work-pets:create-pet",
+    "work-pets:pets",
+    "work-pets:update-pet"
   ]
 }
