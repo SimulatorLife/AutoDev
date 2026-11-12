@@ -34,3 +34,10 @@ test("orchestration skill steers unrelated follow-up work to a fresh session", (
   assert.match(skill, /fresh session/);
   assert.match(skill, /auto_compact_token_limit/);
 });
+
+// Tool results over ~20k characters were 12% of calls but 58% of tool-output
+// volume, mostly unscoped `rg`/`cat` dumps re-sent until compaction.
+test("orchestration skill scopes reads and searches to the step", () => {
+  assert.match(skill, /Scope reads and searches/);
+  assert.match(skill, /truncation_policy/);
+});

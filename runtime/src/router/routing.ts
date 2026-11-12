@@ -188,14 +188,17 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   },
   {
     // Web chat sites driven through the user's signed-in browser; both are
-    // served by the one opencli bridge.
+    // served by the one opencli bridge, which runs each site's turns in as
+    // many browser tabs as its route takes concurrent requests. ChatGPT
+    // answers in background tabs; Gemini's model picker does not render in
+    // one, so it keeps a single tab.
     provider: "opencli-chatgpt",
     pattern: OPENCLI_CHATGPT_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4004/v1",
     healthUrl:
       "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
     envKey: "CODEX_ROUTER_OPENCLI_API_KEY",
-    maxConcurrentRequests: 1
+    maxConcurrentRequests: 3
   },
   {
     provider: "opencli-gemini",

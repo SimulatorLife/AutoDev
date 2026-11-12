@@ -25,8 +25,24 @@ type HookInput = {
   turn_id?: unknown;
   transcript_path?: unknown;
 };
-/** Codex rollout record type that replaces history with a compacted summary. */
-const COMPACTED_RECORD = '"type":"compacted"';
+/**
+ * Transcript records that replace history with a summary: Codex rollouts write
+ * a `compacted` record, Claude Code writes a `compact_boundary` system record.
+ */
+const COMPACTION_RECORDS = [
+  '"type":"compacted"',
+  '"subtype":"compact_boundary"'
+];
+/**
+ * Transcript records that carry hook-injected context: Codex records it as a
+ * developer message, Claude Code as a `hook_additional_context` attachment.
+ * Tool output that merely quotes the bootstrap (a `cat` of the prompt file) is
+ * not an injection and must not suppress one.
+ */
+const INJECTION_RECORDS = [
+  '"role":"developer"',
+  '"type":"hook_additional_context"'
+];
 const NON_ROOT_MODEL =
   /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/;
 const DEDUP_TTL_MS = 15 * 60 * 1000;
@@ -34,8 +50,8 @@ const DEDUP_MAX_ENTRIES = 1024;
 const LOCK_STALE_MS = 30 * 1000;
 
 /**
- * The bootstrap stays in model context until Codex compacts the history, which
- * drops hook-injected developer messages. Re-injecting it on every user prompt
+ * The bootstrap stays in model context until the host (Codex or Claude Code)
+ * compacts the history, which drops hook-injected context. Re-injecting it on every user prompt
  * re-sends ~2k tokens per prompt for the rest of the session, so inject only
  * when the current context window does not already carry it. Fails open: an
  * unreadable or missing transcript injects.
@@ -52,8 +68,19 @@ export function bootstrapInCurrentWindow(
   } catch {
     return false;
   }
-  const markerAt = transcript.lastIndexOf(JSON.stringify(marker).slice(1, -1));
-  return markerAt !== -1 && markerAt > transcript.lastIndexOf(COMPACTED_RECORD);
+  const encodedMarker = JSON.stringify(marker).slice(1, -1);
+  let injected = false;
+  for (const record of transcript.split("\n")) {
+    const carriesBootstrap =
+      record.includes(encodedMarker) &&
+      INJECTION_RECORDS.some((kind) => record.includes(kind));
+    // A compaction record starts a new window; it keeps the bootstrap only
+    // when its replacement history retained the injected message.
+    if (COMPACTION_RECORDS.some((boundary) => record.includes(boundary)))
+      injected = carriesBootstrap;
+    else if (carriesBootstrap) injected = true;
+  }
+  return injected;
 }
 
 function shouldInjectOnce(input: HookInput, model: string): boolean {

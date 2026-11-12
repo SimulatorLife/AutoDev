@@ -2,7 +2,7 @@
  * The opencli Responses bridge: Codex turns served by web chat sites.
  *
  * Codex -> Router -> this bridge (`127.0.0.1:4004`) -> `opencli <site> ...` ->
- * the user's signed-in browser tab on chatgpt.com or gemini.google.com.
+ * the user's signed-in browser tabs on chatgpt.com or gemini.google.com.
  *
  * Each `opencli-<site>` model is one site. A turn is one opencli command: the
  * bridge renders the Codex conversation into a prompt (see `opencli-turn.ts`),
@@ -10,8 +10,9 @@
  * calls in the reply become `custom_tool_call`/`function_call` items that
  * Codex executes; nothing runs inside the site or this bridge.
  *
- * A site is one browser tab, so turns for the same site run one at a time.
- * Different sites run in parallel.
+ * A site runs turns in a pool of browser tabs, one turn per tab, as many at
+ * once as its route's `maxConcurrentRequests` (see `SiteTabs`). Different
+ * sites run in parallel.
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
@@ -67,6 +68,8 @@ import {
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
+
+import { type ProviderRoute, ROUTES } from "../router/routing.ts";
 
 import {
   type CodexTool,
@@ -187,6 +190,54 @@ function compactForTypedChatgpt(
   return original;
 }
 
+/** Build a first-chat prompt, retaining all instructions and minimizing MCP references first. */
+function firstPromptForSite(
+  site: OpencliSite,
+  spec: OpencliSiteSpec,
+  tools: readonly CodexTool[],
+  segments: string[],
+  instructions: string,
+  role: string | null
+): string {
+  const transcript = segments.join("\n\n");
+  const render = (reference: readonly CodexTool[], text: string): string =>
+    renderOpencliPrompt(instructions, reference, text, role);
+  let reference = tools;
+  let prompt = render(reference, transcript);
+  const promptLimit = spec.attachesPrompt
+    ? MAX_ATTACHED_PROMPT_BYTES
+    : MAX_ARGV_PROMPT_BYTES;
+  for (const detail of ["summaries", "names"] as const) {
+    if (Buffer.byteLength(prompt) <= promptLimit) break;
+    const narrowed = compactCodexTools(tools, detail);
+    const compact = render(narrowed, transcript);
+    writeErrorLine(
+      `opencli ${site} first prompt is ${Buffer.byteLength(prompt)} bytes; MCP tools listed by ${detail === "names" ? "name only" : "name and summary"} (${Buffer.byteLength(compact)} bytes)`
+    );
+    prompt = compact;
+    reference = narrowed;
+  }
+  // The reference is shortened before the transcript; older transcript
+  // messages are omitted only when the complete first prompt cannot fit.
+  if (Buffer.byteLength(prompt) > promptLimit) {
+    const head = Buffer.byteLength(render(reference, ""));
+    if (head <= promptLimit) {
+      const compacted = compactTranscript(segments, promptLimit - head);
+      if (compacted.dropped > 0) {
+        prompt = render(reference, compacted.text);
+        writeErrorLine(
+          `opencli ${site} first prompt is ${Buffer.byteLength(prompt)} bytes; ${compacted.dropped} earlier message(s) left out to fit the site's limit`
+        );
+      }
+    }
+  }
+  // A compacted MCP tool reference may allow typing the entire transcript,
+  // including when attachment-size handling had omitted some history.
+  return site === "chatgpt"
+    ? compactForTypedChatgpt(prompt, tools, transcript, render)
+    : prompt;
+}
+
 export interface OpencliRunRequest {
   readonly args: readonly string[];
   readonly signal: AbortSignal;
@@ -201,6 +252,12 @@ export interface OpencliBridgeOptions {
   readonly run: OpencliRunner;
   readonly authToken: string;
   readonly turnTimeoutSeconds: number;
+  /**
+   * How many browser tabs each site runs turns in at once: its route's
+   * `maxConcurrentRequests`, so the router and the bridge admit the same
+   * number of turns.
+   */
+  readonly siteTabs: Readonly<Record<OpencliSite, number>>;
   readonly ledger?: OpencliConversationLedger;
   /** Persist the bridge's observed upload usage alongside its conversation ledger. */
   readonly uploadLogPath?: string;
@@ -385,17 +442,26 @@ const FIRST_MODEL_LIST_WAIT_MS = 5000;
  * opencli is resolved per turn rather than once at startup: a checkout whose
  * dependencies are missing then fails each turn with a 503 the router routes
  * around, instead of a bridge that crash-loops under launchd's KeepAlive.
+ *
+ * Every command runs in the site's tab pool (`OPENCLI_SITE_SLOTS`), sized to
+ * the tabs the bridge admits turns into, so opencli never hands out more tabs
+ * than the bridge runs turns in.
  */
 export function processRunner(
   resolveCommand: () => OpencliCommand,
+  siteTabs: Readonly<Record<OpencliSite, number>>,
   live: Set<ChildProcess> = new Set()
 ): OpencliRunner {
+  const env = {
+    ...process.env,
+    OPENCLI_SITE_SLOTS: opencliSiteSlots(siteTabs)
+  };
   return ({ args, signal }) =>
     new Promise((resolve, reject) => {
       const command = resolveCommand();
       const child = spawn(command.command, [...command.args, ...args], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env
+        env
       });
       live.add(child);
       let stdout = "";
@@ -446,60 +512,186 @@ export function processRunner(
 }
 
 /**
- * One queue per site. A site is one browser tab: two commands on it at once
- * would type into the same composer and read each other's replies.
+ * opencli's site-slot pool for the tabs the bridge was given: each site runs
+ * its commands in that many persistent tabs (`site:<site>#<n>`), one command
+ * per tab at a time, and opencli's daemon hands each command a free one.
  */
-class SiteQueues {
-  private readonly tails = new Map<OpencliSite, Promise<unknown>>();
-  private readonly depth = new Map<OpencliSite, number>();
-  private readonly activeSince = new Map<OpencliSite, number>();
+export function opencliSiteSlots(
+  tabs: Readonly<Record<OpencliSite, number>>
+): string {
+  return OPENCLI_SITES.map((site) => `${site}:${tabs[site]}`).join(",");
+}
 
-  run<T>(site: OpencliSite, task: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(site) ?? Promise.resolve();
-    this.depth.set(site, (this.depth.get(site) ?? 0) + 1);
-    const next = previous
-      .catch(() => {})
-      .then(() => {
-        this.activeSince.set(site, Date.now());
-        return task();
-      })
-      .finally(() => {
-        this.activeSince.delete(site);
-        this.depth.set(site, (this.depth.get(site) ?? 1) - 1);
-      });
-    this.tails.set(site, next);
-    return next;
+/**
+ * The tabs each site runs turns in: its route's `maxConcurrentRequests`, the
+ * number of turns the router sends it at once. A route with no limit gets one
+ * tab, the most a site can serve without one.
+ */
+export function routedSiteTabs(
+  routes: readonly Pick<
+    ProviderRoute,
+    "provider" | "maxConcurrentRequests"
+  >[] = ROUTES
+): Record<OpencliSite, number> {
+  const tabs = Object.fromEntries(
+    OPENCLI_SITES.map((site) => [site, 1])
+  ) as Record<OpencliSite, number>;
+  for (const provider of OPENCLI_PROVIDERS) {
+    const limit = routes.find(
+      (route) => route.provider === provider
+    )?.maxConcurrentRequests;
+    if (limit !== undefined) tabs[OPENCLI_PROVIDER_SITES[provider]] = limit;
+  }
+  return tabs;
+}
+
+interface TabTask {
+  readonly level: string | null;
+  readonly start: () => void;
+}
+
+interface RunningTask {
+  readonly since: number;
+  readonly level: string | null;
+}
+
+/**
+ * The browser tabs each site's commands run in.
+ *
+ * A site has as many tabs as its route takes concurrent requests, and one
+ * command at a time drives each tab: opencli's daemon gives every command a
+ * free tab of the site's pool. Turns are admitted in arrival order, as many at
+ * once as the site has tabs. One tab per site made every agent on a site wait
+ * for every other: more than half of a ChatGPT turn's time was spent queued
+ * behind other agents' turns, not answering.
+ *
+ * A site's model is an account setting, not a tab's (`chatgpt model` changes
+ * the account's last-used model), so turns share the site only while they
+ * want the model it is on. A turn that wants another model waits for the
+ * site to drain and then runs alone, so its switch cannot change the model
+ * under a turn in another tab; once the site is on its model, later turns
+ * that want the same one run beside it again. `level` is that model; a task
+ * with no level (a model listing) runs at any model.
+ */
+class SiteTabs {
+  private readonly waiting = new Map<OpencliSite, TabTask[]>();
+  private readonly running = new Map<OpencliSite, Map<symbol, RunningTask>>();
+
+  private readonly tabs: Readonly<Record<OpencliSite, number>>;
+  /** The model the site is on now, as far as the bridge knows. */
+  private readonly siteLevel: (site: OpencliSite) => string | undefined;
+
+  constructor(
+    tabs: Readonly<Record<OpencliSite, number>>,
+    siteLevel: (site: OpencliSite) => string | undefined
+  ) {
+    this.tabs = tabs;
+    this.siteLevel = siteLevel;
   }
 
-  activeSinceFor(site: OpencliSite): number | null {
-    return this.activeSince.get(site) ?? null;
+  run<T>(
+    site: OpencliSite,
+    level: string | null,
+    task: () => Promise<T>
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.waitingFor(site).push({
+        level,
+        start: () => {
+          const id = Symbol(site);
+          const running = this.runningFor(site);
+          running.set(id, { since: Date.now(), level });
+          Promise.resolve()
+            .then(task)
+            .then(resolve, reject)
+            .finally(() => {
+              running.delete(id);
+              this.admit(site);
+            });
+        }
+      });
+      this.admit(site);
+    });
   }
 
   /**
-   * Run a background task on the site's tab, but only while the tab is free.
+   * Run a background task in one of the site's tabs, but only while the site
+   * is idle.
    *
    * A background task is a refresh of what the site can answer, not a request:
    * it may be dropped and asked for again. One that queued behind a turn would
-   * hold the tab away from the turns that arrive after it, and one that cannot
+   * hold a tab away from the turns that arrive after it, and one that cannot
    * read the site's models holds it for its whole timeout. So a background task
-   * takes the tab only when nothing else wants it, and is dropped otherwise.
+   * runs only when nothing else wants the site, and is dropped otherwise.
    */
   runInBackground<T>(
     site: OpencliSite,
     task: () => Promise<T>
   ): Promise<T | null> {
-    if ((this.depth.get(site) ?? 0) > 0) return Promise.resolve(null);
-    return this.run(site, task);
+    if (this.depthFor(site) > 0) return Promise.resolve(null);
+    return this.run(site, null, task);
   }
 
+  /** When the longest-running task on the site started, or null when idle. */
+  oldestActiveSince(site: OpencliSite): number | null {
+    let oldest: number | null = null;
+    for (const { since } of this.runningFor(site).values())
+      oldest = oldest === null ? since : Math.min(oldest, since);
+    return oldest;
+  }
+
+  tabsFor(site: OpencliSite): number {
+    return this.tabs[site];
+  }
+
+  activeFor(site: OpencliSite): number {
+    return this.runningFor(site).size;
+  }
+
+  /** Tasks running or waiting on the site. */
   depthFor(site: OpencliSite): number {
-    return this.depth.get(site) ?? 0;
+    return this.waitingFor(site).length + this.activeFor(site);
   }
 
   status(): Record<string, number> {
     return Object.fromEntries(
-      OPENCLI_SITES.map((site) => [site, this.depth.get(site) ?? 0])
+      OPENCLI_SITES.map((site) => [site, this.depthFor(site)])
     );
+  }
+
+  private admit(site: OpencliSite): void {
+    const waiting = this.waitingFor(site);
+    const running = this.runningFor(site);
+    while (waiting.length > 0 && running.size < this.tabs[site]) {
+      const next = waiting[0];
+      if (next === undefined || !this.joins(site, next.level, running)) return;
+      waiting.shift();
+      next.start();
+    }
+  }
+
+  /** Whether a task at `level` may run beside the tasks running now. */
+  private joins(
+    site: OpencliSite,
+    level: string | null,
+    running: Map<symbol, RunningTask>
+  ): boolean {
+    if (running.size === 0 || level === null) return true;
+    for (const task of running.values())
+      if (task.level !== null && task.level !== level) return false;
+    return this.siteLevel(site) === level;
+  }
+
+  private waitingFor(site: OpencliSite): TabTask[] {
+    let waiting = this.waiting.get(site);
+    if (!waiting) this.waiting.set(site, (waiting = []));
+    return waiting;
+  }
+
+  private runningFor(site: OpencliSite): Map<symbol, RunningTask> {
+    let running = this.running.get(site);
+    if (!running) this.running.set(site, (running = new Map()));
+    return running;
   }
 }
 
@@ -844,10 +1036,12 @@ export function createOpencliBridge(
   options: OpencliBridgeOptions
 ): OpencliBridge {
   const ledger = options.ledger ?? new OpencliConversationLedger();
-  const queues = new SiteQueues();
-  // The site model each tab was last switched to by this bridge. A site whose
+  // The model each site was last switched to by this bridge. A site whose
   // model is an account setting is switched only when a turn asks for another.
   const selectedModels = new Map<OpencliSite, string>();
+  const tabs = new SiteTabs(options.siteTabs, (site) =>
+    selectedModels.get(site)
+  );
   // The thinking level each site last answered at. A site that is already at
   // the level the turn asks for is not asked again: the switch costs the site
   // a menu it has to open and close.
@@ -881,8 +1075,8 @@ export function createOpencliBridge(
     };
     const refresh = (
       mode.background === true
-        ? queues.runInBackground(site, list)
-        : queues.run(site, list)
+        ? tabs.runInBackground(site, list)
+        : tabs.run(site, null, list)
     )
       .then((models) => {
         if (models === null) return undefined;
@@ -998,59 +1192,16 @@ export function createOpencliBridge(
     const instructions =
       typeof payload.instructions === "string" ? payload.instructions : "";
     const role = orchestrator ? roleInstructions(agentRole) : null;
-    const renderFirst = (
-      reference: readonly CodexTool[],
-      transcript: string
-    ): string => renderOpencliPrompt(instructions, reference, transcript, role);
-    // A site that takes its prompt on the command line gets MCP tools named
-    // rather than documented when the full reference would not fit; a site
-    // that takes it as an attachment gets the same treatment when the model
-    // would spend a minute reading the reference. Either way the model reads
-    // the rest of a tool's description from `ALL_TOOLS` before calling it.
-    let reference = tools;
-    let fullPrompt = renderFirst(reference, segments.join("\n\n"));
-    const promptLimit = spec.attachesPrompt
-      ? MAX_ATTACHED_PROMPT_BYTES
-      : MAX_ARGV_PROMPT_BYTES;
-    for (const detail of ["summaries", "names"] as const) {
-      if (Buffer.byteLength(fullPrompt) <= promptLimit) break;
-      const narrowed = compactCodexTools(tools, detail);
-      const compact = renderFirst(narrowed, segments.join("\n\n"));
-      writeErrorLine(
-        `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; MCP tools listed by ${detail === "names" ? "name only" : "name and summary"} (${Buffer.byteLength(compact)} bytes)`
-      );
-      fullPrompt = compact;
-      reference = narrowed;
-    }
-    // The tool reference is not what fills a long prompt: the conversation is.
-    // A chat that is new has to carry all of it, so when the reference has
-    // been narrowed as far as it goes and the prompt still does not fit, the
-    // middle of the conversation is what is left out. A head that is over the
-    // limit on its own is the reference's doing, and shortening the
-    // conversation would not make the prompt fit.
-    if (Buffer.byteLength(fullPrompt) > promptLimit) {
-      const head = Buffer.byteLength(renderFirst(reference, ""));
-      if (head <= promptLimit) {
-        const compacted = compactTranscript(segments, promptLimit - head);
-        if (compacted.dropped > 0) {
-          fullPrompt = renderFirst(reference, compacted.text);
-          writeErrorLine(
-            `opencli ${site} first prompt is ${Buffer.byteLength(fullPrompt)} bytes; ${compacted.dropped} earlier message(s) left out to fit the site's limit`
-          );
-        }
-      }
-    }
-    // For ChatGPT, prefer a typed prompt to spending a file upload. The
-    // existing MCP-only reduction keeps role instructions and every transcript
-    // segment intact. If neither reduction fits the observed typed limit,
-    // retain the original prompt for its normal attachment path.
-    if (site === "chatgpt")
-      fullPrompt = compactForTypedChatgpt(
-        fullPrompt,
-        tools,
-        segments.join("\n\n"),
-        renderFirst
-      );
+    // Both sites narrow MCP tool descriptions before omitting transcript.
+    // ChatGPT additionally attempts MCP-only compaction to stay in typed mode.
+    const fullPrompt = firstPromptForSite(
+      site,
+      spec,
+      tools,
+      segments,
+      instructions,
+      role
+    );
     const prompt = resume
       ? renderOpencliContinuation(
           tools,
@@ -1296,6 +1447,19 @@ export function createOpencliBridge(
     saveUploadLog();
   }
 
+  // Uploads that turns running in a site's tabs are about to make: a turn's
+  // upload is recorded only once it is known to have been spent, and until
+  // then the turns in the site's other tabs must still count it.
+  const pendingUploads = new Map<OpencliSite, number>();
+
+  function uploadsInFlight(site: OpencliSite): number {
+    return pendingUploads.get(site) ?? 0;
+  }
+
+  function reserveUpload(site: OpencliSite, change: 1 | -1): void {
+    pendingUploads.set(site, uploadsInFlight(site) + change);
+  }
+
   /**
    * The site would not take the upload a prompt this long needs.
    *
@@ -1341,13 +1505,16 @@ export function createOpencliBridge(
       const promptFile = path.join(directory, attachedPromptFileName());
       if (turn.spec.attachesPrompt)
         writeFileSync(promptFile, prompt, { mode: 0o600 });
-      return await queues.run(turn.site, async () => {
-        // Check inside the site's queue so concurrent turns cannot both spend
-        // the final available upload. A refusal makes no opencli/site call.
+      return await tabs.run(turn.site, turn.siteModel, async () => {
+        // Checked once the turn has a tab, counting the uploads the turns in
+        // the site's other tabs are making, so concurrent turns cannot both
+        // spend the final available upload. A refusal makes no opencli/site
+        // call.
         if (
           uploading &&
           turn.site === "chatgpt" &&
-          uploadHealth(turn.site).uploadsUsed >= CHATGPT_UPLOAD_ALLOWANCE
+          uploadHealth(turn.site).uploadsUsed + uploadsInFlight(turn.site) >=
+            CHATGPT_UPLOAD_ALLOWANCE
         )
           throw uploadsExhausted(turn.site, promptBytes);
         // A turn that waited for the site as long as it may hold it is
@@ -1359,47 +1526,52 @@ export function createOpencliBridge(
             SITE_BUSY,
             null
           );
-        // Decided inside the site's queue: the model a site last answered
-        // with is what its tab shows now.
-        const reply = await turn.spec
-          .turn(
-            {
-              prompt,
-              promptFile,
-              typed,
-              conversationId,
-              siteModel: turn.siteModel,
-              selectModel: selectedModels.get(turn.site) !== turn.siteModel,
-              siteThinking:
-                turn.siteThinking !== null &&
-                selectedThinking.get(turn.site) !== turn.siteThinking
-                  ? turn.siteThinking
-                  : null,
-              // What is left of the turn's budget, not the whole of it: a
-              // turn that already held the site must not be given a command
-              // timeout longer than the turn itself.
-              timeoutSeconds: remainingSeconds(deadline)
-            },
-            execFor(signal, deadline)
-          )
-          .catch((error: unknown) => {
-            if (!(error instanceof OpencliCommandError)) throw error;
-            if (uploadsRefused(error))
-              throw uploadsExhausted(turn.site, promptBytes, error);
-            // A turn that failed after its prompt was sent spent the upload.
-            if (uploading && !failedBeforeSending(error))
-              recordUpload(turn.site);
-            throw error;
-          });
-        if (uploading) recordUpload(turn.site);
-        selectedModels.set(turn.site, turn.siteModel);
-        // The site reports the level it answered at. A turn that asked for a
-        // level the site would not take answers at the level the site had, so
-        // the bridge keeps what it knew: the site's level did not change, and
-        // a later turn that asks for it again is the one that finds out
-        // whether the site will take it now.
-        if (reply.thinking) selectedThinking.set(turn.site, reply.thinking);
-        return reply;
+        if (uploading) reserveUpload(turn.site, 1);
+        try {
+          // Decided once the turn has a tab: the site runs one model at a
+          // time, and the one it last answered with is the one it is on.
+          const reply = await turn.spec
+            .turn(
+              {
+                prompt,
+                promptFile,
+                typed,
+                conversationId,
+                siteModel: turn.siteModel,
+                selectModel: selectedModels.get(turn.site) !== turn.siteModel,
+                siteThinking:
+                  turn.siteThinking !== null &&
+                  selectedThinking.get(turn.site) !== turn.siteThinking
+                    ? turn.siteThinking
+                    : null,
+                // What is left of the turn's budget, not the whole of it: a
+                // turn that already held the site must not be given a command
+                // timeout longer than the turn itself.
+                timeoutSeconds: remainingSeconds(deadline)
+              },
+              execFor(signal, deadline)
+            )
+            .catch((error: unknown) => {
+              if (!(error instanceof OpencliCommandError)) throw error;
+              if (uploadsRefused(error))
+                throw uploadsExhausted(turn.site, promptBytes, error);
+              // Even a failure after sending does not establish that the site
+              // accepted the attachment. Count only confirmed successful turns;
+              // an ambiguous failure remains unknown rather than invented usage.
+              throw error;
+            });
+          if (uploading) recordUpload(turn.site);
+          selectedModels.set(turn.site, turn.siteModel);
+          // The site reports the level it answered at. A turn that asked for
+          // a level the site would not take answers at the level the site
+          // had, so the bridge keeps what it knew: the site's level did not
+          // change, and a later turn that asks for it again is the one that
+          // finds out whether the site will take it now.
+          if (reply.thinking) selectedThinking.set(turn.site, reply.thinking);
+          return reply;
+        } finally {
+          if (uploading) reserveUpload(turn.site, -1);
+        }
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -1590,13 +1762,13 @@ export function createOpencliBridge(
           return;
         }
         const site = OPENCLI_PROVIDER_SITES[requested as OpencliProvider];
-        const activeSince = queues.activeSinceFor(site);
+        const activeSince = tabs.oldestActiveSince(site);
         const wedgedThresholdMs =
           options.wedgedTimeoutMs ?? options.turnTimeoutSeconds * 1000 + 30_000;
-        // A site is wedged when the task holding its tab has run past the time
-        // it was given. Every turn draws one budget and every command in that
-        // turn draws on the same one, so a turn cannot hold the tab past the
-        // threshold: the threshold is reached by a command that stopped
+        // A site is wedged when a task holding one of its tabs has run past
+        // the time it was given. Every turn draws one budget and every command
+        // in that turn draws on the same one, so a turn cannot hold a tab past
+        // the threshold: the threshold is reached by a command that stopped
         // answering, not by a turn that is merely slow.
         const isWedged =
           activeSince !== null && Date.now() - activeSince > wedgedThresholdMs;
@@ -1619,11 +1791,13 @@ export function createOpencliBridge(
           status: "ok",
           provider: requested,
           site,
-          // A site is one browser tab: it is busy whenever a turn holds it.
-          // Busy is not broken, and the caller is told which one it is.
-          busy: activeSince !== null,
-          queueDepth: queues.depthFor(site),
-          queued: queues.status(),
+          // A site is busy when a turn holds every one of its tabs. Busy is
+          // not broken, and the caller is told which one it is.
+          busy: tabs.activeFor(site) >= tabs.tabsFor(site),
+          tabs: tabs.tabsFor(site),
+          activeTurns: tabs.activeFor(site),
+          queueDepth: tabs.depthFor(site),
+          queued: tabs.status(),
           modelsObserved: Boolean(
             cachedModels && cachedModels.models.length > 0
           ),
@@ -1636,7 +1810,7 @@ export function createOpencliBridge(
       sendJson(response, 200, {
         status: "ok",
         provider: PROVIDER,
-        queued: queues.status(),
+        queued: tabs.status(),
         conversations: ledger.size
       });
       return;
@@ -1699,8 +1873,10 @@ if (IS_MAIN) {
     DEFAULT_PORT
   );
   const live = new Set<ChildProcess>();
+  const siteTabs = routedSiteTabs();
   const bridge = createOpencliBridge({
-    run: processRunner(() => resolveOpencliCommand(), live),
+    run: processRunner(() => resolveOpencliCommand(), siteTabs, live),
+    siteTabs,
     authToken: process.env[OPENCLI_ROUTER_AUTH_VARIABLE] ?? "",
     ledger: new OpencliConversationLedger({
       file:

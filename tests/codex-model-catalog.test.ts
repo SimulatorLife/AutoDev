@@ -87,9 +87,12 @@ test("every MiniMax model assigned by routing is listed in both catalogs", () =>
   }
 });
 
-test("every catalog model compacts before its context outgrows the cost band", async () => {
-  const { autoCompactTokenLimit, AUTO_COMPACT_TOKEN_LIMIT_CAP } =
-    await import("../runtime/src/config/render-model-catalog.ts");
+test("every catalog model compacts and truncates tool output inside the cost band", async () => {
+  const {
+    autoCompactTokenLimit,
+    AUTO_COMPACT_TOKEN_LIMIT_CAP,
+    TOOL_OUTPUT_TOKEN_LIMIT
+  } = await import("../runtime/src/config/render-model-catalog.ts");
   for (const file of [
     "codex",
     "claude",
@@ -115,6 +118,14 @@ test("every catalog model compacts before its context outgrows the cost band", a
       );
       assert.ok(model.auto_compact_token_limit <= AUTO_COMPACT_TOKEN_LIMIT_CAP);
       assert.ok(model.auto_compact_token_limit < model.context_window);
+      const policy = model.truncation_policy as { mode: string; limit: number };
+      if (policy.mode === "tokens")
+        assert.equal(
+          policy.limit,
+          TOOL_OUTPUT_TOKEN_LIMIT,
+          `${file}:${model.slug} must use the shared tool-output token budget`
+        );
+      else assert.ok(policy.limit / 4 <= TOOL_OUTPUT_TOKEN_LIMIT, model.slug);
     }
   }
 });

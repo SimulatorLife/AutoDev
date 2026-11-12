@@ -256,10 +256,16 @@ function isGeminiThinkingSelectionFailure(error: unknown): boolean {
   );
 }
 
-const GEMINI_UNKNOWN_MODEL =
-  /Unknown model "([^"]+)"\. Available models: (.+?)\. Use "opencli gemini models"/u;
-const GEMINI_LIMITED_MODEL =
-  /^(.+)-limit-resets-([a-z]{3})-(\d{1,2})-(\d{3,4})-(am|pm)$/u;
+/**
+ * opencli's code for a Gemini model the account is out of usage on: the site
+ * keeps the model in its picker and replaces its description with when the
+ * limit resets, and `gemini ask --model` refuses it with that text
+ * ('Gemini model "4-argon" is out of usage: Limit resets Nov 9, 9:26 PM').
+ */
+const GEMINI_MODEL_LIMIT = "MODEL_LIMIT";
+const GEMINI_LIMITED_MODEL = /^Gemini model "([^"]+)" is out of usage/u;
+const GEMINI_LIMIT_RESETS =
+  /Limit resets ([A-Za-z]{3})[a-z]* (\d{1,2}), (\d{1,2}):(\d{2})\s*([AP]M)\b/iu;
 const MONTHS = Object.freeze([
   "jan",
   "feb",
@@ -290,16 +296,15 @@ const GEMINI_RESET_HORIZON_MS = 45 * 24 * 60 * 60 * 1000;
 function geminiLimitReset(
   month: string,
   day: string,
-  clock: string,
+  hour12: number,
+  minute: number,
   meridiem: string,
   now: number
 ): string | null {
-  const monthIndex = MONTHS.indexOf(month);
-  const hour12 = Number(clock.slice(0, -2));
-  const minute = Number(clock.slice(-2));
+  const monthIndex = MONTHS.indexOf(month.toLowerCase());
   if (monthIndex === -1 || hour12 < 1 || hour12 > 12 || minute > 59)
     return null;
-  const hour = (hour12 % 12) + (meridiem === "pm" ? 12 : 0);
+  const hour = (hour12 % 12) + (meridiem.toLowerCase() === "pm" ? 12 : 0);
   const at = (year: number) =>
     new Date(year, monthIndex, Number(day), hour, minute).getTime();
   const year = new Date(now).getFullYear();
@@ -311,37 +316,40 @@ function geminiLimitReset(
 }
 
 /**
- * The limit behind a Gemini model the site no longer lists under its name.
+ * The usage limit behind a Gemini model opencli refused to ask.
  *
- * opencli names a model by the picker's label and description. A model that
- * is out of usage keeps its label but its description becomes "Limit resets
- * Nov 9, 9:26 PM", so the id the route asks for is gone from the list and
- * opencli answers "Unknown model" -- an outage by the look of it, when the
- * site has said exactly what happened and when it ends. This reads it back
- * as the usage limit it is, with the reset the site stated.
+ * opencli names a model by its own name and version alone, and reports a
+ * model the account is out of usage on under its own code with the site's
+ * "Limit resets Nov 9, 9:26 PM". This reads it back as the usage limit it
+ * is, with the reset the site stated as an instant, so the router cools the
+ * route down until then instead of reading a refusal it cannot place.
  */
 export function geminiModelLimit(
   error: unknown,
   now = Date.now()
 ): OpencliCommandError | null {
-  if (!(error instanceof OpencliCommandError)) return null;
-  const unknown = GEMINI_UNKNOWN_MODEL.exec(error.message);
-  if (!unknown) return null;
-  const requested = unknown[1] ?? "";
-  for (const listed of (unknown[2] ?? "").split(",")) {
-    const limited = GEMINI_LIMITED_MODEL.exec(listed.trim());
-    if (!limited) continue;
-    const [, family = "", month = "", day = "", clock = "", meridiem = ""] =
-      limited;
-    if (!requested.startsWith(`${family}-`)) continue;
-    const resetsAt = geminiLimitReset(month, day, clock, meridiem, now);
-    return new OpencliCommandError(
-      `Gemini usage limit reached for ${family}${resetsAt ? `; resets at ${resetsAt}` : ""}`,
-      "MODEL_LIMIT",
-      error.exitCode
-    );
-  }
-  return null;
+  if (
+    !(error instanceof OpencliCommandError) ||
+    error.code !== GEMINI_MODEL_LIMIT
+  )
+    return null;
+  const model = GEMINI_LIMITED_MODEL.exec(error.message)?.[1];
+  const resets = GEMINI_LIMIT_RESETS.exec(error.message);
+  const resetsAt = resets
+    ? geminiLimitReset(
+        resets[1] ?? "",
+        resets[2] ?? "",
+        Number(resets[3]),
+        Number(resets[4]),
+        resets[5] ?? "",
+        now
+      )
+    : null;
+  return new OpencliCommandError(
+    `Gemini usage limit reached${model ? ` for ${model}` : ""}${resetsAt ? `; resets at ${resetsAt}` : ""}`,
+    GEMINI_MODEL_LIMIT,
+    error.exitCode
+  );
 }
 
 /** The conversation a Gemini `/app/<id>` URL names, or null for any other page. */

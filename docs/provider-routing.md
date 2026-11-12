@@ -712,6 +712,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   `tests/codex-model-catalog.test.ts` rejects any row or profile that deviates.
   Provider profiles do not set `model_context_window` or
   `model_auto_compact_token_limit`; the catalog owns both.
+- **Token-truncated catalog rows cap each tool result at `TOOL_OUTPUT_TOKEN_LIMIT` (6,000 tokens).**
+  A tool result is re-sent on every later request until compaction; in
+  2026-11-10..11 rollouts, results over ~20k characters were 12% of calls but
+  58% of tool-output volume, mostly unscoped `rg`/`cat` dumps. Codex keeps the
+  head and tail of a truncated result. Byte-truncated rows (MiniMax, opencli)
+  already sit below the cap; the same catalog test enforces both.
 - **What each transport can carry is a property of the CLI, not of the model.**
   The models behind these routes read images; what decides whether a route can
   serve an image-bearing request is the channel the bridge hands the turn to.
@@ -2414,13 +2420,17 @@ single list; the route patterns and the site registry in
     the picker is out of reach, and a switch that still cannot be made
     leaves the turn at the level the site has instead of failing it.
   - `opencli-gemini-<model>`: whatever `opencli gemini models` lists for the
-    account (`3.8-flash`, `3.1-pro`, `4-argon-complex-tasks`, ...), read from
-    the site by the bridge's `GET /v1/models` and kept five minutes; each
-    turn passes `--model`. opencli 2.0.3 is patched
-    (`patches/@jackwener__opencli@2.0.3.patch`) so `--model` accepts every
-    id its own `models` lists (it rejected `4-argon-complex-tasks`) and so a
-    selection whose read-back is empty is not reported as failed: the picker
-    now shows only the variant ("Flash"), never the version.
+    account (`3.5-flash-lite`, `3.8-flash`, `3.1-pro`, `4-argon`,
+    `4-carbon`), read from the site by the bridge's `GET /v1/models` and kept
+    five minutes; each turn passes `--model`. opencli 2.0.3 is patched
+    (`patches/@jackwener__opencli@2.0.3.patch`) so a model's id is its own
+    name and version alone -- the one text part of the picker item that
+    starts with a version ("4 Argon" is `4-argon`) -- never the description
+    the site shows beside it ("Code & analysis"), which it rewords and moves;
+    so `--model` accepts every id its own `models` lists and selects the
+    item by that same id; and so a selection whose read-back is empty is not
+    reported as failed: the picker now shows only the variant ("Flash"),
+    never the version.
     Gemini is also the site with a **thinking level** of its own (`low`,
     `medium`, `high`, read from the site's own "Thinking level" submenu), and
     the site renamed them: opencli knew only `standard` and `extended`, so
@@ -2595,9 +2605,10 @@ single list; the route patterns and the site registry in
   transcripts began alike (subagents spawned with the same task and given the
   same plain reply) could resolve to one chat.
 - **A prompt only ever goes into its own chat.** Every agent and session takes
-  turns in one browser tab per site, and the tab can be moved by anything
-  else driving the browser -- someone clicking another chat in it, or another
-  opencli client. So one opencli command is the whole turn (`ask-file` /
+  turns in a site's shared pool of browser tabs, so any tab may have shown
+  another agent's chat last, and a tab can be moved by anything else driving
+  the browser -- someone clicking another chat in it, or another opencli
+  client. So one opencli command is the whole turn (`ask-file` /
   `ask` with `--conversation <id>` or `--new`), and AutoDev's patch makes it,
   on the page that sends and immediately before sending: open the chat, stop
   a reply an interrupted turn left running there, and confirm the tab shows
@@ -2608,9 +2619,11 @@ single list; the route patterns and the site registry in
   message unique to its turn. A tab moved between turns is therefore
   harmless, and one moved during a reply can fail a turn but not misroute it.
 - **Router admission avoids an occupied opencli tab when another route is available.**
-  Each opencli provider declares `maxConcurrentRequests: 1` in the routing
-  configuration, independently for ChatGPT and Gemini even though they share
-  the bridge port. The router reserves a per-provider request slot before
+  Each opencli provider declares `maxConcurrentRequests` in the routing
+  configuration -- 3 for ChatGPT, 1 for Gemini -- independently even though
+  they share the bridge port. It is also the number of browser tabs the
+  bridge runs that site's turns in (see "Tab pool" below), so the router and
+  the bridge admit the same number of turns. The router reserves a per-provider request slot before
   dispatch. A role fallback chain defers a saturated provider when another
   eligible, non-cooling provider has room; if alternatives fail, or the chain
   has only that provider, the request waits for its slot instead of failing
@@ -2618,12 +2631,12 @@ single list; the route patterns and the site registry in
   provider and queue. Waiting requests can be cancelled without being sent.
   Capacity is not a provider failure: it does not cool the provider, change
   its health, or count live agents as active transport requests. The bridge
-  still serializes requests per browser site and retains its wait/turn budgets.
-  Provider-specific `/health` reports `busy` and `queueDepth` diagnostically;
-  a healthy occupied tab continues returning HTTP 200.
-- **One budget per turn, and a busy site is not a broken site.** A site is one
-  browser tab, so turns for it run one at a time and a turn that finds the tab
-  busy waits for it. A turn has two allowances of the same length (the turn
+  still admits turns per site into its tabs and retains its wait/turn budgets.
+  Provider-specific `/health` reports `busy` (every tab holds a turn), `tabs`,
+  `activeTurns` and `queueDepth` (running plus waiting) diagnostically; a
+  healthy occupied site continues returning HTTP 200.
+- **One budget per turn, and a busy site is not a broken site.** A site runs
+  one turn per tab, so a turn that finds every tab busy waits for one. A turn has two allowances of the same length (the turn
   timeout): one to wait for the tab, and one to hold it. The second starts
   when the turn first takes the tab, and every command in the turn draws on
   it: the command opencli runs is given the time the turn has left, and a turn
@@ -2721,12 +2734,34 @@ single list; the route patterns and the site registry in
   chat that loads with no visible turns) and continuing fails before anything
   was sent, the entry is dropped and the turn runs once more as a new chat
   with the whole conversation, so the session does not stick on a dead chat.
-- **Serialisation.** A site is one browser tab: turns for the same site queue
-  in the bridge; different sites run in parallel. A command the bridge
-  cancels ends at once, but opencli's daemon keeps the site session until
-  that command's browser step finishes, so the next command can be refused
-  with `SESSION_BUSY`; the bridge waits that out (retrying every 5 s) until
-  the turn's own timeout instead of failing the turn.
+- **Tab pool.** A site runs its turns in as many browser tabs as its route's
+  `maxConcurrentRequests`, one turn per tab. With one tab per site, more than
+  half of a ChatGPT turn's time (p50 114 s; 51 s of it the site actually
+  working) was spent queued behind other agents' turns, two to six of them
+  deep for most of the day. The bridge passes the pool to opencli as
+  `OPENCLI_SITE_SLOTS` (`chatgpt:3,gemini:1`): each command borrows a free
+  persistent tab (`site:<site>#<n>`) from opencli's daemon and gives it back
+  when it ends. Three concurrent ChatGPT turns in background tabs -- two
+  continuing chats and one new -- each answered correctly in 38-48 s. Gemini
+  keeps one tab: its model picker does not render in a background tab.
+  The bridge admits turns in arrival order, as many at once as the site has
+  tabs (`SiteTabs` in `opencli.ts`). A site's model is an account setting
+  (`chatgpt model` changes the account's last-used model), so turns share
+  the site only while they want the model it is on: a turn that wants
+  another waits for the site to drain and runs alone, so its switch cannot
+  change the model under a turn in another tab, and turns behind it wait for
+  it. ChatGPT's upload allowance is checked once a turn has a tab, counting
+  the uploads the site's other tabs are making, so concurrent turns cannot
+  both spend the last one. Different sites run in parallel. A command the
+  bridge cancels ends at once, but opencli's daemon keeps its tab until that
+  command's browser step finishes; a refusal with `SESSION_BUSY` is waited
+  out (retrying every 5 s) until the turn's own timeout instead of failing
+  the turn.
+- **A finished ChatGPT reply is read within about two seconds.** The patched
+  adapter reads the reply every second (it was every 3 s) and still returns
+  it only once the page has stopped generating and the same text has been
+  read three times in a row, which is what guards against a half-rendered
+  reply. At 3 s every turn waited 6-9 s after the reply had already ended.
 - **Keep-alives are events.** The 15 s keep-alive is a `response.in_progress`
   event, not an SSE comment: an SSE parser drops comments, so Codex never
   counted the old `: keep-alive` lines and aborted every site turn that ran
@@ -2742,15 +2777,16 @@ single list; the route patterns and the site registry in
   not render in a hidden or covered window, and opencli then selects no model
   at all ("model discovery returned no selectable models"); such a turn is
   asked with the model Gemini already has rather than failing.
-- **A Gemini model that is out of usage is its usage limit.** opencli names
-  a Gemini model by the picker's label and description, and a model that is
-  out of usage has its description replaced by "Limit resets Nov 9, 9:26 PM":
-  the id the route asks for (`4-argon-complex-tasks`) disappears from the
-  list, `4-argon-limit-resets-nov-9-926-pm` appears, and opencli answers
-  `Unknown model` -- which read as an outage. The bridge reads it back as
-  `quota_exhausted` (`MODEL_LIMIT`, HTTP 429 or a stream's `error.limit`)
-  with the reset the site stated, taken in local time; a stated time that has
-  already passed is a label the page has not refreshed and names no reset.
+- **A Gemini model that is out of usage is its usage limit.** The site keeps
+  such a model in its picker and replaces its description with "Limit
+  resets Nov 9, 9:26 PM". The model keeps its id; `opencli gemini models`
+  reports the site's text as the row's `limit` (null otherwise), and
+  `gemini ask --model` refuses the model before sending anything, under the
+  error code `MODEL_LIMIT` ('Gemini model "4-argon" is out of usage: Limit
+  resets Nov 9, 9:26 PM'). The bridge (`geminiModelLimit`) reads that back
+  as `quota_exhausted` (HTTP 429 or a stream's `error.limit`) with the reset
+  the site stated, taken in local time; a stated time that has already
+  passed is a label the page has not refreshed and names no reset.
 - **Per-site health isolation and live probe resilience.** Both opencli
   providers share the `:4004` bridge process, but each route probes its own
   site via `http://127.0.0.1:4004/health/liveliness?provider=<provider>`.

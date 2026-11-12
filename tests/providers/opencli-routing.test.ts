@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -16,6 +16,9 @@ import {
   OpencliConversationLedger,
   typedPromptMarker
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+
+/** One tab per site: these tests drive a site's turns one at a time. */
+const ONE_TAB_PER_SITE = { chatgpt: 1, gemini: 1 } as const;
 
 /**
  * Every prompt reaches the chat of the agent that sent it, and every reply
@@ -227,6 +230,7 @@ async function withSites(
   const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-routing-"));
   const ledger = new OpencliConversationLedger();
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     tempRoot,
@@ -509,6 +513,7 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
   const ledger = new OpencliConversationLedger();
   let releaseTurn: (() => void) | null = null;
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 1,
     wedgedTimeoutMs: 50,
@@ -627,6 +632,7 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
 async function withBridge(
   options: {
     readonly turnTimeoutSeconds: number;
+    readonly siteTabs?: Readonly<Record<Site, number>>;
     readonly modelListTtlMs?: number;
     readonly now?: () => number;
     readonly uploadLogPath?: string;
@@ -640,6 +646,7 @@ async function withBridge(
   const sites = new FakeSites();
   const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-budget-"));
   const bridge = createOpencliBridge({
+    siteTabs: options.siteTabs ?? ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: options.turnTimeoutSeconds,
     ...(options.modelListTtlMs === undefined
@@ -888,6 +895,221 @@ test("a busy site reports itself busy rather than unavailable", async () => {
       assert.equal((await turnResponse).status, 200);
     }
   );
+});
+
+/**
+ * Holds every ChatGPT `ask-file` until the test lets it go, and records the
+ * commands the bridge ran and how many asks were in flight at once.
+ */
+class HeldAsks {
+  inFlight = 0;
+  mostInFlight = 0;
+  readonly commands: string[] = [];
+  private readonly held: Array<() => void> = [];
+
+  readonly run = async (
+    request: OpencliRunRequest,
+    sites: FakeSites
+  ): Promise<JsonRecord[]> => {
+    if (request.args[0] === "chatgpt")
+      this.commands.push(request.args.slice(1, 3).join(" "));
+    if (request.args[1] !== "ask-file") return sites.run(request);
+    this.inFlight++;
+    this.mostInFlight = Math.max(this.mostInFlight, this.inFlight);
+    await new Promise<void>((resolve) => this.held.push(resolve));
+    this.inFlight--;
+    return sites.run(request);
+  };
+
+  /** Resolves once `count` asks are held. */
+  async waitForHeld(count: number): Promise<void> {
+    for (let tries = 0; this.held.length < count; tries++) {
+      assert.ok(tries < 200, `${count} asks were never in flight`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  releaseAll(): void {
+    for (const release of this.held.splice(0)) release();
+  }
+}
+
+/** A short pause for anything the bridge would start if it were going to. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+test("a site runs as many turns at once as it has tabs, and queues the rest", async () => {
+  const asks = new HeldAsks();
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      siteTabs: { chatgpt: 2, gemini: 1 },
+      run: asks.run
+    },
+    async (baseUrl) => {
+      // The first turn puts the site on its model.
+      const first = postTurn(
+        baseUrl,
+        turnRequest("first", MODEL.chatgpt, "tabs-0")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await first).status, 200);
+
+      const turns = [1, 2, 3].map((index) =>
+        postTurn(
+          baseUrl,
+          turnRequest(`tab-${index}`, MODEL.chatgpt, `tabs-${index}`)
+        )
+      );
+      await asks.waitForHeld(2);
+      await settle();
+      assert.equal(asks.inFlight, 2, "two tabs, two turns at once");
+
+      const health = (await (
+        await fetch(`${baseUrl}/health/liveliness?provider=opencli-chatgpt`)
+      ).json()) as {
+        busy: boolean;
+        tabs: number;
+        activeTurns: number;
+        queueDepth: number;
+      };
+      assert.deepEqual(
+        {
+          busy: health.busy,
+          tabs: health.tabs,
+          activeTurns: health.activeTurns,
+          queueDepth: health.queueDepth
+        },
+        { busy: true, tabs: 2, activeTurns: 2, queueDepth: 3 }
+      );
+
+      asks.releaseAll();
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      for (const response of await Promise.all(turns))
+        assert.equal(response.status, 200);
+      assert.equal(asks.mostInFlight, 2);
+    }
+  );
+});
+
+test("a turn that wants another model waits for the site to drain and switches it alone", async () => {
+  const asks = new HeldAsks();
+  const other = "opencli-chatgpt-advanced";
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      siteTabs: { chatgpt: 3, gemini: 1 },
+      run: asks.run
+    },
+    async (baseUrl) => {
+      const first = postTurn(
+        baseUrl,
+        turnRequest("first", MODEL.chatgpt, "model-0")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await first).status, 200);
+      asks.commands.length = 0;
+
+      const before = [1, 2].map((index) =>
+        postTurn(
+          baseUrl,
+          turnRequest(`same-${index}`, MODEL.chatgpt, `model-${index}`)
+        )
+      );
+      await asks.waitForHeld(2);
+      const switching = postTurn(
+        baseUrl,
+        turnRequest("switch", other, "model-switch")
+      );
+      await settle();
+      // A turn behind the switch waits for it, even at the site's model.
+      const after = postTurn(
+        baseUrl,
+        turnRequest("after", MODEL.chatgpt, "model-after")
+      );
+      await settle();
+      assert.equal(asks.inFlight, 2, "the switch waits for the site to drain");
+      assert.ok(
+        !asks.commands.includes("model advanced"),
+        "the model is not switched under running turns"
+      );
+
+      asks.releaseAll();
+      await asks.waitForHeld(1);
+      await settle();
+      assert.equal(asks.inFlight, 1, "the switching turn runs alone");
+      assert.ok(asks.commands.includes("model advanced"));
+
+      asks.releaseAll();
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      for (const response of await Promise.all([
+        ...before,
+        switching,
+        after
+      ]))
+        assert.equal(response.status, 200);
+      assert.deepEqual(
+        asks.commands.filter((command) => command.startsWith("model")),
+        ["model advanced", "model balanced"]
+      );
+    }
+  );
+});
+
+test("turns in a site's other tabs count the uploads they are making", async () => {
+  const asks = new HeldAsks();
+  const clock = Date.parse("2026-11-11T15:00:00.000Z");
+  const directory = mkdtempSync(join(tmpdir(), "autodev-opencli-uploads-"));
+  const uploadLogPath = join(directory, "uploads.json");
+  // One upload left in the window.
+  writeFileSync(
+    uploadLogPath,
+    JSON.stringify({
+      schema: "autodev-opencli-uploads-v1",
+      sites: {
+        chatgpt: Array.from({ length: 79 }, (_, index) => clock - 1000 - index)
+      }
+    })
+  );
+  try {
+    await withBridge(
+      {
+        turnTimeoutSeconds: 30,
+        siteTabs: { chatgpt: 2, gemini: 1 },
+        now: () => clock,
+        uploadLogPath,
+        run: asks.run
+      },
+      async (baseUrl) => {
+        const first = postTurn(
+          baseUrl,
+          turnRequest("first", MODEL.chatgpt, "uploads-0")
+        );
+        await asks.waitForHeld(1);
+        asks.releaseAll();
+        assert.equal((await first).status, 200);
+
+        const uploading = postTurn(
+          baseUrl,
+          longTurnRequest("upload-a", "uploads-a")
+        );
+        await asks.waitForHeld(1);
+        const refused = await postTurn(
+          baseUrl,
+          longTurnRequest("upload-b", "uploads-b")
+        );
+        assert.equal(refused.status, 429, "the last upload is already taken");
+        asks.releaseAll();
+        assert.equal((await uploading).status, 200);
+        assert.equal((await uploadHealth(baseUrl, "chatgpt")).uploadsUsed, 80);
+      }
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 /** A turn whose prompt is too long to type: the site has to take it as a file. */
@@ -1266,38 +1488,42 @@ test("a turn that waited for the site's tab still has its whole time on it", asy
 });
 
 test("a Gemini model that is out of usage is its usage limit, with the site's reset", async () => {
-  const unknown = new OpencliCommandError(
-    'Unknown model "4-argon-complex-tasks". Available models: 3.5-flash-lite, 3.8-flash, 3.1-pro, 4-argon-limit-resets-nov-9-926-pm. Use "opencli gemini models" to see available values.',
-    "ARGUMENT",
-    2
-  );
+  // opencli keeps the model under its own name and refuses to ask it, with
+  // the site's text; its hint follows in parentheses.
+  const refusal = (text: string) =>
+    new OpencliCommandError(
+      `Gemini model "4-argon" is out of usage: ${text} (Use another model until then. "opencli gemini models" shows each model's limit.)`,
+      "MODEL_LIMIT",
+      1
+    );
+  const limited = refusal("Limit resets Nov 9, 9:26 PM");
   const now = new Date(2026, 10, 9, 12, 0).getTime();
-  const limit = geminiModelLimit(unknown, now);
+  const limit = geminiModelLimit(limited, now);
   assert.ok(limit);
-  assert.match(
+  assert.equal(limit.code, "MODEL_LIMIT");
+  assert.equal(
     limit.message,
-    /^Gemini usage limit reached for 4-argon; resets at /u
-  );
-  assert.ok(
-    limit.message.endsWith(new Date(2026, 10, 9, 21, 26).toISOString())
+    `Gemini usage limit reached for 4-argon; resets at ${new Date(2026, 10, 9, 21, 26).toISOString()}`
   );
   // A December read of a January reset is next year's.
   const january = geminiModelLimit(
-    new OpencliCommandError(
-      'Unknown model "4-argon-complex-tasks". Available models: 4-argon-limit-resets-jan-2-1000-am. Use "opencli gemini models" to see available values.',
-      "ARGUMENT",
-      2
-    ),
+    refusal("Limit resets Jan 2, 10:00 AM"),
     new Date(2026, 11, 30, 12, 0).getTime()
   );
   assert.ok(
     january?.message.endsWith(new Date(2027, 0, 2, 10, 0).toISOString())
   );
+  // A reset the site words in a way that names no instant is still the
+  // limit, with no reset.
+  assert.equal(
+    geminiModelLimit(refusal("Limit resets soon"), now)?.message,
+    "Gemini usage limit reached for 4-argon"
+  );
   // A model the site simply does not have is still an unknown model.
   assert.equal(
     geminiModelLimit(
       new OpencliCommandError(
-        'Unknown model "9-nope". Available models: 3.8-flash, 4-argon-limit-resets-nov-9-926-pm. Use "opencli gemini models" to see available values.',
+        'Unknown model "9-nope". Available models: 3.8-flash, 4-argon. Use "opencli gemini models" to see available values.',
         "ARGUMENT",
         2
       ),
@@ -1310,18 +1536,14 @@ test("a Gemini model that is out of usage is its usage limit, with the site's re
     {
       turnTimeoutSeconds: 30,
       run: async (request, sites) => {
-        if (request.args[1] === "ask") throw unknown;
+        if (request.args[1] === "ask") throw limited;
         return sites.run(request);
       }
     },
     async (baseUrl) => {
       const response = await postTurn(
         baseUrl,
-        turnRequest(
-          "limited",
-          "opencli-gemini-4-argon-complex-tasks",
-          "g-thread"
-        )
+        turnRequest("limited", "opencli-gemini-4-argon", "g-thread")
       );
       assert.equal(response.status, 429);
       const body = (await response.json()) as {

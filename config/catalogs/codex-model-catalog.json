@@ -45,7 +45,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -100,7 +100,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -147,7 +147,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -193,7 +193,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -239,7 +239,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -383,7 +383,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -429,7 +429,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -475,7 +475,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -521,7 +521,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -567,7 +567,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -613,7 +613,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -659,7 +659,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -705,7 +705,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -1082,9 +1082,55 @@
       ]
     },
     {
-      "slug": "opencli-gemini-4-argon-complex-tasks",
-      "display_name": "Gemini 4 Argon (complex tasks) (opencli)",
-      "description": "Gemini web's 4 Argon (complex tasks) model, driven through opencli and the signed-in browser.",
+      "slug": "opencli-gemini-4-argon",
+      "display_name": "Gemini 4 Argon (opencli)",
+      "description": "Gemini web's 4 Argon model, driven through opencli and the signed-in browser.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Quick and efficient"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced depth"
+        },
+        {
+          "effort": "high",
+          "description": "Extra thorough"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "auto_compact_token_limit": 115200,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": false,
+      "support_verbosity": false,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "opencli-gemini-4-carbon",
+      "display_name": "Gemini 4 Carbon (opencli)",
+      "description": "Gemini web's 4 Carbon model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
@@ -1172,7 +1218,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1227,7 +1273,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1282,7 +1328,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1337,7 +1383,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1392,7 +1438,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1447,7 +1493,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1502,7 +1548,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1557,7 +1603,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1612,7 +1658,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,
@@ -1667,7 +1713,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": true,

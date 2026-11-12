@@ -82,7 +82,7 @@
       "baseUrl": "http://127.0.0.1:4004/v1",
       "healthUrl": "http://127.0.0.1:4004/health/liveliness?provider=opencli-chatgpt",
       "envKey": "CODEX_ROUTER_OPENCLI_API_KEY",
-      "maxConcurrentRequests": 1
+      "maxConcurrentRequests": 3
     },
     "opencli-gemini": {
       "pattern": "^opencli-gemini-[a-z0-9][a-z0-9.-]*$",
@@ -151,8 +151,8 @@
     "opencli-gemini": {
       "models": {
         "default": "opencli-gemini-3.8-flash",
-        "smart": "opencli-gemini-4-argon-complex-tasks",
-        "orchestrator": "opencli-gemini-4-argon-complex-tasks"
+        "smart": "opencli-gemini-4-argon",
+        "orchestrator": "opencli-gemini-4-argon"
       },
       "links": {
         "usage": "https://gemini.google.com/usage",

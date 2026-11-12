@@ -36,7 +36,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -82,7 +82,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -128,7 +128,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -174,7 +174,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -220,7 +220,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -266,7 +266,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -312,7 +312,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,
@@ -358,7 +358,7 @@
       "tool_mode": "code_mode_only",
       "truncation_policy": {
         "mode": "tokens",
-        "limit": 10000
+        "limit": 6000
       },
       "experimental_supported_tools": [],
       "use_responses_lite": false,

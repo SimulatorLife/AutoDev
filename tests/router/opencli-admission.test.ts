@@ -56,13 +56,22 @@ const KEY = "CODEX_ROUTER_OPENCLI_API_KEY";
 const chatgptModel = "opencli-chatgpt-balanced";
 const geminiModel = "opencli-gemini-3.8-flash";
 
+/**
+ * The site's configured route, with room for one request: the tests below
+ * exercise what admission does once a route is full, which one turn then is.
+ */
 function candidate(provider: "opencli-chatgpt" | "opencli-gemini"): Candidate {
   const model = provider === "opencli-chatgpt" ? chatgptModel : geminiModel;
   const configured = ROUTING_POLICY.routeForModel(model);
   assert.ok(configured);
   assert.equal(configured.provider, provider);
   const { healthUrl: _healthUrl, ...withoutHealthProbe } = configured;
-  return { ...withoutHealthProbe, model, baseUrl: `http://${provider}.test/v1` };
+  return {
+    ...withoutHealthProbe,
+    model,
+    baseUrl: `http://${provider}.test/v1`,
+    maxConcurrentRequests: 1
+  };
 }
 
 function response(id: string): Response {
@@ -103,10 +112,10 @@ async function withMockedProviders(fn: () => Promise<void>) {
   }
 }
 
-test("opencli sites declare separate, validated single-request capacities", () => {
+test("opencli sites declare separate, validated capacities: one per browser tab", () => {
   const chatgpt = ROUTING_POLICY.routeForModel(chatgptModel);
   const gemini = ROUTING_POLICY.routeForModel(geminiModel);
-  assert.equal(chatgpt?.maxConcurrentRequests, 1);
+  assert.equal(chatgpt?.maxConcurrentRequests, 3);
   assert.equal(gemini?.maxConcurrentRequests, 1);
   assert.notEqual(chatgpt?.provider, gemini?.provider);
 });

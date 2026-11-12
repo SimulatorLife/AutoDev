@@ -6,6 +6,11 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import {
+  geminiModelLimit,
+  OpencliCommandError
+} from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+
 /**
  * The ChatGPT adapter AutoDev patches: how a prompt reaches the site.
  *
@@ -424,5 +429,136 @@ test("the picker is looked for where the site keeps it", async () => {
     script,
     /mode\[\\s-\]\*picker/u,
     "the adapter's own name patterns cover the site's label"
+  );
+});
+
+/** One of the installed Gemini adapter's modules, or null without the package. */
+async function geminiModule<T>(file: string): Promise<T | null> {
+  let entry: string;
+  try {
+    entry = require.resolve("@jackwener/opencli");
+  } catch {
+    return null;
+  }
+  const url = pathToFileURL(
+    resolve(dirname(entry), "..", "..", "clis", "gemini", file)
+  ).href;
+  return (await import(url)) as T;
+}
+
+interface GeminiModelIdentity {
+  geminiModelIdOf: (text: string) => string;
+  geminiModelEntry: (
+    item: unknown
+  ) => { model: string; limit: string | null } | null;
+}
+
+/**
+ * The adapter's model identity, run against picker items made of text parts.
+ *
+ * Each part stands for one element of the item that holds text of its own,
+ * the way the page's tree walker reads it.
+ */
+function geminiModelIdentity(logic: string): GeminiModelIdentity {
+  interface FakeItem {
+    readonly parts: readonly string[];
+  }
+  const document = {
+    createTreeWalker(root: FakeItem) {
+      const nodes = root.parts.map((text) => ({
+        nodeValue: text,
+        parentElement: { closest: () => null }
+      }));
+      let index = -1;
+      return { nextNode: () => nodes[++index] ?? null };
+    }
+  };
+  // The adapter ships this logic as page-script source.
+  const build = new Function(
+    "document",
+    "NodeFilter",
+    `${logic}; return { geminiModelIdOf, geminiModelEntry };`
+  ) as (document: unknown, nodeFilter: unknown) => GeminiModelIdentity;
+  return build(document, { SHOW_TEXT: 4 });
+}
+
+test("a Gemini model's id is its own name, whatever the site writes beside it", async () => {
+  // The picker shows each model's name and version in one part and a
+  // description in another, and the site rewords the description, moves it
+  // before or after the name, and replaces it with "Limit resets ..." while
+  // the account is out of usage. An id read from the item's whole text was
+  // `4-argon-complex-tasks`, then `code--analysis-4-argon`, then
+  // `4-argon-limit-resets-nov-9-926-pm`, and every route that named the
+  // model was told it did not exist.
+  const utils = await geminiModule<{ geminiModelIdentityLogic: () => string }>(
+    "utils.js"
+  );
+  if (utils === null) return;
+  const { geminiModelEntry, geminiModelIdOf } = geminiModelIdentity(
+    utils.geminiModelIdentityLogic()
+  );
+  const item = (...parts: string[]) => geminiModelEntry({ parts });
+
+  assert.deepEqual(item("Quick answers", "3.5 Flash-Lite"), {
+    model: "3.5-flash-lite",
+    limit: null
+  });
+  assert.deepEqual(item("All-around help", "3.8 Flash"), {
+    model: "3.8-flash",
+    limit: null
+  });
+  assert.deepEqual(item("Detailed research", "3.1 Pro"), {
+    model: "3.1-pro",
+    limit: null
+  });
+  assert.deepEqual(item("Code & analysis", "4 Argon"), {
+    model: "4-argon",
+    limit: null
+  });
+  assert.deepEqual(item("4 Carbon", "Most complex work"), {
+    model: "4-carbon",
+    limit: null
+  });
+  // Out of usage, the model keeps its id and says when it comes back.
+  assert.deepEqual(item("Limit resets Nov 9, 9:26 PM", "4 Argon"), {
+    model: "4-argon",
+    limit: "Limit resets Nov 9, 9:26 PM"
+  });
+  // The thinking levels share the menu and are no model.
+  assert.equal(item("Low", "Fast and efficient"), null);
+  assert.equal(geminiModelIdOf("Gemini 3.1 Pro"), "3.1-pro");
+  assert.equal(geminiModelIdOf("Code & analysis"), "");
+});
+
+test("a Gemini model that is out of usage is refused as its usage limit", async () => {
+  // `gemini ask --model` on a model the account is out of usage on fails
+  // under its own code with the site's text, and the bridge reads that back
+  // as the limit with the instant the site named -- not as a model that does
+  // not exist.
+  const ask = await geminiModule<{
+    __test__: {
+      geminiModelLimitError: (
+        model: string,
+        limit: string
+      ) => Error & { code: string; hint?: string; exitCode: number };
+    };
+  }>("ask.js");
+  if (ask === null) return;
+  const refusal = ask.__test__.geminiModelLimitError(
+    "4-argon",
+    "Limit resets Nov 9, 9:26 PM"
+  );
+  assert.equal(refusal.code, "MODEL_LIMIT");
+  const limit = geminiModelLimit(
+    new OpencliCommandError(
+      `${refusal.message} (${refusal.hint ?? ""})`,
+      refusal.code,
+      refusal.exitCode
+    ),
+    new Date(2026, 10, 9, 12, 0).getTime()
+  );
+  assert.equal(
+    limit?.message,
+    `Gemini usage limit reached for 4-argon; resets at ${new Date(2026, 10, 9, 21, 26).toISOString()}`
   );
 });

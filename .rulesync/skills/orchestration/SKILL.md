@@ -58,7 +58,7 @@ Allow discovery and worker subagents to complete their assignments. Do not close
 
 ## Waiting and context budget
 
-Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context.
+Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context. Scope reads and searches to what the step needs (`rg -l`, `--max-count`, a line range, a path filter): every result stays in context until compaction, and output past the catalog's `truncation_policy` is cut to its head and tail anyway.
 
 Codex compacts at the catalog's `auto_compact_token_limit`; do not re-read files or re-request reports to rebuild context compaction dropped unless the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
 

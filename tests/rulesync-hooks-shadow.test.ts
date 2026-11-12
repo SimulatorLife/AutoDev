@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync
+  rmSync,
+  symlinkSync,
+  writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  generateRepositoryRulesync,
+  renderCodexUserHooks,
+  writeCodexUserHooks
+} from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import { parse } from "smol-toml";
 
 type JsonObject = Record<string, unknown>;
@@ -250,29 +260,44 @@ test("generation writes one hook file per target and leaves the portable source 
     );
 });
 
-test("configured Rulesync generation writes hooks alongside skills", () => {
-  const output = mkdtempSync(join(temporaryRoot, "configured-"));
+test("install projects Codex hooks once, at user level only", () => {
+  // Codex loads $CODEX_HOME/hooks.json and the project's .codex/hooks.json;
+  // a projection in both ran every hook twice in this repository.
+  const repo = mkdtempSync(join(temporaryRoot, "install-"));
+  const codexHome = join(repo, "codex-home");
   try {
-    const result = spawnSync(
-      "pnpm",
-      [
-        "exec",
-        "rulesync",
-        "generate",
-        "--config",
-        "rulesync.jsonc",
-        "--output-roots",
-        output,
-        "--delete",
-        "--silent"
-      ],
-      { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+    cpSync(sourceRoot, join(repo, ".rulesync"), { recursive: true });
+    cpSync(
+      join(repositoryRoot, "rulesync.jsonc"),
+      join(repo, "rulesync.jsonc")
     );
-    assert.equal(result.status, 0, result.stderr);
-    for (const target of targets)
-      assert.equal(existsSync(join(output, hookPaths[target])), true, target);
+    symlinkSync(
+      join(repositoryRoot, "node_modules"),
+      join(repo, "node_modules")
+    );
+    mkdirSync(join(repo, ".codex"), { recursive: true });
+    writeFileSync(join(repo, ".codex", "hooks.json"), "{}");
+
+    generateRepositoryRulesync(repo);
+    generateRepositoryRulesync(repo, { check: true });
+    writeCodexUserHooks(repo, codexHome);
+
+    assert.equal(existsSync(join(repo, ".codex", "hooks.json")), false);
+    for (const target of targets.filter((name) => name !== "codexcli"))
+      assert.equal(existsSync(join(repo, hookPaths[target])), true, target);
+    const installed = join(codexHome, "hooks.json");
+    assert.equal(lstatSync(installed).isFile(), true);
+    assert.equal(readFileSync(installed, "utf8"), renderCodexUserHooks(repo));
+    const installedCommands = groupedCommands(
+      asObject(readJson(installed).hooks)
+    );
+    assert.equal(new Set(installedCommands).size, installedCommands.length);
+    assert.deepEqual(
+      new Set(installedCommands),
+      new Set(groupedCommands(asObject(document("codexcli").hooks)))
+    );
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 

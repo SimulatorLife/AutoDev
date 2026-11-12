@@ -3,14 +3,37 @@ targets: ["*"]
 description: Evaluate AutoDev and recent sessions to improve usage/token/model efficiency.
 ---
 
-Evaluate recent AutoDev sessions, code, and metrics; how/where were agents/model-usage inefficient? How/where/why did they use too much "usage", too many tokens, overly-verbose/unnecessary/duplicate/repeated context/prompts/steering?
+# AutoDev Efficiency Audit & Optimization
 
-Where/how did they spend too much time in loops, retries, discovery, tool-discovery, or unnecessary steps? Where/how did they fail to leverage existing context, memory, or tooling? What repeated steps or patterns across different sessions could be optimized, eliminated, or improved?
+**Goal:** Analyze recent AutoDev sessions, code, and metrics to minimize token usage, context overhead, latency, and unnecessary work while maintaining or improving results.
 
-Goal is to cut down extraneous token/context usage as much / wherever possible *and* improve results.
+## 1. Audit Areas
 
-When do/did sessions run long? Longer sessions are more expensive and less efficient, even with caching. How/when/where could sessions be compacted mid-task so that sessions run less at/over high-context? How/when can new sessions be started when a new task begins, rather than continuing to run a long session with high context?
+1. **Token and prompt overhead:** Excessive model usage, verbose or duplicated prompts, instructions, steering, and injected context.
+2. **Session and context management:** Long-running sessions, excessive context growth, missed compaction opportunities, and failure to start fresh sessions for new tasks.
+3. **Context and memory reuse:** Repeated discovery, investigation, file reads, or failure to reuse existing context, memory, caches, and prior results.
+4. **Tools:** Unnecessary or repeated calls, excessive discovery, inefficient sequencing, oversized inputs/outputs, and missing output bounds.
+5. **Loops and retries:** Repeated reasoning, failed attempts, excessive polling, ineffective retries, and unproductive steps.
+6. **Hooks and automation:** Unnecessary triggers, excessive execution frequency, and redundant context injections.
+7. **Skills:** Oversized or verbose skills, unnecessary always-loaded content, redundant skills, and opportunities to split reference files or consolidate skills.
+8. **Agent orchestration:** Unnecessary delegation, duplicated agent work, excessive context transfers, and inefficient coordination.
+9. **Model routing:** Inefficient model selection, unnecessary escalation/fallback, and avoidable usage or latency.
+10. **Workflow and code inefficiencies:** Redundant steps, repeated cross-session patterns, unnecessary custom logic, and underused existing tooling.
 
-Report savings/optimizations/efficiencies at the end.
+## 2. Procedure
 
-Test, validate, lock in the fixes/improvements with unit tests to prevent regressions.
+1. **Inspect:** Analyze representative recent sessions, traces, metrics, code, and configurations.
+2. **Diagnose:** Identify inefficiencies, root causes, recurring patterns, and measurable overhead.
+3. **Prioritize:** Rank opportunities by expected savings, frequency, effort, and risk.
+4. **Fix:** Implement simple, maintainable, systemic improvements using existing tooling where practical.
+5. **Test:** Add regression tests and validate correctness, reliability, and task quality.
+6. **Measure:** Compare before/after token usage, context size, tool calls, retries, latency, and costs.
+7. **Report:** Summarize findings, fixes, verified savings, test results, and remaining opportunities.
+
+## Requirements
+
+- Optimize **total end-to-end efficiency**, not individual metrics at the expense of results
+- Eliminate unnecessary work rather than simply shortening its output
+- Preserve functionality and avoid adding unjustified complexity
+- Base findings and savings on evidence; distinguish measurements from estimates
+- **Implement, test, and validate fixes**, not just recommend them

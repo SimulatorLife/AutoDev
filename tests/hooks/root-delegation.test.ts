@@ -166,6 +166,38 @@ test("root delegation keeps a bootstrap retained inside the compacted history", 
   assert.equal(runWithTranscript(transcript, "turn-retained"), "");
 });
 
+test("root delegation re-injects after a Claude Code compact boundary", () => {
+  const claudeInjection = `${JSON.stringify({
+    type: "attachment",
+    attachment: {
+      type: "hook_additional_context",
+      content: ["# Root orchestrator bootstrap\n\nbody"]
+    }
+  })}\n`;
+  const boundary = `${JSON.stringify({
+    type: "system",
+    subtype: "compact_boundary",
+    content: "Conversation compacted"
+  })}\n`;
+  assert.equal(runWithTranscript(claudeInjection, "claude-turn-2"), "");
+  assert.match(
+    runWithTranscript(claudeInjection + boundary, "claude-turn-after-compact"),
+    /Root orchestrator bootstrap/
+  );
+});
+
+test("root delegation ignores tool output that only quotes the bootstrap", () => {
+  const transcript = rolloutLine("response_item", {
+    type: "custom_tool_call_output",
+    output:
+      "$ cat agents/prompts/orchestrator.md\n# Root orchestrator bootstrap\n"
+  });
+  assert.match(
+    runWithTranscript(transcript, "turn-quoted"),
+    /Root orchestrator bootstrap/
+  );
+});
+
 test("root delegation injects when the transcript is new, missing, or unrelated", () => {
   assert.match(
     runWithTranscript(rolloutLine("session_meta", { id: "fresh" }), "turn-1"),

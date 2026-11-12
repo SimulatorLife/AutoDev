@@ -47,14 +47,17 @@ test("syncHookTrust populates canonical hashes and strips obsolete config.toml e
     const configPath = join(codexHome, "config.toml");
 
     mkdirSync(codexHome, { recursive: true });
-    mkdirSync(join(repoRoot, ".codex"), { recursive: true });
-    writeFileSync(join(repoRoot, ".codex", "hooks.json"), "{}");
+    const projectHooks = join(repoRoot, ".codex", "hooks.json");
 
-    // Initial config with obsolete entries
+    // Initial config with obsolete entries, including trust for the project
+    // projection an earlier install wrote (Codex loads it a second time).
     const initialContent = `
 model = "autodev/orchestrator"
 
 [hooks.state]
+
+[hooks.state."${projectHooks}:user_prompt_submit:0:0"]
+trusted_hash = "${CANONICAL_HOOK_HASHES["user_prompt_submit:0:0"]}"
 
 [hooks.state."${codexHome}/config.toml:user_prompt_submit:0:0"]
 trusted_hash = "sha256:obsolete1"
@@ -76,18 +79,14 @@ trusted_hash = "sha256:obsolete2"
     // Verify the content doesn't contain obsolete entries
     const updatedContent = readFileSync(configPath, "utf8");
     assert.doesNotMatch(updatedContent, /config\.toml:/);
+    assert.equal(updatedContent.includes(projectHooks), false);
 
-    // Verify each canonical hook is present
+    // Verify each canonical hook is trusted at user level only
     const userHooks = join(codexHome, "hooks.json");
-    const projectHooks = join(repoRoot, ".codex", "hooks.json");
     for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
       assert.match(
         updatedContent,
         new RegExp(JSON.stringify(`${userHooks}:${suffix}`))
-      );
-      assert.match(
-        updatedContent,
-        new RegExp(JSON.stringify(`${projectHooks}:${suffix}`))
       );
       assert.match(updatedContent, new RegExp(hash));
     }

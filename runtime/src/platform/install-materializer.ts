@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
-  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -51,6 +50,7 @@ import {
   materializeRuntimeContent,
   materializeRuntimeFile,
   resolveCommandOnPath,
+  type RulesyncGenerateOptions,
   runRulesyncGenerate,
   runtimeTarget,
   skillLinkMatches
@@ -415,12 +415,11 @@ export function syncHookTrust(
   const userHooksJson = path.join(codexHome, HOOKS_JSON);
   const projectHooksJson = path.join(repositoryRoot, ".codex", HOOKS_JSON);
 
-  for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
-    stateTable[`${userHooksJson}:${suffix}`] = { trusted_hash: hash };
-    if (exists(projectHooksJson)) {
-      stateTable[`${projectHooksJson}:${suffix}`] = { trusted_hash: hash };
-    }
+  for (const key of Object.keys(stateTable)) {
+    if (key.startsWith(`${projectHooksJson}:`)) delete stateTable[key];
   }
+  for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES))
+    stateTable[`${userHooksJson}:${suffix}`] = { trusted_hash: hash };
 
   hooksTable.state = stateTable;
   config.hooks = hooksTable;
@@ -461,13 +460,10 @@ export function checkHookTrust(
       const userEntry = stateTable[`${userHooksJson}:${suffix}`] as
         { trusted_hash?: string } | undefined;
       if (userEntry?.trusted_hash !== hash) return false;
-      if (exists(projectHooksJson)) {
-        const projectEntry = stateTable[`${projectHooksJson}:${suffix}`] as
-          { trusted_hash?: string } | undefined;
-        if (projectEntry?.trusted_hash !== hash) return false;
-      }
     }
-    return true;
+    return !Object.keys(stateTable).some((key) =>
+      key.startsWith(`${projectHooksJson}:`)
+    );
   } catch {
     return false;
   }
@@ -548,7 +544,6 @@ function ensureExclude(options: MaterializeOptions): void {
   mkdirSync(path.dirname(exclude), { recursive: true });
   const entries = [
     "/.agents/skills/",
-    "/.codex/hooks.json",
     "/.claude/settings.json",
     "/.github/hooks/",
     "/.agents/hooks.json"
@@ -1277,27 +1272,100 @@ export function materializeMcpConfiguration(options: {
  * left exactly as they are, because a declaration of hooks says nothing about
  * the skills or the commands a repository also projects.
  */
+/**
+ * Codex reads both `$CODEX_HOME/hooks.json` and the working project's
+ * `.codex/hooks.json`. Projecting Codex hooks into this checkout as well as
+ * the user level ran every Codex hook twice in AutoDev sessions (the root
+ * bootstrap was injected 2-4 times per turn), so Codex hooks are written only
+ * at user level by {@link writeCodexUserHooks}; the repository projection
+ * covers every other configured target.
+ */
+const USER_LEVEL_HOOK_TARGETS: ReadonlySet<string> = new Set(["codexcli"]);
+
+/**
+ * Run the repository's `rulesync.jsonc` generation (or its `--check`), with
+ * hooks projected for every configured target except the user-level ones.
+ */
+export function generateRepositoryRulesync(
+  repositoryRoot: string,
+  options: {
+    readonly features?: readonly string[];
+    readonly check?: boolean;
+  } = {}
+): void {
+  const configPath = path.join(repositoryRoot, "rulesync.jsonc");
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+    targets: string[];
+    features: string[];
+  };
+  const features = options.features ?? config.features;
+  const base: RulesyncGenerateOptions = {
+    configPath,
+    check: options.check === true,
+    silent: true
+  };
+  const projectFeatures = features.filter((feature) => feature !== "hooks");
+  if (projectFeatures.length > 0)
+    runRulesyncGenerate(repositoryRoot, { ...base, features: projectFeatures });
+  if (features.includes("hooks"))
+    runRulesyncGenerate(repositoryRoot, {
+      ...base,
+      features: ["hooks"],
+      targets: config.targets.filter(
+        (target) => !USER_LEVEL_HOOK_TARGETS.has(target)
+      )
+    });
+}
+
+/** Render the Codex hooks file Rulesync projects for a user-level install. */
+export function renderCodexUserHooks(repositoryRoot: string): string {
+  const projectedHome = mkdtempSync(
+    path.join(repositoryRoot, ".autodev-hooks-home-")
+  );
+  try {
+    runRulesyncGenerate(
+      repositoryRoot,
+      {
+        global: true,
+        inputRoots: [path.join(repositoryRoot, ".rulesync")],
+        targets: ["codexcli"],
+        features: ["hooks"],
+        silent: true
+      },
+      projectedHome
+    );
+    return readFileSync(path.join(projectedHome, ".codex", HOOKS_JSON), "utf8");
+  } finally {
+    rmSync(projectedHome, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Write the user-level Codex hooks file and remove the repository projection
+ * an earlier install left, which Codex would otherwise load a second time.
+ */
+export function writeCodexUserHooks(
+  repositoryRoot: string,
+  codexHome: string
+): void {
+  materializeRuntimeContent(
+    renderCodexUserHooks(repositoryRoot),
+    path.join(codexHome, HOOKS_JSON),
+    0o644
+  );
+  rmSync(path.join(repositoryRoot, ".codex", HOOKS_JSON), { force: true });
+}
+
 export function materializeCurrentHookProjections(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
 }): void {
-  const configPath = path.join(options.repositoryRoot, "rulesync.jsonc");
-  runRulesyncGenerate(options.repositoryRoot, {
-    configPath,
+  generateRepositoryRulesync(options.repositoryRoot, { features: ["hooks"] });
+  generateRepositoryRulesync(options.repositoryRoot, {
     features: ["hooks"],
-    silent: true
+    check: true
   });
-  runRulesyncGenerate(options.repositoryRoot, {
-    configPath,
-    features: ["hooks"],
-    check: true,
-    silent: true
-  });
-  const projection = path.join(options.repositoryRoot, ".codex", HOOKS_JSON);
-  if (!existsSync(projection))
-    throw new Error(`missing-hook-projection ${projection}`);
-
-  linkRuntimeSource(projection, path.join(options.codexHome, HOOKS_JSON));
+  writeCodexUserHooks(options.repositoryRoot, options.codexHome);
   syncHookTrust(
     path.join(options.codexHome, CONFIG_TOML_FILE),
     options.codexHome,
@@ -1460,10 +1528,7 @@ function composeAndLinkConfigs(
     source("config/model-routing.json"),
     path.join(options.codexHome, "codex-model-routing.json")
   );
-  linkRuntimeSource(
-    source(".codex/hooks.json"),
-    path.join(options.codexHome, "hooks.json")
-  );
+  writeCodexUserHooks(options.repositoryRoot, options.codexHome);
   syncHookTrust(
     path.join(options.codexHome, CONFIG_TOML_FILE),
     options.codexHome,
@@ -1801,10 +1866,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
     codexHome: options.codexHome,
     codexMcpSource: options.codexMcpSource
   });
-  runRulesyncGenerate(options.repositoryRoot, {
-    configPath: path.join(options.repositoryRoot, "rulesync.jsonc"),
-    silent: true
-  });
+  generateRepositoryRulesync(options.repositoryRoot);
   const updatedPrompts = materializeCommands(options, prompts);
   // The Codex desktop app reads $CODEX_HOME/prompts once, when its window
   // loads, and never re-reads it: an install that changed a prompt while the

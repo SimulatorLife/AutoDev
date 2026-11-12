@@ -17,8 +17,11 @@ import test from "node:test";
 
 import {
   createOpencliBridge,
-  type OpencliRunRequest
+  type OpencliRunRequest,
+  opencliSiteSlots,
+  routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
+import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   attachedPromptFileName,
   attachedPromptMessage,
@@ -46,6 +49,25 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 type JsonRecord = Record<string, unknown>;
+
+/** One tab per site: these tests drive a site's turns one at a time. */
+const ONE_TAB_PER_SITE = { chatgpt: 1, gemini: 1 } as const;
+
+test("each site gets as many tabs as its route takes concurrent requests", () => {
+  assert.deepEqual(routedSiteTabs(ROUTES), { chatgpt: 3, gemini: 1 });
+  assert.deepEqual(
+    routedSiteTabs([
+      { provider: "opencli-chatgpt", maxConcurrentRequests: 5 },
+      { provider: "opencli-gemini" }
+    ]),
+    { chatgpt: 5, gemini: 1 }
+  );
+  // opencli pools every site's commands into that many tabs.
+  assert.equal(
+    opencliSiteSlots({ chatgpt: 3, gemini: 1 }),
+    "chatgpt:3,gemini:1"
+  );
+});
 
 const EXEC_TOOL = {
   type: "custom",
@@ -648,6 +670,7 @@ test("the conversation ledger resumes the longest recorded prefix until the turn
 test("a streamed turn opens at once, keeps alive, and reports a failure in the stream", async () => {
   let release: (row: JsonRecord | Error) => void = () => {};
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     sessionBusyRetryMs: 1,
@@ -727,6 +750,7 @@ test("a later message in the same session continues the same chat after a restar
   ): Promise<{ args: readonly string[]; body: { output: JsonRecord[] } }> => {
     let args: readonly string[] = [];
     const bridge = createOpencliBridge({
+      siteTabs: ONE_TAB_PER_SITE,
       authToken: "",
       turnTimeoutSeconds: 30,
       ledger: new OpencliConversationLedger({ file }),
@@ -823,6 +847,7 @@ test("concurrent agents with identical transcripts each keep their own chat", as
   let nextChat = 0;
   const continuedIn: string[] = [];
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     run: async (request) => {
@@ -965,6 +990,7 @@ async function withBridge(
   const runs: FakeRun = { requests: [], prompts: [] };
   const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-test-"));
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken,
     turnTimeoutSeconds: 30,
     tempRoot,
@@ -1239,6 +1265,7 @@ test("an orchestrator turn carries the full orchestrator role prompt, a leaf tur
 test("an empty site model list is not cached", async () => {
   let listings = 0;
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     run: async (request) => {
@@ -1275,6 +1302,7 @@ test("a provider's model listing answers from cache and 503s before any list is 
   let listings = 0;
   let release: () => void = () => {};
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     run: async (request) => {
@@ -1349,6 +1377,7 @@ test("the follow-up tool index names exec's nested functions", () => {
 test("a slow streamed turn keeps Codex's idle timer alive with real events", async () => {
   let release: () => void = () => {};
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     keepAliveMs: 5,
@@ -1452,6 +1481,7 @@ test("a streamed turn that never reached the site says so in the stream", async 
   // failed with, and a route that cannot serve the request is not a provider
   // that is down.
   const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
     sessionBusyRetryMs: 1,

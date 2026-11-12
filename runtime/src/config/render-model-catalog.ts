@@ -55,6 +55,16 @@ export function autoCompactTokenLimit(contextWindow: number): number {
   );
 }
 
+/**
+ * Per-call tool output budget for token-truncated models. A tool result stays
+ * in context and is re-sent on every later request until compaction; outputs
+ * over ~20k characters were 12% of calls but 58% of all tool-output volume,
+ * mostly unbounded `rg`/`cat` dumps that a narrower query would answer.
+ * Codex keeps the head and tail of a truncated result, so the model still sees
+ * where to narrow. Byte-truncated provider catalogs already sit below this.
+ */
+export const TOOL_OUTPUT_TOKEN_LIMIT = 6_000;
+
 const STANDARD_REASONING_LEVELS = [
   { effort: "low", description: "Low reasoning" },
   { effort: "medium", description: "Balanced reasoning" },
@@ -153,7 +163,7 @@ export function buildCodexModelEntry(
     tool_mode: "code_mode_only",
     truncation_policy: {
       mode: "tokens",
-      limit: 10_000
+      limit: TOOL_OUTPUT_TOKEN_LIMIT
     },
     experimental_supported_tools: [],
     use_responses_lite: true,
@@ -196,7 +206,7 @@ export function buildRoleAliasEntry(roleName: string): CatalogModelEntry {
     tool_mode: "code_mode_only",
     truncation_policy: {
       mode: "tokens",
-      limit: 10_000
+      limit: TOOL_OUTPUT_TOKEN_LIMIT
     },
     experimental_supported_tools: [],
     use_responses_lite: true,
