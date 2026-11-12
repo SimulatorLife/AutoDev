@@ -132,9 +132,15 @@ test("compaction preserves the requested concise handoff language", () => {
   assert.match(prompt, /Keep each section concise/u);
   assert.match(prompt, /terse, single-line bullets/u);
   assert.match(prompt, /Prefer short references over detailed restatement/u);
-  assert.match(prompt, /If a prior checkpoint exists \(including `<compacted-summary>`\)/u);
+  assert.match(
+    prompt,
+    /If a prior checkpoint exists \(including `<compacted-summary>`\)/u
+  );
   assert.match(prompt, /function signatures, and syntax fragments/u);
-  assert.match(prompt, /Capture user feedback and explicit instructions faithfully/u);
+  assert.match(
+    prompt,
+    /Capture user feedback and explicit instructions faithfully/u
+  );
   assert.match(prompt, /Do not mention this summarization request/u);
 });
 
