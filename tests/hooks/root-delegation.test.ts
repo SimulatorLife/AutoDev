@@ -29,7 +29,8 @@ function runHook(
   sessionId?: string,
   turnId?: string,
   sharedHome?: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  extraInput: Record<string, unknown> = {}
 ): string {
   const home =
     sharedHome ?? mkdtempSync(join(tmpdir(), "autodev-root-delegation-"));
@@ -57,7 +58,8 @@ function runHook(
     const input = JSON.stringify({
       model,
       ...(sessionId === undefined ? {} : { session_id: sessionId }),
-      ...(turnId === undefined ? {} : { turn_id: turnId })
+      ...(turnId === undefined ? {} : { turn_id: turnId }),
+      ...extraInput
     });
     return execFileSync(process.execPath, [hookModule], {
       cwd: repositoryRoot,
@@ -103,6 +105,76 @@ test("root delegation suppresses duplicate context for the same identified turn"
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+function rolloutLine(type: string, payload: Record<string, unknown>): string {
+  return `${JSON.stringify({ type, payload })}\n`;
+}
+
+const injectedBootstrapLine = rolloutLine("response_item", {
+  type: "message",
+  role: "developer",
+  content: [
+    { type: "input_text", text: "# Root orchestrator bootstrap\n\nbody" }
+  ]
+});
+
+function runWithTranscript(transcript: string | null, turnId: string): string {
+  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-window-"));
+  const transcriptPath = join(home, "rollout.jsonl");
+  if (transcript !== null) writeFileSync(transcriptPath, transcript);
+  try {
+    return runHook(
+      "autodev/orchestrator",
+      "window-session",
+      turnId,
+      home,
+      undefined,
+      { transcript_path: transcriptPath }
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("root delegation does not re-inject a bootstrap the current context window already carries", () => {
+  const transcript =
+    rolloutLine("session_meta", { id: "window-session" }) +
+    injectedBootstrapLine +
+    rolloutLine("response_item", {
+      type: "message",
+      role: "user",
+      content: []
+    });
+  assert.equal(runWithTranscript(transcript, "turn-2"), "");
+});
+
+test("root delegation re-injects the bootstrap after compaction drops it", () => {
+  const transcript =
+    injectedBootstrapLine +
+    rolloutLine("compacted", { message: "", replacement_history: [] });
+  assert.match(
+    runWithTranscript(transcript, "turn-after-compaction"),
+    /Root orchestrator bootstrap/
+  );
+});
+
+test("root delegation keeps a bootstrap retained inside the compacted history", () => {
+  const transcript = rolloutLine("compacted", {
+    replacement_history: [JSON.parse(injectedBootstrapLine).payload]
+  });
+  assert.equal(runWithTranscript(transcript, "turn-retained"), "");
+});
+
+test("root delegation injects when the transcript is new, missing, or unrelated", () => {
+  assert.match(
+    runWithTranscript(rolloutLine("session_meta", { id: "fresh" }), "turn-1"),
+    /Root orchestrator bootstrap/
+  );
+  assert.match(
+    runWithTranscript(null, "turn-1"),
+    /Root orchestrator bootstrap/
+  );
 });
 
 test("root delegation atomically suppresses concurrent duplicate submissions", async () => {
@@ -181,11 +253,12 @@ test("root delegation does not deduplicate when turn identity is incomplete", ()
 });
 
 test("root delegation fails open when deduplication state cannot be created", () => {
-  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-state-error-"));
-  mkdirSync(
-    join(home, ".codex", "hooks", "root-delegation-state.json"),
-    { recursive: true }
+  const home = mkdtempSync(
+    join(tmpdir(), "autodev-root-delegation-state-error-")
   );
+  mkdirSync(join(home, ".codex", "hooks", "root-delegation-state.json"), {
+    recursive: true
+  });
   try {
     assert.match(
       runHook(
@@ -202,7 +275,9 @@ test("root delegation fails open when deduplication state cannot be created", ()
 });
 
 test("root delegation fails open when temporary state cleanup also fails", async () => {
-  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-temp-cleanup-"));
+  const home = mkdtempSync(
+    join(tmpdir(), "autodev-root-delegation-temp-cleanup-")
+  );
   const codexHome = join(home, ".codex");
   const hooksDir = join(codexHome, "hooks");
   mkdirSync(hooksDir, { recursive: true });
@@ -287,7 +362,10 @@ test("root delegation injects the typed policy and canonical sources for a paren
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /parent-test-1/);
-  assert.ok(context.length < 9_500, `root hook context is ${context.length} chars`);
+  assert.ok(
+    context.length < 9_500,
+    `root hook context is ${context.length} chars`
+  );
 });
 
 test("root delegation injects the typed policy for autodev/orchestrator alias", () => {
@@ -301,7 +379,10 @@ test("root delegation injects the typed policy for autodev/orchestrator alias", 
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /orchestrator-test-1/);
-  assert.ok(context.length < 9_500, `root hook context is ${context.length} chars`);
+  assert.ok(
+    context.length < 9_500,
+    `root hook context is ${context.length} chars`
+  );
 });
 
 test("the root role enables the canonical skill referenced by the compact hook", () => {
@@ -313,10 +394,7 @@ test("the root role enables the canonical skill referenced by the compact hook",
     join(repositoryRoot, ".rulesync", "skills", "orchestration", "SKILL.md"),
     "utf8"
   );
-  assert.match(
-    role,
-    /name = "orchestration"\s*\nenabled = true/
-  );
+  assert.match(role, /name = "orchestration"\s*\nenabled = true/);
   assert.match(skill, /source of truth for orchestration policy/);
 });
 
@@ -377,7 +455,11 @@ test("root delegation logs hook input without putting it in the injected policy"
 
 test("root delegation keeps recovery context compact and owner-scoped", () => {
   const output = JSON.parse(
-    runHook("autodev/orchestrator", "parent-live-preflight-1", "turn-live-preflight-1")
+    runHook(
+      "autodev/orchestrator",
+      "parent-live-preflight-1",
+      "turn-live-preflight-1"
+    )
   ) as HookOutput;
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   assert.match(context, /## Current-parent recovery preflight/);
@@ -387,5 +469,8 @@ test("root delegation keeps recovery context compact and owner-scoped", () => {
   assert.match(context, /Never inspect or clean up foreign sessions/);
   assert.doesNotMatch(context, /```js/);
   assert.doesNotMatch(context, /const recoveryObjects/);
-  assert.ok(context.length < 9_500, `root hook context is ${context.length} chars`);
+  assert.ok(
+    context.length < 9_500,
+    `root hook context is ${context.length} chars`
+  );
 });

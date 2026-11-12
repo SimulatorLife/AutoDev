@@ -23,12 +23,38 @@ type HookInput = {
   session_id?: unknown;
   hook_event_name?: unknown;
   turn_id?: unknown;
+  transcript_path?: unknown;
 };
+/** Codex rollout record type that replaces history with a compacted summary. */
+const COMPACTED_RECORD = '"type":"compacted"';
 const NON_ROOT_MODEL =
   /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/;
 const DEDUP_TTL_MS = 15 * 60 * 1000;
 const DEDUP_MAX_ENTRIES = 1024;
 const LOCK_STALE_MS = 30 * 1000;
+
+/**
+ * The bootstrap stays in model context until Codex compacts the history, which
+ * drops hook-injected developer messages. Re-injecting it on every user prompt
+ * re-sends ~2k tokens per prompt for the rest of the session, so inject only
+ * when the current context window does not already carry it. Fails open: an
+ * unreadable or missing transcript injects.
+ */
+export function bootstrapInCurrentWindow(
+  transcriptPath: unknown,
+  marker: string
+): boolean {
+  if (typeof transcriptPath !== "string" || !path.isAbsolute(transcriptPath))
+    return false;
+  let transcript: string;
+  try {
+    transcript = readFileSync(transcriptPath, "utf8");
+  } catch {
+    return false;
+  }
+  const markerAt = transcript.lastIndexOf(JSON.stringify(marker).slice(1, -1));
+  return markerAt !== -1 && markerAt > transcript.lastIndexOf(COMPACTED_RECORD);
+}
 
 function shouldInjectOnce(input: HookInput, model: string): boolean {
   const sessionId =
@@ -185,8 +211,6 @@ export async function runRootDelegation(
   logInput(input);
   const model = typeof input.model === "string" ? input.model : "";
   if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
-  if (!shouldInjectOnce(input, model)) return 0;
-
   const root = repositoryRoot();
   const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
   const skillFile = path.join(
@@ -209,6 +233,11 @@ export async function runRootDelegation(
       ? input.session_id.trim()
       : null;
   const prompt = readFileSync(promptFile, "utf8").trim();
+  const firstLineEnd = prompt.indexOf("\n");
+  const marker = firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd);
+  if (marker && bootstrapInCurrentWindow(input.transcript_path, marker))
+    return 0;
+  if (!shouldInjectOnce(input, model)) return 0;
   const skill = existsSync(skillFile)
     ? `\n\n## Canonical orchestration skill\n\nRead and follow the installed \`orchestration\` skill before substantial work. It is the sole authority for delegation, child lifecycle, recovery, workspace boundaries, and validation. Source: ${skillFile}. The hook points to the skill instead of copying its full body.`
     : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;

@@ -701,6 +701,17 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   bytes, well inside MiniMax's `204,800`-token window) while preserving the
   initial setup prefix, `additional_tools` declarations, and `call_id` pairing
   on the most recent suffix turns.
+- **Every catalog model compacts at `auto_compact_token_limit`, at most 200k tokens.**
+  Without the field Codex compacts at 90% of `context_window`, so 1M-window
+  routes ran requests at 300k-900k input tokens: in 2026-11-09..11 rollouts,
+  42% of all 1.62B input tokens were context above 200k and only 4 sessions
+  ever compacted. `autoCompactTokenLimit` in
+  `runtime/src/config/render-model-catalog.ts` is the policy
+  (`min(90% of context_window, 200_000)`); the renderer applies it to Codex and
+  role-alias rows, each provider catalog declares it per model, and
+  `tests/codex-model-catalog.test.ts` rejects any row or profile that deviates.
+  Provider profiles do not set `model_context_window` or
+  `model_auto_compact_token_limit`; the catalog owns both.
 - **What each transport can carry is a property of the CLI, not of the model.**
   The models behind these routes read images; what decides whether a route can
   serve an image-bearing request is the channel the bridge hands the turn to.

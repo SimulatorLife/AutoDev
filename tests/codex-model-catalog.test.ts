@@ -86,3 +86,51 @@ test("every MiniMax model assigned by routing is listed in both catalogs", () =>
     assert.ok(unifiedSlugs.has(model), `unified catalog is missing ${model}`);
   }
 });
+
+test("every catalog model compacts before its context outgrows the cost band", async () => {
+  const { autoCompactTokenLimit, AUTO_COMPACT_TOKEN_LIMIT_CAP } =
+    await import("../runtime/src/config/render-model-catalog.ts");
+  for (const file of [
+    "codex",
+    "claude",
+    "minimax",
+    "antigravity",
+    "opencli-chatgpt",
+    "opencli-gemini"
+  ]) {
+    const source = JSON.parse(
+      await readFile(
+        new URL(
+          `../config/catalogs/${file}-model-catalog.json`,
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as Catalog;
+    for (const model of source.models) {
+      assert.equal(
+        model.auto_compact_token_limit,
+        autoCompactTokenLimit(model.context_window),
+        `${file}:${model.slug} must declare the shared auto-compact limit`
+      );
+      assert.ok(model.auto_compact_token_limit <= AUTO_COMPACT_TOKEN_LIMIT_CAP);
+      assert.ok(model.auto_compact_token_limit < model.context_window);
+    }
+  }
+});
+
+test("provider profiles leave compaction to the model catalog", async () => {
+  for (const profile of ["minimax", "claude", "antigravity"]) {
+    const source = await readFile(
+      new URL(`../config/profiles/${profile}.config.toml`, import.meta.url),
+      "utf8"
+    );
+    assert.doesNotMatch(source, /^model_auto_compact_token_limit\b/m, profile);
+    assert.doesNotMatch(source, /^model_context_window\b/m, profile);
+  }
+  const portable = await readFile(
+    new URL("../config/config.autodev.toml", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(portable, /^model_auto_compact_token_limit\b/m);
+});

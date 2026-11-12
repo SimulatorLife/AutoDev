@@ -56,6 +56,12 @@ Delegated roles are leaves unless nested delegation is explicitly designed. Read
 
 Allow discovery and worker subagents to complete their assignments. Do not close or kill in-flight subagents on wait timeouts; if progress or partial evidence is urgently needed, prompt the subagent for an interim summary rather than terminating it. Completed subagents must remain parked and be reused for follow-up discovery and implementation tasks rather than closed and re-spawned.
 
+## Waiting and context budget
+
+Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context.
+
+Codex compacts at the catalog's `auto_compact_token_limit`; do not re-read files or re-request reports to rebuild context compaction dropped unless the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
+
 ## Validation rules
 
 Validators must be independent of the scope they validate. Pin validation to an identified repository state (commit/head plus any relevant uncommitted diff), and provide acceptance criteria, constraints, and expected evidence without priming validators with the implementer's conclusions unless investigating a specific finding. Validators for the same gate should inspect the same state.

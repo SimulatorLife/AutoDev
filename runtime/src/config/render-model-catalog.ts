@@ -24,6 +24,7 @@ export interface CatalogModelEntry {
   priority: number;
   context_window: number;
   max_context_window: number;
+  auto_compact_token_limit: number;
   supports_parallel_tool_calls: boolean;
   supports_reasoning_summaries?: boolean;
   support_verbosity: boolean;
@@ -35,6 +36,23 @@ export interface CatalogModelEntry {
   multi_agent_version: string;
   input_modalities: string[];
   [key: string]: unknown;
+}
+
+/**
+ * Codex compacts a thread once its input reaches `auto_compact_token_limit`
+ * (90% of `context_window` when unset). With 1M-token windows that let root
+ * and child sessions run every request at 300k-900k input tokens: every turn
+ * re-sends the whole history, so cost grows with context even when cached.
+ * Compacting at 200k keeps requests in the band where cached prefixes stay
+ * cheap and model attention stays sharp; smaller windows keep the 90% default.
+ */
+export const AUTO_COMPACT_TOKEN_LIMIT_CAP = 200_000;
+
+export function autoCompactTokenLimit(contextWindow: number): number {
+  return Math.min(
+    Math.floor(contextWindow * 0.9),
+    AUTO_COMPACT_TOKEN_LIMIT_CAP
+  );
 }
 
 const STANDARD_REASONING_LEVELS = [
@@ -127,6 +145,7 @@ export function buildCodexModelEntry(
     priority: 0,
     context_window: contextWindow,
     max_context_window: contextWindow,
+    auto_compact_token_limit: autoCompactTokenLimit(contextWindow),
     supports_parallel_tool_calls: true,
     supports_reasoning_summaries: true,
     support_verbosity: true,
@@ -169,6 +188,7 @@ export function buildRoleAliasEntry(roleName: string): CatalogModelEntry {
     priority: 0,
     context_window: 1_000_000,
     max_context_window: 1_000_000,
+    auto_compact_token_limit: autoCompactTokenLimit(1_000_000),
     supports_parallel_tool_calls: true,
     supports_reasoning_summaries: true,
     support_verbosity: true,

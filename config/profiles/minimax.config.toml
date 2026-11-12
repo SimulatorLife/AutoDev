@@ -1,7 +1,5 @@
 model = "MiniMax-M3"
 model_provider = "minimax"
-model_context_window = 1000000
-model_auto_compact_token_limit = 600000
 model_reasoning_effort = "high"
 model_reasoning_summary = "none"
 model_catalog_json = "./minimax-model-catalog.json"
