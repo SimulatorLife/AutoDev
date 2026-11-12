@@ -2413,7 +2413,10 @@ the workspace (observed 2026-09-18, worker thread
 
 [opencli](https://github.com/jackwener/opencli) (`@jackwener/opencli`, pinned
 in `runtime/package.json`) drives a chat site's own web UI through the user's
-signed-in browser and returns the reply as JSON. Each site is its own
+signed-in browser and returns the reply as JSON. (Moving this off the user's
+own Chrome onto a dedicated browser, and why headless is not viable, is
+investigated in [`opencli-separate-browser.md`](opencli-separate-browser.md).)
+Each site is its own
 provider -- `opencli-chatgpt` and `opencli-gemini` -- with its own route,
 catalog (`config/catalogs/<provider>-model-catalog.json`), discovery, and the
 models that site offers, so the Console assigns a site model per role as for

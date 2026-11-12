@@ -220,6 +220,10 @@ if (prompt.includes("CASE_LIMIT")) {
 } else if (prompt.includes("CASE_CRASH")) {
   process.stderr.write("agy crashed");
   process.exit(1);
+} else if (prompt.includes("CASE_PARTIAL")) {
+  process.stdout.write(JSON.stringify({event:"step_update",step_update:{step_index:1,step_type:"agent_response",state:"DONE",text_delta:"partial answer"}}) + "\n");
+  process.stderr.write("Antigravity usage limit reached; reset at 2099-01-02T03:04:05Z");
+  process.exit(1);
 } else if (prompt.includes("CASE_GEMINI")) {
   process.stdout.write(JSON.stringify({event:"step_update",step_update:{step_index:1,step_type:"agent_response",state:"DONE",text_delta:"gemini turn done",usage:{input_tokens:2325,output_tokens:99,thinking_tokens:40,cache_read_tokens:36926,total_tokens:2424}}}) + "\n");
   process.stdout.write(JSON.stringify({event:"result",result:{status:"SUCCESS",response:"gemini turn done"}}) + "\n");
@@ -298,30 +302,63 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     assert.equal(failedBody.error.requestId, "req-outcome");
     assert.equal(failedBody.error.role, "browser-tester");
 
-    // A streamed turn that fails before any provider work is still an HTTP
-    // status: a recognised usage limit is a 429 with a retry hint ...
+    // A provider limit before any output emits one response.failed carrying
+    // the declared limit and no output_item.added events.
     const limited = await postTurn(port, {
       cwd: workspace,
       input: "CASE_LIMIT",
       stream: true
     });
-    const limitedBody = await limited.json();
-    assert.equal(limited.status, 429, JSON.stringify(limitedBody));
-    assert.equal(limited.headers.get("content-type"), "application/json");
-    assert.match(limited.headers.get("retry-after") ?? "", /^\d+$/);
-    assert.equal(limitedBody.error.limit.class, "quota_exhausted");
-    assert.equal(limitedBody.error.requestId, "req-outcome");
+    assert.equal(limited.status, 200);
+    assert.equal(limited.headers.get("content-type"), "text/event-stream");
+    const limitedBody = await limited.text();
+    const limitEvents = limitedBody
+      .split("\n")
+      .filter((line) => line.startsWith("data: {") )
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
+    const limitFailures = limitEvents.filter((event) => event.type === "response.failed");
+    assert.equal(limitFailures.length, 1, limitedBody);
+    assert.equal(limitEvents.some((event) => event.type === "response.output_item.added"), false);
+    assert.equal(limitEvents.some((event) => event.type === "response.completed"), false);
+    assert.equal(limitFailures[0]?.response?.status, "failed");
+    assert.deepEqual(limitFailures[0]?.response?.output, []);
+    assert.equal(limitFailures[0]?.response?.error?.limit?.class, "quota_exhausted");
+    assert.equal(limitFailures[0]?.response?.error?.requestId, "req-outcome");
+    assert.match(limitedBody, /data: \[DONE\]/);
 
-    // ... and anything else is a 503 without one.
+    // Pre-output crashes also fail without fabricating output items.
     const crashed = await postTurn(port, {
       cwd: workspace,
       input: "CASE_CRASH",
       stream: true
     });
-    const crashedBody = await crashed.json();
-    assert.equal(crashed.status, 503, JSON.stringify(crashedBody));
-    assert.equal(crashed.headers.get("retry-after"), null);
-    assert.equal(crashedBody.error.limit, undefined);
+    assert.equal(crashed.status, 200);
+    const crashEvents = (await crashed.text())
+      .split("\n")
+      .filter((line) => line.startsWith("data: {") )
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
+    assert.equal(crashEvents.filter((event) => event.type === "response.failed").length, 1);
+    assert.equal(crashEvents.some((event) => event.type === "response.output_item.added"), false);
+    assert.equal(crashEvents.find((event) => event.type === "response.failed")?.response?.error?.limit, undefined);
+
+    // A limit after streamed text keeps the partial result and closes incomplete.
+    const partial = await postTurn(port, {
+      cwd: workspace,
+      input: "CASE_PARTIAL",
+      stream: true
+    });
+    const partialBody = await partial.text();
+    assert.equal(partial.status, 200, partialBody);
+    const partialEvents = partialBody
+      .split("\n")
+      .filter((line) => line.startsWith("data: {") )
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
+    assert.ok(partialEvents.some((event) => event.type === "response.output_item.added"), partialBody);
+    assert.equal(partialEvents.some((event) => event.type === "response.failed"), false);
+    const incomplete = partialEvents.find((event) => event.type === "response.completed")?.response;
+    assert.equal(incomplete?.status, "incomplete", partialBody);
+    assert.match(incomplete?.output_text ?? "", /partial answer/);
+    assert.equal(incomplete?.incomplete_details?.provider_limit?.class, "quota_exhausted");
 
     // A request whose workspace cannot be resolved is rejected before agy
     // starts.

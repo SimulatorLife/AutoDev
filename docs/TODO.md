@@ -46,3 +46,4 @@
 - [ ] **FEAT/BUG**: Antigravity has a 3rd usage pool for "Argon" model; we need to add/show that along with the other 2 pools (Claude and Gemini) in the console/UI.
 - [ ] **BUG**: Agents report that "CGC listed the repository as indexed but returned empty results for relevant queries". Need to evaluate, test, fix, and test to make sure it is properly indexed, the MCP/tool is properly hooked up and working, and we properly explain how to query in our applicable skill.
 - [ ] **BUG**: When using the Claude desktop app, it gets the "root delegation policy" hook firing, which is not applicable to the Claude desktop app.
+- [ ] **FEAT**: Run the opencli providers in a dedicated browser (Chrome for Testing over CDP) instead of the user's own Chrome, so agents stop switching tabs under the user. Investigation, test results, and design: docs/opencli-separate-browser.md. Headless is not viable (ChatGPT's Cloudflare check blocks it).

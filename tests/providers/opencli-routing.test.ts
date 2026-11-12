@@ -11,9 +11,12 @@ import {
   type OpencliRunRequest
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
+  compactCodexTools,
   geminiModelLimit,
   OpencliCommandError,
   OpencliConversationLedger,
+  renderOpencliPrompt,
+  transcriptSegments,
   typedPromptMarker
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 
@@ -1045,11 +1048,7 @@ test("a turn that wants another model waits for the site to drain and switches i
       asks.releaseAll();
       await asks.waitForHeld(1);
       asks.releaseAll();
-      for (const response of await Promise.all([
-        ...before,
-        switching,
-        after
-      ]))
+      for (const response of await Promise.all([...before, switching, after]))
         assert.equal(response.status, 200);
       assert.deepEqual(
         asks.commands.filter((command) => command.startsWith("model")),
@@ -1197,6 +1196,104 @@ test("a ChatGPT prompt that fits is typed, and only a long one is uploaded", asy
       // Either way the site got the whole prompt.
       assert.equal(sites.chatsWith("typedone").length, 1);
       assert.equal(sites.chatsWith("uploadedone").length, 1);
+    }
+  );
+});
+
+test("MCP-only compaction makes an oversized first ChatGPT prompt fit inline", async (t) => {
+  const instructions =
+    "INSTRUCTIONS_PRESERVED: use delegated tools and preserve conversation history.";
+  const firstMessage = "FIRST_TRANSCRIPT_PRESERVED: inspect the example.";
+  const lastMessage = "LAST_TRANSCRIPT_PRESERVED: report the result.";
+  // Model an exec tool that exposes many MCP descriptions alongside a built-in.
+  // The verbose MCP sections should shrink without altering other content.
+  const description = [
+    EXEC_TOOL.description,
+    "### `exec_command`",
+    "BUILTIN_REFERENCE_PRESERVED: execute commands in the agent sandbox.",
+    ...Array.from({ length: 45 }, (_, index) =>
+      [
+        `### ` + "`mcp__fixture_" + index + "`",
+        `MCP fixture ${index} inspects its configured resource.`,
+        "MCP_SCHEMA_DETAIL_TO_REMOVE_".repeat(60)
+      ].join("\n")
+    )
+  ].join("\n\n");
+  const input = [userMessage(firstMessage), userMessage(lastMessage)];
+  const transcript = transcriptSegments(input).join("\n\n");
+  const tools = [
+    {
+      kind: "custom" as const,
+      name: "exec",
+      description,
+      parameters: null,
+      namespace: null
+    }
+  ];
+  const original = renderOpencliPrompt(instructions, tools, transcript);
+  const originalBytes = Buffer.byteLength(original, "utf8");
+  const compactedPreview = renderOpencliPrompt(
+    instructions,
+    compactCodexTools(tools, "summaries"),
+    transcript
+  );
+  const previewBytes = Buffer.byteLength(compactedPreview, "utf8");
+  assert.ok(originalBytes > 32_000, `original was ${originalBytes} bytes`);
+  assert.ok(originalBytes < 120_000, "fixture must stay below attachment cap");
+  assert.ok(
+    previewBytes <= 32_000,
+    `MCP-only preview was ${previewBytes} bytes`
+  );
+
+  const commands: string[][] = [];
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      run: async (request, sites) => {
+        if (request.args[0] === "chatgpt" && request.args[1] === "ask-file")
+          commands.push([...request.args]);
+        return sites.run(request);
+      }
+    },
+    async (baseUrl, sites) => {
+      const response = await postTurn(
+        baseUrl,
+        JSON.stringify({
+          model: MODEL.chatgpt,
+          tools: [{ ...EXEC_TOOL, description }],
+          instructions,
+          input,
+          client_metadata: { thread_id: "mcp-compaction-first-turn" }
+        })
+      );
+      assert.equal(response.status, 200);
+      assert.equal(commands.length, 1);
+      const command = commands[0]!;
+      assert.ok(command.includes("--new"), "must be a first turn");
+      assert.equal(command[command.indexOf("--inline") + 1], "true");
+
+      const chat = only(sites.chatsWith(firstMessage), firstMessage);
+      const prompts = sites.sites.chatgpt.chats.get(chat)!;
+      assert.equal(prompts.length, 1);
+      const compacted = prompts[0]!;
+      const compactedBytes = Buffer.byteLength(compacted, "utf8");
+      t.diagnostic(
+        `Hermetic first-turn MCP compaction: original=${originalBytes} bytes, compacted=${compactedBytes} bytes`
+      );
+      assert.equal(compacted, compactedPreview);
+      assert.ok(compactedBytes <= 32_000);
+      assert.ok(
+        compacted.includes(instructions),
+        "instructions remain verbatim"
+      );
+      assert.ok(
+        compacted.includes(transcript),
+        "full transcript remains verbatim"
+      );
+      assert.match(compacted, /BUILTIN_REFERENCE_PRESERVED/u);
+      assert.match(compacted, /mcp__fixture_0/u);
+      assert.match(compacted, /mcp__fixture_44/u);
+      assert.doesNotMatch(compacted, /MCP_SCHEMA_DETAIL_TO_REMOVE_/u);
     }
   );
 });

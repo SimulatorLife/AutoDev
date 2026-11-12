@@ -69,9 +69,7 @@ import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   limitPayload,
-  limitResponseHeaders,
   type ProviderFailureDiagnostic,
-  retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
@@ -4068,6 +4066,30 @@ class ResponseEventStream {
     this.end();
   }
 
+  /** A failed turn without delivered output has nothing to preserve. */
+  emitFailed(model: JsonValue, error: JsonRecord): void {
+    // The preamble was buffered until provider work arrived. Never flush its
+    // output-item additions on a turn that failed before output began.
+    this.pending.length = 0;
+    this.emit("response.created", {
+      type: "response.created",
+      response: responsePayload(
+        model, "", null, this.responseId, this.itemId, [], "in_progress"
+      )
+    });
+    this.emit("response.failed", {
+      type: "response.failed",
+      response: {
+        ...responsePayload(
+          model, "", null, this.responseId, this.itemId, [], "failed"
+        ),
+        error
+      }
+    });
+    this.start();
+    this.end();
+  }
+
   /** Ends the turn as incomplete, carrying the work it names and why. */
   emitIncomplete({
     model,
@@ -4110,13 +4132,6 @@ type IncompleteTurn = Pick<
   Parameters<typeof terminalIncompleteEvents>[0],
   "reason" | "limit" | "providerFailure"
 > & { text: string };
-
-/** Provider-reported throttling that maps to HTTP 429 rather than 503. */
-const THROTTLED_LIMIT_CLASSES = new Set([
-  "throttled",
-  "session_limit",
-  "quota_exhausted"
-]);
 
 /**
  * Lifecycle of one streamed turn: which of agy's steps are still in flight,
@@ -4555,12 +4570,15 @@ class StreamingTurn implements ParkableTurn {
     // would let the cooldown honour a hard window; that envelope is not read
     // here, so this limit stays inferred by design.
     const limit = classifyCliLimit(message, agyFailure(error).exitCode);
-    if (!this.stream.started && !this.stream.partialText) {
-      this.sendFailureStatus(error, limit);
-      return;
-    }
     if (!this.stream.started) {
-      this.stream.start();
+      const { agentRole, cwd, requestId } = this.turn;
+      const details: JsonRecord = agyErrorDetails(
+        error, agentRole, cwd, requestId
+      );
+      const declaredLimit = limitPayload(limit);
+      if (declaredLimit) details.limit = declaredLimit;
+      this.stream.emitFailed(this.turn.responseModel, details);
+      return;
     }
     // A failure after the stream opened cannot be replayed on another
     // provider, so the work already sent is all the parent will ever get for
@@ -4719,27 +4737,7 @@ class StreamingTurn implements ParkableTurn {
     this.delegation.activeWaits = 0;
   }
 
-  /** Nothing was streamed yet, so the failure can still be an HTTP status. */
-  private sendFailureStatus(
-    error: unknown,
-    limit: ReturnType<typeof classifyCliLimit>
-  ): void {
-    const status =
-      limit && THROTTLED_LIMIT_CLASSES.has(limit.limitClass) ? 429 : 503;
-    const headers = limitResponseHeaders(limit);
-    const retryAfter = retryAfterSecondsFromLimit(limit);
-    if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
-    const { agentRole, cwd, requestId } = this.turn;
-    const errorDetails: JsonRecord = agyErrorDetails(
-      error,
-      agentRole,
-      cwd,
-      requestId
-    );
-    const declaredLimit = limitPayload(limit);
-    if (declaredLimit) errorDetails.limit = declaredLimit;
-    sendJson(this.response, status, { error: errorDetails }, headers);
-  }
+
 }
 
 function trackActiveStep(
