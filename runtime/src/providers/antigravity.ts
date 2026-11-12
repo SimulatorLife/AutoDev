@@ -25,6 +25,7 @@ import pathApi from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { type AntigravityProvider } from "@simulatorlife/autodev-core";
 import {
   bridgeDelegationInstruction,
   bridgeSkillContext,
@@ -72,6 +73,7 @@ import {
   type ProviderFailureDiagnostic,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { antigravityProvider } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import {
   requestContentParts,
   type RequestImage,
@@ -198,7 +200,8 @@ interface AntigravitySettings extends JsonRecord {
 interface AgyErrorDetails extends JsonRecord {
   type: string;
   message: string;
-  provider: "antigravity";
+  /** The Antigravity provider whose model failed, or null for an unrouted id. */
+  provider: AntigravityProvider | null;
   role: string;
   workspace: string;
   requestId: string | null;
@@ -2989,7 +2992,7 @@ function runAgy(
               // persisted into the workspace.
               ...gitCommitIdentityEnv({
                 role: agentRole,
-                provider: "antigravity"
+                provider: antigravityProvider(model) ?? "other"
               })
             },
             workspaceKey,
@@ -3159,6 +3162,7 @@ async function readJsonBody(
 // there: no prompt text, just the identity the router itself assigned.
 function agyErrorDetails(
   error: unknown,
+  model: unknown,
   role: string | null,
   workspace: string,
   requestId: string | null = null
@@ -3171,7 +3175,7 @@ function agyErrorDetails(
   const details: AgyErrorDetails = {
     type: permissionFailure?.code ?? failure.failureCode ?? "upstream_error",
     message,
-    provider: "antigravity",
+    provider: antigravityProvider(model),
     role: role ?? "default",
     workspace,
     requestId: requestId ?? null
@@ -3703,7 +3707,13 @@ async function runNonStreamingTurn(
     if (spawnSession) spawnSessions.close(spawnSession);
     turn.logTurnEnd("failed", errorMessage(error));
     sendJson(response, 502, {
-      error: agyErrorDetails(error, agentRole, cwd, requestId)
+      error: agyErrorDetails(
+        error,
+        turn.responseModel,
+        agentRole,
+        cwd,
+        requestId
+      )
     });
   }
 }
@@ -4074,14 +4084,26 @@ class ResponseEventStream {
     this.emit("response.created", {
       type: "response.created",
       response: responsePayload(
-        model, "", null, this.responseId, this.itemId, [], "in_progress"
+        model,
+        "",
+        null,
+        this.responseId,
+        this.itemId,
+        [],
+        "in_progress"
       )
     });
     this.emit("response.failed", {
       type: "response.failed",
       response: {
         ...responsePayload(
-          model, "", null, this.responseId, this.itemId, [], "failed"
+          model,
+          "",
+          null,
+          this.responseId,
+          this.itemId,
+          [],
+          "failed"
         ),
         error
       }
@@ -4101,7 +4123,7 @@ class ResponseEventStream {
       itemId: this.itemId,
       reasoningId: this.reasoningId,
       reasoningText: this.reasoningText,
-      provider: "antigravity",
+      provider: antigravityProvider(model),
       response: responsePayload(
         model,
         incomplete.text,
@@ -4562,18 +4584,22 @@ class StreamingTurn implements ParkableTurn {
     //
     // The class is load-bearing beyond the wording. Reading `quota reached` as
     // `quota_exhausted` rather than letting the `429` in agy's status carry it
-    // to `throttled` is what scopes the cooldown to the exhausted model family
-    // instead of the whole provider, so a spent first-party Gemini quota stops
-    // being retried while an assigned Claude model on the same provider stays
-    // servable. agy also emits a structured `AGY_ERROR` envelope naming
-    // `RESOURCE_EXHAUSTED`, which is reported rather than inferred evidence and
-    // would let the cooldown honour a hard window; that envelope is not read
-    // here, so this limit stays inferred by design.
+    // to `throttled` is what holds the exhausted provider -- one Antigravity
+    // quota: Gemini, Argon, or Claude/GPT-OSS -- out until its window resets,
+    // while the other Antigravity providers keep serving. agy also emits a
+    // structured `AGY_ERROR` envelope naming `RESOURCE_EXHAUSTED`, which is
+    // reported rather than inferred evidence and would let the cooldown honour
+    // a hard window; that envelope is not read here, so this limit stays
+    // inferred by design.
     const limit = classifyCliLimit(message, agyFailure(error).exitCode);
     if (!this.stream.started) {
       const { agentRole, cwd, requestId } = this.turn;
       const details: JsonRecord = agyErrorDetails(
-        error, agentRole, cwd, requestId
+        error,
+        this.turn.responseModel,
+        agentRole,
+        cwd,
+        requestId
       );
       const declaredLimit = limitPayload(limit);
       if (declaredLimit) details.limit = declaredLimit;
@@ -4736,8 +4762,6 @@ class StreamingTurn implements ParkableTurn {
     this.delegation.activeCommands = 0;
     this.delegation.activeWaits = 0;
   }
-
-
 }
 
 function trackActiveStep(

@@ -17,19 +17,18 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 
-import type {
-  ControlApiProviderCliVersion,
-  ControlApiProviderVersionEntry,
-  ControlApiProviderVersionsResponse
+import {
+  ANTIGRAVITY_PROVIDERS,
+  type ControlApiProviderCliVersion,
+  type ControlApiProviderVersionsResponse
 } from "@simulatorlife/autodev-core";
 import {
   findAgyBinary,
   findClaudeBinary,
+  findCodexBinary,
   findCopilotBinary,
   findMiniMaxBinary,
-  findOpencliCommand,
-  findCodexBinary
-} from "@simulatorlife/autodev-runtime/shared/executables";
+  findOpencliCommand} from "@simulatorlife/autodev-runtime/shared/executables";
 
 import { ROUTING_POLICY } from "../router/routing.ts";
 
@@ -41,7 +40,7 @@ import { ROUTING_POLICY } from "../router/routing.ts";
  * that matters -- a CLI that has to warm something up before it prints -- and
  * because a version is not worth a stalled page load.
  */
-export const CLI_VERSION_TIMEOUT_MS = 5_000;
+export const CLI_VERSION_TIMEOUT_MS = 5000;
 /** The bound on what a CLI may print before its output is refused. */
 const MAX_VERSION_OUTPUT_BYTES = 8 * 1024;
 /**
@@ -121,14 +120,17 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
     label: "Codex",
     locate: locateCodex
   },
-  antigravity: {
-    command: "agy",
-    label: "Antigravity",
-    locate: (env) => {
-      const binary = findAgyBinary(env);
-      return binary ? located("agy", binary) : null;
-    }
-  },
+  // The Antigravity providers are all served by the one `agy` CLI.
+  ...Object.fromEntries(
+    ANTIGRAVITY_PROVIDERS.map((provider) => [
+      provider,
+      {
+        command: "agy",
+        label: "Antigravity",
+        locate: locateAgy
+      } satisfies ProviderCliDefinition
+    ])
+  ),
   minimax: {
     command: "mmx",
     label: "MiniMax",
@@ -156,6 +158,11 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
     locate: locateOpencli
   }
 };
+
+function locateAgy(env: NodeJS.ProcessEnv): ProviderCliCommand | null {
+  const binary = findAgyBinary(env);
+  return binary ? located("agy", binary) : null;
+}
 
 /**
  * opencli is a package dependency rather than a global install, so it runs
@@ -431,6 +438,20 @@ export class ProviderCliVersionService {
   }
 
   private async readAll(): Promise<void> {
+    // Providers served by the same CLI (the Antigravity providers by `agy`,
+    // the opencli sites by opencli) share one read of it per refresh.
+    const captures = new Map<string, Promise<CliVersionCapture>>();
+    const captureOnce = (
+      command: ProviderCliCommand
+    ): Promise<CliVersionCapture> => {
+      const key = JSON.stringify([command.program, ...command.args]);
+      let capture = captures.get(key);
+      if (!capture) {
+        capture = this.capture(command);
+        captures.set(key, capture);
+      }
+      return capture;
+    };
     await Promise.all(
       this.providerIds().map(async (provider) => {
         const command = this.locate(provider, this.env);
@@ -445,7 +466,7 @@ export class ProviderCliVersionService {
           });
           return;
         }
-        const capture = await this.capture(command);
+        const capture = await captureOnce(command);
         this.states.set(
           provider,
           capture.ok

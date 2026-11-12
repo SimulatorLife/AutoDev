@@ -27,7 +27,7 @@ function response(discovery: unknown): Response {
     schema: "autodev-control-provider-model-discovery-v1",
     source: "runtime-provider-discovery",
     providers: [
-      { provider: "antigravity", discovery },
+      { provider: "antigravity-gemini", discovery },
       {
         provider: "copilot",
         discovery: {
@@ -184,7 +184,7 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
       source: "runtime-provider-discovery",
       providers: [
         {
-          provider: "antigravity",
+          provider: "antigravity-gemini",
           discovery: {
             status: "observed",
             source: "agy models",
@@ -238,12 +238,12 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
   };
 
   assert.deepEqual(
-    providerModelChoices(discovery, "antigravity").map(({ id }) => id),
+    providerModelChoices(discovery, "antigravity-gemini").map(({ id }) => id),
     ["gemini-3.8-flash-low"]
   );
   assert.deepEqual(unsupportedProviderModels(discovery), [
     {
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       id: "gpt-oss-120b-medium",
       displayName: "GPT OSS Medium",
       reason: "Runtime has no route for this model ID.",
@@ -251,11 +251,11 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
     }
   ]);
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity", "gemini-3.8-flash-low"),
+    providerModelAvailability(discovery, "antigravity-gemini", "gemini-3.8-flash-low"),
     { status: "observed", source: "agy models" }
   );
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity", "gpt-oss-120b-medium"),
+    providerModelAvailability(discovery, "antigravity-gemini", "gpt-oss-120b-medium"),
     {
       status: "unsupported",
       reason: "Runtime has no route for this model ID.",
@@ -263,7 +263,7 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
     }
   );
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity", "no-longer-listed"),
+    providerModelAvailability(discovery, "antigravity-gemini", "no-longer-listed"),
     {
       status: "not-listed",
       reason: "The current provider listing does not include this model."
@@ -320,7 +320,7 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
 test("model rows keep routing assignment separate from provider availability", () => {
   const configuredUnsupported: ControlApiModelRecord = {
     id: "gpt-oss-120b-medium",
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     tiers: ["default"],
     displayName: "Configured static name",
     enablement: {
@@ -344,7 +344,7 @@ test("model rows keep routing assignment separate from provider availability", (
       source: "runtime-provider-discovery",
       providers: [
         {
-          provider: "antigravity",
+          provider: "antigravity-gemini",
           discovery: {
             status: "observed",
             source: "agy models",

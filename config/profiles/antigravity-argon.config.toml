@@ -1,15 +1,15 @@
-model = "gemini-3.8-flash-medium"
+model = "gemini-4-argon-medium"
 model_provider = "antigravity_cli"
 model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
-model_catalog_json = "./antigravity-model-catalog.json"
+model_catalog_json = "./antigravity-argon-model-catalog.json"
 
 [features]
 multi_agent = true
 enable_fanout = true
 
 [agents]
-default_subagent_model = "gemini-3.8-flash-medium"
+default_subagent_model = "gemini-4-argon-medium"
 default_subagent_reasoning_effort = "medium"
 
 [model_providers.antigravity_cli]

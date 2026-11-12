@@ -298,7 +298,7 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     });
     const failedBody = await failed.json();
     assert.equal(failed.status, 502, JSON.stringify(failedBody));
-    assert.equal(failedBody.error.provider, "antigravity");
+    assert.equal(failedBody.error.provider, "antigravity-gemini");
     assert.equal(failedBody.error.requestId, "req-outcome");
     assert.equal(failedBody.error.role, "browser-tester");
 

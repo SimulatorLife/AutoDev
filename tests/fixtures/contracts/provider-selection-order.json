@@ -3,115 +3,147 @@
     "default_seed_coffee_first_eight": [
       [
         "minimax",
-        "antigravity",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
         "claude",
         "copilot",
         "codex"
       ],
       [
+        "antigravity-gemini",
+        "antigravity-argon",
+        "minimax",
+        "antigravity-claude-gpt",
         "claude",
-        "antigravity",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "claude",
+        "minimax",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-gemini",
+        "antigravity-argon",
+        "claude",
+        "antigravity-claude-gpt",
+        "minimax",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-gemini",
+        "minimax",
+        "claude",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
+        "copilot",
+        "codex"
+      ],
+      [
+        "claude",
+        "minimax",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "antigravity-argon",
+        "antigravity-gemini",
+        "claude",
         "minimax",
         "copilot",
         "codex"
       ],
       [
         "minimax",
-        "antigravity",
+        "antigravity-argon",
         "claude",
-        "copilot",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "minimax",
-        "claude",
-        "copilot",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "claude",
-        "minimax",
-        "copilot",
-        "codex"
-      ],
-      [
-        "minimax",
-        "claude",
-        "antigravity",
-        "copilot",
-        "codex"
-      ],
-      [
-        "claude",
-        "antigravity",
-        "minimax",
-        "copilot",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "minimax",
-        "claude",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot",
         "codex"
       ]
     ],
     "default_seed_coffee_next_eight": [
       [
+        "antigravity-argon",
         "claude",
         "minimax",
-        "antigravity",
-        "copilot",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "minimax",
-        "claude",
-        "copilot",
-        "codex"
-      ],
-      [
-        "claude",
-        "minimax",
-        "antigravity",
-        "copilot",
-        "codex"
-      ],
-      [
-        "claude",
-        "minimax",
-        "antigravity",
-        "copilot",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "claude",
-        "minimax",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot",
         "codex"
       ],
       [
         "minimax",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "claude",
-        "antigravity",
+        "antigravity-argon",
         "copilot",
         "codex"
       ],
       [
+        "antigravity-claude-gpt",
+        "claude",
+        "antigravity-argon",
         "minimax",
-        "antigravity",
+        "antigravity-gemini",
+        "copilot",
+        "codex"
+      ],
+      [
+        "claude",
+        "antigravity-argon",
+        "minimax",
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "claude",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "minimax",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "claude",
+        "antigravity-argon",
+        "antigravity-gemini",
+        "minimax",
+        "copilot",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "antigravity-argon",
+        "minimax",
+        "antigravity-gemini",
         "claude",
         "copilot",
         "codex"
       ],
       [
-        "antigravity",
+        "antigravity-argon",
         "minimax",
         "claude",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot",
         "codex"
       ]
@@ -119,100 +151,124 @@
     "orchestrator_seed_coffee_first_eight": [
       [
         "codex",
-        "antigravity",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot",
         "claude"
       ],
       [
         "codex",
-        "claude",
+        "antigravity-claude-gpt",
         "copilot",
-        "antigravity"
+        "claude",
+        "antigravity-gemini"
       ],
       [
         "codex",
-        "antigravity",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot",
         "claude"
       ],
       [
         "codex",
-        "copilot",
-        "antigravity",
-        "claude"
+        "antigravity-gemini",
+        "claude",
+        "antigravity-claude-gpt",
+        "copilot"
       ],
       [
         "codex",
-        "copilot",
+        "antigravity-gemini",
         "claude",
-        "antigravity"
+        "copilot",
+        "antigravity-claude-gpt"
       ],
       [
         "codex",
-        "antigravity",
         "claude",
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
         "copilot"
       ],
       [
         "codex",
         "claude",
-        "copilot",
-        "antigravity"
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
+        "copilot"
       ],
       [
         "codex",
+        "claude",
+        "antigravity-gemini",
         "copilot",
-        "antigravity",
-        "claude"
+        "antigravity-claude-gpt"
       ]
     ],
     "smart_seed_coffee_first_eight": [
       [
         "minimax",
-        "antigravity",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
         "claude",
         "codex"
       ],
       [
+        "antigravity-gemini",
+        "antigravity-argon",
+        "minimax",
+        "antigravity-claude-gpt",
         "claude",
-        "antigravity",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "claude",
+        "minimax",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "codex"
+      ],
+      [
+        "antigravity-gemini",
+        "antigravity-argon",
+        "claude",
+        "antigravity-claude-gpt",
+        "minimax",
+        "codex"
+      ],
+      [
+        "antigravity-gemini",
+        "minimax",
+        "claude",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
+        "codex"
+      ],
+      [
+        "claude",
+        "minimax",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
+        "codex"
+      ],
+      [
+        "antigravity-claude-gpt",
+        "antigravity-argon",
+        "antigravity-gemini",
+        "claude",
         "minimax",
         "codex"
       ],
       [
         "minimax",
-        "antigravity",
+        "antigravity-argon",
         "claude",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "minimax",
-        "claude",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "claude",
-        "minimax",
-        "codex"
-      ],
-      [
-        "minimax",
-        "claude",
-        "antigravity",
-        "codex"
-      ],
-      [
-        "claude",
-        "antigravity",
-        "minimax",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "minimax",
-        "claude",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "codex"
       ]
     ]
@@ -223,20 +279,25 @@
   "tiers": {
     "default": [
       "claude",
-      "antigravity",
+      "antigravity-gemini",
+      "antigravity-claude-gpt",
+      "antigravity-argon",
       "minimax",
       "copilot",
       "codex"
     ],
     "orchestrator": [
       "codex",
+      "claude",
       "copilot",
-      "antigravity",
-      "claude"
+      "antigravity-gemini",
+      "antigravity-claude-gpt"
     ],
     "smart": [
       "claude",
-      "antigravity",
+      "antigravity-gemini",
+      "antigravity-claude-gpt",
+      "antigravity-argon",
       "minimax",
       "codex"
     ]

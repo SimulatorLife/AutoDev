@@ -43,7 +43,7 @@ const mockDiscovery: ProviderModelDiscoveryState = {
         }
       },
       {
-        provider: "antigravity",
+        provider: "antigravity-gemini",
         discovery: {
           status: "observed",
           source: "fixture",
@@ -135,7 +135,7 @@ const mockClaudeProvider: ControlApiProviderRecord = {
 };
 
 const mockAgyProvider: ControlApiProviderRecord = {
-  id: "antigravity",
+  id: "antigravity-gemini",
   links: { usage: null, documentation: null },
   route: null,
   credential: { envKey: null, configured: true },
@@ -183,6 +183,7 @@ const mockAgyProvider: ControlApiProviderRecord = {
 test("ProviderRoleControls renders reasoning effort dropdown when supported", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockClaudeProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -202,6 +203,7 @@ test("ProviderRoleControls renders reasoning effort dropdown when supported", ()
 test("ProviderRoleControls renders placeholder when model does not support reasoning levels", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockAgyProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -211,7 +213,7 @@ test("ProviderRoleControls renders placeholder when model does not support reaso
   // antigravity orchestrator role has model=null and no supported levels
   assert.match(
     markup,
-    /data-role-effort-placeholder="antigravity-orchestrator"/
+    /data-role-effort-placeholder="antigravity-gemini-orchestrator"/
   );
   assert.ok(markup.includes(`>${NOT_OBSERVED_LABEL}</span>`));
 });
@@ -219,6 +221,7 @@ test("ProviderRoleControls renders placeholder when model does not support reaso
 test("ProviderRoleControls renders fixed indicator for Antigravity model slug suffix", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockAgyProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -226,13 +229,14 @@ test("ProviderRoleControls renders fixed indicator for Antigravity model slug su
   );
 
   // antigravity subagent role has gemini-3.8-flash-high
-  assert.match(markup, /data-role-effort-fixed="antigravity-subagent"/);
+  assert.match(markup, /data-role-effort-fixed="antigravity-gemini-subagent"/);
   assert.match(markup, />high<\/span>/);
 });
 
 test("ProviderRoleControls carries preserved reasoningEffort hidden input when role is disabled", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockClaudeProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -283,6 +287,7 @@ function roleForm(markup: string, provider: string, role: string): string {
 test("ProviderRoleControls shows the effort in force when the supported levels are unobserved", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockClaudeUnobservedProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -300,6 +305,7 @@ test("ProviderRoleControls shows the effort in force when the supported levels a
 test("ProviderRoleControls submits no effort for a role that holds no model", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockClaudeUnobservedProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -317,6 +323,7 @@ test("ProviderRoleControls submits no effort for a role that holds no model", ()
 test("every role select is submitted by the page-level listener and shows the Runtime's value", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: mockClaudeProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
@@ -644,6 +651,7 @@ test("a role change the Runtime refuses is logged with its status and code", asy
 test("the Subagent model is one hierarchical select: all subagents, then each agent role", () => {
   const html = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: {
         ...mockClaudeProvider,
         agentModels: [
@@ -686,7 +694,10 @@ test("the Subagent model is one hierarchical select: all subagents, then each ag
     assert.ok(formAt !== -1 && formAt < roleFormStart, level);
     assert.match(
       html.slice(formAt),
-      new RegExp(`^[^>]*action="${action.replaceAll("/", String.raw`\/`)}"`, "u")
+      new RegExp(
+        `^[^>]*action="${action.replaceAll("/", String.raw`\/`)}"`,
+        "u"
+      )
     );
     assert.match(
       html,
@@ -708,9 +719,111 @@ test("the Subagent model is one hierarchical select: all subagents, then each ag
   );
 });
 
+test("the rows layout gives each agent role its own model row under Subagent", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      subagentLayout: "rows",
+      provider: {
+        ...mockClaudeProvider,
+        agentModels: [
+          {
+            role: "explorer",
+            tier: "default",
+            model: "sonnet",
+            tierModel: "opus"
+          },
+          { role: "smart", tier: "smart", model: null, tierModel: "opus" }
+        ]
+      },
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers/claude"
+    })
+  );
+  // No hierarchical select: Subagent's model is a plain select in its form.
+  assert.doesNotMatch(html, /data-hierarchical-/u);
+  const subagentForm = html.indexOf('data-role-form="claude-subagent"');
+  const explorerForm = html.indexOf('data-agent-model-form="claude-explorer"');
+  const smartForm = html.indexOf('data-agent-model-form="claude-smart"');
+  assert.ok(subagentForm !== -1 && subagentForm < explorerForm);
+  assert.ok(explorerForm < smartForm);
+  assert.match(
+    html.slice(subagentForm, explorerForm),
+    /<select[^>]*id="select-model-claude-subagent"[^>]*name="model"/u
+  );
+  // Each agent role posts its model to its own agent route.
+  for (const [role, action] of [
+    ["explorer", "/api/providers/claude/agents/explorer"],
+    ["smart", "/api/providers/claude/agents/smart"]
+  ] as const) {
+    const formAt = html.lastIndexOf(
+      "<form",
+      html.indexOf(`data-agent-model-form="claude-${role}"`)
+    );
+    assert.match(
+      html.slice(formAt),
+      new RegExp(
+        `^<form[^>]*action="${action.replaceAll("/", String.raw`\/`)}"`,
+        "u"
+      )
+    );
+    assert.match(
+      html,
+      new RegExp(`<input type="hidden" name="role" value="${role}"/>`, "u")
+    );
+  }
+  // The explorer's own model is selected; smart's Auto names its tier model.
+  assert.match(
+    html,
+    /id="select-agent-model-claude-explorer"[\s\S]*?<option value="sonnet" selected="">/u
+  );
+  assert.match(
+    html,
+    /id="select-agent-model-claude-smart"[\s\S]*?<option value="" selected="">Auto \(opus\)<\/option>/u
+  );
+});
+
+test("the rows layout blocks agent model rows while the Subagent role is disabled", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      subagentLayout: "rows",
+      provider: {
+        ...mockClaudeProvider,
+        roles: {
+          ...mockClaudeProvider.roles,
+          subagent: {
+            ...mockClaudeProvider.roles.subagent,
+            priority: "disabled"
+          }
+        },
+        agentModels: [
+          {
+            role: "explorer",
+            tier: "default",
+            model: "sonnet",
+            tierModel: null
+          }
+        ]
+      },
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers/claude"
+    })
+  );
+  assert.match(
+    html,
+    /<select[^>]*id="select-agent-model-claude-explorer"[^>]*disabled=""/u
+  );
+  // The route requires `model`, so the blocked row still carries its choice.
+  const formAt = html.indexOf('data-agent-model-form="claude-explorer"');
+  assert.match(
+    html.slice(formAt),
+    /<input type="hidden" name="model" value="sonnet"\/>/u
+  );
+});
+
 test("a disabled provider keeps its Subagent models but does not offer to change them", () => {
   const html = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: {
         ...mockClaudeProvider,
         disabled: true,

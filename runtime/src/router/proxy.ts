@@ -46,7 +46,6 @@ import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
   isHardLimitClass,
-  isPoolScopableLimitClass,
   LIMIT_HEADER_CLASS,
   LIMIT_HEADER_RESETS_AT,
   LIMIT_SOURCE_REPORTED,
@@ -55,7 +54,6 @@ import {
   readLimitHeaders,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
-import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
   providerPhasesFromResponse,
@@ -698,22 +696,12 @@ export function cooldownFor(
   failureClass: string,
   limit: ProviderLimit | null = null,
   model: string | null = null,
-  body: string | null = null,
-  provider: string | null = null
+  body: string | null = null
 ): CooldownOptions {
-  const resolvedFailureClass = limit?.limitClass ?? failureClass;
-  const isPoolScopableClass = isPoolScopableLimitClass(resolvedFailureClass);
   return {
-    failureClass: resolvedFailureClass,
+    failureClass: limit?.limitClass ?? failureClass,
     resetsAt: limit?.resetsAt ?? null,
     structured: limit?.source === LIMIT_SOURCE_REPORTED,
-    scope:
-      isPoolScopableClass &&
-      provider !== null &&
-      model !== null &&
-      providerQuotaPool(provider, model) !== null
-        ? "pool"
-        : "provider",
     model,
     detail: body === null ? null : providerErrorDetail(body)
   };
@@ -2995,13 +2983,7 @@ async function handleConcreteStatusFailure(
   if (result.retryable)
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor(
-        failureClass,
-        result.limit,
-        modelName,
-        result.body ?? null,
-        route.provider
-      )
+      cooldownFor(failureClass, result.limit, modelName, result.body ?? null)
     );
   sendConcreteFailureResponse({
     response,
@@ -3112,7 +3094,7 @@ async function handleConcreteTransportError(
   endConcreteRequest(activitySubject, requestId, "failure");
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, null, modelName, null, route.provider)
+    cooldownFor(failureClass, null, modelName, null)
   );
   sendConcreteFailureResponse({
     response,
@@ -4607,13 +4589,7 @@ async function handleCandidateSuccess(
       if (failureClass !== "unsupported_request")
         COOLDOWNS.cooldownProvider(
           route.provider,
-          cooldownFor(
-            failureClass,
-            responseResult.limit,
-            route.model,
-            null,
-            route.provider
-          )
+          cooldownFor(failureClass, responseResult.limit, route.model, null)
         );
       recordRouterEvent({
         phase: "result",
@@ -4690,7 +4666,7 @@ async function handleCandidateSuccess(
   } catch (streamError) {
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor("upstream_error", null, route.model, null, route.provider)
+      cooldownFor("upstream_error", null, route.model, null)
     );
     throw streamError;
   }
@@ -4765,13 +4741,7 @@ function handleCandidateUpstreamFailure(
   if (decision.coolDown) {
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor(
-        failureClass,
-        result.limit,
-        route.model,
-        result.body ?? null,
-        route.provider
-      )
+      cooldownFor(failureClass, result.limit, route.model, result.body ?? null)
     );
   }
   return "fallback";
@@ -4823,7 +4793,7 @@ function handleCandidateTransportError(
   });
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, null, route.model, null, route.provider)
+    cooldownFor(failureClass, null, route.model, null)
   );
   if (clientCommitted(ctx)) {
     if (!ctx.response.writableEnded) {

@@ -147,90 +147,36 @@ test("typed cooldown persistence restores only future hard entries and clamps th
   assert.equal(restored.isCooling("expired", NOW + 1), false);
 });
 
-test("Antigravity quota cooldowns isolate Gemini and shared Claude pool", () => {
+test("each Antigravity provider cools down on its own quota", () => {
   const cooldowns = new ProviderCooldowns();
-  const claude = "claude-opus-5-5-high";
-  const sonnet = "claude-sonnet-5-5-medium";
-  const gemini = "gemini-3-pro";
-  cooldowns.cooldownProvider("antigravity", {
-    now: NOW,
-    model: claude,
-    failureClass: "quota_exhausted",
-    structured: true,
-    scope: "pool"
-  });
-  assert.equal(cooldowns.get("antigravity", NOW, claude)?.kind, "hard");
-  assert.equal(cooldowns.get("antigravity", NOW, sonnet)?.kind, "hard");
-  assert.equal(cooldowns.get("antigravity", NOW, gemini), null);
-  assert.ok(
-    cooldowns.nextRetryMs([{ provider: "antigravity", model: sonnet }], NOW) > 0
-  );
-  cooldowns.clearAfterSuccess("antigravity", gemini);
-  assert.equal(cooldowns.get("antigravity", NOW, sonnet)?.kind, "hard");
-  cooldowns.clearAfterSuccess("antigravity", sonnet);
-  assert.equal(cooldowns.get("antigravity", NOW, sonnet), null);
-});
-
-test("Antigravity pool transient quota and success clearing are scoped", () => {
-  const cooldowns = new ProviderCooldowns();
-  const claude = "claude-opus-5-5-high";
-  const sonnet = "claude-sonnet-5-5-medium";
-  const gemini = "gemini-3-pro";
-  const failure = cooldowns.cooldownProvider("antigravity", {
-    now: NOW,
-    model: claude,
-    failureClass: "quota_exhausted",
-    scope: "pool"
-  });
-  assert.equal(failure.kind, "transient");
-  assert.equal(failure.durationMs, COOLDOWN_CONFIG.providerCooldownMs);
-  assert.equal(cooldowns.get("antigravity", NOW, sonnet)?.kind, "transient");
-  assert.equal(cooldowns.get("antigravity", NOW, gemini), null);
-  const geminiFailure = cooldowns.cooldownProvider("antigravity", {
-    now: NOW,
-    model: gemini,
-    failureClass: "quota_exhausted",
-    scope: "pool"
-  });
-  assert.equal(geminiFailure.durationMs, COOLDOWN_CONFIG.providerCooldownMs);
-  assert.equal(cooldowns.get("antigravity", NOW, gemini)?.kind, "transient");
-  cooldowns.clearAfterSuccess("antigravity", gemini);
-  assert.equal(cooldowns.get("antigravity", NOW, gemini), null);
-  assert.equal(cooldowns.get("antigravity", NOW, claude)?.kind, "transient");
-  cooldowns.clearAfterSuccess("antigravity", sonnet);
-  assert.equal(cooldowns.get("antigravity", NOW, sonnet), null);
-});
-
-test("Antigravity pool hard limits persist with pool; provider limits stay global", () => {
-  const source = new ProviderCooldowns();
-  source.cooldownProvider("antigravity", {
+  cooldowns.cooldownProvider("antigravity-claude-gpt", {
     now: NOW,
     model: "claude-opus-5-5-high",
     failureClass: "quota_exhausted",
-    structured: true,
-    scope: "pool"
-  });
-  source.cooldownProvider("claude", {
-    now: NOW,
-    failureClass: "quota_exhausted",
     structured: true
   });
-  const entries = source.persistedHardEntries();
+  // The whole Claude/GPT-OSS quota is out, GPT-OSS included...
+  assert.equal(cooldowns.get("antigravity-claude-gpt", NOW)?.kind, "hard");
   assert.equal(
-    entries.find((entry) => entry.provider === "antigravity")?.pool,
-    "third_party"
+    cooldowns.get("antigravity-claude-gpt", NOW, "gpt-oss-120b-medium")?.kind,
+    "hard"
   );
+  // ...while Gemini and Argon, metered separately, keep serving.
+  assert.equal(cooldowns.get("antigravity-gemini", NOW), null);
+  assert.equal(cooldowns.get("antigravity-argon", NOW), null);
+
+  // A hard limit persists and restores against its own provider.
   const restored = new ProviderCooldowns();
-  restored.restoreHardEntries(entries, NOW);
-  assert.equal(
-    restored.get("antigravity", NOW + 1, "claude-sonnet-5-5-medium")?.kind,
-    "hard"
+  restored.restoreHardEntries(cooldowns.persistedHardEntries(), NOW);
+  assert.equal(restored.get("antigravity-claude-gpt", NOW + 1)?.kind, "hard");
+  assert.equal(restored.get("antigravity-gemini", NOW + 1), null);
+
+  // A success on the provider clears it.
+  cooldowns.clearAfterSuccess(
+    "antigravity-claude-gpt",
+    "claude-sonnet-5-5-medium"
   );
-  assert.equal(restored.get("antigravity", NOW + 1, "gemini-3-pro"), null);
-  assert.equal(
-    restored.get("claude", NOW + 1, "claude-opus-5-5")?.kind,
-    "hard"
-  );
+  assert.equal(cooldowns.get("antigravity-claude-gpt", NOW), null);
 });
 
 test("retry deadlines ignore non-retryable model configuration cooldowns", () => {

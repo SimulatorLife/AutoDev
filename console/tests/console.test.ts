@@ -1409,7 +1409,7 @@ test("a disabled control states why it is disabled", () => {
       metrics: undefined,
       filterOptions: {
         workspace: ["AutoDev"],
-        provider: ["antigravity"],
+        provider: ["antigravity-gemini"],
         model: ["gemini-3.8-flash-high"],
         agent: ["orchestrator"],
         skill: ["debug"]
@@ -16007,7 +16007,7 @@ test("a Disabled role preserves its exact assignment while provider discovery is
         providers: [
           {
             ...base,
-            id: "antigravity",
+            id: "antigravity-gemini",
             disabled: false,
             // Keep the fixture shapes and change only what this case needs:
             // the provider offers exactly one model, and Subagent is Disabled
@@ -16033,7 +16033,7 @@ test("a Disabled role preserves its exact assignment while provider discovery is
     })
   );
   const formTag = formTags(markup).find((tag) =>
-    /data-role-form="antigravity-subagent"/u.test(tag)
+    /data-role-form="antigravity-gemini-subagent"/u.test(tag)
   );
   assert.ok(formTag, "the Disabled role form must be present");
   assert.equal(
@@ -16527,7 +16527,7 @@ test("Providers toggles may only return to Providers pages", () => {
     "/providers?tab=providers",
     "/providers?tab=models",
     "/providers/claude",
-    "/providers/antigravity/models/gemini-3.8-flash-high"
+    "/providers/antigravity-gemini/models/gemini-3.8-flash-high"
   ]) {
     assert.equal(isProvidersReturnPath(path), true, path);
   }
@@ -21156,6 +21156,7 @@ test("POST mutation submit cancels native navigation and preserves FormData", as
 test("ProviderRoleControls wires role priority and model dropdowns to auto-submit on change", () => {
   const provider = PROVIDERS_FIXTURE.providers[0]!;
   const controls = ProviderRoleControls({
+    subagentLayout: "hierarchical",
     provider,
     modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
     returnTo: "/providers"
@@ -21244,6 +21245,7 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
 
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider,
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       returnTo: "/providers"
@@ -21344,6 +21346,7 @@ test("disabled role retains preserved model hidden input and disabled reasons wi
   const codex = PROVIDERS_FIXTURE.providers.find((p) => p.id === "codex")!;
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
+      subagentLayout: "hierarchical",
       provider: codex,
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       returnTo: "/providers"

@@ -473,6 +473,7 @@ test("Antigravity permission failures become structured diagnostics", () => {
         failurePhase: "tool_permission",
         failureTool: "read_file"
       },
+      "gemini-3.8-flash-medium",
       "explorer",
       "/workspace"
     ),
@@ -480,7 +481,7 @@ test("Antigravity permission failures become structured diagnostics", () => {
       type: "AGY_PERMISSION_DENIED",
       message:
         "Antigravity denied a required tool permission in headless mode.",
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       role: "explorer",
       workspace: "/workspace",
       requestId: null,
@@ -498,6 +499,7 @@ test("Antigravity permission failures become structured diagnostics", () => {
       failurePhase: "tool_permission",
       failureTool: "read_file"
     },
+    "gemini-3.8-flash-medium",
     "explorer",
     "/workspace"
   );
@@ -515,6 +517,7 @@ test("Antigravity permission failures become structured diagnostics", () => {
         failurePhase: "tool_permission",
         failureTool: "read_file"
       },
+      "gemini-3.8-flash-medium",
       "explorer",
       "/workspace",
       "req-abc123"
@@ -523,7 +526,7 @@ test("Antigravity permission failures become structured diagnostics", () => {
       type: "AGY_PERMISSION_DENIED",
       message:
         "Antigravity denied a required tool permission in headless mode.",
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       role: "explorer",
       workspace: "/workspace",
       requestId: "req-abc123",
@@ -549,9 +552,11 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   );
   // Both places agyErrorDetails is called for an upstream failure (the
   // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass
-  // it through.
+  // it through, alongside the model that names the failing provider.
   const errorDetailsCallSites = [
-    ...source.matchAll(/agyErrorDetails\(error, agentRole, cwd, requestId\)/g)
+    ...source.matchAll(
+      /agyErrorDetails\(\s*error,\s*(?:this\.)?turn\.responseModel,\s*agentRole,\s*cwd,\s*requestId\s*\)/g
+    )
   ];
   assert.equal(
     errorDetailsCallSites.length,

@@ -2,20 +2,21 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  ANTIGRAVITY_PROVIDERS,
   type ControlApiDiscoveredProviderModel,
   PROVIDER_ROLES,
   type ProviderAgentLimits,
   type ProviderRole,
   type ProviderRoleAssignment,
-  type RoutingPolicyState
-} from "@simulatorlife/autodev-core";
+  type RoutingPolicyState} from "@simulatorlife/autodev-core";
 import {
   providerInjectsRoleMcp,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
-  ANTIGRAVITY_MODEL_PATTERN,
+  ANTIGRAVITY_PROVIDER_PATTERNS,
   CLAUDE_MODEL_PATTERN,
+  CODEX_MODEL_PATTERN,
   MINIMAX_MODEL_PATTERN,
   OPENCLI_CHATGPT_MODEL_PATTERN,
   OPENCLI_GEMINI_MODEL_PATTERN
@@ -162,18 +163,18 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     healthUrl: "http://127.0.0.1:18765/health",
     envKey: "MINIMAX_API_KEY"
   },
-  {
-    provider: "antigravity",
-    // Gemini ids plus agy's effort-suffixed Claude ids (`claude-opus-5-5-high`).
-    pattern: ANTIGRAVITY_MODEL_PATTERN,
+  // One provider per Antigravity quota (Gemini, Argon, Claude/GPT-OSS), all
+  // served by the one agy bridge.
+  ...ANTIGRAVITY_PROVIDERS.map((provider) => ({
+    provider,
+    pattern: ANTIGRAVITY_PROVIDER_PATTERNS[provider],
     baseUrl: "http://127.0.0.1:4002/v1",
     healthUrl: "http://127.0.0.1:4002/health/liveliness",
     envKey: "LITELLM_API_KEY"
-  },
+  })),
   {
     provider: "codex",
-    pattern:
-      /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/,
+    pattern: CODEX_MODEL_PATTERN,
     baseUrl:
       process.env.CODEX_ROUTER_GPT_BASE_URL ??
       "https://chatgpt.com/backend-api/codex",

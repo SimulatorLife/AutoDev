@@ -1,8 +1,5 @@
 import { isTransientFailureClass } from "./provider-limits.ts";
-import type {
-  ControlApiProviderHealth,
-  ControlApiSubproviderQuota
-} from "./types.ts";
+import type { ControlApiProviderHealth } from "./types.ts";
 
 export type ProviderHealthReadiness = "ready" | "unavailable" | "not-observed";
 
@@ -51,29 +48,6 @@ export function providerSignInRequired(
   return latest?.failureClass === SIGN_IN_REQUIRED_FAILURE_CLASS;
 }
 
-function isFailureOtherPoolOnly(
-  health: ControlApiProviderHealth,
-  pools: readonly ControlApiSubproviderQuota[] | undefined
-): boolean {
-  if (!Array.isArray(pools) || pools.length === 0) return false;
-  const failedPool =
-    health.lastFailure?.pool ??
-    (health.lastFailure?.model
-      ? (pools.find((pool) => pool.models.includes(health.lastFailure!.model!))
-          ?.pool ?? null)
-      : null);
-  if (failedPool == null) return false;
-  return pools.some(
-    (pool) =>
-      pool.pool !== failedPool &&
-      (pool.status === "available" ||
-        pool.status === "warning" ||
-        pool.status === "unlimited") &&
-      !pool.cooldown &&
-      !health.poolCooldowns?.[pool.pool]
-  );
-}
-
 /**
  * Whether a failure has stopped being live evidence.
  *
@@ -92,9 +66,6 @@ function isFailureExpiredTransient(
   const hasActiveCooldown =
     health.cooldown !== null ||
     Boolean(
-      health.poolCooldowns && Object.keys(health.poolCooldowns).length > 0
-    ) ||
-    Boolean(
       health.modelCooldowns && Object.keys(health.modelCooldowns).length > 0
     );
   return !hasActiveCooldown;
@@ -104,24 +75,7 @@ export function providerHealthReadiness(
   health: ControlApiProviderHealth | null
 ): ProviderHealthReadiness {
   if (health === null) return "not-observed";
-  if (health.cooldown !== null) {
-    const isScoped =
-      health.cooldown.scope === "pool" || health.cooldown.scope === "model";
-    const hasHealthyPool =
-      isScoped &&
-      Array.isArray(health.quota?.pools) &&
-      health.quota.pools.some(
-        (pool) =>
-          (pool.status === "available" ||
-            pool.status === "warning" ||
-            pool.status === "unlimited") &&
-          !pool.cooldown &&
-          !health.poolCooldowns?.[pool.pool]
-      );
-    if (!hasHealthyPool) {
-      return "unavailable";
-    }
-  }
+  if (health.cooldown !== null) return "unavailable";
   const quota = health.quota ?? null;
   if (quota?.status === "ok" && quota.summaryStatus === "exhausted") {
     return "unavailable";
@@ -139,15 +93,12 @@ export function providerHealthReadiness(
     check?.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY,
     quotaAvailableAt
   );
-  const failureIsOtherPoolOnly = isFailureOtherPoolOnly(health, quota?.pools);
   const failureIsExpiredTransient = isFailureExpiredTransient(
     health,
     lastSuccessAt
   );
   const lastFailureAt = Math.max(
-    health.lastFailure === null ||
-      failureIsOtherPoolOnly ||
-      failureIsExpiredTransient
+    health.lastFailure === null || failureIsExpiredTransient
       ? Number.NEGATIVE_INFINITY
       : timestamp(health.lastFailure.at, Number.POSITIVE_INFINITY),
     check && !check.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY

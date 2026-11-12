@@ -14,7 +14,10 @@ const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
  * the span, and the panel reads as if that provider had cost nothing.
  */
 const PROVIDER_CATALOGUES = {
-  antigravity: "config/catalogs/antigravity-model-catalog.json",
+  "antigravity-gemini": "config/catalogs/antigravity-gemini-model-catalog.json",
+  "antigravity-argon": "config/catalogs/antigravity-argon-model-catalog.json",
+  "antigravity-claude-gpt":
+    "config/catalogs/antigravity-claude-gpt-model-catalog.json",
   claude: "config/catalogs/claude-model-catalog.json",
   minimax: "config/catalogs/minimax-model-catalog.json",
   "opencli-chatgpt": "config/catalogs/opencli-chatgpt-model-catalog.json",
@@ -32,7 +35,7 @@ const SERVED_MODEL_IDS: ReadonlyArray<readonly [string, string]> = [
   ["minimax", "MiniMax-M3.1-Flash"],
   // agy serves the third effort of this family too, and the Console offers
   // every model the provider serves, so it has to carry a price.
-  ["antigravity", "gemini-3.8-flash-low"]
+  ["antigravity-gemini", "gemini-3.8-flash-low"]
 ];
 
 function pricedModelIds(provider: string): Set<string> {

@@ -173,15 +173,14 @@ export interface ControlApiAgentEnablementPatchResponse {
   readonly reconciliation: ReconciliationView;
 }
 
-/** Active cooldown window on a provider, subprovider quota pool, or model. */
+/** Active cooldown window on a provider or one of its models. */
 export interface ControlApiProviderCooldown {
   readonly kind: string;
   readonly failureClass: string | null;
   readonly until: string;
   readonly resetsAt: string | null;
   readonly lastResortEligible: boolean;
-  readonly scope?: "provider" | "pool" | "model";
-  readonly pool?: string | null;
+  readonly scope?: "provider" | "model";
   readonly model?: string | null;
 }
 
@@ -206,24 +205,10 @@ export interface ControlApiQuotaWindow {
   readonly resetsAt: string | null;
 }
 
-/** Quota and cooldown state for a subprovider model class/pool (e.g. Antigravity first_party vs third_party). */
-export interface ControlApiSubproviderQuota {
-  readonly pool: string;
-  readonly label: string;
-  readonly status: ControlApiQuotaStatus;
-  readonly usedPercent: number | null;
-  readonly remainingPercent: number | null;
-  readonly resetsAt: string | null;
-  readonly windows: readonly ControlApiQuotaWindow[];
-  readonly models: readonly string[];
-  readonly cooldown?: ControlApiProviderCooldown | null;
-}
-
 /** Quota and limit state for a specific model on a provider. */
 export interface ControlApiModelQuota {
   readonly model: string;
   readonly displayName?: string | null;
-  readonly pool?: string | null;
   readonly status: ControlApiQuotaStatus;
   readonly usedPercent: number | null;
   readonly remainingPercent: number | null;
@@ -232,7 +217,7 @@ export interface ControlApiModelQuota {
   readonly cooldown?: ControlApiProviderCooldown | null;
 }
 
-/** Live usage, quota, and limit snapshot for a provider across its windows, pools, and models. */
+/** Live usage, quota, and limit snapshot for a provider across its windows and models. */
 export interface ControlApiProviderQuota {
   readonly provider: string;
   readonly status: "ok" | "unavailable";
@@ -242,14 +227,12 @@ export interface ControlApiProviderQuota {
   readonly error?: string | null;
   readonly summaryStatus: ControlApiQuotaStatus;
   readonly windows: readonly ControlApiQuotaWindow[];
-  readonly pools?: readonly ControlApiSubproviderQuota[];
   readonly models?: readonly ControlApiModelQuota[];
 }
 
 /** Live router evidence for one provider; absent when the router is not observed. */
 export interface ControlApiProviderHealth {
   readonly cooldown: ControlApiProviderCooldown | null;
-  readonly poolCooldowns?: Readonly<Record<string, ControlApiProviderCooldown>>;
   readonly modelCooldowns?: Readonly<
     Record<string, ControlApiProviderCooldown>
   >;
@@ -266,7 +249,6 @@ export interface ControlApiProviderHealth {
     readonly at: string;
     readonly failureClass: string | null;
     readonly status: number | null;
-    readonly pool?: string | null;
     readonly model?: string | null;
   } | null;
   /**

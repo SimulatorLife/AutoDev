@@ -11,7 +11,9 @@ test("getAutoDevProviders returns all canonical AutoDev providers", () => {
   const providerIds = new Set(providers.map((p) => p.providerId));
 
   assert.ok(providerIds.has("claude"));
-  assert.ok(providerIds.has("antigravity"));
+  assert.ok(providerIds.has("antigravity-gemini"));
+  assert.ok(providerIds.has("antigravity-argon"));
+  assert.ok(providerIds.has("antigravity-claude-gpt"));
   assert.ok(providerIds.has("minimax"));
   assert.ok(providerIds.has("copilot"));
   assert.ok(providerIds.has("codex"));

@@ -186,7 +186,7 @@ function observedWidgets(): readonly UsageWidget[] {
       partial: false,
       rows: [
         { g0: "claude → minimax", hops: 2 },
-        { g0: "claude → antigravity", hops: 1 }
+        { g0: "claude → antigravity-gemini", hops: 1 }
       ],
       xAxis: "g0",
       yAxis: "hops"
@@ -198,7 +198,7 @@ function observedWidgets(): readonly UsageWidget[] {
       partial: false,
       rows: [
         { g0: "minimax", hops: 2 },
-        { g0: "antigravity", hops: 1 }
+        { g0: "antigravity-gemini", hops: 1 }
       ],
       xAxis: "g0",
       yAxis: "hops"

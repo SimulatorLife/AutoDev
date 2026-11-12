@@ -2,6 +2,7 @@ import {
   type ControlApiProviderAgentModel,
   type ControlApiProviderRecord,
   type ControlApiProviderRoleAssignment,
+  isAntigravityProvider,
   PROVIDER_ROLES,
   type ProviderRole
 } from "@simulatorlife/autodev-core";
@@ -11,7 +12,8 @@ import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectFi
 import {
   HierarchicalSelect,
   HierarchicalSelectForms,
-  type HierarchicalSelectProps} from "../../components/forms/HierarchicalSelect.ts";
+  type HierarchicalSelectProps
+} from "../../components/forms/HierarchicalSelect.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
@@ -23,7 +25,14 @@ import {
 } from "./provider-model-discovery.ts";
 
 /**
- * The Roles column: the four fixed roles, each with its priority and its model.
+ * The Roles column: the fixed roles, each with its priority and its model.
+ *
+ * The Subagent role's per-agent model overrides take one of two layouts. The
+ * Providers table, where the strip shares a row with every other column, folds
+ * them into one hierarchical select on the Subagent row. The provider detail
+ * page, where the strip has the panel to itself, gives each agent role
+ * (`explorer`, `worker`, ...) a row of its own under Subagent, so a model per
+ * agent role is one select away rather than two levels into a menu.
  *
  * Every role is one form that posts to the role route. Priority and model live
  * in the same submission because they are one assignment -- a role's
@@ -65,10 +74,18 @@ function priorityOptionSelected(
     : String(assignment.priority);
 }
 
+/**
+ * How the Subagent role's per-agent model overrides are laid out: folded into
+ * the Subagent row's hierarchical select, or one row per agent role.
+ */
+export type SubagentModelLayout = "hierarchical" | "rows";
+
+type ModelChoice = { readonly id: string; readonly label: string };
+
 function availableModels(
   discovery: ProviderModelDiscoveryState,
   provider: string
-): readonly { readonly id: string; readonly label: string }[] {
+): readonly ModelChoice[] {
   return providerModelChoices(discovery, provider)
     .map(({ id }) => ({ id, label: id }))
     .sort((left, right) => MODEL_COLLATOR.compare(left.id, right.id));
@@ -125,6 +142,32 @@ function modelDiscoveryDisabledReason(
   return null;
 }
 
+/**
+ * A model select's options: the Auto choice, every listed model, and the
+ * current model when the listing no longer carries it -- labelled with why --
+ * so a saved choice stays visible instead of silently reading as Auto.
+ */
+function modelSelectOptions(
+  discovery: ProviderModelDiscoveryState,
+  provider: string,
+  models: readonly ModelChoice[],
+  current: string | null,
+  autoLabel: string
+): { readonly value: string; readonly label: string }[] {
+  return [
+    { value: "", label: autoLabel },
+    ...models.map(({ id, label }) => ({ value: id, label })),
+    ...(current !== null && !models.some(({ id }) => id === current)
+      ? [
+          {
+            value: current,
+            label: preservedModelLabel(discovery, provider, current)
+          }
+        ]
+      : [])
+  ];
+}
+
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 /**
@@ -161,17 +204,19 @@ function RoleModelSelect({
   role,
   assignment,
   models,
+  discovery,
   disabledReason
 }: {
   readonly provider: string;
   readonly role: ProviderRole;
   readonly assignment: ControlApiProviderRoleAssignment;
-  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly models: readonly ModelChoice[];
+  readonly discovery: ProviderModelDiscoveryState;
   readonly disabledReason: string | undefined;
 }): React.JSX.Element {
   const roleDisabled = assignment.priority === "disabled";
   return React.createElement(AutoSubmitSelectField, {
-    // Scoped per role: four role forms submit `model` from the same page, so
+    // Scoped per role: several role forms submit `model` from the same page, so
     // sharing the default id would leave every label pointing at whichever
     // control the DOM resolved first.
     id: `select-model-${provider}-${role}`,
@@ -189,10 +234,13 @@ function RoleModelSelect({
     },
     defaultValue: assignment.model ?? "",
     ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
-    options: [
-      { value: "", label: "Auto" },
-      ...models.map(({ id, label }) => ({ value: id, label }))
-    ]
+    options: modelSelectOptions(
+      discovery,
+      provider,
+      models,
+      assignment.model,
+      "Auto"
+    )
   });
 }
 
@@ -210,7 +258,7 @@ function RoleEffortSelect({
   const supportedLevels = assignment.supportedReasoningLevels ?? [];
   const hasLevels = supportedLevels.length > 0;
   const isAgyFixed =
-    provider === "antigravity" &&
+    isAntigravityProvider(provider) &&
     assignment.model !== null &&
     MODEL_EFFORT_SUFFIX.test(assignment.model);
 
@@ -283,6 +331,30 @@ function RoleEffortSelect({
   });
 }
 
+/**
+ * The role strip's aligned grid: label, priority, model, effort. Every row --
+ * a role's or an agent role's -- uses it, so the columns line up down the
+ * whole strip.
+ *
+ * The label column is a fixed width, and it is the width the longest role
+ * label needs: `Orchestrator`, with its icon, is 92px.
+ *
+ * It was `max-content` for a while, to stop a label being cut. That traded
+ * one defect for another: every row's grid sized its own label track to its
+ * own label, so the rows' controls started at different x positions.
+ * Measured in Chromium against the production build, the priority column
+ * drifted 38px between `Smart` and `Orchestrator`, and the model column
+ * drifted with it -- a strip that claims to be an aligned configuration, in
+ * which the eye cannot scan down a column at all.
+ *
+ * The gaps are `1.5` because the four tracks sum to 494px against a 496px
+ * cell: the columns were sized to fill that cell exactly, so the four pixels
+ * the label needed came from the gaps rather than from a column that was
+ * already measured.
+ */
+const ROLE_GRID_CLASS =
+  "grid min-w-0 grid-cols-[5.75rem_5rem_12rem_7rem] items-center gap-1.5";
+
 function RoleRow({
   provider,
   role,
@@ -290,16 +362,22 @@ function RoleRow({
   agentModels,
   models,
   discovery,
+  subagentLayout,
   returnTo
 }: {
   readonly provider: string;
   readonly role: ProviderRole;
   readonly assignment: ControlApiProviderRoleAssignment;
   readonly agentModels: readonly ControlApiProviderAgentModel[];
-  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly models: readonly ModelChoice[];
   readonly discovery: ProviderModelDiscoveryState;
+  readonly subagentLayout: SubagentModelLayout;
   readonly returnTo: string;
 }): React.JSX.Element {
+  // Only the hierarchical layout moves the Subagent model into its own menu
+  // forms; in the rows layout it is an ordinary select in this role's form.
+  const hierarchicalModel =
+    role === "subagent" && subagentLayout === "hierarchical";
   const roleDisabled = assignment.priority === "disabled";
   // A globally disabled provider's roles cannot be edited until it is enabled
   // again. Both controls stay in place with that reason rather than vanishing,
@@ -329,22 +407,11 @@ function RoleRow({
   const supportedLevels = assignment.supportedReasoningLevels ?? [];
   const hasLevels = supportedLevels.length > 0;
   const isAgyFixed =
-    provider === "antigravity" &&
+    isAntigravityProvider(provider) &&
     assignment.model !== null &&
     MODEL_EFFORT_SUFFIX.test(assignment.model);
   const effortSubmitsViaSelect =
     hasLevels && !isAgyFixed && effortReason === undefined;
-
-  const modelOptions = [...models];
-  if (
-    assignment.model !== null &&
-    !modelOptions.some(({ id }) => id === assignment.model)
-  ) {
-    modelOptions.push({
-      id: assignment.model,
-      label: preservedModelLabel(discovery, provider, assignment.model)
-    });
-  }
 
   return React.createElement(
     // A write surface inside a table cell is a group of controls rather
@@ -355,24 +422,7 @@ function RoleRow({
       role: "group",
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
-      className:
-        // The label column is a fixed width, and it is the width the longest
-        // role label needs: `Orchestrator`, with its icon, is 92px.
-        //
-        // It was `max-content` for a while, to stop a label being cut. That
-        // traded one defect for another: every row's grid sized its own
-        // label track to its own label, so the four rows' controls started at
-        // four different x positions. Measured in Chromium against the
-        // production build, the priority column drifted 38px between `Smart`
-        // and `Orchestrator`, and the model column drifted with it -- a strip
-        // that claims to be an aligned configuration, in which the eye cannot
-        // scan down a column at all.
-        //
-        // The gaps are `1.5` because the four tracks sum to 494px against a
-        // 496px cell: the columns were sized to fill that cell exactly, so
-        // the four pixels the label needed came from the gaps rather than
-        // from a column that was already measured.
-        "grid min-w-0 grid-cols-[5.75rem_5rem_12rem_7rem] items-center gap-1.5",
+      className: ROLE_GRID_CLASS,
       "data-role-form": `${provider}-${role}`
     },
     React.createElement("input", {
@@ -426,7 +476,7 @@ function RoleRow({
         { value: "disabled", label: "Disabled" }
       ]
     }),
-    role === "subagent"
+    hierarchicalModel
       ? React.createElement(HierarchicalSelect, {
           ...subagentModelSelect({
             provider,
@@ -445,7 +495,8 @@ function RoleRow({
           provider,
           role,
           assignment,
-          models: modelOptions,
+          models,
+          discovery,
           disabledReason: modelReason
         }),
     React.createElement(RoleEffortSelect, {
@@ -455,9 +506,10 @@ function RoleRow({
       disabledReason: effortReason
     }),
     // A natively `disabled` control is not submitted by the browser, and the
-    // Subagent model is chosen in its own menu forms, so the role's form
-    // carries the current model for its priority and effort changes.
-    ...(modelReason === undefined && role !== "subagent"
+    // hierarchical Subagent model is chosen in its own menu forms, so the
+    // role's form carries the current model for its priority and effort
+    // changes.
+    ...(modelReason === undefined && !hierarchicalModel
       ? []
       : [
           React.createElement("input", {
@@ -488,17 +540,119 @@ function RoleRow({
 }
 
 /**
- * The two roles for one provider, in the fixed order the target state names:
+ * One agent role's model override, as a row of its own under Subagent.
+ *
+ * An agent role has no priority or reasoning effort of its own -- it runs at
+ * the Subagent role's priority and effort -- so its row is a label spanning the
+ * label and priority tracks, and a model select in the model track, aligned
+ * with every role's model above it. Auto names the model the role then runs:
+ * its tier's configured model. The select is blocked for the same reasons the
+ * Subagent model is, since the override only applies while that role serves.
+ */
+function AgentModelRow({
+  provider,
+  entry,
+  subagent,
+  models,
+  discovery,
+  returnTo
+}: {
+  readonly provider: string;
+  readonly entry: ControlApiProviderAgentModel;
+  readonly subagent: ControlApiProviderRoleAssignment;
+  readonly models: readonly ModelChoice[];
+  readonly discovery: ProviderModelDiscoveryState;
+  readonly returnTo: string;
+}): React.JSX.Element {
+  const disabledReason = roleModelDisabledReason(provider, subagent, discovery);
+  return React.createElement(
+    "form",
+    {
+      role: "group",
+      action: `/api/providers/${encodeURIComponent(provider)}/agents/${encodeURIComponent(entry.role)}`,
+      method: "POST",
+      className: ROLE_GRID_CLASS,
+      "data-agent-model-form": `${provider}-${entry.role}`
+    },
+    React.createElement("input", {
+      type: "hidden",
+      name: "provider",
+      value: provider
+    }),
+    React.createElement("input", {
+      type: "hidden",
+      name: "role",
+      value: entry.role
+    }),
+    React.createElement("input", {
+      type: "hidden",
+      name: "returnTo",
+      value: returnTo
+    }),
+    React.createElement(
+      "span",
+      {
+        className:
+          "col-span-2 flex min-w-0 items-center gap-1.5 pl-5 " +
+          MUTED_META_CLASS,
+        title: `The ${entry.role} agent's model. Auto runs its tier's model; priority and reasoning effort follow the Subagent role.`,
+        "data-agent-model-label": entry.role
+      },
+      React.createElement("span", { className: "truncate" }, entry.role)
+    ),
+    React.createElement(AutoSubmitSelectField, {
+      id: `select-agent-model-${provider}-${entry.role}`,
+      name: "model",
+      label: `${entry.role} agent model`,
+      hideLabel: true,
+      className: "min-w-0 w-48",
+      testId: `agent-model-${provider}-${entry.role}`,
+      dataAttributes: {
+        "data-agent-model": entry.role,
+        "data-dimmed": subagent.priority === "disabled" ? "true" : "false"
+      },
+      defaultValue: entry.model ?? "",
+      ...(disabledReason === undefined
+        ? {}
+        : { disabled: true, disabledReason }),
+      options: modelSelectOptions(
+        discovery,
+        provider,
+        models,
+        entry.model,
+        `Auto (${entry.tierModel ?? NOT_OBSERVED_LABEL})`
+      )
+    }),
+    // A natively `disabled` select is not submitted, and the route requires
+    // `model`, so a blocked row still carries its current choice.
+    ...(disabledReason === undefined
+      ? []
+      : [
+          React.createElement("input", {
+            key: "preserved-model",
+            type: "hidden",
+            name: "model",
+            value: entry.model ?? ""
+          })
+        ])
+  );
+}
+
+/**
+ * The roles for one provider, in the fixed order the target state names:
  * Orchestrator, Subagent. The order is read from `PROVIDER_ROLES` rather than
  * restated here so a role added to Core cannot go missing from this column.
+ * In the `rows` layout each agent role follows Subagent in a row of its own.
  */
 export function ProviderRoleControls({
   provider,
   modelDiscovery,
+  subagentLayout,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
   readonly modelDiscovery: ProviderModelDiscoveryState;
+  readonly subagentLayout: SubagentModelLayout;
   readonly returnTo: string;
 }): React.JSX.Element {
   const models = availableModels(modelDiscovery, provider.id);
@@ -525,11 +679,11 @@ export function ProviderRoleControls({
         "flex list-none flex-col items-start gap-1.5 overflow-x-auto p-0 py-1.5 m-0",
       "data-provider-roles": provider.id
     },
-    ...PROVIDER_ROLES.map((role) =>
+    ...PROVIDER_ROLES.flatMap((role) => [
       React.createElement(
         "li",
         { key: role, className: "flex min-w-0" },
-        role === "subagent"
+        role === "subagent" && subagentLayout === "hierarchical"
           ? React.createElement(
               HierarchicalSelectForms,
               subagentModelSelect({
@@ -549,10 +703,27 @@ export function ProviderRoleControls({
           agentModels: provider.agentModels,
           models,
           discovery: modelDiscovery,
+          subagentLayout,
           returnTo
         })
-      )
-    )
+      ),
+      ...(role === "subagent" && subagentLayout === "rows"
+        ? provider.agentModels.map((entry) =>
+            React.createElement(
+              "li",
+              { key: `agent-${entry.role}`, className: "flex min-w-0" },
+              React.createElement(AgentModelRow, {
+                provider: provider.id,
+                entry,
+                subagent: provider.roles.subagent,
+                models,
+                discovery: modelDiscovery,
+                returnTo
+              })
+            )
+          )
+        : [])
+    ])
   );
 }
 
@@ -574,22 +745,12 @@ function subagentModelSelect({
   readonly provider: string;
   readonly assignment: ControlApiProviderRoleAssignment;
   readonly agentModels: readonly ControlApiProviderAgentModel[];
-  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly models: readonly ModelChoice[];
   readonly discovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
 }): HierarchicalSelectProps {
-  const options = (current: string | null, auto: string) => [
-    { value: "", label: auto },
-    ...models.map(({ id, label }) => ({ value: id, label })),
-    ...(current !== null && !models.some(({ id }) => id === current)
-      ? [
-          {
-            value: current,
-            label: preservedModelLabel(discovery, provider, current)
-          }
-        ]
-      : [])
-  ];
+  const options = (current: string | null, auto: string) =>
+    modelSelectOptions(discovery, provider, models, current, auto);
   const overrides = agentModels.filter(({ model }) => model !== null).length;
   const subagentModel = assignment.model ?? "Auto";
   return {

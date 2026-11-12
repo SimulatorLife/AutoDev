@@ -294,11 +294,19 @@ export const HOOKS = [
   "run-codex-console.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
-export const PROFILES = ["claude", "minimax", "antigravity"] as const;
+export const PROFILES = [
+  "claude",
+  "minimax",
+  "antigravity-gemini",
+  "antigravity-argon",
+  "antigravity-claude-gpt"
+] as const;
 export const CATALOGS = [
   "claude",
   "minimax",
-  "antigravity",
+  "antigravity-gemini",
+  "antigravity-argon",
+  "antigravity-claude-gpt",
   "opencli-chatgpt",
   "opencli-gemini",
   "codex"
@@ -355,7 +363,11 @@ const OBSOLETE_COLLECTOR_HOOKS = [
 ] as const;
 export const OBSOLETE_PATHS = [
   ".config/litellm/antigravity.yaml",
-  ".codex/codex-antigravity-litellm-config.sha256"
+  ".codex/codex-antigravity-litellm-config.sha256",
+  // The single Antigravity provider's profile and catalog, replaced by one
+  // per Antigravity provider (gemini, argon, claude-gpt).
+  ".codex/antigravity.config.toml",
+  ".codex/antigravity-model-catalog.json"
 ] as const;
 export const OBSOLETE_DASHBOARD = "codex-model-router-dashboard.html";
 export const OBSOLETE_HOOKS = [

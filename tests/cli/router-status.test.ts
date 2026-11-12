@@ -203,25 +203,17 @@ test("router status explains a provider's cooldown, streaks, and live limits", a
   assert.equal(stdout.split("↳").length - 1, 3);
 });
 
-test("router status names the routes that are out when the provider itself is not", async () => {
+test("router status names the models that are out when the provider itself is not", async () => {
   const base = statusPayload.providers.openai;
   const { stdout } = await runStatusCli({
     ...statusPayload,
     providers: {
-      pooled: {
+      serving: {
         ...base,
         status: "ready",
         subagentStatus: "ready",
-        // The provider itself is serving: one of its quota pools and one of
-        // its models are out, and those are the routes that are named.
-        poolCooldowns: {
-          first_party: {
-            kind: "hard",
-            failureClass: "quota_exhausted",
-            resetsAt: "2026-09-30T00:05:00.000Z",
-            until: "2026-09-30T00:05:00.000Z"
-          }
-        },
+        // The provider itself is serving: one of its models is out, and that
+        // is the route that is named.
         modelCooldowns: {
           "gemini-3.8-flash-medium": {
             kind: "config",
@@ -232,13 +224,9 @@ test("router status names the routes that are out when the provider itself is no
     }
   });
 
-  assert.match(
-    stdout,
-    /pool cooldown first_party: hard, resets 2026-09-30T00:05:00\.000Z/
-  );
   assert.match(stdout, /model cooldown gemini-3\.8-flash-medium: config/);
   // The provider is not down, so it is not reported as cooling down.
-  assert.match(stdout, /pooled\s+enabled\/enabled/);
+  assert.match(stdout, /serving\s+enabled\/enabled/);
 });
 
 test("router status JSON exposes only the operational runtime contract", async () => {

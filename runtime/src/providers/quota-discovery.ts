@@ -4,27 +4,28 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import type {
-  ControlApiModelQuota,
-  ControlApiProviderCooldown,
-  ControlApiProviderQuota,
-  ControlApiQuotaStatus,
-  ControlApiQuotaWindow,
-  ControlApiQuotaWindowKind,
-  ControlApiSubproviderQuota
+import {
+  ANTIGRAVITY_PROVIDERS,
+  type AntigravityProvider,
+  type ControlApiModelQuota,
+  type ControlApiProviderQuota,
+  type ControlApiQuotaStatus,
+  type ControlApiQuotaWindow,
+  type ControlApiQuotaWindowKind,
+  isAntigravityProvider
 } from "@simulatorlife/autodev-core";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
-import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
-
 import {
   findAgyBinary,
   findMiniMaxBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
+import { antigravityProvider } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+
 import { loadCodexAuth } from "../router/proxy.ts";
 
 const execFileAsync = promisify(execFile);
 
-const QUOTA_DISCOVERY_TIMEOUT_MS = 6_000;
+const QUOTA_DISCOVERY_TIMEOUT_MS = 6000;
 const ANTIGRAVITY_FETCH_MODELS_URL =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 const ANTIGRAVITY_USER_AGENT = "antigravity/1.5.3 darwin/arm64";
@@ -93,19 +94,9 @@ function statusFromUsedPercent(
 }
 
 function combineStatuses(
-  statuses: readonly ControlApiQuotaStatus[],
-  options: { allPoolsRequiredForExhausted?: boolean } = {}
+  statuses: readonly ControlApiQuotaStatus[]
 ): ControlApiQuotaStatus {
   if (statuses.length === 0) return "unavailable";
-  if (options.allPoolsRequiredForExhausted) {
-    const activeStatuses = statuses.filter((s) => s !== "unavailable");
-    if (activeStatuses.length === 0) return "unavailable";
-    if (activeStatuses.every((s) => s === "exhausted")) return "exhausted";
-    if (activeStatuses.some((s) => s === "warning")) return "warning";
-    if (activeStatuses.some((s) => s === "available")) return "available";
-    if (activeStatuses.some((s) => s === "unlimited")) return "unlimited";
-    return "unavailable";
-  }
   if (statuses.includes("exhausted")) return "exhausted";
   if (statuses.includes("warning")) return "warning";
   if (statuses.includes("available")) return "available";
@@ -119,8 +110,8 @@ function windowKindFromSeconds(
   if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) {
     return "rolling";
   }
-  if (Math.abs(seconds - 18_000) <= 3_600) return "five_hour";
-  if (Math.abs(seconds - 86_400) <= 7_200) return "daily";
+  if (Math.abs(seconds - 18_000) <= 3600) return "five_hour";
+  if (Math.abs(seconds - 86_400) <= 7200) return "daily";
   if (Math.abs(seconds - 604_800) <= 86_400) return "weekly";
   if (seconds >= 2_000_000) return "monthly";
   return "rolling";
@@ -131,16 +122,21 @@ function windowLabelFromKind(
   fallback: string
 ): string {
   switch (kind) {
-    case "five_hour":
+    case "five_hour": {
       return "5-hour limit";
-    case "daily":
+    }
+    case "daily": {
       return "Daily limit";
-    case "weekly":
+    }
+    case "weekly": {
       return "Weekly limit";
-    case "monthly":
+    }
+    case "monthly": {
       return "Monthly limit";
-    default:
+    }
+    default: {
       return fallback;
+    }
   }
 }
 
@@ -243,7 +239,6 @@ export function parseMinimaxQuotaOutput(
     models: MINIMAX_CONFIGURED_MODELS.map((cfg) => ({
       model: cfg.model,
       displayName: cfg.displayName,
-      pool: null,
       status: summaryStatus,
       usedPercent: primary.usedPercent,
       remainingPercent: primary.remainingPercent,
@@ -281,7 +276,9 @@ export function parseCodexWhamUsage(
         : null;
     if (rawUsed === null) continue;
     const usedPercent =
-      limitReached && key === "primary_window" ? Math.max(100, rawUsed) : rawUsed;
+      limitReached && key === "primary_window"
+        ? Math.max(100, rawUsed)
+        : rawUsed;
     const remainingPercent = clampPercent(100 - usedPercent);
     const windowSeconds =
       typeof win.limit_window_seconds === "number" &&
@@ -291,7 +288,12 @@ export function parseCodexWhamUsage(
     const kind = windowKindFromSeconds(windowSeconds);
     const resetsAt = canonicalIso(win.reset_at);
     windows.push({
-      id: kind === "five_hour" ? "codex-5h" : kind === "weekly" ? "codex-weekly" : fallbackId,
+      id:
+        kind === "five_hour"
+          ? "codex-5h"
+          : kind === "weekly"
+            ? "codex-weekly"
+            : fallbackId,
       label: windowLabelFromKind(
         kind,
         key === "primary_window" ? "Primary window" : "Secondary window"
@@ -337,12 +339,12 @@ export function parseCodexResponseRateLimitHeaders(
     const usedPercent = clampPercent(usedNum);
     const remainingPercent = clampPercent(100 - usedPercent);
     const minutesRaw = headers.get(`x-codex-${prefix}-window-minutes`);
-    const minutes = minutesRaw !== null ? Number(minutesRaw) : Number.NaN;
+    const minutes = minutesRaw === null ? Number.NaN : Number(minutesRaw);
     const windowSeconds =
       Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null;
     const kind = windowKindFromSeconds(windowSeconds);
     const resetRaw = headers.get(`x-codex-${prefix}-reset-at`);
-    const resetNum = resetRaw !== null ? Number(resetRaw) : Number.NaN;
+    const resetNum = resetRaw === null ? Number.NaN : Number(resetRaw);
     const resetsAt = Number.isFinite(resetNum)
       ? canonicalIso(resetNum)
       : canonicalIso(resetRaw);
@@ -379,17 +381,28 @@ export function parseCodexResponseRateLimitHeaders(
   };
 }
 
+/** The quota window kinds Antigravity reports, in display order. */
+const ANTIGRAVITY_WINDOW_KINDS = ["five_hour", "weekly"] as const;
+
 /**
- * Parse Antigravity `v1internal:fetchAvailableModels` response into subprovider
- * quota pools (`first_party` Gemini vs `third_party` Claude) and per-model quotas.
+ * Parse Antigravity `v1internal:fetchAvailableModels` into one quota per
+ * Antigravity provider.
+ *
+ * agy meters Gemini, Argon, and Claude/GPT-OSS separately, and AutoDev routes
+ * each as its own provider (`antigravity-gemini`, `antigravity-argon`,
+ * `antigravity-claude-gpt`), so one response yields each provider's quota. A
+ * model reports its remaining fraction and next reset; a reset more than a day
+ * out is the weekly window, a nearer one the 5-hour window. A provider's window
+ * of each kind reads the most-used of its models, because its models draw on
+ * the same quota.
  */
 export function parseAntigravityAvailableModelsQuota(
   payload: unknown,
   nowMs = Date.now()
-): ControlApiProviderQuota | null {
-  if (!isRecord(payload) || !isRecord(payload.models)) return null;
+): Partial<Record<AntigravityProvider, ControlApiProviderQuota>> {
+  if (!isRecord(payload) || !isRecord(payload.models)) return {};
   const modelsRecord = payload.models;
-  const modelQuotas: ControlApiModelQuota[] = [];
+  const byProvider = new Map<AntigravityProvider, ControlApiModelQuota[]>();
   const seenModelIds = new Set<string>();
 
   const addModelEntry = (
@@ -398,14 +411,8 @@ export function parseAntigravityAvailableModelsQuota(
     quotaInfo: Record<string, unknown>
   ): void => {
     if (seenModelIds.has(modelId)) return;
-    const pool =
-      providerQuotaPool("antigravity", modelId) ??
-      (modelId.startsWith("gemini-")
-        ? "first_party"
-        : modelId.startsWith("claude-")
-          ? "third_party"
-          : null);
-    if (!pool) return;
+    const provider = antigravityProvider(modelId);
+    if (!provider) return;
     seenModelIds.add(modelId);
     const resetsAt = canonicalIso(quotaInfo.resetTime);
     let remainingFraction: number | null = null;
@@ -422,7 +429,7 @@ export function parseAntigravityAvailableModelsQuota(
     const remainingPercent = clampPercent(remainingFraction * 100);
     const usedPercent = clampPercent(100 - remainingPercent);
     const status = statusFromUsedPercent(usedPercent);
-    const resetMs = resetsAt !== null ? Date.parse(resetsAt) : Number.NaN;
+    const resetMs = resetsAt === null ? Number.NaN : Date.parse(resetsAt);
     const remainingSec =
       Number.isFinite(resetMs) && resetMs > nowMs
         ? Math.round((resetMs - nowMs) / 1000)
@@ -430,99 +437,87 @@ export function parseAntigravityAvailableModelsQuota(
     const kind: ControlApiQuotaWindowKind =
       remainingSec !== null && remainingSec > 86_400 ? "weekly" : "five_hour";
     const win: ControlApiQuotaWindow = {
-      id: `antigravity-${modelId}`,
-      label: kind === "weekly" ? "Pool limit" : "5-hour limit",
+      id: `${provider}-${modelId}`,
+      label: windowLabelFromKind(kind, "Usage limit"),
       kind,
       status,
       usedPercent,
       remainingPercent,
       resetsAt
     };
-    modelQuotas.push({
+    const models = byProvider.get(provider) ?? [];
+    models.push({
       model: modelId,
       displayName,
-      pool,
       status,
       usedPercent,
       remainingPercent,
       resetsAt,
       windows: [win]
     });
+    byProvider.set(provider, models);
   };
 
+  // A model the response names by its own id reports its own quota; the
+  // tiered Flash entry speaks only for the variants nothing else names. The
+  // API files Argon under that tiered entry today, so Argon reads the tiered
+  // quota until the response carries an Argon entry of its own.
+  let tiered: {
+    displayName: string | null;
+    quotaInfo: Record<string, unknown>;
+  } | null = null;
   for (const [rawId, rawEntry] of Object.entries(modelsRecord)) {
     if (!isRecord(rawEntry) || !isRecord(rawEntry.quotaInfo)) continue;
     const displayName =
       typeof rawEntry.displayName === "string" && rawEntry.displayName.trim()
         ? rawEntry.displayName.trim()
         : null;
-    if (rawId === "gemini-3.8-flash-tiered") {
-      for (const variant of ANTIGRAVITY_FLASH_TIERED_VARIANTS) {
-        addModelEntry(variant, displayName, rawEntry.quotaInfo);
-      }
-      continue;
-    }
-    addModelEntry(rawId, displayName, rawEntry.quotaInfo);
+    if (rawId === "gemini-3.8-flash-tiered")
+      tiered = { displayName, quotaInfo: rawEntry.quotaInfo };
+    else addModelEntry(rawId, displayName, rawEntry.quotaInfo);
   }
+  if (tiered)
+    for (const variant of ANTIGRAVITY_FLASH_TIERED_VARIANTS)
+      addModelEntry(variant, tiered.displayName, tiered.quotaInfo);
 
-  if (modelQuotas.length === 0) return null;
-
-  const pools: ControlApiSubproviderQuota[] = [];
-  for (const [poolId, label] of [
-    ["first_party", "Gemini (First-Party)"],
-    ["third_party", "Claude (Third-Party)"]
-  ] as const) {
-    const members = modelQuotas.filter((m) => m.pool === poolId);
-    if (members.length === 0) continue;
-    // All models in a given Antigravity pool share a common quota bucket; use
-    // the maximum usedPercent across members of that pool.
-    const usedValues = members
-      .map((m) => m.usedPercent)
-      .filter((v): v is number => v !== null);
-    const usedPercent =
-      usedValues.length > 0 ? clampPercent(Math.max(...usedValues)) : null;
-    const remainingPercent =
-      usedPercent !== null ? clampPercent(100 - usedPercent) : null;
-    const resetsAt =
-      members.map((m) => m.resetsAt).find((r) => r !== null) ?? null;
-    const status = statusFromUsedPercent(usedPercent);
-    const poolWindow: ControlApiQuotaWindow = {
-      id: `antigravity-pool-${poolId}`,
-      label: `${label} quota`,
-      kind: poolId === "first_party" ? "five_hour" : "weekly",
-      status,
-      usedPercent,
-      remainingPercent,
-      resetsAt
-    };
-    pools.push({
-      pool: poolId,
-      label,
-      status,
-      usedPercent,
-      remainingPercent,
-      resetsAt,
-      windows: [poolWindow],
-      models: members.map((m) => m.model)
+  const result: Partial<Record<AntigravityProvider, ControlApiProviderQuota>> =
+    {};
+  for (const [provider, models] of byProvider) {
+    const windows = ANTIGRAVITY_WINDOW_KINDS.flatMap((kind) => {
+      const members = models.flatMap((m) =>
+        m.windows.filter((w) => w.kind === kind)
+      );
+      if (members.length === 0) return [];
+      const mostUsed = members.reduce((most, w) =>
+        (w.usedPercent ?? -1) > (most.usedPercent ?? -1) ? w : most
+      );
+      const usedPercent = mostUsed.usedPercent;
+      const window: ControlApiQuotaWindow = {
+        id: `${provider}-${kind}`,
+        label: windowLabelFromKind(kind, "Usage limit"),
+        kind,
+        status: statusFromUsedPercent(usedPercent),
+        usedPercent,
+        remainingPercent:
+          usedPercent === null ? null : clampPercent(100 - usedPercent),
+        resetsAt:
+          mostUsed.resetsAt ??
+          members.find((w) => w.resetsAt !== null)?.resetsAt ??
+          null
+      };
+      return [window];
     });
+    result[provider] = {
+      provider,
+      status: "ok",
+      source: "antigravity-cloudcode-api",
+      updatedAt: new Date(nowMs).toISOString(),
+      summaryStatus: combineStatuses(windows.map((w) => w.status)),
+      windows,
+      models
+    };
   }
-
-  const windows = pools.flatMap((p) => p.windows);
-  const summaryStatus = combineStatuses(
-    pools.map((p) => p.status),
-    { allPoolsRequiredForExhausted: true }
-  );
-
-  return {
-    provider: "antigravity",
-    status: "ok",
-    source: "antigravity-cloudcode-api",
-    updatedAt: new Date(nowMs).toISOString(),
-    summaryStatus,
-    windows,
-    pools,
-    models: modelQuotas
-  };
+  return result;
 }
 
 /**
@@ -558,7 +553,8 @@ export function parseCopilotUserQuota(
           ? snap.remaining
           : null;
     const used =
-      typeof snap.credits_used === "number" && Number.isFinite(snap.credits_used)
+      typeof snap.credits_used === "number" &&
+      Number.isFinite(snap.credits_used)
         ? snap.credits_used
         : entitlement !== null && remaining !== null
           ? Math.max(0, Math.round((entitlement - remaining) * 10) / 10)
@@ -571,12 +567,11 @@ export function parseCopilotUserQuota(
         : entitlement && remaining !== null && entitlement > 0
           ? clampPercent((remaining / entitlement) * 100)
           : null;
-    const usedPercent =
-      unlimited
-        ? 0
-        : remainingPercent !== null
-          ? clampPercent(100 - remainingPercent)
-          : null;
+    const usedPercent = unlimited
+      ? 0
+      : remainingPercent === null
+        ? null
+        : clampPercent(100 - remainingPercent);
     windows.push({
       id: "copilot-premium",
       label: "Monthly premium requests",
@@ -599,12 +594,11 @@ export function parseCopilotUserQuota(
       : typeof snap.percent_remaining === "number"
         ? clampPercent(snap.percent_remaining)
         : null;
-    const usedPercent =
-      unlimited
-        ? 0
-        : remainingPercent !== null
-          ? clampPercent(100 - remainingPercent)
-          : null;
+    const usedPercent = unlimited
+      ? 0
+      : remainingPercent === null
+        ? null
+        : clampPercent(100 - remainingPercent);
     windows.push({
       id: "copilot-chat",
       label: "Chat requests",
@@ -658,7 +652,6 @@ function claudeProviderQuota(
     models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
       model: cfg.model,
       displayName: cfg.displayName,
-      pool: null,
       status: primary.status,
       usedPercent: primary.usedPercent,
       remainingPercent: primary.remainingPercent,
@@ -680,9 +673,12 @@ export function parseClaudeOAuthUsage(
   for (const [key, id, label, kind] of CLAUDE_USAGE_WINDOWS) {
     const bucket = payload[key];
     if (!isRecord(bucket)) continue;
-    const rawUtil = bucket.utilization ?? bucket.percent_used ?? bucket.used_percent;
+    const rawUtil =
+      bucket.utilization ?? bucket.percent_used ?? bucket.used_percent;
     if (typeof rawUtil !== "number" || !Number.isFinite(rawUtil)) continue;
-    const usedPercent = clampPercent(rawUtil <= 1 && rawUtil > 0 ? rawUtil * 100 : rawUtil);
+    const usedPercent = clampPercent(
+      rawUtil <= 1 && rawUtil > 0 ? rawUtil * 100 : rawUtil
+    );
     const remainingPercent = clampPercent(100 - usedPercent);
     const resetsAt = canonicalIso(bucket.resets_at ?? bucket.reset_at);
     windows.push({
@@ -696,7 +692,12 @@ export function parseClaudeOAuthUsage(
     });
   }
   if (windows.length === 0) return null;
-  return claudeProviderQuota("anthropic-oauth-usage", "Claude Pro Plan", windows, nowMs);
+  return claudeProviderQuota(
+    "anthropic-oauth-usage",
+    "Claude Pro Plan",
+    windows,
+    nowMs
+  );
 }
 
 /**
@@ -707,7 +708,11 @@ export function parseClaudeOAuthUsage(
  */
 function claudeEventWindow(
   [, id, label, kind]: (typeof CLAUDE_USAGE_WINDOWS)[number],
-  reading: { utilization: unknown; resetsAt: unknown; eventStatus: string | null },
+  reading: {
+    utilization: unknown;
+    resetsAt: unknown;
+    eventStatus: string | null;
+  },
   nowMs: number
 ): ControlApiQuotaWindow | null {
   const resetsAt = canonicalIso(reading.resetsAt);
@@ -723,7 +728,8 @@ function claudeEventWindow(
     };
   }
   const usedPercent =
-    typeof reading.utilization === "number" && Number.isFinite(reading.utilization)
+    typeof reading.utilization === "number" &&
+    Number.isFinite(reading.utilization)
       ? clampPercent(reading.utilization * 100)
       : reading.eventStatus === "rejected"
         ? 100
@@ -733,11 +739,11 @@ function claudeEventWindow(
       ? "exhausted"
       : reading.eventStatus === "allowed_warning"
         ? "warning"
-        : usedPercent !== null
-          ? statusFromUsedPercent(usedPercent)
-          : reading.eventStatus === "allowed"
+        : usedPercent === null
+          ? reading.eventStatus === "allowed"
             ? "available"
-            : "unavailable";
+            : "unavailable"
+          : statusFromUsedPercent(usedPercent);
   if (status === "unavailable" && resetsAt === null) return null;
   return {
     id,
@@ -745,7 +751,8 @@ function claudeEventWindow(
     kind,
     status,
     usedPercent,
-    remainingPercent: usedPercent !== null ? clampPercent(100 - usedPercent) : null,
+    remainingPercent:
+      usedPercent === null ? null : clampPercent(100 - usedPercent),
     resetsAt
   };
 }
@@ -797,81 +804,24 @@ export function parseClaudeRateLimitEvent(
   );
 }
 
-function serializeCooldown(
-  entry: {
-    kind: string;
-    failureClass?: string | null;
-    until: number;
-    resetsAt?: string | null;
-    scope?: "provider" | "pool" | "model";
-    pool?: string | null;
-    model?: string | null;
-  },
-  nowMs: number
-): ControlApiProviderCooldown {
-  const scope: "provider" | "pool" | "model" =
-    entry.scope ?? (entry.model ? "model" : entry.pool ? "pool" : "provider");
-  return {
-    kind: entry.kind,
-    failureClass: entry.failureClass ?? null,
-    until: new Date(entry.until).toISOString(),
-    resetsAt: entry.resetsAt ?? null,
-    lastResortEligible: false,
-    scope,
-    ...(entry.pool !== undefined ? { pool: entry.pool } : {}),
-    ...(entry.model !== undefined ? { model: entry.model } : {})
-  };
-}
-
 /**
- * Overlay active router cooldowns onto a provider quota snapshot so any live
- * pool/model/provider cooldown is reflected in the UI quota view.
+ * Overlay an active router quota cooldown onto a provider quota snapshot, so a
+ * provider the router has cooled down for its quota reads exhausted in the UI.
  */
 export function overlayRouterCooldownsOnQuota(
   provider: string,
   quota: ControlApiProviderQuota | null,
   nowMs = Date.now()
 ): ControlApiProviderQuota | null {
-  const poolCooldowns = COOLDOWNS.getPoolCooldowns(provider, nowMs);
+  if (!quota) return null;
   const providerCooldown = COOLDOWNS.get(provider, nowMs);
-  if (!quota) {
-    return null;
-  }
-  const pools = quota.pools?.map((pool) => {
-    const activePoolCd = poolCooldowns[pool.pool];
-    if (!activePoolCd) return pool;
-    const serialized = serializeCooldown(activePoolCd, nowMs);
-    const isQuotaCd =
-      activePoolCd.failureClass === "quota_exhausted" ||
-      activePoolCd.failureClass === "session_limit" ||
-      activePoolCd.kind === "hard";
-    return {
-      ...pool,
-      status: isQuotaCd ? ("exhausted" as const) : pool.status,
-      usedPercent: isQuotaCd ? 100 : pool.usedPercent,
-      remainingPercent: isQuotaCd ? 0 : pool.remainingPercent,
-      resetsAt: pool.resetsAt ?? serialized.resetsAt ?? serialized.until,
-      cooldown: serialized
-    };
-  });
-
-  const summaryStatus =
-    pools && pools.length > 0
-      ? combineStatuses(
-          pools.map((p) => p.status),
-          { allPoolsRequiredForExhausted: true }
-        )
-      : providerCooldown &&
-          (providerCooldown.failureClass === "quota_exhausted" ||
-            providerCooldown.failureClass === "session_limit")
-        ? "exhausted"
-        : quota.summaryStatus;
-
-  return {
-    ...quota,
-    summaryStatus,
-    ...(pools ? { pools } : {})
-  };
+  if (
+    providerCooldown &&
+    (providerCooldown.failureClass === "quota_exhausted" ||
+      providerCooldown.failureClass === "session_limit")
+  )
+    return { ...quota, summaryStatus: "exhausted" };
+  return quota;
 }
 
 /**
@@ -882,38 +832,6 @@ export function syncQuotaToCooldowns(
   nowMs = Date.now()
 ): void {
   if (quota.status !== "ok") return;
-  if (quota.pools && quota.pools.length > 0) {
-    for (const pool of quota.pools) {
-      if (pool.status === "exhausted") {
-        const resetsAt =
-          pool.resetsAt && Date.parse(pool.resetsAt) > nowMs
-            ? pool.resetsAt
-            : null;
-        COOLDOWNS.cooldownProvider(quota.provider, {
-          now: nowMs,
-          failureClass: "quota_exhausted",
-          resetsAt,
-          structured: Boolean(resetsAt),
-          scope: "pool",
-          pool: pool.pool
-        });
-      } else if (pool.status === "available" || pool.status === "unlimited") {
-        const existing = COOLDOWNS.getPoolCooldowns(quota.provider, nowMs)[
-          pool.pool
-        ];
-        if (
-          existing &&
-          (existing.failureClass === "quota_exhausted" ||
-            existing.failureClass === "session_limit" ||
-            existing.kind === "hard")
-        ) {
-          COOLDOWNS.clearPool(quota.provider, pool.pool);
-        }
-      }
-    }
-    return;
-  }
-
   if (quota.summaryStatus === "exhausted") {
     const exhaustedWin = quota.windows.find((w) => w.status === "exhausted");
     const resetsAt =
@@ -924,8 +842,7 @@ export function syncQuotaToCooldowns(
       now: nowMs,
       failureClass: "quota_exhausted",
       resetsAt,
-      structured: Boolean(resetsAt),
-      scope: "provider"
+      structured: Boolean(resetsAt)
     });
   } else if (
     quota.summaryStatus === "available" ||
@@ -965,6 +882,7 @@ export function setCachedProviderQuota(
 
 export function clearProviderQuotaCacheForTests(): void {
   quotaCache.clear();
+  antigravityQuotaRead = null;
 }
 
 export async function readMinimaxAuth(
@@ -1105,7 +1023,7 @@ async function readAntigravityCliAccessToken(): Promise<string | null> {
       "security",
       ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
       {
-        timeout: 2_500,
+        timeout: 2500,
         env: cliSearchEnv()
       }
     );
@@ -1145,12 +1063,12 @@ async function fetchAntigravityModelsWithToken(
   });
 }
 
-async function discoverAntigravityQuota(
+async function fetchAntigravityQuotas(
   nowMs: number
-): Promise<ControlApiProviderQuota | null> {
+): Promise<Partial<Record<AntigravityProvider, ControlApiProviderQuota>>> {
   try {
     let token = await readAntigravityCliAccessToken();
-    if (!token) return null;
+    if (!token) return {};
     let response = await fetchAntigravityModelsWithToken(token);
     if (response.status === 401 || response.status === 403) {
       // Trigger `agy models` once so the CLI refreshes its stored OAuth token.
@@ -1159,15 +1077,47 @@ async function discoverAntigravityQuota(
         env: cliSearchEnv()
       }).catch(() => null);
       token = await readAntigravityCliAccessToken();
-      if (!token) return null;
+      if (!token) return {};
       response = await fetchAntigravityModelsWithToken(token);
     }
-    if (!response.ok) return null;
+    if (!response.ok) return {};
     const payload = await response.json();
     return parseAntigravityAvailableModelsQuota(payload, nowMs);
   } catch {
-    return null;
+    return {};
   }
+}
+
+/**
+ * How long one Antigravity quota read answers for all three Antigravity
+ * providers. A refresh discovers each provider separately; one
+ * `fetchAvailableModels` response carries all three, so the second and third
+ * read the first's answer instead of asking the API again.
+ */
+const ANTIGRAVITY_QUOTA_SHARE_MS = 10_000;
+
+let antigravityQuotaRead: {
+  readonly startedAt: number;
+  readonly result: Promise<
+    Partial<Record<AntigravityProvider, ControlApiProviderQuota>>
+  >;
+} | null = null;
+
+async function discoverAntigravityQuota(
+  provider: AntigravityProvider,
+  nowMs: number
+): Promise<ControlApiProviderQuota | null> {
+  if (
+    antigravityQuotaRead === null ||
+    Math.abs(nowMs - antigravityQuotaRead.startedAt) >
+      ANTIGRAVITY_QUOTA_SHARE_MS
+  )
+    antigravityQuotaRead = {
+      startedAt: nowMs,
+      result: fetchAntigravityQuotas(nowMs)
+    };
+  const quotas = await antigravityQuotaRead.result;
+  return quotas[provider] ?? null;
 }
 
 async function discoverCopilotQuota(
@@ -1233,8 +1183,8 @@ export async function readClaudePlanMetadata(
       if (orgType) {
         return {
           plan: orgType
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (c) => c.toUpperCase()),
+            .replaceAll("_", " ")
+            .replaceAll(/\b\w/g, (c) => c.toUpperCase()),
           billingType,
           rateLimitTier,
           displayName
@@ -1250,7 +1200,7 @@ export async function readClaudePlanMetadata(
     const { stdout } = await execFileAsync(
       "security",
       ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { timeout: 2_500 }
+      { timeout: 2500 }
     );
     const creds = JSON.parse(stdout.trim()) as unknown;
     if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
@@ -1319,7 +1269,12 @@ export function buildClaudeSubscriptionQuota(
       resetsAt: null
     })
   );
-  return claudeProviderQuota("claude-plan-subscription", planMeta.plan, windows, nowMs);
+  return claudeProviderQuota(
+    "claude-plan-subscription",
+    planMeta.plan,
+    windows,
+    nowMs
+  );
 }
 
 async function discoverClaudeQuota(
@@ -1327,12 +1282,15 @@ async function discoverClaudeQuota(
 ): Promise<ControlApiProviderQuota | null> {
   try {
     const bridgeResponse = await fetch(CLAUDE_BRIDGE_HEALTH_URL, {
-      signal: AbortSignal.timeout(2_500)
+      signal: AbortSignal.timeout(2500)
     }).catch(() => null);
     if (bridgeResponse?.ok) {
       const body = (await bridgeResponse.json().catch(() => null)) as unknown;
       if (isRecord(body) && body.rateLimitInfo) {
-        const parsedEvent = parseClaudeRateLimitEvent(body.rateLimitInfo, nowMs);
+        const parsedEvent = parseClaudeRateLimitEvent(
+          body.rateLimitInfo,
+          nowMs
+        );
         if (parsedEvent) return parsedEvent;
       }
     }
@@ -1354,7 +1312,7 @@ async function discoverClaudeQuota(
     const { stdout } = await execFileAsync(
       "security",
       ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { timeout: 3_000 }
+      { timeout: 3000 }
     );
     const creds = JSON.parse(stdout.trim()) as unknown;
     if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
@@ -1402,24 +1360,28 @@ export async function discoverProviderQuota(
   const nowMs = options.now ?? Date.now();
   let discovered: ControlApiProviderQuota | null = null;
   switch (provider) {
-    case "minimax":
+    case "minimax": {
       discovered = await discoverMinimaxQuota(nowMs);
       break;
-    case "codex":
+    }
+    case "codex": {
       discovered = await discoverCodexQuota(nowMs);
       break;
-    case "antigravity":
-      discovered = await discoverAntigravityQuota(nowMs);
-      break;
-    case "copilot":
+    }
+    case "copilot": {
       discovered = await discoverCopilotQuota(nowMs);
       break;
-    case "claude":
+    }
+    case "claude": {
       discovered = await discoverClaudeQuota(nowMs);
       break;
-    default:
-      discovered = null;
+    }
+    default: {
+      discovered = isAntigravityProvider(provider)
+        ? await discoverAntigravityQuota(provider, nowMs)
+        : null;
       break;
+    }
   }
   if (discovered) {
     setCachedProviderQuota(provider, discovered, {
@@ -1446,9 +1408,8 @@ export async function refreshAllProviderQuotas(
   return Object.fromEntries(results);
 }
 
-
 export const DEFAULT_QUOTA_PROVIDERS = [
-  "antigravity",
+  ...ANTIGRAVITY_PROVIDERS,
   "codex",
   "minimax",
   "copilot",

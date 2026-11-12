@@ -3,10 +3,8 @@ import test from "node:test";
 
 import {
   isHardLimitClass,
-  isPoolScopableLimitClass,
   isTransientFailureClass,
   PROVIDER_HARD_LIMIT_CLASSES,
-  PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES,
   PROVIDER_TRANSIENT_FAILURE_CLASSES
 } from "../src/index.ts";
 
@@ -22,21 +20,6 @@ test("PROVIDER_HARD_LIMIT_CLASSES classifies quota_exhausted and session_limit",
   assert.equal(isHardLimitClass(""), false);
   assert.equal(isHardLimitClass(null), false);
   assert.equal(isHardLimitClass(undefined), false);
-});
-
-test("PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES identifies limits that scope to subprovider pools", () => {
-  assert.deepEqual([...PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES], [
-    "quota_exhausted",
-    "session_limit",
-    "throttled"
-  ]);
-  assert.equal(isPoolScopableLimitClass("quota_exhausted"), true);
-  assert.equal(isPoolScopableLimitClass("session_limit"), true);
-  assert.equal(isPoolScopableLimitClass("throttled"), true);
-  assert.equal(isPoolScopableLimitClass("rate_limit"), false);
-  assert.equal(isPoolScopableLimitClass("authentication"), false);
-  assert.equal(isPoolScopableLimitClass(null), false);
-  assert.equal(isPoolScopableLimitClass(undefined), false);
 });
 
 test("PROVIDER_TRANSIENT_FAILURE_CLASSES identifies condition-based failures that expire after cooldown", () => {

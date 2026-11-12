@@ -1,24 +1,18 @@
 import {
   isHardLimitClass,
-  isPoolScopableLimitClass,
   isTransientFailureClass,
   PROVIDER_HARD_LIMIT_CLASSES,
-  PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES,
   PROVIDER_TRANSIENT_FAILURE_CLASSES,
   type ProviderHardLimitClass,
-  type ProviderPoolScopableLimitClass,
   type ProviderTransientFailureClass
 } from "@simulatorlife/autodev-core";
 
 export {
   isHardLimitClass,
-  isPoolScopableLimitClass,
   isTransientFailureClass,
   PROVIDER_HARD_LIMIT_CLASSES,
-  PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES,
   PROVIDER_TRANSIENT_FAILURE_CLASSES,
   type ProviderHardLimitClass,
-  type ProviderPoolScopableLimitClass,
   type ProviderTransientFailureClass
 };
 

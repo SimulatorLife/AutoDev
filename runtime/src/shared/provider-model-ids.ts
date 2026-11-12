@@ -15,37 +15,58 @@
  * (`claude-opus-5-5-high`, `claude-sonnet-5-5-medium`). An effort-suffixed
  * Claude id therefore belongs to Antigravity and every other Claude id to the
  * Claude bridge, so a model id alone names its provider whatever the route
- * order.
+ * order. The same holds for GPT: agy's open-weight GPT ids are
+ * `gpt-oss-<size>-<effort>` and Codex never serves a `gpt-oss-` id, so the
+ * Codex pattern excludes that prefix.
+ *
+ * The one Antigravity service (the `agy` CLI behind its bridge on :4002) is
+ * split into one provider per subscription quota: agy meters Gemini, Argon,
+ * and Claude/GPT-OSS separately, each with its own 5-hour and weekly limits,
+ * so each is a provider with its own models, routing, cooldowns and usage.
  */
 
-/** Gemini ids, plus agy's effort-suffixed Claude ids (`claude-opus-5-5-high`). */
-export const ANTIGRAVITY_MODEL_PATTERN =
-  /^(gemini-[A-Za-z0-9][A-Za-z0-9.-]*|claude-[a-z0-9-]*[a-z0-9]-(?:low|medium|high))$/;
+import {
+  ANTIGRAVITY_PROVIDERS,
+  type AntigravityProvider
+} from "@simulatorlife/autodev-core";
 
-export const ANTIGRAVITY_QUOTA_POOLS = Object.freeze([
-  "first_party",
-  "third_party"
-] as const);
+/** agy's Gemini ids other than Argon (`gemini-3.8-flash-medium`). */
+export const ANTIGRAVITY_GEMINI_MODEL_PATTERN =
+  /^gemini-(?![0-9][0-9.]*-argon(?:-|$))[A-Za-z0-9][A-Za-z0-9.-]*$/;
 
-export type AntigravityQuotaPool = (typeof ANTIGRAVITY_QUOTA_POOLS)[number];
+/** agy's Argon ids, which carry their own quota (`gemini-4-argon-high`). */
+export const ANTIGRAVITY_ARGON_MODEL_PATTERN =
+  /^gemini-[0-9][0-9.]*-argon-(?:low|medium|high)$/;
 
-/** All quota pools recognized for a provider, or empty when unpooled. */
-export function providerKnownPools(provider: string): readonly string[] {
-  if (provider === "antigravity") return ANTIGRAVITY_QUOTA_POOLS;
-  return [];
-}
+/** agy's effort-suffixed Claude and GPT-OSS ids, which share one quota. */
+export const ANTIGRAVITY_CLAUDE_GPT_MODEL_PATTERN =
+  /^(?:claude-[a-z0-9-]*[a-z0-9]|gpt-oss-[a-z0-9-]*[a-z0-9])-(?:low|medium|high)$/;
 
-/** Antigravity's currently routed Gemini and Claude families use separate quota pools. */
-export function providerQuotaPool(
-  provider: string,
-  model: string | null
-): AntigravityQuotaPool | null {
-  if (provider !== "antigravity" || model === null) return null;
-  if (!ANTIGRAVITY_MODEL_PATTERN.test(model)) return null;
-  if (model.startsWith("gemini-")) return "first_party";
-  if (model.startsWith("claude-")) return "third_party";
+/**
+ * The model ids each Antigravity provider serves. Core owns the provider ids
+ * (`ANTIGRAVITY_PROVIDERS`), because the Console shares them.
+ */
+export const ANTIGRAVITY_PROVIDER_PATTERNS: Readonly<
+  Record<AntigravityProvider, RegExp>
+> = Object.freeze({
+  "antigravity-gemini": ANTIGRAVITY_GEMINI_MODEL_PATTERN,
+  "antigravity-argon": ANTIGRAVITY_ARGON_MODEL_PATTERN,
+  "antigravity-claude-gpt": ANTIGRAVITY_CLAUDE_GPT_MODEL_PATTERN
+});
+
+/** The Antigravity provider that owns an agy model id, or null. */
+export function antigravityProvider(
+  model: unknown
+): AntigravityProvider | null {
+  if (typeof model !== "string") return null;
+  for (const provider of ANTIGRAVITY_PROVIDERS)
+    if (ANTIGRAVITY_PROVIDER_PATTERNS[provider].test(model)) return provider;
   return null;
 }
+
+/** Codex's own ids. `gpt-oss-` ids belong to Antigravity. */
+export const CODEX_MODEL_PATTERN =
+  /^(gpt-(?!oss-)[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/;
 
 /**
  * Claude family aliases and Anthropic's lowercase, hyphen-separated ids --
@@ -73,7 +94,7 @@ export function isProviderRequestModel(
     if (typeof model !== "string") return false;
 
     if (provider === "antigravity")
-      return ANTIGRAVITY_MODEL_PATTERN.test(model.trim().toLowerCase());
+      return antigravityProvider(model.trim().toLowerCase()) !== null;
     if (provider === "claude") return CLAUDE_MODEL_PATTERN.test(model.trim());
     return MINIMAX_MODEL_PATTERN.test(model);
   } catch {

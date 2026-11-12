@@ -223,7 +223,7 @@ test("an exhausted quota names the window the provider reported", () => {
   const resetsAt = new Date(Date.now() + 24 * 60_000 + 43_000).toISOString();
   const summary: CooldownSummary[] = [
     {
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-high",
       state: "transient",
       failureClass: "quota_exhausted",
@@ -259,7 +259,7 @@ test("a reset the retry actually lands on is stated once, not twice", () => {
   const resetsAt = new Date(Date.now() + 480_000).toISOString();
   const summary: CooldownSummary[] = [
     {
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-high",
       state: "hard",
       failureClass: "quota_exhausted",
@@ -351,7 +351,7 @@ test(
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input);
       calls.push(url);
-      if (url.includes("antigravity.test")) {
+      if (url.includes("antigravity-gemini.test")) {
         now += CHAIN_SELECTION_DEADLINE_MS + 1;
         return new Response("quota exhausted", { status: 429 });
       }
@@ -372,7 +372,7 @@ test(
           {
             candidates: [
               {
-                ...route("antigravity", "LITELLM_API_KEY"),
+                ...route("antigravity-gemini", "LITELLM_API_KEY"),
                 model: "gemini-3.8-flash-medium"
               },
               {
@@ -390,7 +390,7 @@ test(
           null
         );
         assert.deepEqual(calls, [
-          "http://antigravity.test/v1/responses",
+          "http://antigravity-gemini.test/v1/responses",
           "http://copilot.test/v1/responses"
         ]);
         assert.equal(response.statusCode, 200);
@@ -469,7 +469,7 @@ test(
 );
 
 test(
-  "an Antigravity quota limit cools only its Claude or Gemini usage pool",
+  "an Antigravity quota limit cools only the provider that meters it",
   { concurrency: false },
   async () => {
     COOLDOWNS.clearAll();
@@ -503,11 +503,15 @@ test(
       );
     }) as typeof fetch;
 
-    const request = async (model: string, requestId: string) =>
+    const request = async (
+      provider: string,
+      model: string,
+      requestId: string
+    ) =>
       proxyFallbackChain(
         responseRecorder(),
         {
-          candidates: [{ ...route("antigravity", "LITELLM_API_KEY"), model }],
+          candidates: [{ ...route(provider, "LITELLM_API_KEY"), model }],
           role: "worker",
           subject: "worker turn",
           sessionKey: "agy-quota-pool",
@@ -521,31 +525,50 @@ test(
       );
 
     try {
-      await request("claude-opus-5-5-high", "req-agy-claude-quota");
-      assert.equal(
-        COOLDOWNS.get("antigravity", Date.now(), "claude-sonnet-5-5-medium")
-          ?.failureClass,
-        "quota_exhausted",
-        "Opus and Sonnet share the Antigravity third-party quota pool"
+      await request(
+        "antigravity-claude-gpt",
+        "claude-opus-5-5-high",
+        "req-agy-claude-quota"
       );
       assert.equal(
-        COOLDOWNS.get("antigravity", Date.now(), "gemini-3.8-flash-medium"),
+        COOLDOWNS.get(
+          "antigravity-claude-gpt",
+          Date.now(),
+          "gpt-oss-120b-medium"
+        )?.failureClass,
+        "quota_exhausted",
+        "Claude and GPT-OSS share the antigravity-claude-gpt quota"
+      );
+      assert.equal(
+        COOLDOWNS.get(
+          "antigravity-gemini",
+          Date.now(),
+          "gemini-3.8-flash-medium"
+        ),
         null,
-        "a Claude quota failure must not block first-party Gemini"
+        "a Claude quota failure must not block Antigravity Gemini"
       );
 
       COOLDOWNS.clearAll();
-      await request("gemini-3.8-flash-medium", "req-agy-gemini-quota");
-      assert.equal(
-        COOLDOWNS.get("antigravity", Date.now(), "gemini-3.8-flash-high")
-          ?.failureClass,
-        "quota_exhausted",
-        "Gemini variants share the first-party quota pool"
+      await request(
+        "antigravity-gemini",
+        "gemini-3.8-flash-medium",
+        "req-agy-gemini-quota"
       );
       assert.equal(
-        COOLDOWNS.get("antigravity", Date.now(), "claude-opus-5-5-high"),
+        COOLDOWNS.get("antigravity-gemini", Date.now(), "gemini-3.8-flash-high")
+          ?.failureClass,
+        "quota_exhausted",
+        "Gemini variants share the antigravity-gemini quota"
+      );
+      assert.equal(
+        COOLDOWNS.get(
+          "antigravity-claude-gpt",
+          Date.now(),
+          "claude-opus-5-5-high"
+        ),
         null,
-        "a Gemini quota failure must not block third-party Claude"
+        "a Gemini quota failure must not block Antigravity Claude/GPT-OSS"
       );
       assert.deepEqual(requestedModels, [
         "claude-opus-5-5-high",
@@ -1247,7 +1270,7 @@ test("a route that refused the request is named as such, not as a provider that 
       detail: null
     },
     {
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-high",
       state: "available",
       failureClass: null,
@@ -1265,7 +1288,7 @@ test("a route that refused the request is named as such, not as a provider that 
     ],
     observed: new Map([
       ["claude", "unsupported_request"],
-      ["antigravity", "unsupported_request"]
+      ["antigravity-gemini", "unsupported_request"]
     ]),
     model: "claude-opus-5-5",
     requestId: "req-refused",
@@ -1274,7 +1297,7 @@ test("a route that refused the request is named as such, not as a provider that 
   });
   const message = (body as any).error.message as string;
   assert.match(message, /claude: cannot serve this request/);
-  assert.match(message, /antigravity: cannot serve this request/);
+  assert.match(message, /antigravity-gemini: cannot serve this request/);
   assert.doesNotMatch(
     message,
     /did not complete the turn/,
@@ -1289,7 +1312,7 @@ test("a route that refused the request is named as such, not as a provider that 
       summary,
       observed: new Map([
         ["claude", "unsupported_request"],
-        ["antigravity", "unsupported_request"]
+        ["antigravity-gemini", "unsupported_request"]
       ]),
       requestId: "req-refused"
     }),
@@ -1473,48 +1496,6 @@ test(
 );
 
 test(
-  "Antigravity session_limit and throttled failures cool only the affected subprovider pool",
-  { concurrency: false },
-  () => {
-    COOLDOWNS.clearAll();
-    try {
-      const now = Date.now();
-      COOLDOWNS.cooldownProvider("antigravity", {
-        now,
-        failureClass: "session_limit",
-        resetsAt: new Date(now + 3_600_000).toISOString(),
-        structured: true,
-        model: "claude-opus-5-5-high",
-        scope: "pool"
-      });
-
-      assert.equal(
-        COOLDOWNS.isCooling("antigravity", now, "claude-opus-5-5-high"),
-        true,
-        "Claude model in third_party pool must be cooled"
-      );
-      assert.equal(
-        COOLDOWNS.isCooling("antigravity", now, "claude-sonnet-5-5-medium"),
-        true,
-        "Other Claude models in third_party pool must share the pool cooldown"
-      );
-      assert.equal(
-        COOLDOWNS.isCooling("antigravity", now, "gemini-3.8-flash-high"),
-        false,
-        "Gemini models in first_party pool must remain available"
-      );
-      assert.equal(
-        COOLDOWNS.get("antigravity", now),
-        null,
-        "Provider-level Antigravity cooldown must remain null while first_party pool is available"
-      );
-    } finally {
-      COOLDOWNS.clearAll();
-    }
-  }
-);
-
-test(
   "proxyRoleResponse records subagent session and sticks to that provider across multi-turn requests",
   { concurrency: false },
   async () => {
@@ -1636,7 +1617,7 @@ test(
 
     const candidates = [
       {
-        ...route("antigravity", "LITELLM_API_KEY"),
+        ...route("antigravity-gemini", "LITELLM_API_KEY"),
         model: "gemini-3.8-flash-high"
       },
       { ...route("minimax", "MINIMAX_API_KEY"), model: "MiniMax-M3.1-Flash" }
@@ -1646,15 +1627,15 @@ test(
     // exceeding sticky wait window of 60s so primary selection skips it
     // without sleeping and falls back to MiniMax).
     const now = Date.now();
-    COOLDOWNS.cooldownProvider("antigravity", {
+    COOLDOWNS.cooldownProvider("antigravity-gemini", {
       failureClass: "unavailable",
       now
     });
-    COOLDOWNS.cooldownProvider("antigravity", {
+    COOLDOWNS.cooldownProvider("antigravity-gemini", {
       failureClass: "unavailable",
       now
     });
-    COOLDOWNS.cooldownProvider("antigravity", {
+    COOLDOWNS.cooldownProvider("antigravity-gemini", {
       failureClass: "unavailable",
       now
     });
@@ -1689,7 +1670,7 @@ test(
         response,
         {
           candidates,
-          preferredProvider: "antigravity",
+          preferredProvider: "antigravity-gemini",
           role: "orchestrator",
           subject: "the orchestrator",
           sessionKey: "01a1bc3f-e5cf-7642-bfa0-34930eb04b1c",
@@ -1708,7 +1689,7 @@ test(
 
       assert.deepEqual(responseCalls, [
         "http://minimax.test/v1/responses",
-        "http://antigravity.test/v1/responses"
+        "http://antigravity-gemini.test/v1/responses"
       ]);
       assert.equal(response.statusCode, 200);
       assert.match(response.body, /resp_rescued_by_last_resort/);
@@ -1718,7 +1699,7 @@ test(
         "a context-window refusal on an oversized transcript must not cool down MiniMax for normal requests"
       );
       assert.equal(
-        COOLDOWNS.isCooling("antigravity"),
+        COOLDOWNS.isCooling("antigravity-gemini"),
         false,
         "the successful last-resort turn on Antigravity clears its transient cooldown"
       );
@@ -1765,7 +1746,7 @@ test(
         {
           candidates: [
             {
-              ...route("antigravity", "LITELLM_API_KEY"),
+              ...route("antigravity-gemini", "LITELLM_API_KEY"),
               model: "gemini-3.8-flash-high"
             }
           ],

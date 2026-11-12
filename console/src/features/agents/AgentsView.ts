@@ -180,10 +180,14 @@ export function AgentsView({
       // cell content -- and wrapping costs height, not legibility, so this is the
       // cheapest column on the page to narrow.
       //
-      // 136 is the widest provider chip -- `antigravity` measures 98px -- with
-      // the cell's own 32px of inset. At 125 the chip was cut at its last
-      // glyph on every row that named a long provider.
-      weight: 136,
+      // 178 is all the slack the table's 1118px budget leaves this column.
+      // It holds every provider chip but the longest, `antigravity-claude-gpt`
+      // (178px, 210 with the cell's own 32px of inset), whose chip ellipsizes
+      // its last glyphs and carries the full name on its title. Taking the
+      // remaining 32px from Skills or MCPs would cut their common chips
+      // (`playwright` needs all of MCPs' 122) on every row instead of one
+      // provider's.
+      weight: 178,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },

@@ -5,7 +5,6 @@ import {
   type ControlApiProviderRecord,
   type ControlApiQuotaStatus,
   type ControlApiQuotaWindow,
-  type ControlApiSubproviderQuota,
   providerHealthReadiness,
   providerSignInRequired,
   SIGN_IN_REQUIRED_FAILURE_CLASS
@@ -161,7 +160,7 @@ export function resolveProviderQuota(
 
 /**
  * Resolve quota details for one specific model on a provider, falling back to
- * its subprovider pool or provider-wide windows when applicable.
+ * the provider-wide windows when the model has none of its own.
  */
 export function resolveModelQuota(
   provider: ControlApiProviderRecord | null | undefined,
@@ -171,26 +170,10 @@ export function resolveModelQuota(
   if (!quota || quota.status !== "ok") return null;
   const direct = quota.models?.find((entry) => entry.model === modelId);
   if (direct) return direct;
-  const matchingPool = quota.pools?.find((pool) =>
-    pool.models.includes(modelId)
-  );
-  if (matchingPool) {
-    return {
-      model: modelId,
-      pool: matchingPool.pool,
-      status: matchingPool.status,
-      usedPercent: matchingPool.usedPercent,
-      remainingPercent: matchingPool.remainingPercent,
-      resetsAt: matchingPool.resetsAt,
-      windows: matchingPool.windows,
-      ...(matchingPool.cooldown ? { cooldown: matchingPool.cooldown } : {})
-    };
-  }
   if (quota.windows.length > 0) {
     const primary = quota.windows[0]!;
     return {
       model: modelId,
-      pool: null,
       status: quota.summaryStatus,
       usedPercent: primary.usedPercent,
       remainingPercent: primary.remainingPercent,
@@ -244,12 +227,6 @@ function shortWindowLabel(window: ControlApiQuotaWindow): string {
   }
 }
 
-function shortPoolLabel(pool: ControlApiSubproviderQuota): string {
-  if (pool.pool === "first_party") return "Gemini";
-  if (pool.pool === "third_party") return "Claude";
-  return pool.label;
-}
-
 function quotaToneClass(status: ControlApiQuotaStatus): string {
   switch (status) {
     case "exhausted":
@@ -291,28 +268,9 @@ export function formatQuotaWindowCompact(
   return `${label}: ${window.status}${reset ? ` (${reset})` : ""}`;
 }
 
-export function formatSubproviderPoolCompact(
-  pool: ControlApiSubproviderQuota,
-  nowMs = Date.now()
-): string {
-  const label = shortPoolLabel(pool);
-  const reset = formatQuotaResetRemaining(
-    pool.resetsAt ?? pool.cooldown?.resetsAt ?? pool.cooldown?.until ?? null,
-    nowMs
-  );
-  if (pool.usedPercent !== null) {
-    const pct = Math.round(pool.usedPercent);
-    return `${label}: ${pct}% used${reset ? ` (${reset})` : ""}`;
-  }
-  if (pool.status === "exhausted" || pool.cooldown) {
-    return `${label}: Exhausted${reset ? ` (${reset})` : ""}`;
-  }
-  return `${label}: ${pool.status}${reset ? ` (${reset})` : ""}`;
-}
-
 /**
  * Compact per-provider quota/limits summary rendered inside the provider's row
- * on `/providers` when quota or subprovider pool cooldown evidence is present.
+ * on `/providers` when quota evidence is present.
  *
  * Uses `data-provider-quota` and `data-quota-status` rather than `StatusBadge`
  * so the row's single `StatusBadge` verdict contract remains intact.
@@ -325,60 +283,7 @@ export function ProviderQuotaInlineSummary({
   readonly nowMs?: number;
 }): React.JSX.Element | null {
   const quota = resolveProviderQuota(provider);
-  const poolCooldowns = provider.health?.poolCooldowns;
-  const hasPoolCooldowns =
-    poolCooldowns !== undefined && Object.keys(poolCooldowns).length > 0;
-  if (!quota && !hasPoolCooldowns) {
-    return null;
-  }
   if (quota && quota.status === "ok") {
-    const pools = quota.pools ?? [];
-    if (pools.length > 0) {
-      return React.createElement(
-        "div",
-        {
-          className: "mt-1.5 flex flex-col gap-1 text-micro tabular-nums",
-          "data-provider-quota": provider.id,
-          "data-quota-status": quota.summaryStatus
-        },
-        ...pools.map((pool) => {
-          const text = formatSubproviderPoolCompact(pool, nowMs);
-          const pct =
-            pool.usedPercent === null
-              ? null
-              : Math.max(0, Math.min(100, Math.round(pool.usedPercent)));
-          return React.createElement(
-            "div",
-            {
-              key: pool.pool,
-              className: "flex flex-col gap-0.5",
-              "data-provider-quota-pool": `${provider.id}:${pool.pool}`,
-              title: pool.resetsAt
-                ? `${pool.label} — ${text} (resets at ${pool.resetsAt})`
-                : `${pool.label} — ${text}`
-            },
-            React.createElement(
-              "span",
-              { className: `truncate ${quotaToneClass(pool.status)}` },
-              text
-            ),
-            pct === null
-              ? null
-              : React.createElement(
-                  "div",
-                  {
-                    className:
-                      "h-1 w-full overflow-hidden rounded-full bg-surface-raised"
-                  },
-                  React.createElement("div", {
-                    className: `h-full ${quotaBarColorClass(pool.status)}`,
-                    style: { width: `${pct}%` }
-                  })
-                )
-          );
-        })
-      );
-    }
     const visibleWindows = quota.windows.filter(
       (w) => w.status !== "unlimited" || quota.windows.length === 1
     );
@@ -428,39 +333,6 @@ export function ProviderQuotaInlineSummary({
         })
       );
     }
-  }
-  if (hasPoolCooldowns && poolCooldowns) {
-    return React.createElement(
-      "div",
-      {
-        className: "mt-1.5 flex flex-col gap-0.5 text-micro tabular-nums",
-        "data-provider-quota": provider.id,
-        "data-quota-status": "warning"
-      },
-      ...Object.entries(poolCooldowns).map(([pool, cooldown]) => {
-        const label =
-          pool === "first_party"
-            ? "Gemini"
-            : pool === "third_party"
-              ? "Claude"
-              : pool;
-        const reset = formatQuotaResetRemaining(
-          cooldown.resetsAt ?? cooldown.until,
-          nowMs
-        );
-        const text = `${label}: Cooling down${reset ? ` (${reset})` : ""}`;
-        return React.createElement(
-          "span",
-          {
-            key: pool,
-            className: "truncate text-warning",
-            title: text,
-            "data-provider-quota-pool": `${provider.id}:${pool}`
-          },
-          text
-        );
-      })
-    );
   }
   return null;
 }

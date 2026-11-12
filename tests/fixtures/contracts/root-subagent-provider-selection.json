@@ -17,49 +17,49 @@
       "smart": "autodev/smart"
     },
     "nonAliases": {
-      "concreteModels": [
-        "sonnet",
-        "MiniMax-M3",
-        "gpt-6-luna"
-      ],
-      "unknownModels": [
-        "autodev/not-a-role",
-        "not-a-model"
-      ]
+      "concreteModels": ["sonnet", "MiniMax-M3", "gpt-6-luna"],
+      "unknownModels": ["autodev/not-a-role", "not-a-model"]
     }
   },
   "tiers": {
     "default": [
       "minimax",
-      "antigravity",
+      "antigravity-gemini",
+      "antigravity-argon",
+      "antigravity-claude-gpt",
       "claude",
       "copilot",
       "codex"
     ],
     "smart": [
       "minimax",
-      "antigravity",
+      "antigravity-gemini",
+      "antigravity-argon",
+      "antigravity-claude-gpt",
       "claude",
       "codex"
     ],
     "orchestrator": [
+      "claude",
       "codex",
-      "antigravity",
-      "copilot",
-      "claude"
+      "antigravity-claude-gpt",
+      "antigravity-gemini",
+      "copilot"
     ],
     "browser-tester": [
-      "antigravity",
+      "antigravity-argon",
+      "antigravity-claude-gpt",
+      "antigravity-gemini",
       "copilot"
     ]
   },
   "roleScopedMcp": {
     "browser-tester": {
-      "scopedMcp": [
-        "playwright"
-      ],
+      "scopedMcp": ["playwright"],
       "eligibleProviders": [
-        "antigravity",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
         "copilot"
       ]
     }
@@ -71,8 +71,16 @@
         "model": "MiniMax-M3"
       },
       {
-        "provider": "antigravity",
+        "provider": "antigravity-gemini",
         "model": "gemini-3.8-flash-medium"
+      },
+      {
+        "provider": "antigravity-argon",
+        "model": "gemini-4-argon-medium"
+      },
+      {
+        "provider": "antigravity-claude-gpt",
+        "model": "claude-sonnet-5-5-medium"
       },
       {
         "provider": "claude",
@@ -93,8 +101,16 @@
         "model": "MiniMax-M3.1-Flash-Preview"
       },
       {
-        "provider": "antigravity",
+        "provider": "antigravity-gemini",
         "model": "gemini-3.8-flash-high"
+      },
+      {
+        "provider": "antigravity-argon",
+        "model": "gemini-4-argon-high"
+      },
+      {
+        "provider": "antigravity-claude-gpt",
+        "model": "claude-opus-5-5-high"
       },
       {
         "provider": "claude",
@@ -107,7 +123,15 @@
     ],
     "browser-tester": [
       {
-        "provider": "antigravity",
+        "provider": "antigravity-argon",
+        "model": "gemini-4-argon-medium"
+      },
+      {
+        "provider": "antigravity-claude-gpt",
+        "model": "claude-sonnet-5-5-medium"
+      },
+      {
+        "provider": "antigravity-gemini",
         "model": "gemini-3.8-flash-medium"
       },
       {
@@ -124,7 +148,12 @@
         "reasoningEffort": null
       },
       {
-        "provider": "antigravity",
+        "provider": "antigravity-claude-gpt",
+        "model": "claude-opus-5-5-high",
+        "reasoningEffort": "high"
+      },
+      {
+        "provider": "antigravity-gemini",
         "model": "gemini-3.8-flash-high",
         "reasoningEffort": "high"
       },
@@ -147,7 +176,12 @@
           "reasoningEffort": null
         },
         {
-          "provider": "antigravity",
+          "provider": "antigravity-claude-gpt",
+          "model": "claude-opus-5-5-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-high",
           "reasoningEffort": "high"
         },
@@ -162,9 +196,9 @@
           "reasoningEffort": "medium"
         }
       ],
-      "antigravity": [
+      "antigravity-gemini": [
         {
-          "provider": "antigravity",
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-high",
           "reasoningEffort": "high"
         },
@@ -172,6 +206,38 @@
           "provider": "codex",
           "model": "gpt-6-luna",
           "reasoningEffort": null
+        },
+        {
+          "provider": "antigravity-claude-gpt",
+          "model": "claude-opus-5-5-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "copilot",
+          "model": "copilot",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5-5",
+          "reasoningEffort": "medium"
+        }
+      ],
+      "antigravity-claude-gpt": [
+        {
+          "provider": "antigravity-claude-gpt",
+          "model": "claude-opus-5-5-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-6-luna",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "antigravity-gemini",
+          "model": "gemini-3.8-flash-high",
+          "reasoningEffort": "high"
         },
         {
           "provider": "copilot",
@@ -196,7 +262,12 @@
           "reasoningEffort": null
         },
         {
-          "provider": "antigravity",
+          "provider": "antigravity-claude-gpt",
+          "model": "claude-opus-5-5-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-high",
           "reasoningEffort": "high"
         },
@@ -218,7 +289,12 @@
           "reasoningEffort": null
         },
         {
-          "provider": "antigravity",
+          "provider": "antigravity-claude-gpt",
+          "model": "claude-opus-5-5-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-high",
           "reasoningEffort": "high"
         },

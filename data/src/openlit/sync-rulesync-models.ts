@@ -66,6 +66,11 @@ const DEFAULT_CONFIG_SCHEMA = {
   }
 };
 
+/** The Antigravity providers, one per agy subscription quota. */
+const ANTIGRAVITY_GEMINI = "antigravity-gemini";
+const ANTIGRAVITY_ARGON = "antigravity-argon";
+const ANTIGRAVITY_CLAUDE_GPT = "antigravity-claude-gpt";
+
 /**
  * Canonical AutoDev providers to register into OpenLIT.
  */
@@ -79,11 +84,28 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
       configSchema: DEFAULT_CONFIG_SCHEMA,
       isDefault: true
     },
+    // One provider per Antigravity subscription quota, all bridged through
+    // the one Antigravity CLI.
     {
-      providerId: "antigravity",
-      displayName: "Google Antigravity",
-      description:
-        "Google Gemini and Claude models bridged via Antigravity CLI",
+      providerId: ANTIGRAVITY_GEMINI,
+      displayName: "Antigravity Gemini",
+      description: "Google Gemini models bridged via Antigravity CLI",
+      requiresVault: false,
+      configSchema: DEFAULT_CONFIG_SCHEMA,
+      isDefault: true
+    },
+    {
+      providerId: ANTIGRAVITY_ARGON,
+      displayName: "Antigravity Argon",
+      description: "Google Gemini Argon models bridged via Antigravity CLI",
+      requiresVault: false,
+      configSchema: DEFAULT_CONFIG_SCHEMA,
+      isDefault: true
+    },
+    {
+      providerId: ANTIGRAVITY_CLAUDE_GPT,
+      displayName: "Antigravity Claude & GPT-OSS",
+      description: "Claude and GPT-OSS models bridged via Antigravity CLI",
       requiresVault: false,
       configSchema: DEFAULT_CONFIG_SCHEMA,
       isDefault: true
@@ -236,7 +258,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       ] as const
     ).flatMap((entry) =>
       (["low", "medium", "high"] as const).map((effort) => ({
-        provider: "antigravity",
+        provider: ANTIGRAVITY_GEMINI,
         modelId: `${entry.family}-${effort}`,
         displayName: `${entry.name} ${effort[0]!.toUpperCase()}${effort.slice(1)}`,
         modelType: "chat" as const,
@@ -250,7 +272,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       }))
     ),
     {
-      provider: "antigravity",
+      provider: ANTIGRAVITY_GEMINI,
       modelId: "gemini-2.5-pro",
       displayName: "Gemini 2.5 Pro",
       modelType: "chat",
@@ -263,7 +285,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "antigravity",
+      provider: ANTIGRAVITY_GEMINI,
       modelId: "gemini-2.5-flash",
       displayName: "Gemini 2.5 Flash",
       modelType: "chat",
@@ -276,11 +298,28 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
 
-    // Claude families served by the same agy subscription. agy encodes
+    // Gemini Argon has its own Antigravity quota. Google publishes no API
+    // price for it, so, like the other subscription-only web models, it is
+    // priced at zero rather than at a guessed rate.
+    ...(["low", "medium", "high"] as const).map((effort) => ({
+      provider: ANTIGRAVITY_ARGON,
+      modelId: `gemini-4-argon-${effort}`,
+      displayName: `Gemini 4 Argon ${effort[0]!.toUpperCase()}${effort.slice(1)}`,
+      modelType: "chat" as const,
+      contextWindow: 1_000_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: effort === "medium"
+    })),
+
+    // Claude families and GPT-OSS share one Antigravity quota. agy encodes
     // reasoning depth in the model id, so each effort is its own model.
     ...(["opus", "sonnet"] as const).flatMap((family) =>
       (["low", "medium", "high"] as const).map((effort) => ({
-        provider: "antigravity",
+        provider: ANTIGRAVITY_CLAUDE_GPT,
         modelId: `claude-${family}-5-5-${effort}`,
         displayName: `Claude ${family === "opus" ? "Opus" : "Sonnet"} 5.5 (${effort[0]!.toUpperCase()}${effort.slice(1)})`,
         modelType: "chat" as const,
@@ -293,6 +332,21 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
         isDefault: false
       }))
     ),
+    // GPT-OSS is open-weight with no Google API price for it through
+    // Antigravity, so it is priced at zero rather than at a guessed rate.
+    ...(["low", "medium", "high"] as const).map((effort) => ({
+      provider: ANTIGRAVITY_CLAUDE_GPT,
+      modelId: `gpt-oss-120b-${effort}`,
+      displayName: `GPT-OSS 120B (${effort[0]!.toUpperCase()}${effort.slice(1)})`,
+      modelType: "chat" as const,
+      contextWindow: 131_072,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    })),
 
     // MiniMax
     {
@@ -717,7 +771,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools", "reasoning"],
       isDefault: false
     })),
-    // The agy bridge serves Claude under the `antigravity` provider, so the
+    // The agy bridge serves Claude under the `antigravity-claude-gpt` provider, so the
     // Anthropic-side aliases are what let trace attribution still price those
     // turns as Claude rather than leaving them unattributed.
     ...(["opus", "sonnet"] as const).flatMap((family) =>

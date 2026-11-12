@@ -440,7 +440,23 @@
       "permissionMode": "native",
       "delegation": "codex-shim"
     },
-    "antigravity": {
+    "antigravity-gemini": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured",
+      "delegation": "codex-shim",
+      "roleMcpInjection": true
+    },
+    "antigravity-claude-gpt": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured",
+      "delegation": "codex-shim",
+      "roleMcpInjection": true
+    },
+    "antigravity-argon": {
       "spawnTools": [
         "invoke_subagent"
       ],

@@ -314,7 +314,7 @@ test("provider model discovery is an authenticated read-only snapshot, separate 
       source: "runtime-provider-discovery",
       providers: [
         {
-          provider: "antigravity",
+          provider: "antigravity-gemini",
           discovery: {
             status: "observed",
             source: "agy models",
@@ -332,7 +332,7 @@ test("provider model discovery is an authenticated read-only snapshot, separate 
                 routeability: {
                   status: "unsupported",
                   reason:
-                    "Runtime has no route and quota ownership for this model ID."
+                    "Runtime has no route for this model ID."
                 }
               }
             ]
@@ -965,14 +965,14 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
   const previousClaude =
     ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null;
   const previousAgy =
-    ROUTING_POLICY.assignmentFor("antigravity", "subagent") ?? null;
+    ROUTING_POLICY.assignmentFor("antigravity-gemini", "subagent") ?? null;
   try {
     configure();
     ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
       priority: 1,
       model: "sonnet"
     });
-    ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", {
+    ROUTING_POLICY.setProviderAssignment("antigravity-gemini", "subagent", {
       priority: 1,
       model: "gemini-3.8-flash-high"
     });
@@ -1027,7 +1027,7 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     );
 
     // 5. Antigravity provider with fixed model slug (gemini-3.8-flash-high)
-    const agyPath = CONTROL_API_PATHS.providers + "/antigravity/roles/subagent";
+    const agyPath = CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent";
     const agyPatch = await call("PATCH", agyPath, {
       actor: "operator-a",
       body: {
@@ -1050,11 +1050,11 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     if (previousAgy)
       ROUTING_POLICY.setProviderAssignment(
-        "antigravity",
+        "antigravity-gemini",
         "subagent",
         previousAgy
       );
-    else ROUTING_POLICY.clearProviderAssignment("antigravity", "subagent");
+    else ROUTING_POLICY.clearProviderAssignment("antigravity-gemini", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }
@@ -1445,13 +1445,13 @@ test("provider reset clears only role assignments, provider disables, model disa
       priority: 1,
       model: "claude-opus-5-5"
     });
-    ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", {
+    ROUTING_POLICY.setProviderAssignment("antigravity-gemini", "subagent", {
       priority: 1,
       model: "gemini-3.8-flash-high"
     });
     ROUTING_POLICY.setProviderEnabled("claude", false);
     ROUTING_POLICY.setModelEnabled("sonnet", false);
-    ROUTING_POLICY.setProviderLimits("antigravity", {
+    ROUTING_POLICY.setProviderLimits("antigravity-gemini", {
       perSession: 2,
       acrossSessions: 5
     });
@@ -1506,12 +1506,12 @@ test("provider reset clears only role assignments, provider disables, model disa
       undefined
     );
     assert.equal(
-      ROUTING_POLICY.assignmentFor("antigravity", "subagent"),
+      ROUTING_POLICY.assignmentFor("antigravity-gemini", "subagent"),
       undefined
     );
     assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), false);
     assert.equal(ROUTING_POLICY.isModelEnabled("sonnet"), true);
-    assert.equal(ROUTING_POLICY.limitsFor("antigravity"), undefined);
+    assert.equal(ROUTING_POLICY.limitsFor("antigravity-gemini"), undefined);
     assert.equal(ROUTING_POLICY.agentModelFor("claude", "explorer"), undefined);
 
     // Static routing source remains the default authority; Reset clears only
@@ -1668,7 +1668,7 @@ test("provider reset serializes with a concurrent provider role mutation on the 
     // reset's own apply/persist/rollback sequence.
     roleCall = call(
       "PATCH",
-      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
+      CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent",
       {
         actor: "operator-a",
         body: { priority: "disabled", model: null }
@@ -1691,7 +1691,7 @@ test("provider reset serializes with a concurrent provider role mutation on the 
     // The role mutation ran strictly after the reset committed, so its
     // assignment must be the one still standing.
     assert.equal(
-      ROUTING_POLICY.assignmentFor("antigravity", "subagent")?.priority,
+      ROUTING_POLICY.assignmentFor("antigravity-gemini", "subagent")?.priority,
       "disabled"
     );
     assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
@@ -4851,7 +4851,7 @@ test("queued provider role patches revalidate an unchanged model after reset cle
 
     firstCall = call(
       "PATCH",
-      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
+      CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent",
       {
         actor: "operator-a",
         body: { priority: 1, model: null }
@@ -4925,7 +4925,7 @@ test("queued provider role patches recheck provider enablement after a disable c
 
     firstCall = call(
       "PATCH",
-      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
+      CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent",
       {
         actor: "operator-a",
         body: { priority: 1, model: null }

@@ -176,65 +176,6 @@ test("a passing check newer than the last failure counts as recovery", () => {
   );
 });
 
-test("multi-pool provider stays ready when one subprovider pool is exhausted while another has remaining quota", () => {
-  assert.equal(
-    providerHealthReadiness(
-      health({
-        lastSuccessAt: "2026-11-09T12:00:00.000Z",
-        lastFailure: {
-          at: "2026-11-09T12:05:00.000Z",
-          failureClass: "quota_exhausted",
-          status: 429,
-          pool: "third_party",
-          model: "claude-opus-5-2-thinking"
-        },
-        poolCooldowns: {
-          third_party: {
-            kind: "quota",
-            failureClass: "quota_exhausted",
-            until: "2026-11-11T18:06:00.000Z",
-            resetsAt: "2026-11-11T18:06:00.000Z",
-            lastResortEligible: false,
-            scope: "pool",
-            pool: "third_party"
-          }
-        },
-        quota: {
-          provider: "antigravity",
-          status: "ok",
-          source: "antigravity-cloudcode-api",
-          updatedAt: "2026-11-09T12:05:01.000Z",
-          summaryStatus: "available",
-          windows: [],
-          pools: [
-            {
-              pool: "first_party",
-              label: "Gemini (First-Party)",
-              status: "available",
-              usedPercent: 40,
-              remainingPercent: 60,
-              resetsAt: "2026-11-09T16:00:00.000Z",
-              windows: [],
-              models: ["gemini-3.8-flash-high"]
-            },
-            {
-              pool: "third_party",
-              label: "Claude (Third-Party)",
-              status: "exhausted",
-              usedPercent: 100,
-              remainingPercent: 0,
-              resetsAt: "2026-11-11T18:06:00.000Z",
-              windows: [],
-              models: ["claude-opus-5-2-thinking"]
-            }
-          ]
-        }
-      })
-    ),
-    "ready"
-  );
-});
-
 test("live quota observation with remaining usage counts as readiness evidence and exhausted quota marks unavailable", () => {
   assert.equal(
     providerHealthReadiness(
@@ -300,64 +241,6 @@ test("an expired rate-limit failure does not keep a previously observed provider
           at: "2026-11-09T11:05:00.000Z",
           failureClass: "throttled",
           status: 429
-        }
-      })
-    ),
-    "ready"
-  );
-});
-
-test("multi-pool provider stays ready when failure specifies model from exhausted pool without explicit pool attribute", () => {
-  assert.equal(
-    providerHealthReadiness(
-      health({
-        lastSuccessAt: "2026-11-09T12:00:00.000Z",
-        lastFailure: {
-          at: "2026-11-09T12:05:00.000Z",
-          failureClass: "quota_exhausted",
-          status: 429,
-          model: "claude-opus-5-2-thinking"
-        },
-        poolCooldowns: {
-          third_party: {
-            kind: "quota",
-            failureClass: "quota_exhausted",
-            until: "2026-11-11T18:06:00.000Z",
-            resetsAt: "2026-11-11T18:06:00.000Z",
-            lastResortEligible: false,
-            scope: "pool",
-            pool: "third_party"
-          }
-        },
-        quota: {
-          provider: "antigravity",
-          status: "ok",
-          source: "antigravity-cloudcode-api",
-          updatedAt: "2026-11-09T12:05:01.000Z",
-          summaryStatus: "available",
-          windows: [],
-          pools: [
-            {
-              pool: "first_party",
-              label: "Gemini (First-Party)",
-              status: "available",
-              usedPercent: 40,
-              remainingPercent: 60,
-              resetsAt: "2026-11-09T16:00:00.000Z",
-              windows: [],
-              models: ["gemini-3.8-flash-high"]
-            },
-            {
-              pool: "third_party",
-              label: "Claude (Third-Party)",
-              status: "exhausted",
-              usedPercent: 100,
-              remainingPercent: 0,
-              resetsAt: "2026-11-11T18:06:00.000Z",
-              windows: [],
-              models: ["claude-opus-5-2-thinking"]
-            }
-          ]
         }
       })
     ),

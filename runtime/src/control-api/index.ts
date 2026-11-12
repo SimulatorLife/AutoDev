@@ -68,6 +68,7 @@ import {
   type GithubWorkflowState,
   type HookAction,
   type HookEvent,
+  isAntigravityProvider,
   isHookEvent,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
@@ -1122,7 +1123,7 @@ function providersView(now: number): Record<string, unknown> {
           : undefined;
         const supportedReasoningLevels = modelInfo?.supportedLevels ?? [];
         const isAgyFixed =
-          provider === "antigravity" &&
+          isAntigravityProvider(provider) &&
           Boolean(modelEffort(assignedModel ?? ""));
         const effectiveReasoningEffort = isAgyFixed
           ? modelEffort(assignedModel ?? "")
@@ -5238,7 +5239,7 @@ async function patchProviderRole(
   }
 
   const isAgyFixed =
-    provider === "antigravity" && Boolean(modelEffort(assignedModel ?? ""));
+    isAntigravityProvider(provider) && Boolean(modelEffort(assignedModel ?? ""));
   const effectiveReasoningEffort = isAgyFixed
     ? modelEffort(assignedModel ?? "")
     : (reasoningEffort ?? modelInfo?.defaultLevel ?? null);

@@ -107,7 +107,7 @@ defines its chain under the top-level
 
 The default order pins the primary provider and load-balances the rest:
 
-3. `orchestrator`: OpenAI/Codex Luna, then Claude Opus, Copilot, and Gemini/Antigravity (randomized)
+3. `orchestrator`: OpenAI/Codex Luna, then Claude Opus, Copilot, Antigravity Gemini, and Antigravity Claude/GPT-OSS (randomized)
 
 Differences from a role request:
 
@@ -116,7 +116,8 @@ Differences from a role request:
 - The primary provider is dispatched with the caller's own reasoning effort
   (`model_reasoning_effort` in the parent config). Fallback providers with a
   declared entry in `orchestrator.reasoningEffort` use that provider-specific
-  effort (`claude` medium and `antigravity` high by default); Copilot uses its
+  effort (`claude` medium, `antigravity-gemini` and `antigravity-claude-gpt`
+  high by default); Copilot uses its
   CLI-selected effort because its bridge has no compatible override.
 - Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
   origin even when it lands on a non-Codex provider, rather than
@@ -305,7 +306,7 @@ delegation paths:
     shared script-and-event assembly; provider bridges only drain their
     per-turn delegation and attach the returned events.
 
-- **Bridge-native spawn** (`antigravity`): the CLI behind the bridge
+- **Bridge-native spawn** (the Antigravity providers): the CLI behind the bridge
   delegates inside its own runtime -- Antigravity's `invoke_subagent` -- and no
   router request is made for the child. Claude is not in this category: it acts
   only through Codex's tools (see "Claude bridge: Codex executes every tool"),
@@ -595,36 +596,37 @@ Six rules are load-bearing:
 reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   headers -- produces a hard cooldown. An inferred limit stays on the transient
   ladder.
-- **Antigravity usage limits follow its separate model-family pools.** Its
-  usage panel separates Gemini models from Claude/GPT models. The router maps
-  Antigravity's Gemini ids to a `first_party` pool and its effort-suffixed Claude
-  ids to a shared `third_party` pool, so exhausting Claude Opus or Sonnet does
-  not take Gemini offline (and a Gemini limit does not disable Claude). All
-  rate-limit failure classes (`quota_exhausted`, `session_limit`, and
-  `throttled`) arm that pool scope on Antigravity; non-rate-limit failures and
-  single-pool providers keep their provider-wide cooldown behavior. A successful
-  request clears only its own pool, and `COOLDOWNS.get("antigravity", now)`
-  reports a provider-level cooldown only when a provider-wide cooldown is active
-  or both `first_party` and `third_party` pools are simultaneously cooling.
+- **Each Antigravity quota is its own provider.** agy meters its model
+  families separately, each with its own 5-hour and weekly limits, so the one
+  Antigravity service (the `agy` CLI behind its bridge on :4002) is routed as
+  three providers: `antigravity-gemini` (Gemini ids other than Argon),
+  `antigravity-argon` (`gemini-<ver>-argon-<effort>`), and
+  `antigravity-claude-gpt` (agy's effort-suffixed Claude ids and
+  `gpt-oss-<size>-<effort>`). Each has its own route pattern, models, role
+  assignments, cooldowns and quota, so exhausting Claude/GPT-OSS cools only
+  `antigravity-claude-gpt` and Gemini keeps serving. The patterns are mutually
+  exclusive with each other and with the Claude bridge (Anthropic ids carry no
+  effort suffix) and Codex (whose pattern excludes `gpt-oss-`), so a model id
+  alone names its provider. The provider ids live in
+  `@simulatorlife/autodev-core` (`ANTIGRAVITY_PROVIDERS`) and the patterns in
+  `runtime/src/shared/provider-model-ids.ts`.
 
 - **A cooldown belongs to the route that failed.** The router records a failure
-  against the provider, the model, or the quota pool the failed route belongs
-  to, and the scope follows the limit the provider reported: a pooled provider
-  cools one pool, a rejected model cools one model, anything else cools the
-  provider. `COOLDOWNS.get(provider, now, model)` is the lookup that resolves
-  all three -- provider first, then the model, then the pool that model belongs
-  to -- so a reader that asks a _provider_ whether it is cooling down gets the
-  provider-wide answer, and reads `null` for a route that is out. `/status`
-  reports the provider-wide cooldown as `cooldownKind` and names the routes
-  that are out in `poolCooldowns` and `modelCooldowns`; the Control API reports
-  the same two under `health.poolCooldowns` and `health.modelCooldowns`.
+  against the provider or the model the failed route names: a rejected model
+  cools one model, anything else cools the provider.
+  `COOLDOWNS.get(provider, now, model)` resolves both -- provider first, then
+  the model -- so a reader that asks a _provider_ whether it is cooling down
+  gets the provider-wide answer, and reads `null` for a model that is out.
+  `/status` reports the provider-wide cooldown as `cooldownKind` and names the
+  models that are out in `modelCooldowns`; the Control API reports them under
+  `health.modelCooldowns`.
 
-- **Per-provider, per-subprovider, and per-model quota discovery.**
+- **Per-provider and per-model quota discovery.**
   `runtime/src/providers/quota-discovery.ts` discovers live usage windows (5-hour
   limits, weekly limits, `% used` / `% remaining`, and reset times) and exposes
   them on `/control/providers` (`provider.quota` and `provider.health.quota`),
-  overlaying active router pool/provider cooldowns and synchronizing exhausted
-  windows or pools into `COOLDOWNS`:
+  overlaying active router provider cooldowns and synchronizing exhausted
+  windows into `COOLDOWNS`:
   - **MiniMax:** Direct REST API query to `https://api.minimax.io/v1/token_plan/remains`
     using `MINIMAX_API_KEY` or the OAuth token in `~/.mmx/config.json`, with
     fallback to `mmx quota --output json`. Maps 5-hour interval and weekly limits
@@ -633,8 +635,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   - **Codex:** ChatGPT `/backend-api/wham/usage` and live `x-codex-*` upstream
     response rate-limit headers (5-hour primary and weekly secondary windows).
   - **Antigravity:** Google Cloud Code `v1internal:fetchAvailableModels` using
-    the CLI's keychain/file OAuth token, separating `first_party` (Gemini) and
-    `third_party` (Claude) subprovider quota pools and per-model quotas.
+    the CLI's keychain/file OAuth token. One response yields a quota for each
+    Antigravity provider (`antigravity-gemini`, `antigravity-argon`,
+    `antigravity-claude-gpt`): each model reports its remaining fraction and
+    next reset, a reset more than a day out is the weekly window and a nearer
+    one the 5-hour window, and a provider's window reads its most-used model.
+    The three providers' discoveries share one API read per refresh.
   - **Copilot:** `gh api /copilot_internal/user` (`premium_interactions` and
     `chat` snapshots).
   - **Claude:** Claude bridge `/health` (port 4000) `rateLimitInfo` captured from live
@@ -652,11 +658,9 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   `/providers?tab=models`, while dedicated **Quota & usage limits** panels render
   on `/providers/:provider` (`ProviderDetailView`) and
   `/providers/:provider/models/:model` (`ModelDetailView`).
-  `providerHealthReadiness` in `@simulatorlife/autodev-core` keeps a multi-pool
-  provider `ready` whenever at least one pool has remaining usage and is not in
-  cooldown, resolves model-scoped failures to their owning pool (keeping
-  Antigravity ready when only its third-party Claude pool is exhausted), and
-  does not leave a provider stuck in `unavailable` after a rate-limit or
+  `providerHealthReadiness` in `@simulatorlife/autodev-core` reads a provider
+  `unavailable` while it is cooling down or its quota is exhausted, and does
+  not leave a provider stuck in `unavailable` after a rate-limit or
   transient cooldown has expired. A failure that describes a condition which
   passes -- a rate limit, a throttle, a busy upstream, a timeout, a 5xx -- is
   live only while the Runtime is still cooling the provider down for it, and
@@ -702,7 +706,7 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 - **Stateful/web bridges floor downstream `usage.input_tokens` to the wire transcript estimate, and MiniMax bounds replayed transcripts.**
   Codex triggers native context auto-compaction (`compacted` rollout event)
   based on `usage.total_tokens` in the `response.completed` envelope. Stateful
-  CLI and web bridges (`antigravity`, `claude`, `opencli`, `copilot`) execute a
+  CLI and web bridges (Antigravity, `claude`, `opencli`, `copilot`) execute a
   distilled prompt in their own persistent session and report `0` or delta-only
   `input_tokens`, which previously left Codex blind to wire transcript growth
   across multi-hour sessions. The router now floors downstream `usage.input_tokens`
@@ -866,7 +870,7 @@ strength of free text — but the window the provider named survives into
 both are reported rather than one standing in for the other:
 
 ```text
-antigravity: quota_exhausted, provider reports usage resets in 25m
+antigravity-claude-gpt: quota_exhausted, provider reports usage resets in 25m
   (2026-10-14T16:47:21.728Z); retrying in 480s
 ```
 

@@ -51,11 +51,11 @@
     },
     "probe_ladder_first_through_fifth": {
       "setup": [
-        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } }
+        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } }
       ],
       "expectedStreaks": [
         { "kind": "probe", "streak": 1, "durationMs": 5000 },
@@ -274,10 +274,10 @@
     "retry_returns_earliest_remaining_ms": {
       "setup": [
         { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": {} }
+        { "provider": "antigravity-gemini", "args": {} }
       ],
       "atDeltaMs": 0,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "expected": 5000
     },
     "retry_returns_ms_for_single_cooling_provider": {
@@ -291,24 +291,24 @@
     "retry_returns_zero_when_none_cooling": {
       "setup": [],
       "atDeltaMs": 0,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "expected": 0
     },
     "retry_skips_expired_entries_at_future_time": {
       "setup": [
         { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity", "args": {} }
+        { "provider": "antigravity-gemini", "args": {} }
       ],
       "atDeltaMs": 6000,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }],
       "expected": 24000
     },
     "summary_disabled_provider_reports_disabled_state": {
-      "setup": [{ "disable": "antigravity" }],
-      "candidates": [{ "provider": "antigravity", "model": "gemini-3.8-flash-medium" }],
+      "setup": [{ "disable": "antigravity-gemini" }],
+      "candidates": [{ "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }],
       "expected": [
         {
-          "provider": "antigravity",
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-medium",
           "state": "disabled",
           "failureClass": "provider_disabled",
@@ -372,7 +372,7 @@
       "setup": [
         { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
       ],
-      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "atDeltaMs": 1,
       "expected": [
         {
@@ -385,7 +385,7 @@
           "detail": null
         },
         {
-          "provider": "antigravity",
+          "provider": "antigravity-gemini",
           "model": "gemini-3.8-flash-medium",
           "state": "available",
           "failureClass": null,

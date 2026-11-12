@@ -45,6 +45,8 @@ import {
   TabNav
 } from "../../components/tabs/Tabs.ts";
 import {
+  ENTITY_LINK_CLASS,
+  MONO_ID_CLASS,
   MONO_ID_LINK_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -195,11 +197,24 @@ export interface ProvidersViewProps {
   readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
+/**
+ * The provider id as the providers table's row identifier.
+ *
+ * It wraps at its hyphens instead of truncating. The Antigravity providers
+ * share the 11-character `antigravity-` prefix, so a truncated id reads
+ * `antigravit…` on all three rows and the row names nothing; wrapped,
+ * `antigravity-claude-gpt` keeps the column's width and names its row.
+ */
+const WRAPPING_PROVIDER_ID_LINK_CLASS = `${MONO_ID_CLASS} block min-h-6 ${ENTITY_LINK_CLASS}`;
+
 function ProviderLink({
   provider,
-  context
+  context,
+  wrap = false
 }: {
   readonly provider: string;
+  /** Wrap the id at its hyphens rather than truncating it. */
+  readonly wrap?: boolean;
   /**
    * What distinguishes this link from another link to the same provider.
    *
@@ -216,7 +231,7 @@ function ProviderLink({
     NavigationLink,
     {
       href: providerPath(provider),
-      className: MONO_ID_LINK_CLASS,
+      className: wrap ? WRAPPING_PROVIDER_ID_LINK_CLASS : MONO_ID_LINK_CLASS,
       title: provider,
       "aria-label":
         context === undefined
@@ -259,7 +274,10 @@ function providerColumns(
         React.createElement(
           "div",
           { className: "flex flex-col gap-1" },
-          React.createElement(ProviderLink, { provider: provider.id }),
+          React.createElement(ProviderLink, {
+            provider: provider.id,
+            wrap: true
+          }),
           // The CLI version rides under the provider's name: it is the
           // provider's own fact, it is small, and the eye asking "which
           // version is this provider on" is already looking there.
@@ -350,6 +368,7 @@ function providerColumns(
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
           provider,
+          subagentLayout: "hierarchical",
           modelDiscovery,
           returnTo
         })
@@ -437,7 +456,6 @@ function modelColumns(
                   "data-model-quota": model.id
                 },
                 [
-                  modelQuota.pool ? `pool: ${modelQuota.pool}` : null,
                   modelQuota.status === "unlimited"
                     ? "Unlimited"
                     : modelQuota.usedPercent !== null

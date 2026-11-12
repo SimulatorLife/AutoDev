@@ -114,10 +114,15 @@ describe("root versus subagent provider selection", () => {
         providerInjectsRoleMcp(provider),
         `${provider} must inject the role-scoped MCP that browser-tester declares`
       );
-    assert.ok(
-      browserTesterProviders.has("antigravity"),
-      "Antigravity must honor browser-tester's per-role Playwright MCP contract"
-    );
+    for (const provider of [
+      "antigravity-gemini",
+      "antigravity-argon",
+      "antigravity-claude-gpt"
+    ])
+      assert.ok(
+        browserTesterProviders.has(provider),
+        `${provider} must honor browser-tester's per-role Playwright MCP contract`
+      );
   });
 
   test("freezes root fallback reasoning and preferred continuation ordering", () => {

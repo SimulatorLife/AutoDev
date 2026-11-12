@@ -188,7 +188,7 @@ test("the provider hop evidence names both providers, the reason and the place",
   });
   await expect(route).toBeVisible();
   await expect(route.getByText("claude → minimax")).toBeVisible();
-  await expect(route.getByText("claude → antigravity")).toBeVisible();
+  await expect(route.getByText("claude → antigravity-gemini")).toBeVisible();
 
   // The reason is what makes the count actionable, so it is shown next to it.
   const reason = page.getByRole("list", {

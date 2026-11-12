@@ -130,6 +130,10 @@ function ProviderReconciliationPanel({
  * row *and* in its detail view. Reusing `ProviderRoleControls` rather than
  * re-describing the roles here is what keeps the two surfaces from drifting
  * apart -- they used to, when each listed its own set of roles.
+ *
+ * The one difference is layout: here the strip has the panel to itself, so
+ * each agent role gets a model row of its own under Subagent (`rows`) instead
+ * of the Providers row's single hierarchical select.
  */
 function RolesPanel({
   provider,
@@ -151,6 +155,7 @@ function RolesPanel({
     ),
     React.createElement(ProviderRoleControls, {
       provider,
+      subagentLayout: "rows",
       modelDiscovery,
       returnTo
     })
@@ -250,7 +255,6 @@ function ModelsPanel({
                   "data-model-quota": model.id
                 },
                 [
-                  modelQuota.pool ? `pool: ${modelQuota.pool}` : null,
                   modelQuota.status === "unlimited"
                     ? "Unlimited"
                     : modelQuota.usedPercent === null
@@ -651,9 +655,6 @@ function HealthPanel({
                   health.lastFailure.status === null
                     ? null
                     : `HTTP ${health.lastFailure.status}`,
-                  health.lastFailure.pool
-                    ? `pool ${health.lastFailure.pool}`
-                    : null,
                   health.lastFailure.model ?? null
                 ]
                   .filter(Boolean)
@@ -673,12 +674,7 @@ export function ProviderQuotaLimitsPanel({
   readonly nowMs?: number;
 }): React.JSX.Element | null {
   const quota = resolveProviderQuota(provider);
-  const poolCooldowns = provider.health?.poolCooldowns;
-  const hasPoolCooldowns =
-    poolCooldowns !== undefined && Object.keys(poolCooldowns).length > 0;
-  if (!quota && !hasPoolCooldowns) {
-    return null;
-  }
+  if (!quota) return null;
 
   return React.createElement(
     "section",
@@ -793,95 +789,6 @@ export function ProviderQuotaLimitsPanel({
               )
             );
           })
-        )
-      : null,
-    quota?.pools && quota.pools.length > 0
-      ? React.createElement(
-          "div",
-          { className: "mt-3", "data-section": "provider-quota-pools" },
-          React.createElement(
-            "h4",
-            { className: `mb-2 ${MUTED_META_CLASS}` },
-            "Subprovider quota pools"
-          ),
-          React.createElement(
-            DetailGrid,
-            { columns: 2 },
-            ...quota.pools.map((pool) => {
-              const resetRemaining = formatQuotaResetRemaining(
-                pool.resetsAt ??
-                  pool.cooldown?.resetsAt ??
-                  pool.cooldown?.until ??
-                  null,
-                nowMs
-              );
-              const usedSummary =
-                pool.usedPercent === null
-                  ? pool.status
-                  : `${Math.round(pool.usedPercent)}% used (${Math.round(
-                      pool.remainingPercent ?? 100 - pool.usedPercent
-                    )}% remaining)`;
-              return React.createElement(
-                DetailValue,
-                {
-                  key: pool.pool,
-                  label: pool.label
-                },
-                React.createElement(
-                  "div",
-                  {
-                    className: "flex flex-col gap-1 tabular-nums",
-                    "data-quota-pool": pool.pool
-                  },
-                  React.createElement(
-                    "span",
-                    { className: "font-mono text-xs text-fg" },
-                    usedSummary
-                  ),
-                  pool.usedPercent === null
-                    ? null
-                    : React.createElement(
-                        "div",
-                        {
-                          className:
-                            "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
-                        },
-                        React.createElement("div", {
-                          className:
-                            pool.status === "exhausted"
-                              ? "h-full bg-danger"
-                              : pool.status === "warning"
-                                ? "h-full bg-warning"
-                                : "h-full bg-accent",
-                          style: {
-                            width: `${Math.max(
-                              0,
-                              Math.min(100, Math.round(pool.usedPercent))
-                            )}%`
-                          }
-                        })
-                      ),
-                  pool.resetsAt
-                    ? React.createElement(
-                        "span",
-                        { className: MUTED_META_CLASS },
-                        "Resets ",
-                        resetRemaining ? `${resetRemaining} (` : "",
-                        formatTimestamp(pool.resetsAt),
-                        resetRemaining ? ")" : ""
-                      )
-                    : null,
-                  pool.models.length > 0
-                    ? React.createElement(
-                        "span",
-                        { className: MUTED_META_CLASS },
-                        `Models: ${pool.models.join(", ")}`
-                      )
-                    : null
-                )
-              );
-            })
-          )
         )
       : null
   );

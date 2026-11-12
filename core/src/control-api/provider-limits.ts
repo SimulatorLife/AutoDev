@@ -4,7 +4,7 @@
  */
 
 /**
- * Hard limit failure classes: the provider or pool is completely out of quota
+ * Hard limit failure classes: the provider is completely out of quota
  * or session allowance until its declared window resets.
  */
 export const PROVIDER_HARD_LIMIT_CLASSES = Object.freeze([
@@ -14,20 +14,6 @@ export const PROVIDER_HARD_LIMIT_CLASSES = Object.freeze([
 
 export type ProviderHardLimitClass =
   (typeof PROVIDER_HARD_LIMIT_CLASSES)[number];
-
-/**
- * Limit failure classes that can be scoped to an individual subprovider pool
- * (e.g. Antigravity's first_party vs third_party pools) rather than cooling the
- * entire provider.
- */
-export const PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES = Object.freeze([
-  "quota_exhausted",
-  "session_limit",
-  "throttled"
-] as const);
-
-export type ProviderPoolScopableLimitClass =
-  (typeof PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES)[number];
 
 /**
  * The failure classes that describe a condition which passes with time or cooldown.
@@ -63,17 +49,6 @@ export function isHardLimitClass(
   return (
     typeof failureClass === "string" &&
     (PROVIDER_HARD_LIMIT_CLASSES as readonly string[]).includes(failureClass)
-  );
-}
-
-export function isPoolScopableLimitClass(
-  failureClass: string | null | undefined
-): boolean {
-  return (
-    typeof failureClass === "string" &&
-    (PROVIDER_POOL_SCOPABLE_LIMIT_CLASSES as readonly string[]).includes(
-      failureClass
-    )
   );
 }
 

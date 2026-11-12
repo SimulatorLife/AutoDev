@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { ANTIGRAVITY_PROVIDERS } from "@simulatorlife/autodev-core";
+import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 import { parse } from "smol-toml";
 
 import { normalizedSource } from "./source-text.ts";
@@ -190,8 +192,12 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /spawn\(CLI, agyArgs\(/
   );
   assert.match(route("copilot"), /baseUrl: "http:\/\/127\.0\.0\.1:4003\/v1"/);
-  assert.match(
-    route("antigravity"),
-    /baseUrl: "http:\/\/127\.0\.0\.1:4002\/v1"/
-  );
+  // Every Antigravity provider (one per agy quota) is served by the one agy
+  // bridge.
+  for (const provider of ANTIGRAVITY_PROVIDERS)
+    assert.equal(
+      ROUTES.find((candidate) => candidate.provider === provider)?.baseUrl,
+      "http://127.0.0.1:4002/v1",
+      provider
+    );
 });

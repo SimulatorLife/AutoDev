@@ -159,11 +159,6 @@ function ModelQuotaLimitsPanel({
       ),
       React.createElement(
         DetailValue,
-        { label: "Quota pool" },
-        modelQuota.pool ?? "Provider-wide"
-      ),
-      React.createElement(
-        DetailValue,
         { label: "Next reset" },
         modelQuota.resetsAt
           ? React.createElement(

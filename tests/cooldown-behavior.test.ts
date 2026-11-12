@@ -30,7 +30,15 @@ assert.equal(
 );
 
 const NOW = contract.now;
-const PROVIDERS = ["claude", "antigravity", "minimax", "copilot", "codex"];
+const PROVIDERS = [
+  "claude",
+  "antigravity-gemini",
+  "antigravity-claude-gpt",
+  "antigravity-argon",
+  "minimax",
+  "copilot",
+  "codex"
+];
 
 function cleanState() {
   for (const provider of PROVIDERS) cooldowns.clear(provider);
@@ -236,7 +244,7 @@ describe("cooldown behavior", () => {
       assert.equal(cfg.resetsAt, null);
 
       cleanState();
-      const probe = cooldowns.cooldownProvider("antigravity", {
+      const probe = cooldowns.cooldownProvider("antigravity-gemini", {
         now: NOW,
         failureClass: "probe_unavailable"
       });
@@ -341,7 +349,7 @@ describe("cooldown behavior", () => {
         if (!last) continue;
         cleanState();
         const sentinel =
-          last.provider === "antigravity" ? "claude" : "antigravity";
+          last.provider === "antigravity-gemini" ? "claude" : "antigravity-gemini";
         const final = cooldowns.cooldownProvider(sentinel, {
           now: NOW,
           ...last.args

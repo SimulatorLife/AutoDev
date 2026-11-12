@@ -238,7 +238,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   // and it mistranslated `response.failed`, which forced the adapter to fake a
   // completed response. Both workarounds are gone with it.
   const route = routing.routeForModel("gemini-3.8-flash-high")!;
-  assert.equal(route.provider, "antigravity");
+  assert.equal(route.provider, "antigravity-gemini");
   assert.equal(route.baseUrl, "http://127.0.0.1:4002/v1");
   assert.equal(route.healthUrl, "http://127.0.0.1:4002/health/liveliness");
 
@@ -459,7 +459,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
       .slice(1)
       .map((candidate) => candidate.provider)
       .sort(),
-    ["antigravity", "claude", "copilot"]
+    ["antigravity-claude-gpt", "antigravity-gemini", "claude", "copilot"]
   );
 
   const byProvider: Record<string, any> = Object.fromEntries(
@@ -469,8 +469,13 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   assert.equal(byProvider.claude.reasoningEffort, "medium");
   assert.equal(byProvider.copilot.model, "copilot");
   assert.equal(byProvider.copilot.reasoningEffort, null);
-  assert.equal(byProvider.antigravity.model, "gemini-3.8-flash-high");
-  assert.equal(byProvider.antigravity.reasoningEffort, "high");
+  assert.equal(byProvider["antigravity-gemini"].model, "gemini-3.8-flash-high");
+  assert.equal(byProvider["antigravity-gemini"].reasoningEffort, "high");
+  assert.equal(
+    byProvider["antigravity-claude-gpt"].model,
+    "claude-opus-5-5-high"
+  );
+  assert.equal(byProvider["antigravity-claude-gpt"].reasoningEffort, "high");
 
   // The fallback group is shuffled/least-loaded, never the pinned primary.
   assert.notDeepEqual(
@@ -645,8 +650,9 @@ test("routes supported model families without provider aliases", () => {
     "minimax"
   );
   assert.equal(
-    routing.routeForModel(routing.configuredModel("antigravity")!)?.provider,
-    "antigravity"
+    routing.routeForModel(routing.configuredModel("antigravity-gemini")!)
+      ?.provider,
+    "antigravity-gemini"
   );
   assert.equal(routing.routeForModel("unknown-model"), null);
 });
@@ -947,7 +953,9 @@ test("backs off repeatedly failing providers and moves them behind healthy peers
     const providers = routing
       .roleCandidates("default", () => 0.5)
       .map(({ provider }) => provider);
-    assert.ok(providers.indexOf("claude") > providers.indexOf("antigravity"));
+    assert.ok(
+      providers.indexOf("claude") > providers.indexOf("antigravity-gemini")
+    );
     assert.ok(providers.indexOf("claude") > providers.indexOf("minimax"));
   } finally {
     activeProviderRequests.clear();
@@ -968,11 +976,11 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   process.env.CODEX_ROUTER_COPILOT_API_KEY = "test-provider-key";
   activeProviderRequests.clear();
   cooldowns.clear("claude");
-  cooldowns.clear("antigravity");
+  cooldowns.clear("antigravity-gemini");
   cooldowns.clear("minimax");
   agentActivity.beginRequest("busy-antigravity", {
     requestId: "busy-antigravity",
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     model: "gemini-3.8-flash-medium",
     origin: "direct"
   });
@@ -988,6 +996,19 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
     model: "MiniMax-M3",
     origin: "direct"
   });
+  // The other Antigravity providers are as busy as MiniMax, so the least-busy
+  // fallback is Antigravity Gemini.
+  for (const [provider, model] of [
+    ["antigravity-claude-gpt", "claude-sonnet-5-5-medium"],
+    ["antigravity-argon", "gemini-4-argon-medium"]
+  ] as const)
+    for (const n of [1, 2])
+      agentActivity.beginRequest(`busy-${provider}-${n}`, {
+        requestId: `busy-${provider}-${n}`,
+        provider,
+        model,
+        origin: "direct"
+      });
   globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
@@ -1034,7 +1055,10 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
       }
     );
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-autodev-provider"), "antigravity");
+    assert.equal(
+      response.headers.get("x-autodev-provider"),
+      "antigravity-gemini"
+    );
     assert.equal(responseCalls, 2);
   } finally {
     await closeServer(server);
@@ -1061,7 +1085,15 @@ test("a streamed refusal does not cool the provider down, and a streamed failure
   };
   process.env.LITELLM_API_KEY = "test-provider-key";
   process.env.MINIMAX_API_KEY = "test-provider-key";
-  const candidates = ["claude", "antigravity", "minimax", "copilot", "codex"];
+  const candidates = [
+    "claude",
+    "antigravity-gemini",
+    "antigravity-claude-gpt",
+    "antigravity-argon",
+    "minimax",
+    "copilot",
+    "codex"
+  ];
   const streamWith = (error: unknown): string =>
     [
       `data: ${JSON.stringify({
@@ -1192,7 +1224,13 @@ test("orchestrator alias falls back to another provider when the primary is unav
   process.env.MINIMAX_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of ["codex", "claude", "antigravity", "minimax"])
+  for (const provider of [
+    "codex",
+    "claude",
+    "antigravity-gemini",
+    "antigravity-claude-gpt",
+    "minimax"
+  ])
     cooldowns.clear(provider);
   let orchestratorResponseProvider = null;
   globalThis.fetch = async (url: any, options: any = {}) => {
@@ -1247,7 +1285,12 @@ test("orchestrator alias falls back to another provider when the primary is unav
     assert.equal(response.status, 200);
     const servingProvider = response.headers.get("x-autodev-provider");
     assert.ok(
-      ["claude", "minimax", "antigravity"].includes(servingProvider!),
+      [
+        "claude",
+        "copilot",
+        "antigravity-gemini",
+        "antigravity-claude-gpt"
+      ].includes(servingProvider!),
       `expected a fallback-group provider, got ${servingProvider}`
     );
     assert.notEqual(
@@ -1297,7 +1340,7 @@ test("reports the earliest provider retry time when every role candidate is cool
   const cooldownStartedAt = Date.now();
   for (const provider of [
     "claude",
-    "antigravity",
+    "antigravity-gemini",
     "minimax",
     "copilot",
     "codex"
@@ -1331,7 +1374,7 @@ test("reports the earliest provider retry time when every role candidate is cool
     globalThis.fetch = originalFetch;
     for (const provider of [
       "claude",
-      "antigravity",
+      "antigravity-gemini",
       "minimax",
       "copilot",
       "codex"
@@ -1500,7 +1543,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
 
 test("agent-events reporting is decoupled from spawn-tool availability", () => {
   const forAntigravity = bridgeTelemetryHeaders(
-    { provider: "antigravity" },
+    { provider: "antigravity-gemini" },
     "request-1"
   );
   assert.deepEqual(forAntigravity, {
@@ -1622,7 +1665,9 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     assert.deepEqual(status.byProvider, { claude: 3, minimax: 1 });
     assert.deepEqual(status.byRole, { explorer: 1, worker: 2, validator: 1 });
     assert.deepEqual(status.spawnCapableProviders, [
-      "antigravity",
+      "antigravity-gemini",
+      "antigravity-claude-gpt",
+      "antigravity-argon",
       "claude",
       "minimax",
       "copilot",
@@ -1670,7 +1715,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     noteBridgeRequest("request-live", {
       activitySubject: `req:${"request-live"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-high",
       role: null,
       workspace: "AutoDev"
@@ -1703,7 +1748,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
 
     const status = await (await fetch(`${base}/status`)).json();
     assert.equal(status.subagents.total, 1);
-    assert.deepEqual(status.subagents.byProvider, { antigravity: 1 });
+    assert.deepEqual(status.subagents.byProvider, { "antigravity-gemini": 1 });
     assert.equal(status.subagents.recent[0].tool, "invoke_subagent");
   } finally {
     await closeServer(server);
@@ -1725,13 +1770,16 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     noteBridgeRequest("request-batch", {
       activitySubject: `req:${"request-batch"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-high",
       role: null,
       workspace: "SimulatorLife/RacingGame"
     });
     const reporter = resolveAgentEventReporter({
-      ...bridgeTelemetryHeaders({ provider: "antigravity" }, "request-batch"),
+      ...bridgeTelemetryHeaders(
+        { provider: "antigravity-gemini" },
+        "request-batch"
+      ),
       [AGENT_EVENTS_URL_HEADER]: `${base}${AGENT_EVENTS_PATH}`
     });
     const stepUpdate = {
@@ -1770,7 +1818,7 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
 
     const status = await (await fetch(`${base}/status`)).json();
     assert.equal(status.subagents.total, 3);
-    assert.deepEqual(status.subagents.byProvider, { antigravity: 3 });
+    assert.deepEqual(status.subagents.byProvider, { "antigravity-gemini": 3 });
     assert.deepEqual(status.subagents.byRole, { explorer: 2, validator: 1 });
     assert.deepEqual(status.subagents.byMechanism, {
       router_alias: 0,
@@ -1794,7 +1842,7 @@ test("a spawn breakdown says how its children ended, not only that they started"
   try {
     noteBridgeRequest("request-status", {
       activitySubject: `req:${"request-status"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-medium",
       role: null,
       workspace: "SimulatorLife/RacingGame"
@@ -1867,7 +1915,7 @@ test("a spawn row restored from an older state file still settles", async () => 
     resetSubagentTelemetry();
     noteBridgeRequest("request-old-row", {
       activitySubject: `req:${"request-old-row"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-medium",
       role: null,
       workspace: "SimulatorLife/RacingGame"
@@ -1898,7 +1946,7 @@ test("a spawn row restored from an older state file still settles", async () => 
 
     noteBridgeRequest("request-old-row", {
       activitySubject: `req:${"request-old-row"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-medium",
       role: null,
       workspace: "SimulatorLife/RacingGame"
@@ -1943,7 +1991,7 @@ test("children still running when the parent turn ends are settled by it", async
   try {
     noteBridgeRequest("request-parent-close", {
       activitySubject: `req:${"request-parent-close"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-medium",
       role: null,
       workspace: "SimulatorLife/RacingGame"
@@ -1991,7 +2039,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
   try {
     noteBridgeRequest("request-usage", {
       activitySubject: `req:${"request-usage"}`,
-      provider: "antigravity",
+      provider: "antigravity-gemini",
       model: "gemini-3.8-flash-medium",
       role: null,
       workspace: "SimulatorLife/RacingGame"
@@ -2078,13 +2126,16 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     );
     // `inherit` is agy naming the parent's model rather than choosing one.
     assert.equal(
-      modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-medium") -
-        modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-medium"),
+      modelAttempts(usageOpen, "antigravity-gemini/gemini-3.8-flash-medium") -
+        modelAttempts(
+          usageBefore,
+          "antigravity-gemini/gemini-3.8-flash-medium"
+        ),
       2
     );
     assert.equal(
-      modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-high") -
-        modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-high"),
+      modelAttempts(usageOpen, "antigravity-gemini/gemini-3.8-flash-high") -
+        modelAttempts(usageBefore, "antigravity-gemini/gemini-3.8-flash-high"),
       1
     );
     assert.equal(
@@ -2095,7 +2146,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     );
     const liveWithParent = getRouterStatus();
     assert.equal(
-      liveWithParent.providers.antigravity.active,
+      liveWithParent.providers["antigravity-gemini"].active,
       4,
       "the explicitly tracked parent and three children share the selected provider"
     );
@@ -2161,7 +2212,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
       0
     );
     assert.equal(
-      getRouterStatus().providers.antigravity.active,
+      getRouterStatus().providers["antigravity-gemini"].active,
       0,
       "parent and child activity settle together"
     );
@@ -2484,7 +2535,7 @@ test("downstreamHeaders leaves keep-alive pooling untouched for other providers"
   for (const route of [
     { provider: "claude", envKey: "LITELLM_API_KEY" },
     { provider: "minimax", envKey: "MINIMAX_API_KEY" },
-    { provider: "antigravity", envKey: "LITELLM_API_KEY" },
+    { provider: "antigravity-gemini", envKey: "LITELLM_API_KEY" },
     { provider: "copilot", envKey: "CODEX_ROUTER_COPILOT_API_KEY" }
   ]) {
     const headers = downstreamHeaders(route as any, null, null);
@@ -2631,7 +2682,7 @@ test("restores validated workspace metadata on role and concrete continuations",
   resetRouterTelemetry();
   for (const provider of [
     "claude",
-    "antigravity",
+    "antigravity-gemini",
     "minimax",
     "copilot",
     "codex"
@@ -4442,8 +4493,13 @@ test("uses the least-busy provider before starting another provider request", ()
   const candidates = routing
     .roleCandidates("default", () => 0.5)
     .map((candidate) => candidate.provider);
-  assert.equal(candidates[0], "antigravity");
-  assert.deepEqual(candidates.slice(3), ["copilot", "codex"]);
+  // The idle providers of the first group lead: the three Antigravity ones.
+  assert.deepEqual(candidates.slice(0, 3).sort(), [
+    "antigravity-argon",
+    "antigravity-claude-gpt",
+    "antigravity-gemini"
+  ]);
+  assert.deepEqual(candidates.slice(5), ["copilot", "codex"]);
   activeProviderRequests.clear();
   agentActivity.reset();
 });
@@ -4465,25 +4521,30 @@ test("balances candidate provider priority across active in-flight requests", ()
   });
   agentActivity.beginRequest("antigravity-1", {
     requestId: "antigravity-1",
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     model: "gemini-3.8-flash-medium"
   });
   assert.equal(agentActivity.countLive({ provider: "claude" }), 2);
-  assert.equal(agentActivity.countLive({ provider: "antigravity" }), 1);
+  assert.equal(agentActivity.countLive({ provider: "antigravity-gemini" }), 1);
   assert.equal(agentActivity.countLive({ provider: "minimax" }), 0);
 
   const candidates = routing.roleCandidates("default", () => 0.5);
   const providers = candidates.map((c) => c.provider);
-  // minimax (0 active) should come first, then antigravity (1 active), then claude (2 active)
-  assert.equal(providers[0], "minimax");
-  assert.equal(providers[1], "antigravity");
-  assert.equal(providers[2], "claude");
+  // The idle providers come first (minimax and the other two Antigravity
+  // providers, 0 active), then Antigravity Gemini (1 active), then claude (2).
+  assert.deepEqual(providers.slice(0, 3).sort(), [
+    "antigravity-argon",
+    "antigravity-claude-gpt",
+    "minimax"
+  ]);
+  assert.equal(providers[3], "antigravity-gemini");
+  assert.equal(providers[4], "claude");
 
   agentActivity.finish("claude-1", { requestId: "claude-1" });
   agentActivity.finish("claude-2", { requestId: "claude-2" });
   agentActivity.finish("antigravity-1", { requestId: "antigravity-1" });
   assert.equal(agentActivity.countLive({ provider: "claude" }), 0);
-  assert.equal(agentActivity.countLive({ provider: "antigravity" }), 0);
+  assert.equal(agentActivity.countLive({ provider: "antigravity-gemini" }), 0);
   activeProviderRequests.clear();
   agentActivity.reset();
 });
@@ -5308,7 +5369,7 @@ test("direct concrete request does not reroute to a different provider when the 
   let antigravityCalls = 0;
   process.env.LITELLM_API_KEY = "test-provider-key";
   cooldowns.clear("claude");
-  cooldowns.clear("antigravity");
+  cooldowns.clear("antigravity-gemini");
   globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return Response.json(
@@ -5376,7 +5437,7 @@ test("direct concrete request does not reroute to a different provider when the 
     }
     activeProviderRequests.clear();
     cooldowns.clear("claude");
-    cooldowns.clear("antigravity");
+    cooldowns.clear("antigravity-gemini");
     resetRouterTelemetry();
   }
 });
@@ -5618,7 +5679,7 @@ test("tells the provider bridge that an orchestrator turn is the orchestrator, s
   process.env.LITELLM_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of ["codex", "claude", "antigravity", "minimax"])
+  for (const provider of ["codex", "claude", "antigravity-gemini", "minimax"])
     cooldowns.clear(provider);
   let upstreamHeaders: any = null;
   globalThis.fetch = async (url: any, options: any = {}) => {
@@ -5683,7 +5744,7 @@ test("a delegated role is named as that role, and a client cannot claim to be th
   for (const provider of [
     "codex",
     "claude",
-    "antigravity",
+    "antigravity-gemini",
     "minimax",
     "copilot"
   ])
@@ -6054,7 +6115,15 @@ const jsonResponse = (body: any, init: any = {}) =>
     headers: { "content-type": "application/json" },
     ...init
   });
-const DEFAULT_TIER = ["claude", "antigravity", "minimax", "copilot", "codex"];
+const DEFAULT_TIER = [
+  "claude",
+  "antigravity-gemini",
+  "antigravity-claude-gpt",
+  "antigravity-argon",
+  "minimax",
+  "copilot",
+  "codex"
+];
 
 test("attempts a cooling provider as a last resort rather than stranding the caller", async () => {
   let responseCalls = 0;
@@ -6489,39 +6558,28 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
-test("a provider whose quota pool is cooling names the pool instead of reading as an outage", async () => {
+test("an exhausted Antigravity quota cools only its own provider", async () => {
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   const resetsAt = new Date(Date.now() + 5_400_000).toISOString();
   try {
-    // Antigravity's Gemini models share one quota pool and its Claude models
-    // another, so the pool that ran out is the route that is out -- and the
-    // provider itself can still serve the other pool.
-    cooldowns.cooldownProvider("antigravity", {
+    // agy meters Gemini and Claude/GPT-OSS separately, and each is its own
+    // provider, so the Gemini quota running out takes out Gemini alone.
+    cooldowns.cooldownProvider("antigravity-gemini", {
       failureClass: "quota_exhausted",
       resetsAt,
       structured: true,
-      scope: "pool",
       model: "gemini-3.8-flash-medium"
     });
-    const provider = getRouterStatus().providers.antigravity;
-    assert.equal(provider.cooldownKind, null);
-    assert.equal(provider.status, "ready");
-    // The route that is out is named, with the limit the provider reported.
-    assert.equal(provider.poolCooldowns?.first_party?.kind, "hard");
+    const status = getRouterStatus().providers;
+    assert.equal(status["antigravity-gemini"]?.cooldownKind, "hard");
+    assert.equal(status["antigravity-gemini"]?.cooldownResetsAt, resetsAt);
+    assert.equal(status["antigravity-claude-gpt"]?.cooldownKind, null);
     assert.equal(
-      provider.poolCooldowns?.first_party?.failureClass,
-      "quota_exhausted"
-    );
-    assert.equal(provider.poolCooldowns?.first_party?.resetsAt, resetsAt);
-    assert.equal(provider.poolCooldowns?.third_party, undefined);
-    // And the lookup the router itself makes follows the route, not the
-    // provider: the Gemini route is out and the Claude route is not.
-    assert.equal(
-      cooldowns.get("antigravity", Date.now(), "gemini-3.8-flash-medium")?.kind,
-      "hard"
-    );
-    assert.equal(
-      cooldowns.get("antigravity", Date.now(), "claude-opus-5-5-high"),
+      cooldowns.get(
+        "antigravity-claude-gpt",
+        Date.now(),
+        "claude-opus-5-5-high"
+      ),
       null
     );
   } finally {
@@ -6752,7 +6810,14 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
  * depend on whether `~/.codex/auth.json` exists: the point is what the router
  * does when nothing it can reach is able to serve.
  */
-const TIER_WITHOUT_CODEX = ["claude", "antigravity", "minimax", "copilot"];
+const TIER_WITHOUT_CODEX = [
+  "claude",
+  "antigravity-gemini",
+  "antigravity-claude-gpt",
+  "antigravity-argon",
+  "minimax",
+  "copilot"
+];
 
 test("a request no provider can serve because its usage is exhausted ends the turn instead of being retried for hours", async () => {
   // Observed 2026-10-27: every provider the orchestrator tier could reach was
@@ -7205,7 +7270,7 @@ test("an added section does not throw away the history already persisted", async
     older.subagents = {
       total: 7,
       byMechanism: { bridge_native: 7 },
-      byProvider: { antigravity: 7 },
+      byProvider: { "antigravity-gemini": 7 },
       byRole: {},
       byStatus: {},
       recent: []
@@ -7832,7 +7897,7 @@ test("research roles request website tools without a provider routing capability
   for (const provider of [
     "codex",
     "claude",
-    "antigravity",
+    "antigravity-gemini",
     "copilot",
     "minimax"
   ]) {
@@ -8308,6 +8373,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
     if (target.includes("/health")) return new Response("ok", { status: 200 });
     let provider = null;
     if (target.includes(":4000/")) provider = "claude";
+    // Every Antigravity provider is served by the one bridge on :4002.
     else if (target.includes(":4002/")) provider = "antigravity";
     else if (target.includes(":18765/")) provider = "minimax";
     if (provider) attemptedProviders.push(provider);
@@ -8368,8 +8434,10 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
       "fallback should attempt the first candidate, fail, then try and succeed with the second"
     );
     assert.ok(
-      attemptedProviders.includes("antigravity") &&
-        attemptedProviders.includes("minimax")
+      attemptedProviders.every((provider) =>
+        ["antigravity", "minimax"].includes(provider)
+      ),
+      "only the enabled providers of the first group are attempted"
     );
 
     // 4. Direct concrete request to a disabled provider is rejected, and not
@@ -8407,7 +8475,9 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   routing.resetRoleAssignment("orchestrator");
   const allProviders = [
     "claude",
-    "antigravity",
+    "antigravity-gemini",
+    "antigravity-claude-gpt",
+    "antigravity-argon",
     "minimax",
     "copilot",
     "opencli-chatgpt",
@@ -9233,7 +9303,7 @@ test("agent-events endpoint applies only bridge-only lifecycle facts, to the req
   const requestId = "lifecycle-req-1";
   noteBridgeRequest(requestId, {
     activitySubject: "lifecycle-agent",
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     model: "flash",
     role: null,
     workspace: null,
@@ -9241,7 +9311,7 @@ test("agent-events endpoint applies only bridge-only lifecycle facts, to the req
   });
   agentActivity.beginRequest("lifecycle-agent", {
     requestId,
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     model: "flash"
   });
 
@@ -9651,7 +9721,7 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   });
   agentActivity.beginRequest("sub-b1", {
     requestId: "req-b1",
-    provider: "antigravity",
+    provider: "antigravity-gemini",
     model: "gemini-3.8-flash",
     role: "explorer",
     origin: "subagent",
@@ -9709,7 +9779,7 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   assert.equal(status.providers.minimax.active, 1);
   assert.equal(status.providers.claude.active, 1);
   assert.equal(status.providers.codex.active, 1);
-  assert.equal(status.providers.antigravity.active, 1);
+  assert.equal(status.providers["antigravity-gemini"].active, 1);
   assert.equal(status.providers.copilot.active, 1);
   assert.equal(status.providers.unattributed, undefined);
   const providerSum = Object.values(status.providers).reduce(

@@ -1120,11 +1120,7 @@ function isProviderCooldown(value: unknown): boolean {
     typeof value.lastResortEligible === "boolean" &&
     (value.scope === undefined ||
       value.scope === "provider" ||
-      value.scope === "pool" ||
       value.scope === "model") &&
-    (value.pool === undefined ||
-      value.pool === null ||
-      typeof value.pool === "string") &&
     (value.model === undefined ||
       value.model === null ||
       typeof value.model === "string")
@@ -1178,26 +1174,6 @@ function isQuotaWindow(value: unknown): boolean {
   );
 }
 
-function isSubproviderQuota(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.pool === "string" &&
-    typeof value.label === "string" &&
-    isQuotaStatus(value.status) &&
-    (value.usedPercent === null || typeof value.usedPercent === "number") &&
-    (value.remainingPercent === null ||
-      typeof value.remainingPercent === "number") &&
-    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt)) &&
-    Array.isArray(value.windows) &&
-    value.windows.every(isQuotaWindow) &&
-    Array.isArray(value.models) &&
-    value.models.every((model) => typeof model === "string") &&
-    (value.cooldown === undefined ||
-      value.cooldown === null ||
-      isProviderCooldown(value.cooldown))
-  );
-}
-
 function isModelQuota(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1205,9 +1181,6 @@ function isModelQuota(value: unknown): boolean {
     (value.displayName === undefined ||
       value.displayName === null ||
       typeof value.displayName === "string") &&
-    (value.pool === undefined ||
-      value.pool === null ||
-      typeof value.pool === "string") &&
     isQuotaStatus(value.status) &&
     (value.usedPercent === null || typeof value.usedPercent === "number") &&
     (value.remainingPercent === null ||
@@ -1238,8 +1211,6 @@ function isProviderQuota(value: unknown): boolean {
     isQuotaStatus(value.summaryStatus) &&
     Array.isArray(value.windows) &&
     value.windows.every(isQuotaWindow) &&
-    (value.pools === undefined ||
-      (Array.isArray(value.pools) && value.pools.every(isSubproviderQuota))) &&
     (value.models === undefined ||
       (Array.isArray(value.models) && value.models.every(isModelQuota)))
   );
@@ -1250,7 +1221,6 @@ function isProviderHealth(value: unknown): boolean {
   return (
     isRecord(value) &&
     (value.cooldown === null || isProviderCooldown(value.cooldown)) &&
-    isProviderCooldownMap(value.poolCooldowns) &&
     isProviderCooldownMap(value.modelCooldowns) &&
     isNonNegativeInteger(value.failureStreak) &&
     isNonNegativeInteger(value.probeFailureStreak) &&
@@ -1270,9 +1240,6 @@ function isProviderHealth(value: unknown): boolean {
         (value.lastFailure.status === null ||
           (isNonNegativeInteger(value.lastFailure.status) &&
             value.lastFailure.status <= 999)) &&
-        (value.lastFailure.pool === undefined ||
-          value.lastFailure.pool === null ||
-          typeof value.lastFailure.pool === "string") &&
         (value.lastFailure.model === undefined ||
           value.lastFailure.model === null ||
           typeof value.lastFailure.model === "string"))) &&

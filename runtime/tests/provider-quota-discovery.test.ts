@@ -127,8 +127,8 @@ test("parseCodexWhamUsage and parseCodexResponseRateLimitHeaders parse 5h and we
   assert.equal(fromHeaders.windows[1]?.usedPercent, 52);
 });
 
-test("parseAntigravityAvailableModelsQuota separates first_party Gemini and third_party Claude pools", () => {
-  const quota = parseAntigravityAvailableModelsQuota(
+test("parseAntigravityAvailableModelsQuota splits one response into a quota per Antigravity provider", () => {
+  const quotas = parseAntigravityAvailableModelsQuota(
     {
       models: {
         "gemini-3.8-flash-tiered": {
@@ -149,29 +149,59 @@ test("parseAntigravityAvailableModelsQuota separates first_party Gemini and thir
           quotaInfo: {
             resetTime: "2026-11-11T18:06:00Z"
           }
+        },
+        "gpt-oss-120b-medium": {
+          displayName: "GPT OSS 120B (Medium)",
+          quotaInfo: {
+            remainingFraction: 0.2,
+            resetTime: "2026-11-09T14:00:00Z"
+          }
         }
       }
     },
     NOW
   );
-  assert.ok(quota);
-  assert.equal(quota.provider, "antigravity");
-  assert.equal(quota.summaryStatus, "available");
-  assert.equal(quota.pools?.length, 2);
+  assert.deepEqual(Object.keys(quotas).sort(), [
+    "antigravity-argon",
+    "antigravity-claude-gpt",
+    "antigravity-gemini"
+  ]);
 
-  const geminiPool = quota.pools?.find((pool) => pool.pool === "first_party");
-  const claudePool = quota.pools?.find((pool) => pool.pool === "third_party");
-  assert.ok(geminiPool);
-  assert.ok(claudePool);
-  assert.equal(geminiPool.status, "available");
-  assert.equal(geminiPool.usedPercent, 59);
-  assert.equal(geminiPool.remainingPercent, 41);
-  assert.ok(geminiPool.models.includes("gemini-3.8-flash-high"));
+  const gemini = quotas["antigravity-gemini"];
+  assert.ok(gemini);
+  assert.equal(gemini.provider, "antigravity-gemini");
+  assert.equal(gemini.summaryStatus, "available");
+  assert.deepEqual(
+    gemini.windows.map((w) => [w.kind, w.usedPercent]),
+    [["five_hour", 59]]
+  );
+  assert.ok(gemini.models?.some((m) => m.model === "gemini-3.8-flash-high"));
+  assert.ok(gemini.models?.every((m) => !m.model.includes("argon")));
 
-  assert.equal(claudePool.status, "exhausted");
-  assert.equal(claudePool.usedPercent, 100);
-  assert.equal(claudePool.remainingPercent, 0);
-  assert.equal(claudePool.resetsAt, "2026-11-11T18:06:00.000Z");
+  // The tiered Flash quota names the Argon efforts too; they are Argon's own.
+  const argon = quotas["antigravity-argon"];
+  assert.ok(argon);
+  assert.deepEqual(
+    argon.models?.map((m) => m.model),
+    ["gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high"]
+  );
+
+  // Claude and GPT-OSS share one quota with a 5-hour and a weekly window; the
+  // provider is out while either is.
+  const claudeGpt = quotas["antigravity-claude-gpt"];
+  assert.ok(claudeGpt);
+  assert.equal(claudeGpt.summaryStatus, "exhausted");
+  assert.deepEqual(
+    claudeGpt.windows.map((w) => [w.kind, w.status, w.usedPercent]),
+    [
+      ["five_hour", "available", 80],
+      ["weekly", "exhausted", 100]
+    ]
+  );
+  assert.equal(
+    claudeGpt.windows.find((w) => w.kind === "weekly")?.resetsAt,
+    "2026-11-11T18:06:00.000Z"
+  );
 });
 
 test("parseCopilotUserQuota and Claude parsers build structured quota snapshots", () => {
@@ -284,11 +314,39 @@ test("parseClaudeRateLimitEvent rolls over windows whose reset time has passed",
   assert.equal(quota.summaryStatus, "available");
 });
 
-test("syncQuotaToCooldowns cools only exhausted subprovider pools and leaves healthy pools uncooled", () => {
+test("an Antigravity model's own quota entry outranks the tiered Flash entry", () => {
+  const quotas = parseAntigravityAvailableModelsQuota(
+    {
+      models: {
+        "gemini-3.8-flash-tiered": {
+          quotaInfo: { resetTime: "2026-11-11T18:06:00Z" }
+        },
+        "gemini-4-argon-high": {
+          displayName: "Gemini 4 Argon (High)",
+          quotaInfo: {
+            remainingFraction: 0.9,
+            resetTime: "2026-11-09T14:00:00Z"
+          }
+        }
+      }
+    },
+    NOW
+  );
+  // Argon High reports its own quota, which is not the exhausted Flash one.
+  assert.equal(
+    quotas["antigravity-argon"]?.models?.find(
+      (m) => m.model === "gemini-4-argon-high"
+    )?.usedPercent,
+    10
+  );
+  assert.equal(quotas["antigravity-gemini"]?.summaryStatus, "exhausted");
+});
+
+test("syncQuotaToCooldowns cools only the exhausted Antigravity provider", () => {
   COOLDOWNS.clearAll();
   clearProviderQuotaCacheForTests();
   try {
-    const quota = parseAntigravityAvailableModelsQuota(
+    const quotas = parseAntigravityAvailableModelsQuota(
       {
         models: {
           "gemini-3.8-flash-tiered": {
@@ -307,34 +365,25 @@ test("syncQuotaToCooldowns cools only exhausted subprovider pools and leaves hea
         }
       },
       NOW
-    )!;
-    syncQuotaToCooldowns(quota, NOW);
+    );
+    for (const quota of Object.values(quotas)) syncQuotaToCooldowns(quota, NOW);
 
     assert.equal(
-      COOLDOWNS.get("antigravity", NOW),
+      COOLDOWNS.get("antigravity-gemini", NOW),
       null,
-      "provider-wide Antigravity cooldown must remain null while first_party Gemini has remaining quota"
+      "Gemini keeps serving while the Claude/GPT-OSS quota is spent"
     );
-    assert.equal(
-      COOLDOWNS.get("antigravity", NOW, "gemini-3.8-flash-high"),
-      null,
-      "Gemini models in first_party pool must remain available"
-    );
-    const claudeCooldown = COOLDOWNS.get(
-      "antigravity",
-      NOW,
-      "claude-opus-5-5-high"
-    );
-    assert.ok(claudeCooldown, "Claude pool must be cooled down until reset");
-    assert.equal(claudeCooldown.pool, "third_party");
+    const claudeCooldown = COOLDOWNS.get("antigravity-claude-gpt", NOW);
+    assert.ok(claudeCooldown, "Claude/GPT-OSS is cooled down until reset");
+    assert.equal(claudeCooldown.failureClass, "quota_exhausted");
+    assert.equal(claudeCooldown.resetsAt, "2026-11-11T18:06:00.000Z");
 
-    const overlaid = overlayRouterCooldownsOnQuota("antigravity", quota, NOW);
-    assert.ok(overlaid);
-    const thirdParty = overlaid.pools?.find((p) => p.pool === "third_party");
-    assert.equal(thirdParty?.status, "exhausted");
-    assert.ok(thirdParty?.cooldown);
-    assert.equal(thirdParty?.cooldown.scope, "pool");
-    assert.equal(thirdParty?.cooldown.pool, "third_party");
+    const overlaid = overlayRouterCooldownsOnQuota(
+      "antigravity-claude-gpt",
+      quotas["antigravity-claude-gpt"]!,
+      NOW
+    );
+    assert.equal(overlaid?.summaryStatus, "exhausted");
   } finally {
     COOLDOWNS.clearAll();
     clearProviderQuotaCacheForTests();
@@ -344,7 +393,9 @@ test("syncQuotaToCooldowns cools only exhausted subprovider pools and leaves hea
 test("createProviderQuotaDiscoveryService manages lifecycle and snapshots", async () => {
   assert.equal(PROVIDER_QUOTA_REFRESH_INTERVAL_MS, 60_000);
   assert.deepEqual(DEFAULT_QUOTA_PROVIDERS, [
-    "antigravity",
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt",
     "codex",
     "minimax",
     "copilot",
@@ -353,7 +404,7 @@ test("createProviderQuotaDiscoveryService manages lifecycle and snapshots", asyn
 
   const customNow = 1_000_000;
   const service = createProviderQuotaDiscoveryService({
-    providers: ["antigravity"],
+    providers: ["antigravity-gemini"],
     intervalMs: 500,
     now: () => customNow
   });
@@ -367,7 +418,7 @@ test("createProviderQuotaDiscoveryService manages lifecycle and snapshots", asyn
 
   await service.refresh();
   const snapAfter = service.snapshot();
-  assert.ok("antigravity" in snapAfter);
+  assert.ok("antigravity-gemini" in snapAfter);
 
   service.stop();
   // Double-stop is safe

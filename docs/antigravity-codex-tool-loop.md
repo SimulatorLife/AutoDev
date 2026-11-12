@@ -80,10 +80,11 @@ The repository is already partway through this transition
 
 ### Codex-owned delegation
 
-`config/execution-contract.json` currently declares:
+`config/execution-contract.json` currently declares, for each Antigravity
+provider (`antigravity-gemini`, `antigravity-argon`, `antigravity-claude-gpt`):
 
 ```json
-"antigravity": {
+"antigravity-gemini": {
   "spawnTools": ["invoke_subagent"],
   "permissionMode": "configured",
   "delegation": "codex-shim"

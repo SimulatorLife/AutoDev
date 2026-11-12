@@ -16,6 +16,8 @@
  * being written verbatim.
  */
 
+import { ANTIGRAVITY_PROVIDERS } from "@simulatorlife/autodev-core";
+
 import { safeAutoDevAgentRole } from "./resource-context/index.ts";
 
 const IDENTITY_DOMAIN = "agents.autodev.local";
@@ -30,7 +32,7 @@ const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/u;
  * A provider outside it is not written into a commit; it becomes `other`.
  */
 const KNOWN_PROVIDERS = new Set([
-  "antigravity",
+  ...ANTIGRAVITY_PROVIDERS,
   "claude",
   "claude-code",
   "codex",

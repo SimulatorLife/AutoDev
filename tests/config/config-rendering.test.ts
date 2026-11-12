@@ -516,7 +516,12 @@ test("Playtester and Browser Tester declare isolated MCP injection requirements"
     false,
     "the MCP reads the runner token from the protected secret file"
   );
-  assert.deepEqual(contract.providers.antigravity?.roleMcpInjection, true);
+  for (const provider of [
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt"
+  ])
+    assert.deepEqual(contract.providers[provider]?.roleMcpInjection, true);
   assert.deepEqual(contract.providers.copilot?.roleMcpInjection, true);
   assert.equal(contract.providers.codex?.roleMcpInjection ?? false, false);
   assert.equal(contract.providers.claude?.roleMcpInjection ?? false, false);

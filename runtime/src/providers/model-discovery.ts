@@ -4,15 +4,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type {
+  AntigravityProvider,
   ControlApiDiscoveredProviderModel,
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
 import { providerSignInRequiredMessage } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
+  ANTIGRAVITY_PROVIDER_PATTERNS,
   OPENCLI_PROVIDERS,
-  type OpencliProvider,
-  providerQuotaPool
+  type OpencliProvider
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { loadCodexAuth } from "../router/proxy.ts";
@@ -256,82 +257,124 @@ function agyExecutable(env: NodeJS.ProcessEnv): string {
   );
 }
 
-export function createAntigravityModelDiscoveryAdapter(
+/**
+ * One model-discovery adapter per Antigravity provider, all answered by one
+ * `agy models` listing.
+ *
+ * `agy models` lists every model the subscription serves; each Antigravity
+ * provider (`antigravity-gemini`, `antigravity-argon`,
+ * `antigravity-claude-gpt`) offers the ones its route owns. A refresh asks
+ * every provider, so the providers asking while a listing is running share it
+ * rather than each spawning the CLI.
+ */
+export function createAntigravityModelDiscoveryAdapters(
   env: NodeJS.ProcessEnv = process.env,
   spawnProcess: typeof spawn = spawn
-): ProviderModelDiscoveryAdapter {
-  return {
-    source: "agy models",
-    discover: (signal) =>
-      new Promise((resolve, reject) => {
-        if (signal.aborted) {
-          reject(new Error("provider model discovery was cancelled"));
-          return;
-        }
-        const child = spawnProcess(agyExecutable(env), ["models"], {
-          cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
-          env,
-          stdio: ["ignore", "pipe", "ignore"]
+): Readonly<Record<AntigravityProvider, ProviderModelDiscoveryAdapter>> {
+  let listing: Promise<readonly ProviderModelDiscoveryItem[]> | null = null;
+  const sharedListing = (
+    signal: AbortSignal
+  ): Promise<readonly ProviderModelDiscoveryItem[]> => {
+    if (listing === null) {
+      const started: Promise<readonly ProviderModelDiscoveryItem[]> =
+        listAgyModels(env, spawnProcess, signal).finally(() => {
+          if (listing === started) listing = null;
         });
-        const chunks: Buffer[] = [];
-        let byteLength = 0;
-        let settled = false;
-        const finish = (
-          error?: Error,
-          result?: readonly ProviderModelDiscoveryItem[]
-        ) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          signal.removeEventListener("abort", abort);
-          if (error) reject(error);
-          else resolve(result ?? []);
-        };
-        const abort = (): void => {
-          child.kill("SIGTERM");
-          finish(new Error("provider model discovery was cancelled"));
-        };
-        const timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          const forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
-          forceKill.unref();
-          finish(new Error("agy model discovery timed out"));
-        }, ANTIGRAVITY_CLI_TIMEOUT_MS);
-        timer.unref();
-        signal.addEventListener("abort", abort, { once: true });
-        child.stdout.on("data", (chunk: Buffer) => {
-          byteLength += chunk.length;
-          if (byteLength > MAX_AGY_OUTPUT_BYTES) {
-            child.kill("SIGTERM");
-            finish(new Error("agy model list exceeded the response bound"));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        child.once("error", () => {
-          finish(new Error("agy models could not be started"));
-        });
-        child.once("close", (code) => {
-          if (settled) return;
-          if (code !== 0) {
-            finish(new Error(`agy models exited with status ${String(code)}`));
-            return;
-          }
-          try {
-            finish(
-              undefined,
-              parseAntigravityModelList(Buffer.concat(chunks).toString("utf8"))
-            );
-          } catch (error) {
-            finish(
-              error instanceof Error
-                ? error
-                : new Error("agy model list was invalid")
-            );
-          }
-        });
-      })
+      listing = started;
+    }
+    return listing;
   };
+  const adapter = (
+    provider: AntigravityProvider
+  ): ProviderModelDiscoveryAdapter => ({
+    source: "agy models",
+    discover: async (signal) => {
+      const models = await sharedListing(signal);
+      return models.filter((model) =>
+        ANTIGRAVITY_PROVIDER_PATTERNS[provider].test(model.id)
+      );
+    }
+  });
+  return {
+    "antigravity-gemini": adapter("antigravity-gemini"),
+    "antigravity-argon": adapter("antigravity-argon"),
+    "antigravity-claude-gpt": adapter("antigravity-claude-gpt")
+  };
+}
+
+function listAgyModels(
+  env: NodeJS.ProcessEnv,
+  spawnProcess: typeof spawn,
+  signal: AbortSignal
+): Promise<readonly ProviderModelDiscoveryItem[]> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("provider model discovery was cancelled"));
+      return;
+    }
+    const child = spawnProcess(agyExecutable(env), ["models"], {
+      cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
+      env,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    let settled = false;
+    const finish = (
+      error?: Error,
+      result?: readonly ProviderModelDiscoveryItem[]
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve(result ?? []);
+    };
+    const abort = (): void => {
+      child.kill("SIGTERM");
+      finish(new Error("provider model discovery was cancelled"));
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      const forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
+      forceKill.unref();
+      finish(new Error("agy model discovery timed out"));
+    }, ANTIGRAVITY_CLI_TIMEOUT_MS);
+    timer.unref();
+    signal.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      byteLength += chunk.length;
+      if (byteLength > MAX_AGY_OUTPUT_BYTES) {
+        child.kill("SIGTERM");
+        finish(new Error("agy model list exceeded the response bound"));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.once("error", () => {
+      finish(new Error("agy models could not be started"));
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      if (code !== 0) {
+        finish(new Error(`agy models exited with status ${String(code)}`));
+        return;
+      }
+      try {
+        finish(
+          undefined,
+          parseAntigravityModelList(Buffer.concat(chunks).toString("utf8"))
+        );
+      } catch (error) {
+        finish(
+          error instanceof Error
+            ? error
+            : new Error("agy model list was invalid")
+        );
+      }
+    });
+  });
 }
 
 async function boundedResponseText(
@@ -795,7 +838,7 @@ function defaultAdapters(): Readonly<
   Record<string, ProviderModelDiscoveryAdapter>
 > {
   return {
-    antigravity: createAntigravityModelDiscoveryAdapter(),
+    ...createAntigravityModelDiscoveryAdapters(),
     minimax: minimaxModelAdapter(),
     codex: codexModelAdapter(),
     claude: claudeModelAdapter(),
@@ -814,17 +857,11 @@ function routeability(
   modelId: string
 ): ControlApiDiscoveredProviderModel["routeability"] {
   const route = ROUTES.find((candidate) => candidate.provider === provider);
-  const matchesRoute = route?.pattern.test(modelId) ?? false;
-  // Antigravity's quota attribution is model-family-specific as well as
-  // pattern-specific. A matching route is not enough if the Runtime cannot
-  // classify which provider quota pool owns the discovered model.
-  const hasQuotaOwner =
-    provider !== "antigravity" || providerQuotaPool(provider, modelId) !== null;
-  return matchesRoute && hasQuotaOwner
+  return route?.pattern.test(modelId)
     ? { status: "supported" }
     : {
         status: "unsupported",
-        reason: "Runtime has no route and quota ownership for this model ID."
+        reason: "Runtime has no route for this model ID."
       };
 }
 

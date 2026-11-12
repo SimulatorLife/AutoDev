@@ -156,7 +156,9 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
       [
         "codex",
         "claude",
-        "antigravity",
+        "antigravity-gemini",
+        "antigravity-argon",
+        "antigravity-claude-gpt",
         "copilot",
         "minimax",
         "opencli-chatgpt",
@@ -166,7 +168,9 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
     {
       codex: "native",
       claude: "codex-shim",
-      antigravity: "codex-shim",
+      "antigravity-gemini": "codex-shim",
+      "antigravity-argon": "codex-shim",
+      "antigravity-claude-gpt": "codex-shim",
       copilot: "codex-shim",
       minimax: "native",
       "opencli-chatgpt": "native",

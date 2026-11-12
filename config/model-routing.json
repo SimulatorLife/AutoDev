@@ -3,7 +3,9 @@
     "default": [
       [
         "claude",
-        "antigravity",
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
+        "antigravity-argon",
         "minimax"
       ],
       [
@@ -17,7 +19,9 @@
       [
         "claude",
         "minimax",
-        "antigravity"
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
+        "antigravity-argon"
       ],
       [
         "copilot"
@@ -29,7 +33,9 @@
     "smart": [
       [
         "claude",
-        "antigravity",
+        "antigravity-gemini",
+        "antigravity-claude-gpt",
+        "antigravity-argon",
         "minimax"
       ],
       [
@@ -43,7 +49,8 @@
       [
         "claude",
         "copilot",
-        "antigravity"
+        "antigravity-gemini",
+        "antigravity-claude-gpt"
       ]
     ]
   },
@@ -60,14 +67,26 @@
       "healthUrl": "http://127.0.0.1:18765/health",
       "envKey": "MINIMAX_API_KEY"
     },
-    "antigravity": {
-      "pattern": "^(gemini-[A-Za-z0-9][A-Za-z0-9.-]*|claude-[a-z0-9-]*[a-z0-9]-(?:low|medium|high))$",
+    "antigravity-gemini": {
+      "pattern": "^gemini-(?![0-9][0-9.]*-argon(?:-|$))[A-Za-z0-9][A-Za-z0-9.-]*$",
+      "baseUrl": "http://127.0.0.1:4002/v1",
+      "healthUrl": "http://127.0.0.1:4002/health/liveliness",
+      "envKey": "LITELLM_API_KEY"
+    },
+    "antigravity-argon": {
+      "pattern": "^gemini-[0-9][0-9.]*-argon-(?:low|medium|high)$",
+      "baseUrl": "http://127.0.0.1:4002/v1",
+      "healthUrl": "http://127.0.0.1:4002/health/liveliness",
+      "envKey": "LITELLM_API_KEY"
+    },
+    "antigravity-claude-gpt": {
+      "pattern": "^(?:claude-[a-z0-9-]*[a-z0-9]|gpt-oss-[a-z0-9-]*[a-z0-9])-(?:low|medium|high)$",
       "baseUrl": "http://127.0.0.1:4002/v1",
       "healthUrl": "http://127.0.0.1:4002/health/liveliness",
       "envKey": "LITELLM_API_KEY"
     },
     "codex": {
-      "pattern": "^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$",
+      "pattern": "^(gpt-(?!oss-)[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$",
       "baseUrl": "https://chatgpt.com/backend-api/codex",
       "envKey": null
     },
@@ -93,13 +112,32 @@
     }
   },
   "providers": {
-    "antigravity": {
+    "antigravity-gemini": {
       "models": {
         "smart": "gemini-3.8-flash-high",
         "orchestrator": "gemini-3.8-flash-high",
-        "default": "gemini-3.8-flash-medium",
-        "claude-opus": "claude-opus-5-5-high",
-        "claude-sonnet": "claude-sonnet-5-5-medium"
+        "default": "gemini-3.8-flash-medium"
+      },
+      "links": {
+        "usage": "https://gemini.google.com/u/1/usage?pli=1",
+        "documentation": "https://ai.google.dev/gemini-api/docs"
+      }
+    },
+    "antigravity-claude-gpt": {
+      "models": {
+        "smart": "claude-opus-5-5-high",
+        "orchestrator": "claude-opus-5-5-high",
+        "default": "claude-sonnet-5-5-medium"
+      },
+      "links": {
+        "usage": "https://gemini.google.com/u/1/usage?pli=1",
+        "documentation": "https://ai.google.dev/gemini-api/docs"
+      }
+    },
+    "antigravity-argon": {
+      "models": {
+        "smart": "gemini-4-argon-high",
+        "default": "gemini-4-argon-medium"
       },
       "links": {
         "usage": "https://gemini.google.com/u/1/usage?pli=1",
@@ -205,7 +243,8 @@
     "tier": "orchestrator",
     "reasoningEffort": {
       "claude": "medium",
-      "antigravity": "high"
+      "antigravity-gemini": "high",
+      "antigravity-claude-gpt": "high"
     }
   }
 }

@@ -232,7 +232,9 @@ const CODEX_ROLE_MODELS = [
 const PROVIDER_CATALOG_FILES = [
   "claude-model-catalog.json",
   "minimax-model-catalog.json",
-  "antigravity-model-catalog.json",
+  "antigravity-gemini-model-catalog.json",
+  "antigravity-argon-model-catalog.json",
+  "antigravity-claude-gpt-model-catalog.json",
   "opencli-chatgpt-model-catalog.json",
   "opencli-gemini-model-catalog.json"
 ] as const;

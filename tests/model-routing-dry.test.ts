@@ -133,7 +133,13 @@ test("renderModelCatalog dynamically generates complete codex-model-catalog from
       `Catalog must contain configured Codex model ${model}`
     );
   }
-  for (const providerCatalog of ["claude", "minimax", "antigravity"]) {
+  for (const providerCatalog of [
+    "claude",
+    "minimax",
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt"
+  ]) {
     const source = JSON.parse(
       await readFile(
         join(CATALOGS_DIR, `${providerCatalog}-model-catalog.json`),

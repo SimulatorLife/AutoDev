@@ -5,10 +5,9 @@ import test from "node:test";
 import {
   captureCliVersion,
   parseCliVersion,
-  ProviderCliVersionService,
   providerCliCommand,
-  providerCliName
-} from "../src/providers/cli-versions.ts";
+  providerCliName,
+  ProviderCliVersionService} from "../src/providers/cli-versions.ts";
 
 /**
  * A child process that prints `output` and exits, without starting anything.
@@ -72,11 +71,15 @@ test("a provider's CLI is named by the command an operator would type", () => {
   } as NodeJS.ProcessEnv;
   assert.equal(providerCliCommand("claude", env)?.command, "claude");
   assert.equal(providerCliCommand("claude", env)?.program, process.execPath);
-  assert.equal(providerCliCommand("antigravity", env)?.command, "agy");
-  assert.equal(
-    providerCliCommand("antigravity", env)?.program,
-    process.execPath
-  );
+  // Every Antigravity provider is served by the one agy CLI.
+  for (const provider of [
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt"
+  ]) {
+    assert.equal(providerCliCommand(provider, env)?.command, "agy");
+    assert.equal(providerCliCommand(provider, env)?.program, process.execPath);
+  }
   // The name of each provider's CLI is known whether or not the CLI is
   // installed, so a provider whose CLI is missing is still named.
   assert.equal(providerCliName("codex"), "codex");
@@ -93,7 +96,7 @@ test("a CLI that is not installed has no command to run", () => {
   // An empty PATH and a home with no install: the CLI is not on this machine.
   const env = { PATH: "", HOME: "/nonexistent-home" } as NodeJS.ProcessEnv;
   assert.equal(providerCliCommand("claude", env), null);
-  assert.equal(providerCliCommand("antigravity", env), null);
+  assert.equal(providerCliCommand("antigravity-gemini", env), null);
   assert.equal(providerCliCommand("minimax", env), null);
   assert.equal(providerCliCommand("copilot", env), null);
 });
@@ -180,6 +183,30 @@ test("the service reports the version it read and the reason for the one it coul
   assert.equal(
     claude?.cli.status === "unavailable" ? claude.cli.command : "",
     "claude"
+  );
+});
+
+test("providers served by the same CLI share one version read per refresh", async () => {
+  const reads: string[] = [];
+  const service = new ProviderCliVersionService({
+    providerIds: () => [
+      "antigravity-gemini",
+      "antigravity-argon",
+      "antigravity-claude-gpt"
+    ],
+    env: { PATH: "", HOME: "/nonexistent-home" } as NodeJS.ProcessEnv,
+    now: () => new Date("2026-11-09T12:00:00.000Z"),
+    locate: () => ({ command: "agy", program: "/opt/bin/agy", args: [] }),
+    capture: (command) => {
+      reads.push(command.program);
+      return Promise.resolve({ ok: true, version: "1.5.3" });
+    }
+  });
+  await service.refresh();
+  assert.deepEqual(reads, ["/opt/bin/agy"]);
+  assert.deepEqual(
+    service.snapshot().providers.map((entry) => entry.cli.status),
+    ["observed", "observed", "observed"]
   );
 });
 

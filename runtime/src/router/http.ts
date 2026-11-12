@@ -83,7 +83,6 @@ import {
   loadCodexStateCollectorConfig
 } from "@simulatorlife/autodev-runtime/router/state-collector";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import {
   isDirectory,
   parseTurnMetadataJson,
@@ -225,7 +224,6 @@ export const providerTelemetry = new Map(
         timestamp: string;
         class: string | null;
         status: number | null | undefined;
-        pool?: string | null;
         model?: string | null;
       } | null,
       lastCheck: null as ControlApiProviderCheck | null
@@ -392,10 +390,6 @@ const routerEvents = new RouterEventRecorder({
         state.lastFailureClass = null;
         state.lastFailure = null;
       } else if (!isNonProviderHealthFailure(event)) {
-        const pool =
-          event.provider && event.model
-            ? providerQuotaPool(event.provider, event.model)
-            : null;
         state.failures += 1;
         state.lastFailureAt = event.timestamp;
         state.lastFailureClass = event.failureClass;
@@ -403,7 +397,6 @@ const routerEvents = new RouterEventRecorder({
           timestamp: event.timestamp,
           class: event.failureClass,
           status: event.status,
-          ...(pool ? { pool } : {}),
           ...(event.model ? { model: event.model } : {})
         };
       }
@@ -1319,20 +1312,18 @@ function providerTierPriorities(provider: string): string[] {
 }
 
 /**
- * The routes of one provider that are out.
+ * The models of one provider that are out.
  *
- * A cooldown belongs to the route that failed, not to the provider: a pooled
- * provider (Antigravity) cools one quota pool, and a rejected model cools one
- * model. The provider-wide cooldown is therefore only non-null when the whole
- * provider is out, and the routes that are out are named here -- otherwise a
- * provider with one exhausted pool reads as "ready" and the traffic that
- * vanished has nowhere to show up.
+ * A cooldown belongs to the route that failed, not to the provider: a rejected
+ * model cools one model. The provider-wide cooldown is therefore only non-null
+ * when the whole provider is out, and the models that are out are named here
+ * -- otherwise a provider with one rejected model reads as "ready" and the
+ * traffic that vanished has nowhere to show up.
  */
 function scopedProviderCooldowns(
   provider: string,
   now: number
 ): Record<string, unknown> {
-  const pools = COOLDOWNS.getPoolCooldowns(provider, now);
   const models = COOLDOWNS.getModelCooldowns(provider, now);
   const serialize = (entries: Record<string, CooldownEntry>) =>
     Object.fromEntries(
@@ -1342,9 +1333,6 @@ function scopedProviderCooldowns(
       ])
     );
   return {
-    ...(Object.keys(pools).length > 0
-      ? { poolCooldowns: serialize(pools) }
-      : {}),
     ...(Object.keys(models).length > 0
       ? { modelCooldowns: serialize(models) }
       : {})
@@ -1458,9 +1446,7 @@ function serializeProviderCooldown(
     until: new Date(cooldown.until).toISOString(),
     resetsAt: cooldown.resetsAt ?? null,
     lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now),
-    ...(cooldown.pool !== undefined ? { scope: "pool" as const } : {}),
     ...(cooldown.model !== undefined ? { scope: "model" as const } : {}),
-    ...(cooldown.pool !== undefined ? { pool: cooldown.pool } : {}),
     ...(cooldown.model !== undefined ? { model: cooldown.model } : {})
   };
 }
@@ -1474,10 +1460,6 @@ function controlApiProviderHealth(
     ROUTES.map((route) => {
       const state = providerState(route.provider);
       const cooldown = COOLDOWNS.get(route.provider, now);
-      const rawPoolCooldowns = COOLDOWNS.getPoolCooldowns(route.provider, now);
-      const poolCooldownEntries = Object.entries(rawPoolCooldowns).map(
-        ([pool, entry]) => [pool, serializeProviderCooldown(entry, now)]
-      );
       const rawModelCooldowns = COOLDOWNS.getModelCooldowns(
         route.provider,
         now
@@ -1493,9 +1475,6 @@ function controlApiProviderHealth(
           : null;
       const health: ControlApiProviderHealth = {
         cooldown: cooldown ? serializeProviderCooldown(cooldown, now) : null,
-        ...(poolCooldownEntries.length > 0
-          ? { poolCooldowns: Object.fromEntries(poolCooldownEntries) }
-          : {}),
         ...(modelCooldownEntries.length > 0
           ? { modelCooldowns: Object.fromEntries(modelCooldownEntries) }
           : {}),
@@ -1512,9 +1491,6 @@ function controlApiProviderHealth(
               at: activeLastFailure.timestamp,
               failureClass: activeLastFailure.class,
               status: activeLastFailure.status ?? null,
-              ...(activeLastFailure.pool !== undefined
-                ? { pool: activeLastFailure.pool }
-                : {}),
               ...(activeLastFailure.model !== undefined
                 ? { model: activeLastFailure.model }
                 : {})

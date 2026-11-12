@@ -8,7 +8,7 @@ import test from "node:test";
 
 import {
   copilotModelSource,
-  createAntigravityModelDiscoveryAdapter,
+  createAntigravityModelDiscoveryAdapters,
   discoverBridgeModels,
   discoverCodexModels,
   discoverMiniMaxModels,
@@ -72,18 +72,27 @@ test("agy model parsing preserves provider IDs and labels", () => {
   assert.deepEqual(parseAntigravityModelList(""), []);
 });
 
-test("Antigravity discovery accepts a slow bounded CLI listing", async (t) => {
+test("Antigravity discovery accepts a slow bounded CLI listing and shares it across providers", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const killedSignals: NodeJS.Signals[] = [];
   const child = fakeAgyChild(killedSignals);
-  const spawnProcess = (() => child) as unknown as typeof spawn;
-  const adapter = createAntigravityModelDiscoveryAdapter(
+  let spawns = 0;
+  const spawnProcess = (() => {
+    spawns += 1;
+    return child;
+  }) as unknown as typeof spawn;
+  const adapters = createAntigravityModelDiscoveryAdapters(
     { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
     spawnProcess
   );
   try {
-    const outcome = adapter.discover(new AbortController().signal).then(
-      (models) => ({ models }),
+    const signal = new AbortController().signal;
+    const outcome = Promise.all([
+      adapters["antigravity-gemini"].discover(signal),
+      adapters["antigravity-argon"].discover(signal),
+      adapters["antigravity-claude-gpt"].discover(signal)
+    ]).then(
+      ([gemini, argon, claudeGpt]) => ({ gemini, argon, claudeGpt }),
       (error: unknown) => ({ error })
     );
     t.mock.timers.tick(8500);
@@ -91,12 +100,18 @@ test("Antigravity discovery accepts a slow bounded CLI listing", async (t) => {
     child.emit("close", 0);
 
     const result = await outcome;
+    // One `agy models` listing answers every Antigravity provider, and each
+    // offers only the models its own quota serves.
+    assert.equal(spawns, 1);
     assert.deepEqual(result, {
-      models: [
+      gemini: [
         {
           id: "gemini-3.8-flash-low",
           displayName: "Gemini 3.8 Flash (Low)"
-        },
+        }
+      ],
+      argon: [],
+      claudeGpt: [
         { id: "gpt-oss-120b-medium", displayName: "GPT OSS 120B (Medium)" }
       ]
     });
@@ -111,10 +126,10 @@ test("Antigravity discovery remains bounded when the CLI stalls", async (t) => {
   const killedSignals: NodeJS.Signals[] = [];
   const child = fakeAgyChild(killedSignals);
   const spawnProcess = (() => child) as unknown as typeof spawn;
-  const adapter = createAntigravityModelDiscoveryAdapter(
+  const adapter = createAntigravityModelDiscoveryAdapters(
     { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
     spawnProcess
-  );
+  )["antigravity-gemini"];
   try {
     const outcome = adapter.discover(new AbortController().signal).then(
       () => null,
@@ -474,9 +489,9 @@ test("discovery snapshots distinguish observed-empty, unavailable, and unsupport
     discover: async () => [{ id: "MiniMax-M3", displayName: null }]
   };
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["antigravity", "claude", "minimax", "copilot"],
+    providerIds: () => ["antigravity-gemini", "claude", "minimax", "copilot"],
     adapters: {
-      antigravity: observedAdapter,
+      "antigravity-gemini": observedAdapter,
       claude: emptyAdapter,
       minimax: minimaxAdapter
     },
@@ -497,7 +512,7 @@ test("discovery snapshots distinguish observed-empty, unavailable, and unsupport
   assert.equal(antigravityReads, 1);
   const afterRefresh = service.snapshot();
   const antigravity = afterRefresh.providers.find(
-    (entry) => entry.provider === "antigravity"
+    (entry) => entry.provider === "antigravity-gemini"
   )?.discovery;
   const claude = afterRefresh.providers.find(
     (entry) => entry.provider === "claude"
@@ -553,8 +568,8 @@ test("a failed refresh retains the last observed list as stale, not as current",
   };
   let now = 0;
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["antigravity"],
-    adapters: { antigravity: adapter },
+    providerIds: () => ["antigravity-gemini"],
+    adapters: { "antigravity-gemini": adapter },
     now: () => new Date(Date.UTC(2026, 9, 14, 12, 0, now++))
   });
 
@@ -581,9 +596,9 @@ test("an empty listing keeps the provider's last non-empty models", async () => 
   restoreProviderModelDiscoveryPersistence(null);
   let empty = false;
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["antigravity"],
+    providerIds: () => ["antigravity-gemini"],
     adapters: {
-      antigravity: {
+      "antigravity-gemini": {
         source: "fixture provider list",
         discover: async () =>
           empty ? [] : parseAntigravityModelList(AGY_MODELS)
@@ -607,9 +622,9 @@ test("a failed listing is retried soon rather than at the next refresh interval"
   restoreProviderModelDiscoveryPersistence(null);
   let attempts = 0;
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["antigravity"],
+    providerIds: () => ["antigravity-gemini"],
     adapters: {
-      antigravity: {
+      "antigravity-gemini": {
         source: "fixture provider list",
         discover: async () => {
           attempts += 1;
@@ -636,7 +651,7 @@ test("a failed listing is retried soon rather than at the next refresh interval"
 });
 
 test("last-known provider models survive restart as stale until a fresh listing succeeds", async () => {
-  const provider = "antigravity";
+  const provider = "antigravity-gemini";
   const directory = mkdtempSync(
     join(tmpdir(), "autodev-provider-model-state-")
   );
@@ -743,7 +758,7 @@ test("last-known provider models survive restart as stale until a fresh listing 
 test("an invalid persisted model snapshot is discarded and remains unavailable", () => {
   const previousPersistence = providerModelDiscoveryPersistenceSnapshot();
   const previousDiscovered = ROUTING_POLICY.discoveredModels()
-    .filter((model) => model.provider === "antigravity")
+    .filter((model) => model.provider === "antigravity-gemini")
     .map(({ id, displayName, routeability }) => ({
       id,
       displayName,
@@ -754,7 +769,7 @@ test("an invalid persisted model snapshot is discarded and remains unavailable",
       schema: "autodev-provider-model-discovery-state-v1",
       providers: [
         {
-          provider: "antigravity",
+          provider: "antigravity-gemini",
           source: "fixture provider source",
           observedAt: "2026-10-14T12:00:00.000Z",
           lastAttemptAt: "2026-10-14T12:00:00.000Z",
@@ -766,9 +781,9 @@ test("an invalid persisted model snapshot is discarded and remains unavailable",
     false
   );
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["antigravity"],
+    providerIds: () => ["antigravity-gemini"],
     adapters: {
-      antigravity: {
+      "antigravity-gemini": {
         source: "fixture provider source",
         discover: async () => []
       }
@@ -781,7 +796,10 @@ test("an invalid persisted model snapshot is discarded and remains unavailable",
   }
   service.stop();
   restoreProviderModelDiscoveryPersistence(previousPersistence);
-  ROUTING_POLICY.setDiscoveredProviderModels("antigravity", previousDiscovered);
+  ROUTING_POLICY.setDiscoveredProviderModels(
+    "antigravity-gemini",
+    previousDiscovered
+  );
 });
 
 test("providers without verified provider-owned listings remain unavailable", async () => {

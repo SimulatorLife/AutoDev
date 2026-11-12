@@ -27,7 +27,7 @@ Codex session. Where it is absent -- including for a Gemini model served by
 opencli, which is not Antigravity -- use `multi_agent_v1__spawn_agent` through
 `exec`. Every catalog in
 `config/catalogs/` and every model catalog in
-`~/.codex/{codex,claude,minimax,antigravity}-model-catalog.json` declares
+`~/.codex/*-model-catalog.json` declares
 `"tool_mode": "code_mode_only"` and `"multi_agent_version": "v1"`, so
 Codex delivers the entire tool surface as one `exec` custom tool whose input
 is raw JavaScript evaluated against a `tools` global; the spawn and

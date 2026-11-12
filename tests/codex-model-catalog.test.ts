@@ -97,7 +97,9 @@ test("every catalog model compacts and truncates tool output inside the cost ban
     "codex",
     "claude",
     "minimax",
-    "antigravity",
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt",
     "opencli-chatgpt",
     "opencli-gemini"
   ]) {
@@ -131,7 +133,13 @@ test("every catalog model compacts and truncates tool output inside the cost ban
 });
 
 test("provider profiles leave compaction to the model catalog", async () => {
-  for (const profile of ["minimax", "claude", "antigravity"]) {
+  for (const profile of [
+    "minimax",
+    "claude",
+    "antigravity-gemini",
+    "antigravity-argon",
+    "antigravity-claude-gpt"
+  ]) {
     const source = await readFile(
       new URL(`../config/profiles/${profile}.config.toml`, import.meta.url),
       "utf8"

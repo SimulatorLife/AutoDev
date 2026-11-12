@@ -1,98 +1,6 @@
 {
   "models": [
     {
-      "slug": "gemini-3.8-flash-high",
-      "display_name": "Antigravity Gemini Flash subscription (High)",
-      "description": "Antigravity CLI subscription through the local Responses adapter.",
-      "default_reasoning_level": "high",
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Gemini low reasoning"
-        },
-        {
-          "effort": "medium",
-          "description": "Gemini medium reasoning"
-        },
-        {
-          "effort": "high",
-          "description": "Gemini high reasoning"
-        }
-      ],
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 0,
-      "base_instructions": "You are a bounded external-provider Codex agent.",
-      "model_messages": {
-        "instructions_template": "You are a bounded external-provider Codex agent."
-      },
-      "context_window": 1000000,
-      "max_context_window": 1000000,
-      "auto_compact_token_limit": 200000,
-      "supports_parallel_tool_calls": false,
-      "support_verbosity": true,
-      "supports_search_tool": false,
-      "tool_mode": "code_mode_only",
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 6000
-      },
-      "experimental_supported_tools": [],
-      "use_responses_lite": false,
-      "multi_agent_version": "v1",
-      "input_modalities": [
-        "text",
-        "image"
-      ]
-    },
-    {
-      "slug": "gemini-3.8-flash-medium",
-      "display_name": "Antigravity Gemini Flash subscription",
-      "description": "Antigravity CLI subscription through the local Responses adapter.",
-      "default_reasoning_level": "medium",
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Gemini low reasoning"
-        },
-        {
-          "effort": "medium",
-          "description": "Gemini medium reasoning"
-        },
-        {
-          "effort": "high",
-          "description": "Gemini high reasoning"
-        }
-      ],
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 0,
-      "base_instructions": "You are a bounded external-provider Codex agent.",
-      "model_messages": {
-        "instructions_template": "You are a bounded external-provider Codex agent."
-      },
-      "context_window": 1000000,
-      "max_context_window": 1000000,
-      "auto_compact_token_limit": 200000,
-      "supports_parallel_tool_calls": false,
-      "support_verbosity": true,
-      "supports_search_tool": false,
-      "tool_mode": "code_mode_only",
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 6000
-      },
-      "experimental_supported_tools": [],
-      "use_responses_lite": false,
-      "multi_agent_version": "v1",
-      "input_modalities": [
-        "text",
-        "image"
-      ]
-    },
-    {
       "slug": "claude-opus-5-5-high",
       "display_name": "Antigravity Claude Opus 5.5 (High)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
@@ -366,6 +274,51 @@
       "input_modalities": [
         "text",
         "image"
+      ]
+    },
+    {
+      "slug": "gpt-oss-120b-medium",
+      "display_name": "Antigravity GPT-OSS 120B (Medium)",
+      "description": "GPT-OSS 120B through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "GPT-OSS low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "GPT-OSS medium reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "GPT-OSS high reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 131072,
+      "max_context_window": 131072,
+      "auto_compact_token_limit": 117964,
+      "supports_parallel_tool_calls": false,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 6000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
       ]
     }
   ]

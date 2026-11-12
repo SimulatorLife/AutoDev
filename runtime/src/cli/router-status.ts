@@ -280,17 +280,15 @@ const describeScopedCooldowns = (
 };
 
 /**
- * The routes of a provider that are out, when the provider itself is not.
+ * The models of a provider that are out, when the provider itself is not.
  *
- * A pooled provider (Antigravity) cools one quota pool at a time, and a
- * rejected model cools one model: the provider keeps serving its other
- * routes, so its own status still reads "ready" and the routes that are out
+ * A rejected model cools one model: the provider keeps serving its other
+ * models, so its own status still reads "ready" and the models that are out
  * are named here.
  */
 const scopedCooldownDetailLines = (
   state: RouterProviderRuntimeStatus
 ): string[] => [
-  ...describeScopedCooldowns("pool cooldown", state.poolCooldowns),
   ...describeScopedCooldowns("model cooldown", state.modelCooldowns)
 ];
 

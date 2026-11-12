@@ -1,13 +1,8 @@
 import type { ProviderRole } from "@simulatorlife/autodev-core";
 import {
   isHardLimitClass,
-  isPoolScopableLimitClass,
   normalizeResetsAt
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
-import {
-  providerKnownPools,
-  providerQuotaPool
-} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 export type CooldownKind = "config" | "probe" | "hard" | "transient";
 
@@ -19,8 +14,6 @@ export interface CooldownEntry {
   since: number;
   /** Set when the cooldown covers one model rather than the whole provider. */
   model?: string;
-  /** Set when the cooldown covers a provider's shared model-family quota. */
-  pool?: string;
   /** The provider's own explanation, for failures only the user can fix. */
   detail?: string | null;
 }
@@ -41,10 +34,6 @@ export interface CooldownOptions {
   structured?: boolean;
   /** The model that failed; an `invalid_model` failure cools down only it. */
   model?: string | null;
-  /** Explicit quota pool name when cooling down a subprovider pool directly. */
-  pool?: string | null;
-  /** Scope `quota_exhausted`, `session_limit`, or `throttled` to the model's configured family pool. */
-  scope?: "provider" | "pool";
   detail?: string | null;
 }
 
@@ -65,7 +54,6 @@ export interface PersistedCooldownEntry {
   failureClass: string | null;
   resetsAt: string | null;
   since: number;
-  pool?: string;
 }
 
 export interface CooldownConfig {
@@ -127,9 +115,7 @@ export const COOLDOWN_CONFIG: Readonly<CooldownConfig> = Object.freeze({
 export class ProviderCooldowns {
   private readonly cooldowns = new Map<string, CooldownEntry>();
   private readonly modelCooldowns = new Map<string, CooldownEntry>();
-  private readonly poolCooldowns = new Map<string, CooldownEntry>();
   private readonly failureStreaks = new Map<string, number>();
-  private readonly poolFailureStreaks = new Map<string, number>();
   private readonly probeStreaks = new Map<string, number>();
   private runtime: CooldownRuntime;
 
@@ -147,7 +133,7 @@ export class ProviderCooldowns {
     this.runtime = runtime;
   }
 
-  /** Resolve the provider-wide, exact-model, or configured quota-pool cooldown. */
+  /** Resolve the provider-wide or exact-model cooldown. */
   get(
     provider: string,
     now = Date.now(),
@@ -155,51 +141,14 @@ export class ProviderCooldowns {
   ): CooldownEntry | null {
     const providerEntry = liveEntry(this.cooldowns, provider, now);
     if (providerEntry) return providerEntry;
-    if (model === null) {
-      const pools = providerKnownPools(provider);
-      if (pools.length > 0) {
-        const poolEntries = pools.map((pool) =>
-          liveEntry(this.poolCooldowns, modelKey(provider, pool), now)
-        );
-        if (
-          poolEntries.length > 0 &&
-          poolEntries.every((entry): entry is CooldownEntry => entry !== null)
-        ) {
-          return poolEntries.reduce((earliest, entry) =>
-            entry.until <= earliest.until ? entry : earliest
-          );
-        }
-      }
-      return null;
-    }
+    if (model === null) return null;
 
     const modelEntry = liveEntry(
       this.modelCooldowns,
       modelKey(provider, model),
       now
     );
-    if (modelEntry) return modelEntry;
-
-    const pool = providerQuotaPool(provider, model);
-    return pool === null
-      ? null
-      : liveEntry(this.poolCooldowns, modelKey(provider, pool), now);
-  }
-
-  getPoolCooldowns(
-    provider: string,
-    now = Date.now()
-  ): Record<string, CooldownEntry> {
-    const prefix = modelKey(provider, "");
-    const result: Record<string, CooldownEntry> = {};
-    for (const key of Array.from(this.poolCooldowns.keys())) {
-      if (!key.startsWith(prefix)) continue;
-      const entry = liveEntry(this.poolCooldowns, key, now);
-      if (!entry) continue;
-      const pool = entry.pool ?? key.slice(prefix.length);
-      result[pool] = entry;
-    }
-    return result;
+    return modelEntry;
   }
 
   getModelCooldowns(
@@ -216,12 +165,6 @@ export class ProviderCooldowns {
       result[model] = entry;
     }
     return result;
-  }
-
-  clearPool(provider: string, pool: string): void {
-    const key = modelKey(provider, pool);
-    this.poolCooldowns.delete(key);
-    this.poolFailureStreaks.delete(key);
   }
 
   clearModel(provider: string, model: string): void {
@@ -249,12 +192,6 @@ export class ProviderCooldowns {
     for (const key of this.modelCooldowns.keys())
       if (key.startsWith(modelKey(provider, "")))
         this.modelCooldowns.delete(key);
-    for (const key of this.poolCooldowns.keys())
-      if (key.startsWith(modelKey(provider, "")))
-        this.poolCooldowns.delete(key);
-    for (const key of this.poolFailureStreaks.keys())
-      if (key.startsWith(modelKey(provider, "")))
-        this.poolFailureStreaks.delete(key);
     this.failureStreaks.delete(provider);
     this.probeStreaks.delete(provider);
   }
@@ -262,9 +199,7 @@ export class ProviderCooldowns {
   clearAll(): void {
     this.cooldowns.clear();
     this.modelCooldowns.clear();
-    this.poolCooldowns.clear();
     this.failureStreaks.clear();
-    this.poolFailureStreaks.clear();
     this.probeStreaks.clear();
   }
 
@@ -280,18 +215,12 @@ export class ProviderCooldowns {
       this.cooldowns.delete(provider);
   }
 
-  /** Clear provider health and only the quota pool that just succeeded. */
+  /** Clear provider health and the model that just succeeded. */
   clearAfterSuccess(provider: string, model: string): void {
     this.cooldowns.delete(provider);
     this.modelCooldowns.delete(modelKey(provider, model));
     this.failureStreaks.delete(provider);
     this.probeStreaks.delete(provider);
-
-    const pool = providerQuotaPool(provider, model);
-    if (pool === null) return;
-    const key = modelKey(provider, pool);
-    this.poolCooldowns.delete(key);
-    this.poolFailureStreaks.delete(key);
   }
 
   cooldownProvider(
@@ -302,8 +231,6 @@ export class ProviderCooldowns {
       resetsAt = null,
       structured = false,
       model = null,
-      pool = null,
-      scope = "provider",
       detail = null
     }: CooldownOptions = {}
   ): CooldownResult {
@@ -327,10 +254,6 @@ export class ProviderCooldowns {
         resetsAt: null
       };
     }
-    const scopedPool =
-      pool ?? (scope === "pool" ? providerQuotaPool(provider, model) : null);
-    const poolScoped =
-      scopedPool !== null && isPoolScopableLimitClass(failureClass);
     const record = (
       kind: CooldownKind,
       durationMs: number,
@@ -352,11 +275,9 @@ export class ProviderCooldowns {
         resetsAt,
         since: now
       };
-      const target = poolScoped ? this.poolCooldowns : this.cooldowns;
-      const key = poolScoped ? modelKey(provider, scopedPool) : provider;
-      const existing = target.get(key);
+      const existing = this.cooldowns.get(provider);
       const kept = existing && existing.until > until ? existing : entry;
-      target.set(key, poolScoped ? { ...kept, pool: scopedPool } : kept);
+      this.cooldowns.set(provider, kept);
       return {
         provider,
         kind,
@@ -391,12 +312,8 @@ export class ProviderCooldowns {
           : Math.min(declared, now + this.config.hardCooldownMaxMs);
       return record("hard", until - now, 0, until);
     }
-    const streak = poolScoped
-      ? (this.poolFailureStreaks.get(modelKey(provider, scopedPool)) ?? 0) + 1
-      : this.failureStreak(provider) + 1;
-    if (poolScoped)
-      this.poolFailureStreaks.set(modelKey(provider, scopedPool), streak);
-    else this.failureStreaks.set(provider, streak);
+    const streak = this.failureStreak(provider) + 1;
+    this.failureStreaks.set(provider, streak);
     return record(
       "transient",
       Math.min(
@@ -476,20 +393,10 @@ export class ProviderCooldowns {
   }
 
   persistedHardEntries(): PersistedCooldownEntry[] {
-    const providerEntries = Array.from(
-      this.cooldowns.entries(),
-      ([provider, entry]) => ({ provider, ...entry })
-    );
-    const poolEntries = Array.from(
-      this.poolCooldowns.entries(),
-      ([key, entry]) => ({
-        provider: key.slice(0, key.indexOf("\u0000")),
-        ...entry
-      })
-    );
-    return [...providerEntries, ...poolEntries].filter(
-      (entry) => entry.kind === "hard"
-    );
+    return Array.from(this.cooldowns.entries(), ([provider, entry]) => ({
+      provider,
+      ...entry
+    })).filter((entry) => entry.kind === "hard");
   }
 
   restoreHardEntries(entries: readonly unknown[], now = Date.now()): void {
@@ -515,10 +422,7 @@ export class ProviderCooldowns {
         resetsAt: normalizeResetsAt(entry.resetsAt),
         since: typeof entry.since === "number" ? entry.since : now
       };
-      if (typeof entry.pool === "string") {
-        restored.pool = entry.pool;
-        this.poolCooldowns.set(modelKey(entry.provider, entry.pool), restored);
-      } else this.cooldowns.set(entry.provider, restored);
+      this.cooldowns.set(entry.provider, restored);
     }
   }
 }
