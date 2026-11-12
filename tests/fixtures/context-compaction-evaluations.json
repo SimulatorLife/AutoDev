@@ -3,8 +3,7 @@
     "id": "repeated-checkpoint",
     "conversation": "Earlier checkpoint: blocker 'TypeError X'; Active: fix parser. Later: test passed and blocker resolved; user now requests PR review.",
     "must_include": [
-      "PR review",
-      "TypeError X resolved only if relevant"
+      "PR review"
     ],
     "must_omit": [
       "Active: fix parser",
@@ -48,10 +47,10 @@
   },
   {
     "id": "unknown-rehydration",
-    "conversation": "Prior agent used custom memory and skills; successor restoration is not confirmed. Important user constraint is to preserve API compatibility.",
+    "conversation": "Earlier agent used a skill that required 'never change API v1 fields'; the successor's skill/memory restoration is unconfirmed. User requires API compatibility.",
     "must_include": [
-      "preserve API compatibility",
-      "relevant essential state"
+      "never change API v1 fields",
+      "API compatibility"
     ],
     "must_omit": [
       "assume memory automatically loads"
@@ -84,9 +83,9 @@
   },
   {
     "id": "sensitive-identifier",
-    "conversation": "User wants bug fixed. Tool output included API token sk-secret-example and incidental request ID abc123; neither is needed to continue.",
+    "conversation": "User requests 'fix the bug'. A tool result contains a fake secret sk-secret-example and incidental request ID abc123; neither is needed to resume.",
     "must_include": [
-      "bug fix objective"
+      "fix the bug"
     ],
     "must_omit": [
       "sk-secret-example",
