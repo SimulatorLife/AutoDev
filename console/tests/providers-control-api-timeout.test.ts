@@ -24,7 +24,7 @@ function answerAfter(delayMs: number): typeof globalThis.fetch {
       const signal = init?.signal;
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", abort);
-        resolve(Response.json({ schema: "autodev-control-providers-v3" }));
+        resolve(Response.json({ schema: "autodev-control-providers-v4" }));
       }, delayMs);
       const abort = () => {
         clearTimeout(timer);

@@ -431,7 +431,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v3");
+    assert.equal(providers.body.schema, "autodev-control-providers-v4");
     // Each provider's external links are its routing config's, unchanged.
     for (const provider of providers.body.providers as Array<{
       id: string;
@@ -1455,6 +1455,7 @@ test("provider reset clears only role assignments, provider disables, model disa
       perSession: 2,
       acrossSessions: 5
     });
+    ROUTING_POLICY.setAgentModel("claude", "explorer", "sonnet");
 
     // Out-of-scope state the reset must never touch.
     ROUTING_POLICY.setAgentEnabled("worker", false);
@@ -1476,7 +1477,8 @@ test("provider reset clears only role assignments, provider disables, model disa
       roleAssignments: 3,
       disabledProviders: 1,
       disabledModels: 1,
-      providerLimits: 1
+      providerLimits: 1,
+      agentModels: 1
     };
 
     const captured = await captureAudit(() =>
@@ -1510,6 +1512,7 @@ test("provider reset clears only role assignments, provider disables, model disa
     assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), false);
     assert.equal(ROUTING_POLICY.isModelEnabled("sonnet"), true);
     assert.equal(ROUTING_POLICY.limitsFor("antigravity"), undefined);
+    assert.equal(ROUTING_POLICY.agentModelFor("claude", "explorer"), undefined);
 
     // Static routing source remains the default authority; Reset clears only
     // the in-memory operator overlay and never edits its configuration object.
@@ -1561,7 +1564,8 @@ test("provider reset clears only role assignments, provider disables, model disa
       roleAssignments: 0,
       disabledProviders: 0,
       disabledModels: 0,
-      providerLimits: 0
+      providerLimits: 0,
+      agentModels: 0
     });
     assert.ok(
       repeated.body.reconciliation.history.some(
@@ -2942,7 +2946,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v3");
+    assert.equal(providers.body.schema, "autodev-control-providers-v4");
 
     // 3. Models
     const models = await call("GET", CONTROL_API_PATHS.models, {
@@ -4847,7 +4851,7 @@ test("queued provider role patches revalidate an unchanged model after reset cle
 
     firstCall = call(
       "PATCH",
-      CONTROL_API_PATHS.providers + "/antigravity/roles/default",
+      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
       {
         actor: "operator-a",
         body: { priority: 1, model: null }
@@ -4921,7 +4925,7 @@ test("queued provider role patches recheck provider enablement after a disable c
 
     firstCall = call(
       "PATCH",
-      CONTROL_API_PATHS.providers + "/antigravity/roles/default",
+      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
       {
         actor: "operator-a",
         body: { priority: 1, model: null }

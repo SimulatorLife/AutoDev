@@ -557,6 +557,7 @@ export interface ProviderOverrideResetCounts {
   readonly disabledProviders: number;
   readonly disabledModels: number;
   readonly providerLimits: number;
+  readonly agentModels: number;
 }
 
 export class RoutingPolicy {
@@ -583,6 +584,12 @@ export class RoutingPolicy {
   private readonly disabledAgentRoles = new Set<string>();
   private readonly agentEnablementRevisions = new Map<string, number>();
   private readonly providerLimits = new Map<string, ProviderAgentLimits>();
+  /**
+   * Per-provider, per-agent-role model preference. Agent roles that share a
+   * tier share its model; an entry here lets one of them (an explorer, say)
+   * run a different model of the same provider than its siblings.
+   */
+  private readonly agentModels = new Map<string, Record<string, string>>();
 
   constructor(
     config: RoutingConfig,
@@ -791,9 +798,49 @@ export class RoutingPolicy {
     });
   }
 
+  /** The provider's model preference for one agent role, if the operator set one. */
+  agentModelFor(provider: unknown, agentRole: unknown): string | undefined {
+    return typeof provider === "string" && typeof agentRole === "string"
+      ? this.agentModels.get(this.providerKey(provider))?.[
+          agentRole.trim().toLowerCase()
+        ]
+      : undefined;
+  }
+
+  /** Every agent-role model preference the operator set for one provider. */
+  agentModelsFor(provider: unknown): Record<string, string> {
+    return typeof provider === "string"
+      ? { ...this.agentModels.get(this.providerKey(provider)) }
+      : {};
+  }
+
   /**
-   * Clear every provider Runtime override -- role assignments, provider-wide
-   * disables, model disables, and provider agent limits -- in one atomic
+   * Set or (with `null`) clear one agent role's model preference on a
+   * provider. Only agent roles the routing config names are accepted; the
+   * orchestrator is governed by its provider-role assignment instead.
+   */
+  setAgentModel(
+    provider: unknown,
+    agentRole: unknown,
+    model: string | null
+  ): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    if (typeof agentRole !== "string") return;
+    const key = this.providerKey(provider);
+    const role = agentRole.trim().toLowerCase();
+    if (!Object.hasOwn(this.config.providers, key)) return;
+    if (!Object.hasOwn(this.config.roles, role)) return;
+    const next = { ...this.agentModels.get(key) };
+    if (model === null || !model.trim()) delete next[role];
+    else next[role] = model.trim();
+    if (Object.keys(next).length === 0) this.agentModels.delete(key);
+    else this.agentModels.set(key, next);
+  }
+
+  /**
+   * Clear every provider Runtime override -- role assignments, agent-role
+   * models, provider-wide disables, model disables, and provider agent
+   * limits -- in one atomic
    * in-memory step. Agent enablement, provider discovery snapshots,
    * cooldown/health state, and concurrency limits are untouched: none of them
    * are provider routing overrides, so an operator resetting providers has no
@@ -812,9 +859,14 @@ export class RoutingPolicy {
       roleAssignments: roleAssignmentCount,
       disabledProviders: this.disabledProviders.size,
       disabledModels: this.disabledModels.size,
-      providerLimits: this.providerLimits.size
+      providerLimits: this.providerLimits.size,
+      agentModels: [...this.agentModels.values()].reduce(
+        (total, models) => total + Object.keys(models).length,
+        0
+      )
     };
     this.roleAssignments.clear();
+    this.agentModels.clear();
     this.disabledProviders.clear();
     this.disabledModels.clear();
     this.providerLimits.clear();
@@ -981,7 +1033,13 @@ export class RoutingPolicy {
           left < right ? -1 : left > right ? 1 : 0
         )
       ),
-      providerLimits: Object.fromEntries(this.providerLimits)
+      providerLimits: Object.fromEntries(this.providerLimits),
+      agentModels: Object.fromEntries(
+        Array.from(this.agentModels, ([provider, models]) => [
+          provider,
+          { ...models }
+        ])
+      )
     };
   }
 
@@ -992,6 +1050,7 @@ export class RoutingPolicy {
     this.disabledAgentRoles.clear();
     this.agentEnablementRevisions.clear();
     this.providerLimits.clear();
+    this.agentModels.clear();
     if (!isRecord(state)) return;
 
     this.restoreRoleAssignments(state.roleAssignments);
@@ -1000,6 +1059,18 @@ export class RoutingPolicy {
     this.restoreDisabledAgentRoles(state.disabledAgentRoles);
     this.restoreAgentEnablementRevisions(state.agentEnablementRevisions);
     this.restoreProviderLimits(state.providerLimits);
+    this.restoreAgentModels(state.agentModels);
+  }
+
+  /** Rebuild agent-role models; a malformed entry is skipped, not defaulted. */
+  private restoreAgentModels(raw: unknown): void {
+    if (!isRecord(raw)) return;
+    for (const [provider, models] of Object.entries(raw)) {
+      if (!isRecord(models)) continue;
+      for (const [role, model] of Object.entries(models)) {
+        if (nonEmptyString(model)) this.setAgentModel(provider, role, model);
+      }
+    }
   }
 
   /**
@@ -1104,53 +1175,19 @@ export class RoutingPolicy {
   }
 
   /**
-   * The operator's assignment that governs a provider on one tier.
-   *
-   * The Console assigns each provider four roles. `orchestrator` governs the
-   * orchestrator tier. `default` and `smart` are routing roles that govern the
-   * tier of the same name. `subagent` is the agent execution role: it governs
-   * the traffic of every subagent tier the operator has not given a role of
-   * its own (such as `browser-tester`), and its `disabled` also switches the
-   * provider off for all subagent traffic -- which `isProviderEnabledForRole`
-   * already enforces.
-   *
-   * A tier the operator has said nothing about is governed by the role that
-   * governs the traffic through it, so a provider the operator enabled for
-   * subagents serves the tier their subagents run in.
-   *
-   * One assignment governs both the rank and the enablement. Reading the rank
-   * from the tier's role and the enablement from the `subagent` role made the
-   * two disagree: a provider whose subagent role was disabled was dropped
-   * from every tier without a word, and a provider the operator had enabled
-   * for subagents never reached the tier their subagents run in -- while the
-   * Console reported it as enabled for them.
+   * The assignment that governs a provider for one kind of traffic: the
+   * orchestrator's for the orchestrator, the subagent's for every tier a
+   * subagent runs in. One assignment governs both the rank and the
+   * enablement, so the two cannot disagree.
    */
-  tierAssignment(
+  private governingAssignment(
     provider: string,
-    tier: string,
     role: ProviderRole
   ): ProviderRoleAssignment | undefined {
     return this.assignmentFor(
       provider,
-      this.governingRole(provider, tier, role)
+      role === "orchestrator" ? "orchestrator" : "subagent"
     );
-  }
-
-  /**
-   * The role whose assignment governs a provider on a tier.
-   *
-   * The tier's own role governs it when the operator set one; the role that
-   * governs the traffic through the tier governs it otherwise.
-   */
-  private governingRole(
-    provider: string,
-    tier: string,
-    role: ProviderRole
-  ): ProviderRole {
-    if (role === "orchestrator") return "orchestrator";
-    const tierRole = tier === "default" || tier === "smart" ? tier : null;
-    if (tierRole && this.assignmentFor(provider, tierRole)) return tierRole;
-    return "subagent";
   }
 
   /**
@@ -1180,7 +1217,7 @@ export class RoutingPolicy {
       ...this.providerIds().filter((provider) => !configured.has(provider))
     ];
     for (const provider of candidates) {
-      const assignment = this.tierAssignment(provider, tier, role);
+      const assignment = this.governingAssignment(provider, role);
       if (assignment?.priority === "disabled") continue;
       const rank =
         typeof assignment?.priority === "number"
@@ -1285,8 +1322,9 @@ export class RoutingPolicy {
         });
         continue;
       }
-      const governing = this.tierAssignment(provider, tier, role);
-      const governingRole = this.governingRole(provider, tier, role);
+      const governing = this.governingAssignment(provider, role);
+      const governingRole =
+        role === "orchestrator" ? "orchestrator" : "subagent";
       if (governing?.priority === "disabled") {
         excluded.push({
           provider,
@@ -1413,7 +1451,8 @@ export class RoutingPolicy {
   tierCandidates(
     tier: string | undefined,
     random = Math.random,
-    role: ProviderRole = "subagent"
+    role: ProviderRole = "subagent",
+    agentRole: string | null = null
   ): Candidate[] {
     if (!tier) return [];
     return this.providerPriority(tier, random, role).flatMap((provider) => {
@@ -1426,8 +1465,14 @@ export class RoutingPolicy {
       // The Console's model selector therefore reported a change that no request
       // ever saw, which is why choosing Claude Opus on a provider could not alter
       // the model that ran.
-      const assignment = this.tierAssignment(provider, tier, role);
-      const model = assignment?.model ?? this.configuredModel(provider, tier);
+      // An agent-role preference narrows that choice to one of the tier's
+      // roles, so an explorer can run a faster model than the workers
+      // sharing its tier.
+      const assignment = this.governingAssignment(provider, role);
+      const model =
+        this.agentModelFor(provider, agentRole) ??
+        assignment?.model ??
+        this.configuredModel(provider, tier);
       if (!model || !this.isModelEnabled(model)) return [];
       const route = this.routeForModel(model);
       if (!route) return [];
@@ -1457,7 +1502,8 @@ export class RoutingPolicy {
     const candidates = this.tierCandidates(
       typeof role === "string" ? this.config.roles[role]?.tier : undefined,
       random,
-      "subagent"
+      "subagent",
+      role ?? null
     ).filter(
       (candidate) =>
         scopedMcp.length === 0 || providerInjectsRoleMcp(candidate.provider)
@@ -1548,14 +1594,18 @@ export class RoutingPolicy {
     return Object.fromEntries(
       Object.keys(models).map((tier) => [
         tier,
-        this.tierAssignment(
-          provider,
-          tier,
-          tier === "orchestrator" ? "orchestrator" : "subagent"
-        )?.model ??
-          this.configuredModel(provider, tier) ??
-          ""
+        this.tierModel(provider, tier) ?? ""
       ])
+    );
+  }
+
+  /** The model a provider serves a tier with, before any agent-role model. */
+  tierModel(provider: string, tier: string): string | undefined {
+    return (
+      this.governingAssignment(
+        provider,
+        tier === this.config.orchestrator.tier ? "orchestrator" : "subagent"
+      )?.model ?? this.configuredModel(provider, tier)
     );
   }
 

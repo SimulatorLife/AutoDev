@@ -9,6 +9,7 @@ import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { POST as postAgentModel } from "../app/api/providers/[provider]/agents/[role]/route.ts";
 import { POST } from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
@@ -87,48 +88,13 @@ const mockClaudeProvider: ControlApiProviderRecord = {
   credential: { envKey: "ANTHROPIC_API_KEY", configured: true },
   disabled: false,
   agentLimits: null,
+  agentModels: [],
   models: [{ tier: "smart", model: "sonnet" }],
   priorities: [],
   orchestratorReasoningEffort: null,
   health: null,
   reconciliation: providerReconciliation,
   roles: {
-    default: {
-      priority: 1,
-      model: null,
-      reasoningEffort: null,
-      effectiveReasoningEffort: null,
-      reasoningEffortInForce: true,
-      supportedReasoningLevels: [],
-      mutable: true,
-      convergence: {
-        convergence: "converged",
-        desiredGeneration: "default:enabled=true",
-        observedGeneration: "default:enabled=true",
-        lastApplyAt: null,
-        lastObservationAt: null,
-        lastError: null,
-        explanation: ""
-      }
-    },
-    smart: {
-      priority: 1,
-      model: "sonnet",
-      reasoningEffort: "high",
-      effectiveReasoningEffort: "high",
-      reasoningEffortInForce: true,
-      supportedReasoningLevels: ["low", "medium", "high"],
-      mutable: true,
-      convergence: {
-        convergence: "converged",
-        desiredGeneration: "smart:enabled=true",
-        observedGeneration: "smart:enabled=true",
-        lastApplyAt: null,
-        lastObservationAt: null,
-        lastError: null,
-        explanation: ""
-      }
-    },
     orchestrator: {
       priority: "disabled",
       model: "sonnet",
@@ -150,8 +116,8 @@ const mockClaudeProvider: ControlApiProviderRecord = {
     subagent: {
       priority: 2,
       model: "sonnet",
-      reasoningEffort: null,
-      effectiveReasoningEffort: "medium",
+      reasoningEffort: "high",
+      effectiveReasoningEffort: "high",
       reasoningEffortInForce: true,
       supportedReasoningLevels: ["low", "medium", "high"],
       mutable: true,
@@ -175,44 +141,13 @@ const mockAgyProvider: ControlApiProviderRecord = {
   credential: { envKey: null, configured: true },
   disabled: false,
   agentLimits: null,
+  agentModels: [],
   models: [{ tier: "default", model: "gemini-3.8-flash-high" }],
   priorities: [],
   orchestratorReasoningEffort: null,
   health: null,
   reconciliation: providerReconciliation,
   roles: {
-    default: {
-      priority: 1,
-      model: "gemini-3.8-flash-high",
-      reasoningEffort: "low",
-      effectiveReasoningEffort: "high",
-      reasoningEffortInForce: false,
-      supportedReasoningLevels: ["low", "medium", "high"],
-      mutable: true,
-      convergence: {
-        convergence: "converged",
-        desiredGeneration: "default:enabled=true",
-        observedGeneration: "default:enabled=true",
-        lastApplyAt: null,
-        lastObservationAt: null,
-        lastError: null,
-        explanation: ""
-      }
-    },
-    smart: {
-      priority: 1,
-      model: null,
-      mutable: true,
-      convergence: {
-        convergence: "converged",
-        desiredGeneration: "smart:enabled=true",
-        observedGeneration: "smart:enabled=true",
-        lastApplyAt: null,
-        lastObservationAt: null,
-        lastError: null,
-        explanation: ""
-      }
-    },
     orchestrator: {
       priority: 1,
       model: null,
@@ -229,7 +164,8 @@ const mockAgyProvider: ControlApiProviderRecord = {
     },
     subagent: {
       priority: 1,
-      model: null,
+      model: "gemini-3.8-flash-high",
+      effectiveReasoningEffort: "high",
       mutable: true,
       convergence: {
         convergence: "converged",
@@ -253,9 +189,9 @@ test("ProviderRoleControls renders reasoning effort dropdown when supported", ()
     })
   );
 
-  // smart role has sonnet with ["low", "medium", "high"], reasoningEffort="high"
-  assert.match(markup, /data-role-effort="smart"/);
-  assert.match(markup, /id="select-effort-claude-smart"/);
+  // subagent role has sonnet with ["low", "medium", "high"], reasoningEffort="high"
+  assert.match(markup, /data-role-effort="subagent"/);
+  assert.match(markup, /id="select-effort-claude-subagent"/);
   assert.match(markup, /<option value="high" selected=""/);
   assert.match(markup, /<option value="">Default<\/option>/);
   assert.match(markup, /<option value="low">Low<\/option>/);
@@ -266,14 +202,17 @@ test("ProviderRoleControls renders reasoning effort dropdown when supported", ()
 test("ProviderRoleControls renders placeholder when model does not support reasoning levels", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
-      provider: mockClaudeProvider,
+      provider: mockAgyProvider,
       modelDiscovery: mockDiscovery,
       returnTo: "/providers"
     })
   );
 
-  // default role has model=null, supportedReasoningLevels=[]
-  assert.match(markup, /data-role-effort-placeholder="claude-default"/);
+  // antigravity orchestrator role has model=null and no supported levels
+  assert.match(
+    markup,
+    /data-role-effort-placeholder="antigravity-orchestrator"/
+  );
   assert.ok(markup.includes(`>${NOT_OBSERVED_LABEL}</span>`));
 });
 
@@ -286,8 +225,8 @@ test("ProviderRoleControls renders fixed indicator for Antigravity model slug su
     })
   );
 
-  // antigravity default role has gemini-3.8-flash-high
-  assert.match(markup, /data-role-effort-fixed="antigravity-default"/);
+  // antigravity subagent role has gemini-3.8-flash-high
+  assert.match(markup, /data-role-effort-fixed="antigravity-subagent"/);
   assert.match(markup, />high<\/span>/);
 });
 
@@ -383,21 +322,21 @@ test("every role select is submitted by the page-level listener and shows the Ru
       returnTo: "/providers"
     })
   );
-  const smart = roleForm(markup, "claude", "smart");
-  for (const control of ["priority", "model", "effort"]) {
+  const subagent = roleForm(markup, "claude", "subagent");
+  for (const control of ["priority", "effort"]) {
     const select = new RegExp(
-      `<select id="select-${control}-claude-smart"[^>]*data-submit-on-change="true"`,
+      `<select id="select-${control}-claude-subagent"[^>]*data-submit-on-change="true"`,
       "u"
     );
-    assert.match(smart, select, `the ${control} select submits on change`);
+    assert.match(subagent, select, `the ${control} select submits on change`);
   }
   // The rendered selection is the Runtime's assignment for the role.
-  assert.match(smart, /<option value="high" selected="">High<\/option>/u);
+  assert.match(subagent, /<option value="high" selected="">High<\/option>/u);
 });
 
 test("POST /api/providers/[provider]/roles/[role] rejects non-same-origin requests", async () => {
   const req = new NextRequest(
-    "http://127.0.0.1:3000/api/providers/claude/roles/smart",
+    "http://127.0.0.1:3000/api/providers/claude/roles/subagent",
     {
       method: "POST",
       headers: {
@@ -407,7 +346,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects non-same-origin reques
     }
   );
   const res = await POST(req, {
-    params: Promise.resolve({ provider: "claude", role: "smart" })
+    params: Promise.resolve({ provider: "claude", role: "subagent" })
   });
   assert.equal(res.status, 303);
   const location = res.headers.get("location");
@@ -417,7 +356,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects non-same-origin reques
 test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", async () => {
   const body = new URLSearchParams({
     provider: "claude",
-    role: "smart",
+    role: "subagent",
     priority: "1",
     model: "sonnet",
     reasoningEffort: "high",
@@ -426,7 +365,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
   }).toString();
 
   const req = new NextRequest(
-    "http://127.0.0.1:3000/api/providers/claude/roles/smart",
+    "http://127.0.0.1:3000/api/providers/claude/roles/subagent",
     {
       method: "POST",
       headers: {
@@ -438,7 +377,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
     }
   );
   const res = await POST(req, {
-    params: Promise.resolve({ provider: "claude", role: "smart" })
+    params: Promise.resolve({ provider: "claude", role: "subagent" })
   });
   assert.equal(res.status, 303);
   const location = res.headers.get("location");
@@ -700,4 +639,146 @@ test("a role change the Runtime refuses is logged with its status and code", asy
       delete process.env.AUTODEV_CONTROL_API_TOKEN;
     else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
   }
+});
+
+test("the Subagent model is one hierarchical select: all subagents, then each agent role", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: {
+        ...mockClaudeProvider,
+        agentModels: [
+          {
+            role: "explorer",
+            tier: "default",
+            model: "sonnet",
+            tierModel: "opus"
+          },
+          { role: "smart", tier: "smart", model: null, tierModel: "opus" }
+        ]
+      },
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers/claude"
+    })
+  );
+  // The closed control names the Subagent model and how many roles have
+  // their own, in the shared select chrome.
+  assert.match(
+    html,
+    /<span id="select-model-claude-subagent" title="sonnet \+1"[^>]*appearance-none/u
+  );
+  // Its levels: All subagents, then each agent role with the model it runs.
+  assert.match(
+    html,
+    /data-hierarchical-level="subagent"[\s\S]*?All subagents/u
+  );
+  assert.match(html, /data-hierarchical-level="explorer"[\s\S]*?>sonnet</u);
+  assert.match(html, /data-hierarchical-level="smart"[\s\S]*?>Auto \(opus\)</u);
+  // Each level posts its own form, rendered outside the role's form.
+  const roleFormStart = html.indexOf('data-role-form="claude-subagent"');
+  for (const [level, action] of [
+    ["subagent", "/api/providers/claude/roles/subagent"],
+    ["explorer", "/api/providers/claude/agents/explorer"],
+    ["smart", "/api/providers/claude/agents/smart"]
+  ] as const) {
+    const formAt = html.indexOf(
+      `id="select-model-claude-subagent-${level}-form"`
+    );
+    assert.ok(formAt !== -1 && formAt < roleFormStart, level);
+    assert.match(
+      html.slice(formAt),
+      new RegExp(`^[^>]*action="${action.replaceAll("/", String.raw`\/`)}"`, "u")
+    );
+    assert.match(
+      html,
+      new RegExp(
+        `<button type="submit" form="select-model-claude-subagent-${level}-form" value=""[^>]*name="model"`,
+        "u"
+      )
+    );
+  }
+  // The explorer's own model is the pressed choice in its level.
+  assert.match(
+    html,
+    /form="select-model-claude-subagent-explorer-form" value="sonnet" aria-pressed="true"/u
+  );
+  // The role's own form still carries the current model for its other fields.
+  assert.match(
+    html.slice(roleFormStart),
+    /<input type="hidden" name="model" value="sonnet"\/>/u
+  );
+});
+
+test("a disabled provider keeps its Subagent models but does not offer to change them", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: {
+        ...mockClaudeProvider,
+        disabled: true,
+        roles: {
+          ...mockClaudeProvider.roles,
+          subagent: { ...mockClaudeProvider.roles.subagent, mutable: false }
+        },
+        agentModels: [
+          {
+            role: "explorer",
+            tier: "default",
+            model: "sonnet",
+            tierModel: null
+          }
+        ]
+      },
+      modelDiscovery: mockDiscovery,
+      returnTo: "/providers/claude"
+    })
+  );
+  assert.match(
+    html,
+    /id="select-model-claude-subagent" role="button" aria-disabled="true"/u
+  );
+  assert.doesNotMatch(html, /data-hierarchical-form=/u);
+});
+
+function agentModelRequest(fields: Record<string, string>): NextRequest {
+  return new NextRequest(
+    "http://127.0.0.1:3000/api/providers/claude/agents/explorer",
+    {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:3000",
+        origin: "http://127.0.0.1:3000",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams(fields).toString()
+    }
+  );
+}
+
+test("POST /api/providers/[provider]/agents/[role] refuses forms it did not render", async () => {
+  const params = {
+    params: Promise.resolve({ provider: "claude", role: "explorer" })
+  };
+  const valid = {
+    provider: "claude",
+    role: "explorer",
+    model: "sonnet",
+    returnTo: "/providers/claude"
+  };
+  for (const fields of [
+    { ...valid, extra: "x" },
+    { ...valid, role: "worker" },
+    { provider: "claude", role: "explorer", returnTo: "/providers/claude" }
+  ]) {
+    const response = await postAgentModel(agentModelRequest(fields), params);
+    assert.equal(response.status, 303);
+    assert.match(response.headers.get("location") ?? "", /control=failed/u);
+  }
+  const crossOrigin = new NextRequest(
+    "http://127.0.0.1:3000/api/providers/claude/agents/explorer",
+    {
+      method: "POST",
+      headers: { host: "127.0.0.1:3000", origin: "http://evil.com" }
+    }
+  );
+  const refused = await postAgentModel(crossOrigin, params);
+  assert.match(refused.headers.get("location") ?? "", /control=failed/u);
 });

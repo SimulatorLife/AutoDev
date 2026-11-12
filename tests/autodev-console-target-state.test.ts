@@ -220,7 +220,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.match(
     target,
-    /\| Per-role priority and model assignment for Default\/Smart\/Orchestrator\/Subagent, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \|\s*Providers \(Providers and Models tabs\)\s*\|/u
+    /\| Per-role priority and model assignment for Orchestrator\/Subagent, per-agent-role models, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \|\s*Providers \(Providers and Models tabs\)\s*\|/u
   );
   assert.match(
     target,

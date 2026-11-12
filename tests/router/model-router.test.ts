@@ -121,7 +121,7 @@ const DISABLE_SUBAGENT_BODY = DISABLED_ASSIGNMENT;
  */
 function restoreAssignment(
   provider: string,
-  role: "default" | "smart" | "orchestrator" | "subagent",
+  role: "orchestrator" | "subagent",
   assignment:
     { priority: 1 | 2 | 3 | "disabled"; model: string | null } | undefined
 ): void {
@@ -4296,7 +4296,7 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   assert.equal(selected.providers.claude.configuredModels.default, "sonnet");
   // A Console assignment is what the router routes the tier to, so status
   // reports it rather than the routing config's model.
-  routing.setProviderAssignment("claude", "default", {
+  routing.setProviderAssignment("claude", "subagent", {
     priority: 1,
     model: "claude-opus-5-5"
   });
@@ -4306,7 +4306,7 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
       "claude-opus-5-5"
     );
   } finally {
-    routing.clearProviderAssignment("claude", "default");
+    routing.clearProviderAssignment("claude", "subagent");
   }
   assert.equal(selected.providers.claude.attempts, 1);
   assert.equal(selected.providers.claude.inFlightRequests, 1);
@@ -8109,7 +8109,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     assert.equal(viewerRead.status, 200);
     assert.equal(
       (await viewerRead.json()).schema,
-      "autodev-control-providers-v3"
+      "autodev-control-providers-v4"
     );
 
     const wrongMethod = await originalFetch(endpoint, {

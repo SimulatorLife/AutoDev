@@ -327,7 +327,8 @@ test("provider role administration is independent", () => {
     disabledModels: [],
     disabledAgentRoles: [],
     agentEnablementRevisions: {},
-    providerLimits: {}
+    providerLimits: {},
+    agentModels: {}
   });
   policy.restoreRuntimeState({
     roleAssignments: { claude: { subagent: DISABLED_ASSIGNMENT } },
@@ -543,7 +544,8 @@ test("model enablement removes a model from every tier it serves and survives re
     disabledModels: [CLAUDE_DEFAULT_TEST_MODEL, "gpt-unconfigured"],
     disabledAgentRoles: [],
     agentEnablementRevisions: {},
-    providerLimits: {}
+    providerLimits: {},
+    agentModels: {}
   });
   assert.equal(policy.isModelEnabled(CLAUDE_SMART_TEST_MODEL), true);
 });
@@ -586,6 +588,43 @@ function assignmentTestPolicy(): RoutingPolicy {
   );
 }
 
+test("an agent-role model applies to that role only and clears back to the tier's model", () => {
+  const policy = assignmentTestPolicy();
+  const claudeModel = (role: string): string | undefined =>
+    policy
+      .roleCandidates(role, seeded(1))
+      .find(({ provider }) => provider === "claude")?.model;
+
+  policy.setAgentModel("claude", "explorer", CLAUDE_SMART_TEST_MODEL);
+  assert.equal(claudeModel("explorer"), CLAUDE_SMART_TEST_MODEL);
+  // The worker shares the explorer's tier and keeps the tier's model.
+  assert.equal(claudeModel("worker"), CLAUDE_DEFAULT_TEST_MODEL);
+  // An agent-role model wins over the Subagent model, which wins over the
+  // tier's configured model.
+  policy.setProviderAssignment("claude", "subagent", {
+    priority: 1,
+    model: "claude-assigned-test-model"
+  });
+  assert.equal(claudeModel("explorer"), CLAUDE_SMART_TEST_MODEL);
+  assert.equal(claudeModel("worker"), "claude-assigned-test-model");
+
+  // It persists and restores with the rest of the runtime state...
+  const restored = assignmentTestPolicy();
+  restored.restoreRuntimeState(policy.runtimeState());
+  assert.deepEqual(restored.agentModelsFor("claude"), {
+    explorer: CLAUDE_SMART_TEST_MODEL
+  });
+  // ...and clearing returns the role to the Subagent model.
+  policy.setAgentModel("claude", "explorer", null);
+  assert.equal(claudeModel("explorer"), "claude-assigned-test-model");
+  assert.deepEqual(policy.runtimeState().agentModels, {});
+
+  // Unknown roles and providers are not recorded.
+  policy.setAgentModel("claude", "orchestrator", CLAUDE_SMART_TEST_MODEL);
+  policy.setAgentModel("nobody", "explorer", CLAUDE_SMART_TEST_MODEL);
+  assert.deepEqual(policy.runtimeState().agentModels, {});
+});
+
 test("operator priorities rank providers within a tier and override the configured groups", () => {
   const policy = assignmentTestPolicy();
   assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
@@ -593,11 +632,11 @@ test("operator priorities rank providers within a tier and override the configur
     ["copilot"]
   ]);
   // Copilot promoted ahead of Claude, which is demoted to P3.
-  policy.setProviderAssignment("copilot", "default", {
+  policy.setProviderAssignment("copilot", "subagent", {
     priority: 1,
     model: null
   });
-  policy.setProviderAssignment("claude", "default", {
+  policy.setProviderAssignment("claude", "subagent", {
     priority: 3,
     model: null
   });
@@ -617,7 +656,7 @@ test("an unlisted provider enters a tier only when the operator assigns it a pri
     policy.effectiveProviderGroups(tier, "subagent").flat();
   // opencli-gemini is configured but in no group: opt-in.
   assert.equal(providers("default").includes("opencli-gemini"), false);
-  policy.setProviderAssignment("opencli-gemini", "default", {
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
     priority: 2,
     model: "opencli-gemini-3.1-pro"
   });
@@ -629,37 +668,23 @@ test("an unlisted provider enters a tier only when the operator assigns it a pri
     .roleCandidates("default", seeded(1))
     .find(({ provider }) => provider === "opencli-gemini");
   assert.equal(candidate?.model, "opencli-gemini-3.1-pro");
-  // The `default` assignment governs only the default tier.
-  assert.equal(providers("smart").includes("opencli-gemini"), false);
-  assert.equal(providers("browser-tester").includes("opencli-gemini"), false);
-  // `subagent` governs the other subagent tiers.
-  policy.setProviderAssignment("opencli-gemini", "subagent", {
-    priority: 1,
-    model: null
-  });
-  assert.deepEqual(
-    policy.effectiveProviderGroups("browser-tester", "subagent"),
-    [["claude", "opencli-gemini"]]
-  );
+  // The `subagent` assignment governs every tier a subagent runs in.
+  assert.equal(providers("smart").includes("opencli-gemini"), true);
+  assert.equal(providers("browser-tester").includes("opencli-gemini"), true);
 });
 
-test("a disabled tier assignment removes the provider from that tier only", () => {
+test("a disabled subagent assignment removes the provider from every subagent tier", () => {
   const policy = assignmentTestPolicy();
-  policy.setProviderAssignment("claude", "smart", DISABLED_ASSIGNMENT);
-  assert.deepEqual(policy.roleCandidates("smart", seeded(1)), []);
-  assert.ok(
-    policy
-      .roleCandidates("default", seeded(1))
-      .some(({ provider }) => provider === "claude")
-  );
-  // Disabling the subagent execution role switches every subagent tier off.
   policy.setProviderAssignment("claude", "subagent", DISABLED_ASSIGNMENT);
-  assert.equal(
-    policy
-      .roleCandidates("default", seeded(1))
-      .some(({ provider }) => provider === "claude"),
-    false
-  );
+  for (const role of ["smart", "default", "explorer", "browser-tester"]) {
+    assert.equal(
+      policy
+        .roleCandidates(role, seeded(1))
+        .some(({ provider }) => provider === "claude"),
+      false,
+      role
+    );
+  }
 });
 
 test("a provider enabled for subagents serves the tier their subagents run in", () => {
@@ -688,36 +713,6 @@ test("a provider enabled for subagents serves the tier their subagents run in", 
     ),
     new Set(["claude", "copilot", "opencli-gemini"])
   );
-  // The tier's own role still governs it when the operator sets one.
-  policy.setProviderAssignment("opencli-gemini", "default", {
-    priority: 3,
-    model: "opencli-gemini-3.8-flash"
-  });
-  assert.deepEqual(policy.effectiveProviderGroups("default", "subagent"), [
-    ["claude"],
-    ["copilot"],
-    ["opencli-gemini"]
-  ]);
-  // And a role disabled for the tier keeps the provider out of it, while the
-  // subagent role still governs the tiers that have no role of their own.
-  policy.setProviderAssignment(
-    "opencli-gemini",
-    "default",
-    DISABLED_ASSIGNMENT
-  );
-  assert.equal(
-    policy
-      .effectiveProviderGroups("default", "subagent")
-      .flat()
-      .includes("opencli-gemini"),
-    false
-  );
-  assert.ok(
-    policy
-      .effectiveProviderGroups("browser-tester", "subagent")
-      .flat()
-      .includes("opencli-gemini")
-  );
 });
 
 test("the providers a tier cannot use are named, and why", () => {
@@ -738,18 +733,6 @@ test("the providers a tier cannot use are named, and why", () => {
   );
   assert.deepEqual(policy.excludedProviders("default", "subagent"), [
     { provider: "opencli-gemini", reason: "its subagent role is disabled" }
-  ]);
-  policy.setProviderAssignment("opencli-gemini", "subagent", {
-    priority: 1,
-    model: "opencli-gemini-3.8-flash"
-  });
-  policy.setProviderAssignment(
-    "opencli-gemini",
-    "default",
-    DISABLED_ASSIGNMENT
-  );
-  assert.deepEqual(policy.excludedProviders("default", "subagent"), [
-    { provider: "opencli-gemini", reason: "its default role is disabled" }
   ]);
   // A provider the operator never configured is not excluded from a tier: it
   // was never in it.

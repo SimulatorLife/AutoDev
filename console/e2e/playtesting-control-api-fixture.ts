@@ -6056,12 +6056,62 @@ function handleFixtureCatalogRoutes(
 
 /** The role a provider assignment is for, as the Console writes it. */
 const PROVIDER_ROLE_ROUTE =
-  /^\/control\/providers\/([^/]+)\/roles\/(default|smart|orchestrator|subagent)$/u;
-type FixtureProviderRole = "default" | "smart" | "orchestrator" | "subagent";
+  /^\/control\/providers\/([^/]+)\/roles\/(orchestrator|subagent)$/u;
+const PROVIDER_AGENT_MODEL_ROUTE =
+  /^\/control\/providers\/([^/]+)\/agents\/([a-z0-9-]+)$/u;
+/** The agent roles each fixture provider lists under its Subagent model. */
+const FIXTURE_AGENT_ROLES = [
+  { role: "explorer", tier: "default" },
+  { role: "worker", tier: "default" },
+  { role: "smart", tier: "smart" }
+] as const;
+/** Agent-role model writes the fixture has accepted, by `provider:role`. */
+const agentModelWrites = new Map<string, string>();
+
+function fixtureAgentModels(provider: string, tierModel: string | null) {
+  return FIXTURE_AGENT_ROLES.map(({ role, tier }) => ({
+    role,
+    tier,
+    model: agentModelWrites.get(`${provider}:${role}`) ?? null,
+    tierModel
+  }));
+}
+
+async function handleAgentModelMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(PROVIDER_AGENT_MODEL_ROUTE);
+  if (match === null || request.method !== "PATCH") return false;
+  const provider = decodeURIComponent(match[1] ?? "");
+  const role = match[2] ?? "";
+  const body = await readJsonBody(request);
+  const model = body?.model;
+  if (model !== null && typeof model !== "string") {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "autodev_control_api_bad_body",
+          message: "The fixture needs a model or null.",
+          type: "invalid_request_error"
+        }
+      },
+      400
+    );
+    return true;
+  }
+  if (model === null) agentModelWrites.delete(`${provider}:${role}`);
+  else agentModelWrites.set(`${provider}:${role}`, model);
+  sendJson(response, { provider, role, model, previous: null });
+  return true;
+}
+type FixtureProviderRole = "orchestrator" | "subagent";
 type FixtureRolePriority = 1 | 2 | 3 | "disabled";
 const INITIAL_ROLE_PRIORITIES: Readonly<
   Record<FixtureProviderRole, FixtureRolePriority>
-> = { default: 1, smart: 1, orchestrator: 2, subagent: 1 };
+> = { orchestrator: 2, subagent: 1 };
 
 /**
  * The provider role writes the fixture has accepted, by `provider:role`.
@@ -6167,6 +6217,7 @@ function configureProviderRoleFixture(
   const state = url.searchParams.get("state");
   if (state === "reset") {
     providerRoleWrites.clear();
+    agentModelWrites.clear();
     refuseNextProviderRoleWrite = null;
   } else if (state === "refuse-next") {
     refuseNextProviderRoleWrite =
@@ -6211,6 +6262,7 @@ async function handleSyntheticMutationRoutes(
     return true;
   if (await handleAgentEnablementMutation(request, response, url)) return true;
   if (await handleProviderRoleMutation(request, response, url)) return true;
+  if (await handleAgentModelMutation(request, response, url)) return true;
   if (configureProviderRoleFixture(request, response, url)) return true;
   if (await handleCanonicalSourceMutation(request, response, url)) return true;
   if (await applyMcpDeclarationWrite(response, request, url)) {
@@ -6294,20 +6346,19 @@ const server = createServer(
         credential: { envKey: null, configured: true },
         disabled: false,
         roles: Object.fromEntries(
-          (["default", "smart", "orchestrator", "subagent"] as const).map(
-            (role) => [
-              role,
-              {
-                ...fixtureProviderRole(id, role, model),
-                mutable: true,
-                canServe: true,
-                cannotServeReason: null,
-                convergence
-              }
-            ]
-          )
+          (["orchestrator", "subagent"] as const).map((role) => [
+            role,
+            {
+              ...fixtureProviderRole(id, role, model),
+              mutable: true,
+              canServe: true,
+              cannotServeReason: null,
+              convergence
+            }
+          ])
         ),
         agentLimits: null,
+        agentModels: fixtureAgentModels(id, model),
         models: model === null ? [] : [{ tier: "default", model }],
         priorities: groups,
         orchestratorReasoningEffort: null,
@@ -6335,7 +6386,7 @@ const server = createServer(
         }
       });
       sendJson(response, {
-        schema: "autodev-control-providers-v3",
+        schema: "autodev-control-providers-v4",
         orchestratorTier: "orchestrator",
         tiers: [
           { tier: "default", groups: [["claude"], ["codex"]] },

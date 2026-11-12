@@ -64,18 +64,25 @@ export function AgentProviderSummary({
           : assignment.priority === "disabled"
             ? "Disabled"
             : `P${assignment.priority}`;
+      // The model this agent role was given on the provider, when it has one
+      // of its own rather than its tier's.
+      const agentModel =
+        record?.agentModels.find((entry) => entry.role === agent.id)?.model ??
+        null;
       return React.createElement(
         "li",
         { key: provider, className: "flex min-w-0 items-center" },
         React.createElement(StatusChip, {
           status,
           stateLabel: state,
-          label: provider,
+          label: agentModel === null ? provider : `${provider} · ${agentModel}`,
           href: providerPath(provider),
           // The name has to say which agent the chip belongs to. Ten agents
           // each link to the same five providers, so "codex: p1" named ten
           // different links and a links list showed the same entry ten times.
-          title: `${provider}: ${state.toLowerCase()} for the ${agent.id} role`
+          title: `${provider}: ${state.toLowerCase()} for the ${agent.id} role${
+            agentModel === null ? "" : `, on ${agentModel}`
+          }`
         })
       );
     })

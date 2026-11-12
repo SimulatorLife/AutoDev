@@ -49,7 +49,7 @@ function isControlApiContractResponse(value: unknown): boolean {
 }
 
 function isControlApiProvidersResponse(value: unknown): value is {
-  readonly schema: "autodev-control-providers-v3";
+  readonly schema: "autodev-control-providers-v4";
   readonly providers: readonly {
     readonly id: string;
     readonly links: {
@@ -60,7 +60,7 @@ function isControlApiProvidersResponse(value: unknown): value is {
 } {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-providers-v3" ||
+    value.schema !== "autodev-control-providers-v4" ||
     !Array.isArray(value.providers)
   ) {
     return false;

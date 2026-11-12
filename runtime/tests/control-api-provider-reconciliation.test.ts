@@ -141,7 +141,7 @@ test("the providers read carries each provider's own reconciliation view", async
   try {
     const read = await h.call("GET", "/control/providers");
     assert.equal(read.status, 200);
-    assert.equal(read.body?.schema, "autodev-control-providers-v3");
+    assert.equal(read.body?.schema, "autodev-control-providers-v4");
     const providers = read.body?.providers as ProviderRecord[];
     assert.ok(providers.length > 0);
     for (const provider of providers) {

@@ -493,6 +493,16 @@ export interface ControlApiProviderVersionsResponse {
   readonly providers: readonly ControlApiProviderVersionEntry[];
 }
 
+/** One agent role's model on one provider. */
+export interface ControlApiProviderAgentModel {
+  readonly role: string;
+  readonly tier: string;
+  /** The operator's choice for this role, or null to run the tier's model. */
+  readonly model: string | null;
+  /** The model the role's tier runs on this provider. */
+  readonly tierModel: string | null;
+}
+
 export interface ControlApiProviderRecord {
   readonly id: string;
   readonly links: ControlApiProviderLinks;
@@ -517,6 +527,12 @@ export interface ControlApiProviderRecord {
   >;
   /** Concurrent-agent limits for this provider, across every role. */
   readonly agentLimits: ControlApiProviderAgentLimits | null;
+  /**
+   * One entry per agent role (`explorer`, `worker`, ...) whose tier this
+   * provider serves: the operator's model for that role, if any, and the
+   * tier's model it runs otherwise.
+   */
+  readonly agentModels: readonly ControlApiProviderAgentModel[];
   /** Configured model per capability tier. */
   readonly models: readonly {
     readonly tier: string;
@@ -545,7 +561,7 @@ export interface ControlApiProviderRecord {
 }
 
 export interface ControlApiProvidersResponse {
-  readonly schema: "autodev-control-providers-v3";
+  readonly schema: "autodev-control-providers-v4";
   readonly orchestratorTier: string;
   /** Ordered priority/fallback groups per capability tier. */
   readonly tiers: readonly {
@@ -589,6 +605,18 @@ export interface ControlApiProviderEnabledPatchResponse {
   readonly reconciliation: ReconciliationView;
 }
 
+/** Response of `PATCH /control/providers/:provider/agents/:role`. */
+export interface ControlApiProviderAgentModelPatchResponse {
+  readonly schema: "autodev-control-provider-agent-model-v1";
+  readonly provider: string;
+  readonly role: string;
+  /** The role's model preference now, or null when it runs its tier's model. */
+  readonly model: string | null;
+  readonly previous: string | null;
+  readonly actor: string;
+  readonly reconciliation: ReconciliationView;
+}
+
 /** Response of `PATCH /control/providers/:provider/limits`. */
 export interface ControlApiProviderLimitsPatchResponse {
   readonly schema: "autodev-control-provider-limits-v1";
@@ -608,8 +636,8 @@ export interface ControlApiProvidersResetRequest {
  * Response of `POST /control/providers/reset` -- the Providers page header's
  * confirmation-bound "Reset to defaults" operation.
  *
- * This clears only provider Runtime overrides (role assignments, provider
- * disables, model disables, and provider agent limits), returning routing to
+ * This clears only provider Runtime overrides (role assignments, agent-role
+ * models, provider disables, model disables, and provider agent limits), returning routing to
  * the static `config/model-routing.json` defaults. Agent enablement, provider
  * discovery snapshots, cooldown/health state, and concurrency limits are
  * untouched -- none of them are provider routing overrides. Bounded counts
@@ -624,6 +652,7 @@ export interface ControlApiProvidersResetResponse {
     readonly disabledProviders: number;
     readonly disabledModels: number;
     readonly providerLimits: number;
+    readonly agentModels: number;
   };
   readonly reconciliation: ReconciliationView;
 }

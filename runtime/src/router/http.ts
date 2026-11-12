@@ -530,7 +530,8 @@ const ROUTING_POLICY_PERSISTENCE_SECTIONS = new Set([
   "disabledModels",
   "disabledAgentRoles",
   "agentEnablementRevisions",
-  "providerLimits"
+  "providerLimits",
+  "agentModels"
 ]);
 
 function restorePersistedSection(args: {
@@ -1398,6 +1399,7 @@ function routerProviderStatus(
       failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
       probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
       configuredModels: ROUTING_POLICY.effectiveModels(route.provider),
+      agentModels: ROUTING_POLICY.agentModelsFor(route.provider),
       capabilities: providerCapabilities(route.provider),
       attempts: state.attempts,
       successes: state.successes,

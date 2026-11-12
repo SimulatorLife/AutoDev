@@ -101,6 +101,7 @@ function provider(
     disabled: false,
     roles,
     agentLimits: null,
+    agentModels: [],
     models: [],
     priorities: [],
     orchestratorReasoningEffort: null,
@@ -155,7 +156,7 @@ function providersResponse(
   records: readonly ControlApiProviderRecord[]
 ): ControlApiProvidersResponse {
   return {
-    schema: "autodev-control-providers-v3",
+    schema: "autodev-control-providers-v4",
     orchestratorTier: "orchestrator",
     tiers: [{ tier: "default", groups: [[]] }],
     providers: records

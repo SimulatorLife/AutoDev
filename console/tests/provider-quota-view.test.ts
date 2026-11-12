@@ -201,7 +201,7 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
   };
 
   return {
-    schema: "autodev-control-providers-v3",
+    schema: "autodev-control-providers-v4",
     orchestratorTier: "orchestrator",
     tiers: [
       {
@@ -232,12 +232,13 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
         disabled: false,
         roles: buildRoleAssignments({
           orchestrator: "gemini-3.8-flash-high",
-          default: "gemini-3.8-flash-medium"
+          subagent: "gemini-3.8-flash-medium"
         }),
         agentLimits: {
           perSession: null,
           acrossSessions: 8
         },
+        agentModels: [],
         models: [
           { tier: "orchestrator", model: "gemini-3.8-flash-high" },
           { tier: "default", model: "gemini-3.8-flash-medium" },
@@ -302,9 +303,10 @@ function buildProvidersResponseFixture(): ControlApiProvidersResponse {
         },
         disabled: false,
         roles: buildRoleAssignments({
-          default: "MiniMax-M2.7"
+          subagent: "MiniMax-M2.7"
         }),
         agentLimits: null,
+        agentModels: [],
         models: [{ tier: "default", model: "MiniMax-M2.7" }],
         priorities: [{ tier: "default", group: 1 }],
         orchestratorReasoningEffort: null,

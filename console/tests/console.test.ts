@@ -77,6 +77,7 @@ import {
   AutoSubmitSelectField,
   type AutoSubmitSelectFieldProps
 } from "../src/components/forms/AutoSubmitSelectField.ts";
+import { HierarchicalSelect } from "../src/components/forms/HierarchicalSelect.ts";
 import { SUBMIT_ON_CHANGE_SCRIPT } from "../src/components/forms/submit-on-change.ts";
 import {
   ICON_PATHS,
@@ -4249,7 +4250,7 @@ test("server Control API client uses only its configured token and fixed local a
       headers: new Headers(init?.headers)
     });
     return Response.json({
-      schema: "autodev-control-providers-v3",
+      schema: "autodev-control-providers-v4",
       orchestratorTier: "orchestrator",
       tiers: [],
       providers: []
@@ -11868,7 +11869,7 @@ test("the metric chips wrap between items instead of clipping each to its prefix
 });
 
 const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
-  schema: "autodev-control-providers-v3",
+  schema: "autodev-control-providers-v4",
   orchestratorTier: "orchestrator",
   tiers: [
     { tier: "default", groups: [["claude"], ["codex"]] },
@@ -11883,6 +11884,7 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       disabled: false,
       agentLimits: { perSession: 3, acrossSessions: 8 },
+      agentModels: [],
       route: {
         pattern: "^(sonnet|claude-[a-z0-9-]*[a-z0-9])$",
         baseUrl: "http://127.0.0.1:4000/v1",
@@ -11890,38 +11892,6 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: "LITELLM_API_KEY", configured: false },
       roles: {
-        default: {
-          priority: 1,
-          model: "sonnet",
-          mutable: true,
-          convergence: {
-            convergence: "converged",
-            desiredGeneration: "default:1/sonnet",
-            observedGeneration: "default:1/sonnet",
-            lastApplyAt: "2026-10-05T15:00:00.000Z",
-            lastObservationAt: "2026-10-05T15:00:00.000Z",
-            lastError: null,
-            explanation: "Converged."
-          },
-          canServe: true,
-          cannotServeReason: null
-        },
-        smart: {
-          priority: 2,
-          model: "claude-opus-5-5",
-          mutable: true,
-          convergence: {
-            convergence: "converged",
-            desiredGeneration: "smart:2/claude-opus-5-5",
-            observedGeneration: "smart:2/claude-opus-5-5",
-            lastApplyAt: "2026-10-05T15:00:00.000Z",
-            lastObservationAt: "2026-10-05T15:00:00.000Z",
-            lastError: null,
-            explanation: "Converged."
-          },
-          canServe: true,
-          cannotServeReason: null
-        },
         orchestrator: {
           priority: 1,
           model: "claude-opus-5-5",
@@ -12006,6 +11976,7 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       links: { usage: "https://usage.example.test/codex", documentation: null },
       disabled: true,
       agentLimits: { perSession: null, acrossSessions: null },
+      agentModels: [],
       route: {
         pattern: "^gpt-.*$",
         baseUrl: "https://chatgpt.com/backend-api/codex",
@@ -12013,38 +11984,6 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: null, configured: true },
       roles: {
-        default: {
-          priority: 2,
-          model: "gpt-6-luna",
-          mutable: true,
-          convergence: {
-            convergence: "pending",
-            desiredGeneration: "default:2/gpt-6-luna",
-            observedGeneration: null,
-            lastApplyAt: "2026-10-05T15:30:00.000Z",
-            lastObservationAt: null,
-            lastError: null,
-            explanation: "Pending observation."
-          },
-          canServe: true,
-          cannotServeReason: null
-        },
-        smart: {
-          priority: 2,
-          model: "gpt-6-luna",
-          mutable: true,
-          convergence: {
-            convergence: "pending",
-            desiredGeneration: "smart:2/gpt-6-luna",
-            observedGeneration: null,
-            lastApplyAt: "2026-10-05T15:30:00.000Z",
-            lastObservationAt: null,
-            lastError: null,
-            explanation: "Pending observation."
-          },
-          canServe: true,
-          cannotServeReason: null
-        },
         orchestrator: {
           priority: "disabled",
           model: null,
@@ -15731,11 +15670,11 @@ test("ProvidersView renders configuration columns and live provider counts", () 
     );
   }
 
-  // Every one of the four roles gets its own form on every provider row,
-  // carrying both the priority and the model it would set.
+  // Every role gets its own form on every provider row, carrying both the
+  // priority and the model it would set.
   const forms = formTags(markup);
   for (const provider of ["claude", "codex"]) {
-    for (const role of ["default", "smart", "orchestrator", "subagent"]) {
+    for (const role of ["orchestrator", "subagent"]) {
       const form = forms.find((tag) =>
         tag.includes(`action="/api/providers/${provider}/roles/${role}"`)
       );
@@ -15757,7 +15696,7 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   // columns did not line up at all. `console/e2e/provider-role-alignment-
   // acceptance.spec.ts` measures that in the browser.
   const roleForms = forms.filter((form) => form.includes("data-role-form="));
-  assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 4);
+  assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 2);
   for (const roleForm of roleForms) {
     assert.match(roleForm, /grid-cols-\[5\.75rem_5rem_12rem_7rem\]/u);
     assert.doesNotMatch(roleForm, /flex-wrap/u);
@@ -15767,9 +15706,19 @@ test("ProvidersView renders configuration columns and live provider counts", () 
     markup.match(/<select\b[^>]*data-submit-on-change="true"[^>]*>/gu) ?? [];
   assert.equal(
     autoSubmitSelects.length,
-    PROVIDERS_FIXTURE.providers.length * 4 * 2,
+    PROVIDERS_FIXTURE.providers.length * 3,
     "priority and model selections both apply immediately for every role"
   );
+  // The Subagent model is one hierarchical select per provider.
+  for (const provider of ["claude", "codex"]) {
+    assert.match(
+      markup,
+      new RegExp(
+        `data-hierarchical-select="select-model-${provider}-subagent"`,
+        "u"
+      )
+    );
+  }
 
   // The read-only codex provider keeps all four roles' controls in place,
   // disabled, with the reason. Its configuration is preserved, not hidden.
@@ -15795,7 +15744,7 @@ test("ProvidersView renders configuration columns and live provider counts", () 
     )?.[0] ?? "";
   const activePrioritySelect =
     markup.match(
-      /<select\b(?=[^>]*data-select="role-priority-claude-default")[^>]*>/u
+      /<select\b(?=[^>]*data-select="role-priority-claude-subagent")[^>]*>/u
     )?.[0] ?? "";
   assert.ok(disabledPrioritySelect);
   assert.ok(activePrioritySelect);
@@ -15942,7 +15891,7 @@ test("a Disabled role's rendered form still submits the five fields its route re
     immutableBody.matchAll(/<select\b([^>]*)>/gu),
     (match) => match[1] ?? ""
   );
-  assert.equal(immutableSelects.length, 2);
+  assert.equal(immutableSelects.length, 1);
   for (const attributes of immutableSelects) {
     assert.match(attributes, /(?:^|\s)disabled(?=[\s/>=]|$)/u);
     assert.match(
@@ -15950,6 +15899,12 @@ test("a Disabled role's rendered form still submits the five fields its route re
       /title="This provider is disabled\. Enable it to change its roles\."/u
     );
   }
+  // The Subagent model's menu is closed to changes too, with the same reason.
+  assert.match(
+    immutableBody,
+    /id="select-model-codex-subagent"[^>]*aria-disabled="true"[^>]*title="[^"]*This provider is disabled\. Enable it to change its roles\."/u
+  );
+  assert.doesNotMatch(immutableBody, /<details/u);
   assert.doesNotMatch(immutableBody, /data-apply-role|>Apply<\/button>/u);
 });
 
@@ -15970,7 +15925,7 @@ test("a Disabled role preserves its exact assignment while provider discovery is
             id: "antigravity",
             disabled: false,
             // Keep the fixture shapes and change only what this case needs:
-            // the provider offers exactly one model, and Default is Disabled
+            // the provider offers exactly one model, and Subagent is Disabled
             // while holding a model that is not among them.
             models: [
               {
@@ -15980,8 +15935,8 @@ test("a Disabled role preserves its exact assignment while provider discovery is
             ],
             roles: {
               ...base.roles,
-              default: {
-                ...base.roles.default,
+              subagent: {
+                ...base.roles.subagent,
                 priority: "disabled",
                 model: "a-removed-model"
               }
@@ -15993,7 +15948,7 @@ test("a Disabled role preserves its exact assignment while provider discovery is
     })
   );
   const formTag = formTags(markup).find((tag) =>
-    /data-role-form="antigravity-default"/u.test(tag)
+    /data-role-form="antigravity-subagent"/u.test(tag)
   );
   assert.ok(formTag, "the Disabled role form must be present");
   assert.equal(
@@ -16191,7 +16146,7 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   const modelForms = forms.filter((form) =>
     form.includes('data-enablement-form="model"')
   );
-  assert.equal(roleForms.length, 4);
+  assert.equal(roleForms.length, 2);
   assert.match(markup, /data-section="provider-agent-limits"/);
   assert.match(markup, /data-provider-limits="claude"/);
   assert.match(markup, /data-provider-disabled="claude"/);
@@ -16208,7 +16163,7 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
     1,
     "provider detail reuses the same enablement mutation as the Providers row"
   );
-  for (const role of ["default", "smart", "orchestrator", "subagent"]) {
+  for (const role of ["orchestrator", "subagent"]) {
     assert.ok(
       roleForms.some((form) =>
         form.includes(`action="/api/providers/claude/roles/${role}"`)
@@ -16408,7 +16363,7 @@ test("ModelDetailView renders the model toggle under its provider's breadcrumbs"
   assert.equal(hiddenValue(markup, forms[0]!, "enabled"), "true");
   // Every fixed role is listed read-only, with its priority rather than the
   // removed enabled boolean.
-  for (const role of ["default", "smart", "orchestrator", "subagent"]) {
+  for (const role of ["orchestrator", "subagent"]) {
     assert.match(markup, new RegExp(`${role}: (P[123]|Disabled)`));
   }
   assert.match(markup, /href="\/usage\?model=sonnet"/);
@@ -16800,6 +16755,7 @@ test("every provider mutation addresses its canonical Control API path", async (
         schema: "autodev-control-provider-limits-v1",
         provider: "claude",
         agentLimits: { perSession: 3, acrossSessions: null },
+        agentModels: [],
         previous: null,
         actor: LOCAL_CONTROL_API_ACTOR,
         reconciliation: { status: {}, history: [] }
@@ -20300,6 +20256,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     links: { usage: null, documentation: null },
     disabled: false,
     agentLimits: { perSession: 2, acrossSessions: null },
+    agentModels: [],
     route: null,
     credential: { envKey: "ANTHROPIC_API_KEY", configured: true },
     roles: {
@@ -20330,7 +20287,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     }
   };
   const providersEnvelope = (providers: unknown[]) => ({
-    schema: "autodev-control-providers-v3",
+    schema: "autodev-control-providers-v4",
     orchestratorTier: "orchestrator",
     tiers: [{ tier: "orchestrator", groups: [["anthropic"]] }],
     providers
@@ -21122,10 +21079,14 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
   const listItems = React.Children.toArray(
     controls.props.children
   ) as React.ReactElement<{ readonly children?: React.ReactNode }>[];
-  assert.equal(listItems.length, 4);
+  assert.equal(listItems.length, 2);
 
   for (const item of listItems) {
-    const roleRowElement = item.props.children as React.ReactElement<{
+    // The row is the item's last child: the Subagent item puts its model
+    // menu's forms before it, outside the row's own form.
+    const roleRowElement = React.Children.toArray(item.props.children).at(
+      -1
+    ) as React.ReactElement<{
       readonly action?: string;
       readonly method?: string;
       readonly children?: React.ReactNode;
@@ -21172,6 +21133,15 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
       (child) =>
         typeof child.type === "function" && child.props?.role !== undefined
     ) as React.ReactElement<{ readonly role?: string }> | undefined;
+    // The Subagent model is a hierarchical menu of submit buttons, which
+    // applies immediately without the page-level listener.
+    if (roleRow.props.action?.endsWith("/roles/subagent")) {
+      assert.ok(
+        formChildren.some((child) => child.type === HierarchicalSelect),
+        "the Subagent row's model is the hierarchical select"
+      );
+      continue;
+    }
     assert.ok(roleModelElement, "Role row must render RoleModelSelect");
     const modelSelectFn = roleModelElement.type as (
       props: unknown

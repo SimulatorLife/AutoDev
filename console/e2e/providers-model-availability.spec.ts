@@ -55,7 +55,7 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
   await page.goto(PROVIDERS_TAB_URL);
   await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
   const currentModel = page.locator(
-    `[data-select="role-model-${CLAUDE_PROVIDER_ID}-default"]`
+    `[data-select="role-model-${CLAUDE_PROVIDER_ID}-orchestrator"]`
   );
   await expect(currentModel).toBeVisible();
   const currentOptions = await currentModel
@@ -66,10 +66,12 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
   expect(currentOptions).toEqual(["", "sonnet"]);
   expect(currentOptions).not.toContain(UNSUPPORTED_MODEL_ID);
 
-  const staleModel = page.locator('[data-select="role-model-codex-default"]');
+  const staleModel = page.locator(
+    '[data-select="role-model-codex-orchestrator"]'
+  );
   await expect(staleModel).toBeDisabled();
   await expect(staleModel).toHaveAttribute("title", STALE_AVAILABILITY_TITLE);
-  const staleForm = page.locator('[data-role-form="codex-default"]');
+  const staleForm = page.locator('[data-role-form="codex-orchestrator"]');
   await expect(staleForm.locator('input[name="model"]')).toHaveValue(
     "gpt-6-luna"
   );
@@ -182,12 +184,7 @@ test("Providers keeps its five-column role table readable at narrow and desktop 
       .evaluateAll((nodes) =>
         Array.from(new Set(nodes.map((node) => node.textContent?.trim() ?? "")))
       );
-    expect(roleLabels).toEqual([
-      "Default",
-      "Smart",
-      "Orchestrator",
-      "Subagent"
-    ]);
+    expect(roleLabels).toEqual(["Orchestrator", "Subagent"]);
 
     const widths = await table.evaluate((element) => {
       const scroller = element.parentElement;
@@ -292,7 +289,7 @@ test("Provider detail reuses provider-wide controls and navigates in place", asy
     .click();
   await expect(page).toHaveURL(PROVIDER_DETAIL_URL_PATTERN);
   await expect(
-    page.locator(`[data-role-form="${CLAUDE_PROVIDER_ID}-default"]`)
+    page.locator(`[data-role-form="${CLAUDE_PROVIDER_ID}-subagent"]`)
   ).toBeVisible();
   await expect(
     page.locator(`[data-provider-limits="${CLAUDE_PROVIDER_ID}"]`)

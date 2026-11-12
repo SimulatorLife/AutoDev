@@ -484,8 +484,21 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     },
     {
       provider: "opencli-gemini",
-      modelId: "opencli-gemini-4-argon-complex-tasks",
-      displayName: "Gemini 4 Argon (complex tasks) (opencli)",
+      modelId: "opencli-gemini-4-argon",
+      displayName: "Gemini 4 Argon (opencli)",
+      modelType: "chat",
+      contextWindow: 128_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "opencli-gemini",
+      modelId: "opencli-gemini-4-carbon",
+      displayName: "Gemini 4 Carbon (opencli)",
       modelType: "chat",
       contextWindow: 128_000,
       inputPricePerMToken: 0,

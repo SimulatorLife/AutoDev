@@ -39,12 +39,14 @@ import {
   type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
+  type ControlApiProviderAgentModelPatchResponse,
   type ControlApiProviderCheckResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderHealth,
   type ControlApiProviderLimitsPatchResponse,
   type ControlApiProviderModelDiscovery,
   type ControlApiProviderModelsResponse,
+  type ControlApiProviderRecord,
   type ControlApiProviderRoleAssignment,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResetRequest,
@@ -223,6 +225,8 @@ const PROVIDER_ROLE_PATH = new RegExp(
   `^/control/providers/([a-zA-Z0-9._-]+)/roles/(${PROVIDER_ROLES.join("|")})$`,
   "u"
 );
+const PROVIDER_AGENT_MODEL_PATH =
+  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/agents\/([a-z0-9-]+)$/u;
 const PROVIDER_LIMITS_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/limits$/u;
 const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
@@ -1050,6 +1054,23 @@ function rolesForEveryProviderRole(
   return assigned;
 }
 
+/** Every agent role whose tier this provider serves, with its model choice. */
+function agentModelsView(
+  provider: string
+): ControlApiProviderRecord["agentModels"] {
+  const servedTiers = new Set(
+    providerTierPriorities(provider).map(({ tier }) => tier)
+  );
+  return Object.entries(ROUTING_POLICY.config.roles)
+    .filter(([, { tier }]) => servedTiers.has(tier))
+    .map(([role, { tier }]) => ({
+      role,
+      tier,
+      model: ROUTING_POLICY.agentModelFor(provider, role) ?? null,
+      tierModel: ROUTING_POLICY.tierModel(provider, tier) ?? null
+    }));
+}
+
 function providersView(now: number): Record<string, unknown> {
   const names = ROUTING_POLICY.providerIds();
   const reasoningEffort = ROUTING_POLICY.config.orchestrator.reasoningEffort;
@@ -1140,20 +1161,21 @@ function providersView(now: number): Record<string, unknown> {
         };
       }),
       agentLimits,
+      agentModels: agentModelsView(provider),
       models: Object.entries(
         ROUTING_POLICY.config.providers[provider]?.models ?? {}
       ).map(([tier, model]) => ({ tier, model: model.trim() })),
       priorities: providerTierPriorities(provider),
       orchestratorReasoningEffort: reasoningEffort?.[provider] ?? null,
       health: health?.[provider] ?? null,
-      ...(health?.[provider]?.quota !== undefined
-        ? { quota: health[provider].quota }
-        : {}),
+      ...(health?.[provider]?.quota === undefined
+        ? {}
+        : { quota: health[provider].quota }),
       reconciliation: providerReconciliationView(provider)
     };
   });
   return {
-    schema: "autodev-control-providers-v3",
+    schema: "autodev-control-providers-v4",
     orchestratorTier: ROUTING_POLICY.config.orchestrator.tier,
     tiers: Object.entries(ROUTING_POLICY.effectiveTierGroups()).map(
       ([tier, groups]) => ({ tier, groups })
@@ -5281,9 +5303,7 @@ async function patchProviderRole(
     const modelIsValid =
       model === null ||
       (typeof model === "string" &&
-        (model === previous?.model ||
-          (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
-            providerHasCurrentModelDiscovery(provider, model))));
+        isProviderModelChoice(provider, model, previous?.model ?? null));
     if (!modelIsValid) {
       audit("error", null, "invalid_body");
       sendControlError(
@@ -5383,6 +5403,163 @@ async function patchProviderRole(
     );
   });
 }
+/**
+ * Whether an operator may choose `model` for a provider: the model it already
+ * has, or one currently observed as routeable for that provider. Provider-role
+ * and agent-role assignments both choose a model this way.
+ */
+function isProviderModelChoice(
+  provider: string,
+  model: string,
+  current: string | null
+): boolean {
+  return (
+    model === current ||
+    (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
+      providerHasCurrentModelDiscovery(provider, model))
+  );
+}
+
+/**
+ * `PATCH /control/providers/:provider/agents/:role` -- set (`{model}`) or
+ * clear (`{model: null}`) one agent role's model preference on a provider.
+ */
+async function patchProviderAgentModel(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string,
+  role: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/agents/${role}`;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_provider_agent_model",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
+    });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to change agent models."
+    );
+    return;
+  }
+  if (!providerIsKnown(provider)) {
+    audit("error", null, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
+    );
+    return;
+  }
+  if (!Object.hasOwn(ROUTING_POLICY.config.roles, role)) {
+    audit("error", null, "unknown_role");
+    sendControlError(
+      response,
+      404,
+      "autodev_control_api_unknown_agent_role",
+      "Unknown agent role."
+    );
+    return;
+  }
+  if (ROUTING_POLICY.isProviderDisabled(provider)) {
+    audit("error", null, "provider_disabled");
+    sendControlError(
+      response,
+      409,
+      "autodev_control_api_provider_disabled",
+      "Enable the provider before changing its agent models."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const { body } = parsed;
+  const model = body.model;
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    const previous = ROUTING_POLICY.agentModelFor(provider, role) ?? null;
+    if (
+      Object.keys(body).length !== 1 ||
+      model !== null &&
+        (typeof model !== "string" ||
+          !isProviderModelChoice(provider, model, previous))
+    ) {
+      audit("error", null, "invalid_body");
+      sendControlError(
+        response,
+        400,
+        "autodev_control_api_bad_body",
+        "Agent model body must carry only a model that is null (use the tier's model), unchanged, or currently observed as routeable for this provider."
+      );
+      return;
+    }
+    try {
+      ROUTING_POLICY.setAgentModel(provider, role, model);
+      await persistRoutingPolicy();
+    } catch {
+      try {
+        ROUTING_POLICY.setAgentModel(provider, role, previous);
+      } catch {
+        // Preserve the original failure; the audit record captures it.
+      }
+      audit("error", { model, previous }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Agent model change could not be persisted."
+      );
+      return;
+    }
+
+    const applied = ROUTING_POLICY.agentModelFor(provider, role) ?? null;
+    const reconciliation = providerMutationReconciliation(
+      resource,
+      `${role}=${model ?? "tier"}`,
+      applied === model
+    );
+    audit("ok", { model, previous }, undefined, reconciliation.audit);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-provider-agent-model-v1",
+        provider,
+        role,
+        model: applied,
+        previous,
+        actor: actor.actor,
+        reconciliation: reconciliation.view
+      } satisfies ControlApiProviderAgentModelPatchResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  });
+}
+
 /**
  * Whether the runtime currently serves this provider at all. Used by both
  * provider-wide mutations to decide whether an applied change really landed.
@@ -8637,6 +8814,29 @@ async function handleMutationOnlyRoute(
       return true;
     }
     await patchConcurrencyLimit(request, response, actor);
+    return true;
+  }
+  const agentModelMatch = pathname.match(PROVIDER_AGENT_MODEL_PATH);
+  if (agentModelMatch) {
+    if (method !== "PATCH") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "PATCH",
+        "Agent models are mutated via PATCH only."
+      );
+      return true;
+    }
+    await patchProviderAgentModel(
+      request,
+      response,
+      actor,
+      agentModelMatch[1]!,
+      agentModelMatch[2]!
+    );
     return true;
   }
   const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);

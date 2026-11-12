@@ -15,6 +15,7 @@ function createMockProvider(
     links: { usage: null, documentation: null },
     disabled: false,
     agentLimits: { perSession: 4, acrossSessions: 12 },
+    agentModels: [],
     route: {
       pattern: "^claude",
       baseUrl: "http://127.0.0.1:4000/v1",
@@ -22,34 +23,6 @@ function createMockProvider(
     },
     credential: { envKey: "ANTHROPIC_API_KEY", configured: true },
     roles: {
-      default: {
-        priority: 1,
-        model: "claude-3-5-sonnet",
-        mutable: true,
-        convergence: {
-          convergence: "converged",
-          desiredGeneration: "default:1/claude-3-5-sonnet",
-          observedGeneration: "default:1/claude-3-5-sonnet",
-          lastApplyAt: "2026-10-07T00:00:00.000Z",
-          lastObservationAt: "2026-10-07T00:00:00.000Z",
-          lastError: null,
-          explanation: "Converged."
-        }
-      },
-      smart: {
-        priority: 1,
-        model: "claude-opus-5-5",
-        mutable: true,
-        convergence: {
-          convergence: "converged",
-          desiredGeneration: "smart:1/claude-opus-5-5",
-          observedGeneration: "smart:1/claude-opus-5-5",
-          lastApplyAt: "2026-10-07T00:00:00.000Z",
-          lastObservationAt: "2026-10-07T00:00:00.000Z",
-          lastError: null,
-          explanation: "Converged."
-        }
-      },
       orchestrator: {
         priority: 1,
         model: "claude-opus-5-5",

@@ -35,18 +35,6 @@ function provider(id: string): ControlApiProviderRecord {
     credential: { envKey: null, configured: false },
     disabled: false,
     roles: {
-      default: {
-        priority: "disabled",
-        model: null,
-        mutable: false,
-        convergence: NO_CONVERGENCE
-      },
-      smart: {
-        priority: "disabled",
-        model: null,
-        mutable: false,
-        convergence: NO_CONVERGENCE
-      },
       orchestrator: {
         priority: "disabled",
         model: null,
@@ -61,6 +49,7 @@ function provider(id: string): ControlApiProviderRecord {
       }
     },
     agentLimits: null,
+    agentModels: [],
     models: [],
     priorities: [],
     orchestratorReasoningEffort: null,
@@ -70,7 +59,7 @@ function provider(id: string): ControlApiProviderRecord {
 }
 
 const PROVIDERS: ControlApiProvidersResponse = {
-  schema: "autodev-control-providers-v3",
+  schema: "autodev-control-providers-v4",
   orchestratorTier: "orchestrator",
   tiers: [{ tier: "default", groups: [["claude"]] }],
   providers: [provider("claude")]

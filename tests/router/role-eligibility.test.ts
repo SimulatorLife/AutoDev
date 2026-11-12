@@ -33,7 +33,7 @@ import { useNonDelegatingContract } from "./non-delegating-contract.ts";
 const NON_DELEGATING = "minimax";
 const restoreContract = useNonDelegatingContract(NON_DELEGATING);
 test.after(restoreContract);
-const NON_DELEGATING_ROLES = ["default", "smart", "subagent"] as const;
+const NON_DELEGATING_ROLES = ["subagent"] as const;
 
 // The launcher publishes CODEX_ROUTER_AUTH_TOKEN into the launchd user
 // domain, so a maintainer's shell normally carries it. Without pinning, the

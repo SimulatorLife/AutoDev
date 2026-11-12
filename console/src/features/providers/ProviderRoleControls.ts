@@ -1,4 +1,5 @@
 import {
+  type ControlApiProviderAgentModel,
   type ControlApiProviderRecord,
   type ControlApiProviderRoleAssignment,
   PROVIDER_ROLES,
@@ -7,6 +8,10 @@ import {
 import React from "react";
 
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
+import {
+  HierarchicalSelect,
+  HierarchicalSelectForms,
+  type HierarchicalSelectProps} from "../../components/forms/HierarchicalSelect.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
@@ -32,8 +37,6 @@ import {
  */
 
 const ROLE_LABELS: Readonly<Record<ProviderRole, string>> = {
-  default: "Default",
-  smart: "Smart",
   orchestrator: "Orchestrator",
   subagent: "Subagent"
 };
@@ -45,8 +48,6 @@ const ROLE_LABELS: Readonly<Record<ProviderRole, string>> = {
  * component at runtime.
  */
 const ROLE_ICONS = {
-  default: { name: "roleDefault" },
-  smart: { name: "roleSmart" },
   orchestrator: { name: "roleOrchestrator" },
   subagent: { name: "roleSubagent" }
 } as const satisfies Readonly<
@@ -127,6 +128,27 @@ function modelDiscoveryDisabledReason(
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 /**
+ * Why a role's model cannot be changed now, or undefined when it can: the
+ * provider is disabled, cannot serve the role, the role is Disabled, or the
+ * provider's models are not currently observed.
+ */
+function roleModelDisabledReason(
+  provider: string,
+  assignment: ControlApiProviderRoleAssignment,
+  discovery: ProviderModelDiscoveryState
+): string | undefined {
+  if (!assignment.mutable)
+    return "This provider is disabled. Enable it to change its roles.";
+  if (assignment.canServe === false)
+    return (
+      assignment.cannotServeReason ?? "This provider cannot serve this role."
+    );
+  if (assignment.priority === "disabled")
+    return "This role is set to Disabled. Choose a priority to change its model.";
+  return modelDiscoveryDisabledReason(discovery, provider) ?? undefined;
+}
+
+/**
  * The model dropdown for one role.
  *
  * When the role is disabled the control stays present and keeps its value, but
@@ -168,7 +190,7 @@ function RoleModelSelect({
     defaultValue: assignment.model ?? "",
     ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
     options: [
-      { value: "", label: "Not set" },
+      { value: "", label: "Auto" },
       ...models.map(({ id, label }) => ({ value: id, label }))
     ]
   });
@@ -265,6 +287,7 @@ function RoleRow({
   provider,
   role,
   assignment,
+  agentModels,
   models,
   discovery,
   returnTo
@@ -272,6 +295,7 @@ function RoleRow({
   readonly provider: string;
   readonly role: ProviderRole;
   readonly assignment: ControlApiProviderRoleAssignment;
+  readonly agentModels: readonly ControlApiProviderAgentModel[];
   readonly models: readonly { readonly id: string; readonly label: string }[];
   readonly discovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
@@ -294,12 +318,7 @@ function RoleRow({
       ? (assignment.cannotServeReason ??
         "This provider cannot serve this role.")
       : undefined;
-  const modelReason =
-    blockedReason ??
-    cannotServeReason ??
-    (roleDisabled
-      ? "This role is set to Disabled. Choose a priority to change its model."
-      : (modelDiscoveryDisabledReason(discovery, provider) ?? undefined));
+  const modelReason = roleModelDisabledReason(provider, assignment, discovery);
   const effortReason =
     blockedReason ??
     cannotServeReason ??
@@ -391,14 +410,15 @@ function RoleRow({
       hideLabel: true,
       className: "min-w-0 w-20",
       testId: `role-priority-${provider}-${role}`,
-      tone: roleDisabled || cannotServeReason !== undefined ? "warning" : undefined,
+      tone:
+        roleDisabled || cannotServeReason !== undefined ? "warning" : undefined,
       dataAttributes: { "data-role-priority": role },
       defaultValue: priorityOptionSelected(assignment),
-      ...(blockedReason !== undefined
-        ? { disabled: true, disabledReason: blockedReason }
-        : cannotServeReason !== undefined
-          ? { disabled: true, disabledReason: cannotServeReason }
-          : {}),
+      ...(blockedReason === undefined
+        ? cannotServeReason === undefined
+          ? {}
+          : { disabled: true, disabledReason: cannotServeReason }
+        : { disabled: true, disabledReason: blockedReason }),
       options: [
         { value: "1", label: "P1" },
         { value: "2", label: "P2" },
@@ -406,22 +426,38 @@ function RoleRow({
         { value: "disabled", label: "Disabled" }
       ]
     }),
-    React.createElement(RoleModelSelect, {
-      provider,
-      role,
-      assignment,
-      models: modelOptions,
-      disabledReason: modelReason
-    }),
+    role === "subagent"
+      ? React.createElement(HierarchicalSelect, {
+          ...subagentModelSelect({
+            provider,
+            assignment,
+            agentModels,
+            models,
+            discovery,
+            returnTo
+          }),
+          className: "max-w-48 justify-self-start",
+          // The opened menu takes a row of its own under the role's controls,
+          // so the scrolling strip never clips it.
+          menuClassName: "col-span-full row-start-2"
+        })
+      : React.createElement(RoleModelSelect, {
+          provider,
+          role,
+          assignment,
+          models: modelOptions,
+          disabledReason: modelReason
+        }),
     React.createElement(RoleEffortSelect, {
       provider,
       role,
       assignment,
       disabledReason: effortReason
     }),
-    // A natively `disabled` control is not submitted by the browser.
-    // The hidden fields carry preserved model and effort values across submissions.
-    ...(modelReason === undefined
+    // A natively `disabled` control is not submitted by the browser, and the
+    // Subagent model is chosen in its own menu forms, so the role's form
+    // carries the current model for its priority and effort changes.
+    ...(modelReason === undefined && role !== "subagent"
       ? []
       : [
           React.createElement("input", {
@@ -452,10 +488,9 @@ function RoleRow({
 }
 
 /**
- * The four roles for one provider, in the fixed order the target state names:
- * Default, Smart, Orchestrator, Subagent. The order is read from
- * `PROVIDER_ROLES` rather than restated here so a role added to Core cannot go
- * missing from this column.
+ * The two roles for one provider, in the fixed order the target state names:
+ * Orchestrator, Subagent. The order is read from `PROVIDER_ROLES` rather than
+ * restated here so a role added to Core cannot go missing from this column.
  */
 export function ProviderRoleControls({
   provider,
@@ -494,10 +529,24 @@ export function ProviderRoleControls({
       React.createElement(
         "li",
         { key: role, className: "flex min-w-0" },
+        role === "subagent"
+          ? React.createElement(
+              HierarchicalSelectForms,
+              subagentModelSelect({
+                provider: provider.id,
+                assignment: provider.roles.subagent,
+                agentModels: provider.agentModels,
+                models,
+                discovery: modelDiscovery,
+                returnTo
+              })
+            )
+          : null,
         React.createElement(RoleRow, {
           provider: provider.id,
           role,
           assignment: provider.roles[role],
+          agentModels: provider.agentModels,
           models,
           discovery: modelDiscovery,
           returnTo
@@ -505,4 +554,79 @@ export function ProviderRoleControls({
       )
     )
   );
+}
+
+/**
+ * The Subagent model, as one select with a level per target: "All subagents"
+ * sets the Subagent role's model, and each agent role (`explorer`, `smart`,
+ * ...) can be given a model of its own that wins over it. A role left on Auto
+ * runs the Subagent model, or the tier's configured model when that is Auto
+ * too; each level says which model that is.
+ */
+function subagentModelSelect({
+  provider,
+  assignment,
+  agentModels,
+  models,
+  discovery,
+  returnTo
+}: {
+  readonly provider: string;
+  readonly assignment: ControlApiProviderRoleAssignment;
+  readonly agentModels: readonly ControlApiProviderAgentModel[];
+  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly discovery: ProviderModelDiscoveryState;
+  readonly returnTo: string;
+}): HierarchicalSelectProps {
+  const options = (current: string | null, auto: string) => [
+    { value: "", label: auto },
+    ...models.map(({ id, label }) => ({ value: id, label })),
+    ...(current !== null && !models.some(({ id }) => id === current)
+      ? [
+          {
+            value: current,
+            label: preservedModelLabel(discovery, provider, current)
+          }
+        ]
+      : [])
+  ];
+  const overrides = agentModels.filter(({ model }) => model !== null).length;
+  const subagentModel = assignment.model ?? "Auto";
+  return {
+    id: `select-model-${provider}-subagent`,
+    label: "Subagent model",
+    summary: overrides === 0 ? subagentModel : `${subagentModel} +${overrides}`,
+    disabledReason: roleModelDisabledReason(provider, assignment, discovery),
+    levels: [
+      {
+        key: "subagent",
+        label: "All subagents",
+        current: subagentModel,
+        selected: assignment.model ?? "",
+        action: `/api/providers/${encodeURIComponent(provider)}/roles/subagent`,
+        name: "model",
+        hiddenFields: {
+          provider,
+          role: "subagent",
+          returnTo,
+          priority: priorityOptionSelected(assignment),
+          reasoningEffort: assignment.reasoningEffort ?? ""
+        },
+        options: options(assignment.model, "Auto")
+      },
+      ...agentModels.map((entry) => {
+        const auto = `Auto (${entry.tierModel ?? NOT_OBSERVED_LABEL})`;
+        return {
+          key: entry.role,
+          label: entry.role,
+          current: entry.model ?? auto,
+          selected: entry.model ?? "",
+          action: `/api/providers/${encodeURIComponent(provider)}/agents/${encodeURIComponent(entry.role)}`,
+          name: "model",
+          hiddenFields: { provider, role: entry.role, returnTo },
+          options: options(entry.model, auto)
+        };
+      })
+    ]
+  };
 }

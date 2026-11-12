@@ -3,16 +3,12 @@
  *
  * These are the canonical roles a provider can serve, and they are fixed: a
  * provider's participation in each is expressed by its priority, not by an
- * open-ended capability set. `default` and `smart` are the two routing roles the
- * Runtime has always resolved; `orchestrator` and `subagent` are the agent
- * execution roles.
+ * open-ended capability set. `orchestrator` governs the root agent and
+ * `subagent` governs every tier a subagent runs in. A single agent role
+ * (`explorer`, `smart`, ...) can narrow the subagent model further through
+ * `RoutingPolicyState.agentModels`.
  */
-export const PROVIDER_ROLES = [
-  "default",
-  "smart",
-  "orchestrator",
-  "subagent"
-] as const;
+export const PROVIDER_ROLES = ["orchestrator", "subagent"] as const;
 
 export type ProviderRole = (typeof PROVIDER_ROLES)[number];
 
@@ -86,4 +82,12 @@ export interface RoutingPolicyState {
   readonly agentEnablementRevisions: Readonly<Record<string, number>>;
   /** Per-provider concurrency limits; absent providers are unconstrained. */
   readonly providerLimits: Readonly<Record<string, ProviderAgentLimits>>;
+  /**
+   * Per-provider model preference for individual agent roles (`explorer`,
+   * `worker`, ...). It wins over the tier's model for that role only; a role
+   * absent here uses its tier's model.
+   */
+  readonly agentModels: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
 }

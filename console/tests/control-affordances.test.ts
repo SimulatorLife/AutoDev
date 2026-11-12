@@ -70,7 +70,7 @@ const NO_CONVERGENCE = {
 };
 
 const PROVIDERS_FIXTURE = {
-  schema: "autodev-control-providers-v3",
+  schema: "autodev-control-providers-v4",
   orchestratorTier: "root",
   tiers: [
     { tier: "default", groups: [["provider-fixture"]] },
@@ -84,18 +84,6 @@ const PROVIDERS_FIXTURE = {
       credential: { envKey: null, configured: false },
       disabled: false,
       roles: {
-        default: {
-          priority: "disabled",
-          model: null,
-          mutable: false,
-          convergence: NO_CONVERGENCE
-        },
-        smart: {
-          priority: "disabled",
-          model: null,
-          mutable: false,
-          convergence: NO_CONVERGENCE
-        },
         orchestrator: {
           priority: "disabled",
           model: null,
@@ -110,6 +98,7 @@ const PROVIDERS_FIXTURE = {
         }
       },
       agentLimits: null,
+      agentModels: [],
       models: [],
       priorities: [],
       orchestratorReasoningEffort: null,

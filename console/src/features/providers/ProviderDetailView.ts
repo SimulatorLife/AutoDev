@@ -125,7 +125,7 @@ function ProviderReconciliationPanel({
 /**
  * The provider detail page's role panel.
  *
- * It shows the same four-role controls as the Providers row, because the
+ * It shows the same role controls as the Providers row, because the
  * target state's contextual-controls rule requires an item's controls on its
  * row *and* in its detail view. Reusing `ProviderRoleControls` rather than
  * re-describing the roles here is what keeps the two surfaces from drifting
@@ -253,9 +253,9 @@ function ModelsPanel({
                   modelQuota.pool ? `pool: ${modelQuota.pool}` : null,
                   modelQuota.status === "unlimited"
                     ? "Unlimited"
-                    : modelQuota.usedPercent !== null
-                      ? `${Math.round(modelQuota.usedPercent)}% used`
-                      : modelQuota.status,
+                    : modelQuota.usedPercent === null
+                      ? modelQuota.status
+                      : `${Math.round(modelQuota.usedPercent)}% used`,
                   quotaReset ? `resets ${quotaReset}` : null
                 ]
                   .filter(Boolean)
@@ -731,11 +731,11 @@ export function ProviderQuotaLimitsPanel({
             const usedSummary =
               window.status === "unlimited"
                 ? "Unlimited"
-                : window.usedPercent !== null
-                  ? `${Math.round(window.usedPercent)}% used (${Math.round(
+                : window.usedPercent === null
+                  ? window.status
+                  : `${Math.round(window.usedPercent)}% used (${Math.round(
                       window.remainingPercent ?? 100 - window.usedPercent
-                    )}% remaining)`
-                  : window.status;
+                    )}% remaining)`;
             const countSummary =
               window.used != null && window.limit != null
                 ? `${window.used} / ${window.limit}${window.unit ? ` ${window.unit}` : ""}`
@@ -816,11 +816,11 @@ export function ProviderQuotaLimitsPanel({
                 nowMs
               );
               const usedSummary =
-                pool.usedPercent !== null
-                  ? `${Math.round(pool.usedPercent)}% used (${Math.round(
+                pool.usedPercent === null
+                  ? pool.status
+                  : `${Math.round(pool.usedPercent)}% used (${Math.round(
                       pool.remainingPercent ?? 100 - pool.usedPercent
-                    )}% remaining)`
-                  : pool.status;
+                    )}% remaining)`;
               return React.createElement(
                 DetailValue,
                 {

@@ -74,6 +74,7 @@ import {
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
   type ControlApiProviderAgentLimits,
+  type ControlApiProviderAgentModelPatchResponse,
   type ControlApiProviderCheckResponse,
   type ControlApiProviderCliVersion,
   type ControlApiProviderEnabledPatchResponse,
@@ -1294,6 +1295,16 @@ function isProviderCheck(value: unknown): boolean {
   );
 }
 
+function isProviderAgentModel(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.role === "string" &&
+    typeof value.tier === "string" &&
+    (value.model === null || typeof value.model === "string") &&
+    (value.tierModel === null || typeof value.tierModel === "string")
+  );
+}
+
 function isProviderLinks(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1307,7 +1318,7 @@ function isControlApiProvidersResponse(
 ): value is ControlApiProvidersResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-providers-v3" &&
+    value.schema === "autodev-control-providers-v4" &&
     typeof value.orchestratorTier === "string" &&
     Array.isArray(value.tiers) &&
     value.tiers.every(
@@ -1327,6 +1338,8 @@ function isControlApiProvidersResponse(
         isProviderRoles(provider.roles) &&
         typeof provider.disabled === "boolean" &&
         isProviderAgentLimits(provider.agentLimits) &&
+        Array.isArray(provider.agentModels) &&
+        provider.agentModels.every(isProviderAgentModel) &&
         isRecord(provider.credential) &&
         typeof provider.credential.configured === "boolean" &&
         Array.isArray(provider.models) &&
@@ -1361,7 +1374,7 @@ export async function fetchProviders(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_providers_response",
     message:
-      "AutoDev Control API returned an incompatible Providers response; the Console requires the v3 provider contract."
+      "AutoDev Control API returned an incompatible Providers response; the Console requires the v4 provider contract."
   };
 }
 
@@ -1402,6 +1415,28 @@ export function patchProviderRole(
         ? {}
         : { reasoningEffort: assignment.reasoningEffort })
     },
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed PATCH of one agent role's model preference on a provider;
+ * `null` returns the role to its tier's model.
+ */
+export function patchAgentModel(
+  provider: string,
+  role: string,
+  model: string | null,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderAgentModelPatchResponse>> {
+  return mutateControlApi<ControlApiProviderAgentModelPatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.providers}/${encodeURIComponent(
+      provider
+    )}/agents/${encodeURIComponent(role)}`,
+    { model },
     config,
     options
   );

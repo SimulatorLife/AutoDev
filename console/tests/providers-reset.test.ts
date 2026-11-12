@@ -16,7 +16,8 @@ const RESET_RESPONSE = {
     roleAssignments: 2,
     disabledProviders: 1,
     disabledModels: 1,
-    providerLimits: 1
+    providerLimits: 1,
+    agentModels: 0
   },
   reconciliation: {
     status: {

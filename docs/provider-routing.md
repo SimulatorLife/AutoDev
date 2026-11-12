@@ -27,12 +27,23 @@ process receives a role-scoped temporary MCP home. `smart` uses the configured
 model. Every role uses the `local_model_router` with an `autodev/<role>` model
 alias.
 
-A provider's role assignment may name its own model, and that assignment wins
-over the tier's configured model for that provider and role. The Console's
-Providers tab and `PATCH /control/providers/<provider>/roles/<role>` both write
-it; it is an operator override layered on top of the routing config's tier
-defaults, not a second place to define tiers. Clearing the assignment restores
-the tier's model. A model named by an assignment must route to the same provider
+A provider has two operator roles: `orchestrator`, which governs the root
+agent, and `subagent`, which governs every tier a subagent runs in (its
+priority ranks the provider in those tiers and its `Disabled` removes it from
+all of them). Each may name its own model. For a subagent request the model is
+chosen in this order:
+
+1. the agent role's own model on that provider (`agentModels`, e.g. `explorer`
+   on `opencli-chatgpt-fast`);
+2. the provider's `subagent` assignment model;
+3. the tier's configured model.
+
+The Console's Providers tab writes the role assignments through
+`PATCH /control/providers/<provider>/roles/<role>` and the agent-role models
+through `PATCH /control/providers/<provider>/agents/<role>` (`{"model": null}`
+clears one). Both are operator overrides layered on top of the routing
+config's tier defaults, not a second place to define tiers. Clearing an
+override restores the next model in the order above. A model named by an assignment must route to the same provider
 and must be enabled, or the provider drops out of that role's candidates rather
 than falling back — a role assignment that names an unusable model removes that
 provider from the role rather than silently serving a different one.
@@ -1001,7 +1012,10 @@ The router makes its effective choice visible in two ways:
   cooldown countdown, configured models, capabilities, and attempt/outcome counters.
   `configuredModels` is the model each configured tier is routed to
   (`RoutingPolicy.effectiveModels`): the Console assignment for the role that
-  governs the tier when the operator set one, else the routing config's.
+  governs the tier (`orchestrator` or `subagent`) when the operator set one,
+  else the routing config's. `agentModels` lists only the agent roles given a
+  model of their own on that provider (`{"explorer": "opencli-chatgpt-fast"}`),
+  which win over `configuredModels` for that role.
 - The status payload exposes structured `routing` metadata (`status.routing`):
   `configSource` (`"default_codex_home"` or `"env_override"`), `configFileExists`,
   `orchestrator` (`alias`, `tier`, and pinned `reasoningEffort`), configured capability `roles`,

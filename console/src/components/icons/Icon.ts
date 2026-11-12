@@ -90,8 +90,6 @@ export const ICON_PATHS = {
   // apart without relying on colour. There is deliberately no crown for the
   // Default role -- a crown would make one role a special case in the same
   // column where the other three are peers.
-  roleDefault: ["M4 4h16v12H4z", "M9 20h6", "M12 16v4"],
-  roleSmart: ["M13 2 3 14h9l-1 8 10-12h-9l1-8z"],
   roleOrchestrator: [
     "M18 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6",
     "M6 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6",
