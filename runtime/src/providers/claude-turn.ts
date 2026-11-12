@@ -24,6 +24,7 @@ import {
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   incompleteDetails,
+  limitPayload,
   type ProviderLimit,
   truncationNotice
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
@@ -119,9 +120,9 @@ export interface ResponseStreamOptions {
 /**
  * The Responses stream for one HTTP request.
  *
- * Nothing is written until the first real content arrives, so a failure
- * before that point can still answer with a proper HTTP status (a 429 the
- * router can cool down on) instead of a 200 stream that says it failed.
+ * Nothing is written until the first real content arrives. A streaming failure
+ * before output emits response.failed without fabricating output items; a
+ * non-streaming failure retains its normal HTTP error status.
  */
 export class ResponseStream {
   readonly id = `resp_${turnId(12)}`;
@@ -415,7 +416,10 @@ export class ResponseStream {
       this.emit(eventName, body);
   }
 
-  private end(payload: JsonRecord): void {
+  private end(
+    payload: JsonRecord,
+    terminalEvent: "response.completed" | "response.failed" = "response.completed"
+  ): void {
     if (this.ended) return;
     const { response } = this.options;
     if (!this.options.streaming) {
@@ -431,8 +435,8 @@ export class ResponseStream {
       return;
     }
     this.start();
-    this.emit("response.completed", {
-      type: "response.completed",
+    this.emit(terminalEvent, {
+      type: terminalEvent,
       response: payload
     });
     this.ended = true;
@@ -470,10 +474,30 @@ export class ResponseStream {
 
   fail(failure: TurnFailure, provider: string): void {
     if (this.ended) return;
-    if (!this.started && this.output.length === 0 && !this.outputText()) {
-      // Nothing streamed yet: a real HTTP error lets the router react to it.
-      this.ended = true;
-      this.options.sendError(this.options.response, failure);
+    if (this.output.length === 0) {
+      if (!this.options.streaming) {
+        this.ended = true;
+        this.options.sendError(this.options.response, failure);
+        return;
+      }
+      const message =
+        failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error);
+      const limit = limitPayload(failure.limit);
+      const type =
+        failure.limit?.limitClass === "capacity"
+          ? "overloaded_error"
+          : failure.limit
+            ? "rate_limit_error"
+            : "upstream_error";
+      this.end(
+        {
+          ...this.snapshot("failed"),
+          error: { type, message, ...(limit ? { limit } : {}) }
+        },
+        "response.failed"
+      );
       return;
     }
     this.start();
