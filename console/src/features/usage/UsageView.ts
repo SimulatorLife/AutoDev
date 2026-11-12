@@ -1356,7 +1356,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       ),
       React.createElement(
         StatGrid,
-        { columns: 5 },
+        { columns: 4 },
         React.createElement(StatCard, {
           title: "Logical Routed Requests",
           value: formatCount(metrics.logicalRequests),
@@ -1373,14 +1373,39 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           subtitle: "Cached / Input tokens"
         }),
         React.createElement(StatCard, {
+          title: "Estimated Cost",
+          value: formatEstimatedCost(metrics.estimatedCostUsd),
+          subtitle: "OpenLIT pricing estimate; not billed cost"
+        })
+      )
+    ),
+    React.createElement(
+      "div",
+      null,
+      React.createElement(
+        "h2",
+        { className: SECTION_HEADING_CLASS },
+        "Attempt latency"
+      ),
+      // Where an attempt's time went: its whole duration, then -- from the
+      // bridges that report it -- the wait for the provider and the time on it.
+      React.createElement(
+        StatGrid,
+        { columns: 3 },
+        React.createElement(StatCard, {
           title: "P95 Latency",
           value: formatLatency(metrics.p95LatencyMs),
           subtitle: "Physical attempt duration"
         }),
         React.createElement(StatCard, {
-          title: "Estimated Cost",
-          value: formatEstimatedCost(metrics.estimatedCostUsd),
-          subtitle: "OpenLIT pricing estimate; not billed cost"
+          title: "P95 Provider Queue",
+          value: formatLatency(metrics.p95ProviderQueueMs),
+          subtitle: "Waiting for the provider, e.g. a free browser tab"
+        }),
+        React.createElement(StatCard, {
+          title: "P95 Provider On-site",
+          value: formatLatency(metrics.p95ProviderSiteMs),
+          subtitle: "On the provider once it took the attempt"
         })
       )
     ),
@@ -1778,6 +1803,8 @@ function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {
     metrics.totalOutputTokens,
     metrics.cacheReadRate,
     metrics.p95LatencyMs,
+    metrics.p95ProviderQueueMs,
+    metrics.p95ProviderSiteMs,
     metrics.estimatedCostUsd,
     metrics.physicalAttempts,
     metrics.mcpCalls,

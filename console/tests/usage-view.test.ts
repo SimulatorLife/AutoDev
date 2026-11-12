@@ -53,6 +53,8 @@ const observedMetrics: UsageMetricsData = {
   totalOutputTokens: 300,
   cacheReadRate: 25,
   p95LatencyMs: 1250,
+  p95ProviderQueueMs: null,
+  p95ProviderSiteMs: null,
   estimatedCostUsd: 0.0081,
   physicalAttempts: 48,
   mcpCalls: 5,
@@ -131,6 +133,36 @@ test("Usage renders Git output without double-counting file subsets or hiding pa
   assert.match(markup, /Commits by workspace/u);
   assert.match(markup, /Commits by provider/u);
   assert.match(markup, /Commits by agent role/u);
+});
+
+test("Usage splits attempt latency into the provider queue wait and the time on it", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: {
+        ...observedMetrics,
+        p95ProviderQueueMs: 12_500,
+        p95ProviderSiteMs: 101_400
+      }
+    })
+  );
+  assert.match(markup, /Attempt latency/u);
+  for (const [title, ms] of [
+    ["P95 Provider Queue", 12_500],
+    ["P95 Provider On-site", 101_400]
+  ] as const) {
+    const at = markup.indexOf(title);
+    assert.ok(at !== -1, title);
+    assert.ok(
+      markup.slice(at, at + 600).includes(formatLatency(ms)),
+      `${title} shows ${formatLatency(ms)}`
+    );
+  }
+
+  // An attempt that reports no phases leaves the cards unobserved, not zero.
+  const unreported = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics })
+  );
+  assert.match(unreported, /P95 Provider Queue[\s\S]*?Not observed/u);
 });
 
 test("Usage keeps exact-session investigation outside URL filters and metric dimensions", () => {
@@ -284,6 +316,8 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     totalOutputTokens: null,
     cacheReadRate: null,
     p95LatencyMs: null,
+    p95ProviderQueueMs: null,
+    p95ProviderSiteMs: null,
     estimatedCostUsd: null,
     physicalAttempts: null,
     mcpCalls: null,

@@ -68,6 +68,10 @@ import {
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
+import {
+  providerPhasesField,
+  type ProviderPhaseTiming
+} from "@simulatorlife/autodev-runtime/telemetry/provider-phases";
 
 import { type ProviderRoute, ROUTES } from "../router/routing.ts";
 import {
@@ -786,11 +790,18 @@ function messageEvents(
   ];
 }
 
+/**
+ * A Responses object for one turn. A web chat reports no token counts, so the
+ * response carries no `usage` -- an unreported count is unknown, not zero --
+ * and a completed turn carries where its time went (a wait for a tab, then
+ * the site), which the router records on the attempt.
+ */
 function responseObject(
   id: string,
   model: string,
   status: string,
-  output: JsonRecord[]
+  output: JsonRecord[],
+  phases: ProviderPhaseTiming | null = null
 ): JsonRecord {
   const text = output
     .filter((item) => item.type === "message")
@@ -804,8 +815,7 @@ function responseObject(
     status,
     output,
     output_text: text,
-    // A web chat reports no token counts.
-    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
+    ...(phases === null ? {} : providerPhasesField(phases))
   };
 }
 
@@ -864,7 +874,7 @@ class TurnStream {
     }, keepAliveMs);
   }
 
-  complete(output: JsonRecord[]): void {
+  complete(output: JsonRecord[], phases: ProviderPhaseTiming): void {
     output.forEach((item, index) => {
       const events =
         item.type === "message"
@@ -874,7 +884,13 @@ class TurnStream {
     });
     this.emit("response.completed", {
       type: "response.completed",
-      response: responseObject(this.responseId, this.model, "completed", output)
+      response: responseObject(
+        this.responseId,
+        this.model,
+        "completed",
+        output,
+        phases
+      )
     });
     this.end();
   }
@@ -1018,21 +1034,11 @@ interface PreparedTurn {
 }
 
 /** A turn's reply, with the prompt that produced it and whether it continued a chat. */
-/**
- * Where a turn's time went: waiting for one of the site's tabs, and holding
- * one (driving the page and waiting for the model). Summed over both attempts
- * of a turn that restarted its chat.
- */
-export interface TurnTiming {
-  queuedMs: number;
-  onSiteMs: number;
-}
-
 interface TurnRun {
   readonly reply: OpencliReply;
   readonly prompt: string;
   readonly continued: boolean;
-  readonly timing: TurnTiming;
+  readonly timing: ProviderPhaseTiming;
 }
 
 /** Milliseconds as seconds with one decimal, for the turn log. */
@@ -1057,7 +1063,7 @@ export function opencliTurnLogLine(
   run: {
     readonly prompt: string;
     readonly continued: boolean;
-    readonly timing: Readonly<TurnTiming>;
+    readonly timing: Readonly<ProviderPhaseTiming>;
   },
   calls: number
 ): string {
@@ -1564,7 +1570,7 @@ export function createOpencliBridge(
     conversationId: string | null,
     signal: AbortSignal,
     budget: TurnBudget,
-    timing: TurnTiming
+    timing: ProviderPhaseTiming
   ): Promise<OpencliReply> {
     const promptBytes = Buffer.byteLength(prompt);
     // A prompt that fits is typed; only one too long to type is uploaded.
@@ -1685,7 +1691,7 @@ export function createOpencliBridge(
     signal: AbortSignal
   ): Promise<TurnRun> {
     const budget = turnBudget();
-    const timing: TurnTiming = { queuedMs: 0, onSiteMs: 0 };
+    const timing: ProviderPhaseTiming = { queuedMs: 0, onSiteMs: 0 };
     try {
       const reply = await attemptTurn(
         turn,
@@ -1827,12 +1833,12 @@ export function createOpencliBridge(
 
     const { output, calls } = finishTurn(turn, run.reply);
     writeErrorLine(opencliTurnLogLine(turn, run, calls));
-    if (stream) stream.complete(output);
+    if (stream) stream.complete(output, run.timing);
     else
       sendJson(
         response,
         200,
-        responseObject(responseId, turn.model, "completed", output)
+        responseObject(responseId, turn.model, "completed", output, run.timing)
       );
   }
 

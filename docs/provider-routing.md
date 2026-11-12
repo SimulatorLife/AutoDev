@@ -2796,7 +2796,17 @@ single list; the route patterns and the site registry in
   went -- `queued Ns` waiting for one of the site's tabs, `on site Ns` holding
   one (driving the page and waiting for the model), summed over both attempts
   of a turn that restarted its chat -- so tab contention and model latency
-  can be told apart.
+  can be told apart. The same two numbers ride on the completed response as
+  `autodev_phases: {queued_ms, on_site_ms}`
+  (`runtime/src/telemetry/provider-phases.ts`, the one contract between a
+  bridge and the router). The router -- the only OpenTelemetry owner -- records
+  them on the attempt's `gen_ai.client_operation` span as
+  `autodev.provider.queue.duration` and `autodev.provider.site.duration`
+  (seconds) and in the `autodev.provider.phase.duration` histogram
+  (`autodev.provider.phase` = `queued` | `on_site`), and the Console's Usage
+  page shows their P95s beside the attempt P95 under **Attempt latency**. A
+  web chat reports no token counts, so its response carries no `usage` at all
+  rather than zeros.
 - **One round trip, as much work as it can carry.** A ChatGPT turn's p50 is
   114 s, and 1130 of 1194 turns over two days made exactly one tool call, so a
   40-step task took 40 round trips. The response rules tell the model that

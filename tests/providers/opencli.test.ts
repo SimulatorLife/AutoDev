@@ -857,6 +857,13 @@ test("a later message in the same session continues the same chat after a restar
       { model: "opencli-chatgpt-balanced", input }
     );
     assert.ok(first.args.includes("--new"));
+    // A web chat reports no tokens, so the response carries no usage rather
+    // than a fabricated zero, and it says where the turn's time went.
+    assert.equal(Object.hasOwn(first.body, "usage"), false);
+    const phases = (first.body as unknown as JsonRecord).autodev_phases as
+      { queued_ms: unknown; on_site_ms: unknown } | undefined;
+    assert.ok(Number.isInteger(phases?.queued_ms));
+    assert.ok(Number.isInteger(phases?.on_site_ms));
     // The bridge restarts (a deploy); the user then says "Continue".
     const later = await serve(
       { response: "Continuing.", conversation_id: "conv-7" },

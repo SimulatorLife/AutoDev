@@ -30,6 +30,8 @@ export type UsageWidgetId =
   | "output-tokens"
   | "cache-rate"
   | "p95-latency"
+  | "p95-provider-queue"
+  | "p95-provider-site"
   | "attempts-by-provider"
   | "mcp-calls"
   | "mcp-duration"
@@ -275,6 +277,13 @@ export interface UsageMetricsData {
   readonly totalOutputTokens: number | null;
   readonly cacheReadRate: number | null;
   readonly p95LatencyMs: number | null;
+  /**
+   * P95 time an attempt waited for its provider to take it (a web-chat
+   * bridge's wait for a free tab), over the attempts that report it.
+   */
+  readonly p95ProviderQueueMs: number | null;
+  /** P95 time the provider spent on an attempt once it had it. */
+  readonly p95ProviderSiteMs: number | null;
   /** OpenLIT's pricing-catalog estimate; not a provider billing statement. */
   readonly estimatedCostUsd: number | null;
   readonly physicalAttempts: number | null;

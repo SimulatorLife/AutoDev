@@ -91,7 +91,8 @@ export const OPENLIT_PATCH_NAMES = [
   "74-openlit-pricing-cron-backlog",
   "75-autodev-provider-hops-usage",
   "76-autodev-usage-query-scheduler",
-  "77-autodev-usage-session-lookup"
+  "77-autodev-usage-session-lookup",
+  "78-autodev-provider-phase-usage"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

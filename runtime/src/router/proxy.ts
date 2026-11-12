@@ -54,6 +54,10 @@ import {
 import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
+  providerPhasesFromResponse,
+  type ProviderPhaseTiming
+} from "@simulatorlife/autodev-runtime/telemetry/provider-phases";
+import {
   AUTODEV_WORKSPACE_KEY_HEADER,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
@@ -283,15 +287,20 @@ const providerCapacityWaiters = new Map<string, ProviderCapacityWaiter[]>();
 function wakeProviderCapacityWaiters(provider: string): void {
   const waiters = providerCapacityWaiters.get(provider);
   if (!waiters) return;
-  while (waiters.length > 0 && getActiveRequests(provider) < waiters[0]!.limit) {
+  while (
+    waiters.length > 0 &&
+    getActiveRequests(provider) < waiters[0]!.limit
+  ) {
     waiters.shift()!.admit();
   }
   if (waiters.length === 0) providerCapacityWaiters.delete(provider);
 }
 
 function providerAtCapacity(route: ProviderRoute): boolean {
-  return route.maxConcurrentRequests !== undefined &&
-    getActiveRequests(route.provider) >= route.maxConcurrentRequests;
+  return (
+    route.maxConcurrentRequests !== undefined &&
+    getActiveRequests(route.provider) >= route.maxConcurrentRequests
+  );
 }
 
 /** Reserve capacity before dispatch; cancellable FIFO waiting when all slots are held. */
@@ -1040,12 +1049,36 @@ function usageFromResponse(value: unknown): ProviderUsage | null {
     : result;
 }
 
+/**
+ * What a provider's final response says about its attempt: the tokens it
+ * used, the model that answered, and -- from a bridge that measures them --
+ * where the turn's time went. Each is null when the response does not say.
+ */
+interface AttemptObservation {
+  readonly usage: ProviderUsage | null;
+  readonly responseModel: string | null;
+  readonly phases: ProviderPhaseTiming | null;
+}
+
+const NO_ATTEMPT_OBSERVATION: AttemptObservation = {
+  usage: null,
+  responseModel: null,
+  phases: null
+};
+
+function observeResponse(value: unknown): AttemptObservation {
+  return {
+    usage: usageFromResponse(value),
+    responseModel: providerResponseModel(value),
+    phases: providerPhasesFromResponse(value)
+  };
+}
+
 function endStreamAttempt(
   span: Span | undefined,
   statusCode: number | undefined,
   result: StreamWriteResult,
-  usage: ProviderUsage | null,
-  responseModel: string | null
+  observation: AttemptObservation
 ): void {
   if (!span) return;
   endAttemptSpan(span, {
@@ -1059,8 +1092,7 @@ function endStreamAttempt(
       result.failed && !result.clientDisconnected
         ? "provider stream did not complete successfully"
         : null,
-    usage,
-    responseModel
+    ...observation
   });
 }
 
@@ -1423,22 +1455,18 @@ export async function writeResponseStream(
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
   let streamError: ProviderReportedError | null = null;
-  let attemptUsage: ProviderUsage | null = null;
-  let attemptResponseModel: string | null = null;
+  let attemptObservation = NO_ATTEMPT_OBSERVATION;
   const captureCompletedResponse = (
     completed: Record<string, unknown>
   ): void => {
-    attemptUsage = usageFromResponse(completed);
-    attemptResponseModel =
-      typeof completed.model === "string" ? completed.model : null;
+    attemptObservation = observeResponse(completed);
   };
   const finalizeAttempt = (result: StreamWriteResult): StreamWriteResult => {
     endStreamAttempt(
       attemptTelemetry?.span,
       attemptTelemetry?.statusCode,
       result,
-      attemptUsage,
-      attemptResponseModel
+      attemptObservation
     );
     return result;
   };
@@ -1748,12 +1776,9 @@ async function bufferNonStreamingJsonResponse(
     }
     throw error;
   }
-  let usage: ProviderUsage | null = null;
-  let model: string | null = null;
+  let observation = NO_ATTEMPT_OBSERVATION;
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    usage = usageFromResponse(parsed);
-    model = providerResponseModel(parsed);
+    observation = observeResponse(JSON.parse(text));
   } catch {
     /* Preserve malformed JSON as pass-through without trusting its usage. */
   }
@@ -1761,8 +1786,7 @@ async function bufferNonStreamingJsonResponse(
     endAttemptSpan(attemptSpan, {
       status: "ok",
       statusCode: upstream.status,
-      responseModel: model,
-      usage
+      ...observation
     });
   }
   return {
@@ -1993,8 +2017,7 @@ function finishBufferedAttempt(
     result.attemptSpan,
     result.attemptStatusCode,
     emptyBufferedResult(failed),
-    completed ? usageFromResponse(completed) : null,
-    providerResponseModel(completed)
+    observeResponse(completed)
   );
 }
 
@@ -3623,7 +3646,8 @@ export async function proxyFallbackChain(
         (other) =>
           other.provider !== route.provider &&
           !attempted.has(other.provider) &&
-          ROUTING_POLICY.routeDisabledReason(other, fbCtx.providerRole) === null &&
+          ROUTING_POLICY.routeDisabledReason(other, fbCtx.providerRole) ===
+            null &&
           !COOLDOWNS.isCooling(other.provider, Date.now(), other.model) &&
           !providerAtCapacity(other)
       )

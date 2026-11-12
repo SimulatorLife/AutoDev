@@ -576,6 +576,118 @@ test(
 );
 
 test(
+  "a bridge's reported phases become attempt attributes and a bounded phase histogram",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    // A web-chat bridge reports no tokens, only where its turn's time went.
+    const event =
+      'data: {"type":"response.completed","response":{"id":"phased","status":"completed","model":"claude-3","autodev_phases":{"queued_ms":12500,"on_site_ms":101400}}}\n\n';
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(event));
+            controller.close();
+          }
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )) as typeof fetch;
+
+    try {
+      const logical = startLogicalRequestSpan({
+        requestId: "phase-request-id",
+        role: "explorer",
+        providerRole: "subagent",
+        workspace: null,
+        subject: "phase fixture",
+        requestedModel: "claude-3"
+      });
+      await withLogicalSpan(logical, async () => {
+        const pending = await fetchUpstream(
+          route("claude", "LITELLM_API_KEY"),
+          { model: "claude-3", input: [], stream: true },
+          true,
+          null,
+          null,
+          "explorer",
+          "phase-request-id",
+          null,
+          {
+            selection: "primary",
+            attemptNumber: 1,
+            model: "claude-3",
+            role: "explorer"
+          }
+        );
+        if (!pending.ok) throw new Error("mock provider should succeed");
+        await writeResponseStream(
+          responseRecorder(),
+          pending.upstream,
+          "claude-3",
+          pending.signal,
+          null,
+          null,
+          false,
+          {
+            ...(pending.attemptSpan ? { span: pending.attemptSpan } : {}),
+            ...(pending.attemptStatusCode === undefined
+              ? {}
+              : { statusCode: pending.attemptStatusCode })
+          }
+        );
+      });
+      endLogicalRequestSpan(logical, { status: "ok" });
+      await flushTelemetryMetrics();
+
+      const attempt = findAttemptSpans(snapshotSpans())[0];
+      assert.equal(
+        attempt?.attributes["autodev.provider.queue.duration"],
+        12.5
+      );
+      assert.equal(
+        attempt?.attributes["autodev.provider.site.duration"],
+        101.4
+      );
+      // No usage was reported, so none is recorded: unknown is not zero.
+      assert.equal(
+        Object.hasOwn(attempt?.attributes ?? {}, "gen_ai.usage.input_tokens"),
+        false
+      );
+
+      const phases = findMetricPoints("autodev.provider.phase.duration");
+      const sumOf = (phase: string): unknown => {
+        const point = phases.find(
+          (candidate) =>
+            candidate.attributes["autodev.provider.phase"] === phase
+        );
+        return point?.value && typeof point.value === "object"
+          ? point.value.sum
+          : point?.value;
+      };
+      assert.equal(sumOf("queued"), 12.5);
+      assert.equal(sumOf("on_site"), 101.4);
+      for (const point of phases) {
+        assert.equal(point.attributes["gen_ai.provider.name"], "claude");
+        assert.equal(
+          Object.hasOwn(point.attributes, "requestId"),
+          false,
+          "request IDs must never become metric dimensions"
+        );
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
   "orchestrator payload preparation and memory spans share the routed-request trace",
   { concurrency: false },
   async () => {

@@ -86,6 +86,12 @@ const partialPayload = {
       rows: [{ p95_seconds: "1.425" }],
       valuePath: "0.p95_seconds"
     }),
+    makeWidget("p95-provider-queue", {
+      observed: true,
+      rows: [{ p95_queue_seconds: "12.5" }],
+      valuePath: "0.p95_queue_seconds"
+    }),
+    makeWidget("p95-provider-site"),
     makeWidget("attempts-by-provider", {
       observed: true,
       rows: [{ provider: "openai", attempts: "5" }],
@@ -299,6 +305,10 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
   assert.equal(result.data.metrics.cacheReadRate, 75);
   assert.equal(result.data.metrics.totalInputTokens, null);
   assert.equal(result.data.metrics.p95LatencyMs, 1425);
+  // Phase percentiles are read from their own widgets; one with no rows stays
+  // unobserved rather than becoming zero.
+  assert.equal(result.data.metrics.p95ProviderQueueMs, 12_500);
+  assert.equal(result.data.metrics.p95ProviderSiteMs, null);
   assert.equal(result.data.metrics.p95McpDurationMs, 42);
   assert.equal(result.data.metrics.failedAttempts, 2);
   assert.deepEqual(result.data.metrics.attemptErrorsByProvider, [

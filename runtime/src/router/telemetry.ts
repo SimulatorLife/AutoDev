@@ -66,6 +66,7 @@ import {
 } from "@opentelemetry/semantic-conventions";
 import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import type { ProviderPhaseTiming } from "@simulatorlife/autodev-runtime/telemetry/provider-phases";
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
@@ -209,6 +210,16 @@ const METRIC_LOGICAL_REQUEST_DURATION =
   "autodev.router.logical_request.duration";
 const METRIC_CACHE_READ_TOKENS = "autodev.gen_ai.cache_read.input_tokens";
 const METRIC_SKILL_EVENTS = "autodev.skill.events";
+/** Seconds one attempt spent in a bridge-reported phase (`autodev.provider.phase`). */
+export const METRIC_PROVIDER_PHASE_DURATION = "autodev.provider.phase.duration";
+/** `queued` (waiting for the provider, e.g. a free browser tab) or `on_site`. */
+export const ATTR_AUTODEV_PROVIDER_PHASE = "autodev.provider.phase" as const;
+/** Seconds the attempt waited before the provider took it. */
+export const ATTR_AUTODEV_PROVIDER_QUEUE_DURATION =
+  "autodev.provider.queue.duration" as const;
+/** Seconds the provider spent on the attempt once it had it. */
+export const ATTR_AUTODEV_PROVIDER_SITE_DURATION =
+  "autodev.provider.site.duration" as const;
 
 const TRACER_NAME = "autodev.router";
 const TRACER_VERSION = "1.0.0";
@@ -273,6 +284,7 @@ interface RouterMetricInstruments {
   logicalRequests: ReturnType<Meter["createCounter"]>;
   logicalRequestDuration: ReturnType<Meter["createHistogram"]>;
   genAiOperationDuration: ReturnType<Meter["createHistogram"]>;
+  providerPhaseDuration: ReturnType<Meter["createHistogram"]>;
   genAiTokenUsage: ReturnType<Meter["createHistogram"]>;
   cacheReadTokens: ReturnType<Meter["createHistogram"]>;
   skillEvents: ReturnType<Meter["createCounter"]>;
@@ -453,6 +465,14 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
       METRIC_GEN_AI_CLIENT_OPERATION_DURATION,
       {
         description: "Duration of one physical GenAI provider/model operation.",
+        unit: "s"
+      }
+    ),
+    providerPhaseDuration: meter.createHistogram(
+      METRIC_PROVIDER_PHASE_DURATION,
+      {
+        description:
+          "Time one provider attempt spent in each phase a bridge reports: queued for the provider, then on it.",
         unit: "s"
       }
     ),
@@ -1428,6 +1448,8 @@ export interface EndAttemptSpanOptions {
   finishReason?: string | null;
   usage?: AttemptUsage | null;
   responseModel?: string | null;
+  /** Where a bridge says the attempt's time went; absent when it does not. */
+  phases?: ProviderPhaseTiming | null;
 }
 
 function finiteTokenCount(value: number | null | undefined): number | null {
@@ -1453,6 +1475,16 @@ function attachAttemptSpanAttributes(
     span.setAttribute(ATTR_GEN_AI_RESPONSE_FINISH_REASONS, [finishReason]);
   }
   if (options.usage) attachUsageAttributes(span, options.usage);
+  if (options.phases) {
+    span.setAttribute(
+      ATTR_AUTODEV_PROVIDER_QUEUE_DURATION,
+      options.phases.queuedMs / 1000
+    );
+    span.setAttribute(
+      ATTR_AUTODEV_PROVIDER_SITE_DURATION,
+      options.phases.onSiteMs / 1000
+    );
+  }
   if (options.status === "error") {
     const errorType = safeTrim(options.errorType);
     if (errorType) span.setAttribute(ATTR_GEN_AI_ERROR_TYPE, errorType);
@@ -1493,6 +1525,16 @@ function recordAttemptMetrics(
     attributes
   );
   recordTokenMetrics(attributes, options.usage);
+  if (options.phases) {
+    instruments.providerPhaseDuration.record(options.phases.queuedMs / 1000, {
+      ...attributes,
+      [ATTR_AUTODEV_PROVIDER_PHASE]: "queued"
+    });
+    instruments.providerPhaseDuration.record(options.phases.onSiteMs / 1000, {
+      ...attributes,
+      [ATTR_AUTODEV_PROVIDER_PHASE]: "on_site"
+    });
+  }
   attemptMetricContexts.delete(span);
 }
 

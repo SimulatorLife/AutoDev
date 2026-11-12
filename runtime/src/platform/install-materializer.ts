@@ -189,6 +189,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/index.ts",
   "runtime/src/telemetry/agent-events.ts",
   "runtime/src/telemetry/github-metrics.ts",
+  "runtime/src/telemetry/provider-phases.ts",
   "runtime/src/providers/minimax.ts",
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/cli-versions.ts",

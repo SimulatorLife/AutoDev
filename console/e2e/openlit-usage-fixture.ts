@@ -59,6 +59,8 @@ const USAGE_WIDGET_IDS = [
   "output-tokens",
   "cache-rate",
   "p95-latency",
+  "p95-provider-queue",
+  "p95-provider-site",
   "attempts-by-provider",
   "mcp-calls",
   "mcp-duration",

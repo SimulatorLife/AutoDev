@@ -106,6 +106,7 @@
     "./shared/tool-names": "./src/shared/tool-names.ts",
     "./telemetry": "./src/telemetry/index.ts",
     "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts",
+    "./telemetry/provider-phases": "./src/telemetry/provider-phases.ts",
     "./shared/skill-reads": "./src/shared/skill-reads.ts"
   },
   "scripts": {

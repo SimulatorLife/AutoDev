@@ -14,6 +14,8 @@ const usageWidgetIds = [
   "output-tokens",
   "cache-rate",
   "p95-latency",
+  "p95-provider-queue",
+  "p95-provider-site",
   "attempts-by-provider",
   "requests-by-agent",
   "requests-by-workspace",

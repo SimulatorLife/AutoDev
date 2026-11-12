@@ -79,6 +79,8 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "output-tokens",
   "cache-rate",
   "p95-latency",
+  "p95-provider-queue",
+  "p95-provider-site",
   "attempts-by-provider",
   "mcp-calls",
   "mcp-duration",
@@ -1213,6 +1215,12 @@ function toUsageSnapshot(
     totalOutputTokens: observedMetric(widgets.get("output-tokens")),
     cacheReadRate: ratioMetric(widgets.get("cache-rate")),
     p95LatencyMs: milliseconds(observedMetric(widgets.get("p95-latency"))),
+    p95ProviderQueueMs: milliseconds(
+      observedMetric(widgets.get("p95-provider-queue"))
+    ),
+    p95ProviderSiteMs: milliseconds(
+      observedMetric(widgets.get("p95-provider-site"))
+    ),
     estimatedCostUsd: observedMetric(widgets.get("estimated-cost")),
     physicalAttempts:
       attempts === null

@@ -1,0 +1,189 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 15bf1aa5..58675517 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -111,6 +111,8 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+         "provider-hops-by-role",
+         "provider-hops-by-workspace",
+         "provider-hops-by-reason",
++        "p95-provider-queue",
++        "p95-provider-site",
+         "skill-events-by-event",
+         "estimated-cost",
+         "requests-by-workspace"
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index a2aafb5d..3cd54119 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -432,6 +432,39 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		]);
+ 	});
+ 
++	it("reads provider phase percentiles only from attempts that report them", () => {
++		// A bridge reports where an attempt's time went (waiting for the
++		// provider, then on it), and the router records each phase as an
++		// attribute of the attempt span. An attempt that reports nothing must
++		// not count as a zero-second phase, so each card requires its attribute.
++		for (const [title, key, alias] of [
++			["P95 provider queue wait", "autodev.provider.queue.duration", "p95_queue_seconds"],
++			["P95 provider on-site time", "autodev.provider.site.duration", "p95_site_seconds"],
++		] as const) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			expect(widget?.type).toBe("STAT_CARD");
++			expect(widget?.properties).toMatchObject({
++				value: `0.${alias}`,
++				suffix: "s",
++				optInVariables: ["workspace", "provider", "model", "agent"],
++			});
++			expect(widget?.config.structuredQuery?.query?.filters).toEqual([
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{ target: "spanName", op: "eq", value: "gen_ai.client_operation" },
++				{ target: "attribute", scope: "span", key, op: "exists" },
++			]);
++			expect(widget?.config.structuredQuery?.query?.aggregations).toEqual([
++				{ fn: "p95", field: `span:${key}`, as: alias },
++			]);
++		}
++	});
++
+ 	it("counts provider hops from the hop attributes the router publishes", () => {
+ 		// A hop is a fact about one request: the request moved the agent from
+ 		// one provider to another. The router publishes it on the request's own
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index ae8f78a8..27465fbb 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -32,6 +32,8 @@ const USAGE_WIDGET_IDS = {
+ 	"output-tokens": "47c52af8-0c4a-4e85-8a9e-a8f85745b103",
+ 	"cache-rate": "47c52af8-0c4a-4e85-8a9e-a8f85745b104",
+ 	"p95-latency": "47c52af8-0c4a-4e85-8a9e-a8f85745b105",
++	"p95-provider-queue": "47c52af8-0c4a-4e85-8a9e-a8f85745b205",
++	"p95-provider-site": "47c52af8-0c4a-4e85-8a9e-a8f85745b206",
+ 	"attempts-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
+ 	"requests-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
+ 	"requests-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b116",
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index 1444f1d4..291e2ac2 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -1592,6 +1592,114 @@
+           }
+         }
+       }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b205": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b205",
++      "title": "P95 provider queue wait",
++      "description": "95th percentile time a physical attempt waited for its provider to take it (for a web-chat bridge, a free browser tab). Only attempts whose bridge reports it are counted.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.p95_queue_seconds",
++        "suffix": "s",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.provider.queue.duration",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "p95",
++                "field": "span:autodev.provider.queue.duration",
++                "as": "p95_queue_seconds"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b206": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b206",
++      "title": "P95 provider on-site time",
++      "description": "95th percentile time a provider spent on a physical attempt once it had it (for a web-chat bridge, driving the page and waiting for the model). Only attempts whose bridge reports it are counted.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.p95_site_seconds",
++        "suffix": "s",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.provider.site.duration",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "p95",
++                "field": "span:autodev.provider.site.duration",
++                "as": "p95_site_seconds"
++              }
++            ]
++          }
++        }
++      }
+     }
+   },
+   "tags": "[\"autodev\",\"usage\"]",
