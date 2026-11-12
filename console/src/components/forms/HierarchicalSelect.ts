@@ -55,10 +55,18 @@ const MENU_ITEM_CLASS =
  *
  * The closed control wears the shared select chrome, so it reads as the same
  * control as every other select in a row. Opening it is an unnamed checkbox
- * (never submitted) driving its sibling menu through `peer-checked`, and each
- * level is a native `<details>`; each option is a submit button for its
- * level's own native form, so choosing one applies immediately with no client
- * script, exactly as the auto-submitting selects beside it do.
+ * (never submitted) inside the control's label, which drives the sibling menu
+ * through `peer-has-checked`, and each level is a native `<details>`; each
+ * option is a submit button for its level's own native form, so choosing one
+ * applies immediately with no client script, exactly as the auto-submitting
+ * selects beside it do.
+ *
+ * The checkbox sits inside the label's own `relative` wrapper on purpose. A
+ * visually hidden checkbox is absolutely positioned, so anywhere else it is
+ * placed against whichever ancestor happens to be positioned (the app shell),
+ * away from the control; clicking the label focuses it, and the browser then
+ * scrolls every ancestor, the `overflow-hidden` shell included, to reveal it,
+ * leaving the page shifted under an empty band.
  *
  * It returns sibling elements rather than one wrapper, so a caller laying the
  * control out on a grid can give the menu a row of its own (`menuClassName`)
@@ -102,20 +110,20 @@ export function HierarchicalSelect({
   return React.createElement(
     React.Fragment,
     null,
-    React.createElement("input", {
-      id: toggleId,
-      type: "checkbox",
-      className: "peer sr-only",
-      "aria-controls": `${id}-menu`,
-      "aria-label": `Open ${label}`
-    }),
     React.createElement(
       "label",
       {
         htmlFor: toggleId,
-        className: `${wrapperClass} peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2`,
+        className: `${wrapperClass} peer has-focus-visible:outline has-focus-visible:outline-2 has-focus-visible:outline-offset-2`,
         "data-hierarchical-select": id
       },
+      React.createElement("input", {
+        id: toggleId,
+        type: "checkbox",
+        className: "sr-only",
+        "aria-controls": `${id}-menu`,
+        "aria-label": `Open ${label}`
+      }),
       React.createElement(
         "span",
         {
@@ -132,7 +140,7 @@ export function HierarchicalSelect({
       {
         id: `${id}-menu`,
         "aria-label": label,
-        className: `m-0 hidden list-none flex-col gap-0.5 rounded border border-border-strong bg-surface-raised p-1 shadow-lg peer-checked:flex ${menuClassName ?? ""}`
+        className: `m-0 hidden list-none flex-col gap-0.5 rounded border border-border-strong bg-surface-raised p-1 shadow-lg peer-has-checked:flex ${menuClassName ?? ""}`
       },
       ...levels.map((level) =>
         React.createElement(

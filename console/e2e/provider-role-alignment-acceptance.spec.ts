@@ -84,6 +84,42 @@ for (const route of ROUTES) {
   });
 }
 
+test("opening and closing the Subagent model never scrolls the app shell", async ({
+  page
+}) => {
+  // A short viewport puts the last provider's control below the fold, where
+  // focusing a toggle positioned against the shell instead of the control
+  // scrolls the `overflow-hidden` shell and leaves an empty band behind.
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.goto("/providers");
+  await waitForPageContent(page);
+
+  const controls = page.locator(
+    'label[data-hierarchical-select^="select-model-"][data-hierarchical-select$="-subagent"]'
+  );
+  const control = controls.last();
+  const id = await control.getAttribute("data-hierarchical-select");
+  const menu = page.locator(`#${id}-menu`);
+  await control.click();
+  await expect(menu).toBeVisible();
+  await control.click();
+  await expect(menu).toBeHidden();
+
+  const shift = await page.evaluate(() =>
+    [...document.querySelectorAll("body *")]
+      .filter(
+        (element) =>
+          getComputedStyle(element).overflowY === "hidden" &&
+          element.scrollTop > 0
+      )
+      .map((element) => element.className)
+  );
+  expect(shift).toEqual([]);
+  const box = await control.boundingBox();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(520);
+});
+
 test("the Subagent model opens to each agent role and applies a role's own model", async ({
   page
 }) => {
