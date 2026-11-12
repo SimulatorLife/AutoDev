@@ -629,6 +629,45 @@ export function parseCopilotUserQuota(
   };
 }
 
+/** Claude's usage windows, in display order: the 5-hour session window first. */
+const CLAUDE_USAGE_WINDOWS = [
+  ["five_hour", "claude-5h", "5-hour limit", "five_hour"],
+  ["seven_day", "claude-weekly", "Weekly limit", "weekly"],
+  ["seven_day_opus", "claude-weekly-opus", "Weekly Opus limit", "weekly"],
+  ["seven_day_sonnet", "claude-weekly-sonnet", "Weekly Sonnet limit", "weekly"]
+] as const satisfies ReadonlyArray<
+  readonly [string, string, string, ControlApiQuotaWindowKind]
+>;
+
+/** Wraps Claude windows in the provider envelope shared by every Claude source. */
+function claudeProviderQuota(
+  source: string,
+  plan: string,
+  windows: ControlApiQuotaWindow[],
+  nowMs: number
+): ControlApiProviderQuota {
+  const primary = windows[0]!;
+  return {
+    provider: "claude",
+    status: "ok",
+    source,
+    updatedAt: new Date(nowMs).toISOString(),
+    plan,
+    summaryStatus: combineStatuses(windows.map((w) => w.status)),
+    windows,
+    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
+      model: cfg.model,
+      displayName: cfg.displayName,
+      pool: null,
+      status: primary.status,
+      usedPercent: primary.usedPercent,
+      remainingPercent: primary.remainingPercent,
+      resetsAt: primary.resetsAt,
+      windows
+    }))
+  };
+}
+
 /**
  * Parse Anthropic OAuth `/api/oauth/usage` payload.
  */
@@ -638,12 +677,7 @@ export function parseClaudeOAuthUsage(
 ): ControlApiProviderQuota | null {
   if (!isRecord(payload)) return null;
   const windows: ControlApiQuotaWindow[] = [];
-  for (const [key, id, label, kind] of [
-    ["five_hour", "claude-5h", "5-hour limit", "five_hour"],
-    ["seven_day", "claude-weekly", "Weekly limit", "weekly"],
-    ["seven_day_opus", "claude-weekly-opus", "Weekly Opus limit", "weekly"],
-    ["seven_day_sonnet", "claude-weekly-sonnet", "Weekly Sonnet limit", "weekly"]
-  ] as const) {
+  for (const [key, id, label, kind] of CLAUDE_USAGE_WINDOWS) {
     const bucket = payload[key];
     if (!isRecord(bucket)) continue;
     const rawUtil = bucket.utilization ?? bucket.percent_used ?? bucket.used_percent;
@@ -662,97 +696,105 @@ export function parseClaudeOAuthUsage(
     });
   }
   if (windows.length === 0) return null;
-  const summaryStatus = combineStatuses(windows.map((w) => w.status));
-  const primary = windows[0]!;
+  return claudeProviderQuota("anthropic-oauth-usage", "Claude Pro Plan", windows, nowMs);
+}
+
+/**
+ * Builds one Claude window from a CLI rate-limit reading. The CLI reports
+ * `utilization` as a 0..1 fraction. A window whose reset time has already
+ * passed has rolled over since the reading was captured, so it reports a fresh
+ * window rather than the stale usage (a persisted reading can be days old).
+ */
+function claudeEventWindow(
+  [, id, label, kind]: (typeof CLAUDE_USAGE_WINDOWS)[number],
+  reading: { utilization: unknown; resetsAt: unknown; eventStatus: string | null },
+  nowMs: number
+): ControlApiQuotaWindow | null {
+  const resetsAt = canonicalIso(reading.resetsAt);
+  if (resetsAt !== null && Date.parse(resetsAt) <= nowMs) {
+    return {
+      id,
+      label,
+      kind,
+      status: "available",
+      usedPercent: 0,
+      remainingPercent: 100,
+      resetsAt: null
+    };
+  }
+  const usedPercent =
+    typeof reading.utilization === "number" && Number.isFinite(reading.utilization)
+      ? clampPercent(reading.utilization * 100)
+      : reading.eventStatus === "rejected"
+        ? 100
+        : null;
+  const status: ControlApiQuotaStatus =
+    reading.eventStatus === "rejected"
+      ? "exhausted"
+      : reading.eventStatus === "allowed_warning"
+        ? "warning"
+        : usedPercent !== null
+          ? statusFromUsedPercent(usedPercent)
+          : reading.eventStatus === "allowed"
+            ? "available"
+            : "unavailable";
+  if (status === "unavailable" && resetsAt === null) return null;
   return {
-    provider: "claude",
-    status: "ok",
-    source: "anthropic-oauth-usage",
-    updatedAt: new Date(nowMs).toISOString(),
-    plan: "Claude Pro Plan",
-    summaryStatus,
-    windows,
-    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
-      model: cfg.model,
-      displayName: cfg.displayName,
-      pool: null,
-      status: primary.status,
-      usedPercent: primary.usedPercent,
-      remainingPercent: primary.remainingPercent,
-      resetsAt: primary.resetsAt,
-      windows
-    }))
+    id,
+    label,
+    kind,
+    status,
+    usedPercent,
+    remainingPercent: usedPercent !== null ? clampPercent(100 - usedPercent) : null,
+    resetsAt
   };
 }
 
 /**
  * Parse Claude CLI `rate_limit_event` (`rate_limit_info`) captured by the local bridge.
+ *
+ * The event's top-level `status`/`utilization`/`resetsAt` describe only the
+ * window named by `rateLimitType`; `unifiedWindows` carries every window
+ * (5-hour session and weekly), so each one is reported.
  */
 export function parseClaudeRateLimitEvent(
   info: unknown,
   nowMs = Date.now()
 ): ControlApiProviderQuota | null {
   if (!isRecord(info)) return null;
-  const statusStr = typeof info.status === "string" ? info.status : "";
+  const eventStatus = typeof info.status === "string" ? info.status : "";
   const rateLimitType =
-    typeof info.rateLimitType === "string" ? info.rateLimitType : "";
-  const resetsAt = canonicalIso(info.resetsAt ?? info.resetAt ?? info.resets_at);
-  const rawUtil =
-    typeof info.utilization === "number"
-      ? info.utilization
-      : typeof info.usedPercent === "number"
-        ? info.usedPercent
-        : null;
-  const usedPercent =
-    rawUtil !== null && Number.isFinite(rawUtil)
-      ? clampPercent(rawUtil <= 1 && rawUtil > 0 ? rawUtil * 100 : rawUtil)
-      : statusStr === "rejected"
-        ? 100
-        : null;
-  const remainingPercent =
-    usedPercent !== null ? clampPercent(100 - usedPercent) : null;
-  const kind: ControlApiQuotaWindowKind = rateLimitType.includes("seven_day")
-    ? "weekly"
-    : "five_hour";
-  const status: ControlApiQuotaStatus =
-    statusStr === "rejected"
-      ? "exhausted"
-      : statusStr === "allowed_warning"
-        ? "warning"
-        : usedPercent !== null
-          ? statusFromUsedPercent(usedPercent)
-          : statusStr === "allowed"
-            ? "available"
-            : "unavailable";
-  if (status === "unavailable" && resetsAt === null) return null;
-  const win: ControlApiQuotaWindow = {
-    id: kind === "weekly" ? "claude-weekly" : "claude-5h",
-    label: windowLabelFromKind(kind, "Session limit"),
-    kind,
-    status,
-    usedPercent,
-    remainingPercent,
-    resetsAt
-  };
-  return {
-    provider: "claude",
-    status: "ok",
-    source: "claude-cli-rate-limit-event",
-    updatedAt: new Date(nowMs).toISOString(),
-    plan: "Claude Pro Plan",
-    summaryStatus: status,
-    windows: [win],
-    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
-      model: cfg.model,
-      displayName: cfg.displayName,
-      pool: null,
-      status,
-      usedPercent: win.usedPercent,
-      remainingPercent: win.remainingPercent,
-      resetsAt: win.resetsAt,
-      windows: [win]
-    }))
-  };
+    typeof info.rateLimitType === "string" && info.rateLimitType
+      ? info.rateLimitType
+      : "five_hour";
+  const unified = isRecord(info.unifiedWindows) ? info.unifiedWindows : {};
+  const windows: ControlApiQuotaWindow[] = [];
+  for (const spec of CLAUDE_USAGE_WINDOWS) {
+    const key = spec[0];
+    const isEventWindow = key === rateLimitType;
+    const bucket = unified[key];
+    if (!isRecord(bucket) && !isEventWindow) continue;
+    const reading = isRecord(bucket)
+      ? {
+          utilization: bucket.utilization,
+          resetsAt: bucket.resetsAt ?? bucket.resets_at,
+          eventStatus: isEventWindow ? eventStatus : null
+        }
+      : {
+          utilization: info.utilization,
+          resetsAt: info.resetsAt ?? info.resets_at,
+          eventStatus
+        };
+    const win = claudeEventWindow(spec, reading, nowMs);
+    if (win) windows.push(win);
+  }
+  if (windows.length === 0) return null;
+  return claudeProviderQuota(
+    "claude-cli-rate-limit-event",
+    "Claude Pro Plan",
+    windows,
+    nowMs
+  );
 }
 
 function serializeCooldown(
@@ -1266,46 +1308,18 @@ export function buildClaudeSubscriptionQuota(
   planMeta: ClaudePlanMetadata,
   nowMs = Date.now()
 ): ControlApiProviderQuota {
-  const windows: ControlApiQuotaWindow[] = [
-    {
-      id: "claude-5h",
-      label: "5-hour limit",
-      kind: "five_hour",
+  const windows: ControlApiQuotaWindow[] = CLAUDE_USAGE_WINDOWS.slice(0, 2).map(
+    ([, id, label, kind]) => ({
+      id,
+      label,
+      kind,
       status: "available",
       usedPercent: 0,
       remainingPercent: 100,
       resetsAt: null
-    },
-    {
-      id: "claude-weekly",
-      label: "Weekly limit",
-      kind: "weekly",
-      status: "available",
-      usedPercent: 0,
-      remainingPercent: 100,
-      resetsAt: null
-    }
-  ];
-  const primary = windows[0]!;
-  return {
-    provider: "claude",
-    status: "ok",
-    source: "claude-plan-subscription",
-    updatedAt: new Date(nowMs).toISOString(),
-    plan: planMeta.plan,
-    summaryStatus: "available",
-    windows,
-    models: CLAUDE_CONFIGURED_MODELS.map((cfg) => ({
-      model: cfg.model,
-      displayName: cfg.displayName,
-      pool: null,
-      status: "available",
-      usedPercent: primary.usedPercent,
-      remainingPercent: primary.remainingPercent,
-      resetsAt: primary.resetsAt,
-      windows
-    }))
-  };
+    })
+  );
+  return claudeProviderQuota("claude-plan-subscription", planMeta.plan, windows, nowMs);
 }
 
 async function discoverClaudeQuota(

@@ -233,6 +233,57 @@ test("parseCopilotUserQuota and Claude parsers build structured quota snapshots"
   assert.equal(claudeEvent.windows[0]?.usedPercent, 85);
 });
 
+test("parseClaudeRateLimitEvent reports the 5-hour window alongside the weekly window the event names", () => {
+  const nowSec = Math.floor(NOW / 1000);
+  const quota = parseClaudeRateLimitEvent(
+    {
+      status: "allowed_warning",
+      rateLimitType: "seven_day",
+      resetsAt: nowSec + 86_400,
+      unifiedWindows: {
+        five_hour: { utilization: 0.4, resetsAt: nowSec + 3_600 },
+        seven_day: { utilization: 0.9, resetsAt: nowSec + 86_400 }
+      }
+    },
+    NOW
+  );
+  assert.ok(quota);
+  assert.deepEqual(
+    quota.windows.map((w) => [w.id, w.kind, w.status, w.usedPercent]),
+    [
+      ["claude-5h", "five_hour", "available", 40],
+      ["claude-weekly", "weekly", "warning", 90]
+    ]
+  );
+  assert.equal(quota.summaryStatus, "warning");
+  assert.equal(quota.models?.[0]?.windows.length, 2);
+});
+
+test("parseClaudeRateLimitEvent rolls over windows whose reset time has passed", () => {
+  const nowSec = Math.floor(NOW / 1000);
+  const quota = parseClaudeRateLimitEvent(
+    {
+      status: "rejected",
+      rateLimitType: "seven_day",
+      resetsAt: nowSec - 60,
+      unifiedWindows: {
+        five_hour: { utilization: 0.7, resetsAt: nowSec - 7_200 },
+        seven_day: { utilization: 1, resetsAt: nowSec - 60 }
+      }
+    },
+    NOW
+  );
+  assert.ok(quota);
+  assert.deepEqual(
+    quota.windows.map((w) => [w.id, w.status, w.usedPercent, w.resetsAt]),
+    [
+      ["claude-5h", "available", 0, null],
+      ["claude-weekly", "available", 0, null]
+    ]
+  );
+  assert.equal(quota.summaryStatus, "available");
+});
+
 test("syncQuotaToCooldowns cools only exhausted subprovider pools and leaves healthy pools uncooled", () => {
   COOLDOWNS.clearAll();
   clearProviderQuotaCacheForTests();
