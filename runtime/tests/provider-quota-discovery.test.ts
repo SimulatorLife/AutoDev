@@ -291,16 +291,16 @@ test("parseClaudeRateLimitEvent reports the 5-hour window alongside the weekly w
   assert.equal(quota.models?.[0]?.windows.length, 2);
 });
 
-test("parseClaudeRateLimitEvent rolls over windows whose reset time has passed", () => {
+test("parseClaudeRateLimitEvent reports a window whose reset has passed as unreported, not 0%", () => {
   const nowSec = Math.floor(NOW / 1000);
   const quota = parseClaudeRateLimitEvent(
     {
-      status: "rejected",
+      status: "allowed",
       rateLimitType: "seven_day",
-      resetsAt: nowSec - 60,
+      resetsAt: nowSec + 86_400,
       unifiedWindows: {
         five_hour: { utilization: 0.7, resetsAt: nowSec - 7_200 },
-        seven_day: { utilization: 1, resetsAt: nowSec - 60 }
+        seven_day: { utilization: 0.38, resetsAt: nowSec + 86_400 }
       }
     },
     NOW
@@ -309,11 +309,33 @@ test("parseClaudeRateLimitEvent rolls over windows whose reset time has passed",
   assert.deepEqual(
     quota.windows.map((w) => [w.id, w.status, w.usedPercent, w.resetsAt]),
     [
-      ["claude-5h", "available", 0, null],
-      ["claude-weekly", "available", 0, null]
+      ["claude-5h", "unavailable", null, null],
+      [
+        "claude-weekly",
+        "available",
+        38,
+        new Date((nowSec + 86_400) * 1000).toISOString()
+      ]
     ]
   );
   assert.equal(quota.summaryStatus, "available");
+});
+
+test("parseClaudeRateLimitEvent yields no quota when every window has rolled over since the event", () => {
+  const nowSec = Math.floor(NOW / 1000);
+  const quota = parseClaudeRateLimitEvent(
+    {
+      status: "rejected",
+      rateLimitType: "seven_day",
+      resetsAt: nowSec - 60,
+      unifiedWindows: {
+        five_hour: { utilization: 0, resetsAt: nowSec - 7_200 },
+        seven_day: { utilization: 1, resetsAt: nowSec - 60 }
+      }
+    },
+    NOW
+  );
+  assert.equal(quota, null);
 });
 
 test("an Antigravity model's own quota entry outranks the tiered Flash entry", () => {
@@ -627,7 +649,7 @@ test("readMinimaxAuth prioritizes environment variable over config.json", async 
   assert.equal(authFromEnv.baseUrl, "https://api.minimax.io");
 });
 
-test("readClaudePlanMetadata and buildClaudeSubscriptionQuota generate canonical Pro quota", async () => {
+test("buildClaudeSubscriptionQuota names the plan but reports no usage", async () => {
   const planMeta = {
     plan: "Claude Pro Plan",
     billingType: "stripe_subscription",
@@ -641,16 +663,19 @@ test("readClaudePlanMetadata and buildClaudeSubscriptionQuota generate canonical
   assert.equal(quota.status, "ok");
   assert.equal(quota.source, "claude-plan-subscription");
   assert.equal(quota.plan, "Claude Pro Plan");
-  assert.equal(quota.summaryStatus, "available");
-  assert.equal(quota.windows.length, 2);
-  assert.equal(quota.windows[0]?.kind, "five_hour");
-  assert.equal(quota.windows[0]?.status, "available");
-  assert.equal(quota.windows[1]?.kind, "weekly");
-  assert.equal(quota.windows[1]?.status, "available");
+  assert.equal(quota.summaryStatus, "unavailable");
+  assert.deepEqual(
+    quota.windows.map((w) => [w.kind, w.status, w.usedPercent]),
+    [
+      ["five_hour", "unavailable", null],
+      ["weekly", "unavailable", null]
+    ]
+  );
 
   assert.equal(quota.models?.length, CLAUDE_CONFIGURED_MODELS.length);
   for (const m of quota.models!) {
-    assert.equal(m.status, "available");
+    assert.equal(m.status, "unavailable");
+    assert.equal(m.usedPercent, null);
     assert.equal(m.windows.length, 2);
   }
 });

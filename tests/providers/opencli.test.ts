@@ -201,7 +201,7 @@ test("ChatGPT turns attach the prompt and continue by conversation id", async ()
       },
       fresh.exec
     ),
-    { response: "Hi", conversationId: "c1" }
+    { response: "Hi", conversationId: "c1", modelSelected: true }
   );
   assert.deepEqual(fresh.calls, [
     [
@@ -477,7 +477,12 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
     ),
     // The adapter's speech-bubble decoration is not the model's. The turn
     // asked for no level, so the reply establishes none.
-    { response: "PONG", conversationId: "0c7fc86c8c985ae2", thinking: null }
+    {
+      response: "PONG",
+      conversationId: "0c7fc86c8c985ae2",
+      thinking: null,
+      modelSelected: true
+    }
   );
   assert.deepEqual(fresh.calls, [
     [
@@ -496,7 +501,9 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
   ]);
   // One command continues the chat: opencli opens it and confirms it on the
   // sending page right before sending, so no other command can move the tab
-  // in between.
+  // in between. The site is already on the model, so the picker is left
+  // alone: opening it every turn cost seconds and failed turns whenever the
+  // window could not render it.
   const continued = recordingExec([
     { response: "next", url: "https://gemini.google.com/app/0c7fc86c8c985ae2" }
   ]);
@@ -518,8 +525,6 @@ test("Gemini turns take the chat from the page that answered and reopen it to co
       "gemini",
       "ask",
       "only the delta",
-      "--model",
-      "3.1-pro",
       "--conversation",
       "0c7fc86c8c985ae2",
       "--timeout",
@@ -581,8 +586,31 @@ test("a reply splits into prose and tool calls, unwrapping a fenced body", () =>
   ]);
   assert.deepEqual(parseOpencliReply("All done."), {
     text: "All done.",
-    calls: []
+    calls: [],
+    unparsedCall: false
   });
+});
+
+test("a call is read whatever its quoting, namespace, escaping or missing close", () => {
+  // Single quotes and a namespaced name are still a call.
+  assert.deepEqual(
+    parseOpencliReply("<tool_call name='mcp__lsp__hover'>{}</tool_call>").calls,
+    [{ name: "mcp__lsp__hover", input: "{}" }]
+  );
+  // A site that renders the reply as HTML escapes the call and its body.
+  const escaped = parseOpencliReply(
+    'Next.\n&lt;tool_call name=&quot;exec&quot;&gt;a &amp;&amp; b&lt;/tool_call&gt;'
+  );
+  assert.deepEqual(escaped.calls, [{ name: "exec", input: "a && b" }]);
+  assert.equal(escaped.text, "Next.");
+  // A reply that ends inside its last call still makes that call.
+  const cut = parseOpencliReply('Run it.\n<tool_call name="exec">\ntext(1);');
+  assert.deepEqual(cut.calls, [{ name: "exec", input: "text(1);" }]);
+  assert.equal(cut.unparsedCall, false);
+  // A call the parser cannot read is reported, not passed off as prose.
+  const garbled = parseOpencliReply("<tool_call exec>text(1);</tool_call>");
+  assert.deepEqual(garbled.calls, []);
+  assert.equal(garbled.unparsedCall, true);
 });
 
 test("parsed calls become the Responses item for the tool Codex offered", () => {

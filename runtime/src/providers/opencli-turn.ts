@@ -136,9 +136,11 @@ export interface OpencliInvocation {
   /** The site's own model name the turn asks (`advanced`, `3.1-pro`). */
   readonly siteModel: string;
   /**
-   * Whether the site's model has to be switched before asking. A site whose
-   * model is an account setting (ChatGPT) is switched only when the turn asks
-   * for a different one than the bridge last selected.
+   * Whether the site's model has to be switched before asking. A site's
+   * model is an account setting that outlives the chat, so it is switched
+   * only when the turn asks for a different one than the bridge last
+   * selected: Gemini's picker then is not opened, read and closed on every
+   * turn, and a picker that cannot render fails only the turns that need it.
    */
   readonly selectModel: boolean;
   /**
@@ -170,8 +172,14 @@ export interface OpencliSiteSpec {
   readonly site: OpencliSite;
   /** Whether the prompt travels as a file (typed or uploaded) rather than as argv. */
   readonly attachesPrompt: boolean;
-  /** The site models this account can be asked, as opencli names them. */
-  models(exec: OpencliExec): Promise<string[]>;
+  /**
+   * The site models this account can be asked, as opencli names them: a
+   * fixed list for a site with no model-list command (ChatGPT), or the
+   * listing that reads them from the site. A fixed list never touches the
+   * site, so it takes no tab and says nothing about whether the site's
+   * account is signed in.
+   */
+  readonly models: readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
   /**
    * One turn: the commands that deliver the prompt into the right site
    * conversation with the right model and read back the reply, and the
@@ -233,7 +241,7 @@ function answeredIn(
 
 /** opencli could not open or read Gemini's model picker, so selected no model. */
 const GEMINI_MODEL_SELECTION_FAILURE =
-  /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open model picker|not found in picker menu/u;
+  /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open (?:Gemini )?model picker|model picker button was not found|Failed to click Gemini model picker|not found in picker menu/u;
 
 function isGeminiModelSelectionFailure(error: unknown): boolean {
   return (
@@ -247,7 +255,7 @@ function isGeminiModelSelectionFailure(error: unknown): boolean {
  * it does not offer the level that was asked for.
  */
 const GEMINI_THINKING_SELECTION_FAILURE =
-  /Could not select thinking level|--thinking must be one of/u;
+  /Could not select thinking level|--thinking must be one of|--thinking '[^']*' is not (?:currently )?available/u;
 
 function isGeminiThinkingSelectionFailure(error: unknown): boolean {
   return (
@@ -409,8 +417,9 @@ export const OPENCLI_SITE_SPECS: Readonly<
   chatgpt: {
     site: "chatgpt",
     attachesPrompt: true,
-    models: () => Promise.resolve([...CHATGPT_MODELS]),
+    models: CHATGPT_MODELS,
     turn: async (invocation, exec) => {
+      let modelSelected = true;
       if (invocation.selectModel) {
         try {
           await exec([
@@ -430,6 +439,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
           writeErrorLine(
             `opencli chatgpt could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
           );
+          modelSelected = false;
         }
       }
       const reply = replyFromRow(
@@ -452,7 +462,10 @@ export const OPENCLI_SITE_SPECS: Readonly<
           ])
         )
       );
-      return answeredIn("ChatGPT", invocation.conversationId, reply);
+      return answeredIn("ChatGPT", invocation.conversationId, {
+        ...reply,
+        modelSelected
+      });
     }
   },
   gemini: {
@@ -492,8 +505,12 @@ export const OPENCLI_SITE_SPECS: Readonly<
       // level has not been put on the level that was asked for, and the
       // bridge must not remember it as one.
       let thinking: string | null = invocation.siteThinking;
+      let modelSelected = true;
       try {
-        rows = await ask(invocation.siteModel, invocation.siteThinking);
+        rows = await ask(
+          invocation.selectModel ? invocation.siteModel : null,
+          invocation.siteThinking
+        );
       } catch (error) {
         // The thinking level is a preference, like the model: a site that
         // cannot take it answers at the level it has, the way it answers at
@@ -502,7 +519,10 @@ export const OPENCLI_SITE_SPECS: Readonly<
           writeErrorLine(
             `opencli gemini could not switch to ${invocation.siteThinking}: ${errorMessage(error)}`
           );
-          rows = await ask(invocation.siteModel, null);
+          rows = await ask(
+            invocation.selectModel ? invocation.siteModel : null,
+            null
+          );
           thinking = null;
         } else if (isGeminiModelSelectionFailure(error)) {
           // Gemini's model picker does not render in a hidden or covered
@@ -519,6 +539,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
           );
           rows = await ask(null, null);
           thinking = null;
+          modelSelected = false;
         } else throw geminiModelLimit(error) ?? error;
       }
       // The chat comes from the page `ask` answered on (its `url`), never from
@@ -532,7 +553,8 @@ export const OPENCLI_SITE_SPECS: Readonly<
           ? response.slice(GEMINI_REPLY_PREFIX.length)
           : response,
         conversationId: geminiConversationId(row.url),
-        thinking
+        thinking,
+        modelSelected
       });
     }
   }
@@ -1071,6 +1093,13 @@ export interface OpencliReply {
    * the level it had.
    */
   readonly thinking?: string | null;
+  /**
+   * Whether the site is now on the model the turn asked for: it was already
+   * on it, or the turn switched it. `false` when the switch failed and the
+   * site answered at the model it had, so the bridge does not record a model
+   * the site is not on and the next turn asks for it again.
+   */
+  readonly modelSelected: boolean;
 }
 
 export class OpencliCommandError extends Error {
@@ -1136,7 +1165,9 @@ export function parseOpencliOutput(
  * The reply an `ask` row carries. `ask` names the conversation
  * `conversationId`, `ask-file` names it `conversation_id`; both are read.
  */
-export function replyFromRow(row: JsonRecord): OpencliReply {
+export function replyFromRow(
+  row: JsonRecord
+): Pick<OpencliReply, "response" | "conversationId"> {
   const response = stringField(row, "response");
   if (response === null)
     throw new OpencliCommandError(
@@ -1159,10 +1190,33 @@ export interface ParsedReply {
   /** The reply's prose, with every call removed. */
   readonly text: string;
   readonly calls: ParsedToolCall[];
+  /**
+   * Whether the prose still holds a `<tool_call` the parser could not read.
+   * Such a reply asked for a call it did not complete; sending it to Codex as
+   * prose ends the agent's turn on an answer the model never gave.
+   */
+  readonly unparsedCall: boolean;
 }
 
+/**
+ * One call: `<tool_call name="...">body</tool_call>`. The name may be single-
+ * or double-quoted and may carry a namespace (`mcp__x__y`, `ns.tool`). A
+ * final call the reply ends inside -- the site cut it off, or the model
+ * stopped before the closing tag -- runs to the end of the reply.
+ */
 const TOOL_CALL_PATTERN =
-  /<tool_call\s+name="([\w-]{1,64})"[^>]*>([\s\S]*?)<\/tool_call>/gu;
+  /<tool_call\s+name=(["'])([\w.:/-]{1,128})\1[^>]*>([\s\S]*?)(?:<\/tool_call>|$(?![\s\S]))/gu;
+const TOOL_CALL_OPENING = /<tool_call\b/u;
+/** A reply the site rendered as escaped HTML carries its calls as `&lt;tool_call`. */
+const ESCAPED_TOOL_CALL = /&lt;\/?tool_call\b/u;
+const HTML_ENTITIES: Readonly<Record<string, string>> = {
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&amp;": "&"
+};
+const HTML_ENTITY_PATTERN = /&(?:lt|gt|quot|#39|amp);/gu;
 const FENCED_BODY_PATTERN = /^```[\w-]*\n([\s\S]*?)\n?```$/u;
 const LEADING_NEWLINE_PATTERN = /^\r?\n/u;
 const TRAILING_NEWLINE_PATTERN = /\r?\n$/u;
@@ -1185,14 +1239,26 @@ function callBody(raw: string): string {
 /** Split a site reply into its prose and the tool calls it requests. */
 export function parseOpencliReply(response: string): ParsedReply {
   const calls: ParsedToolCall[] = [];
-  const text = response
-    .replaceAll(TOOL_CALL_PATTERN, (_match, name: string, body: string) => {
-      calls.push({ name, input: callBody(body) });
-      return "";
-    })
+  // A site that shows the reply as HTML escapes it whole: the calls and
+  // their bodies alike. Only such a reply is unescaped.
+  const source =
+    !TOOL_CALL_OPENING.test(response) && ESCAPED_TOOL_CALL.test(response)
+      ? response.replaceAll(
+          HTML_ENTITY_PATTERN,
+          (entity) => HTML_ENTITIES[entity] ?? entity
+        )
+      : response;
+  const text = source
+    .replaceAll(
+      TOOL_CALL_PATTERN,
+      (_match, _quote: string, name: string, body: string) => {
+        calls.push({ name, input: callBody(body) });
+        return "";
+      }
+    )
     .replaceAll(BLANK_RUN_PATTERN, "\n\n")
     .trim();
-  return { text, calls };
+  return { text, calls, unparsedCall: TOOL_CALL_OPENING.test(text) };
 }
 
 /**

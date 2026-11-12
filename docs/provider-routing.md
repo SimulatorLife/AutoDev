@@ -661,8 +661,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
     and fallback to Anthropic OAuth `/api/oauth/usage`. Maps rolling 5-hour session and
     weekly windows across configured models (`claude-opus-5-5`, `claude-sonnet-5-5`).
     Every window comes from the event's `unifiedWindows` (the top-level fields only
-    describe the window named by `rateLimitType`), and a window whose reset time has
-    passed since the reading was captured reports as a fresh, unused window.
+    describe the window named by `rateLimitType`). A window whose reset time has
+    passed since the reading was captured reports its usage as not reported (any
+    Claude use since then is invisible to that reading), never as 0%; when every
+    window has rolled over, discovery skips the stale event for the next source.
+    The plan-metadata fallback names the plan but reports both windows' usage as
+    not reported.
 
   In the Console UI, inline quota bars and reset countdowns render in each
   provider's `Status` cell on `/providers` and in each model's row on

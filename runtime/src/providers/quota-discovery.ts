@@ -849,14 +849,33 @@ export function parseClaudeOAuthUsage(
   );
 }
 
+/** A Claude window whose current usage no source has reported. */
+function claudeUnreportedWindow([
+  ,
+  id,
+  label,
+  kind
+]: (typeof CLAUDE_USAGE_WINDOWS)[number]): ControlApiQuotaWindow {
+  return {
+    id,
+    label,
+    kind,
+    status: "unavailable",
+    usedPercent: null,
+    remainingPercent: null,
+    resetsAt: null
+  };
+}
+
 /**
  * Builds one Claude window from a CLI rate-limit reading. The CLI reports
  * `utilization` as a 0..1 fraction. A window whose reset time has already
- * passed has rolled over since the reading was captured, so it reports a fresh
- * window rather than the stale usage (a persisted reading can be days old).
+ * passed has rolled over since the reading was captured (a persisted reading
+ * can be days old), and any Claude use since then is invisible to it, so its
+ * usage is unreported rather than assumed to be 0%.
  */
 function claudeEventWindow(
-  [, id, label, kind]: (typeof CLAUDE_USAGE_WINDOWS)[number],
+  spec: (typeof CLAUDE_USAGE_WINDOWS)[number],
   reading: {
     utilization: unknown;
     resetsAt: unknown;
@@ -866,16 +885,9 @@ function claudeEventWindow(
 ): ControlApiQuotaWindow | null {
   const resetsAt = canonicalIso(reading.resetsAt);
   if (resetsAt !== null && Date.parse(resetsAt) <= nowMs) {
-    return {
-      id,
-      label,
-      kind,
-      status: "available",
-      usedPercent: 0,
-      remainingPercent: 100,
-      resetsAt: null
-    };
+    return claudeUnreportedWindow(spec);
   }
+  const [, id, label, kind] = spec;
   const usedPercent =
     typeof reading.utilization === "number" &&
     Number.isFinite(reading.utilization)
@@ -911,7 +923,9 @@ function claudeEventWindow(
  *
  * The event's top-level `status`/`utilization`/`resetsAt` describe only the
  * window named by `rateLimitType`; `unifiedWindows` carries every window
- * (5-hour session and weekly), so each one is reported.
+ * (5-hour session and weekly), so each one is reported. Returns null when every
+ * window has rolled over since the event, so discovery moves on to a source
+ * that reports current usage.
  */
 export function parseClaudeRateLimitEvent(
   info: unknown,
@@ -944,7 +958,9 @@ export function parseClaudeRateLimitEvent(
     const win = claudeEventWindow(spec, reading, nowMs);
     if (win) windows.push(win);
   }
-  if (windows.length === 0) return null;
+  if (windows.every((w) => w.usedPercent === null && w.resetsAt === null)) {
+    return null;
+  }
   return claudeProviderQuota(
     "claude-cli-rate-limit-event",
     "Claude Pro Plan",
@@ -1422,21 +1438,15 @@ export async function readPersistedClaudeRateLimit(
   return null;
 }
 
+/**
+ * The plan-metadata fallback: names the Claude plan, but knows nothing of its
+ * usage, so both windows are unreported.
+ */
 export function buildClaudeSubscriptionQuota(
   planMeta: ClaudePlanMetadata,
   nowMs = Date.now()
 ): ControlApiProviderQuota {
-  const windows: ControlApiQuotaWindow[] = CLAUDE_USAGE_WINDOWS.slice(0, 2).map(
-    ([, id, label, kind]) => ({
-      id,
-      label,
-      kind,
-      status: "available",
-      usedPercent: 0,
-      remainingPercent: 100,
-      resetsAt: null
-    })
-  );
+  const windows = CLAUDE_USAGE_WINDOWS.slice(0, 2).map(claudeUnreportedWindow);
   return claudeProviderQuota(
     "claude-plan-subscription",
     planMeta.plan,

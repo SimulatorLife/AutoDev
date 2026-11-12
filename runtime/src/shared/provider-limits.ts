@@ -146,7 +146,13 @@ const CLI_LIMIT_PATTERNS = Object.freeze([
   {
     limitClass: "throttled",
     limitType: "rate",
-    pattern: /rate.?limit|too many requests|429/i
+    // A 429 is a status only when it stands as a number of its own. A bare
+    // `429` also matched inside chat UUIDs, ids and byte counts ("tab shows
+    // chat 6a429c1e-...", "prompt is 64291 bytes"), so a refusal that named
+    // one was read as the site throttling the account and cooled the provider
+    // down.
+    pattern:
+      /rate.?limit|too many requests|(?<![\w.-])429(?![\w.-])(?!\s*(?:bytes?|ms|seconds?|KB)\b)/i
   }
 ]);
 
