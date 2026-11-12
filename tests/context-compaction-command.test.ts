@@ -103,13 +103,13 @@ test("compaction checkpoint has stable sections and distinct fact ownership", ()
     "References & Critical Facts"
   ]);
   assert.match(prompt, /\(none\).*empty sections/u);
-  assert.match(prompt, /Keep.*test results.*Work State/u);
+  assert.match(prompt, /\*\*Validation:\*\* Last relevant test\/build command and result/u);
   assert.match(prompt, /not already recorded above/u);
   assert.match(prompt, /exact wording of unanswered user requests/u);
   assert.match(prompt, /whether user-approved or agent-proposed/u);
   assert.match(prompt, /does not clear conversation context/u);
   assert.match(prompt, /Do not mention the summary\/compaction process/u);
-  assert.match(prompt, /do not.*call tools/u);
+  assert.match(prompt, /Do not.*call tools/u);
 });
 
 test("compaction stays focused without arbitrary summary or reference caps", () => {
