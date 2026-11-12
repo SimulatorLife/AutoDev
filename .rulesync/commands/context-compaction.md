@@ -35,7 +35,8 @@ Return only the Markdown sections below, using `(none)` for empty sections and o
 - **Active:** Exact point of interruption and approved-plan step statuses: [DONE], [IN PROGRESS], [TODO].
 - **Blocked:** Blocker, relevant failed command/error, verified vs suspected cause, attempted fix, and unblock action/event.
 - **Running:** Live subprocess/agent/job ID, owner, status, and expected result, if any.
-- **Git/PR:** Verified branch, uncommitted/committed/pushed changes, and PR open/under review/merged state; mark unverified status unknown. Record relevant test results here, not again under References.
+- **Git/PR:** Verified branch, uncommitted/committed/pushed changes, and PR open/under review/merged state; mark unverified status unknown.
+- **Validation:** Last relevant test/build command and result; put blocking failure diagnosis under Blocked.
 
 ## Next Actions
 1. Immediate action and essential remaining steps; if complete, write `None — requested work complete` and invent no follow-ups.
