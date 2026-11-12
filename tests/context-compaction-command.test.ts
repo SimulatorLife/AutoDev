@@ -78,7 +78,7 @@ const policyCases = [
   }
 ];
 
-test("compaction command has valid metadata without injecting source URLs into prompts", () => {
+test("compaction sources stay in metadata", () => {
   assert.match(frontmatter, /^targets: \["\*"\]$/mu);
   assert.match(frontmatter, /^description: Generate a handoff summary/mu);
   for (const sourceUrl of [
@@ -88,13 +88,17 @@ test("compaction command has valid metadata without injecting source URLs into p
     "deepseek-ai/deepseek-harness"
   ]) {
     assert.ok(frontmatter.includes(sourceUrl), `missing source: ${sourceUrl}`);
-    assert.equal(prompt.includes(sourceUrl), false, "sources must stay metadata-only");
+    assert.equal(
+      prompt.includes(sourceUrl),
+      false,
+      "sources must stay metadata-only"
+    );
   }
 });
 
-test("compaction checkpoint has stable sections and distinct fact ownership", () => {
-  const headings = [...prompt.matchAll(/^## (.+)$/gmu)].map((match) => match[1]);
-  assert.deepEqual(headings, [
+test("compaction checkpoint sections are stable", () => {
+  const headings = [...prompt.matchAll(/^## (.+)$/gmu)];
+  assert.deepEqual(headings.map((match) => match[1]), [
     "Objective",
     "Requirements",
     "Decisions",
@@ -103,7 +107,10 @@ test("compaction checkpoint has stable sections and distinct fact ownership", ()
     "References & Critical Facts"
   ]);
   assert.match(prompt, /\(none\).*empty sections/u);
-  assert.match(prompt, /\*\*Validation:\*\* Last relevant test\/build command and result/u);
+  assert.match(
+    prompt,
+    /\*\*Validation:\*\* Last relevant test\/build command and result/u
+  );
   assert.match(prompt, /not already recorded above/u);
   assert.match(prompt, /exact wording of unanswered user requests/u);
   assert.match(prompt, /whether user-approved or agent-proposed/u);
@@ -112,10 +119,13 @@ test("compaction checkpoint has stable sections and distinct fact ownership", ()
   assert.match(prompt, /Do not.*call tools/u);
 });
 
-test("compaction stays focused without arbitrary summary or reference caps", () => {
+test("compaction has no arbitrary size caps", () => {
   assert.ok(prompt.length < 4_000, "command should remain compact");
   assert.doesNotMatch(prompt, /\b(?:400 words|up to 10|at most 10)\b/iu);
-  assert.match(prompt, /Only files\/URLs needed to continue, ordered by importance/u);
+  assert.match(
+    prompt,
+    /Only files\/URLs needed to continue, ordered by importance/u
+  );
 });
 
 const evaluationFixtures = JSON.parse(
