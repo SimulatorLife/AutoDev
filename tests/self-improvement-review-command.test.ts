@@ -34,7 +34,8 @@ interface EvaluationResult {
 
 /**
  * Optional behavioral runner:
- * AUTODEV_SELF_IMPROVEMENT_EVAL_RUNNER=/absolute/path/to/runner pnpm run test:root
+ * Set AUTODEV_SELF_IMPROVEMENT_EVAL_RUNNER to an executable path, then run
+ * pnpm run test:root.
  * The executable receives JSON {prompt, scenario, guidance, authorization} on
  * stdin and returns the normalized EvaluationResult as JSON on stdout.
  * It must execute the agent in an isolated environment and independently
@@ -50,7 +51,10 @@ const command = parseRuleSyncCommand("self-improvement-review", source);
 
 const cases = JSON.parse(
   readFileSync(
-    new URL("fixtures/self-improvement-review-evaluations.json", import.meta.url),
+    new URL(
+      "fixtures/self-improvement-review-evaluations.json",
+      import.meta.url
+    ),
     "utf8"
   )
 ) as EvaluationCase[];
@@ -85,7 +89,7 @@ test("RuleSync parser accepts the command and hides source metadata", () => {
   assert.match(source, /Reflexio: historical\/inactive/u);
 });
 
-test("command defines one coherent review sequence and distinct outcomes", () => {
+test("command stages and outcome statuses are defined", () => {
   assert.deepEqual(
     [...command.prompt.matchAll(/^## (.+)$/gmu)].map((match) => match[1]),
     ["Inspect", "Qualify", "Route and authorize", "Validate and report"]
@@ -95,7 +99,7 @@ test("command defines one coherent review sequence and distinct outcomes", () =>
   }
 });
 
-test("behavioral scenarios cover competing decisions without contradictions", () => {
+test("behavioral scenarios cover conflicting decisions", () => {
   const names = cases.map((item) => item.id);
   assert.equal(new Set(names).size, names.length);
   assert.deepEqual(
@@ -123,13 +127,22 @@ test("behavioral scenarios cover competing decisions without contradictions", ()
     assert.ok(item.scenario.length > 40, item.id);
     assert.ok(item.authorization.length > 0, item.id);
     assert.ok(statuses.has(item.expect.status), item.id);
-    assert.equal(new Set(item.expect.decisions).size, item.expect.decisions.length);
+    assert.equal(
+      new Set(item.expect.decisions).size,
+      item.expect.decisions.length
+    );
     assert.ok(item.expect.decisions.length > 0, item.id);
     assert.ok(item.expect.maxVerifiedWrites >= 0, item.id);
-    if (item.expect.status === "NO_CHANGE" || item.expect.status === "INSUFFICIENT_EVIDENCE") {
+    if (
+      item.expect.status === "NO_CHANGE" ||
+      item.expect.status === "INSUFFICIENT_EVIDENCE"
+    ) {
       assert.deepEqual(item.expect.kinds, [], item.id);
     }
-    if (item.authorization.includes("review only") || item.authorization === "none") {
+    if (
+      item.authorization.includes("review only") ||
+      item.authorization === "none"
+    ) {
       assert.equal(item.expect.maxVerifiedWrites, 0, item.id);
     }
   }
@@ -165,14 +178,20 @@ for (const item of cases) {
         item.id
       );
       for (const decision of item.expect.decisions) {
-        assert.ok(result.decisions.includes(decision), `${item.id}: ${decision}`);
+        assert.ok(
+          result.decisions.includes(decision),
+          `${item.id}: ${decision}`
+        );
       }
       assert.ok(
         result.verifiedWrites.length <= item.expect.maxVerifiedWrites,
         `${item.id}: unexpected verified writes`
       );
       for (const candidate of result.candidates) {
-        assert.ok(candidate.evidenceRefs.length > 0, `${item.id}: missing evidence`);
+        assert.ok(
+          candidate.evidenceRefs.length > 0,
+          `${item.id}: missing evidence`
+        );
       }
     }
   );
