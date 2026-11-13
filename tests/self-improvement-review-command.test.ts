@@ -10,6 +10,7 @@ type ReviewStatus =
 
 interface EvaluationCase {
   id: string;
+  category: string;
   scenario: string;
   guidance: string;
   authorization: string;
@@ -17,7 +18,7 @@ interface EvaluationCase {
     status: ReviewStatus;
     kinds: string[];
     decisions: string[];
-    maxVerifiedWrites: number;
+    maxVerifiedWrites?: number;
   };
 }
 
@@ -67,20 +68,14 @@ test("RuleSync parser accepts the command and hides source metadata", () => {
   assert.deepEqual(command.targets, ["*"]);
   assert.match(command.description ?? "", /Review completed agent work/u);
   assert.ok(command.prompt.length > 0);
-  for (const repository of [
-    "NousResearch/hermes-agent",
-    "Orkas-AI/Orkas",
-    "affaan-m/ECC",
-    "BayramAnnakov/claude-reflect",
-    "pskoett/self-improving-agent",
-    "Kulaxyz/self-learning-skills",
-    "EfficientStreet/hindsight",
-    "ReflexioAI/reflexio",
-    "anthropics/skills",
-    "gepa-ai/gepa"
-  ]) {
-    assert.ok(source.includes(repository), repository);
-    assert.ok(!command.prompt.includes(repository), repository);
+  const metadata = source.slice(0, source.indexOf("\n---\n"));
+  const references = [
+    ...metadata.matchAll(/^# (https:\/\/github\.com\/\S+)$/gmu)
+  ].map((match) => match[1]!);
+  assert.equal(references.length, 10);
+  assert.equal(new Set(references).size, references.length);
+  for (const reference of references) {
+    assert.ok(!command.prompt.includes(reference), reference);
   }
   assert.match(source, /Reflexio: historical\/inactive/u);
 });
@@ -98,26 +93,20 @@ test("command stages and outcome statuses are defined", () => {
 test("behavioral scenarios cover conflicting decisions", () => {
   const names = cases.map((item) => item.id);
   assert.equal(new Set(names).size, names.length);
+  assert.ok(cases.length >= 12);
   assert.deepEqual(
-    [...names].sort(),
+    [...new Set(cases.map((item) => item.category))].sort(),
     [
-      "no-review-input",
-      "successful-routine-task",
-      "transient-rate-limit",
-      "untrusted-tool-injection",
-      "one-off-user-request",
-      "explicit-standing-preference",
-      "verified-setup-recovery",
-      "unverified-one-off-fix",
-      "verified-repeated-procedure",
-      "duplicate-approved-rule",
-      "stale-instruction-supersession",
-      "demonstrated-capability-reversal",
-      "overbroad-local-preference",
-      "unauthorized-skill-write",
-      "write-blocked-after-approval",
-      "subjective-quality-evaluation"
-    ].sort()
+      "authorization",
+      "deduplication",
+      "environment",
+      "outcome",
+      "preference",
+      "qualification",
+      "scope",
+      "trust",
+      "validation"
+    ]
   );
   for (const item of cases) {
     assert.ok(item.scenario.length > 40, item.id);
@@ -128,7 +117,7 @@ test("behavioral scenarios cover conflicting decisions", () => {
       item.expect.decisions.length
     );
     assert.ok(item.expect.decisions.length > 0, item.id);
-    assert.ok(item.expect.maxVerifiedWrites >= 0, item.id);
+    assert.ok((item.expect.maxVerifiedWrites ?? 0) >= 0, item.id);
     if (
       item.expect.status === "NO_CHANGE" ||
       item.expect.status === "INSUFFICIENT_EVIDENCE"
@@ -139,7 +128,7 @@ test("behavioral scenarios cover conflicting decisions", () => {
       item.authorization.includes("review only") ||
       item.authorization === "none"
     ) {
-      assert.equal(item.expect.maxVerifiedWrites, 0, item.id);
+      assert.equal(item.expect.maxVerifiedWrites ?? 0, 0, item.id);
     }
   }
 });
@@ -180,7 +169,7 @@ for (const item of cases) {
         );
       }
       assert.ok(
-        result.verifiedWrites.length <= item.expect.maxVerifiedWrites,
+        result.verifiedWrites.length <= (item.expect.maxVerifiedWrites ?? 0),
         `${item.id}: unexpected verified writes`
       );
       for (const candidate of result.candidates) {
