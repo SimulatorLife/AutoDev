@@ -468,7 +468,10 @@ describe("agent reconciliation contract: router event -> usage projection keying
       tmpdir(),
       `autodev-router-state-contract-${Date.now()}.json`
     );
-    const persistedEvent = (requestId: string | null) => ({
+    const persistedEvent = (
+      requestId: string | null,
+      overrides: Record<string, unknown> = {}
+    ) => ({
       schema: "autodev-router-event-v1",
       timestamp: new Date().toISOString(),
       routerInstanceId: "contract-replay",
@@ -476,6 +479,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
       thread: null,
       phase: "result",
       role: "worker",
+      origin: "subagent",
       requestedModel: "gpt-5.1-codex",
       provider: "codex",
       model: "gpt-5.1-codex",
@@ -493,7 +497,8 @@ describe("agent reconciliation contract: router event -> usage projection keying
       syscall: null,
       selection: null,
       normalizedItemIds: 0,
-      droppedReasoningItems: 0
+      droppedReasoningItems: 0,
+      ...overrides
     });
     try {
       writeFileSync(
@@ -518,6 +523,67 @@ describe("agent reconciliation contract: router event -> usage projection keying
       // null-requestId event is skipped rather than invented an identity.
       assert.equal(status.totals.successes, 1);
       assert.equal(Object.hasOwn(status.byWorkspace, "AutoDev"), true);
+    } finally {
+      rmSync(tmpFile, { force: true });
+      resetRouterTelemetry();
+    }
+  });
+
+  test("persisted-event replay keeps the recorded origin of a roleless concrete request", () => {
+    // A model picked directly on a child thread carries no role; only its
+    // recorded origin says it was a subagent request. Replay must read that
+    // origin rather than re-deriving "direct" from the missing role.
+    resetRouterTelemetry();
+    const tmpFile = join(
+      tmpdir(),
+      `autodev-router-state-origin-${Date.now()}.json`
+    );
+    const event = (requestId: string, origin: string) => ({
+      schema: "autodev-router-event-v1",
+      timestamp: new Date().toISOString(),
+      routerInstanceId: "contract-replay",
+      requestId,
+      thread: `${requestId}-thread`,
+      phase: "result",
+      role: null,
+      origin,
+      requestedModel: "sonnet",
+      provider: "claude",
+      model: "sonnet",
+      workspace: "AutoDev",
+      cwd: "/tmp/AutoDev",
+      outcome: "success",
+      status: 200,
+      failureClass: null,
+      denialReason: null,
+      spawnFailureReason: null,
+      elapsedMs: 10,
+      toolCalls: 0,
+      errorName: null,
+      errorCode: null,
+      syscall: null,
+      selection: null,
+      normalizedItemIds: 0,
+      droppedReasoningItems: 0
+    });
+    try {
+      writeFileSync(
+        tmpFile,
+        JSON.stringify({
+          schema: "autodev-router-persisted-state-v4",
+          updatedAt: new Date().toISOString(),
+          recentEvents: [
+            event("origin-child", "subagent"),
+            event("origin-direct", "direct")
+          ]
+        }),
+        "utf8"
+      );
+      loadRouterState(tmpFile);
+      const status = getDefaultUsageTracker().usageStatus();
+      assert.equal(status.byOrigin.subagent?.successes, 1);
+      assert.equal(status.byOrigin.direct?.successes, 1);
+      assert.equal(status.byRole.unattributed?.successes, 2);
     } finally {
       rmSync(tmpFile, { force: true });
       resetRouterTelemetry();

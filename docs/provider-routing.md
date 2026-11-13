@@ -1087,7 +1087,10 @@ The router makes its effective choice visible in two ways:
   session (thread ID equals session ID) it is the root agent, so it carries
   the `orchestrator` role and origin whichever provider serves it; on a child
   thread it is a `subagent` with no named role (`unattributed` in `byRole`);
-  with no thread identity it is `direct`. This is an operational inference: the router sees HTTP turns, not the full
+  with no thread identity it is `direct`. Each router event records this
+  `origin` beside its `role`, so replaying persisted events after a restart
+  attributes a roleless child-thread request to `subagent` exactly as the live
+  event did. This is an operational inference: the router sees HTTP turns, not the full
   lifetime of a Codex session, and tool-call counts cover calls represented in
   Responses events only. The JSON `/status` payload keeps `usage.byOrigin` and
   `usage.byRole` as separate, unmodified buckets.

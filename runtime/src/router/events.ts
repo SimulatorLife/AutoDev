@@ -36,6 +36,13 @@ export interface RouterEvent {
   activitySubject?: string | null;
   phase: string;
   role: string | null;
+  /**
+   * Where the request came from: the root thread ("orchestrator"), a child
+   * thread ("subagent") or an unidentified caller ("direct"). Persisted so a
+   * replay after a restart attributes a roleless child-thread request the same
+   * way the live event did.
+   */
+  origin: string | null;
   requestedModel: string | null | undefined;
   provider: string | null | undefined;
   model: string | null | undefined;
@@ -140,11 +147,7 @@ export interface RouterEventRecorderOptions {
     | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   onEvent?:
-    | ((
-        event: RouterEvent,
-        input: RecordRouterEventInput,
-        effectiveOrigin: string | null
-      ) => void)
+    | ((event: RouterEvent, input: RecordRouterEventInput) => void)
     | undefined;
 }
 
@@ -164,11 +167,7 @@ export class RouterEventRecorder {
     | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   private readonly onEventListener?:
-    | ((
-        event: RouterEvent,
-        input: RecordRouterEventInput,
-        effectiveOrigin: string | null
-      ) => void)
+    | ((event: RouterEvent, input: RecordRouterEventInput) => void)
     | undefined;
 
   constructor(options: RouterEventRecorderOptions = {}) {
@@ -257,6 +256,7 @@ export class RouterEventRecorder {
       thread: input.thread ?? requestIdentity?.thread ?? null,
       phase: input.phase,
       role: effectiveRole,
+      origin: effectiveOrigin,
       requestedModel: input.requestedModel,
       provider: input.provider,
       model: input.model,
@@ -284,7 +284,7 @@ export class RouterEventRecorder {
 
     if (this.onEventListener) {
       try {
-        this.onEventListener(event, input, effectiveOrigin);
+        this.onEventListener(event, input);
       } catch (error) {
         writeErrorLine("Error in onEvent listener:", error);
       }

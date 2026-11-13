@@ -265,13 +265,13 @@ const USAGE_ELIGIBLE_PHASES = new Set(["selected", "skipped", "result"]);
 // The single owner of RouterEvent -> Usage projection. Used by both the live
 // onEvent listener (which also has the raw RecordRouterEventInput, so it can
 // read an explicit, validated workspace_id) and persisted-event replay
-// (which only has the already-recorded RouterEvent fields). Requests without
+// (which only has the already-recorded RouterEvent fields, origin included, so
+// a replayed child-thread request stays a subagent request). Requests without
 // a requestId cannot be keyed and are intentionally skipped rather than
 // invented; a null/unknown outcome is omitted rather than coerced to failure.
 function usageEventFromRouterEvent(
   event: RouterEvent,
-  rawWorkspace: string | WorkspaceInput | null | undefined,
-  effectiveOrigin: string | null
+  rawWorkspace: string | WorkspaceInput | null | undefined
 ): RecordUsageEventParams | null {
   if (
     !event.requestId ||
@@ -295,7 +295,7 @@ function usageEventFromRouterEvent(
     elapsedMs: event.elapsedMs,
     toolCalls: event.toolCalls,
     timestamp: event.timestamp,
-    origin: effectiveOrigin ?? usageOrigin(event.role)
+    origin: event.origin ?? usageOrigin(event.role)
   };
 }
 
@@ -321,7 +321,7 @@ const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
   resolveOrigin: (role) => usageOrigin(role),
-  onEvent: (event, input, effectiveOrigin) => {
+  onEvent: (event, input) => {
     const workspaceSessionKey =
       event.thread ??
       (event.activitySubject?.startsWith("thread:")
@@ -361,11 +361,7 @@ const routerEvents = new RouterEventRecorder({
       durationMs: event.elapsedMs,
       name: event.model ? `${event.provider ?? ""}/${event.model}` : null
     });
-    const usageEvent = usageEventFromRouterEvent(
-      event,
-      input.workspace,
-      effectiveOrigin
-    );
+    const usageEvent = usageEventFromRouterEvent(event, input.workspace);
     if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
     if (event.phase === "result")
       closeBridgeSubagentsForRequest(
@@ -594,7 +590,7 @@ function restoreRecentEvents(
   if (parsed.usage) return;
   getDefaultUsageTracker().resetUsageTelemetry();
   for (const event of routerEvents.getRecentEvents()) {
-    const usageEvent = usageEventFromRouterEvent(event, null, null);
+    const usageEvent = usageEventFromRouterEvent(event, null);
     if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
   }
   getDefaultUsageTracker().inFlightUsage.clear();

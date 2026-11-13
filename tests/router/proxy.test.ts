@@ -359,7 +359,10 @@ test(
         (event) => event.requestId === "req-concrete-root"
       );
       assert.ok(rootEvents.length > 0);
-      for (const event of rootEvents) assert.equal(event.role, "orchestrator");
+      for (const event of rootEvents) {
+        assert.equal(event.role, "orchestrator");
+        assert.equal(event.origin, "orchestrator");
+      }
       assert.ok(roleAttempts("orchestrator") > orchestratorBefore);
 
       // A Codex model on a child thread is a subagent, never the orchestrator.
@@ -386,7 +389,12 @@ test(
         (event) => event.requestId === "req-concrete-child"
       );
       assert.ok(childEvents.length > 0);
-      for (const event of childEvents) assert.equal(event.role, null);
+      for (const event of childEvents) {
+        assert.equal(event.role, null);
+        // Persisted with the event, so a replay after a restart still counts
+        // this roleless request as a subagent's.
+        assert.equal(event.origin, "subagent");
+      }
       assert.equal(roleAttempts("orchestrator"), orchestratorAfterRoot);
     } finally {
       globalThis.fetch = originalFetch;

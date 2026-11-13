@@ -175,8 +175,8 @@ test("RouterEventRecorder derives an orchestrator role from an orchestrator orig
     logger: null,
     resolveOrigin: (role) =>
       role === "orchestrator" ? "orchestrator" : role ? "subagent" : "direct",
-    onEvent: (_event, _input, effectiveOrigin) => {
-      origins.push(effectiveOrigin);
+    onEvent: (event) => {
+      origins.push(event.origin);
     }
   });
 
@@ -189,6 +189,7 @@ test("RouterEventRecorder derives an orchestrator role from an orchestrator orig
     model: CONFIGURED_SMART_MODEL
   });
   assert.equal(roleless.role, null);
+  assert.equal(roleless.origin, "direct");
   // A caller that knows the request is the root says so with its origin.
   const root = recorder.record({
     phase: "selected",
@@ -199,6 +200,7 @@ test("RouterEventRecorder derives an orchestrator role from an orchestrator orig
     model: "sonnet"
   });
   assert.equal(root.role, "orchestrator");
+  assert.equal(root.origin, "orchestrator");
   assert.deepEqual(origins, ["direct", "orchestrator"]);
 });
 
