@@ -353,13 +353,16 @@ export function emptyUsageBucket(): UsageBucket {
   };
 }
 
+/**
+ * The origin a role implies. A request with no role is direct: the provider
+ * that served it says nothing about where it sits in the agent tree, so a
+ * caller that knows the request's thread passes its origin explicitly.
+ */
 export function usageOrigin(
-  role?: string | null,
-  provider?: string | null
+  role?: string | null
 ): "orchestrator" | "subagent" | "direct" {
   if (role === "orchestrator") return "orchestrator";
   if (role) return "subagent";
-  if (provider === "codex") return "orchestrator";
   return "direct";
 }
 
@@ -1126,7 +1129,7 @@ export class UsageTracker {
   }): UsageBucket[] {
     const workspaceContext =
       typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
-    const origin = originOverride ?? usageOrigin(role, provider);
+    const origin = originOverride ?? usageOrigin(role);
     const roleKey =
       role ?? (origin === "orchestrator" ? "orchestrator" : "unattributed");
     const modelKey = `${provider}/${model}`;
@@ -1499,7 +1502,7 @@ export class UsageTracker {
 
     const allLiveAgents: ProjectedAgent[] = directAgents.map((a) => ({
       ...a,
-      origin: a.origin ?? usageOrigin(a.role, a.provider)
+      origin: a.origin ?? usageOrigin(a.role)
     }));
 
     const byProvider: Record<string, number> = {};

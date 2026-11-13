@@ -1082,8 +1082,12 @@ The router makes its effective choice visible in two ways:
   `subagent`, or `direct`), role, and resolved provider/model. Each bucket
   includes attempts, outcomes, average/max turn duration, and tool-call counts
   inferred from Responses output items. A `role` request is classified as a
-  subagent; a direct Codex model request is classified as orchestrator-originated.
-  This is an operational inference: the router sees HTTP turns, not the full
+  subagent. A concrete model request (no `autodev/<role>` alias) is attributed
+  by its thread, never by its provider: on the root thread of an identified
+  session (thread ID equals session ID) it is the root agent, so it carries
+  the `orchestrator` role and origin whichever provider serves it; on a child
+  thread it is a `subagent` with no named role (`unattributed` in `byRole`);
+  with no thread identity it is `direct`. This is an operational inference: the router sees HTTP turns, not the full
   lifetime of a Codex session, and tool-call counts cover calls represented in
   Responses events only. The JSON `/status` payload keeps `usage.byOrigin` and
   `usage.byRole` as separate, unmodified buckets.

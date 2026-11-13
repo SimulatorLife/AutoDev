@@ -137,10 +137,7 @@ export interface RouterEventRecorderOptions {
   routerInstanceId?: string | undefined;
   logger?: ((event: RouterEvent) => void) | null | undefined;
   resolveOrigin?:
-    | ((
-        role: string | null | undefined,
-        provider: string | null | undefined
-      ) => string | null | undefined)
+    | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   onEvent?:
     | ((
@@ -164,10 +161,7 @@ export class RouterEventRecorder {
   private readonly routerInstanceId: string;
   private readonly logger: ((event: RouterEvent) => void) | null;
   private readonly resolveOrigin?:
-    | ((
-        role: string | null | undefined,
-        provider: string | null | undefined
-      ) => string | null | undefined)
+    | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   private readonly onEventListener?:
     | ((
@@ -248,9 +242,7 @@ export class RouterEventRecorder {
 
     const effectiveOrigin =
       input.origin ??
-      (this.resolveOrigin
-        ? this.resolveOrigin(input.role, input.provider)
-        : null) ??
+      (this.resolveOrigin ? this.resolveOrigin(input.role) : null) ??
       null;
     const effectiveRole =
       input.role ??

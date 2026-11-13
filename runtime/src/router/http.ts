@@ -295,8 +295,7 @@ function usageEventFromRouterEvent(
     elapsedMs: event.elapsedMs,
     toolCalls: event.toolCalls,
     timestamp: event.timestamp,
-    origin:
-      effectiveOrigin ?? usageOrigin(event.role, String(event.provider ?? ""))
+    origin: effectiveOrigin ?? usageOrigin(event.role)
   };
 }
 
@@ -321,7 +320,7 @@ function isNonProviderHealthFailure(event: RouterEvent): boolean {
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
-  resolveOrigin: (role, provider) => usageOrigin(role, provider),
+  resolveOrigin: (role) => usageOrigin(role),
   onEvent: (event, input, effectiveOrigin) => {
     const workspaceSessionKey =
       event.thread ??

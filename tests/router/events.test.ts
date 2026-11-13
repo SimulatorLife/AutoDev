@@ -169,31 +169,37 @@ test("RouterEventRecorder clear and restore handle persistence serialization", (
   assert.equal(recent[1]?.requestId, "restored-3");
 });
 
-test("RouterEventRecorder uses resolveOrigin to derive orchestrator role for codex provider", () => {
-  let passedOrigin: string | null = null;
+test("RouterEventRecorder derives an orchestrator role from an orchestrator origin, never from the provider", () => {
+  const origins: Array<string | null> = [];
   const recorder = new RouterEventRecorder({
     logger: null,
-    resolveOrigin: (role, provider) => {
-      if (role === "orchestrator") return "orchestrator";
-      if (role) return "subagent";
-      if (provider === "codex") return "orchestrator";
-      return "direct";
-    },
+    resolveOrigin: (role) =>
+      role === "orchestrator" ? "orchestrator" : role ? "subagent" : "direct",
     onEvent: (_event, _input, effectiveOrigin) => {
-      passedOrigin = effectiveOrigin;
+      origins.push(effectiveOrigin);
     }
   });
 
-  const event = recorder.record({
+  // A roleless Codex request is not the orchestrator by virtue of its provider.
+  const roleless = recorder.record({
     phase: "selected",
-    requestId: "req-orchestrator",
+    requestId: "req-codex",
     requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
     model: CONFIGURED_SMART_MODEL
   });
-
-  assert.equal(event.role, "orchestrator");
-  assert.equal(passedOrigin, "orchestrator");
+  assert.equal(roleless.role, null);
+  // A caller that knows the request is the root says so with its origin.
+  const root = recorder.record({
+    phase: "selected",
+    requestId: "req-root",
+    origin: "orchestrator",
+    requestedModel: "sonnet",
+    provider: "claude",
+    model: "sonnet"
+  });
+  assert.equal(root.role, "orchestrator");
+  assert.deepEqual(origins, ["direct", "orchestrator"]);
 });
 
 test("request events retain the raw thread and canonical activity subject", () => {

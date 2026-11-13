@@ -39,15 +39,14 @@ test("emptyUsageBucket produces standard zeroed telemetry counters", () => {
   });
 });
 
-test("usageOrigin determines origin from role and provider correctly", () => {
-  assert.equal(usageOrigin("orchestrator", "anthropic"), "orchestrator");
-  assert.equal(usageOrigin("orchestrator", "codex"), "orchestrator");
-  assert.equal(usageOrigin("explorer", "anthropic"), "subagent");
-  assert.equal(usageOrigin("worker", null), "subagent");
-  assert.equal(usageOrigin(null, "codex"), "orchestrator");
-  assert.equal(usageOrigin(undefined, "codex"), "orchestrator");
-  assert.equal(usageOrigin(null, "anthropic"), "direct");
-  assert.equal(usageOrigin(null, "openai"), "direct");
+test("usageOrigin derives origin from the role alone", () => {
+  assert.equal(usageOrigin("orchestrator"), "orchestrator");
+  assert.equal(usageOrigin("explorer"), "subagent");
+  assert.equal(usageOrigin("worker"), "subagent");
+  // No role is a direct request whichever provider served it; a caller that
+  // knows the request's place in the agent tree passes its origin explicitly.
+  assert.equal(usageOrigin(null), "direct");
+  assert.equal(usageOrigin(undefined), "direct");
 });
 
 test("usageKey formats null-delimited composite key", () => {

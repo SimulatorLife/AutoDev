@@ -3230,6 +3230,7 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   recordRouterEvent({
     phase: "selected",
     requestId: "req-usage-parent",
+    origin: "orchestrator",
     requestedModel: CONFIGURED_ORCHESTRATOR_MODEL,
     provider: "codex",
     model: CONFIGURED_ORCHESTRATOR_MODEL
@@ -3237,6 +3238,7 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   recordRouterEvent({
     phase: "result",
     requestId: "req-usage-parent",
+    origin: "orchestrator",
     requestedModel: CONFIGURED_ORCHESTRATOR_MODEL,
     provider: "codex",
     model: CONFIGURED_ORCHESTRATOR_MODEL,
@@ -3324,11 +3326,12 @@ test("activeUsageSnapshot keeps two live agents' cumulative usage isolated and p
     "racecar-movement"
   );
 
-  // Agent B: an orchestrator-origin thread (no role, codex provider), one
-  // success and one failure, in a different workspace.
+  // Agent B: a root thread on a concrete model (origin orchestrator, no
+  // explicit role), one success and one failure, in a different workspace.
   tracker.recordUsageEvent({
     phase: "selected",
     requestId: "req-b-1",
+    origin: "orchestrator",
     provider: "codex",
     model: "gpt-5-codex",
     workspace: { key: "workspace-b", cwd: "/repo/service-b" },
@@ -3338,6 +3341,7 @@ test("activeUsageSnapshot keeps two live agents' cumulative usage isolated and p
   tracker.recordUsageEvent({
     phase: "result",
     requestId: "req-b-1",
+    origin: "orchestrator",
     provider: "codex",
     model: "gpt-5-codex",
     workspace: { key: "workspace-b", cwd: "/repo/service-b" },
@@ -3351,6 +3355,7 @@ test("activeUsageSnapshot keeps two live agents' cumulative usage isolated and p
   tracker.recordUsageEvent({
     phase: "selected",
     requestId: "req-b-2",
+    origin: "orchestrator",
     provider: "codex",
     model: "gpt-5-codex",
     workspace: { key: "workspace-b", cwd: "/repo/service-b" },
@@ -3360,6 +3365,7 @@ test("activeUsageSnapshot keeps two live agents' cumulative usage isolated and p
   tracker.recordUsageEvent({
     phase: "result",
     requestId: "req-b-2",
+    origin: "orchestrator",
     provider: "codex",
     model: "gpt-5-codex",
     workspace: { key: "workspace-b", cwd: "/repo/service-b" },
@@ -3561,38 +3567,43 @@ test("All status omits router active-correlation identities", () => {
 
 test("keeps orchestrator role attribution separate from direct and subagent traffic", () => {
   resetRouterTelemetry();
-  // Orchestrator-origin: a direct Codex model request (no role).
+  // Orchestrator-origin: a concrete model the operator picked for the root
+  // thread (no role). Its provider is not Codex: the thread decides, not the
+  // provider.
   recordRouterEvent({
     phase: "selected",
     requestId: "req-orchestrator",
+    origin: "orchestrator",
+    requestedModel: "MiniMax-M3",
+    provider: "minimax",
+    model: "MiniMax-M3"
+  });
+  recordRouterEvent({
+    phase: "result",
+    requestId: "req-orchestrator",
+    origin: "orchestrator",
+    requestedModel: "MiniMax-M3",
+    provider: "minimax",
+    model: "MiniMax-M3",
+    outcome: "success",
+    status: 200,
+    elapsedMs: 50
+  });
+  // Direct-origin: a concrete model request with no thread identity (no
+  // role). A Codex provider does not make it the orchestrator.
+  recordRouterEvent({
+    phase: "selected",
+    requestId: "req-direct",
     requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
     model: CONFIGURED_SMART_MODEL
   });
   recordRouterEvent({
     phase: "result",
-    requestId: "req-orchestrator",
+    requestId: "req-direct",
     requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
     model: CONFIGURED_SMART_MODEL,
-    outcome: "success",
-    status: 200,
-    elapsedMs: 50
-  });
-  // Direct-origin: a non-Codex concrete model request (no role).
-  recordRouterEvent({
-    phase: "selected",
-    requestId: "req-direct",
-    requestedModel: "sonnet",
-    provider: "claude",
-    model: "sonnet"
-  });
-  recordRouterEvent({
-    phase: "result",
-    requestId: "req-direct",
-    requestedModel: "sonnet",
-    provider: "claude",
-    model: "sonnet",
     outcome: "success",
     status: 200,
     elapsedMs: 30
@@ -3645,8 +3656,8 @@ test("keeps orchestrator role attribution separate from direct and subagent traf
   assert.equal(usage.byOrigin.direct.successes, 1);
   assert.equal(usage.byOrigin.subagent.successes, 1);
   assert.equal(usage.byOrigin.subagent.failures, 1);
-  // Root Codex traffic has a canonical orchestrator role; direct non-Codex
-  // traffic remains unattributed because it has no role contract.
+  // Root-thread traffic has the canonical orchestrator role whatever its
+  // provider; direct traffic remains unattributed because it has no role.
   assert.equal(usage.byRole.orchestrator.attempts, 1);
   assert.equal(usage.byRole.orchestrator.successes, 1);
   assert.equal(

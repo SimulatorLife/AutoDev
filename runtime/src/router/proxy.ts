@@ -507,6 +507,34 @@ export function activitySubjectFor(
   return session?.key || `req:${requestId}`;
 }
 
+/** Who a concrete provider/model request runs as, from its thread identity. */
+export interface ConcreteRequestAttribution {
+  role: typeof ORCHESTRATOR_AGENT_ROLE | null;
+  origin: "orchestrator" | "subagent" | "direct";
+}
+
+/**
+ * A concrete model names no `autodev/<role>` alias, so its Agent role comes
+ * from where it sits in the Codex agent tree. The root thread of an
+ * identified session (its thread id equals the session key) is the session's
+ * root agent -- the orchestrator -- whichever model the operator picked for
+ * it. A child thread is a subagent whose named role a concrete model does not
+ * carry, so its role stays unattributed. Without a thread id the request has
+ * no place in an agent tree and is a direct request. The provider never
+ * decides: a Codex model picked for a child is not the orchestrator, and a
+ * MiniMax model picked for the root is.
+ */
+export function concreteRequestAttribution(
+  session: RouterSession | null
+): ConcreteRequestAttribution {
+  const thread = session?.thread ?? null;
+  if (!session || session.scope !== "identified" || !thread)
+    return { role: null, origin: "direct" };
+  return thread === session.key
+    ? { role: ORCHESTRATOR_AGENT_ROLE, origin: "orchestrator" }
+    : { role: null, origin: "subagent" };
+}
+
 export function carriesPendingToolResult(payload: unknown): boolean {
   const input =
     payload && typeof payload === "object" && "input" in payload
@@ -2584,6 +2612,7 @@ type ConcreteRequestContext = {
   clientSignal: AbortSignal | null;
   session: RouterSession | null;
   activitySubject: string;
+  attribution: ConcreteRequestAttribution;
   modelName: string;
   sessionKey: string | null;
   startedAt: number;
@@ -2600,6 +2629,8 @@ function recordConcreteResult(
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,
+    role: ctx.attribution.role,
+    origin: ctx.attribution.origin,
     requestedModel: ctx.modelName,
     provider: ctx.route.provider,
     model: ctx.modelName,
@@ -2620,6 +2651,8 @@ function recordConcreteRetry(
   recordRouterEvent({
     phase: "retry",
     requestId: ctx.requestId,
+    role: ctx.attribution.role,
+    origin: ctx.attribution.origin,
     requestedModel: ctx.modelName,
     provider: ctx.route.provider,
     model: ctx.modelName,
@@ -2634,6 +2667,8 @@ function recordConcreteAbort(ctx: ConcreteRequestContext): void {
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,
+    role: ctx.attribution.role,
+    origin: ctx.attribution.origin,
     requestedModel: ctx.modelName,
     provider: ctx.route.provider,
     model: ctx.modelName,
@@ -2735,11 +2770,12 @@ export async function proxyConcreteResponse(
   session: RouterSession | null = null
 ): Promise<void> {
   const activitySubject = activitySubjectFor(requestId, session);
+  const attribution = concreteRequestAttribution(session);
   const modelName =
     typeof payload.model === "string" ? payload.model : "default";
   const logicalSpan = startLogicalRequestSpan({
     requestId,
-    role: null,
+    role: attribution.role,
     providerRole: "subagent",
     workspace,
     subject: "concrete request",
@@ -2759,6 +2795,7 @@ export async function proxyConcreteResponse(
       requestId,
       modelName,
       workspace,
+      attribution,
       disabledReason
     );
     endLogicalRequestSpan(logicalSpan, {
@@ -2785,6 +2822,7 @@ export async function proxyConcreteResponse(
     clientSignal,
     session,
     activitySubject,
+    attribution,
     modelName,
     sessionKey,
     startedAt,
@@ -2796,6 +2834,8 @@ export async function proxyConcreteResponse(
   recordRouterEvent({
     phase: "selected",
     requestId,
+    role: attribution.role,
+    origin: attribution.origin,
     requestedModel: modelName,
     provider: route.provider,
     model: modelName,
@@ -2805,11 +2845,8 @@ export async function proxyConcreteResponse(
     requestId,
     provider: route.provider,
     model: modelName,
-    role:
-      usageOrigin(null, route.provider) === "orchestrator"
-        ? "orchestrator"
-        : null,
-    origin: usageOrigin(null, route.provider),
+    role: attribution.role,
+    origin: attribution.origin,
     workspace: workspace?.key ?? null,
     sessionId: session?.sessionId ?? null
   });
@@ -2817,7 +2854,7 @@ export async function proxyConcreteResponse(
     activitySubject,
     provider: route.provider,
     model: modelName,
-    role: null,
+    role: attribution.role,
     workspace: workspace?.key ?? null,
     sessionKey,
     sessionId: session?.sessionId ?? null
@@ -2867,11 +2904,14 @@ function rejectConcreteRequest(
   requestId: string,
   modelName: string,
   workspace: { key: string; cwd?: string | null } | null,
+  attribution: ConcreteRequestAttribution,
   failureClass: RouteDisabledReason
 ): void {
   recordRouterEvent({
     phase: "skipped",
     requestId,
+    role: attribution.role,
+    origin: attribution.origin,
     requestedModel: modelName,
     provider: route.provider,
     model: modelName,
@@ -2881,6 +2921,8 @@ function rejectConcreteRequest(
   recordRouterEvent({
     phase: "result",
     requestId,
+    role: attribution.role,
+    origin: attribution.origin,
     requestedModel: modelName,
     provider: route.provider,
     model: modelName,
@@ -2951,7 +2993,7 @@ async function runConcreteAttempts(
         attemptNumber: attempts + 1,
         model: typeof payload.model === "string" ? payload.model : null,
         requestedModel: ctx.modelName,
-        role: null,
+        role: ctx.attribution.role,
         workspace: ctx.workspace,
         sessionId: session?.sessionId ?? null
       }
@@ -3433,7 +3475,7 @@ function beginCandidateRequest(
 ): string | null {
   const activityRole =
     ctx.role ??
-    ((ctx.origin ?? usageOrigin(ctx.role, route.provider)) === "orchestrator"
+    ((ctx.origin ?? usageOrigin(ctx.role)) === "orchestrator"
       ? "orchestrator"
       : null);
   getDefaultUsageTracker().activityTracker?.beginRequest(ctx.activitySubject, {
@@ -3447,7 +3489,7 @@ function beginCandidateRequest(
         ? "orchestrator"
         : ctx.isKnownOrchestratorSession
           ? "subagent"
-          : usageOrigin(ctx.role, route.provider)),
+          : usageOrigin(ctx.role)),
     workspace: ctx.workspace?.key ?? null,
     sessionId: ctx.session?.sessionId ?? null,
     tag:

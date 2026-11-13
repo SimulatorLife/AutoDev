@@ -8,9 +8,11 @@ import {
   COOLDOWNS,
   type CooldownSummary
 } from "@simulatorlife/autodev-runtime/router/cooldown";
+import { getRecentRouterEvents } from "@simulatorlife/autodev-runtime/router/events";
 import {
   CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
+  concreteRequestAttribution,
   declaredLimit,
   downstreamHeaders,
   EXHAUSTION_WAIT_MS,
@@ -286,6 +288,114 @@ test("a reset the retry actually lands on is stated once, not twice", () => {
   );
   assert.doesNotMatch(message, /retrying in/);
 });
+
+test("a concrete request's role and origin come from its thread, not its provider", () => {
+  assert.deepEqual(
+    concreteRequestAttribution({
+      key: "s-root",
+      scope: "identified",
+      thread: "s-root"
+    }),
+    { role: "orchestrator", origin: "orchestrator" }
+  );
+  assert.deepEqual(
+    concreteRequestAttribution({
+      key: "s-root",
+      scope: "identified",
+      thread: "child-thread"
+    }),
+    { role: null, origin: "subagent" }
+  );
+  // A session with no thread id has no place in an agent tree.
+  assert.deepEqual(
+    concreteRequestAttribution({ key: "s-only", scope: "identified" }),
+    { role: null, origin: "direct" }
+  );
+  assert.deepEqual(concreteRequestAttribution(null), {
+    role: null,
+    origin: "direct"
+  });
+});
+
+test(
+  "a concrete model picked for the root thread is attributed to the orchestrator; one picked for a child is not",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp_attr",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      })) as typeof fetch;
+    const usage = getDefaultUsageTracker();
+    const roleAttempts = (role: string) =>
+      usage.usageTelemetry.byRole[role]?.attempts ?? 0;
+    try {
+      const orchestratorBefore = roleAttempts("orchestrator");
+      await proxyConcreteResponse(
+        responseRecorder(),
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-concrete-root",
+        null,
+        null,
+        null,
+        {
+          key: "s-concrete-root",
+          scope: "identified",
+          thread: "s-concrete-root"
+        }
+      );
+      const root = agentActivity.getRecord("s-concrete-root");
+      assert.equal(root?.role, "orchestrator");
+      assert.equal(root?.origin, "orchestrator");
+      const rootEvents = getRecentRouterEvents().filter(
+        (event) => event.requestId === "req-concrete-root"
+      );
+      assert.ok(rootEvents.length > 0);
+      for (const event of rootEvents) assert.equal(event.role, "orchestrator");
+      assert.ok(roleAttempts("orchestrator") > orchestratorBefore);
+
+      // A Codex model on a child thread is a subagent, never the orchestrator.
+      const orchestratorAfterRoot = roleAttempts("orchestrator");
+      await proxyConcreteResponse(
+        responseRecorder(),
+        route("codex", "LITELLM_API_KEY"),
+        { model: CONFIGURED_ORCHESTRATOR_MODEL, input: [], stream: false },
+        false,
+        "req-concrete-child",
+        null,
+        null,
+        null,
+        {
+          key: "s-concrete-root",
+          scope: "identified",
+          thread: "concrete-child"
+        }
+      );
+      const child = agentActivity.getRecord("thread:concrete-child");
+      assert.equal(child?.role, null);
+      assert.equal(child?.origin, "subagent");
+      const childEvents = getRecentRouterEvents().filter(
+        (event) => event.requestId === "req-concrete-child"
+      );
+      assert.ok(childEvents.length > 0);
+      for (const event of childEvents) assert.equal(event.role, null);
+      assert.equal(roleAttempts("orchestrator"), orchestratorAfterRoot);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
 
 test(
   "concrete proxy retries one fallbackable status without rerouting",
