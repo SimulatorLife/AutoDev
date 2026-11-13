@@ -75,6 +75,11 @@ jobs:
       - name: Validate Shell scripts
         run: pnpm run validate:shell
 
+      - name: Diagnose formatting for review test
+        run: |
+          pnpm exec prettier --write tests/self-improvement-review-command.test.ts
+          git diff -- tests/self-improvement-review-command.test.ts
+
       - name: Validate formatting and lint
         run: |
           pnpm run format:check
