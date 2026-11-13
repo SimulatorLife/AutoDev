@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
+
+const userLevel = userLevelSkills(
+  fileURLToPath(new URL("../.rulesync/skills", import.meta.url))
+);
 
 const read = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const materializer = read("runtime/src/platform/install-materializer.ts");
 const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");
 const helper = read(
   ".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"
@@ -15,9 +21,8 @@ const notices = read(
 );
 
 test("resolve-merge-conflicts is installed as a user-level skill", () => {
-  assert.match(materializer, /code-simplification/);
-  assert.match(materializer, /resolve-merge-conflicts/);
-  assert.match(materializer, /userSkills/);
+  assert.ok(userLevel.includes("code-simplification"));
+  assert.ok(userLevel.includes("resolve-merge-conflicts"));
 });
 
 test("merge conflict skill uses the compact extractor before full-file inspection", () => {

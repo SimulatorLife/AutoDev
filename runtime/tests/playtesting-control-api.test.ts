@@ -38,7 +38,7 @@ import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data
 import {
   handleControlApiRequest,
   warmupDefaultPlaytestingRepository
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import {
   handlePlaytestingControlApiRequest,
   type PlaytestingControlRepository

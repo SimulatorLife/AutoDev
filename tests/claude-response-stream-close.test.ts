@@ -142,6 +142,8 @@ test("pre-output streaming limit emits response.failed with structured limit and
   const failure = {
     error: new Error("Claude quota exhausted"),
     reason: "provider_limit",
+    errorType: "rate_limit_error",
+    errorCode: null,
     limit: {
       limitClass: "quota_exhausted" as const,
       limitType: "weekly",
@@ -186,7 +188,13 @@ test("pre-output streaming limit emits response.failed with structured limit and
 test("pre-output streaming crash emits a single failure without invented limit", () => {
   const recorder = makeRecordingStream(true);
   recorder.stream.fail(
-    { error: new Error("CLI crashed"), reason: "interrupted", limit: null },
+    {
+      error: new Error("CLI crashed"),
+      reason: "interrupted",
+      limit: null,
+      errorType: "upstream_error",
+      errorCode: null
+    },
     "claude"
   );
   const failures = recorder.events.filter(
@@ -210,7 +218,9 @@ test("post-output streaming failure preserves partial output and closes incomple
     {
       error: new Error("quota exhausted"),
       reason: "provider_limit",
-      limit: { limitClass: "quota_exhausted", source: "reported" }
+      limit: { limitClass: "quota_exhausted", source: "reported" },
+      errorType: "rate_limit_error",
+      errorCode: null
     },
     "claude"
   );
@@ -235,10 +245,31 @@ test("pre-output non-streaming failure still delegates to HTTP error handler", (
   const failure = {
     error: new Error("quota exhausted"),
     reason: "provider_limit",
-    limit: null
+    limit: null,
+    errorType: "rate_limit_error",
+    errorCode: null
   };
   recorder.stream.fail(failure, "claude");
   assert.deepEqual(recorder.errors, [failure]);
   assert.equal(recorder.wire, "");
   assert.equal(recorder.stream.isEnded, true);
+});
+
+test("pre-output streaming refusal carries its error type and code for the router", () => {
+  const recorder = makeRecordingStream(true);
+  recorder.stream.fail(
+    {
+      error: new Error("There's an issue with the selected model"),
+      reason: "interrupted",
+      limit: null,
+      errorType: "invalid_request_error",
+      errorCode: "invalid_model"
+    },
+    "claude"
+  );
+  const error = recorder.events.find(
+    (event) => event.type === "response.failed"
+  )?.response?.error;
+  assert.equal(error?.type, "invalid_request_error");
+  assert.equal(error?.code, "invalid_model");
 });

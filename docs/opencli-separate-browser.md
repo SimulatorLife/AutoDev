@@ -1,10 +1,32 @@
 # opencli in a separate browser: findings and design
 
-Status: **investigated, not implemented.** This document records the
+Status: **implemented; live occlusion and session-longevity acceptance remains.** This document records the
 2026-11-11 investigation into moving the opencli providers
 (`opencli-chatgpt`, `opencli-gemini`) out of the user's own Chrome. It is
 subordinate to [`provider-routing.md`](provider-routing.md), which remains the
 authority for how the opencli bridge works today.
+
+## Implementation status
+
+The bridge now owns a separate headed Chromium process, an AutoDev-private
+profile, a loopback-only ephemeral CDP port, and a per-site tab pool sized by
+the admitted route concurrency. Every opencli command gets the exact WebSocket
+target for its leased tab and uses `--site-session ephemeral`; AutoDev replaces
+a closed target before the next command. The Browser Bridge extension, its
+shared daemon, and `OPENCLI_SITE_SLOTS` are no longer part of this path. The
+typed installer places the Playwright-pinned Chromium in
+`$CODEX_HOME/provider-runtime/opencli/browsers`; user sign-in is kept in
+`$CODEX_HOME/run/opencli-browser-profile`. See [`local-setup.md`](local-setup.md)
+for setup and [`provider-routing.md`](provider-routing.md) for the runtime
+contract.
+
+Automated tests cover browser process/readiness, target leasing/replacement,
+per-command endpoint isolation, transport-failure health and recovery, bridge
+health, and installation wiring. Live
+acceptance still needed: occlusion/minimization behavior on macOS, concurrent
+signed-in turns across both sites, and session longevity. The earlier sandboxed
+network reproduction was blocked before it reached opencli; it is not evidence
+that the current environment can perform a live provider turn.
 
 ## Problem
 
@@ -75,7 +97,7 @@ creates the container window, despite `focused: false`.
 opencli 2.0.3 has two transports, chosen by `getBrowserFactory()` in
 `dist/src/runtime.js`:
 
-| | Browser Bridge (today) | Direct CDP |
+| | Browser Bridge (historical) | Direct CDP (implemented) |
 |---|---|---|
 | Selected by | default | `OPENCLI_CDP_ENDPOINT` set |
 | Browser | any Chrome profile running the Browser Bridge extension | any Chromium started with `--remote-debugging-port` |
@@ -155,7 +177,7 @@ Not tested:
 Gemini did load headless, but a design that serves one site headless and the
 other headful buys nothing over running both headful in a separate browser.
 
-## Recommended direction: a dedicated, visible browser over CDP
+## Implemented design: a dedicated, visible browser over CDP
 
 Run opencli against a separate Chromium instance that only AutoDev uses,
 through the direct CDP transport.
@@ -194,38 +216,33 @@ through the direct CDP transport.
 - **It is still a visible window.** It has to live somewhere: another macOS
   Space, or behind other windows, with the occlusion questions below.
 
-## Design considerations for implementation
+## Implementation decisions
 
 ### Browser binary and profile
 
-- Use Chrome for Testing (or Chromium), not the user's branded Chrome.
-  Branded Chrome refuses `--remote-debugging-port` on its default profile,
-  and running a second branded Chrome would share the user's app identity
-  and dock icon.
-- Do not depend on Playwright's cache path. The installer should install a
-  pinned version through a supported channel (for example
-  `@puppeteer/browsers`) and record its path, the same way
-  `runtime/src/shared/executables` resolves other CLIs.
-- Keep the profile in a stable AutoDev-owned directory outside the
-  repository. It holds session cookies and must never be committed or synced.
-- Launch flags: `--user-data-dir`, `--remote-debugging-port` (fixed and
-  dedicated to AutoDev, or `0` with the port read back from
-  `DevToolsActivePort`), `--no-first-run`, `--no-default-browser-check`.
-  Whether background throttling flags
-  (`--disable-backgrounding-occluded-windows`,
-  `--disable-renderer-backgrounding`) are needed is unknown until the
-  occlusion test below is run.
+- The normal installer runs Runtime's pinned Playwright CLI with
+  `install chromium --no-shell`, placing that exact headed Chromium build in
+  `$CODEX_HOME/provider-runtime/opencli/browsers`. The bridge accepts only an
+  executable resolved from this private cache; it never falls back to the
+  user's Chrome or a shared Playwright cache.
+- The browser profile lives at `$CODEX_HOME/run/opencli-browser-profile`,
+  outside the repository, and the bridge creates it with owner-only
+  permissions. It holds site cookies and must never be committed or synced.
+- Chromium starts with `--user-data-dir`,
+  `--remote-debugging-address=127.0.0.1`, `--remote-debugging-port=0`,
+  `--no-first-run`, and `--no-default-browser-check`. The bridge reads the
+  ephemeral port from `DevToolsActivePort`. No occlusion/background-throttling
+  flags are enabled until the macOS acceptance checks establish a need.
 
 ### Lifecycle ownership
 
-- The opencli bridge (or the installer's LaunchAgent for it) starts the
-  browser if `/json/version` on its port does not answer, and reports a
-  distinct health state for "browser not running" versus "site signed out",
-  so the router and Console can tell the user what to do.
-- A signed-out site should surface as an actionable error with the
-  dedicated browser's URL, not as a generic provider failure.
-- Decide whether quitting the dedicated browser is the user's way to pause
-  opencli providers, or whether the bridge relaunches it.
+- The bridge starts Chromium before it listens for provider requests. Browser
+  startup or CDP target-transport failures make health report
+  `dedicated_browser_unavailable`, distinct from a site's signed-out state.
+  A successful target lease clears a transient transport failure; if Chromium
+  exits, the next command starts it again.
+- The operator signs in to each site in the dedicated browser. Closing that
+  browser is not a pause control: the next provider command relaunches it.
 
 ### Tab pool
 
@@ -236,8 +253,9 @@ through the direct CDP transport.
   URL**, so two commands can never attach to the same tab.
   `OPENCLI_CDP_TARGET` alone is not enough: with several tabs on one site,
   every command would pick the same highest-scoring one.
-- `SiteTabs` already serialises commands per tab. It would hand out a tab's
-  endpoint rather than rely on opencli's daemon to pick a free slot.
+- `SiteTabs` serializes site/model-sensitive turn scheduling; the browser
+  owner leases each command a distinct target instead of relying on opencli's
+  daemon to pick a free slot.
 - A tab that is closed or crashes (its WebSocket target disappears) is
   replaced before the next turn, and the turn running in it fails with the
   existing `not_sent` / retryable classification.
@@ -247,16 +265,17 @@ through the direct CDP transport.
 
 ### Removal of the extension path
 
-Per the repository rule against compatibility shims, implementing this
-replaces the Browser Bridge path rather than running both. It removes:
-`OPENCLI_SITE_SLOTS` construction (`opencliSiteSlots`), stale-daemon
-recovery, the Browser Bridge requirement in `provider-routing.md`, and any
-installer or doctor checks for the extension. `local-setup.md` gains the
+Per the repository rule against compatibility shims, this implementation
+replaces the Browser Bridge path rather than running both. It removed:
+`OPENCLI_SITE_SLOTS` construction (`opencliSiteSlots`), stale-daemon recovery,
+Browser-Bridge-only `SESSION_BUSY` retry handling, the Browser Bridge
+requirement in `provider-routing.md`, and any installer or doctor checks for
+the extension. `local-setup.md` documents the
 dedicated browser's install, profile, and sign-in steps. The change also
 updates `tests/providers/opencli.test.ts` and the opencli routing tests to
 the new ownership.
 
-### Things to verify before or during implementation
+### Remaining live acceptance checks
 
 1. Concurrent turns: two ChatGPT tabs and one Gemini tab running at once,
    each on its own `ws://` endpoint.

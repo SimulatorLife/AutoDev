@@ -9,7 +9,12 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse
+} from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -18,8 +23,8 @@ import test from "node:test";
 import {
   createOpencliBridge,
   type OpencliRunRequest,
-  opencliSiteSlots,
   opencliTurnLogLine,
+  processRunner,
   routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
@@ -65,11 +70,53 @@ test("each site gets as many tabs as its route takes concurrent requests", () =>
     ]),
     { chatgpt: 5, gemini: 1 }
   );
-  // opencli pools every site's commands into that many tabs.
-  assert.equal(
-    opencliSiteSlots({ chatgpt: 3, gemini: 1 }),
-    "chatgpt:3,gemini:1"
+});
+
+test("process runner gives each command its exact CDP target without Browser Bridge pool settings", async () => {
+  const previousSlots = process.env.OPENCLI_SITE_SLOTS;
+  process.env.OPENCLI_SITE_SLOTS = "chatgpt:99,gemini:99";
+  let selectedSite = "";
+  const browser = {
+    run: async (
+      site: string,
+      _signal: AbortSignal,
+      command: (endpoint: string) => Promise<unknown>
+    ) => {
+      selectedSite = site;
+      return command("ws://127.0.0.1:9333/devtools/page/7");
+    },
+    close: async () => undefined
+  } as never;
+  const runner = processRunner(
+    () => ({
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write(JSON.stringify({ok:true,data:{endpoint:process.env.OPENCLI_CDP_ENDPOINT,slots:process.env.OPENCLI_SITE_SLOTS??null,args:process.argv.slice(1)}}))"
+      ]
+    }),
+    { chatgpt: 1, gemini: 1 },
+    new Set(),
+    browser
   );
+  try {
+    const result = await runner({
+      args: ["chatgpt", "ask", "prompt"],
+      signal: AbortSignal.timeout(3000)
+    });
+    assert.equal(selectedSite, "chatgpt");
+    assert.deepEqual(result, [
+      {
+        endpoint: "ws://127.0.0.1:9333/devtools/page/7",
+        slots: null,
+        args: ["chatgpt", "ask", "prompt", "--site-session", "ephemeral"]
+      }
+    ]);
+  } finally {
+    await runner.close();
+    if (previousSlots === undefined) delete process.env.OPENCLI_SITE_SLOTS;
+    else process.env.OPENCLI_SITE_SLOTS = previousSlots;
+  }
 });
 
 const EXEC_TOOL = {
@@ -773,7 +820,6 @@ test("a streamed turn opens at once, keeps alive, and reports a failure in the s
     siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
-    sessionBusyRetryMs: 1,
     run: async (request) => {
       if (request.args[1] === "model")
         return [{ Status: "ok", Model: String(request.args[2]) }];
@@ -1101,7 +1147,6 @@ async function withBridge(
     authToken,
     turnTimeoutSeconds: 30,
     tempRoot,
-    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: async (request) => {
       // Model switches and listings are answered here, not from `replies`.
@@ -1110,7 +1155,6 @@ async function withBridge(
       if (request.args[1] === "models")
         return [{ model: "3.8-flash" }, { model: "3.1-pro" }];
       runs.requests.push(request);
-      if (request.args[0] === "daemon") return [];
       const fileIndex = request.args.indexOf("--file");
       if (request.args[1] === "ask" || request.args[1] === "ask-file")
         runs.prompts.push(
@@ -1663,7 +1707,6 @@ test("a streamed turn that never reached the site says so in the stream", async 
     siteTabs: ONE_TAB_PER_SITE,
     authToken: "",
     turnTimeoutSeconds: 30,
-    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: async () => {
       throw new OpencliCommandError("file input is missing", "COMMAND_EXEC", 1);
@@ -1687,56 +1730,6 @@ test("a streamed turn that never reached the site says so in the stream", async 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-});
-
-test("a daemon of another version is stopped, and the command runs again", async () => {
-  // opencli's daemon is shared machine-wide, so the CLI of the version this
-  // repository pins can meet the daemon of another one. The CLI's own remedy
-  // is to stop the daemon by hand; the bridge owns the CLI it runs, so it
-  // does that itself instead of failing the turn.
-  await withBridge(
-    [
-      new OpencliCommandError(
-        "Stale daemon could not be replaced (A stale daemon (v2.0.3 ≠ v2.0.2) is running but did not shut down (graceful + SIGKILL both failed). Run manually: opencli daemon stop)",
-        "COMMAND_EXEC",
-        1
-      ),
-      { response: "done", conversation_id: "c1" }
-    ],
-    async (baseUrl, runs) => {
-      const reply = await post(baseUrl, {
-        model: "opencli-chatgpt-balanced",
-        input: "hi"
-      });
-      assert.equal(reply.status, 200);
-      assert.ok(
-        runs.requests.some((request) => request.args[0] === "daemon"),
-        "the stale daemon was not stopped"
-      );
-      assert.equal(runs.prompts.length, 2, "the turn ran the command twice");
-    }
-  );
-});
-
-test("a busy site session is waited out instead of failing the turn", async () => {
-  await withBridge(
-    [
-      new OpencliCommandError(
-        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
-        "SESSION_BUSY",
-        1
-      ),
-      { response: "done", conversation_id: "c1" }
-    ],
-    async (baseUrl, runs) => {
-      const reply = await post(baseUrl, {
-        model: "opencli-chatgpt-balanced",
-        input: "hi"
-      });
-      assert.equal(reply.status, 200);
-      assert.equal(runs.requests.length, 2);
-    }
-  );
 });
 
 test("a Gemini worker turn continues its web conversation with only the new items", async () => {
@@ -2228,37 +2221,6 @@ test("a refusal that quotes a chat id holding 429 is a refusal, not a site limit
   });
 });
 
-test("a site session held past the turn's deadline is a refusal, not an outage", async () => {
-  // opencli never sent the prompt; the provider is serving somebody else.
-  let attempts = 0;
-  const bridge = createOpencliBridge({
-    siteTabs: ONE_TAB_PER_SITE,
-    authToken: "",
-    turnTimeoutSeconds: 1,
-    sessionBusyRetryMs: 50,
-    run: async () => {
-      attempts += 1;
-      throw new OpencliCommandError(
-        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
-        "SESSION_BUSY",
-        1
-      );
-    }
-  });
-  await serveBridge(bridge, async (baseUrl) => {
-    const reply = await post(baseUrl, {
-      model: "opencli-chatgpt-balanced",
-      input: "hi"
-    });
-    assert.equal(reply.status, 400);
-    assert.equal(
-      ((await reply.json()) as { error: { type: string } }).error.type,
-      "provider_request_unsupported"
-    );
-    assert.ok(attempts > 1, "the busy session was waited on first");
-  });
-});
-
 test("a retried command is given only what is left of the turn", async () => {
   // A retry used to restart the first attempt's whole `--timeout`, so one
   // turn could hold its tab for several of them.
@@ -2487,4 +2449,41 @@ test("an orchestrator's first prompt carries the hook's bootstrap once, keeping 
       assert.match(prompt, /Current parent session: parent-1\./u);
     }
   );
+});
+
+test("browser-unavailable health is distinct from site sign-in and never reports ready", async () => {
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async () => [],
+    browserHealth: () => ({ ready: false, error: "CDP startup failed" })
+  });
+  for (const url of [
+    "/health",
+    "/health/liveliness?provider=opencli-chatgpt"
+  ]) {
+    let status = 0;
+    let body = "";
+    const response = {
+      writeHead: (value: number) => {
+        status = value;
+        return response;
+      },
+      end: (value?: string) => {
+        body = value ?? "";
+        return response;
+      }
+    } as unknown as ServerResponse;
+    await bridge.handle({ url, method: "GET" } as IncomingMessage, response);
+    assert.equal(status, 503);
+    const health = JSON.parse(body) as {
+      status: string;
+      error: string;
+      message: string;
+    };
+    assert.equal(health.status, "unavailable");
+    assert.equal(health.error, "dedicated_browser_unavailable");
+    assert.equal(health.message, "CDP startup failed");
+  }
 });

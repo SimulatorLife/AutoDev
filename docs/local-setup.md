@@ -157,9 +157,10 @@ returns immediately, so it adds no session-start latency. The worker:
 
 - takes a per-repository lock, so a burst of sessions runs one refresh; a lock
   left by a process that has exited is replaced;
-- hashes `HEAD` plus `git status --porcelain`, and exits without touching CGC
-  when the graph already holds the repository and that stamp matches the last
-  successful run;
+- hashes HEAD, Git status, and the contents/modes of tracked changed and
+  non-ignored untracked files, so repeated edits to one already-dirty path
+  invalidate the stamp; it exits without touching CGC only when the graph holds
+  the repository and the full checkout stamp matches the last successful run;
 - otherwise runs `codegraphcontext index --no-progress <root>` for a repository
   the graph does not list, or `codegraphcontext update --quiet <root>` for one
   it does, recording the new stamp only on success so a failure retries at the
@@ -430,15 +431,22 @@ bash scripts/install.sh --check
 If any configured workspace or required MCP permission is missing, `--check`
 reports the missing grants and exits with a non-zero status.
 
+The installer links every skill whose frontmatter declares `targets` into
+`$HOME/.agents/skills/`; today that is:
+
 - `ccc`
 - `code-simplification`
 - `diagnosing-bugs`
 - `doubt-driven-development`
+- `game-playtesting`
 - `improve-codebase-architecture`
 - `lsp-mcp-server`
 - `orchestration`
+- `playtest-analysis`
 - `remove-legacy-shims`
 - `resolve-merge-conflicts`
+- `source-driven-development`
+- `writing-agent-skills`
 
 The shared engineering skills are repository-agnostic and intended to apply
 across local Codex development. `code-simplification` focuses on DRY, KISS,
@@ -478,9 +486,12 @@ inherit capabilities it does not need:
   children do not inherit parent delegation policy.
 - `explorer` keeps `ccc` and `lsp-mcp-server` for read-only codebase
   navigation.
-- `browser-tester` and `docs-researcher` deliberately enable no
-  engineering skills; their bounded work is Playwright UI testing and
-  authoritative documentation research, respectively.
+- `docs-researcher` enables only `source-driven-development` for
+  authoritative documentation research.
+- `playtester` enables `game-playtesting`, and `playtest-analyst` enables
+  `playtest-analysis`.
+- `browser-tester` deliberately enables no engineering skills; its bounded
+  work is Playwright UI testing.
 
 ### Skill-surface lockdown
 
@@ -777,7 +788,7 @@ AutoDev scripts remain the hook implementations, while Rulesync owns declaration
 node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill, and its generated repository skill folders are live output. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` keep the default and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`.
+Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill, and its generated repository skill folders are live output. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` keep the default and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks every skill that declares `targets` (the user-level set `runtime/src/platform/user-level-skills.ts` reads from the frontmatter) from `.rulesync/skills/` into `$HOME/.agents/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`.
 
 The Console Skills detail view edits only an existing canonical `.rulesync/skills/<name>/SKILL.md`; Runtime revision-checks the source, then runs the pinned RuleSync skills-only generator and `--check` across the configured targets before confirming. For manual source edits, regenerate and verify the same projections with:
 
@@ -814,54 +825,51 @@ install: it is the Runtime's pinned `@jackwener/opencli` dependency, installed
 by `pnpm install --frozen-lockfile` and reached from the installed tree through
 its `node_modules` link, so launchd's `PATH` never decides which opencli runs
 (`OPENCLI_BIN` overrides it). Its pnpm `postinstall` (shell completions only)
-is not needed. What the installer cannot do is the browser side: install
-opencli's Browser Bridge Chrome extension and sign in to each site once, then
-confirm with the commands below. When that browser is signed in to several
-Google accounts, name the one Gemini runs as -- an account that has the Gemini
-app -- in `$CODEX_HOME/.env`; otherwise Gemini opens as the browser's first
-account, and a Workspace account without the Gemini app leaves the provider
-reading `Sign-in required`:
+is not needed. The normal typed installer also installs the pinned headed
+Chromium build into `$CODEX_HOME/provider-runtime/opencli/browsers`; it does
+not use or alter the operator's Chrome installation. The bridge starts this
+browser on demand with a private profile at
+`$CODEX_HOME/run/opencli-browser-profile`, exposes CDP only on loopback, and
+keeps one target per admitted turn. The browser window is visible because
+ChatGPT blocks headless Chromium. Sign in to ChatGPT and Gemini in that
+separate AutoDev window; the cookies remain in that profile and are not
+exported. You may need to sign in again when a site's session expires. If
+Gemini has multiple Google accounts in this dedicated profile, set
+`OPENCLI_GEMINI_ACCOUNT` to an account that has Gemini enabled in
+`$CODEX_HOME/.env`; otherwise Gemini may open under an account without app
+access:
 
 ```bash
 echo 'OPENCLI_GEMINI_ACCOUNT=you@example.com' >> ~/.codex/.env
 ```
 
-Then confirm with:
+The opencli proxy starts its dedicated browser before reporting healthy; after
+a normal install or proxy restart, sign in to the requested site in that
+separate browser window. Provider status in the Console reports
+browser startup/transport failures separately from a site's Sign-in required
+state. Site login is not a prerequisite for the bridge to start, and browser
+cookies are stored only in the private profile.
 
-```bash
-node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor
-```
-
-```bash
-node runtime/node_modules/@jackwener/opencli/dist/src/main.js chatgpt status
-```
-
-**What an opencli change has to refresh.** An opencli change lives in three
+**What an opencli change has to refresh.** An opencli change lives in two
 places, and each one is live at a different moment:
 
-- The **site adapter** (`clis/<site>/…` inside the `@jackwener/opencli`
-  package) runs in the CLI process the bridge spawns for a turn, not in the
-  daemon: the adapter drives the page with `page.evaluate`, so the script it
-  runs is the one the just-spawned CLI holds. The bridge resolves that package
-  through the installed tree's `node_modules` link, and Node caches the
-  resolution for the life of the process — a link that moves under a running
-  bridge does not move that bridge. A patch to the adapter is live only for
-  processes started after the link moved.
-- The **daemon** (opencli's browser session, shared machine-wide on one port)
-  runs the package's `dist/`. A patch that touches only `clis/` leaves that
-  tree identical, so the daemon needs no restart — and it cannot notice it is
-  stale either: its health reports `daemonVersion`, the package version, which
-  a patch does not change, so the bridge's stale-daemon recovery (which
-  replaces a daemon of another version) never fires for a patched package.
-- The **bridge's own code** (`runtime/src/providers/opencli*.ts`) runs from the
-  copy the installer writes to `$CODEX_HOME/src/providers/`, the file
-  `run-codex-opencli-proxy.sh` executes. It is live only after the installer
-  has written that copy and the proxy has been reloaded.
+- The **site adapter** (`clis/<site>/…` inside the `@jackwener/opencli` package)
+  runs in the CLI process the bridge spawns for a turn. The bridge resolves
+  that package through the installed tree's `node_modules` link, and Node caches
+  the resolution for the life of the process — a link that moves under a
+  running bridge does not move that bridge. A patch to the adapter is live
+  only for processes started after the link moved.
+- The **bridge and browser owner** (`runtime/src/providers/opencli*.ts`) runs
+  from the copy the installer writes to `$CODEX_HOME/src/providers/`, the file
+  `run-codex-opencli-proxy.sh` executes. The bridge owns Chromium's lifecycle
+  and CDP target pool; its private profile remains in `CODEX_HOME` across
+  restarts. The normal installer refreshes the bridge and ensures the Chromium
+  build pinned by Runtime's Playwright dependency is installed.
 
-So after a patch: `pnpm install` re-applies the patch and moves the link (live
-for processes started afterwards), `bash scripts/install.sh` deploys the
-bridge's own code and reloads the proxy, and `opencli daemon stop` is needed
-only when the patch touched `dist/` as well.
+After a patch: `pnpm install --frozen-lockfile` re-applies the patch and moves
+the link (live for processes started afterwards), then `bash scripts/install.sh`
+deploys the bridge, reconciles the pinned browser and reloads the proxy. There
+is no shared opencli daemon to stop.
 
 To enable the router authentication boundary during a planned restart, run:
 

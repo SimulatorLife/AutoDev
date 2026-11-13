@@ -2018,14 +2018,14 @@ test("resilience and ACP gates have reviewable structural tables", () => {
       )
     );
   }
-  const acp = new Set(
-    doc.slice(
+  const acpRows = doc
+    .slice(
       doc.indexOf(
         "### Agent execution transport contract: ACP, MCP and Responses"
       ),
       doc.indexOf("### Dependency ownership and maintainability")
     )
-  );
+    .split("\n");
   for (const criterion of [
     "Tool/child continuity",
     "Sessions and recovery",
@@ -2034,7 +2034,7 @@ test("resilience and ACP gates have reviewable structural tables", () => {
     "Engineering decision"
   ]) {
     assert.ok(
-      acp.has("| " + criterion + " |"),
+      acpRows.some((row) => row.startsWith("| " + criterion + " |")),
       "Missing ACP gate: " + criterion
     );
   }

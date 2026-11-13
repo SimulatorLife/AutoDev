@@ -704,13 +704,23 @@ test("Control API implementation is Runtime-owned outside the model router", () 
   ) as { exports: Record<string, string> };
   assert.equal(
     runtimePackage.exports["./control-api"],
-    "./src/control-api/index.ts"
+    "./src/control-api/request-handler.ts"
   );
-  for (const name of ["index.ts", "body.ts", "memory.ts"]) {
+  for (const name of [
+    "request-handler.ts",
+    "body.ts",
+    "memory.ts",
+    "github.ts"
+  ]) {
     const runtimePath = `runtime/src/control-api/${name}`;
     assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
     assert.ok((RUNTIME_MODULES as readonly string[]).includes(runtimePath));
   }
+  assert.equal(
+    existsSync(join(repositoryRoot, "runtime/src/control-api/index.ts")),
+    false,
+    "the request handler must have a responsibility-specific filename"
+  );
   for (const name of [
     "control-api.ts",
     "control-api-body.ts",

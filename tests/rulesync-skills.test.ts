@@ -8,12 +8,16 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { staleUserSkillLinks } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
 
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;
@@ -247,13 +251,7 @@ test("each tool folder receives exactly its repository skills with bundled files
 });
 
 test("repository folders never duplicate user-level skills", () => {
-  const materializer = readFileSync(
-    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
-    "utf8"
-  );
-  const match = /export const SKILLS = \[(.*?)\]/su.exec(materializer);
-  assert.ok(match?.[1] !== undefined);
-  const userLevel = new Set(match[1].match(/[A-Za-z0-9-]+/gu));
+  const userLevel = new Set(userLevelSkills(sourceRoot));
   for (const folder of [".claude/skills", ".agents/skills"]) {
     const projected = new Set(
       readdirSync(join(generated, folder), { withFileTypes: true })
@@ -363,4 +361,99 @@ test("RuleSync project config and CI cover the repository projections", () => {
     .filter((entry) => entry.name.startsWith("rulesync-"))
     .map((entry) => entry.name);
   assert.deepEqual(stray, []);
+});
+
+test("every skill a role enables is installed at user level", () => {
+  // Observed 2026-11-12: a hand-kept installer list omitted game-playtesting,
+  // playtest-analysis and source-driven-development, so the roles enabling
+  // them got no skill. The user-level set now comes from each skill's
+  // frontmatter; this pins that every enabled skill is in it.
+  const userLevel = new Set(userLevelSkills(sourceRoot));
+  const rolesRoot = join(repositoryRoot, "agents", "roles");
+  const enabled = new Map<string, string[]>();
+  for (const file of readdirSync(rolesRoot).filter((f) => f.endsWith(".toml")))
+    for (const match of readFileSync(join(rolesRoot, file), "utf8").matchAll(
+      /name = "([^"]+)"\s*\nenabled = true/gu
+    ))
+      enabled.set(match[1]!, [...(enabled.get(match[1]!) ?? []), file]);
+  assert.ok(enabled.size > 0, "roles enable skills");
+  for (const [skill, roles] of enabled)
+    assert.ok(
+      userLevel.has(skill),
+      `${skill} (enabled by ${roles.join(", ")}) is not installed at user level`
+    );
+});
+
+test("every file a skill names exists where an agent resolves it", () => {
+  // A skill names its bundled files relative to its own directory and
+  // repository files relative to the repository root. Either way the file
+  // must exist, or an agent following the skill stops at a missing path.
+  const bundled = /^(?:references|scripts|assets|templates|examples|agents)\//u;
+  const repository =
+    /^(?:docs|runtime|core|console|data|config|agents|tests|scripts|\.rulesync)\//u;
+  const missing: string[] = [];
+  for (const skill of readdirSync(sourceRoot)) {
+    const directory = join(sourceRoot, skill);
+    const documents = readdirSync(directory, { recursive: true })
+      .map(String)
+      .filter((file) => file.endsWith(".md"));
+    for (const document of documents)
+      for (const [, named] of readFileSync(
+        join(directory, document),
+        "utf8"
+      ).matchAll(/`([\w.@/-]+\.[a-z]{1,5})`/gu)) {
+        const reference = named!;
+        if (reference.includes("*") || reference.includes("<")) continue;
+        const inSkill = existsSync(join(directory, reference));
+        const inRepository = existsSync(join(repositoryRoot, reference));
+        if (bundled.test(reference) && !inSkill && !inRepository)
+          missing.push(`${skill}/${document}: ${reference}`);
+        else if (
+          !bundled.test(reference) &&
+          repository.test(reference) &&
+          !inRepository
+        )
+          missing.push(`${skill}/${document}: ${reference}`);
+      }
+  }
+  assert.deepEqual(missing, []);
+});
+
+test("a user skill link into the canonical source is stale once the skill is not user-level", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-stale-skill-links-"));
+  try {
+    const skills = join(root, "source");
+    const user = join(root, "user");
+    const other = join(root, "elsewhere", "mine");
+    for (const directory of [
+      join(skills, "kept"),
+      join(skills, "repo-only"),
+      other,
+      user
+    ])
+      mkdirSync(directory, { recursive: true });
+    symlinkSync(join(skills, "kept"), join(user, "kept"));
+    symlinkSync(join(skills, "repo-only"), join(user, "repo-only"));
+    symlinkSync(join(skills, "deleted"), join(user, "deleted"));
+    symlinkSync(other, join(user, "mine"));
+    assert.deepEqual(staleUserSkillLinks(skills, user, ["kept"]).sort(), [
+      join(user, "deleted"),
+      join(user, "repo-only")
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the local setup guide lists exactly the user-level skills", () => {
+  const guide = readFileSync(
+    join(repositoryRoot, "docs", "local-setup.md"),
+    "utf8"
+  );
+  const section = /today that is:\n\n((?:- `[^`]+`\n)+)/u.exec(guide);
+  assert.ok(section?.[1] !== undefined, "user-level skill list");
+  assert.deepEqual(
+    [...section[1].matchAll(/`([^`]+)`/gu)].map((match) => match[1]),
+    userLevelSkills(sourceRoot)
+  );
 });

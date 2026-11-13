@@ -1,6 +1,6 @@
 {
   "schema": "autodev-claude-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event before any output answered as an HTTP 429 carrying the declared limit as error.limit and no stream at all (so the router can ask its next candidate), a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) answered as a non-retryable 400 invalid_model, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event before any output on a streamed request ended by a single response.failed carrying the declared limit as error.limit, with no output items (so the router can ask its next candidate on the same stream), a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) ended by a single response.failed carrying the non-retryable invalid_model code, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -674,8 +674,13 @@
         "stderr": ""
       },
       "expected": {
-        "status": 429,
-        "errorType": "rate_limit_error",
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.failed",
+          "[DONE]"
+        ],
+        "failedType": "rate_limit_error",
         "limit": {
           "class": "quota_exhausted",
           "type": "weekly_quota",
@@ -801,9 +806,14 @@
         "stderr": ""
       },
       "expected": {
-        "status": 400,
-        "errorType": "invalid_request_error",
-        "errorCode": "invalid_model",
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.failed",
+          "[DONE]"
+        ],
+        "failedType": "invalid_request_error",
+        "failedCode": "invalid_model",
         "errorMessageContains": "issue with the selected model"
       }
     },
@@ -836,9 +846,14 @@
         "stderr": ""
       },
       "expected": {
-        "status": 400,
-        "errorType": "invalid_request_error",
-        "errorCode": "invalid_model",
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.failed",
+          "[DONE]"
+        ],
+        "failedType": "invalid_request_error",
+        "failedCode": "invalid_model",
         "errorMessageContains": "version 2\\.1\\.280 or newer is required"
       }
     },

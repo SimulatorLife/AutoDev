@@ -233,7 +233,7 @@ test("the actor on each commit is read from the commit's committer identity", as
     // of its attribution.
     const identity = gitCommitIdentity({
       role: "orchestrator",
-      provider: "antigravity"
+      provider: "antigravity-gemini"
     });
     assert.ok(identity, "a known role and provider must yield an identity");
     await writeFile(join(root, "a.txt"), "a\n");
@@ -260,7 +260,7 @@ test("the actor on each commit is read from the commit's committer identity", as
     assert.equal(recordable?.commit, agentCommit);
     assert.deepEqual(recordable?.actor, {
       role: "orchestrator",
-      provider: "antigravity"
+      provider: "antigravity-gemini"
     });
     assert.ok(observation, "an observation must exist");
     assert.ok(recordable, "the agent commit must be recordable");
@@ -276,7 +276,7 @@ test("the actor on each commit is read from the commit's committer identity", as
         partial: false,
         workspace: { key: "ws-test-003" },
         role: "orchestrator",
-        provider: "antigravity",
+        provider: "antigravity-gemini",
         model: null,
         actorFromCommitIdentity: true
       }

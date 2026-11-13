@@ -293,6 +293,7 @@ console ──> core, data         # data: exported server-only read projections
 - A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
 - Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
 - Keep modules cohesive and files named for their actual responsibilities; avoid oversized mixed-purpose files and one-function forwarding layers without architectural value.
+- The authenticated Control API request handler composes resource owners. Source validation, runtime projection, and resource-specific caches stay with the owning resource rather than accumulating in the request dispatcher.
 - Apply DRY to **behavior and configuration ownership**: one implementation for routing selection, failure classification, capability scope, MCP/skill policy, telemetry events and shared validation. Delete dead/duplicate adapters when a package or shared domain module satisfies the same contract.
 
 ## 5. Architecture and ownership
@@ -439,6 +440,8 @@ Task → named role + capabilities → validated routing tier
 | Complete autonomous coding-agent CLIs | `codex`, `claude`, `agy`, compatible agents | Own their agent/tool loop; integrate by native CLI or parity-proven ACP. Reuse supported subscription authentication and report source-owned account/quota facts. |
 | Tool-call-capable inference CLI | `mmx` | Can declare/return tool calls but does **not** provide the full autonomous file/shell tool loop; the owning agent harness executes tools. Avoid a duplicate harness. |
 | Browser-backed model CLI | `opencli` | Bridge model turns through authenticated browser sessions, with site queues, idempotency and an accepted-turn ledger. |
+
+**Browser-backed provider isolation.** A provider that automates a signed-in web application owns a dedicated visible Chromium process and private profile; it never drives the operator’s everyday browser or a shared browser extension/daemon. CDP is bound to loopback and each concurrent command receives its own browser target. The profile contains site cookies, stays under AutoDev’s private runtime directory outside the repository, and is never copied, synced, logged, or committed. Browser installation is pinned by the Runtime dependency and reconciled by the typed installer; site sign-in remains an explicit operator action.
 
 Provider authentication, subscription allowances, reset windows and model discovery are backend-specific; do not assume that all CLIs share one quota/authentication model or automatically offer an API-compatible wire protocol.
 
@@ -1098,7 +1101,7 @@ Definitions must be exact, because these words are otherwise used loosely:
 
 - a **commit** is counted once for the commit object actually created. An amend, rebase, cherry-pick, or revert is a distinct commit and counts as one; re-reporting an already observed commit does not count again.
 - **files changed** is the count of distinct paths whose status in that commit's diff is added, modified, deleted, or renamed. Files added and files deleted are **subsets** of files changed, not additions to it — a displayed total must never sum all three and double-count.
-- **lines added** and **lines removed** are the insertions and deletions reported for that commit's diff.
+- **lines added** and **lines removed** are the insertions and deletions reported for that commit's diff. A merge commit is measured against its first parent (the mainline integration diff); file-status and line-count totals must describe that same diff. A root commit is measured against the empty tree.
 
 Only report a measurement the source actually observed:
 

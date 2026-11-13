@@ -109,6 +109,26 @@ test("a listed repository is refreshed, then skipped until the checkout changes"
   assert.equal(f.calls().at(-1), `update --quiet ${f.root}`);
 });
 
+test("a content edit to an already-dirty file invalidates the graph stamp", (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  f.setIndexed([f.root]);
+  assert.equal(runCodeGraphWorker(f.root, f.env), "updated");
+
+  const tracked = join(f.root, "a.ts");
+  writeFileSync(tracked, "export const a = 2;\n");
+  assert.equal(runCodeGraphWorker(f.root, f.env), "updated");
+  writeFileSync(tracked, "export const a = 3;\n");
+  assert.equal(runCodeGraphWorker(f.root, f.env), "updated");
+
+  const untracked = join(f.root, "b.ts");
+  writeFileSync(untracked, "export const b = 2;\n");
+  assert.equal(runCodeGraphWorker(f.root, f.env), "updated");
+  writeFileSync(untracked, "export const b = 3;\n");
+  assert.equal(runCodeGraphWorker(f.root, f.env), "updated");
+  assert.equal(f.calls().at(-1), `update --quiet ${f.root}`);
+});
+
 test("a stamp from an earlier run does not skip a repository the graph lost", (t) => {
   const f = fixture();
   t.after(f.cleanup);

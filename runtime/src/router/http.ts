@@ -88,7 +88,7 @@ import {
   setControlApiLiveAgentCountsSource,
   setControlApiMcpObservationsSource,
   setControlApiProviderHealthSource
-} from "../control-api/index.ts";
+} from "../control-api/request-handler.ts";
 import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
@@ -1953,7 +1953,8 @@ async function handleResponseRequest(
           role,
           tool: "multi_agent_v1.spawn",
           requestId,
-          workspace: workspace?.key ?? null
+          workspace: workspace?.key ?? null,
+          thread: session.thread
         });
         await proxyRoleResponse(
           response,

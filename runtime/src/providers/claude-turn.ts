@@ -95,6 +95,14 @@ export interface TurnFailure {
   error: unknown;
   reason: string;
   limit: ProviderLimit | null;
+  /**
+   * The error type a response that never produced output names. It is decided
+   * once, where the failure is described, so an HTTP answer and a
+   * `response.failed` event cannot disagree about what went wrong.
+   */
+  errorType: string;
+  /** The machine-readable refusal code the router keys on, when the error has one. */
+  errorCode: string | null;
 }
 
 /** The request-scoped side of the bridge a turn reports through. */
@@ -486,16 +494,15 @@ export class ResponseStream {
           ? failure.error.message
           : String(failure.error);
       const limit = limitPayload(failure.limit);
-      const type =
-        failure.limit?.limitClass === "capacity"
-          ? "overloaded_error"
-          : failure.limit
-            ? "rate_limit_error"
-            : "upstream_error";
       this.end(
         {
           ...this.snapshot("failed"),
-          error: { type, message, ...(limit ? { limit } : {}) }
+          error: {
+            type: failure.errorType,
+            ...(failure.errorCode ? { code: failure.errorCode } : {}),
+            message,
+            ...(limit ? { limit } : {})
+          }
         },
         "response.failed"
       );
@@ -730,7 +737,9 @@ export class ClaudeTurn {
       this.endStream({
         error: new Error("turn cancelled"),
         reason: INCOMPLETE_REASON_INTERRUPTED,
-        limit: null
+        limit: null,
+        errorType: "upstream_error",
+        errorCode: null
       });
     this.options.registry.remove(this);
   }

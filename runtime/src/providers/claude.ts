@@ -1139,7 +1139,20 @@ export function describeFailure(error: unknown): TurnFailure {
     : error instanceof ClaudeOverloadedError || TIMED_OUT_PATTERN.test(message)
       ? INCOMPLETE_REASON_TIMEOUT
       : INCOMPLETE_REASON_INTERRUPTED;
-  return { error, reason, limit };
+  return { error, reason, limit, ...failureErrorBody(error, limit) };
+}
+
+/** The error type and code a failure carries, whether answered over HTTP or as `response.failed`. */
+function failureErrorBody(
+  error: unknown,
+  limit: ProviderLimit | null
+): { errorType: string; errorCode: string | null } {
+  if (error instanceof ClaudeModelUnavailableError)
+    return { errorType: "invalid_request_error", errorCode: "invalid_model" };
+  if (limit?.limitClass === "capacity")
+    return { errorType: "overloaded_error", errorCode: null };
+  if (limit) return { errorType: "rate_limit_error", errorCode: null };
+  return { errorType: "upstream_error", errorCode: null };
 }
 
 /**

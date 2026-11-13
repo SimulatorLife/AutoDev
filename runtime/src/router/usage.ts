@@ -1576,17 +1576,21 @@ export class UsageTracker {
     tracker?: AgentActivityTracker,
     exceptSubject: string | null = null
   ): number {
+    return this.listLiveAgentActivity(filter, at, tracker).filter(
+      ({ subject }) => subject !== exceptSubject
+    ).length;
+  }
+
+  /** Every live agent-kind activity record matching the filter. */
+  listLiveAgentActivity(
+    filter: Parameters<AgentActivityTracker["listLive"]>[0] = {},
+    at: number = Date.now(),
+    tracker?: AgentActivityTracker
+  ): ReturnType<AgentActivityTracker["listLive"]> {
     const activityTracker = tracker ?? this.activityTracker;
-    if (!activityTracker) return 0;
-    return (AGENT_ACTIVITY_KINDS as readonly string[]).reduce(
-      (total, kind) =>
-        total +
-        (exceptSubject === null
-          ? activityTracker.countLive({ ...filter, kind }, at)
-          : activityTracker
-              .listLive({ ...filter, kind }, at)
-              .filter(({ subject }) => subject !== exceptSubject).length),
-      0
+    if (!activityTracker) return [];
+    return (AGENT_ACTIVITY_KINDS as readonly string[]).flatMap((kind) =>
+      activityTracker.listLive({ ...filter, kind }, at)
     );
   }
 

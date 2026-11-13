@@ -8,7 +8,7 @@ import type { ControlApiLiveAgentCounts } from "@simulatorlife/autodev-core";
 import {
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import {
   responseBody,
   responseRecorder

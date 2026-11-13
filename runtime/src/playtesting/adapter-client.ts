@@ -32,6 +32,7 @@ import {
   assertPlaytestJsonRpcNotification,
   assertPlaytestJsonRpcRequest,
   assertPlaytestJsonRpcResponse,
+  isPlainObject,
   type PlaytestAdapterErrorCode,
   type PlaytestAdapterMethod,
   type PlaytestAdapterNotification,
@@ -232,9 +233,6 @@ function defaultMintId(): string {
   return `r-${randomUUID()}`;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 function canonicalJson(value: unknown): string {
   if (
     value === null ||

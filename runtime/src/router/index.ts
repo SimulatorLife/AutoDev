@@ -26,7 +26,7 @@ export {
   noteBridgeRequest,
   noteBridgeSession,
   noteOrchestratorSession,
-  noteSubagentSession,
+  noteSubagentThread,
   openBridgeSubagentUsage,
   orchestratorProviderForSession,
   type OrchestratorSessionEntry,
@@ -48,15 +48,14 @@ export {
   type SpawnFailureStatus,
   spawnFailureStatus,
   type SubagentMechanism,
-  subagentProviderForSession,
+  subagentProviderForThread,
   SubagentRegistry,
-  type SubagentSessionEntry,
-  subagentSessionInfo,
   type SubagentSpawnRecord,
   subagentSpawnToolsFor,
   type SubagentStatus,
   subagentStatus,
-  type SubagentTelemetry
-} from "./subagents.ts";
+  type SubagentTelemetry,
+  type SubagentThreadEntry,
+  subagentThreadInfo} from "./subagents.ts";
 export * from "./telemetry.ts";
 export * from "./tool-call-ownership/index.ts";

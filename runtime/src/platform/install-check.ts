@@ -59,8 +59,9 @@ import {
   ROLES,
   RULES,
   RUNTIME_MODULES,
-  SKILLS
+  staleUserSkillLinks
 } from "./install-materializer.ts";
+import { userLevelSkills } from "./user-level-skills.ts";
 import {
   launchAgentMatches,
   resolveLaunchAgentValues
@@ -450,15 +451,23 @@ function checkRulesAndSkills(
       ),
       failures
     );
-  for (const name of SKILLS)
+  const skillsRoot = path.join(paths.repositoryRoot, ".rulesync/skills");
+  const userLevel = userLevelSkills(skillsRoot);
+  for (const name of userLevel)
     check(
       `skill link ${path.join(paths.userSkills, name)}`,
       skillLinkMatches(
-        path.join(paths.repositoryRoot, ".rulesync/skills", name),
+        path.join(skillsRoot, name),
         path.join(paths.userSkills, name)
       ),
       failures
     );
+  for (const stale of staleUserSkillLinks(
+    skillsRoot,
+    paths.userSkills,
+    userLevel
+  ))
+    check(`no stale skill link ${stale}`, false, failures);
 }
 
 function checkRuntimeAndOt(
@@ -874,7 +883,9 @@ function checkObsoleteSkillPaths(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
-  for (const skill of SKILLS) {
+  for (const skill of userLevelSkills(
+    path.join(paths.repositoryRoot, ".rulesync/skills")
+  )) {
     for (const legacy of ["skills", "agents/skills"]) {
       const filePath = path.join(paths.codexHome, legacy, skill);
       check(`obsolete skill path ${filePath}`, !lstatSafe(filePath), failures);

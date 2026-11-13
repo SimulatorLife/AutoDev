@@ -22,6 +22,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/events";
 import { scheduleRouterStatePersist } from "@simulatorlife/autodev-runtime/router/persistence";
 import {
+  type AgentLimitReason,
   type Candidate,
   type OrchestratorCandidate,
   type ProviderRoute,
@@ -100,14 +101,14 @@ import {
   noteBridgeRequest,
   noteBridgeSession,
   noteOrchestratorSession,
-  noteSubagentSession,
+  noteSubagentThread,
   ORCHESTRATOR_AGENT_ROLE,
   orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER,
-  subagentProviderForSession
+  subagentProviderForThread
 } from "./subagents.ts";
 import {
   endAttemptSpan,
@@ -482,6 +483,14 @@ export function activitySubjectFor(
   if (thread) return thread === session?.key ? thread : `thread:${thread}`;
   if (subagentOfKnownSession) return `req:${requestId}`;
   return session?.key || `req:${requestId}`;
+}
+
+/**
+ * The identity a subagent's provider continuity is kept under: its thread.
+ * A caller that names no thread has only its session to go by.
+ */
+function subagentAgentKey(session: RouterSession | null): string | null {
+  return session?.thread ?? session?.key ?? null;
 }
 
 /** Who a concrete provider/model request runs as, from its thread identity. */
@@ -3512,11 +3521,16 @@ function emitFallbackBridgeContext(
       requestId: ctx.requestId
     });
   } else if (ctx.role) {
-    noteSubagentSession(ctx.sessionKey, ctx.role, route.provider, {
-      model: route.model,
-      workspace: ctx.workspace?.key ?? null,
-      requestId: ctx.requestId
-    });
+    noteSubagentThread(
+      subagentAgentKey(ctx.session),
+      ctx.role,
+      route.provider,
+      {
+        model: route.model,
+        workspace: ctx.workspace?.key ?? null,
+        requestId: ctx.requestId
+      }
+    );
   }
 }
 
@@ -3692,8 +3706,7 @@ export async function proxyFallbackChain(
         (other) =>
           other.provider !== route.provider &&
           !attempted.has(other.provider) &&
-          ROUTING_POLICY.routeDisabledReason(other, fbCtx.providerRole) ===
-            null &&
+          routeBlockedReason(fbCtx, other) === null &&
           !COOLDOWNS.isCooling(other.provider, Date.now(), other.model) &&
           !providerAtCapacity(other)
       )
@@ -4208,7 +4221,7 @@ function runLastResortPass(
   const eligible = skipped
     .filter(
       (route) =>
-        ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) === null &&
+        routeBlockedReason(ctx, route) === null &&
         !isTried(route.provider) &&
         COOLDOWNS.allowsLastResort(
           COOLDOWNS.get(route.provider, Date.now(), route.model)
@@ -4258,8 +4271,7 @@ async function runExhaustionWait(
   // on every window. That is the hammering the cooldowns exist to prevent.
   const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
   const waitCandidates = candidates.filter((route) => {
-    if (ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) !== null)
-      return false;
+    if (routeBlockedReason(ctx, route) !== null) return false;
     if (isRequestRefusalClass(failures.observed.get(route.provider)))
       return false;
     const cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
@@ -4421,13 +4433,47 @@ function finalizeFallbackFailure(
   );
 }
 
+/**
+ * Whether the provider's agent limits refuse this request's agent.
+ *
+ * The agent is the request's activity subject; the provider's live agents are
+ * the activity tracker's live records on that provider. The same subject
+ * continuing on the provider is never refused.
+ */
+function agentLimitReason(
+  ctx: FallbackContext,
+  route: Candidate
+): AgentLimitReason | null {
+  return ROUTING_POLICY.agentLimitReason(
+    route.provider,
+    {
+      subject: ctx.activitySubject,
+      sessionId: ctx.session?.sessionId ?? null
+    },
+    getDefaultUsageTracker().listLiveAgentActivity({
+      provider: route.provider
+    })
+  );
+}
+
+/** Why a route cannot take this request now: switched off, or at its agent limit. */
+function routeBlockedReason(
+  ctx: FallbackContext,
+  route: Candidate
+): RouteDisabledReason | AgentLimitReason | null {
+  return (
+    ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) ??
+    agentLimitReason(ctx, route)
+  );
+}
+
 async function attemptCandidate(
   ctx: FallbackContext,
   route: Candidate,
   selection: string,
   failures: CandidateFailures,
   _attempted: Set<string>
-): Promise<"served" | "terminal" | "fallback"> {
+): Promise<"served" | "terminal" | "fallback" | "unavailable"> {
   const attemptStartedAt = Date.now();
   const releaseProviderCapacity = await acquireProviderCapacity(
     route,
@@ -4436,6 +4482,23 @@ async function attemptCandidate(
   if (!releaseProviderCapacity) {
     recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
     return "terminal";
+  }
+  // The limit is checked here, after any capacity wait and with no await
+  // before the attempt opens its activity record, so two agents arriving
+  // together cannot both see the last free place.
+  const agentLimit = agentLimitReason(ctx, route);
+  if (agentLimit) {
+    releaseProviderCapacity();
+    recordFallbackSkip(
+      ctx,
+      route,
+      agentLimit === "agent_limit_per_session"
+        ? "per-session agent limit reached"
+        : "across-sessions agent limit reached",
+      agentLimit,
+      failures
+    );
+    return "unavailable";
   }
   _attempted.add(route.provider);
   recordFallbackSelected(ctx, route, selection);
@@ -4870,24 +4933,14 @@ export function proxyRoleResponse(
   clientSignal: AbortSignal | null = null,
   session: RouterSession | null = null
 ): Promise<void> {
-  const sessionKey = session?.key ?? null;
-  const threadId = session?.thread ?? null;
-  const threadSubject =
-    session?.thread && session.thread !== session.key
-      ? `thread:${session.thread}`
-      : null;
+  // The provider that issued the calls being answered comes first; otherwise
+  // the agent stays with the provider that last served it. Continuity is the
+  // agent's own -- its thread's -- never its session's: siblings and the
+  // orchestrator share the session, and inheriting their provider put every
+  // new subagent ahead of the providers ranked above it.
   const preferred =
     TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
-    subagentProviderForSession(sessionKey, role) ??
-    (threadId ? subagentProviderForSession(threadId, role) : null) ??
-    (threadSubject
-      ? (getDefaultUsageTracker().activityTracker?.getRecord(threadSubject)
-          ?.provider ?? null)
-      : null) ??
-    (sessionKey
-      ? (getDefaultUsageTracker().activityTracker?.getRecord(sessionKey)
-          ?.provider ?? null)
-      : null);
+    subagentProviderForThread(subagentAgentKey(session));
   return proxyFallbackChain(
     response,
     {

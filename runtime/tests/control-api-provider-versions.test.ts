@@ -6,7 +6,7 @@ import test from "node:test";
 import {
   handleControlApiRequest,
   setControlApiProviderCliVersionSource
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import { ProviderCliVersionService } from "../src/providers/cli-versions.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 

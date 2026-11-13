@@ -40,7 +40,7 @@ import {
 import {
   noteOrchestratorSession,
   resetSubagentTelemetry,
-  subagentProviderForSession
+  subagentProviderForThread
 } from "@simulatorlife/autodev-runtime/router/subagents";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
@@ -1614,7 +1614,7 @@ test(
 );
 
 test(
-  "proxyRoleResponse records subagent session and sticks to that provider across multi-turn requests",
+  "proxyRoleResponse records the subagent thread's provider and sticks to it across multi-turn requests",
   { concurrency: false },
   async () => {
     COOLDOWNS.clearAll();
@@ -1662,11 +1662,10 @@ test(
       );
       assert.equal(responseCalls1.length, 1);
       const firstUrl = responseCalls1[0];
-      const firstProvider = subagentProviderForSession(
-        "subagent-session-stickiness-1",
-        "worker"
+      const firstProvider = subagentProviderForThread(
+        "subagent-session-stickiness-1"
       );
-      assert.ok(firstProvider, "Turn 1 must record subagent session provider");
+      assert.ok(firstProvider, "Turn 1 must record the thread's provider");
 
       // Turn 2 in the same session without tool call ownership:
       // must stick to the provider chosen on turn 1

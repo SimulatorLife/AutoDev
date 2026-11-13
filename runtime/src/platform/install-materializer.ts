@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -60,6 +61,7 @@ import {
   renderRuntimeMirrorPackage
 } from "./runtime-mirror-package.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
+import { userLevelSkills } from "./user-level-skills.ts";
 
 export const RUNTIME_MODULES = [
   "runtime/src/router/telemetry.ts",
@@ -142,7 +144,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/skill-reads.ts",
   "runtime/src/shared/service-lifecycle.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",
-  "runtime/src/control-api/index.ts",
+  "runtime/src/control-api/request-handler.ts",
+  "runtime/src/control-api/github.ts",
   "runtime/src/router/subagents.ts",
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
@@ -201,6 +204,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/claude-credential.ts",
   "runtime/src/providers/copilot.ts",
   "runtime/src/providers/opencli.ts",
+  "runtime/src/providers/opencli-browser.ts",
   "runtime/src/providers/opencli-turn.ts",
   "runtime/src/providers/antigravity.ts",
   "runtime/src/providers/claude.ts",
@@ -232,6 +236,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/router-ensure.ts",
   "runtime/src/platform/copilot-ensure.ts",
   "runtime/src/platform/opencli-ensure.ts",
+  "runtime/src/platform/opencli-browser-install.ts",
   "runtime/src/platform/optional-bridge-ensure.ts",
   "runtime/src/platform/code-graph-ensure.ts",
   "runtime/src/platform/antigravity-ensure.ts",
@@ -241,6 +246,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-mirror-package.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
+  "runtime/src/platform/user-level-skills.ts",
   "runtime/src/platform/service-restart.ts",
   "runtime/src/platform/usage-stack.ts",
   "runtime/src/platform/usage-contract.ts",
@@ -326,18 +332,6 @@ export const ROLES = [
   "worker"
 ] as const;
 export const PROMPT_ROLES = [...ROLES, "orchestrator"] as const;
-export const SKILLS = [
-  "ccc",
-  "code-simplification",
-  "diagnosing-bugs",
-  "doubt-driven-development",
-  "improve-codebase-architecture",
-  "lsp-mcp-server",
-  "orchestration",
-  "remove-legacy-shims",
-  "resolve-merge-conflicts",
-  "writing-agent-skills"
-] as const;
 /**
  * Codex custom prompts (slash commands) are materialized at
  * `$CODEX_HOME/prompts/<name>.md` from the canonical `.rulesync/commands/`
@@ -1177,7 +1171,12 @@ function replaceSkillSymlinks(
   skillsRoot: string,
   userSkills: string
 ): void {
-  for (const name of SKILLS) {
+  const names = userLevelSkills(skillsRoot);
+  removeStalePaths(
+    staleUserSkillLinks(skillsRoot, userSkills, names),
+    "obsolete-runtime-path"
+  );
+  for (const name of names) {
     for (const legacy of LEGACY_SKILL_DIRS) {
       const filePath = path.join(codexHome, legacy, name);
       if (exists(filePath) && !isSymlink(filePath))
@@ -1188,6 +1187,30 @@ function replaceSkillSymlinks(
     }
     linkSkillSource(path.join(skillsRoot, name), path.join(userSkills, name));
   }
+}
+
+/**
+ * Links in the user's skills directory that point into the canonical source
+ * at a skill that is no longer user-level (deleted, or now repository-only).
+ * A link to anything else is the user's own and is left alone.
+ */
+export function staleUserSkillLinks(
+  skillsRoot: string,
+  userSkills: string,
+  userLevel: readonly string[]
+): string[] {
+  if (!exists(userSkills)) return [];
+  const keep = new Set(userLevel);
+  return readdirSync(userSkills)
+    .filter((name) => !keep.has(name))
+    .map((name) => path.join(userSkills, name))
+    .filter(
+      (filePath) =>
+        isSymlink(filePath) &&
+        path.dirname(
+          path.resolve(path.dirname(filePath), readlinkSync(filePath))
+        ) === path.resolve(skillsRoot)
+    );
 }
 
 /**

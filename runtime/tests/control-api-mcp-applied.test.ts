@@ -6,7 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import {
   makeRequest,
   responseBody,

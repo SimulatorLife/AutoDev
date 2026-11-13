@@ -1,11 +1,11 @@
 /**
  * Exact measurement of what a git commit changed.
  *
- * The numbers here come from git itself (`diff-tree` for statuses, `numstat`
- * for line counts). Nothing is inferred from edit counts, tool calls, or diff
- * size, because the requirement is a record of what the commit actually
- * contains -- and a proxy would let a commit of nine empty files look like a
- * large one.
+ * The numbers here come from Git's first-parent commit diffs (`show` for
+ * statuses and `numstat` line counts). Nothing is inferred from edit counts,
+ * tool calls, or diff size, because the requirement is a record of what the
+ * commit actually contains -- and a proxy would let a commit of nine empty
+ * files look like a large one.
  */
 
 import { execFile } from "node:child_process";
@@ -49,8 +49,8 @@ export interface GitCommitChange {
    */
   readonly actor: GitCommitActor | null;
   /**
-   * True when some diff could not be summarized -- a binary file, an unreadable
-   * numstat, or a merge commit whose combined diff git declines to render.
+   * True when a diff status or line count could not be summarized (for
+   * example, a binary file or malformed Git output).
    *
    * Partial is reported rather than absorbed: a smaller "complete" number would
    * be indistinguishable from a genuinely small commit.
@@ -181,15 +181,21 @@ export async function measureGitCommitChanges({
       const [identity, names, numstat] = await Promise.all([
         runGit(repositoryRoot, ["log", "-1", "--format=%ce", commit]),
         runGit(repositoryRoot, [
-          "diff-tree",
-          "--root",
-          "--no-commit-id",
+          "show",
+          "--first-parent",
           "--name-status",
+          "--format=",
           "-r",
           "-M",
           commit
         ]),
-        runGit(repositoryRoot, ["show", "--numstat", "--format=", commit])
+        runGit(repositoryRoot, [
+          "show",
+          "--first-parent",
+          "--numstat",
+          "--format=",
+          commit
+        ])
       ]);
       if (names.exitCode !== 0 || numstat.exitCode !== 0) return null;
 

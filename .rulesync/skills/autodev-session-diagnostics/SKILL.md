@@ -32,7 +32,7 @@ node "$SKILL_DIR/scripts/session-trace.ts" <id> --events       # plus every rout
 ```
 
 A Codex App "Session" id is the root thread; a "Thread" id may be a subagent.
-Either finds the whole session. Per thread the report gives turn outcomes,
+Either finds the whole session. To compare investigation metrics across tool-surface changes, save two `--json` reports, then run `node "$SKILL_DIR/scripts/investigation-compare.ts" before.json after.json`. Inputs must be the JSON object emitted by `session-trace --json`, with a top-level `threads` array; every array entry must be an object with an `investigation` object containing boolean `observed`. Metric fields (`toolCalls`, `tokens`, `filesRead`, `repeatedReads`, `searches`, `repeatedSearches`, and `context.ccc`/`cgc`/`lsp`) may be omitted; present counts must be finite numbers, and `tokens` may also be null. The report gives per-period totals/means, metric-specific observed/missing counts, separate unavailable-thread counts, and after-minus-before deltas. It is descriptive only and does not establish causation. Per thread the report gives turn outcomes,
 `GAP`s of 60s+ inside a turn, tool calls by name (MCP tools called inside
 `exec` counted as `mcp__<server>__<tool>`), `TOOL FAILED` lines, and the
 router's requests: per-provider counts, `ROUTER FAILURE`s, and `PROVIDER HOPS`.

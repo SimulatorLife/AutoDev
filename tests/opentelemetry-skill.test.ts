@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { lstatSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
 
 const repositoryRoot = new URL("../", import.meta.url);
 const skillPath = new URL(
@@ -9,10 +12,6 @@ const skillPath = new URL(
 );
 const targetStatePath = new URL(
   "docs/autodev-console-target-state.md",
-  repositoryRoot
-);
-const materializerPath = new URL(
-  "runtime/src/platform/install-materializer.ts",
   repositoryRoot
 );
 
@@ -37,13 +36,12 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   );
   assert.doesNotMatch(front, /^targets:/mu);
 
-  // AutoDev-only development skill: must never be in user-level SKILLS.
-  const materializerContent = readFileSync(materializerPath, "utf8");
-  const skillsMatch = /export const SKILLS = \[(.*?)\]/su.exec(
-    materializerContent
+  // AutoDev-only development skill: must never be installed at user level.
+  assert.ok(
+    !userLevelSkills(
+      fileURLToPath(new URL(".rulesync/skills", repositoryRoot))
+    ).includes("opentelemetry")
   );
-  assert.ok(skillsMatch?.[1] !== undefined);
-  assert.doesNotMatch(skillsMatch[1], /"opentelemetry"/);
 
   // Required reusable OTel sections and project-specific source-of-truth pointer.
   assert.match(body, /^# OpenTelemetry$/mu);

@@ -24,7 +24,7 @@ import {
   setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
   warmupDefaultPlaytestingRepository
-} from "../control-api/index.ts";
+} from "../control-api/request-handler.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";

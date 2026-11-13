@@ -85,45 +85,61 @@ test("SubagentRegistry records spawns and maintains ring buffer and aggregations
   assert.equal(status.recent[0]?.role, "validator");
 });
 
-test("SubagentRegistry tracks subagent sessions by sessionKey and role ignoring process fallback", () => {
+test("SubagentRegistry keeps provider continuity per agent thread, ignoring process fallback", () => {
   const registry = new SubagentRegistry();
 
-  registry.noteSubagentSession("session-worker-1", "worker", "antigravity", {
+  registry.noteSubagentThread("thread-worker-1", "worker", "antigravity", {
     model: "gemini-3.8-flash-high",
     requestId: "req-1"
   });
   assert.equal(
-    registry.subagentProviderForSession("session-worker-1", "worker"),
+    registry.subagentProviderForThread("thread-worker-1"),
     "antigravity"
   );
-  assert.equal(
-    registry.subagentProviderForSession("session-worker-1"),
-    "antigravity"
-  );
-  const info = registry.subagentSessionInfo("session-worker-1", "worker");
+  const info = registry.subagentThreadInfo("thread-worker-1");
   assert.ok(info);
   assert.equal(info.provider, "antigravity");
   assert.equal(info.role, "worker");
   assert.equal(info.model, "gemini-3.8-flash-high");
 
-  // Multi-role session tracks per-role and default
-  registry.noteSubagentSession("session-multi", "explorer", "claude");
-  registry.noteSubagentSession("session-multi", "validator", "minimax");
+  // Sibling threads of one session keep their own providers, and a thread
+  // never seen has no preference at all -- it does not inherit a sibling's.
+  registry.noteSubagentThread("thread-explorer-a", "explorer", "claude");
+  registry.noteSubagentThread("thread-explorer-b", "explorer", "minimax");
   assert.equal(
-    registry.subagentProviderForSession("session-multi", "explorer"),
+    registry.subagentProviderForThread("thread-explorer-a"),
     "claude"
   );
   assert.equal(
-    registry.subagentProviderForSession("session-multi", "validator"),
+    registry.subagentProviderForThread("thread-explorer-b"),
     "minimax"
   );
+  assert.equal(registry.subagentProviderForThread("thread-explorer-c"), null);
 
-  // Process fallback session key must be ignored
-  registry.noteSubagentSession(PROCESS_FALLBACK_SESSION_KEY, "worker", "codex");
+  // Process fallback key must be ignored
+  registry.noteSubagentThread(PROCESS_FALLBACK_SESSION_KEY, "worker", "codex");
   assert.equal(
-    registry.subagentProviderForSession(PROCESS_FALLBACK_SESSION_KEY, "worker"),
+    registry.subagentProviderForThread(PROCESS_FALLBACK_SESSION_KEY),
     null
   );
+});
+
+test("SubagentRegistry records one spawn per thread, not one per request", () => {
+  const registry = new SubagentRegistry();
+  const spawn = (requestId: string, thread: string | null) =>
+    registry.recordSubagentSpawn({
+      mechanism: "router_alias",
+      provider: "codex",
+      role: "explorer",
+      requestId,
+      thread
+    });
+  assert.ok(spawn("req-1", "thread-a"));
+  assert.equal(spawn("req-2", "thread-a"), null);
+  assert.equal(spawn("req-3", "thread-a"), null);
+  assert.ok(spawn("req-4", "thread-b"));
+  assert.ok(spawn("req-5", null));
+  assert.equal(registry.subagentStatus().total, 3);
 });
 
 test("SubagentRegistry tracks orchestrator sessions and workspace metadata ignoring process fallback", () => {
@@ -398,9 +414,9 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
     getDefaultSubagentRegistry,
     setDefaultSubagentRegistry,
     noteOrchestratorSession,
-    noteSubagentSession,
-    subagentProviderForSession,
-    subagentSessionInfo,
+    noteSubagentThread,
+    subagentProviderForThread,
+    subagentThreadInfo,
     orchestratorProviderForSession,
     rememberWorkspaceMetadata,
     getWorkspaceMetadata,
@@ -418,13 +434,10 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
   noteOrchestratorSession("sess-default", "claude");
   assert.equal(orchestratorProviderForSession("sess-default"), "claude");
 
-  noteSubagentSession("sub-sess-default", "worker", "antigravity");
+  noteSubagentThread("sub-thread-default", "worker", "antigravity");
+  assert.equal(subagentProviderForThread("sub-thread-default"), "antigravity");
   assert.equal(
-    subagentProviderForSession("sub-sess-default", "worker"),
-    "antigravity"
-  );
-  assert.equal(
-    subagentSessionInfo("sub-sess-default", "worker")?.provider,
+    subagentThreadInfo("sub-thread-default")?.provider,
     "antigravity"
   );
 

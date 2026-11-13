@@ -57,6 +57,8 @@ export const PROVIDER_HOP_FAILURE_CLASSES: ReadonlySet<string> = new Set([
   "provider_disabled",
   "provider_cannot_delegate",
   "model_disabled",
+  "agent_limit_per_session",
+  "agent_limit_across_sessions",
   "cooldown",
   "probe_unavailable",
   "missing_credential"

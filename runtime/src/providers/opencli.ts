@@ -2,7 +2,7 @@
  * The opencli Responses bridge: Codex turns served by web chat sites.
  *
  * Codex -> Router -> this bridge (`127.0.0.1:4004`) -> `opencli <site> ...` ->
- * the user's signed-in browser tabs on chatgpt.com or gemini.google.com.
+ * the AutoDev-owned signed-in Chromium profile for each site.
  *
  * Each `opencli-<site>` model is one site. A turn is one opencli command: the
  * bridge renders the Codex conversation into a prompt (see `opencli-turn.ts`),
@@ -83,6 +83,10 @@ import {
   codexToolSurface
 } from "./claude-codex-tools.ts";
 import { turnId } from "./codex-tool-turns.ts";
+import {
+  OpencliBrowser,
+  resolveOpencliBrowserExecutable
+} from "./opencli-browser.ts";
 import {
   attachedPromptFileName,
   CHATGPT_MODELS,
@@ -264,6 +268,10 @@ export type OpencliRunner = (
 
 export interface OpencliBridgeOptions {
   readonly run: OpencliRunner;
+  readonly browserHealth?: () => {
+    readonly ready: boolean;
+    readonly error: string | null;
+  };
   readonly authToken: string;
   readonly turnTimeoutSeconds: number;
   /**
@@ -277,8 +285,6 @@ export interface OpencliBridgeOptions {
   readonly uploadLogPath?: string;
   /** Where per-turn prompt files are written; the OS temp dir by default. */
   readonly tempRoot?: string;
-  /** How long to wait before re-trying a site session opencli reports busy. */
-  readonly sessionBusyRetryMs?: number;
   /** How long to wait before re-trying a command the site was not ready for. */
   readonly unsentRetryMs?: number;
   /**
@@ -307,8 +313,6 @@ export interface OpencliBridgeOptions {
   readonly now?: () => number;
 }
 
-/** opencli's code for a site session another command still holds. */
-const SESSION_BUSY = "SESSION_BUSY";
 /**
  * The bridge's own code for a turn the site's single tab never became free for.
  *
@@ -316,7 +320,6 @@ const SESSION_BUSY = "SESSION_BUSY";
  * refusal of this request rather than an outage of the provider.
  */
 const SITE_BUSY = "SITE_BUSY";
-const DEFAULT_SESSION_BUSY_RETRY_MS = 5000;
 const OUTPUT_ITEM_ADDED = "response.output_item.added";
 /** opencli's code for a read that found nothing, e.g. a chat with no visible turns. */
 const EMPTY_RESULT = "EMPTY_RESULT";
@@ -413,18 +416,6 @@ function worthRunningAgain(error: OpencliCommandError): boolean {
 }
 
 /**
- * The opencli daemon another version left running.
- *
- * opencli's daemon is shared machine-wide on one port, so a CLI of a
- * different version finds a daemon it cannot talk to and refuses the
- * command: the stale daemon was not replaced and the turn died before it
- * started. The CLI's own answer is to stop the daemon by hand; the bridge
- * owns the CLI it runs, so it stops the daemon itself and runs the command
- * again.
- */
-const STALE_DAEMON = /stale daemon/iu;
-
-/**
  * How a failed turn failed, as the router has to hear it.
  *
  * - `limit`: the site said the account is out of usage. The router cools the
@@ -464,16 +455,13 @@ function failureKind(error: unknown): OpencliFailureKind {
   // A turn that never reached the site is a refusal before it is anything
   // else. Its message quotes the page ("tab shows chat <uuid>", a byte count)
   // and must not be read for limit wording; the site was not asked, so it
-  // cannot have said the account is out of usage. A session another command
-  // held for the whole budget is the same: opencli never sent the prompt.
-  // The upload refusal is the exception -- it quotes the page's file inputs,
+  // cannot have said the account is out of usage. The upload refusal is the
+  // exception -- it quotes the page's file inputs,
   // but it is the site's own allowance and carries the time it resets.
   if (
     error instanceof OpencliCommandError &&
     error.code !== UPLOADS_EXHAUSTED &&
-    (failedBeforeSending(error) ||
-      error.code === SITE_BUSY ||
-      error.code === SESSION_BUSY)
+    (failedBeforeSending(error) || error.code === SITE_BUSY)
   )
     return "not_sent";
   if (error instanceof OpencliCommandError && error.code === UNUSABLE_REPLY)
@@ -515,83 +503,89 @@ const FIRST_MODEL_LIST_WAIT_MS = 5000;
  * dependencies are missing then fails each turn with a 503 the router routes
  * around, instead of a bridge that crash-loops under launchd's KeepAlive.
  *
- * Every command runs in the site's tab pool (`OPENCLI_SITE_SLOTS`), sized to
- * the tabs the bridge admits turns into, so opencli never hands out more tabs
- * than the bridge runs turns in.
+ * Every command is pinned to a unique target in the bridge-owned browser pool.
  */
 export function processRunner(
   resolveCommand: () => OpencliCommand,
   siteTabs: Readonly<Record<OpencliSite, number>>,
-  live: Set<ChildProcess> = new Set()
-): OpencliRunner {
-  const env = {
-    ...process.env,
-    OPENCLI_SITE_SLOTS: opencliSiteSlots(siteTabs)
-  };
-  return ({ args, signal }) =>
-    new Promise((resolve, reject) => {
-      const command = resolveCommand();
-      const child = spawn(command.command, [...command.args, ...args], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env
-      });
-      live.add(child);
-      let stdout = "";
-      let stderr = "";
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stderr.on("data", (chunk: string) => {
-        stderr = (stderr + chunk).slice(-4000);
-      });
-      const onAbort = () => {
-        child.kill("SIGTERM");
-        const killTimer = setTimeout(() => {
-          if (!child.killed) {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              /* the process is already gone */
+  live: Set<ChildProcess> = new Set(),
+  browser = new OpencliBrowser({
+    executable: resolveOpencliBrowserExecutable(process.env) ?? "",
+    siteTabs
+  })
+): OpencliRunner & {
+  readonly browser: OpencliBrowser;
+  close(): Promise<void>;
+} {
+  const run: OpencliRunner = ({ args, signal }) =>
+    browser.run(
+      args[0] as OpencliSite,
+      signal,
+      (endpoint) =>
+        new Promise((resolve, reject) => {
+          const command = resolveCommand();
+          const child = spawn(
+            command.command,
+            [...command.args, ...args, "--site-session", "ephemeral"],
+            {
+              stdio: ["ignore", "pipe", "pipe"],
+              env: {
+                ...process.env,
+                OPENCLI_CDP_ENDPOINT: endpoint,
+                OPENCLI_SITE_SLOTS: undefined
+              }
             }
-          }
-        }, 2000);
-        if (typeof killTimer.unref === "function") killTimer.unref();
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      child.once("error", (error) => {
-        live.delete(child);
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      });
-      child.once("close", (code) => {
-        live.delete(child);
-        signal.removeEventListener("abort", onAbort);
-        if (signal.aborted) {
-          reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
-          return;
-        }
-        try {
-          resolve(parseOpencliOutput(stdout, code));
-        } catch (error) {
-          if (error instanceof OpencliCommandError && stderr.trim())
-            error.message = `${error.message}; stderr: ${stderr.trim().slice(-800)}`;
-          reject(error);
-        }
-      });
-    });
-}
-
-/**
- * opencli's site-slot pool for the tabs the bridge was given: each site runs
- * its commands in that many persistent tabs (`site:<site>#<n>`), one command
- * per tab at a time, and opencli's daemon hands each command a free one.
- */
-export function opencliSiteSlots(
-  tabs: Readonly<Record<OpencliSite, number>>
-): string {
-  return OPENCLI_SITES.map((site) => `${site}:${tabs[site]}`).join(",");
+          );
+          live.add(child);
+          let stdout = "";
+          let stderr = "";
+          child.stdout.setEncoding("utf8");
+          child.stderr.setEncoding("utf8");
+          child.stdout.on("data", (chunk: string) => {
+            stdout += chunk;
+          });
+          child.stderr.on("data", (chunk: string) => {
+            stderr = (stderr + chunk).slice(-4000);
+          });
+          const onAbort = () => {
+            child.kill("SIGTERM");
+            const killTimer = setTimeout(() => {
+              if (!child.killed) {
+                try {
+                  child.kill("SIGKILL");
+                } catch {
+                  /* the process is already gone */
+                }
+              }
+            }, 2000);
+            if (typeof killTimer.unref === "function") killTimer.unref();
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          child.once("error", (error) => {
+            live.delete(child);
+            signal.removeEventListener("abort", onAbort);
+            reject(error);
+          });
+          child.once("close", (code) => {
+            live.delete(child);
+            signal.removeEventListener("abort", onAbort);
+            if (signal.aborted) {
+              reject(
+                new OpencliCommandError("turn cancelled", "CANCELLED", code)
+              );
+              return;
+            }
+            try {
+              resolve(parseOpencliOutput(stdout, code));
+            } catch (error) {
+              if (error instanceof OpencliCommandError && stderr.trim())
+                error.message = `${error.message}; stderr: ${stderr.trim().slice(-800)}`;
+              reject(error);
+            }
+          });
+        })
+    );
+  return Object.assign(run, { browser, close: () => browser.close() });
 }
 
 /**
@@ -638,12 +632,12 @@ interface RunningTask {
 /**
  * The browser tabs each site's commands run in.
  *
- * A site has as many tabs as its route takes concurrent requests, and one
- * command at a time drives each tab: opencli's daemon gives every command a
- * free tab of the site's pool. Turns are admitted in arrival order, as many at
- * once as the site has tabs. One tab per site made every agent on a site wait
- * for every other: more than half of a ChatGPT turn's time was spent queued
- * behind other agents' turns, not answering.
+ * A site has as many tabs as its route takes concurrent requests. SiteTabs
+ * serializes each site's model-sensitive turns; OpencliBrowser leases the
+ * matching dedicated CDP target to each command. Turns are admitted in arrival
+ * order, as many at once as the site has tabs. One tab per site made every
+ * agent on a site wait for every other: more than half of a ChatGPT turn's time
+ * was spent queued behind other agents' turns, not answering.
  *
  * A site's model is an account setting, not a tab's (`chatgpt model` changes
  * the account's last-used model), so turns share the site only while they
@@ -1237,6 +1231,17 @@ export function createOpencliBridge(
    * site waits for the operator, and its provider must not read Ready.
    */
   const signedOut = new Map<OpencliSite, string>();
+  function reportBrowserUnavailable(response: ServerResponse): boolean {
+    const health = options.browserHealth?.();
+    if (!health || health.ready) return false;
+    sendJson(response, 503, {
+      status: "unavailable",
+      provider: PROVIDER,
+      error: "dedicated_browser_unavailable",
+      message: health.error ?? "Dedicated browser has not started"
+    });
+    return true;
+  }
   function observeSignIn(site: OpencliSite, error: unknown): void {
     if (signInRequired(error)) {
       if (!signedOut.has(site))
@@ -1492,24 +1497,17 @@ export function createOpencliBridge(
   /**
    * One opencli command for a turn, waiting out a busy site session.
    *
-   * A command the bridge cancelled (its client went away) ends here at once,
-   * but opencli's daemon keeps driving the browser until that command's own
-   * step finishes, and holds the site session meanwhile. The next turn's
-   * command is then refused with `SESSION_BUSY` although nothing else wants
-   * the tab -- a worker turn failed that way. The session frees itself, so a
-   * busy refusal is retried until the turn's own timeout.
+   * A command the bridge cancels (its client went away) stops its CLI process
+   * and releases the exact CDP target lease. The site may still be completing
+   * a request that was already sent; accepted-turn ledger recovery, not a
+   * shared daemon lease, determines whether replay is safe.
    *
    * The deadline is the *turn's* budget, not this command's: a turn that
    * continues a chat in a new one runs two commands, and both draw on the same
    * budget, so a turn can never hold the browser tab longer than it was given.
    */
   function execFor(signal: AbortSignal, deadline: number): OpencliExec {
-    const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
     const unsentRetryMs = options.unsentRetryMs ?? DEFAULT_UNSENT_RETRY_MS;
-    // One daemon belongs to one version: a command that met a daemon of
-    // another version stops it and runs again, and only the first such
-    // failure in a turn does so.
-    let daemonStopped = false;
     const attempt = async (
       args: readonly string[],
       unsentRetries = UNSENT_RETRIES
@@ -1548,19 +1546,6 @@ export function createOpencliBridge(
               )
             : error_;
         if (!(error instanceof OpencliCommandError)) throw error;
-        if (STALE_DAEMON.test(error.message) && !daemonStopped) {
-          daemonStopped = true;
-          writeErrorLine(
-            "opencli found a daemon of another version; stopping it and running the command again"
-          );
-          await stopStaleDaemon(signal);
-          return attempt(args, unsentRetries);
-        }
-        if (error.code === SESSION_BUSY && Date.now() + retryMs <= deadline) {
-          writeErrorLine(`opencli site session busy; retrying in ${retryMs}ms`);
-          await sleep(retryMs);
-          return attempt(args, unsentRetries);
-        }
         if (
           unsentRetries > 0 &&
           worthRunningAgain(error) &&
@@ -1576,23 +1561,6 @@ export function createOpencliBridge(
       }
     };
     return attempt;
-  }
-
-  /**
-   * Stop the daemon opencli found, so the next command starts one of this
-   * version.
-   *
-   * The daemon is shared machine-wide, so the stop is the CLI's own remedy
-   * ("run manually: opencli daemon stop"). Doing it here keeps a version skew
-   * from failing the turn: the bridge runs the version the repository pins,
-   * and the daemon it inherits may be another one's.
-   */
-  async function stopStaleDaemon(signal: AbortSignal): Promise<void> {
-    try {
-      await options.run({ args: ["daemon", "stop"], signal });
-    } catch (error) {
-      writeErrorLine(`opencli daemon stop failed: ${errorMessage(error)}`);
-    }
   }
 
   interface TurnBudget {
@@ -2108,6 +2076,7 @@ export function createOpencliBridge(
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const pathname = url.pathname;
     if (pathname === "/health" || pathname === "/health/liveliness") {
+      if (reportBrowserUnavailable(response)) return;
       const requested = url.searchParams.get("provider");
       if (requested) {
         if (!OPENCLI_PROVIDERS.includes(requested as OpencliProvider)) {
@@ -2208,8 +2177,22 @@ if (IS_MAIN) {
   );
   const live = new Set<ChildProcess>();
   const siteTabs = routedSiteTabs();
+  const browser = new OpencliBrowser({
+    executable: resolveOpencliBrowserExecutable(process.env) ?? "",
+    siteTabs
+  });
+  const runner = processRunner(
+    () => resolveOpencliCommand(),
+    siteTabs,
+    live,
+    browser
+  );
   const bridge = createOpencliBridge({
-    run: processRunner(() => resolveOpencliCommand(), siteTabs, live),
+    run: runner,
+    browserHealth: () => ({
+      ready: browser.isReady,
+      error: browser.unavailableReason
+    }),
     siteTabs,
     authToken: process.env[OPENCLI_ROUTER_AUTH_VARIABLE] ?? "",
     ledger: new OpencliConversationLedger({
@@ -2235,18 +2218,25 @@ if (IS_MAIN) {
   });
   const server = createServer((request, response) => {
     void bridge.handle(request, response);
-  }).listen(port, host, () => {
-    writeErrorLine(
-      `opencli Responses proxy listening at http://${host}:${port}`
-    );
   });
   // A turn's opencli command is this process's child; stop it with the bridge
   // so a restart leaves nothing typing into a site.
+  let shuttingDown = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       for (const child of live) child.kill("SIGTERM");
-      server.close();
-      process.exit(0);
+      if (server.listening) server.close();
+      void runner.close().finally(() => process.exit(0));
     });
   }
+  void browser.initialize().finally(() => {
+    if (shuttingDown) return;
+    server.listen(port, host, () => {
+      writeErrorLine(
+        `opencli Responses proxy listening at http://${host}:${port}`
+      );
+    });
+  });
 }

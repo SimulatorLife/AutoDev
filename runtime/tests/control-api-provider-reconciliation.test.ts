@@ -6,7 +6,7 @@ import test from "node:test";
 import {
   handleControlApiRequest,
   resetOperationHistoryForTests
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import {
   type RouterPersistence,
   setDefaultPersistenceManager

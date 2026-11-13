@@ -130,6 +130,16 @@ function normaliseLimit(value: unknown): number | null {
 export type RouteDisabledReason =
   "provider_disabled" | "model_disabled" | "provider_cannot_delegate";
 
+/** Which of a provider's operator-set agent limits refuses a new agent. */
+export type AgentLimitReason =
+  "agent_limit_per_session" | "agent_limit_across_sessions";
+
+/** One live agent as the agent limits see it: who it is and which session. */
+export interface LiveProviderAgent {
+  readonly subject: string;
+  readonly sessionId?: string | null | undefined;
+}
+
 export interface ConfiguredModel {
   model: string;
   provider: string;
@@ -788,6 +798,33 @@ export class RoutingPolicy {
     return typeof provider === "string" && provider.trim().length > 0
       ? this.providerLimits.get(this.providerKey(provider))
       : undefined;
+  }
+
+  /**
+   * Whether the provider's agent limits refuse one more agent, and which.
+   *
+   * The limits bound how many agents run on the provider at once: `perSession`
+   * within one session (the root and its subagents share a session id),
+   * `acrossSessions` over every session. `live` is the provider's live agents.
+   * An agent already among them is continuing, not arriving, so it is never
+   * refused -- a lowered limit gates new agents rather than cutting off the
+   * ones mid-turn. An agent without a session id is its own session.
+   */
+  agentLimitReason(
+    provider: unknown,
+    agent: LiveProviderAgent,
+    live: readonly LiveProviderAgent[]
+  ): AgentLimitReason | null {
+    const limits = this.limitsFor(provider);
+    if (!limits) return null;
+    if (live.some(({ subject }) => subject === agent.subject)) return null;
+    if (limits.acrossSessions !== null && live.length >= limits.acrossSessions)
+      return "agent_limit_across_sessions";
+    if (limits.perSession === null || !agent.sessionId) return null;
+    const inSession = live.filter(
+      ({ sessionId }) => sessionId === agent.sessionId
+    ).length;
+    return inSession >= limits.perSession ? "agent_limit_per_session" : null;
   }
 
   setProviderLimits(provider: unknown, limits: ProviderAgentLimits): void {

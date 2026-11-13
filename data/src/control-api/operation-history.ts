@@ -2,7 +2,7 @@
  * Typed adapter that converts the existing Control API audit envelope into
  * the reusable `OperationHistoryEntry` shape.
  *
- * The audit owner is `auditMutation` in `runtime/src/control-api/index.ts`,
+ * The audit owner is `auditMutation` in `runtime/src/control-api/request-handler.ts`,
  * which already keeps its redacted audit records consistent with the
  * privacy requirements of section 5 of the target state doc. This module
  * deliberately does NOT create a parallel audit store: it reads the same

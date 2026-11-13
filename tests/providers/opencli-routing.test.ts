@@ -238,7 +238,6 @@ async function withSites(
     turnTimeoutSeconds: 30,
     tempRoot,
     ledger,
-    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: sites.run
   });
@@ -522,7 +521,6 @@ test("opencli bridge reports per-site health and isolates wedged turns", async (
     wedgedTimeoutMs: 50,
     tempRoot,
     ledger,
-    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: async (req) => {
       if (req.args.includes("gemini") && releaseTurn !== null) {
@@ -665,7 +663,6 @@ async function withBridge(
       : { modelSwitchPassMs: options.modelSwitchPassMs }),
     tempRoot,
     ledger: new OpencliConversationLedger(),
-    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: (request) => options.run(request, sites)
   });

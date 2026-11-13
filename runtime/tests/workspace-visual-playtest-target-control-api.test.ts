@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { WorkspaceVisualPlaytestTargetRepository } from "@simulatorlife/autodev-data/workspaces";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 const TOKEN = "v".repeat(64);

@@ -67,7 +67,7 @@ test("the CLI and the Control API reach the platform through its entry", () => {
     "runtime/src/cli/dev.ts",
     "runtime/src/cli/install.ts",
     "runtime/src/cli/provider-agent.ts",
-    "runtime/src/control-api/index.ts"
+    "runtime/src/control-api/request-handler.ts"
   ]) {
     assert.match(
       source(file),

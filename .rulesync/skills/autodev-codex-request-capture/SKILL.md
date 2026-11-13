@@ -10,9 +10,9 @@ through AutoDev's repository-scoped skill folders and is never installed at user
 level.
 
 Use it before changing anything that sits between Codex and a model provider:
-- `scripts/codex-model-router.mjs` routes, header allowlists, payload rewrites;
-- provider adapters such as `src/providers/minimax.ts`;
-- model catalogs in `scripts/codex/catalogs/`;
+- `runtime/src/router/` routes, header allowlists, payload rewrites;
+- provider adapters such as `runtime/src/providers/minimax.ts`;
+- model catalogs in `config/catalogs/`;
 - any claim about what leaves the machine.
 
 Documentation and memory describe what Codex *should* send. This procedure shows
@@ -42,8 +42,8 @@ responses-lite), so capture each path you are changing:
 
 | Path | `model` | `model_catalog_json` |
 | --- | --- | --- |
-| A provider profile talking to its adapter directly | e.g. `MiniMax-M3` | `scripts/codex/catalogs/minimax-model-catalog.json` |
-| The router's role aliases | e.g. `autodev/worker` | `scripts/codex/catalogs/codex-model-catalog.json` |
+| A provider profile talking to its adapter directly | e.g. `MiniMax-M3` | `config/catalogs/minimax-model-catalog.json` |
+| The router's role aliases | e.g. `autodev/worker` | `config/catalogs/codex-model-catalog.json` |
 
 ```bash
 node "$SKILL_DIR/scripts/responses-recorder.ts" --record "$WORK/requests.jsonl" --port 0 2>"$WORK/recorder.log" &
@@ -55,7 +55,7 @@ cat > "$WORK/home/config.toml" <<EOF
 model = "MiniMax-M3"
 model_provider = "capture"
 model_reasoning_effort = "high"
-model_catalog_json = "/path/to/AutoDev/scripts/codex/catalogs/minimax-model-catalog.json"
+model_catalog_json = "/path/to/AutoDev/config/catalogs/minimax-model-catalog.json"
 approval_policy = "never"
 sandbox_mode = "read-only"
 
@@ -158,8 +158,8 @@ Pair any finding with the local rollouts under `~/.codex/sessions`: `type:
 
 ## 6. Record the result and clean up
 
-- Put the Codex version, capture paths, shapes, and counts in
-  `docs/AUTODEV_PLATFORM_MIGRATION.md` or the relevant doc.
+- Put the Codex version, capture paths, shapes, and counts in the doc that
+  owns the path, such as `docs/provider-routing.md`.
 - Turn a reproducible shape into a hermetic test, for example in
-  `tests/minimax-proxy.test.mjs`.
+  `tests/minimax-proxy.test.ts`.
 - Delete `$WORK`, and never commit recorded requests.

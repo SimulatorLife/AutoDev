@@ -9,7 +9,7 @@ import { createAgentActivityTracker } from "../src/agents/agent-activity.ts";
 import {
   handleControlApiRequest,
   setControlApiLiveSessionsSource
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import {
   responseBody,
   responseRecorder

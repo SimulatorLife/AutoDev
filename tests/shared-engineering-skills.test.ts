@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
+
+const userLevel = userLevelSkills(
+  fileURLToPath(new URL("../.rulesync/skills", import.meta.url))
+);
 
 const read = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const materializer = read("runtime/src/platform/install-materializer.ts");
 const localSetup = read("docs/local-setup.md");
 const architecture = read(
   ".rulesync/skills/improve-codebase-architecture/SKILL.md"
@@ -16,8 +22,7 @@ const registeredSkills = ["diagnosing-bugs", "improve-codebase-architecture"];
 
 test("new engineering skills are registered as user-level skills", () => {
   for (const skill of registeredSkills) {
-    assert.match(materializer, new RegExp(skill));
-    assert.match(materializer, /userSkills/);
+    assert.ok(userLevel.includes(skill), skill);
     assert.match(localSetup, new RegExp("- `" + skill + "`"));
   }
 });

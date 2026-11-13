@@ -2,6 +2,7 @@
 set -euo pipefail
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$(dirname -- "$hook_dir")}"
+export PLAYWRIGHT_BROWSERS_PATH="$codex_home/provider-runtime/opencli/browsers"
 if [[ -z "${CODEX_ROUTER_OPENCLI_API_KEY:-}" && -f "$codex_home/.env" ]]; then
   CODEX_ROUTER_OPENCLI_API_KEY="$(awk -F= '$1 == "CODEX_ROUTER_OPENCLI_API_KEY" { value = substr($0, index($0, "=") + 1) } END { print value }' "$codex_home/.env")"
   if [[ -n "$CODEX_ROUTER_OPENCLI_API_KEY" ]]; then

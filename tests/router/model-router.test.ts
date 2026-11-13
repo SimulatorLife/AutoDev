@@ -269,10 +269,23 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
     /"incomplete"\)/,
     "the flushed payload must not claim it completed"
   );
-  assert.doesNotMatch(
+  // `response.failed` is reserved for a turn that failed before any output
+  // opened: there is nothing to preserve and the router can replay it on
+  // another provider. Exactly one emit site exists, and it is that method.
+  assert.equal(
+    bridge.match(/emit\("response\.failed"/g)?.length,
+    1,
+    "only the pre-output failure path may emit response.failed"
+  );
+  assert.match(
     bridge,
-    /emit\("response\.failed"/,
-    "a flushed turn must not also be reported as failed"
+    /emitFailed\([^)]*\): void \{[\s\S]*?emit\("response\.failed"/,
+    "response.failed belongs to the no-output failure path"
+  );
+  assert.match(
+    bridge,
+    /if \(!this\.stream\.started\) \{[\s\S]*?this\.stream\.emitFailed\(/,
+    "a failure after the stream opened must close as incomplete instead"
   );
   assert.doesNotMatch(bridge, /failedStream/);
 

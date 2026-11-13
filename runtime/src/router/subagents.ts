@@ -258,6 +258,11 @@ export interface RecordSubagentSpawnInput {
   requestId?: string | null | undefined;
   workspace?: string | null | undefined;
   count?: number | undefined;
+  /**
+   * The spawned agent's own thread. A thread is spawned once: every later
+   * request it makes is the same agent, not a new spawn.
+   */
+  thread?: string | null | undefined;
 }
 
 /**
@@ -343,7 +348,8 @@ export interface OrchestratorSessionEntry {
   updatedAt: number;
 }
 
-export interface SubagentSessionEntry {
+/** The provider that last served one subagent thread, for that agent's continuity. */
+export interface SubagentThreadEntry {
   provider: string;
   role: string;
   model: string | null;
@@ -681,7 +687,16 @@ export class SubagentRegistry {
     string,
     OrchestratorSessionEntry
   >();
-  private readonly subagentSessions = new Map<string, SubagentSessionEntry>();
+  /**
+   * Keyed by the agent's own thread. A subagent shares its root's session key
+   * with every sibling, so keying continuity by session made the first child's
+   * provider -- or, through the root's activity record, the orchestrator's --
+   * every later child's preferred provider: with a Codex orchestrator every
+   * subagent was pinned to Codex ahead of the providers ranked above it.
+   */
+  private readonly subagentThreads = new Map<string, SubagentThreadEntry>();
+  /** Threads whose spawn was already recorded: one agent is one spawn. */
+  private readonly spawnedThreads = new Set<string>();
   private readonly workspaceMetadataBySession = new Map<
     string,
     {
@@ -846,8 +861,8 @@ export class SubagentRegistry {
     return entry ? { ...entry } : null;
   }
 
-  noteSubagentSession(
-    sessionKey: string | null | undefined,
+  noteSubagentThread(
+    agentKey: string | null | undefined,
     role: string | null | undefined,
     provider: string | null | undefined,
     details: {
@@ -856,50 +871,35 @@ export class SubagentRegistry {
       requestId?: string | null;
     } = {}
   ): void {
-    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !provider)
+    if (!agentKey || agentKey === PROCESS_FALLBACK_SESSION_KEY || !provider)
       return;
-    const entry: SubagentSessionEntry = {
+    this.subagentThreads.delete(agentKey);
+    this.subagentThreads.set(agentKey, {
       provider,
       role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
       model: details.model ?? null,
       workspace: details.workspace ?? null,
       requestId: details.requestId ?? null,
       updatedAt: Date.now()
-    };
-    if (role) {
-      this.subagentSessions.delete(sessionKey + ":" + role);
-      this.subagentSessions.set(sessionKey + ":" + role, entry);
-    }
-    this.subagentSessions.delete(sessionKey);
-    this.subagentSessions.set(sessionKey, entry);
-    while (this.subagentSessions.size > this.maxTrackedSessions) {
-      const oldest = this.subagentSessions.keys().next().value;
-      if (oldest !== undefined) this.subagentSessions.delete(oldest);
+    });
+    while (this.subagentThreads.size > this.maxTrackedSessions) {
+      const oldest = this.subagentThreads.keys().next().value;
+      if (oldest !== undefined) this.subagentThreads.delete(oldest);
     }
   }
 
-  subagentProviderForSession(
-    sessionKey: string | null | undefined,
-    role?: string | null
+  subagentProviderForThread(
+    agentKey: string | null | undefined
   ): string | null {
-    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-    if (role) {
-      const scoped = this.subagentSessions.get(sessionKey + ":" + role);
-      if (scoped) return scoped.provider;
-    }
-    return this.subagentSessions.get(sessionKey)?.provider ?? null;
+    if (!agentKey || agentKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    return this.subagentThreads.get(agentKey)?.provider ?? null;
   }
 
-  subagentSessionInfo(
-    sessionKey: string | null | undefined,
-    role?: string | null
-  ): SubagentSessionEntry | null {
-    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-    if (role) {
-      const scoped = this.subagentSessions.get(sessionKey + ":" + role);
-      if (scoped) return { ...scoped };
-    }
-    const entry = this.subagentSessions.get(sessionKey);
+  subagentThreadInfo(
+    agentKey: string | null | undefined
+  ): SubagentThreadEntry | null {
+    if (!agentKey || agentKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    const entry = this.subagentThreads.get(agentKey);
     return entry ? { ...entry } : null;
   }
 
@@ -1306,7 +1306,8 @@ export class SubagentRegistry {
       tool = null,
       requestId = null,
       workspace = null,
-      count = 1
+      count = 1,
+      thread = null
     } = input;
     if (
       !SUBAGENT_MECHANISMS.includes(mechanism as SubagentMechanism) ||
@@ -1314,6 +1315,14 @@ export class SubagentRegistry {
       count < 1
     )
       return null;
+    if (thread) {
+      if (this.spawnedThreads.has(thread)) return null;
+      this.spawnedThreads.add(thread);
+      while (this.spawnedThreads.size > this.maxTrackedRequests) {
+        const oldest = this.spawnedThreads.values().next().value;
+        if (oldest !== undefined) this.spawnedThreads.delete(oldest);
+      }
+    }
     const resolvedProvider =
       typeof provider === "string" && provider.trim()
         ? safeMetricLabel(provider)
@@ -1373,6 +1382,8 @@ export class SubagentRegistry {
     };
     this.subagentTelemetry.recent = [];
     this.orchestratorSessions.clear();
+    this.subagentThreads.clear();
+    this.spawnedThreads.clear();
     this.bridgeRequestContext.clear();
     this.bridgeSessionContext.clear();
     for (const key of this.bridgeSubagentUsage.keys()) {
@@ -1575,8 +1586,8 @@ export function orchestratorSessionInfo(
   return getDefaultSubagentRegistry().orchestratorSessionInfo(sessionKey);
 }
 
-export function noteSubagentSession(
-  sessionKey: string | null | undefined,
+export function noteSubagentThread(
+  agentKey: string | null | undefined,
   role: string | null | undefined,
   provider: string | null | undefined,
   details: {
@@ -1585,29 +1596,24 @@ export function noteSubagentSession(
     requestId?: string | null;
   } = {}
 ): void {
-  getDefaultSubagentRegistry().noteSubagentSession(
-    sessionKey,
+  getDefaultSubagentRegistry().noteSubagentThread(
+    agentKey,
     role,
     provider,
     details
   );
 }
 
-export function subagentProviderForSession(
-  sessionKey: string | null | undefined,
-  role?: string | null
+export function subagentProviderForThread(
+  agentKey: string | null | undefined
 ): string | null {
-  return getDefaultSubagentRegistry().subagentProviderForSession(
-    sessionKey,
-    role
-  );
+  return getDefaultSubagentRegistry().subagentProviderForThread(agentKey);
 }
 
-export function subagentSessionInfo(
-  sessionKey: string | null | undefined,
-  role?: string | null
-): SubagentSessionEntry | null {
-  return getDefaultSubagentRegistry().subagentSessionInfo(sessionKey, role);
+export function subagentThreadInfo(
+  agentKey: string | null | undefined
+): SubagentThreadEntry | null {
+  return getDefaultSubagentRegistry().subagentThreadInfo(agentKey);
 }
 
 export function hasActiveBridgeSubagentsForSession(

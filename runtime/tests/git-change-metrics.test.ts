@@ -123,6 +123,41 @@ test("a root commit's files and lines are measured against the empty tree", asyn
   });
 });
 
+test("merge commits measure the first-parent change consistently", async () => {
+  await withGitRepository(async (root) => {
+    await writeFile(join(root, "base.txt"), "base\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "base"]);
+
+    execGit(root, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(join(root, "feature.txt"), "feature one\nfeature two\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "feature change"]);
+
+    execGit(root, ["checkout", "-q", "main"]);
+    await writeFile(join(root, "main.txt"), "main\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "main change"]);
+    execGit(root, ["merge", "--no-ff", "-q", "feature", "-m", "merge feature"]);
+    const commit = execGit(root, ["rev-parse", "HEAD"]);
+
+    const [change] = await measureGitCommitChanges({
+      repositoryRoot: root,
+      commits: [commit]
+    });
+
+    assert.ok(change, "the merge commit must be measured");
+    // The first-parent diff is the change the merge introduced to the
+    // mainline, and file and line totals must describe that same diff.
+    assert.equal(change.filesChanged, 1);
+    assert.equal(change.filesAdded, 1);
+    assert.equal(change.filesDeleted, 0);
+    assert.equal(change.linesAdded, 2);
+    assert.equal(change.linesRemoved, 0);
+    assert.equal(change.partial, false);
+  });
+});
+
 test("commit measurements bound independent Git reads and preserve commit order", async () => {
   const commits = ["1", "2", "3", "4", "5", "6"].map((digit) =>
     digit.repeat(40)
@@ -140,10 +175,10 @@ test("commit measurements bound independent Git reads and preserve commit order"
       const commit = args.at(-1) ?? "";
       if (args[0] === "log")
         return { exitCode: 0, stdout: "human@example.test" };
-      if (args[0] === "diff-tree") {
+      if (args[0] === "show" && args.includes("--name-status")) {
         return { exitCode: 0, stdout: `A\t${commit}.txt` };
       }
-      if (args[0] === "show") {
+      if (args[0] === "show" && args.includes("--numstat")) {
         return { exitCode: 0, stdout: `1\t0\t${commit}.txt` };
       }
       throw new Error(`Unexpected Git operation: ${String(args[0])}`);
@@ -248,7 +283,7 @@ test("an agent commit's own identity is read back from git, a human commit's is 
     // is exactly how a spawned agent commits.
     const identity = gitCommitIdentity({
       role: "orchestrator",
-      provider: "antigravity"
+      provider: "antigravity-gemini"
     });
     assert.ok(identity, "a known role must yield an identity");
     await writeFile(join(root, "agent.txt"), "agent\n");
@@ -274,7 +309,7 @@ test("an agent commit's own identity is read back from git, a human commit's is 
     assert.equal(byCommit.get(humanCommit)?.actor, null);
     assert.deepEqual(byCommit.get(agentCommit)?.actor, {
       role: "orchestrator",
-      provider: "antigravity"
+      provider: "antigravity-gemini"
     });
   });
 });

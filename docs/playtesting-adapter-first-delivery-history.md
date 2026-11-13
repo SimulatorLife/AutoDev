@@ -1255,7 +1255,7 @@ and a game that cannot classify a persisted result reports `unknown`; neither is
 reconstructed from execution state.
 
 **RacingGame generic-binding migration (2026-10-13):** The local
-`/Users/henrykirk/Desktop/RacingGame` branch advanced concurrently to
+`~/Desktop/RacingGame` branch advanced concurrently to
 `6a8ca817b`, which includes the generic migration and concurrent UI/E2E changes.
 The remaining modified precision-plan, presentation and E2E files were preserved; the
 precision-plan edit in this tree records the review-cap assumptions. RacingGame now
@@ -1367,7 +1367,7 @@ The directly changed dispatch/auth/UI files pass targeted ESLint and
 Prettier checks. The repository-wide `pnpm lint:ci` still reports 219 findings
 in other concurrently modified files; no lint rules or performance thresholds
 were relaxed. `autodev playtest check --checkout-root
-/Users/henrykirk/Desktop/RacingGame` passes, with only the expected warning that
+~/Desktop/RacingGame` passes, with only the expected warning that
 optional invariants/snapshot/replay/fork/captureFrame capabilities are not bound. This
 is a read-only check; no RacingGame conformance episode or real model call was
 run. The earlier one-off saturated-filter timing failure did not recur in the
@@ -1375,13 +1375,13 @@ standalone Console suite or five consecutive URL-performance test runs; its
 threshold was not changed.
 
 **Verification refresh (2026-10-15):** The separate RacingGame-owned
-`pnpm --dir /Users/henrykirk/Desktop/RacingGame run
+`pnpm --dir ~/Desktop/RacingGame run
 playtest:game-manifests:check` first found a stale generated game bundle. The
 canonical `playtest:game-adapter` generator then refreshed only
 `.autodev/adapter/racinggame-playtest-game.mjs`; the manifest check passed and
 reported evaluator/engine provenance verified. AutoDev's read-only
 `pnpm run autodev -- playtest check --checkout-root
-/Users/henrykirk/Desktop/RacingGame` also passed, with only the expected warning
+~/Desktop/RacingGame` also passed, with only the expected warning
 that optional invariants/snapshot/replay/fork/captureFrame capabilities are
 unbound. The target checkout still has in-progress edits, so this generated
 artifact reflects a dirty tree and is not a clean, approved build identity.
@@ -1565,7 +1565,7 @@ for these implementation tests.
 requires Control API contract v4. A fresh read-only
 `node runtime/src/cli/verify-control-api.ts` against the active listener on
 4101 exits with a stale-contract startup refusal; the listener belongs to the
-shared `/Users/henrykirk/.codex/src/router/server.ts`, so it was not restarted.
+shared `~/.codex/src/router/server.ts`, so it was not restarted.
 A headless Playwright read against the already-running Console at 3300 opened the
 real RacingGame session detail and asserted HTTP 200, episode identity, the
 `3 / 4`, `51 / 3`, and `0 / 2190` deterministic metrics, and the explicit
@@ -1789,7 +1789,7 @@ approval. A Workspaces approval now authorizes a **checkout**, not a commit.
       checkout; the managed Router (4101) and Console (3300) were untouched.
       Through the UI, the operator revoked approval revision 3 (pinned to a
       detached `/private/tmp` worktree at `beb03c21`) and approved revision 5 for
-      `/Users/henrykirk/Desktop/RacingGame`. Without re-approval, capabilities
+      `~/Desktop/RacingGame`. Without re-approval, capabilities
       resolved the dirty checkout's `HEAD` `a1f3a95360e879d8562ab223bd448f6e1dc4ed50` and
       validated it. A one-assignment batch, `batch-fedc555b-6af8-44c8-886f-6b85c818a6d6`
       (seed `confirmation`), started from the run form. The start card and live

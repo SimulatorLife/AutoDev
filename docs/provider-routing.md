@@ -687,12 +687,13 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   polls provider usage limits every 60s in the background, keeping positive
   readiness evidence fresh.
 
-- **Subagents and orchestrators stay with their session provider across turns.**
-  Both orchestrator sessions (`noteOrchestratorSession`) and subagent sessions
-  (`noteSubagentSession`) are tracked by the SubagentRegistry. Multi-turn
-  subagent sessions and parked subagents reused for follow-up assignments retain
-  their allocated provider (`subagentProviderForSession`) rather than reshuffling
-  providers mid-session.
+- **Each agent stays with its own provider across turns.** The SubagentRegistry
+  tracks the orchestrator by its session (`noteOrchestratorSession`) and each
+  subagent by its own thread (`noteSubagentThread`). A multi-turn subagent, or a
+  parked one reused for a follow-up assignment, keeps the provider that last
+  served its thread (`subagentProviderForThread`) rather than reshuffling. A new
+  subagent inherits nothing from its orchestrator or siblings: it is ranked by
+  priority.
 - **Short cooldowns on preferred providers are waited out rather than causing mid-session hops.**
   When an orchestrator or subagent session experiences a short transient, probe,
   or rate-limit cooldown (<= 30 s) on its preferred provider, `tryPrimaryRoute`
@@ -792,10 +793,17 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 Selection then runs in up to three passes, and only answers if all three come up
 empty:
 
-1. **Primary (with sticky session continuity and short-cooldown waiting).** Every
-   candidate that is not cooling, in tier order, with the session's sticky
-   `preferredProvider` hoisted first (both across an orchestrator session and
-   across a subagent's `thread:<threadId>` sub-session, even between tool calls).
+1. **Primary (with sticky agent continuity and short-cooldown waiting).** Every
+   candidate that is not cooling, in tier order, with the agent's sticky
+   `preferredProvider` hoisted first: the orchestrator keeps the provider its
+   session started on, and a subagent keeps the provider that last served its
+   own thread, even between tool calls. Continuity is the agent's, never its
+   session's: a subagent's first request has no preference, so it is ranked by
+   priority like any other. Keying it by the shared session key once handed
+   every new child the orchestrator's (or a sibling's) provider -- with a Codex
+   orchestrator every subagent went to Codex ahead of the providers ranked
+   above it (observed 2026-11-13: 121 of 121 subagent requests, none skipping
+   a higher priority).
    When the sticky preferred provider is in a short non-config cooldown (or
    hits a transient rate-limit/blip that sets a short cooldown) that expires
    within `CODEX_ROUTER_STICKY_COOLDOWN_WAIT_MS` (default 15s for role requests,
@@ -804,7 +812,20 @@ empty:
    provider once before switching providers mid-session. If the cooldown is a
    longer quota window, the router falls back to the next candidate without
    waiting.
-2. **Last resort.** The candidates pass 1 skipped, capped at
+   A provider at one of its **agent limits** is skipped too (`skipped`,
+   failure class `agent_limit_per_session` or `agent_limit_across_sessions`).
+   The Console's _Per session_ and _Across sessions_ limits cap how many agents
+   -- the orchestrator and subagents alike, each one live activity subject --
+   run on the provider at once, within the request's session (the root and its
+   children share a session id) and over every session. An agent already live
+   on the provider is continuing, not arriving, and is never refused, so a
+   lowered limit gates new agents rather than cutting off ones mid-turn. The
+   check runs after any provider-capacity wait and immediately before the
+   attempt opens its activity record, with no await between, so two agents
+   spawned together cannot both take the last place. These limits were once
+   persisted and shown but never read by routing.
+2. **Last resort.** The candidates pass 1 skipped (never one at an agent
+   limit), capped at
    `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Providers with no live
    agent go first, so concurrent exhausted requests spread over the skipped
    providers rather than piling onto one (the caller's own agent, often still
@@ -2124,7 +2145,10 @@ policy working.
 
 Both mechanisms land in one `status.subagents` aggregate: `total`,
 `byMechanism` (`router_alias` / `bridge_native`), `byProvider`, `byRole`,
-`byStatus`, and the 50 most recent spawns. `router_alias` spawns are attributed
+`byStatus`, and the 50 most recent spawns. A `router_alias` spawn is one child
+thread, counted on that thread's first request; every later request it makes is
+the same agent. Counting each request as a spawn once reported nine spawns for
+one explorer. `router_alias` spawns are attributed
 to the provider that served the `autodev/orchestrator` turn for the same
 session, which is the only join available: a child thread's request carries no
 trace of which provider ran its parent. The join is skipped for callers that
@@ -2388,7 +2412,7 @@ intended repository, and inspect the app task/log event for those failures.
 | MiniMax                         | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
 | Antigravity                     | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
 | GitHub Copilot                  | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
-| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge `:4004` -> `opencli <site>` -> signed-in browser tab | One provider per web chat site, each with the site's own models (`opencli-chatgpt-advanced`, `opencli-gemini-3.1-pro`). Requires opencli's Browser Bridge Chrome extension and a signed-in site session. Turns for one site run one at a time (one browser tab). Opt-in: in no `providerGroups` tier by default.                                                                                                          |
+| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge :4004 -> opencli site command -> AutoDev-owned signed-in Chromium tab | One provider per web chat site, each with its own site models. Requires the separately installed AutoDev Chromium and a site session signed into its private profile. Turns use a per-site tab pool sized to route concurrency. Opt-in: in no providerGroups tier by default. |
 | Local router                    | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
@@ -2467,13 +2491,14 @@ the workspace (observed 2026-09-18, worker thread
 
 ### opencli: web chat sites as models, Codex executes every tool
 
-[opencli](https://github.com/jackwener/opencli) (`@jackwener/opencli`, pinned
-in `runtime/package.json`) drives a chat site's own web UI through the user's
-signed-in browser and returns the reply as JSON. (Moving this off the user's
-own Chrome onto a dedicated browser, and why headless is not viable, is
-investigated in [`opencli-separate-browser.md`](opencli-separate-browser.md).)
-Each site is its own
-provider -- `opencli-chatgpt` and `opencli-gemini` -- with its own route,
+[opencli](https://github.com/jackwener/opencli), pinned in Runtime, drives a
+chat site's web UI through an AutoDev-owned, signed-in Chromium profile and
+returns the reply as JSON. The normal installer provisions the matching headed
+Chromium build; the bridge starts it on demand, keeps CDP on loopback, and
+never attaches to the user's everyday Chrome or opencli's shared Browser
+Bridge daemon. Headless is not viable because ChatGPT's Cloudflare check blocks
+it; see the dedicated-browser investigation for setup and evidence. Each site
+is its own provider -- `opencli-chatgpt` and `opencli-gemini` -- with its own route,
 catalog (`config/catalogs/<provider>-model-catalog.json`), discovery, and the
 models that site offers, so the Console assigns a site model per role as for
 any other provider. Both providers are served by the one bridge on `:4004`.
@@ -2854,18 +2879,19 @@ single list; the route patterns and the site registry in
   makes a root wait on all its children in one `wait_agent` call of at least
   300 s: a root polling at 10 s spent an Advanced-model turn, and one of the
   site's tabs, on every wake.
-- **Tab pool.** A site runs its turns in as many browser tabs as its route's
-  `maxConcurrentRequests`, one turn per tab. With one tab per site, more than
-  half of a ChatGPT turn's time (p50 114 s; 51 s of it the site actually
-  working) was spent queued behind other agents' turns, two to six of them
-  deep for most of the day. The bridge passes the pool to opencli as
-  `OPENCLI_SITE_SLOTS` (`chatgpt:3,gemini:1`): each command borrows a free
-  persistent tab (`site:<site>#<n>`) from opencli's daemon and gives it back
-  when it ends. Three concurrent ChatGPT turns in background tabs -- two
-  continuing chats and one new -- each answered correctly in 38-48 s. Gemini
-  keeps one tab: its model picker does not render in a background tab.
-  The bridge admits turns in arrival order, as many at once as the site has
-  tabs (`SiteTabs` in `opencli.ts`). A site's model is an account setting
+- **Dedicated browser and tab pool.** A site runs its turns in as many
+  browser tabs as its route's `maxConcurrentRequests`, one turn per tab. The
+  bridge owns a separate visible Chromium process and persistent profile under
+  `$CODEX_HOME`; it launches Chromium with an ephemeral CDP port bound to
+  `127.0.0.1` and reads that port from the profile's `DevToolsActivePort`.
+  `OpencliBrowser` creates the initial site tabs and leases each command a
+  unique tab's exact `ws://127.0.0.1/...` target with `--site-session
+  ephemeral`. This replaces `OPENCLI_SITE_SLOTS` and the shared Browser Bridge
+  daemon: opencli's direct-CDP mode rejects that pool variable and otherwise
+  picks one best-matching target, which could make concurrent commands collide.
+  Missing targets are recreated before the next command. The bridge admits
+  turns in arrival order, as many at once as the site has tabs (`SiteTabs` in
+  `opencli.ts`). A site's model is an account setting
   (`chatgpt model` changes the account's last-used model), so turns share
   the site only while they want the model it is on: a turn that wants
   another waits for the site to drain and runs alone, so its switch cannot
@@ -2873,14 +2899,13 @@ single list; the route patterns and the site registry in
   the model the site is on take the free tabs for its first 30 s
   (`MODEL_SWITCH_PASS_MS`); after that nothing more starts until the site
   has drained for the switch, so a switch is never starved and a root at one
-  level no longer serializes its workers at another. ChatGPT's upload allowance is checked once a turn has a tab, counting
-  the uploads the site's other tabs are making, so concurrent turns cannot
-  both spend the last one. Different sites run in parallel. A command the
-  bridge cancels ends at once, but opencli's daemon keeps its tab until that
-  command's browser step finishes; a refusal with `SESSION_BUSY` is waited
-  out (retrying every 5 s) until the turn's own timeout instead of failing
-  the turn; one that outlasts the timeout is a refusal (nothing was sent),
-  not a provider failure that cools the provider down.
+  level no longer serializes its workers at another. ChatGPT's upload
+  allowance is checked once a turn has a tab, counting the uploads the site's
+  other tabs are making, so concurrent turns cannot both spend the last one.
+  Different sites run in parallel. A cancelled command stops its CLI process
+  and releases the leased target; if the site's request was already sent, the
+  accepted-turn ledger governs recovery rather than assuming nothing happened.
+
 - **Every command runs within the turn's budget.** A retried command gets a
   `--timeout` of what is left of the turn, not a fresh full one, and a retry
   is not started with under 10 s left. A command that is still running 15 s
@@ -3057,11 +3082,6 @@ single list; the route patterns and the site registry in
   down. Cooling a provider for a browser tab that was not ready yet pushed
   every other agent off a working route, and the session ended with a refusal
   that named none of the providers that were excluded.
-- **A daemon of another version is replaced, not fatal.** opencli's daemon is
-  shared machine-wide on one port, so the CLI the repository pins can meet the
-  daemon a global install left running. The CLI's own remedy is to stop the
-  daemon by hand; the bridge owns the CLI it runs, so it stops the daemon and
-  runs the command again instead of failing the turn.
 - **The prompt a site is given is bounded.** A site that takes its prompt on
   the command line takes at most 100 KB, and one that takes it as an
   attachment is bounded the same way for the model: a root orchestrator's tool
@@ -3084,10 +3104,15 @@ single list; the route patterns and the site registry in
   entry plus its `OPENCLI_SITE_SPECS` entry (turn commands and model list),
   route, catalog, and contract entry; the load-time check refuses a site
   without a spec.
-- **Prerequisites.** opencli's daemon starts on demand, but its Browser Bridge
-  Chrome extension and each site's sign-in are the user's. Check them with
-  `node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor` and
-  `… chatgpt status`; sign in with `… chatgpt login`.
+- **Prerequisites and health.** The normal installer installs the exact
+  Chromium build selected by Runtime's pinned `playwright-core` into
+  `$CODEX_HOME/provider-runtime/opencli/browsers`; the visible browser starts
+  on demand and stores its separate site sessions in
+  `$CODEX_HOME/run/opencli-browser-profile`. Browser startup/transport failure
+  is reported as `dedicated_browser_unavailable`, distinct from a site's
+  signed-out state. The operator signs in to both sites in this dedicated
+  browser; no Browser Bridge extension or machine-wide daemon is used. Gemini
+  account selection is configured with `OPENCLI_GEMINI_ACCOUNT` when needed.
 
 ### Antigravity: agy executes its own tools, so its reasoning stream is the record
 
@@ -3341,11 +3366,17 @@ installer is the only supported materialization path into
 `$CODEX_HOME`; materialized runtime copies and symlinks, logs, and
 `.env` credentials remain machine-local and are not versioned.
 
-- User-level skills: `.rulesync/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
-  are versioned directories owned by AutoDev in the single canonical skill
-  source (also the Rulesync input). The installer creates absolute,
-  directory-level symlinks under `$HOME/.agents/skills/`, so Codex reads the
-  canonical skill files without a second copied source of truth. Keep each
+- User-level skills: every `.rulesync/skills/<name>` whose frontmatter declares
+  `targets` is a versioned directory owned by AutoDev in the single canonical
+  skill source (also the Rulesync input); a skill that keeps Rulesync's default
+  targets is repository-only. `runtime/src/platform/user-level-skills.ts` reads
+  that set from the frontmatter, so there is no second hand-kept list. The
+  installer creates absolute, directory-level symlinks under
+  `$HOME/.agents/skills/`, so Codex reads the canonical skill files, bundled
+  `references/` and scripts included, without a second copied source of truth,
+  and removes a link into the canonical source whose skill is no longer
+  user-level. `tests/rulesync-skills.test.ts` requires every skill a role
+  enables to be user-level and every file a skill names to exist. Keep each
   source `SKILL.md` as a regular file; `--check` rejects file-level or relative
   skill links because Codex currently skips symlinked `SKILL.md` files.
 - Native command rules: `agents/rules/default.rules` is the versioned
@@ -3489,7 +3520,7 @@ tool"):
 | `runtime/src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
 | `runtime/src/providers/copilot.ts`     | the `copilot` CLI's own login.                                                                                                                                                                                              |
 | `runtime/src/providers/minimax.ts`     | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
-| `runtime/src/providers/opencli.ts`     | the user's own signed-in browser session on each chat site, through opencli's Browser Bridge extension; no credential reaches the bridge.                                                                                   |
+| runtime/src/providers/opencli.ts | an AutoDev-owned signed-in Chromium profile for each chat site, through loopback CDP; cookies remain in the private profile and no credential reaches the bridge. |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have

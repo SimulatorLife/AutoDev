@@ -56,7 +56,10 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { PlaytestArtifactReference } from "@simulatorlife/autodev-core";
+import {
+  isPlainObject,
+  type PlaytestArtifactReference
+} from "@simulatorlife/autodev-core";
 
 function encodeWindowEntries(
   entries: readonly unknown[],
@@ -664,12 +667,6 @@ function assertNotHumanEntry(entry: unknown): void {
       "Human responses must not enter this generic LLM artifact store; participant data is governed by a separate consent-scoped store."
     );
   }
-}
-
-function isPlainObject(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isWithin(parent: string, child: string): boolean {

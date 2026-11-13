@@ -581,7 +581,11 @@ async function runOauthMissingCase(
   }
 }
 
-/** A model the CLI refuses must reach the router as a non-retryable 400, not an outage. */
+/**
+ * A model the CLI refuses reaches the router as a non-retryable refusal, not an
+ * outage: the streamed turn fails before output carrying `invalid_model`, which
+ * is what cools down only that model rather than the provider.
+ */
 async function runRejectedModelCase(
   name: string,
   rawCase: ContractCase
@@ -613,19 +617,27 @@ async function runRejectedModelCase(
         ...item.request
       })
     });
+    const body = await response.text();
     assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
-    const payload = JSON.parse(await response.text());
-    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
-    assert.equal(payload.error?.code, item.expected.errorCode, `${name}: code`);
+    const events = parseSse(body);
+    assert.deepEqual(
+      events.map(({ event }) => event),
+      item.expected.eventTypes,
+      `${name}: one terminal failure and nothing else`
+    );
+    const error = events.find(({ event }) => event === "response.failed")?.data
+      ?.response?.error;
+    assert.equal(error?.type, item.expected.failedType, `${name}: error type`);
+    assert.equal(error?.code, item.expected.failedCode, `${name}: error code`);
     assert.match(
-      payload.error?.message ?? "",
+      error?.message ?? "",
       new RegExp(item.expected.errorMessageContains),
-      `${name}: the CLI's own explanation reaches the router`
+      `${name}: error message contains marker`
     );
     assert.doesNotMatch(
-      JSON.stringify(payload),
+      body,
       new RegExp(PRIVACY_TOKEN),
-      `${name}: prompt content must not be in error body`
+      `${name}: prompt content must not be in the failure`
     );
   } finally {
     await stop(child);
@@ -634,12 +646,12 @@ async function runRejectedModelCase(
 }
 
 /**
- * A rate limit the CLI reports before any output never opens the stream.
+ * A rate limit the CLI reports before any output opens no output item.
  *
- * The bridge writes nothing until the first real content, so a limit that
- * arrives first is still an HTTP answer: a 429 carrying the declared limit as
- * `error.limit`, with no `response.output_item.added` anywhere. That is what
- * lets the router ask its next candidate instead of forwarding a failed turn.
+ * A streamed turn answers at once, so the limit arrives as one terminal
+ * `response.failed` carrying the declared limit as `error.limit`, with no
+ * `response.output_item.added` anywhere. That is what lets the router ask its
+ * next candidate on the same stream instead of forwarding a failed turn.
  */
 async function runPreOutputLimitCase(
   name: string,
@@ -676,20 +688,28 @@ async function runPreOutputLimitCase(
     assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
     assert.equal(
       response.headers.get("content-type"),
-      "application/json",
-      `${name}: answered before any stream opened`
-    );
-    assert.match(
-      response.headers.get("retry-after") ?? "",
-      /^\d+$/,
-      `${name}: retry hint`
+      "text/event-stream",
+      `${name}: a streamed request is answered as a stream`
     );
     assert.doesNotMatch(body, /response\.output_item\.added/);
     assert.doesNotMatch(body, new RegExp(PRIVACY_TOKEN));
-    const payload = JSON.parse(body);
-    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    const events = parseSse(body);
     assert.deepEqual(
-      payload.error?.limit,
+      events.map(({ event }) => event),
+      item.expected.eventTypes,
+      `${name}: one terminal failure and nothing else`
+    );
+    const failed = events.find(({ event }) => event === "response.failed")?.data
+      ?.response;
+    assert.equal(failed?.status, "failed", `${name}: status`);
+    assert.deepEqual(failed?.output, [], `${name}: no output`);
+    assert.equal(
+      failed?.error?.type,
+      item.expected.failedType,
+      `${name}: type`
+    );
+    assert.deepEqual(
+      failed?.error?.limit,
       item.expected.limit,
       `${name}: limit`
     );

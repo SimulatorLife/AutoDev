@@ -14,6 +14,7 @@
  * key. The result is one place where the registry vocabulary is written.
  */
 
+import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestCoverageModality,
   type PlaytestDimensionRubric,
@@ -285,12 +286,6 @@ const PRIORITY_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 const POLARITIES: ReadonlySet<string> = new Set(PLAYTESTS_POLARITIES);
-
-function isPlainObject(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function assertNonEmptyString(
   value: unknown,

@@ -20,6 +20,7 @@ import {
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
 import { ensureBridgeRouterAuth, ensureRouterAuth } from "./install-state.ts";
+import { installOpencliBrowser } from "./opencli-browser-install.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -106,6 +107,7 @@ export function runInstallCommand(
         installPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0
       )
         return 1;
+      if (installOpencliBrowser({ repositoryRoot, codexHome }) !== 0) return 1;
     }
     materializeInstallation({
       repositoryRoot,

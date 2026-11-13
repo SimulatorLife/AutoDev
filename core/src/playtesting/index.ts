@@ -41,6 +41,7 @@ export * from "./human-study-import.ts";
 export * from "./issue-drafts.ts";
 export * from "./metric-evaluation.ts";
 export * from "./native-timing.ts";
+export * from "./object-guards.ts";
 export * from "./observability.ts";
 export * from "./operation-validation.ts";
 export * from "./player-debrief.ts";

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { compareInvestigations } from "../.rulesync/skills/autodev-session-diagnostics/scripts/investigation-compare.ts";
 import { probe } from "../.rulesync/skills/autodev-session-diagnostics/scripts/mcp-probe.ts";
 import {
   buildReport,
@@ -22,6 +23,12 @@ import {
   traceThread
 } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
 
+const COMPARE_SCRIPT = fileURLToPath(
+  new URL(
+    "../.rulesync/skills/autodev-session-diagnostics/scripts/investigation-compare.ts",
+    import.meta.url
+  )
+);
 const SCRIPT = fileURLToPath(
   new URL(
     "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts",
@@ -31,6 +38,143 @@ const SCRIPT = fileURLToPath(
 const ROOT = "01a0b662-0000-7000-8000-000000000001";
 const CHILD = "01a0b664-0000-7000-8000-000000000002";
 const OTHER = "01a0b699-0000-7000-8000-000000000003";
+
+test("observed investigations with an omitted metric count as metric-missing", () => {
+  const result = compareInvestigations(
+    [
+      { investigation: { observed: true } },
+      { investigation: { observed: false } }
+    ],
+    [{ investigation: { observed: true, toolCalls: 5 } }]
+  );
+  assert.deepEqual(result.before.metrics.toolCalls, {
+    observed: 0,
+    missing: 2,
+    unavailableThreads: 1,
+    total: null,
+    mean: null
+  });
+  assert.deepEqual(result.after.metrics.toolCalls, {
+    observed: 1,
+    missing: 0,
+    unavailableThreads: 0,
+    total: 5,
+    mean: 5
+  });
+});
+
+test("comparison rejects malformed thread records and investigation values", () => {
+  assert.throws(
+    () => compareInvestigations(null as never, []),
+    /before: expected a session-trace JSON object with a threads array/
+  );
+  assert.throws(() => compareInvestigations([{ nope: true } as never], []));
+  assert.throws(() =>
+    compareInvestigations(
+      [{ investigation: { observed: true, toolCalls: Number.NaN } }],
+      []
+    )
+  );
+});
+
+test("comparison CLI reads session-trace reports and gives useful malformed-input errors", () => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "autodev-investigation-compare-")
+  );
+  try {
+    const before = join(directory, "before.json"),
+      after = join(directory, "after.json"),
+      bad = join(directory, "bad.json");
+    writeFileSync(
+      before,
+      JSON.stringify({
+        threads: [{ investigation: { observed: true, toolCalls: 2 } }]
+      })
+    );
+    writeFileSync(
+      after,
+      JSON.stringify({
+        threads: [{ investigation: { observed: true, toolCalls: 3 } }]
+      })
+    );
+    writeFileSync(bad, JSON.stringify({ threads: [null] }));
+    const good = spawnSync(process.execPath, [COMPARE_SCRIPT, before, after], {
+      encoding: "utf8"
+    });
+    assert.equal(good.status, 0, good.stderr);
+    assert.equal(JSON.parse(good.stdout).deltas.toolCalls.total, 1);
+    const invalid = spawnSync(process.execPath, [COMPARE_SCRIPT, before, bad], {
+      encoding: "utf8"
+    });
+    assert.equal(invalid.status, 1);
+    assert.match(invalid.stderr, /threads\[0\] must be an object/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("investigation comparison aggregates observed values and preserves missingness", () => {
+  const result = compareInvestigations(
+    [
+      {
+        investigation: {
+          observed: true,
+          toolCalls: 8,
+          tokens: null,
+          filesRead: 3,
+          repeatedReads: 1,
+          searches: 2,
+          repeatedSearches: 0,
+          context: { ccc: 1, cgc: 2, lsp: 0 }
+        }
+      },
+      {
+        investigation: {
+          observed: false,
+          toolCalls: 0,
+          tokens: null,
+          filesRead: 0,
+          repeatedReads: 0,
+          searches: 0,
+          repeatedSearches: 0,
+          context: { ccc: 0, cgc: 0, lsp: 0 }
+        }
+      }
+    ],
+    [
+      {
+        investigation: {
+          observed: true,
+          toolCalls: 4,
+          tokens: 20,
+          filesRead: 1,
+          repeatedReads: 0,
+          searches: 1,
+          repeatedSearches: 0,
+          context: { ccc: 0, cgc: 1, lsp: 2 }
+        }
+      }
+    ]
+  );
+  assert.equal(result.before.observedThreads, 1);
+  assert.equal(result.before.unavailableThreads, 1);
+  assert.deepEqual(result.before.metrics.toolCalls, {
+    observed: 1,
+    missing: 1,
+    unavailableThreads: 1,
+    total: 8,
+    mean: 8
+  });
+  assert.deepEqual(result.before.metrics.tokens, {
+    observed: 0,
+    missing: 2,
+    unavailableThreads: 1,
+    total: null,
+    mean: null
+  });
+  assert.deepEqual(result.deltas.toolCalls, { total: -4, mean: -4 });
+  assert.match(result.note, /do not establish causation/);
+});
 
 // A synthetic CODEX_HOME shaped like the 2026-09-18 incident: a worker that
 // went silent for five minutes, was interrupted, and hopped providers.

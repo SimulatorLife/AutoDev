@@ -13,7 +13,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import {
   makeRequest,
   responseBody,

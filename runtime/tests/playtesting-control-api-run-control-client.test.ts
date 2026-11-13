@@ -11,7 +11,7 @@ import {
   type PlaytestLaunchRequest
 } from "@simulatorlife/autodev-core";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestControlApiRunClient,

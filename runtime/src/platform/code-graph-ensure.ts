@@ -15,9 +15,11 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -71,24 +73,54 @@ export function codeGraphStateDir(
 }
 
 function git(root: string, args: string[]): string {
-  try {
-    return execFileSync("git", args, {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-  } catch {
-    return "";
-  }
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
 }
 
 /** Identifies the checkout's content: the commit plus every uncommitted change. */
 export function checkoutStamp(root: string): string {
-  return createHash("sha256")
+  const hash = createHash("sha256")
     .update(git(root, ["rev-parse", "HEAD"]))
     .update("\0")
-    .update(git(root, ["status", "--porcelain", "--untracked-files=all"]))
-    .digest("hex");
+    .update(git(root, ["status", "--porcelain", "--untracked-files=all"]));
+  const changedPaths = new Set([
+    ...git(root, ["diff", "--name-only", "-z", "HEAD", "--"])
+      .split("\0")
+      .filter(Boolean),
+    ...git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+      .split("\0")
+      .filter(Boolean)
+  ]);
+  for (const relativePath of [...changedPaths].sort()) {
+    const file = path.resolve(root, relativePath);
+    hash.update("\0").update(relativePath).update("\0");
+    try {
+      const stat = lstatSync(file);
+      const kind = stat.isSymbolicLink()
+        ? "symlink"
+        : stat.isFile()
+          ? "file"
+          : "other";
+      const content = stat.isSymbolicLink()
+        ? readlinkSync(file)
+        : stat.isFile()
+          ? readFileSync(file)
+          : "";
+      hash
+        .update(String(stat.mode & 0o7777))
+        .update("\0")
+        .update(kind)
+        .update("\0")
+        .update(createHash("sha256").update(content).digest("hex"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      hash.update("missing");
+    }
+  }
+  return hash.digest("hex");
 }
 
 function readState(file: string): CodeGraphState | null {

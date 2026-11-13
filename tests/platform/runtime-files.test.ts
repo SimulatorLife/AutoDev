@@ -74,8 +74,12 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     );
   }
   assert.equal(
-    runtimeTarget("runtime/src/control-api/index.ts", "/runtime"),
-    "/runtime/src/control-api/index.ts"
+    runtimeTarget("runtime/src/control-api/request-handler.ts", "/runtime"),
+    "/runtime/src/control-api/request-handler.ts"
+  );
+  assert.equal(
+    runtimeTarget("runtime/src/control-api/github.ts", "/runtime"),
+    "/runtime/src/control-api/github.ts"
   );
   assert.equal(
     runtimeTarget("runtime/src/hooks/root-delegation.ts", "/runtime"),

@@ -12,6 +12,7 @@
  * a downstream caller could silently drop.
  */
 
+import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestAdapterErrorCode,
   type PlaytestAdapterMethod,
@@ -94,12 +95,6 @@ export function isPlaytestMiniPxiItem(
     typeof value === "string" &&
     (PLAYTESTS_MINIPXI_ITEMS as readonly string[]).includes(value)
   );
-}
-
-function isPlainObject(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {

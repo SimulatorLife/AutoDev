@@ -8,7 +8,7 @@ import type { ControlApiMcpRuntimeServer } from "@simulatorlife/autodev-core";
 import {
   handleControlApiRequest,
   setControlApiMcpObservationsSource
-} from "../src/control-api/index.ts";
+} from "../src/control-api/request-handler.ts";
 import {
   getDefaultCorrelationTracker,
   mcpServerObservations,
