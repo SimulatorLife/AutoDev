@@ -236,8 +236,8 @@
   },
   {
     "id": "subjective-quality-evaluation",
-    "scenario": "Task t15: a user says the agent's output is hard to read; no objective formatting metric exists. A corrected version received user approval, without a separate model benchmark.",
-    "guidance": "Project-specific style note is outdated.",
+    "scenario": "Task t15: the user explicitly instructs 'For future design reports, use shorter sections and fewer decorative headings.' The revised report received the user's approval; no objective aesthetic metric exists and no separate model benchmark ran.",
+    "guidance": "A project-specific report-style note conflicts with that standing instruction.",
     "authorization": "review only; no additional rollouts",
     "expect": {
       "status": "PROPOSED",
