@@ -6,11 +6,7 @@ import test from "node:test";
 import { parseRuleSyncCommand } from "../data/src/rulesync/command-parser.ts";
 
 type ReviewStatus =
-  | "NO_CHANGE"
-  | "INSUFFICIENT_EVIDENCE"
-  | "PROPOSED"
-  | "APPLIED"
-  | "BLOCKED";
+  "NO_CHANGE" | "INSUFFICIENT_EVIDENCE" | "PROPOSED" | "APPLIED" | "BLOCKED";
 
 interface EvaluationCase {
   id: string;
