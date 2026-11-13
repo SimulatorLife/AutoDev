@@ -94,20 +94,17 @@ test("behavioral scenarios cover conflicting decisions", () => {
   const names = cases.map((item) => item.id);
   assert.equal(new Set(names).size, names.length);
   assert.ok(cases.length >= 12);
-  assert.deepEqual(
-    [...new Set(cases.map((item) => item.category))].sort(),
-    [
-      "authorization",
-      "deduplication",
-      "environment",
-      "outcome",
-      "preference",
-      "qualification",
-      "scope",
-      "trust",
-      "validation"
-    ]
-  );
+  assert.deepEqual([...new Set(cases.map((item) => item.category))].sort(), [
+    "authorization",
+    "deduplication",
+    "environment",
+    "outcome",
+    "preference",
+    "qualification",
+    "scope",
+    "trust",
+    "validation"
+  ]);
   for (const item of cases) {
     assert.ok(item.scenario.length > 40, item.id);
     assert.ok(item.authorization.length > 0, item.id);
