@@ -101,6 +101,10 @@ function runRulesync(outputRoot: string, ...mode: string[]): RunResult {
       "rulesync.jsonc",
       "--output-roots",
       outputRoot,
+      // Commands also land in `.agents/skills/` (Antigravity CLI's command
+      // surface); tests/rulesync-commands.test.ts owns that projection.
+      "--features",
+      "skills",
       ...mode,
       "--silent"
     ],
@@ -344,7 +348,7 @@ test("Copilot cloud setup generates repository skills after installing dependenc
 test("RuleSync project config and CI cover the repository projections", () => {
   const config = readJson(rulesyncConfigPath);
   assert.deepEqual(config.targets, [...targets, "agentsmd"]);
-  assert.deepEqual(config.features, ["skills", "hooks", "rules"]);
+  assert.deepEqual(config.features, ["skills", "commands", "hooks", "rules"]);
   assert.deepEqual(config.outputRoots, ["."]);
   assert.equal(config.delete, true);
   assert.equal(config.global, false);

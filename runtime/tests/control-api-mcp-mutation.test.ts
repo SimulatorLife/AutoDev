@@ -298,7 +298,7 @@ test("a canonical MCP write preserves header values and publishes only header na
     ]
       .map((line) => indent + line)
       .join("\n");
-  const declaration = DECLARATION.replace(
+  const declaration = DECLARATION.replaceAll(
     /("mcpServers": \{\n)/gu,
     (opening: string) => opening + probe("    ") + "\n"
   );

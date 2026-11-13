@@ -12,8 +12,6 @@ const TOOLS_ROLE_ORCHESTRATOR_URL = /\/tools\?role=orchestrator$/u;
 const PROVIDERS_NAV_LINK_PATTERN = /^Providers/u;
 const PROVIDERS_URL = /\/providers$/u;
 const PROVIDERS_MODELS_URL = /\/providers\?tab=models$/u;
-const PROVIDER_RESET_CONFIRMATION_PATTERN =
-  /Confirm clearing role overrides, disabled models, and provider limits/u;
 const CLAUDE_PROVIDER_ID = "claude";
 const MODEL_ID = "sonnet";
 const NOT_OBSERVED = "Not observed";
@@ -205,7 +203,7 @@ test("Providers keeps its five-column role table readable at narrow and desktop 
   await checkWidth(1280);
 });
 
-test("Providers header exposes a confirmed reset and explains unavailable provider creation", async ({
+test("Providers reset opens a confirmation modal that cancels without posting", async ({
   page
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -215,21 +213,59 @@ test("Providers header exposes a confirmed reset and explains unavailable provid
     name: "Provider configuration actions"
   });
   await expect(actions).toBeVisible();
-  await expect(
-    actions.getByRole("checkbox", {
-      name: PROVIDER_RESET_CONFIRMATION_PATTERN
-    })
-  ).toHaveAttribute("required", "");
-  await expect(
-    actions.getByRole("button", { name: "Reset to defaults" })
-  ).toBeVisible();
-  await expect(
-    actions.getByRole("button", { name: "Add provider" })
-  ).toBeDisabled();
+  await expect(actions.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add provider" })).toHaveCount(
+    0
+  );
   await expect(
     page.getByText("Add a Runtime adapter before configuring another provider.")
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  const posts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") posts.push(request.url());
+  });
+
+  const reset = actions.getByRole("button", { name: "Reset to defaults" });
+  await reset.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Reset provider settings to defaults?"
+  });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(
+    "role assignments, provider disables, model disables, and provider agent limits, reset to static-config defaults"
+  );
+  await expect(dialog).toContainText(
+    "does not edit config/model-routing.json and preserves Agent admission, provider discovery snapshots, live health/cooldown, and Runtime concurrency limits"
+  );
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(reset).toBeFocused();
+
+  await reset.click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(posts).toEqual([]);
   expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("Providers reset posts only after the modal is confirmed", async ({
+  page
+}) => {
+  await page.goto(PROVIDERS_TAB_URL);
+  const resetPost = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().endsWith("/api/providers/reset")
+  );
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Reset provider settings" })
+    .click();
+  expect((await resetPost).postData()).toContain("confirm=true");
 });
 
 test("the providers table names the CLI version each provider is on", async ({

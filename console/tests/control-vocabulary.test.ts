@@ -270,7 +270,6 @@ test("a text control wears the shared chrome and no second focus ring", () => {
 
 test("the features do not spell the checkbox chrome themselves", () => {
   for (const source of [
-    "../src/features/providers/ProvidersView.ts",
     "../src/features/memory/MemoryExperiencesView.ts",
     "../src/features/skills/SkillRoleAssignmentControl.ts",
     "../src/features/workspaces/WorkspaceVisualPlaytestTargetManager.ts",

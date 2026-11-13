@@ -134,7 +134,7 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   installedSkillMatches,
-  materializeCommands,
+  materializeCurrentCommandProjections,
   materializeCurrentHookProjections,
   materializeCurrentMcpConfiguration,
   materializeRuleSyncSkillProjections
@@ -1439,23 +1439,25 @@ function readAppliedMcpCatalogue(codexHome: string): {
   let content: string;
   try {
     content = readFileSync(cataloguePath, "utf8");
-  } catch (error) {
+  } catch {
+    // Fixed diagnostics only: exception text can quote catalogue content,
+    // which holds raw header credentials.
     return {
       available: false,
       servers: [],
       observedAt: null,
-      error: `The applied MCP catalogue could not be read: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
+      error: "The applied MCP catalogue could not be read."
     };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch (error) {
+  } catch {
     return {
       available: false,
       servers: [],
       observedAt: null,
-      error: `The applied MCP catalogue is not valid JSON: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
+      error: "The applied MCP catalogue is not valid JSON."
     };
   }
   if (!isPlainRecord(parsed)) {
@@ -6670,10 +6672,10 @@ async function patchPromptCommand(
 
   let updatedPrompts: readonly string[];
   try {
-    updatedPrompts = materializeCommands(
-      { repositoryRoot },
-      path.join(codexHome, "prompts")
-    );
+    updatedPrompts = materializeCurrentCommandProjections({
+      repositoryRoot,
+      codexHome
+    });
   } catch {
     auditMutation({
       actor: actor.actor,

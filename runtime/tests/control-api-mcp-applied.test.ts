@@ -291,3 +291,23 @@ test("the applied MCP read publishes header names, never values, and still recon
   assert.notEqual(status.desiredGeneration, status.observedGeneration);
   assert.equal(JSON.stringify(drifted).includes("SECRET"), false);
 });
+
+test("a malformed applied catalogue reports a fixed error that quotes no credential", async () => {
+  const options = fixture(
+    '{"docs": {"http_headers": {"Authorization": "Bearer SECRETVALUE"'
+  );
+  const body = await readApplied(options);
+  const status = (
+    body.reconciliation as {
+      status: { convergence: string; lastError: string | null };
+    }
+  ).status;
+  assert.equal(status.convergence, "error");
+  assert.equal(
+    status.lastError,
+    "The applied MCP catalogue is not valid JSON."
+  );
+  const serialized = JSON.stringify(body);
+  for (const fragment of ["SECRET", "Bearer", "SEC"])
+    assert.equal(serialized.includes(fragment), false, fragment);
+});

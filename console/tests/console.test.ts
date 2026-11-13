@@ -22890,6 +22890,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Holds the command palette's own search and keyboard state so an operator can find a resource by name or by what it is for; the results navigate through the shared owner and no page data is fetched client-side."
     ],
     [
+      join("src", "features", "providers", "ProviderResetDialog.ts"),
+      "Opens the native modal that confirms a provider reset and focuses its controls; the reset itself posts through the same-origin server-owned route."
+    ],
+    [
       join("src", "features", "workspaces", "WorkspaceDetailView.ts"),
       "Submits checkout approval and revocation through same-origin routes in place, then renders only the server-confirmed approval state."
     ],

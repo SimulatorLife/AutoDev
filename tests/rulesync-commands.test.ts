@@ -232,6 +232,62 @@ test("RuleSync's codexcli projection contains exactly the canonical Codex comman
   }
 });
 
+test("RuleSync's project projection installs every command for Claude Code, Copilot, and Antigravity CLI", () => {
+  const outputRoot = mkdtempSync(
+    join(tmpdir(), "autodev-rulesync-project-commands-")
+  );
+  try {
+    const result = spawnSync(
+      rulesyncBin,
+      [
+        "generate",
+        "--config",
+        rulesyncConfigPath,
+        "--input-roots",
+        join(repositoryRoot, ".rulesync"),
+        "--output-roots",
+        outputRoot,
+        "--features",
+        "commands",
+        "--silent"
+      ],
+      { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+    );
+    assert.equal(
+      result.status,
+      0,
+      `Rulesync project commands generation failed:\nSTDOUT=${result.stdout}\nSTDERR=${result.stderr}`
+    );
+    const listed = (directory: string, suffix: string) =>
+      readdirSync(join(outputRoot, directory))
+        .filter((entry) => entry.endsWith(suffix))
+        .map((entry) => entry.slice(0, -suffix.length))
+        .sort();
+    // Every canonical command targets `*`, so each project target receives
+    // the whole catalog in its native command surface. Antigravity CLI has no
+    // command format, so Rulesync projects commands as skills.
+    assert.deepEqual(listed(".claude/commands", ".md"), codexCommandNames);
+    assert.deepEqual(
+      listed(".github/prompts", ".prompt.md"),
+      codexCommandNames
+    );
+    assert.deepEqual(
+      readdirSync(join(outputRoot, ".agents", "skills")).sort(),
+      codexCommandNames
+    );
+    for (const name of codexCommandNames)
+      assert.ok(
+        readFileSync(
+          join(outputRoot, ".agents", "skills", name, "SKILL.md"),
+          "utf8"
+        ).startsWith(`---\nname: ${name}\ndescription:`),
+        `${name} must project as a named Antigravity skill`
+      );
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
 test("materializeCommands applies, reconciles, and reports real Codex prompt changes", () => {
   const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-codex-"));
   const promptsDir = join(codexHome, "prompts");
@@ -307,14 +363,18 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
   assert.match(materializer, /export function loadCodexCommands\(/mu);
   assert.match(materializer, /export function materializeCommands\(/mu);
   assert.match(materializer, /materializeCommands\(options, prompts\)/mu);
+  assert.match(
+    materializer,
+    /export function materializeCurrentCommandProjections\(/mu
+  );
   const check = readFileSync(checkModulePath, "utf8");
   assert.match(check, /loadCodexCommands\(paths\.repositoryRoot\)/mu);
   assert.match(check, /function checkCommands\(/mu);
   assert.match(check, /checkCommands\(paths, failures\)/mu);
 
-  // The commands feature stays out of rulesync.jsonc's project-mode features:
-  // codexcli commands is global-only and would throw if used in project mode
-  // alongside the other targets.
+  // Project-mode commands reach Claude Code, Copilot, and Antigravity CLI.
+  // Rulesync skips codexcli (its commands are global-only), so the installer
+  // projects Codex prompts into $CODEX_HOME/prompts separately.
   const config = readConfig();
   assert.deepEqual(config.targets, [
     "copilot",
@@ -323,7 +383,7 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
     "antigravity-cli",
     "agentsmd"
   ]);
-  assert.deepEqual(config.features, ["skills", "hooks", "rules"]);
+  assert.deepEqual(config.features, ["skills", "commands", "hooks", "rules"]);
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
   assert.deepEqual(config.outputRoots, ["."]);

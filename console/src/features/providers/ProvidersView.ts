@@ -8,8 +8,6 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { Button } from "../../components/forms/Button.ts";
-import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
@@ -87,6 +85,7 @@ import {
   ProviderModelAvailabilityBadge,
   ProviderModelDiscoveryBadge
 } from "./ProviderModelAvailabilityBadge.ts";
+import { ProviderResetDialog } from "./ProviderResetDialog.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export function ProvidersHeaderActions({
@@ -101,70 +100,7 @@ export function ProvidersHeaderActions({
       "aria-label": "Provider configuration actions",
       className: "flex min-w-0 flex-wrap items-start justify-end gap-3"
     },
-    React.createElement(
-      // A write surface inside a table cell is a group of controls rather
-      // than a landmark: the operator finds it in the cell, and an
-      // anonymous landmark for every row is a list of names that name nothing.
-      "form",
-      {
-        role: "group",
-        action: "/api/providers/reset",
-        method: "post",
-        className: "flex min-w-0 flex-wrap items-center gap-2",
-        "data-provider-reset-form": "true"
-      },
-      React.createElement("input", {
-        type: "hidden",
-        name: "returnTo",
-        value: returnTo
-      }),
-      React.createElement(CheckboxField, {
-        id: "confirm-provider-reset",
-        name: "confirm",
-        value: "true",
-        required: true,
-        align: "start",
-        label:
-          "Confirm clearing role overrides, disabled models, and provider limits",
-        labelClassName: "min-w-0 max-w-full text-xs",
-        dataAttributes: { "data-provider-reset-confirm": "true" }
-      }),
-      React.createElement(
-        Button,
-        {
-          type: "submit",
-          variant: "secondary",
-          testId: "provider-reset"
-        },
-        "Reset to defaults"
-      )
-    ),
-    React.createElement(
-      "div",
-      { className: "flex min-w-0 flex-col items-end gap-1" },
-      React.createElement(
-        Button,
-        {
-          disabled: true,
-          variant: "secondary",
-          title:
-            "Adding a provider requires a Runtime adapter that is not currently available.",
-          dataAttributes: {
-            "aria-describedby": "provider-add-disabled-reason"
-          },
-          testId: "provider-add"
-        },
-        "Add provider"
-      ),
-      React.createElement(
-        "span",
-        {
-          id: "provider-add-disabled-reason",
-          className: "max-w-48 text-right text-micro text-fg-muted"
-        },
-        "Add a Runtime adapter before configuring another provider."
-      )
-    )
+    React.createElement(ProviderResetDialog, { returnTo })
   );
 }
 

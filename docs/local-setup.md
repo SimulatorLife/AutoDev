@@ -580,10 +580,10 @@ symlinks. Its `--check` mode rejects missing or relative skill-directory links
 and symlinked `SKILL.md` files. Restart Codex or start a new task after
 installation so user-level skill discovery refreshes.
 
-### Prompt catalog (Codex custom prompts)
+### Prompt catalog (commands for every provider)
 
-`.rulesync/commands/*.md` is the single tracked source for AutoDev's Codex
-custom prompts (slash commands). The file name is the prompt name; agents
+`.rulesync/commands/*.md` is the single tracked source for AutoDev's custom
+prompts (slash commands) in every provider Rulesync supports. The file name is the prompt name; agents
 surface them as `/<name>`. Each file declares `targets: ["*"]` and a concise
 `description:` in YAML frontmatter, followed by the prompt body. The catalog is
 the union of the prior AutoDev Codex prompt catalog and the AutoDev-owned
@@ -639,11 +639,27 @@ installs have happened since. The installer therefore prints
 install added, rewrote, or removed a prompt; restart (quit and reopen) the
 Codex app to pick them up.
 
-Rulesync's `codexcli` commands feature is intentionally **not** added to the
-project-mode `rulesync.jsonc` `features` array: it would throw for the project
-mode of codexcli alongside the other targets, and the other targets do not
-need a parallel commands projection. The installer drives the commands
-projection directly.
+`rulesync.jsonc` lists `commands` among its project-mode features, so every
+`rulesync generate` from that config (the installer's repository generation,
+its `--check`, and Copilot's cloud setup steps) projects the catalog into each
+project target's native command surface, as Rulesync defines it:
+
+- Claude Code: `.claude/commands/<name>.md` (`/<name>`).
+- GitHub Copilot: `.github/prompts/<name>.prompt.md` (`/<name>`).
+- Antigravity (CLI and IDE): `.agents/skills/<name>/SKILL.md`, invoked as
+  `/<name>`. Antigravity retired workflows (`.agents/workflows/`) on
+  2026-10-19 in favour of skills, which are invoked the same way, so Rulesync
+  projects commands as skills. The IDE reads the same project
+  `.agents/skills/` directory, so the `antigravity-cli` target covers both.
+  Codex also reads `.agents/skills/`, so it lists these as repository skills
+  in this repository.
+
+These outputs are untracked (`.gitignore` lists the first two;
+`.agents/skills/` is in `.git/info/exclude`). Rulesync skips project-mode
+commands for `codexcli` (global-only) and `agentsmd` (simulated only), which is
+why the installer projects Codex prompts separately as above. A Console prompt
+edit runs `materializeCurrentCommandProjections`, which regenerates and checks
+the repository projections and then reconciles `$CODEX_HOME/prompts/`.
 
 Upstream Codex marks custom prompts deprecated in favour of skills while
 they remain functional, so the catalog stays as prompts (not skills) and
@@ -780,7 +796,7 @@ The suites generate from `.rulesync/` into temporary roots:
 
 - `tests/rulesync-mcp.test.ts` checks that the Codex projection and each user-level file list exactly the servers `.rulesync/mcp.jsonc` declares for that tool, that non-MCP keys survive, and that `--check` catches edited or extra servers.
 - `tests/rulesync-hooks-shadow.test.ts` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse, and that Claude Code gets no root-delegation hook. Rulesync omits `SessionStart` for Copilot and `SubagentStart`/`UserPromptSubmitted` for Antigravity, and omits Codex-only fields such as `prevent_idle_sleep`; the tests freeze each target's actual projection.
-- `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: Data reads every canonical file, Runtime selects only `codexcli` and wildcard targets (including RuleSync's default target), the Rulesync projection contains exactly those commands with description-only frontmatter (no `targets` leak), and real materialization preserves prompt bodies, reconciles stale files, reports changed prompts, and is idempotent.
+- `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: Data reads every canonical file, Runtime selects only `codexcli` and wildcard targets (including RuleSync's default target), the Rulesync projection contains exactly those commands with description-only frontmatter (no `targets` leak), the project-mode projection writes the whole catalog to Claude Code, Copilot, and Antigravity CLI, and real materialization preserves prompt bodies, reconciles stale files, reports changed prompts, and is idempotent.
 
 AutoDev scripts remain the hook implementations, while Rulesync owns declarations. The installer materializes the generated projections in the active repository and validates them with `--check`; no duplicate hook declarations remain in `config.autodev.toml`. RuleSync permissions generation is not yet the current runtime authority, but the canonical target requires permissions to migrate into RuleSync once the existing effective policy has been inventoried and represented losslessly. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
 

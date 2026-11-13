@@ -28,6 +28,11 @@ tmp/
 # `.agents/skills/` that .gitignore lists.
 /.claude/skills/
 /.github/skills/
+# Rulesync-generated repository command projections; `.rulesync/commands/` is
+# the only tracked command source. Antigravity CLI receives commands as skills
+# under the already-excluded `/.agents/skills/`.
+/.claude/commands/
+/.github/prompts/
 # Rulesync-generated hook projections; `.rulesync/hooks.jsonc` is the only
 # tracked declaration source.
 /.codex/hooks.json

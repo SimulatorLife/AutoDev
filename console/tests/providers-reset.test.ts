@@ -6,6 +6,10 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { POST } from "../app/api/providers/reset/route.ts";
+import {
+  PROVIDER_RESET_PRESERVES,
+  PROVIDER_RESET_SCOPE
+} from "../src/features/providers/ProviderResetDialog.ts";
 import { ProvidersHeaderActions } from "../src/features/providers/ProvidersView.ts";
 import { resetProviderSettings } from "../src/lib/server/control-api.ts";
 
@@ -46,23 +50,28 @@ function sameOriginForm(body: URLSearchParams): NextRequest {
   });
 }
 
-test("Providers header reset is confirmation-bound and Add provider explains its unavailable state", () => {
+test("Providers header offers a modal-confirmed reset and no Add provider or inline checkbox", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersHeaderActions, {
       returnTo: "/providers?tab=models"
     })
   );
+  assert.match(markup, />Reset to defaults<\/button>/u);
+  assert.match(markup, /aria-controls="provider-reset-dialog"/u);
+  // The dialog is closed on render: nothing is shown or posted until opened.
+  assert.match(markup, /<dialog[^>]*id="provider-reset-dialog"/u);
+  assert.doesNotMatch(markup, /<dialog[^>]*\sopen/u);
+  assert.match(markup, /aria-labelledby=/u);
+  assert.match(markup, /aria-describedby=/u);
   assert.match(markup, /action="\/api\/providers\/reset"/u);
   assert.match(markup, /name="returnTo" value="\/providers\?tab=models"/u);
   assert.match(markup, /name="confirm" value="true"/u);
-  assert.match(markup, /required=""/u);
-  assert.match(markup, />Reset to defaults<\/button>/u);
-  assert.match(markup, /disabled=""/u);
-  assert.match(markup, />Add provider<\/button>/u);
-  assert.match(
-    markup,
-    /Add a Runtime adapter before configuring another provider\./u
-  );
+  assert.match(markup, />Cancel<\/button>/u);
+  assert.match(markup, /type="submit"[^>]*>Reset provider settings<\/button>/u);
+  assert.ok(markup.includes(PROVIDER_RESET_SCOPE));
+  assert.ok(markup.includes(PROVIDER_RESET_PRESERVES));
+  assert.doesNotMatch(markup, /type="checkbox"/u);
+  assert.doesNotMatch(markup, /Add provider|Add a Runtime adapter/u);
 });
 
 test("provider reset client uses the typed server-only Control API path and confirmation", async () => {

@@ -206,7 +206,11 @@ function ProviderBrowserPanel({
     React.createElement(
       "div",
       { className: "mb-3" },
-      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Browser"),
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Browser"
+      ),
       React.createElement(
         "p",
         { className: `mt-1 ${MUTED_META_CLASS}` },

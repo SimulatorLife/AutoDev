@@ -1568,6 +1568,30 @@ export function materializeCommands(
   }
 }
 
+/**
+ * Regenerate every command projection from the canonical
+ * `.rulesync/commands/` source: the repository outputs `rulesync.jsonc`
+ * configures (Claude Code, Copilot, Antigravity CLI), verified with
+ * `--check`, and the user-level Codex prompts Rulesync only projects
+ * globally. Returns the Codex prompts whose installed content changed.
+ */
+export function materializeCurrentCommandProjections(options: {
+  readonly repositoryRoot: string;
+  readonly codexHome: string;
+}): string[] {
+  generateRepositoryRulesync(options.repositoryRoot, {
+    features: ["commands"]
+  });
+  generateRepositoryRulesync(options.repositoryRoot, {
+    features: ["commands"],
+    check: true
+  });
+  return materializeCommands(
+    { repositoryRoot: options.repositoryRoot },
+    path.join(options.codexHome, "prompts")
+  );
+}
+
 function composeAndLinkConfigs(
   options: MaterializeOptions,
   source: FileTarget
