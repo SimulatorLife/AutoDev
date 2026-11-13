@@ -20,10 +20,10 @@ import { PlaytestArtifactStore } from "./artifact-store.ts";
 import { playtestControlApiRunClientFromEnvironment } from "./control-api-run-control-client.ts";
 import {
   createPlaytestMcpServer,
-  type PlaytestMcpSession,
   type PlaytestMcpSessionProvider
 } from "./mcp.ts";
 import { reconcilePendingPlaytestPackets } from "./packet-artifact-reconciliation.ts";
+import { type PlaytestMcpSession } from "./run-control.ts";
 import { servePlaytestMcpStdio } from "./stdio.ts";
 
 export interface PlaytestStdioConfiguration {

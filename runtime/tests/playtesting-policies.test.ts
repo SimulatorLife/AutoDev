@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PlaytestLoopGuard } from "../src/playtesting/loop-guard.ts";
-import { resolvePolicy } from "../src/playtesting/mcp.ts";
 import {
   createBuiltinPlaytestPolicy,
   createFirstLegalPlaytestPolicy,
@@ -11,6 +10,7 @@ import {
   type PlaytestPolicyContext,
   PLAYTESTS_BUILTIN_POLICY_IDS
 } from "../src/playtesting/policies.ts";
+import { resolvePolicy } from "../src/playtesting/run-control.ts";
 
 const visible = {
   goal: "reach exit",

@@ -52,12 +52,12 @@ import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data
 
 import { loadApprovedPlaytestDefinition } from "../src/playtesting/approved-configuration.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
+import { createPlaytestMcpServer } from "../src/playtesting/mcp.ts";
 import {
-  createPlaytestMcpServer,
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
-} from "../src/playtesting/mcp.ts";
+} from "../src/playtesting/run-control.ts";
 import {
   commitFixtureCheckout,
   isolatedPlaytestPreparer

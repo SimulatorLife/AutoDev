@@ -36,10 +36,6 @@ import {
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
 import {
-  handleControlApiRequest,
-  warmupDefaultPlaytestingRepository
-} from "../src/control-api/request-handler.ts";
-import {
   handlePlaytestingControlApiRequest,
   type PlaytestingControlRepository
 } from "../src/control-api/playtesting.ts";
@@ -49,8 +45,16 @@ import {
   handlePlaytestingRunControlRequest,
   type PlaytestingRunControlApiOptions
 } from "../src/control-api/playtesting-run-control.ts";
+import {
+  handleControlApiRequest,
+  warmupDefaultPlaytestingRepository
+} from "../src/control-api/request-handler.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import { PlaytestSandboxUnavailableError } from "../src/playtesting/docker-sandbox.ts";
+import {
+  isOneJevLocalVisualPolicyAvailable,
+  resetOneJevLocalPolicyAvailabilityCache
+} from "../src/playtesting/onejev-local-policy.ts";
 import {
   type PlaytestAnalystReviewDispatch,
   type PlaytestAnalystReviewRun,
@@ -58,11 +62,7 @@ import {
   PlaytestMcpConflictError,
   type PlaytestRunCapabilities,
   type PlaytestRunControl
-} from "../src/playtesting/mcp.ts";
-import {
-  isOneJevLocalVisualPolicyAvailable,
-  resetOneJevLocalPolicyAvailabilityCache
-} from "../src/playtesting/onejev-local-policy.ts";
+} from "../src/playtesting/run-control.ts";
 import {
   isSmartDirectVisualPolicyAvailable,
   isSmartDirectVisualPolicyConfigured,
@@ -78,7 +78,7 @@ test("internal Control API diagnostics retain safe location metadata without exc
     "Error: Bearer do-not-log user-provided text\n" +
     "    at encodeBatch (/repo/data/src/playtesting/row-codec.ts:296:18)\n" +
     "    at execute (/repo/data/src/playtesting/playtest-repository.ts:311:9)\n" +
-    "    at startRun (/repo/runtime/src/playtesting/mcp.ts:4800:11)";
+    "    at startRun (/repo/runtime/src/playtesting/run-control.ts:6189:11)";
   const diagnostic = formatControlApiInternalErrorDiagnostic(error);
   assert.match(diagnostic, /type=Error/u);
   assert.match(diagnostic, /code=ERR_SAFE_DIAGNOSTIC/u);

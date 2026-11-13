@@ -70,15 +70,9 @@ import {
 } from "../src/playtesting/docker-sandbox.ts";
 import type { PlaytestEpisodeRunOptions } from "../src/playtesting/episode-runner.ts";
 import {
-  assertVisualLaunchLimitsWithinApprovedTarget,
   createPlaytestMcpServer,
-  createPlaytestRunControl,
-  type PlaytestingRepositoryOps,
   type PlaytestMcpOptions,
-  type PlaytestMcpServer,
-  type PlaytestMcpSession,
-  type PlaytestRunControl,
-  type PlaytestRunOwner
+  type PlaytestMcpServer
 } from "../src/playtesting/mcp.ts";
 import {
   assertPlaytestStdioSessionBinding,
@@ -87,6 +81,14 @@ import {
   playtestWorkspaceCatalogRoot
 } from "../src/playtesting/mcp-main.ts";
 import { createSeededRandomPlaytestPolicy } from "../src/playtesting/policies.ts";
+import {
+  assertVisualLaunchLimitsWithinApprovedTarget,
+  createPlaytestRunControl,
+  type PlaytestingRepositoryOps,
+  type PlaytestMcpSession,
+  type PlaytestRunControl,
+  type PlaytestRunOwner
+} from "../src/playtesting/run-control.ts";
 import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
 import { fixturePlaytestMetricRegistry } from "./support/playtesting-metric-registry.ts";
 

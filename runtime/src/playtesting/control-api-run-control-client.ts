@@ -26,7 +26,7 @@ import {
   type PlaytestRunCapabilities,
   type PlaytestRunControl,
   type PlaytestRunStatus
-} from "./mcp.ts";
+} from "./run-control.ts";
 
 const RUNS_PATH = "/control/playtesting/runs";
 const REQUEST_LOOKUP_PATH = RUNS_PATH + "/by-request";

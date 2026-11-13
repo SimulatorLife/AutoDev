@@ -17,14 +17,14 @@ import {
   createPlaytestControlApiRunClient,
   playtestControlApiRunClientFromEnvironment
 } from "../src/playtesting/control-api-run-control-client.ts";
+import { createPlaytestMcpServer } from "../src/playtesting/mcp.ts";
 import {
-  createPlaytestMcpServer,
   PlaytestMcpAuthorizationError,
   PlaytestMcpConflictError,
   type PlaytestMcpSession,
   PlaytestMcpUnavailableError,
   type PlaytestRunControl
-} from "../src/playtesting/mcp.ts";
+} from "../src/playtesting/run-control.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 let launchRequestCounter = 0;

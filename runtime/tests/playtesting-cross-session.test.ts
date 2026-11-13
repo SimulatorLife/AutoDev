@@ -8,10 +8,12 @@ import type {
 
 import {
   createPlaytestMcpServer,
-  createPlaytestRunControl,
-  type PlaytestingRepositoryOps,
   type PlaytestMcpOptions
 } from "../src/playtesting/mcp.ts";
+import {
+  createPlaytestRunControl,
+  type PlaytestingRepositoryOps
+} from "../src/playtesting/run-control.ts";
 
 const WORKSPACE_ID = "owner/game";
 

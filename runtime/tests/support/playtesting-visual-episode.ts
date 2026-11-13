@@ -31,7 +31,7 @@ import {
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
-} from "../../src/playtesting/mcp.ts";
+} from "../../src/playtesting/run-control.ts";
 import type {
   PlaytestVisualActionReceipt,
   PlaytestVisualDriverOpener,

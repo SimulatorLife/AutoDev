@@ -34,6 +34,7 @@ import {
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
 import { playtestLaunchRequestSchema } from "../playtesting/launch-request-schema.ts";
+import { isOneJevLocalVisualPolicyAvailable } from "../playtesting/onejev-local-policy.ts";
 import {
   type PlaytestAnalystReviewDispatch,
   PlaytestMcpAuthorizationError,
@@ -42,8 +43,7 @@ import {
   PlaytestMcpUnavailableError,
   PlaytestMcpValidationError,
   type PlaytestRunControl
-} from "../playtesting/mcp.ts";
-import { isOneJevLocalVisualPolicyAvailable } from "../playtesting/onejev-local-policy.ts";
+} from "../playtesting/run-control.ts";
 import { isSmartDirectVisualPolicyAvailable } from "../playtesting/smart-direct-policy.ts";
 import { isPlaytestVisualBrowserDriverAvailable } from "../playtesting/visual-browser-driver.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";

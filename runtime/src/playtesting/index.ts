@@ -11,6 +11,40 @@ export * from "./loop-guard.ts";
 export * from "./mcp.ts";
 export * from "./onejev-local-policy.ts";
 export * from "./policies.ts";
+export type {
+  PlaytestActiveRunSummary,
+  PlaytestAnalystProcessLauncher,
+  PlaytestAnalystReviewDispatch,
+  PlaytestAnalystReviewReceipt,
+  PlaytestAnalystReviewRun,
+  PlaytestAnalystReviewStatus,
+  PlaytestCrossSessionBudget,
+  PlaytestCrossSessionPacket,
+  PlaytestCrossSessionReceipt,
+  PlaytestingRepositoryOps,
+  PlaytestLaunchIntentRepository,
+  PlaytestMcpSession,
+  PlaytestRunCancellationResult,
+  PlaytestRunCapabilities,
+  PlaytestRunControl,
+  PlaytestRunControlActor,
+  PlaytestRunControlOptions,
+  PlaytestRunOwner,
+  PlaytestRunRequestLookup,
+  PlaytestRunStartReceipt,
+  PlaytestRunStatus,
+  PlaytestVisualPolicy,
+  PlaytestVisualPolicyFactory
+} from "./run-control.ts";
+export {
+  assertVisualLaunchLimitsWithinApprovedTarget,
+  createPlaytestRunControl,
+  PlaytestMcpAuthorizationError,
+  PlaytestMcpConflictError,
+  PlaytestMcpUnavailableError,
+  PlaytestMcpValidationError,
+  resolvePolicy
+} from "./run-control.ts";
 export * from "./run-control-service.ts";
 export * from "./smart-direct-policy.ts";
 export * from "./statistics/index.ts";

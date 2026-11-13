@@ -154,7 +154,7 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import type { PlaytestRunControl } from "../playtesting/mcp.ts";
+import type { PlaytestRunControl } from "../playtesting/run-control.ts";
 import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import {

@@ -8,7 +8,10 @@ import {
 
 import { launchPlaytestAnalystProcess } from "./analyst-process.ts";
 import { PlaytestArtifactStore } from "./artifact-store.ts";
-import { createPlaytestRunControl, type PlaytestRunOwner } from "./mcp.ts";
+import {
+  createPlaytestRunControl,
+  type PlaytestRunOwner
+} from "./run-control.ts";
 
 let defaultRunControl: PlaytestRunOwner | null = null;
 

@@ -96,6 +96,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/jsonl-framer.ts",
   "runtime/src/playtesting/loop-guard.ts",
   "runtime/src/playtesting/mcp.ts",
+  "runtime/src/playtesting/run-control.ts",
   "runtime/src/playtesting/discovery-review.ts",
   "runtime/src/playtesting/analyst-process.ts",
   "runtime/src/playtesting/mcp-main.ts",

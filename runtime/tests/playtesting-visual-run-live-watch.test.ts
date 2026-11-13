@@ -19,7 +19,7 @@ import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestRunControl,
   type PlaytestingRepositoryOps
-} from "../src/playtesting/mcp.ts";
+} from "../src/playtesting/run-control.ts";
 import {
   makeRequest,
   responseBody,

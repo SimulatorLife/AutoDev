@@ -30,11 +30,11 @@ import type {
 } from "../src/playtesting/analyst-process.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import { preparePlaytestDiscoveryEvidencePacket } from "../src/playtesting/discovery-review.ts";
+import { createPlaytestMcpServer } from "../src/playtesting/mcp.ts";
 import {
-  createPlaytestMcpServer,
   createPlaytestRunControl,
   type PlaytestingRepositoryOps
-} from "../src/playtesting/mcp.ts";
+} from "../src/playtesting/run-control.ts";
 
 const WORKSPACE = "SimulatorLife/RacingGame";
 const BATCH_ID = "batch-0123456789abcdef-rest";

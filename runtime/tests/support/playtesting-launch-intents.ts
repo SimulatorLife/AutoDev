@@ -1,6 +1,6 @@
 import type { PlaytestLaunchIntent } from "@simulatorlife/autodev-data/playtesting";
 
-import type { PlaytestLaunchIntentRepository } from "../../src/playtesting/mcp.ts";
+import type { PlaytestLaunchIntentRepository } from "../../src/playtesting/run-control.ts";
 
 /** In-memory launch intent store for tests; production always injects Data's durable ClickHouse owner. */
 export function inMemoryPlaytestLaunchIntentRepository(): PlaytestLaunchIntentRepository {

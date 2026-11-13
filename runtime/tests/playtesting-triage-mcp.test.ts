@@ -20,12 +20,12 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
+import { createPlaytestMcpServer } from "../src/playtesting/mcp.ts";
 import {
-  createPlaytestMcpServer,
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
-} from "../src/playtesting/mcp.ts";
+} from "../src/playtesting/run-control.ts";
 
 const WORKSPACE_ID = "owner/triage-fixture";
 
