@@ -176,61 +176,6 @@ test("a passing check newer than the last failure counts as recovery", () => {
   );
 });
 
-test("live quota observation with remaining usage counts as readiness evidence and exhausted quota marks unavailable", () => {
-  assert.equal(
-    providerHealthReadiness(
-      health({
-        quota: {
-          provider: "minimax",
-          status: "ok",
-          source: "mmx quota --output json",
-          updatedAt: "2026-11-09T12:00:00.000Z",
-          summaryStatus: "available",
-          windows: [
-            {
-              id: "minimax-5h",
-              label: "5-hour limit",
-              kind: "five_hour",
-              status: "available",
-              usedPercent: 10,
-              remainingPercent: 90,
-              resetsAt: "2026-11-09T15:00:00.000Z"
-            }
-          ]
-        }
-      })
-    ),
-    "ready"
-  );
-
-  assert.equal(
-    providerHealthReadiness(
-      health({
-        lastSuccessAt: "2026-11-09T11:00:00.000Z",
-        quota: {
-          provider: "minimax",
-          status: "ok",
-          source: "mmx quota --output json",
-          updatedAt: "2026-11-09T12:00:00.000Z",
-          summaryStatus: "exhausted",
-          windows: [
-            {
-              id: "minimax-5h",
-              label: "5-hour limit",
-              kind: "five_hour",
-              status: "exhausted",
-              usedPercent: 100,
-              remainingPercent: 0,
-              resetsAt: "2026-11-09T15:00:00.000Z"
-            }
-          ]
-        }
-      })
-    ),
-    "unavailable"
-  );
-});
-
 test("an expired rate-limit failure does not keep a previously observed provider unavailable after its cooldown ends", () => {
   assert.equal(
     providerHealthReadiness(

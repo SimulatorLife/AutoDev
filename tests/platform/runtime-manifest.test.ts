@@ -9,6 +9,7 @@ import {
   nodeModuleLinks,
   OBSOLETE_DASHBOARD,
   OBSOLETE_LAUNCH,
+  OBSOLETE_RUNTIME_DATA_FILES,
   OBSOLETE_RUNTIME_MODULES,
   RUNTIME_MODULES
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
@@ -1251,6 +1252,20 @@ test("unused chart.js is absent from root application dependencies", () => {
   assert.equal(rootPackage.devDependencies?.["chart.js"], undefined);
 });
 
+test("obsolete Claude quota snapshots are removed from CODEX_HOME", () => {
+  assert.deepEqual(OBSOLETE_RUNTIME_DATA_FILES, [
+    join("run", "claude-rate-limit.json")
+  ]);
+  const materializer = readFileSync(
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
+    "utf8"
+  );
+  assert.match(
+    materializer,
+    /OBSOLETE_RUNTIME_DATA_FILES\.map\(\(filePath\) =>[\s\S]*path\.join\(codexHome, filePath\)/
+  );
+});
+
 test("AutoDev standalone OTel Collector is decommissioned with no replacement sidecar", () => {
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
@@ -1285,7 +1300,8 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
   // OBSOLETE_RUNTIME_MODULES so the installer removes them on next run.
   const staleAutoDevPaths = [
     "src/platform/otel-collector.ts",
-    "src/platform/otel-provision.ts"
+    "src/platform/otel-provision.ts",
+    "src/providers/quota-discovery.ts"
   ];
   for (const legacyPath of staleAutoDevPaths) {
     assert.equal(

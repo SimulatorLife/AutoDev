@@ -604,15 +604,17 @@ Six rules are load-bearing:
 reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   headers -- produces a hard cooldown. An inferred limit stays on the transient
   ladder.
-- **Each Antigravity quota is its own provider.** agy meters its model
-  families separately, each with its own 5-hour and weekly limits, so the one
+- **Antigravity model families have separate AutoDev routes.** The one
   Antigravity service (the `agy` CLI behind its bridge on :4002) is routed as
   three providers: `antigravity-gemini` (Gemini ids other than Argon),
   `antigravity-argon` (`gemini-<ver>-argon-<effort>`), and
   `antigravity-claude-gpt` (agy's effort-suffixed Claude ids and
   `gpt-oss-<size>-<effort>`). Each has its own route pattern, models, role
-  assignments, cooldowns and quota, so exhausting Claude/GPT-OSS cools only
-  `antigravity-claude-gpt` and Gemini keeps serving. The patterns are mutually
+  assignments and reactive cooldowns, so a provider-declared limit from a
+  Claude/GPT-OSS request cools only `antigravity-claude-gpt` and Gemini keeps
+  serving. This route split does not redefine quota identities: quota-axi
+  reports Antigravity as `agy`, and the Console preserves that identity. The
+  patterns are mutually
   exclusive with each other and with the Claude bridge (Anthropic ids carry no
   effort suffix) and Codex (whose pattern excludes `gpt-oss-`), so a model id
   alone names its provider. The provider ids live in
@@ -629,63 +631,24 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   models that are out in `modelCooldowns`; the Control API reports them under
   `health.modelCooldowns`.
 
-- **Per-provider and per-model quota discovery.**
-  `runtime/src/providers/quota-discovery.ts` discovers live usage windows (5-hour
-  limits, weekly limits, `% used` / `% remaining`, and reset times) and exposes
-  them on `/control/providers` (`provider.quota` and `provider.health.quota`),
-  overlaying active router provider cooldowns and synchronizing exhausted
-  windows into `COOLDOWNS`:
-  - **MiniMax:** Direct REST API query to `https://api.minimax.io/v1/token_plan/remains`
-    using `MINIMAX_API_KEY` or the OAuth token in `~/.mmx/config.json`, with
-    fallback to `mmx quota --output json`. Maps 5-hour interval and weekly limits
-    across configured models (`MiniMax-M3`, `MiniMax-M3.1-Flash-Preview`, `MiniMax-M2.7`).
-    `mmx` is not required as an npm or package dependency.
-  - **Codex:** ChatGPT `/backend-api/wham/usage` and live `x-codex-*` upstream
-    response rate-limit headers (5-hour primary and weekly secondary windows).
-  - **Antigravity:** Google Cloud Code, using the CLI's keychain/file OAuth
-    token. `v1internal:retrieveUserQuotaSummary` states the limits: one group
-    per metered model family (e.g. "Claude and GPT models"), each with a
-    `5h` and a `weekly` bucket, and each group becomes the 5-hour and weekly
-    windows of its Antigravity provider (`antigravity-gemini`,
-    `antigravity-argon`, `antigravity-claude-gpt`). `fetchAvailableModels`
-    supplies each provider's per-model quotas, and the window of a provider
-    the summary does not list (one remaining fraction and next reset per
-    model; a reset more than a day out reads as weekly). The three
-    providers' discoveries share one read of each endpoint per refresh.
-  - **Copilot:** `gh api /copilot_internal/user` (`premium_interactions` and
-    `chat` snapshots).
-  - **Claude:** Claude bridge `/health` (port 4000) `rateLimitInfo` captured from live
-    `rate_limit_event` stream events, persisted across bridge restarts at
-    `$CODEX_HOME/run/claude-rate-limit.json`, with subscription plan discovery from
-    `~/.claude.json` / macOS Keychain (`subscriptionType: "pro"` -> Claude Pro Plan)
-    and fallback to Anthropic OAuth `/api/oauth/usage`. Maps rolling 5-hour session and
-    weekly windows across configured models (`claude-opus-5-5`, `claude-sonnet-5-5`).
-    Every window comes from the event's `unifiedWindows` (the top-level fields only
-    describe the window named by `rateLimitType`). A window whose reset time has
-    passed since the reading was captured reports its usage as not reported (any
-    Claude use since then is invisible to that reading), never as 0%; when every
-    window has rolled over, discovery skips the stale event for the next source.
-    The plan-metadata fallback names the plan but reports both windows' usage as
-    not reported.
+- **Provider usage is a display-only quota-axi report.** Runtime invokes the
+  pinned `quota-axi@0.1.69` public CLI (`quota-axi --json
+  --no-credential-refresh`) in the background every 60 seconds and forwards its
+  JSON report unchanged as `quotaAxi` on `/control/providers` (providers API v5,
+  Control API contract v34). Quota collection does not block provider requests;
+  one in-flight CLI read is shared while a refresh is running. The Console reads
+  the report's own provider identities, states, windows, percentages, reset
+  fields, freshness and availability as supplied; AutoDev does not translate,
+  merge or infer quota values. Missing values stay missing and unknown stays
+  unknown. Version 0.1.69 exports report types and model-catalog helpers, but
+  no in-process quota-reading function; its documented CLI is the supported
+  public collection interface.
 
-  In the Console UI, inline quota bars and reset countdowns render in each
-  provider's `Status` cell on `/providers` and in each model's row on
-  `/providers?tab=models`, while dedicated **Quota & usage limits** panels render
-  on `/providers/:provider` (`ProviderDetailView`) and
-  `/providers/:provider/models/:model` (`ModelDetailView`).
-  `providerHealthReadiness` in `@simulatorlife/autodev-core` reads a provider
-  `unavailable` while it is cooling down or its quota is exhausted, and does
-  not leave a provider stuck in `unavailable` after a rate-limit or
-  transient cooldown has expired. A failure that describes a condition which
-  passes -- a rate limit, a throttle, a busy upstream, a timeout, a 5xx -- is
-  live only while the Runtime is still cooling the provider down for it, and
-  stops being live once that cooldown has passed: the Runtime routes to the
-  provider again at that point, so the verdict has to agree with it. A failure
-  that is not a condition but a fact about the provider (`authentication`)
-  stays live until the operator fixes it. In addition,
-  `createProviderQuotaDiscoveryService`
-  polls provider usage limits every 60s in the background, keeping positive
-  readiness evidence fresh.
+  Quota output is not router health evidence. It does not set, clear or overlay
+  cooldowns and does not change routing, provider concurrency or session
+  stickiness. Those continue to follow provider probes, request outcomes and
+  the router's existing cooldown policy. A quota-axi report is presented
+  separately from those routing decisions.
 
 - **Each agent stays with its own provider across turns.** The SubagentRegistry
   tracks the orchestrator by its session (`noteOrchestratorSession`) and each
@@ -1328,9 +1291,10 @@ Failure classes include `session_limit`,
 `throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
 `authentication`, `invalid_model`, and `probe_unavailable` (a local bridge that
 did not answer its health check). Of these, only `session_limit` and
-`quota_exhausted` are _hard_, and only when the provider declared them. These are observations from upstream
-responses and local health checks, not a provider's authoritative quota API;
-the persisted counters remain available after the router process restarts. Use
+`quota_exhausted` are _hard_, and only when the provider declared them. These
+cooldowns come from upstream request responses and local health checks, not
+from the separate display-only quota-axi report; the persisted counters remain
+available after the router process restarts. Use
 the router instance ID and request ID to correlate a turn with its fallback
 history. Rotate logs by restarting the router: launchd closes and reopens the
 log file handles, and the ensure hook reuses the same fallback PID file
@@ -1340,7 +1304,7 @@ without leaking a stale tracker.
 
 Provider role enablement and model enablement are mutable runtime state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
 
-- `GET /control/providers` (v2) returns each provider's route, credential presence, role enablement, tier models, priority groups, orchestrator reasoning effort, and live router health.
+- `GET /control/providers` (Providers v5) returns each provider's route, credential presence, role enablement, tier models, priority groups, orchestrator reasoning effort, and live router health, plus the unchanged quota-axi report under `quotaAxi`.
 - `GET /control/models` (v2) returns each model the routing config maps a provider tier to, with its provider, tiers, and enablement.
 - `PATCH /control/providers/:provider/roles/:role` and `PATCH /control/models/:model` accept only `{"enabled": boolean}`.
 - Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.

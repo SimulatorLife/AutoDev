@@ -19,10 +19,10 @@
  * `gpt-oss-<size>-<effort>` and Codex never serves a `gpt-oss-` id, so the
  * Codex pattern excludes that prefix.
  *
- * The one Antigravity service (the `agy` CLI behind its bridge on :4002) is
- * split into one provider per subscription quota: agy meters Gemini, Argon,
- * and Claude/GPT-OSS separately, each with its own 5-hour and weekly limits,
- * so each is a provider with its own models, routing, cooldowns and usage.
+ * The one Antigravity service (the `agy` CLI behind its bridge on :4002) has
+ * separate AutoDev routes for its Gemini, Argon, and effort-suffixed
+ * Claude/GPT-OSS model families. These route ids are not quota identities:
+ * quota-axi reports the service as `agy` and its output is not remapped.
  */
 
 import {
@@ -34,11 +34,11 @@ import {
 export const ANTIGRAVITY_GEMINI_MODEL_PATTERN =
   /^gemini-(?![0-9][0-9.]*-argon(?:-|$))[A-Za-z0-9][A-Za-z0-9.-]*$/;
 
-/** agy's Argon ids, which carry their own quota (`gemini-4-argon-high`). */
+/** agy's Argon ids (`gemini-4-argon-high`). */
 export const ANTIGRAVITY_ARGON_MODEL_PATTERN =
   /^gemini-[0-9][0-9.]*-argon-(?:low|medium|high)$/;
 
-/** agy's effort-suffixed Claude and GPT-OSS ids, which share one quota. */
+/** agy's effort-suffixed Claude and GPT-OSS ids. */
 export const ANTIGRAVITY_CLAUDE_GPT_MODEL_PATTERN =
   /^(?:claude-[a-z0-9-]*[a-z0-9]|gpt-oss-[a-z0-9-]*[a-z0-9])-(?:low|medium|high)$/;
 

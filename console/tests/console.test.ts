@@ -4330,7 +4330,8 @@ test("server Control API client uses only its configured token and fixed local a
       headers: new Headers(init?.headers)
     });
     return Response.json({
-      schema: "autodev-control-providers-v4",
+      schema: "autodev-control-providers-v5",
+      quotaAxi: null,
       orchestratorTier: "orchestrator",
       tiers: [],
       providers: []
@@ -11955,7 +11956,8 @@ test("the metric chips wrap between items instead of clipping each to its prefix
 });
 
 const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
-  schema: "autodev-control-providers-v4",
+  schema: "autodev-control-providers-v5",
+  quotaAxi: null,
   orchestratorTier: "orchestrator",
   tiers: [
     { tier: "default", groups: [["claude"], ["codex"]] },
@@ -20444,7 +20446,8 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     }
   };
   const providersEnvelope = (providers: unknown[]) => ({
-    schema: "autodev-control-providers-v4",
+    schema: "autodev-control-providers-v5",
+    quotaAxi: null,
     orchestratorTier: "orchestrator",
     tiers: [{ tier: "orchestrator", groups: [["anthropic"]] }],
     providers

@@ -155,6 +155,7 @@ import {
   WEB_FETCH_TOOL,
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import type { QuotaAxiResponse } from "quota-axi";
 
 import type { PlaytestRunControl } from "../playtesting/run-control.ts";
 import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
@@ -790,6 +791,7 @@ export type ControlApiMcpObservationsSource =
 
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
 let providerCheckSource: ControlApiProviderCheckSource | null = null;
+let providerQuotaAxiSource: (() => QuotaAxiResponse | null) | null = null;
 
 /** The router registers its provider check here; a standalone Control API has none. */
 export function setControlApiProviderCheckSource(
@@ -831,6 +833,13 @@ export function setControlApiProviderHealthSource(
   source: ControlApiProviderHealthSource | null
 ): void {
   providerHealthSource = source;
+}
+
+/** Publish quota-axi's report without reshaping its provider-owned fields. */
+export function setControlApiProviderQuotaAxiSource(
+  source: (() => QuotaAxiResponse | null) | null
+): void {
+  providerQuotaAxiSource = source;
 }
 
 /**
@@ -1189,16 +1198,14 @@ function providersView(now: number): Record<string, unknown> {
       priorities: providerTierPriorities(provider),
       orchestratorReasoningEffort: reasoningEffort?.[provider] ?? null,
       health: health?.[provider] ?? null,
-      ...(health?.[provider]?.quota === undefined
-        ? {}
-        : { quota: health[provider].quota }),
       ...(browser === undefined ? {} : { browser }),
       reconciliation: providerReconciliationView(provider)
     };
   });
   return {
-    schema: "autodev-control-providers-v4",
+    schema: "autodev-control-providers-v5",
     orchestratorTier: ROUTING_POLICY.config.orchestrator.tier,
+    quotaAxi: providerQuotaAxiSource?.() ?? null,
     tiers: Object.entries(ROUTING_POLICY.effectiveTierGroups()).map(
       ([tier, groups]) => ({ tier, groups })
     ),

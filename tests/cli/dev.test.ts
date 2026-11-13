@@ -142,7 +142,8 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
       version: CONTROL_API_CONTRACT.version
     }),
     Response.json({
-      schema: "autodev-control-providers-v4",
+      schema: "autodev-control-providers-v5",
+      quotaAxi: null,
       providers: [
         {
           id: "copilot",
@@ -255,7 +256,8 @@ test("dev Control API probe rejects a Runtime without the current contract hands
     }
     if (url.endsWith("/control/providers")) {
       return Response.json({
-        schema: "autodev-control-providers-v4",
+        schema: "autodev-control-providers-v5",
+        quotaAxi: null,
         providers: [
           {
             id: "copilot",
@@ -357,7 +359,7 @@ test("dev Control API probe rejects an older published compatibility revision", 
   );
 });
 
-test("dev Control API probe rejects the stale Providers v3 response without links", async () => {
+test("dev Control API probe rejects an incomplete Providers v5 response", async () => {
   let requestCount = 0;
   const fetchImpl: typeof fetch = async () => {
     requestCount += 1;
@@ -367,7 +369,8 @@ test("dev Control API probe rejects the stale Providers v3 response without link
           version: CONTROL_API_CONTRACT.version
         })
       : Response.json({
-          schema: "autodev-control-providers-v4",
+          schema: "autodev-control-providers-v5",
+          quotaAxi: null,
           providers: [{ id: "codex" }]
         });
   };
@@ -380,7 +383,7 @@ test("dev Control API probe rejects the stale Providers v3 response without link
     (error: Error) => {
       assert.match(
         error.message,
-        /current Providers v3 response contract is missing/u
+        /current Providers v5 response contract is missing/u
       );
       assert.doesNotMatch(error.message, /probe-token/u);
       return true;
@@ -401,7 +404,8 @@ test("dev Control API probe blocks a Runtime missing model-discovery states", as
     }
     if (requestCount === 2) {
       return Response.json({
-        schema: "autodev-control-providers-v4",
+        schema: "autodev-control-providers-v5",
+        quotaAxi: null,
         providers: [
           { id: "copilot", links: { usage: null, documentation: null } }
         ]
@@ -468,7 +472,8 @@ test("dev Control API probe rejects a Runtime that does not register Playtesting
       version: CONTROL_API_CONTRACT.version
     }),
     Response.json({
-      schema: "autodev-control-providers-v4",
+      schema: "autodev-control-providers-v5",
+      quotaAxi: null,
       providers: [
         { id: "copilot", links: { usage: null, documentation: null } }
       ]

@@ -49,7 +49,8 @@ function isControlApiContractResponse(value: unknown): boolean {
 }
 
 function isControlApiProvidersResponse(value: unknown): value is {
-  readonly schema: "autodev-control-providers-v4";
+  readonly schema: "autodev-control-providers-v5";
+  readonly quotaAxi: unknown;
   readonly providers: readonly {
     readonly id: string;
     readonly links: {
@@ -60,7 +61,8 @@ function isControlApiProvidersResponse(value: unknown): value is {
 } {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-providers-v4" ||
+    value.schema !== "autodev-control-providers-v5" ||
+    (value.quotaAxi !== null && !isRecord(value.quotaAxi)) ||
     !Array.isArray(value.providers)
   ) {
     return false;
@@ -429,7 +431,7 @@ async function verifyControlApiCompatibilityOnce(
   }
   const providerData = providers.body;
   if (!providers.response.ok || !isControlApiProvidersResponse(providerData)) {
-    throw startupError("the current Providers v3 response contract is missing");
+    throw startupError("the current Providers v5 response contract is missing");
   }
 
   const providerIds = new Set(providerData.providers.map(({ id }) => id));

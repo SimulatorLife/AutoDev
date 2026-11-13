@@ -1136,87 +1136,6 @@ function isProviderCooldownMap(value: unknown): boolean {
   );
 }
 
-function isQuotaStatus(value: unknown): boolean {
-  return (
-    value === "available" ||
-    value === "warning" ||
-    value === "exhausted" ||
-    value === "unlimited" ||
-    value === "unavailable"
-  );
-}
-
-function isQuotaWindow(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.label === "string" &&
-    typeof value.kind === "string" &&
-    isQuotaStatus(value.status) &&
-    (value.usedPercent === null || typeof value.usedPercent === "number") &&
-    (value.remainingPercent === null ||
-      typeof value.remainingPercent === "number") &&
-    (value.used === undefined ||
-      value.used === null ||
-      typeof value.used === "number") &&
-    (value.limit === undefined ||
-      value.limit === null ||
-      typeof value.limit === "number") &&
-    (value.remaining === undefined ||
-      value.remaining === null ||
-      typeof value.remaining === "number") &&
-    (value.unit === undefined ||
-      value.unit === null ||
-      typeof value.unit === "string") &&
-    (value.windowSeconds === undefined ||
-      value.windowSeconds === null ||
-      typeof value.windowSeconds === "number") &&
-    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt))
-  );
-}
-
-function isModelQuota(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.model === "string" &&
-    (value.displayName === undefined ||
-      value.displayName === null ||
-      typeof value.displayName === "string") &&
-    isQuotaStatus(value.status) &&
-    (value.usedPercent === null || typeof value.usedPercent === "number") &&
-    (value.remainingPercent === null ||
-      typeof value.remainingPercent === "number") &&
-    (value.resetsAt === null || isCanonicalTimestamp(value.resetsAt)) &&
-    Array.isArray(value.windows) &&
-    value.windows.every(isQuotaWindow) &&
-    (value.cooldown === undefined ||
-      value.cooldown === null ||
-      isProviderCooldown(value.cooldown))
-  );
-}
-
-function isProviderQuota(value: unknown): boolean {
-  if (value === undefined || value === null) return true;
-  return (
-    isRecord(value) &&
-    typeof value.provider === "string" &&
-    (value.status === "ok" || value.status === "unavailable") &&
-    typeof value.source === "string" &&
-    (value.updatedAt === null || isCanonicalTimestamp(value.updatedAt)) &&
-    (value.plan === undefined ||
-      value.plan === null ||
-      typeof value.plan === "string") &&
-    (value.error === undefined ||
-      value.error === null ||
-      typeof value.error === "string") &&
-    isQuotaStatus(value.summaryStatus) &&
-    Array.isArray(value.windows) &&
-    value.windows.every(isQuotaWindow) &&
-    (value.models === undefined ||
-      (Array.isArray(value.models) && value.models.every(isModelQuota)))
-  );
-}
-
 /** Health is a complete Runtime observation, not a partially present record. */
 function isProviderHealth(value: unknown): boolean {
   return (
@@ -1244,8 +1163,7 @@ function isProviderHealth(value: unknown): boolean {
         (value.lastFailure.model === undefined ||
           value.lastFailure.model === null ||
           typeof value.lastFailure.model === "string"))) &&
-    (value.lastCheck === null || isProviderCheck(value.lastCheck)) &&
-    isProviderQuota(value.quota)
+    (value.lastCheck === null || isProviderCheck(value.lastCheck))
   );
 }
 
@@ -1286,7 +1204,8 @@ function isControlApiProvidersResponse(
 ): value is ControlApiProvidersResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-providers-v4" &&
+    value.schema === "autodev-control-providers-v5" &&
+    (value.quotaAxi === null || isRecord(value.quotaAxi)) &&
     typeof value.orchestratorTier === "string" &&
     Array.isArray(value.tiers) &&
     value.tiers.every(
@@ -1319,8 +1238,7 @@ function isControlApiProvidersResponse(
         isReconciliationBundle(provider.reconciliation) &&
         // Health drives the readiness badge, which reads `cooldown.failureClass`
         // and `lastFailure.failureClass`.
-        (provider.health === null || isProviderHealth(provider.health)) &&
-        isProviderQuota(provider.quota)
+        (provider.health === null || isProviderHealth(provider.health))
     )
   );
 }
@@ -1342,7 +1260,7 @@ export async function fetchProviders(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_providers_response",
     message:
-      "AutoDev Control API returned an incompatible Providers response; the Console requires the v4 provider contract."
+      "AutoDev Control API returned an incompatible Providers response; the Console requires the v5 provider contract."
   };
 }
 

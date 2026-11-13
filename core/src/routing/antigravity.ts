@@ -2,10 +2,11 @@
  * The providers the one Antigravity service (the `agy` CLI behind its bridge)
  * serves.
  *
- * agy meters its model families separately -- Gemini, Argon, and Claude with
- * GPT-OSS -- each with its own 5-hour and weekly limits, so AutoDev routes each
- * as a provider of its own with its own models, cooldowns and usage. The
- * Runtime owns which model ids each serves
+ * AutoDev routes agy's Gemini, Argon, and effort-suffixed Claude/GPT-OSS model
+ * families separately so each route owns its model set and reactive cooldowns.
+ * This route partition is not a quota identity: quota-axi reports the service
+ * as `agy`, and its report is displayed without mapping it onto these routes.
+ * The Runtime owns which model ids each route serves
  * (`runtime/src/shared/provider-model-ids.ts`); the Console needs only the ids,
  * for the behaviour all three share: agy fixes a model's reasoning effort in
  * its id (`-low`, `-medium`, `-high`).

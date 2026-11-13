@@ -156,7 +156,8 @@ function providersResponse(
   records: readonly ControlApiProviderRecord[]
 ): ControlApiProvidersResponse {
   return {
-    schema: "autodev-control-providers-v4",
+    schema: "autodev-control-providers-v5",
+    quotaAxi: null,
     orchestratorTier: "orchestrator",
     tiers: [{ tier: "default", groups: [[]] }],
     providers: records

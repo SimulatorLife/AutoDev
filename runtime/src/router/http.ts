@@ -13,7 +13,6 @@ import {
   type ControlApiProviderCooldown,
   type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
-  type ControlApiProviderQuota,
   SIGN_IN_REQUIRED_FAILURE_CLASS
 } from "@simulatorlife/autodev-core";
 import {
@@ -93,7 +92,6 @@ import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
-import { getCachedProviderQuota } from "../providers/quota-discovery.ts";
 import { createAgentEventIngest } from "./agent-event-ingest.ts";
 import {
   correlationSnapshot,
@@ -1033,7 +1031,6 @@ function controlApiProviderHealth(
       const modelCooldownEntries = Object.entries(rawModelCooldowns).map(
         ([model, entry]) => [model, serializeProviderCooldown(entry, now)]
       );
-      const quota = getCachedProviderQuota(route.provider, now);
       const activeLastFailure =
         state.lastFailure &&
         !isNonProviderHealthFailureClass(state.lastFailure.class)
@@ -1062,8 +1059,7 @@ function controlApiProviderHealth(
                 : { model: activeLastFailure.model })
             }
           : null,
-        lastCheck: state.lastCheck,
-        ...(quota ? { quota } : {})
+        lastCheck: state.lastCheck
       };
       return [route.provider, health];
     })
@@ -1075,11 +1071,6 @@ setControlApiProviderHealthSource(controlApiProviderHealth);
 export type ProviderModelRecheck = (
   provider: string
 ) => Promise<ControlApiProviderModelDiscovery | null>;
-
-/** Re-read one provider's quota/usage limits, for a check; null when nothing checks quota. */
-export type ProviderQuotaRecheck = (
-  provider: string
-) => Promise<ControlApiProviderQuota | null>;
 
 /**
  * The failure class a check records for a provider that has no route.
@@ -1158,8 +1149,7 @@ function providerCheckVerdict(
 
 export async function checkProvider(
   provider: string,
-  recheckModels: ProviderModelRecheck | null,
-  recheckQuota: ProviderQuotaRecheck | null = null
+  recheckModels: ProviderModelRecheck | null
 ): Promise<ControlApiProviderCheckResponse> {
   const route = ROUTES.find((candidate) => candidate.provider === provider);
   if (!route) {
@@ -1200,9 +1190,6 @@ export async function checkProvider(
   }
   const check = providerCheckVerdict(provider, probe, listing, checkedFrom);
   providerState(provider).lastCheck = check;
-  if (recheckQuota) {
-    await recheckQuota(provider).catch(() => null);
-  }
   scheduleRouterStatePersist();
   return {
     schema: "autodev-control-provider-check-v1",

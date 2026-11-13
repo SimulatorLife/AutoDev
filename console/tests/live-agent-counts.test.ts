@@ -206,7 +206,8 @@ test("agent, provider, and model views render counts from one Runtime projection
     }
   };
   const providers: ControlApiProvidersResponse = {
-    schema: "autodev-control-providers-v4",
+    schema: "autodev-control-providers-v5",
+    quotaAxi: null,
     orchestratorTier: "root",
     tiers: [],
     providers: [PROVIDER]
@@ -332,7 +333,8 @@ test("a live count's hover spells out the roles it is made of", () => {
   const providersMarkup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
       providers: {
-        schema: "autodev-control-providers-v4",
+        schema: "autodev-control-providers-v5",
+        quotaAxi: null,
         orchestratorTier: "root",
         tiers: [],
         providers: [PROVIDER]

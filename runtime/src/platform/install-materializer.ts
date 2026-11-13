@@ -63,6 +63,8 @@ import {
 import { removeStalePaths } from "./runtime-reconciliation.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
 
+const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
+
 export const RUNTIME_MODULES = [
   "runtime/src/router/telemetry.ts",
   "runtime/src/router/git-commit-observation.ts",
@@ -202,7 +204,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/cli-versions.ts",
-  "runtime/src/providers/quota-discovery.ts",
   "runtime/src/providers/claude-credential.ts",
   "runtime/src/providers/copilot.ts",
   "runtime/src/providers/opencli.ts",
@@ -268,6 +269,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/block-ccc-cli.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
+  "src/providers/quota-discovery.ts",
   "src/shared/otel-resource-context.ts",
   "src/router/otel.ts",
   "src/router/otel-attributes.ts",
@@ -284,6 +286,9 @@ export const OBSOLETE_RUNTIME_MODULES = [
   "src/platform/otel-collector.ts",
   "src/platform/otel-provision.ts",
   "src/platform/sync-rulesync-workspaces.ts"
+] as const;
+export const OBSOLETE_RUNTIME_DATA_FILES = [
+  path.join("run", "claude-rate-limit.json")
 ] as const;
 export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "provider-runtime",
@@ -1010,6 +1015,9 @@ function removeObsoleteRuntimeArtifacts(
     path.join(hooks, OBSOLETE_DASHBOARD),
     path.join(codexHome, "src", "router", "dashboard.html"),
     path.join(codexHome, "src", "router", "lookback-aggregator.ts"),
+    ...OBSOLETE_RUNTIME_DATA_FILES.map((filePath) =>
+      path.join(codexHome, filePath)
+    ),
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs"),
@@ -1020,10 +1028,10 @@ function removeObsoleteRuntimeArtifacts(
     // command rules are `agents/rules/default.rules` alone.
     path.join(codexHome, "rules", "rulesync.rules")
   ];
-  removeStalePaths(obsoletePaths, "obsolete-runtime-path");
+  removeStalePaths(obsoletePaths, OBSOLETE_RUNTIME_PATH_REASON);
   removeStalePaths(
     OBSOLETE_RUNTIME_MODULES.map((filePath) => path.join(codexHome, filePath)),
-    "obsolete-runtime-path"
+    OBSOLETE_RUNTIME_PATH_REASON
   );
   removeStalePaths(
     OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
@@ -1180,7 +1188,7 @@ function replaceSkillSymlinks(
   const names = userLevelSkills(skillsRoot);
   removeStalePaths(
     staleUserSkillLinks(skillsRoot, userSkills, names),
-    "obsolete-runtime-path"
+    OBSOLETE_RUNTIME_PATH_REASON
   );
   for (const name of names) {
     for (const legacy of LEGACY_SKILL_DIRS) {
@@ -1556,7 +1564,7 @@ export function materializeCommands(
     if (staleEntries.length > 0) {
       removeStalePaths(
         staleEntries.map((entry) => path.join(promptsDir, entry)),
-        "obsolete-runtime-path"
+        OBSOLETE_RUNTIME_PATH_REASON
       );
       updated.push(
         ...staleEntries.map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))

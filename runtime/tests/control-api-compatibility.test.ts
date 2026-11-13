@@ -20,7 +20,8 @@ function controlApiFixture(
       version: CONTROL_API_CONTRACT.version
     }),
     "/control/providers": Response.json({
-      schema: "autodev-control-providers-v4",
+      schema: "autodev-control-providers-v5",
+      quotaAxi: null,
       providers: []
     }),
     "/control/provider-models": Response.json({

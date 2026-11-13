@@ -248,11 +248,8 @@ export function findAgyBinary(
 
 /**
  * The MiniMax CLI (`mmx`): the first executable on PATH, else the install
- * under `~/.local/bin`.
- *
- * The quota reader runs `mmx` by name and lets the shell resolve it, so the
- * PATH lookup is the same answer it gets; the `~/.local/bin` fallback only
- * adds a copy the login shell would have found but a bare process would not.
+ * under `~/.local/bin`. The CLI version check uses this to inspect the same
+ * executable a login shell would find, including the local-bin fallback.
  *
  * Every branch reads the environment it was handed, and the lookup answers
  * about *that* environment: a caller that asks about a machine with no CLI

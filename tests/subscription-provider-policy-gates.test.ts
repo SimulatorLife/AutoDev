@@ -83,21 +83,12 @@ const router = normalizedSource(
   readFileSync(join(REPO_ROOT, "runtime/src/router/server.ts"), "utf8")
 );
 
-const REVIEWED_SUBSCRIPTION_QUOTA_CONSUMERS = new Set([
-  // Reads provider quota and models for Console provider health and quota
-  // monitoring. It never serves model inference or proxies model requests.
-  "runtime/src/providers/quota-discovery.ts"
-]);
-
 for (const [needle, reason] of UNSUPPORTED_SUBSCRIPTION_TRANSPORTS) {
   test(`no runtime file uses ${reason}`, () => {
     const consumers = Object.keys(texts).filter((path) =>
       texts[path]?.includes(needle)
     );
-    const unexpected = consumers.filter(
-      (path) => !REVIEWED_SUBSCRIPTION_QUOTA_CONSUMERS.has(path)
-    );
-    assert.deepEqual(unexpected, []);
+    assert.deepEqual(consumers, []);
   });
 }
 
@@ -189,8 +180,7 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /spawn\(CLI, agyArgs\(/
   );
   assert.match(route("copilot"), /baseUrl: "http:\/\/127\.0\.0\.1:4003\/v1"/);
-  // Every Antigravity provider (one per agy quota) is served by the one agy
-  // bridge.
+  // The Antigravity model-family routes are served by the one agy bridge.
   for (const provider of ANTIGRAVITY_PROVIDERS)
     assert.equal(
       ROUTES.find((candidate) => candidate.provider === provider)?.baseUrl,

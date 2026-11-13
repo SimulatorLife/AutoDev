@@ -6386,7 +6386,8 @@ const server = createServer(
         }
       });
       sendJson(response, {
-        schema: "autodev-control-providers-v4",
+        schema: "autodev-control-providers-v5",
+        quotaAxi: null,
         orchestratorTier: "orchestrator",
         tiers: [
           { tier: "default", groups: [["claude"], ["codex"]] },

@@ -123,11 +123,13 @@
  * v33: the MCP applied read (v3) and MCP write response (v2) publish HTTP
  * header names only (httpHeaderNames); header values are credentials and
  * never leave the Runtime.
+ * v34: `/control/providers` publishes the direct quota-axi report separately
+ * from router health, with the provider package's identities and semantics.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 33
+  version: 34
 } as const;
 
 export type ControlApiContractResponse = {

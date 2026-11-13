@@ -1,10 +1,6 @@
 import {
-  type ControlApiModelQuota,
   type ControlApiProviderHealth,
-  type ControlApiProviderQuota,
   type ControlApiProviderRecord,
-  type ControlApiQuotaStatus,
-  type ControlApiQuotaWindow,
   providerHealthReadiness,
   providerSignInRequired,
   SIGN_IN_REQUIRED_FAILURE_CLASS
@@ -19,7 +15,6 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * One provider's overall usability, as a single verdict.
@@ -121,18 +116,6 @@ export function resolveProviderStatus(
       };
     }
     const failureClass = provider.health?.lastFailure?.failureClass;
-    if (
-      !failureClass &&
-      provider.health?.quota?.status === "ok" &&
-      provider.health.quota.summaryStatus === "exhausted"
-    ) {
-      return {
-        tone: "unavailable",
-        label: "Quota exhausted",
-        title:
-          "This provider has reached its usage or quota limit until the current window resets."
-      };
-    }
     return {
       tone: "unavailable",
       label: failureClass ? `Unavailable (${failureClass})` : "Unavailable",
@@ -145,209 +128,6 @@ export function resolveProviderStatus(
     title:
       "Healthy, routed and credentialed: this provider can serve requests now."
   };
-}
-
-/**
- * Resolve the canonical quota snapshot attached to a provider record or its
- * live health payload.
- */
-export function resolveProviderQuota(
-  provider: ControlApiProviderRecord | null | undefined
-): ControlApiProviderQuota | null {
-  if (!provider) return null;
-  return provider.quota ?? provider.health?.quota ?? null;
-}
-
-/**
- * Resolve quota details for one specific model on a provider, falling back to
- * the provider-wide windows when the model has none of its own.
- */
-export function resolveModelQuota(
-  provider: ControlApiProviderRecord | null | undefined,
-  modelId: string
-): ControlApiModelQuota | null {
-  const quota = resolveProviderQuota(provider);
-  if (!quota || quota.status !== "ok") return null;
-  const direct = quota.models?.find((entry) => entry.model === modelId);
-  if (direct) return direct;
-  if (quota.windows.length > 0) {
-    const primary = quota.windows[0]!;
-    return {
-      model: modelId,
-      status: quota.summaryStatus,
-      usedPercent: primary.usedPercent,
-      remainingPercent: primary.remainingPercent,
-      resetsAt: primary.resetsAt,
-      windows: quota.windows
-    };
-  }
-  return null;
-}
-
-/**
- * Format time remaining until a quota window or cooldown resets.
- */
-export function formatQuotaResetRemaining(
-  resetsAt: string | null | undefined,
-  nowMs = Date.now()
-): string | null {
-  if (!resetsAt) return null;
-  const targetMs = Date.parse(resetsAt);
-  if (!Number.isFinite(targetMs)) return null;
-  const diffMs = targetMs - nowMs;
-  if (diffMs <= 0) return "resetting";
-  const totalMinutes = Math.ceil(diffMs / 60_000);
-  if (totalMinutes < 60) {
-    return `in ${totalMinutes}m`;
-  }
-  const totalHours = Math.floor(totalMinutes / 60);
-  const remMinutes = totalMinutes % 60;
-  if (totalHours < 24) {
-    return remMinutes > 0
-      ? `in ${totalHours}h ${remMinutes}m`
-      : `in ${totalHours}h`;
-  }
-  const days = Math.floor(totalHours / 24);
-  const remHours = totalHours % 24;
-  return remHours > 0 ? `in ${days}d ${remHours}h` : `in ${days}d`;
-}
-
-function shortWindowLabel(window: ControlApiQuotaWindow): string {
-  switch (window.kind) {
-    case "five_hour": {
-      return "5h";
-    }
-    case "weekly": {
-      return "7d";
-    }
-    case "monthly": {
-      return "Monthly";
-    }
-    case "daily": {
-      return "24h";
-    }
-    default: {
-      return window.label;
-    }
-  }
-}
-
-function quotaToneClass(status: ControlApiQuotaStatus): string {
-  switch (status) {
-    case "exhausted": {
-      return "text-danger";
-    }
-    case "warning": {
-      return "text-warning";
-    }
-    case "available":
-    case "unlimited": {
-      return "text-fg-secondary";
-    }
-    default: {
-      return MUTED_TEXT_CLASS;
-    }
-  }
-}
-
-function quotaBarColorClass(status: ControlApiQuotaStatus): string {
-  switch (status) {
-    case "exhausted": {
-      return "bg-danger";
-    }
-    case "warning": {
-      return "bg-warning";
-    }
-    default: {
-      return "bg-accent";
-    }
-  }
-}
-
-export function formatQuotaWindowCompact(
-  window: ControlApiQuotaWindow,
-  nowMs = Date.now()
-): string {
-  const label = shortWindowLabel(window);
-  if (window.status === "unlimited") {
-    return `${label}: Unlimited`;
-  }
-  const reset = formatQuotaResetRemaining(window.resetsAt, nowMs);
-  if (window.usedPercent !== null) {
-    const pct = Math.round(window.usedPercent);
-    return `${label}: ${pct}% used${reset ? ` (${reset})` : ""}`;
-  }
-  if (window.status === "unavailable") return `${label}: not reported`;
-  return `${label}: ${window.status}${reset ? ` (${reset})` : ""}`;
-}
-
-/**
- * Compact per-provider quota/limits summary rendered inside the provider's row
- * on `/providers` when quota evidence is present.
- *
- * Uses `data-provider-quota` and `data-quota-status` rather than `StatusBadge`
- * so the row's single `StatusBadge` verdict contract remains intact.
- */
-export function ProviderQuotaInlineSummary({
-  provider,
-  nowMs = Date.now()
-}: {
-  readonly provider: ControlApiProviderRecord;
-  readonly nowMs?: number;
-}): React.JSX.Element | null {
-  const quota = resolveProviderQuota(provider);
-  if (quota && quota.status === "ok") {
-    const visibleWindows = quota.windows.filter(
-      (w) => w.status !== "unlimited" || quota.windows.length === 1
-    );
-    if (visibleWindows.length > 0) {
-      return React.createElement(
-        "div",
-        {
-          className: "mt-1.5 flex flex-col gap-1 text-micro tabular-nums",
-          "data-provider-quota": provider.id,
-          "data-quota-status": quota.summaryStatus
-        },
-        ...visibleWindows.map((window) => {
-          const text = formatQuotaWindowCompact(window, nowMs);
-          const pct =
-            window.usedPercent === null
-              ? null
-              : Math.max(0, Math.min(100, Math.round(window.usedPercent)));
-          return React.createElement(
-            "div",
-            {
-              key: window.id,
-              className: "flex flex-col gap-0.5",
-              "data-provider-quota-window": `${provider.id}:${window.id}`,
-              title: window.resetsAt
-                ? `${window.label} — ${text} (resets at ${window.resetsAt})`
-                : `${window.label} — ${text}`
-            },
-            React.createElement(
-              "span",
-              { className: `truncate ${quotaToneClass(window.status)}` },
-              text
-            ),
-            pct === null
-              ? null
-              : React.createElement(
-                  "div",
-                  {
-                    className:
-                      "h-1 w-full overflow-hidden rounded-full bg-surface-raised"
-                  },
-                  React.createElement("div", {
-                    className: `h-full ${quotaBarColorClass(window.status)}`,
-                    style: { width: `${pct}%` }
-                  })
-                )
-          );
-        })
-      );
-    }
-  }
-  return null;
 }
 
 /**
@@ -521,10 +301,7 @@ export function ProviderHealthBadge({
         ? `Cooling down (${health.cooldown.failureClass})`
         : health.lastFailure?.failureClass
           ? `Unavailable (${health.lastFailure.failureClass})`
-          : health.quota?.status === "ok" &&
-              health.quota.summaryStatus === "exhausted"
-            ? "Quota exhausted"
-            : "Unavailable"
+          : "Unavailable"
     });
   }
   return React.createElement(StatusBadge, { status: "ready", label: "Ready" });

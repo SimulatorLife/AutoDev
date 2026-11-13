@@ -1,3 +1,5 @@
+import type { QuotaAxiResponse } from "quota-axi";
+
 import type { AgentEnablementState } from "../agents/types.ts";
 import type { EvaluationResult } from "../evaluations/types.ts";
 import type {
@@ -184,59 +186,12 @@ export interface ControlApiProviderCooldown {
   readonly model?: string | null;
 }
 
-export type ControlApiQuotaWindowKind =
-  "five_hour" | "weekly" | "daily" | "monthly" | "rolling";
-
-export type ControlApiQuotaStatus =
-  "available" | "warning" | "exhausted" | "unlimited" | "unavailable";
-
-/** A single rate-limit or usage-quota window (e.g., 5-hour or weekly limit). */
-export interface ControlApiQuotaWindow {
-  readonly id: string;
-  readonly label: string;
-  readonly kind: ControlApiQuotaWindowKind;
-  readonly status: ControlApiQuotaStatus;
-  readonly usedPercent: number | null;
-  readonly remainingPercent: number | null;
-  readonly used?: number | null;
-  readonly limit?: number | null;
-  readonly unit?: string | null;
-  readonly windowSeconds?: number | null;
-  readonly resetsAt: string | null;
-}
-
-/** Quota and limit state for a specific model on a provider. */
-export interface ControlApiModelQuota {
-  readonly model: string;
-  readonly displayName?: string | null;
-  readonly status: ControlApiQuotaStatus;
-  readonly usedPercent: number | null;
-  readonly remainingPercent: number | null;
-  readonly resetsAt: string | null;
-  readonly windows: readonly ControlApiQuotaWindow[];
-  readonly cooldown?: ControlApiProviderCooldown | null;
-}
-
-/** Live usage, quota, and limit snapshot for a provider across its windows and models. */
-export interface ControlApiProviderQuota {
-  readonly provider: string;
-  readonly status: "ok" | "unavailable";
-  readonly source: string;
-  readonly updatedAt: string | null;
-  readonly plan?: string | null;
-  readonly error?: string | null;
-  readonly summaryStatus: ControlApiQuotaStatus;
-  readonly windows: readonly ControlApiQuotaWindow[];
-  readonly models?: readonly ControlApiModelQuota[];
-}
-
 /** Live router evidence for one provider; absent when the router is not observed. */
 export interface ControlApiProviderHealth {
   readonly cooldown: ControlApiProviderCooldown | null;
   readonly modelCooldowns?: Readonly<
     Record<string, ControlApiProviderCooldown>
   >;
-  readonly quota?: ControlApiProviderQuota | null;
   readonly failureStreak: number;
   readonly probeFailureStreak: number;
   readonly inFlightRequests: number;
@@ -529,7 +484,6 @@ export interface ControlApiProviderRecord {
   }[];
   readonly orchestratorReasoningEffort: string | null;
   readonly health: ControlApiProviderHealth | null;
-  readonly quota?: ControlApiProviderQuota | null;
   /**
    * The browser an opencli provider drives; present only on the opencli
    * providers, which share one browser setting.
@@ -550,8 +504,10 @@ export interface ControlApiProviderRecord {
 }
 
 export interface ControlApiProvidersResponse {
-  readonly schema: "autodev-control-providers-v4";
+  readonly schema: "autodev-control-providers-v5";
   readonly orchestratorTier: string;
+  /** Exact quota-axi report; Runtime does not normalize provider quota data. */
+  readonly quotaAxi: QuotaAxiResponse | null;
   /** Ordered priority/fallback groups per capability tier. */
   readonly tiers: readonly {
     readonly tier: string;

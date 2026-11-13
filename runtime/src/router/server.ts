@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
 import {
   createServer,
   type IncomingMessage,
   type Server,
   type ServerResponse
 } from "node:http";
-import { pathToFileURL } from "node:url";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import {
@@ -15,6 +17,7 @@ import {
   scheduleRouterStatePersist
 } from "@simulatorlife/autodev-runtime/router/persistence";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import type { QuotaAxiResponse } from "quota-axi";
 
 import {
   opencliProviderBrowser,
@@ -28,16 +31,13 @@ import {
   setControlApiProviderCheckSource,
   setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
+  setControlApiProviderQuotaAxiSource,
   warmupDefaultPlaytestingRepository
 } from "../control-api/request-handler.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
-import {
-  createProviderQuotaDiscoveryService,
-  discoverProviderQuota,
-  refreshAllProviderQuotas
-} from "../providers/quota-discovery.ts";
+import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
 import {
   agentActivity,
   checkProvider,
@@ -54,7 +54,6 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
-import { ROUTES } from "./routing.ts";
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -190,6 +189,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   });
   let livePollStarted = false;
   let quotaPollInterval: ReturnType<typeof setInterval> | null = null;
+  let quotaAxiSnapshot: QuotaAxiResponse | null = null;
+  let quotaAxiRefresh: Promise<void> | null = null;
   let controlServer: Server | null = null;
   let cleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
@@ -210,9 +211,58 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     setControlApiProviderCliVersionSource(() => cliVersions.snapshot());
     cliVersions.start();
   }
-  const quotaDiscovery = IS_MAIN ? createProviderQuotaDiscoveryService() : null;
-  if (quotaDiscovery) {
-    quotaDiscovery.start();
+  const runtimePackageRoot = path.dirname(
+    resolveRuntimePackageManifest(path.dirname(fileURLToPath(import.meta.url)))
+  );
+  const runtimeBinDirectory = path.join(
+    runtimePackageRoot,
+    "node_modules",
+    ".bin"
+  );
+  const quotaAxiExecutable = path.join(runtimeBinDirectory, "quota-axi");
+  const refreshQuotaAxi = (): Promise<void> => {
+    if (quotaAxiRefresh) return quotaAxiRefresh;
+    quotaAxiRefresh = new Promise<void>((resolve, reject) => {
+      execFile(
+        quotaAxiExecutable,
+        ["--json", "--no-credential-refresh"],
+        {
+          cwd: runtimePackageRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: [
+              runtimeBinDirectory,
+              path.dirname(process.execPath),
+              process.env.PATH
+            ]
+              .filter(Boolean)
+              .join(path.delimiter)
+          }
+        },
+        (error, stdout) => {
+          // quota-axi returns 1 when every provider failed, but still emits its
+          // authoritative report. Preserve that report instead of interpreting
+          // the exit status as a replacement availability model.
+          if (error && error.code !== 1) {
+            reject(error);
+            return;
+          }
+          try {
+            quotaAxiSnapshot = JSON.parse(stdout) as QuotaAxiResponse;
+            resolve();
+          } catch (parseError) {
+            reject(parseError);
+          }
+        }
+      );
+    }).finally(() => {
+      quotaAxiRefresh = null;
+    });
+    return quotaAxiRefresh;
+  };
+  if (IS_MAIN) {
+    setControlApiProviderQuotaAxiSource(() => quotaAxiSnapshot);
   }
   setControlApiOpencliBrowserSource({
     read: opencliProviderBrowser,
@@ -221,14 +271,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   setControlApiProviderCheckSource((provider) =>
     checkProvider(
       provider,
-      modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null,
-      quotaDiscovery
-        ? (name) => quotaDiscovery.refreshProvider(name)
-        : (name) =>
-            discoverProviderQuota(name, {
-              now: Date.now(),
-              syncCooldowns: true
-            })
+      modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null
     )
   );
   setControlApiLiveSessionsSource((now) => agentActivity.listLiveSessions(now));
@@ -285,7 +328,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);
     cliVersions?.stop();
     if (cliVersions) setControlApiProviderCliVersionSource(null);
-    quotaDiscovery?.stop();
+    setControlApiProviderQuotaAxiSource(null);
     setControlApiProviderCheckSource(null);
     setControlApiOpencliBrowserSource(null);
     setControlApiLiveSessionsSource(null);
@@ -324,11 +367,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         void refreshCodexState();
         modelDiscovery?.start();
         if (IS_MAIN) {
-          const providerNames = ROUTES.map((route) => route.provider);
-          void refreshAllProviderQuotas(providerNames).catch(() => undefined);
+          void refreshQuotaAxi().catch(() => undefined);
           quotaPollInterval = setInterval(() => {
-            void refreshAllProviderQuotas(providerNames).catch(() => undefined);
-          }, 120_000);
+            void refreshQuotaAxi().catch(() => undefined);
+          }, 60_000);
           quotaPollInterval.unref();
         }
         const controlListener = configuredControlApiListener(port);

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 3,
+  "providers": [
+    {
+      "provider": "agy",
+      "label": "Antigravity",
+      "source": "api",
+      "windows": [
+        {
+          "id": "gemini_weekly",
+          "label": "Gemini weekly",
+          "kind": "weekly",
+          "percentRemaining": 37.25,
+          "resetsAt": "2040-11-13T18:00:00.000Z"
+        },
+        {
+          "id": "unmeasured",
+          "label": "Unmeasured",
+          "kind": "unknown"
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "sourcesTried": ["api"],
+        "refreshedAt": "2026-11-13T17:00:00.000Z"
+      }
+    }
+  ]
+}

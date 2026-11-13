@@ -52,13 +52,7 @@ import {
   providerModelRows,
   unsupportedProviderModels
 } from "./provider-model-discovery.ts";
-import {
-  CredentialBadge,
-  formatQuotaResetRemaining,
-  ProviderHealthBadge,
-  resolveModelQuota,
-  resolveProviderQuota
-} from "./provider-status.ts";
+import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 import { ProviderBrowserControls } from "./ProviderBrowserControls.ts";
 import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
@@ -250,15 +244,6 @@ function ModelsPanel({
       id: "model",
       header: "Model",
       cell: (model) => {
-        const modelQuota = resolveModelQuota(provider, model.id);
-        const quotaReset = modelQuota
-          ? formatQuotaResetRemaining(
-              modelQuota.resetsAt ??
-                modelQuota.cooldown?.resetsAt ??
-                modelQuota.cooldown?.until ??
-                null
-            )
-          : null;
         return React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
@@ -280,25 +265,6 @@ function ModelsPanel({
                   "aria-label": `Open model ${model.id}`
                 },
                 model.id
-              ),
-          modelQuota === null
-            ? null
-            : React.createElement(
-                "span",
-                {
-                  className: `${MUTED_META_CLASS} tabular-nums`,
-                  "data-model-quota": model.id
-                },
-                [
-                  modelQuota.status === "unlimited"
-                    ? "Unlimited"
-                    : modelQuota.usedPercent === null
-                      ? modelQuota.status
-                      : `${Math.round(modelQuota.usedPercent)}% used`,
-                  quotaReset ? `resets ${quotaReset}` : null
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
               )
         );
       }
@@ -701,143 +667,6 @@ function HealthPanel({
   );
 }
 
-type ProviderQuotaWindow = NonNullable<
-  ReturnType<typeof resolveProviderQuota>
->["windows"][number];
-
-function quotaUsedSummary(window: ProviderQuotaWindow): string {
-  if (window.status === "unlimited") return "Unlimited";
-  if (window.usedPercent === null) {
-    return window.status === "unavailable" ? "Not reported" : window.status;
-  }
-  return `${Math.round(window.usedPercent)}% used (${Math.round(
-    window.remainingPercent ?? 100 - window.usedPercent
-  )}% remaining)`;
-}
-
-function quotaWindowValue(
-  window: ProviderQuotaWindow,
-  nowMs: number
-): React.JSX.Element {
-  const resetRemaining = formatQuotaResetRemaining(window.resetsAt, nowMs);
-  const usedSummary = quotaUsedSummary(window);
-  const countSummary =
-    window.used != null && window.limit != null
-      ? `${window.used} / ${window.limit}${window.unit ? ` ${window.unit}` : ""}`
-      : null;
-  return React.createElement(
-    DetailValue,
-    {
-      key: window.id,
-      label: window.label
-    },
-    React.createElement(
-      "div",
-      {
-        className: "flex flex-col gap-1 tabular-nums",
-        "data-quota-window": window.id
-      },
-      React.createElement(
-        "span",
-        { className: "font-mono text-xs text-fg" },
-        [usedSummary, countSummary].filter(Boolean).join(" · ")
-      ),
-      window.usedPercent === null
-        ? null
-        : React.createElement(
-            "div",
-            {
-              className:
-                "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
-            },
-            React.createElement("div", {
-              className:
-                window.status === "exhausted"
-                  ? "h-full bg-danger"
-                  : window.status === "warning"
-                    ? "h-full bg-warning"
-                    : "h-full bg-accent",
-              style: {
-                width: `${Math.max(
-                  0,
-                  Math.min(100, Math.round(window.usedPercent))
-                )}%`
-              }
-            })
-          ),
-      window.resetsAt
-        ? React.createElement(
-            "span",
-            { className: MUTED_META_CLASS },
-            "Resets ",
-            resetRemaining ? `${resetRemaining} (` : "",
-            formatTimestamp(window.resetsAt),
-            resetRemaining ? ")" : ""
-          )
-        : null
-    )
-  );
-}
-
-export function ProviderQuotaLimitsPanel({
-  provider,
-  nowMs = Date.now()
-}: {
-  readonly provider: ControlApiProviderRecord;
-  readonly nowMs?: number;
-}): React.JSX.Element | null {
-  const quota = resolveProviderQuota(provider);
-  if (!quota) return null;
-
-  return React.createElement(
-    "section",
-    {
-      className: DETAIL_PANEL_CLASS,
-      "data-section": "provider-quota-limits",
-      "data-provider-quota-status": quota?.summaryStatus ?? "unavailable"
-    },
-    React.createElement(
-      "div",
-      { className: "mb-3 flex flex-wrap items-center justify-between gap-2" },
-      React.createElement(
-        "h3",
-        { className: SECTION_HEADING_CLASS },
-        "Quota & usage limits"
-      ),
-      quota?.plan
-        ? React.createElement(
-            "span",
-            { className: `font-mono ${MUTED_META_CLASS}` },
-            `Plan: ${quota.plan}`
-          )
-        : null
-    ),
-    quota?.updatedAt
-      ? React.createElement(
-          "p",
-          { className: `mb-3 ${MUTED_META_CLASS}` },
-          `Source: ${quota.source} · Updated `,
-          formatTimestamp(quota.updatedAt)
-        )
-      : null,
-    quota?.status === "unavailable"
-      ? React.createElement(
-          "p",
-          { className: MUTED_BODY_CLASS },
-          quota.error ??
-            "Live quota limits could not be read for this provider."
-        )
-      : null,
-    quota && quota.windows.length > 0
-      ? React.createElement(
-          DetailGrid,
-          { columns: 2, className: "mb-4" },
-          ...quota.windows.map((window) => quotaWindowValue(window, nowMs))
-        )
-      : null
-  );
-}
-
 export function ProviderDetailView({
   provider,
   tiers,
@@ -944,7 +773,6 @@ export function ProviderDetailView({
     }),
     React.createElement(RoutingPanel, { provider, tiers, orchestratorTier }),
     React.createElement(RoutePanel, { provider }),
-    React.createElement(ProviderQuotaLimitsPanel, { provider }),
     React.createElement(HealthPanel, { health: provider.health }),
     usagePanel
   );

@@ -6557,12 +6557,10 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
       assert.match(body, /half a result/);
       const served = response.headers.get("x-autodev-provider");
       const servedModel = response.headers.get("x-autodev-model");
-      // The route that served is what has to cool down, and the route is not
-      // always the provider: a provider whose quota is pooled (antigravity)
-      // is cooled per pool, so that one pool going out does not take the
-      // other one offline with it. The provider-wide field is therefore not
-      // the contract the router keeps -- the route's own cooldown is, and
-      // asking for it resolves provider, model and pool in that order.
+      // The route that served is what has to cool down. Antigravity model-
+      // family routes remain separate routing boundaries; quota-axi identities
+      // and availability do not create or scope cooldowns. The router keeps the
+      // request outcome on its provider/model route.
       const routeCooldown = cooldowns.get(
         served ?? "",
         Date.now(),
@@ -6582,12 +6580,12 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
-test("an exhausted Antigravity quota cools only its own provider", async () => {
+test("Antigravity model-family routes keep independent cooldown state", async () => {
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   const resetsAt = new Date(Date.now() + 5_400_000).toISOString();
   try {
-    // agy meters Gemini and Claude/GPT-OSS separately, and each is its own
-    // provider, so the Gemini quota running out takes out Gemini alone.
+    // The provider response came from the Gemini model-family route. Its
+    // cooldown stays on that route; it does not affect Claude/GPT-OSS.
     cooldowns.cooldownProvider("antigravity-gemini", {
       failureClass: "quota_exhausted",
       resetsAt,
@@ -8279,7 +8277,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     assert.equal(viewerRead.status, 200);
     assert.equal(
       (await viewerRead.json()).schema,
-      "autodev-control-providers-v4"
+      "autodev-control-providers-v5"
     );
 
     const wrongMethod = await originalFetch(endpoint, {

@@ -174,8 +174,8 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     healthUrl: "http://127.0.0.1:18765/health",
     envKey: "MINIMAX_API_KEY"
   },
-  // One provider per Antigravity quota (Gemini, Argon, Claude/GPT-OSS), all
-  // served by the one agy bridge.
+  // Separate AutoDev routes for the Antigravity model families, all served by
+  // one agy bridge. quota-axi retains its own `agy` identity in the UI report.
   ...ANTIGRAVITY_PROVIDERS.map((provider) => ({
     provider,
     pattern: ANTIGRAVITY_PROVIDER_PATTERNS[provider],

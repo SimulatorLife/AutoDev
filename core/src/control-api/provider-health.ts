@@ -76,22 +76,10 @@ export function providerHealthReadiness(
 ): ProviderHealthReadiness {
   if (health === null) return "not-observed";
   if (health.cooldown !== null) return "unavailable";
-  const quota = health.quota ?? null;
-  if (quota?.status === "ok" && quota.summaryStatus === "exhausted") {
-    return "unavailable";
-  }
   const check = health.lastCheck;
-  const quotaAvailableAt =
-    quota?.status === "ok" &&
-    (quota.summaryStatus === "available" ||
-      quota.summaryStatus === "warning" ||
-      quota.summaryStatus === "unlimited")
-      ? timestamp(quota.updatedAt)
-      : Number.NEGATIVE_INFINITY;
   const lastSuccessAt = Math.max(
     timestamp(health.lastSuccessAt),
-    check?.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY,
-    quotaAvailableAt
+    check?.ok ? timestamp(check.at) : Number.NEGATIVE_INFINITY
   );
   const failureIsExpiredTransient = isFailureExpiredTransient(
     health,

@@ -8,5 +8,8 @@
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "quota-axi": "0.1.69"
   }
 }

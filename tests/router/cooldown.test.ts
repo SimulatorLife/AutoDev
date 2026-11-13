@@ -147,7 +147,7 @@ test("typed cooldown persistence restores only future hard entries and clamps th
   assert.equal(restored.isCooling("expired", NOW + 1), false);
 });
 
-test("each Antigravity provider cools down on its own quota", () => {
+test("Antigravity model-family routes keep independent cooldown state", () => {
   const cooldowns = new ProviderCooldowns();
   cooldowns.cooldownProvider("antigravity-claude-gpt", {
     now: NOW,
@@ -155,13 +155,13 @@ test("each Antigravity provider cools down on its own quota", () => {
     failureClass: "quota_exhausted",
     structured: true
   });
-  // The whole Claude/GPT-OSS quota is out, GPT-OSS included...
+  // A response on the Claude/GPT-OSS route cools that route...
   assert.equal(cooldowns.get("antigravity-claude-gpt", NOW)?.kind, "hard");
   assert.equal(
     cooldowns.get("antigravity-claude-gpt", NOW, "gpt-oss-120b-medium")?.kind,
     "hard"
   );
-  // ...while Gemini and Argon, metered separately, keep serving.
+  // ...while the Gemini and Argon routes keep serving.
   assert.equal(cooldowns.get("antigravity-gemini", NOW), null);
   assert.equal(cooldowns.get("antigravity-argon", NOW), null);
 

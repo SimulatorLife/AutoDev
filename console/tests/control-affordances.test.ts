@@ -70,7 +70,8 @@ const NO_CONVERGENCE = {
 };
 
 const PROVIDERS_FIXTURE = {
-  schema: "autodev-control-providers-v4",
+  schema: "autodev-control-providers-v5",
+  quotaAxi: null,
   orchestratorTier: "root",
   tiers: [
     { tier: "default", groups: [["provider-fixture"]] },

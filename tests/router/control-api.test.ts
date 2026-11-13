@@ -19,6 +19,7 @@ import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import {
   type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
+  type ControlApiProvidersResponse,
   LOCAL_CONTROL_API_ACTOR,
   PROVIDER_ROLES,
   type ProviderRoleAssignment
@@ -38,6 +39,7 @@ import {
   setControlApiProviderCheckSource,
   setControlApiProviderHealthSource,
   setControlApiProviderModelDiscoverySource,
+  setControlApiProviderQuotaAxiSource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
 import {
@@ -422,8 +424,26 @@ test("unobserved provider discovery publishes every known provider exactly once"
 test("viewer reads control resources; MCP and Skills views contain configuration, not OTel history", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();
+  const quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> = {
+    generatedAt: "2026-11-13T12:00:00.000Z",
+    schemaVersion: 5,
+    providers: [
+      {
+        provider: "agy",
+        windows: [{ id: "unknown", label: "Unknown", kind: "unknown" }],
+        quotaSemantics: {
+          status: "unknown",
+          effectiveAvailability: [
+            { scope: "gemini", status: "unknown", boundedBy: [] }
+          ]
+        },
+        state: { status: "stale", stale: true }
+      }
+    ]
+  };
   try {
     configure();
+    setControlApiProviderQuotaAxiSource(() => quotaAxi);
     setExecutionContractForTests({
       roles: {
         default: { mcp: ["playwright"], skills: ["orchestration"] },
@@ -436,7 +456,8 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v4");
+    assert.equal(providers.body.schema, "autodev-control-providers-v5");
+    assert.deepEqual(providers.body.quotaAxi, quotaAxi);
     // Each provider's external links are its routing config's, unchanged.
     for (const provider of providers.body.providers as Array<{
       id: string;
@@ -549,6 +570,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       )
     );
   } finally {
+    setControlApiProviderQuotaAxiSource(null);
     setExecutionContractForTests(priorContract);
     restoreEnv(saved);
   }
@@ -1254,9 +1276,11 @@ test("the opencli providers share one browser setting that defaults to the opera
     });
     const browserOf = async (provider: string) =>
       (
-        (await call("GET", CONTROL_API_PATHS.providers, {
-          actor: "viewer-a"
-        })).body as {
+        (
+          await call("GET", CONTROL_API_PATHS.providers, {
+            actor: "viewer-a"
+          })
+        ).body as {
           providers: { id: string; browser?: { dedicated: boolean } }[];
         }
       ).providers.find((entry) => entry.id === provider)?.browser;
@@ -3039,7 +3063,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v4");
+    assert.equal(providers.body.schema, "autodev-control-providers-v5");
 
     // 3. Models
     const models = await call("GET", CONTROL_API_PATHS.models, {
@@ -3857,6 +3881,10 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
     cpSync(join(process.cwd(), ".rulesync", "commands"), commandsDir, {
       recursive: true
     });
+    cpSync(
+      join(process.cwd(), "rulesync.jsonc"),
+      join(repositoryRoot, "rulesync.jsonc")
+    );
     symlinkSync(
       resolve(process.cwd(), "node_modules"),
       join(repositoryRoot, "node_modules"),
@@ -5030,6 +5058,10 @@ test("queued provider role patches recheck provider enablement after a disable c
       actor: "operator-a",
       body: { disabled: true }
     });
+    // Let the disable request finish parsing and enter the held mutation queue
+    // before submitting the role patch whose model only becomes invalid after
+    // the disable commits.
+    await new Promise<void>((_resolve) => setImmediate(_resolve));
     roleCall = call(
       "PATCH",
       CONTROL_API_PATHS.providers + "/claude/roles/subagent",

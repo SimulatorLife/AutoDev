@@ -67,10 +67,6 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import { loadCodexAuth } from "../providers/codex-auth.ts";
-import {
-  parseCodexResponseRateLimitHeaders,
-  setCachedProviderQuota
-} from "../providers/quota-discovery.ts";
 import { recordMcpExposure } from "./correlation.ts";
 import {
   currentRouterMemoryMode,
@@ -1912,12 +1908,6 @@ export async function fetchUpstream(
       });
     }
     throw error;
-  }
-  if (route.provider === "codex" && upstream.headers) {
-    const codexQuota = parseCodexResponseRateLimitHeaders(upstream.headers);
-    if (codexQuota) {
-      setCachedProviderQuota("codex", codexQuota, { syncCooldowns: true });
-    }
   }
   if (!upstream.ok) return failedUpstreamResponse(upstream, attemptSpan);
   if (!wantsStream) {

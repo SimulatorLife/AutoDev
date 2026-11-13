@@ -587,7 +587,7 @@ test(
 );
 
 test(
-  "an Antigravity quota limit cools only the provider that meters it",
+  "a provider-reported Antigravity quota error cools only the route that returned it",
   { concurrency: false },
   async () => {
     COOLDOWNS.clearAll();
@@ -632,8 +632,8 @@ test(
           candidates: [{ ...route(provider, "LITELLM_API_KEY"), model }],
           role: "worker",
           subject: "worker turn",
-          sessionKey: "agy-quota-pool",
-          session: { key: "agy-quota-pool", scope: "identified" }
+          sessionKey: "agy-model-family-session",
+          session: { key: "agy-model-family-session", scope: "identified" }
         },
         { model: "autodev/worker", input: [], stream: false },
         false,
