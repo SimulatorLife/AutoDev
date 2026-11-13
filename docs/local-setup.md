@@ -23,6 +23,26 @@ bash scripts/install.sh
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
+### Codex Cloud development
+
+Codex Cloud runs a Linux workspace, not the macOS host where AutoDev installs
+launchd services. In the **AutoDev** cloud environment, select
+`SimulatorLife/AutoDev`, configure **Node 24.12+**, and use this install script:
+
+```bash
+bash scripts/setup-codex-cloud.sh
+```
+
+The script uses the repository's pinned pnpm version and frozen lockfile,
+materializes Codex skills from RuleSync, protects generated skills from accidental
+commits through the existing exclusions bootstrap, and smoke-tests the typed CLI.
+It deliberately does **not** run `scripts/install.sh`, start host services, or
+require provider credentials. Run `pnpm run format:check`, `pnpm run lint:ci`,
+`pnpm run typecheck`, and `pnpm test` for validation. Browser work additionally
+needs Chromium (`cd console && pnpm exec playwright install --with-deps chromium`);
+playtesting analysis needs `uv`. macOS/launchd-specific behavior must be verified
+by the macOS CI gates, not inferred from the Linux cloud workspace.
+
 ### Typed CLI commands
 
 `pnpm autodev -- --help` lists every command family and the values each one
