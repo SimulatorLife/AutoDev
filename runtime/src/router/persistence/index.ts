@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { rename, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { rename, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -166,6 +167,45 @@ export interface RouterPersistenceOptions {
   onPostRestore?: ((parsed: Record<string, unknown>) => void) | undefined;
 }
 
+/** Whether a process with this id is still running. */
+function processRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Remove the temporary files of state writes whose process is gone.
+ *
+ * A write goes to `<state>.<pid>.<ms>.tmp` and is renamed over the state
+ * file. A process that exited between the two -- a crash, a test process, the
+ * router's fatal exit -- left its file behind, and nothing else ever removed
+ * it. A running process's file may be mid-write, so it is left alone.
+ */
+function removeAbandonedTemporaryFiles(stateFile: string): void {
+  const directory = path.dirname(stateFile);
+  const prefix = `${path.basename(stateFile)}.`;
+  let names: string[];
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
+    const pid = Number(name.slice(prefix.length).split(".")[0]);
+    if (!Number.isInteger(pid) || pid <= 0 || processRunning(pid)) continue;
+    try {
+      unlinkSync(path.join(directory, name));
+    } catch {
+      // Another process removed it first.
+    }
+  }
+}
+
 export class RouterPersistence {
   private readonly stateFileOption?: string | (() => string) | undefined;
   private readonly isMain: boolean;
@@ -216,6 +256,7 @@ export class RouterPersistence {
 
   load(file?: string): boolean {
     const targetFile = this.getStateFile(file);
+    removeAbandonedTemporaryFiles(targetFile);
     if (!existsSync(targetFile)) return false;
     try {
       const parsed = JSON.parse(readFileSync(targetFile, "utf8"));
@@ -268,13 +309,16 @@ export class RouterPersistence {
         this.persistedStateUpdatedAt = new Date().toISOString();
         return true;
       })
-      .catch((error) => {
+      .catch(async (error) => {
         writeErrorLine(
           "Warning: could not persist router state to " +
             targetFile +
             ": " +
             errorMessage(error)
         );
+        // A write that never became the state file must not stay beside it:
+        // 98 of them, up to 29 MB each, had collected in CODEX_HOME.
+        await rm(temporaryFile, { force: true }).catch(() => undefined);
         return false;
       });
 

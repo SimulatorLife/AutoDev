@@ -2858,14 +2858,25 @@ single list; the route patterns and the site registry in
   (`chatgpt model` changes the account's last-used model), so turns share
   the site only while they want the model it is on: a turn that wants
   another waits for the site to drain and runs alone, so its switch cannot
-  change the model under a turn in another tab, and turns behind it wait for
-  it. ChatGPT's upload allowance is checked once a turn has a tab, counting
+  change the model under a turn in another tab. Turns behind it that want
+  the model the site is on take the free tabs for its first 30 s
+  (`MODEL_SWITCH_PASS_MS`); after that nothing more starts until the site
+  has drained for the switch, so a switch is never starved and a root at one
+  level no longer serializes its workers at another. ChatGPT's upload allowance is checked once a turn has a tab, counting
   the uploads the site's other tabs are making, so concurrent turns cannot
   both spend the last one. Different sites run in parallel. A command the
   bridge cancels ends at once, but opencli's daemon keeps its tab until that
   command's browser step finishes; a refusal with `SESSION_BUSY` is waited
   out (retrying every 5 s) until the turn's own timeout instead of failing
-  the turn.
+  the turn; one that outlasts the timeout is a refusal (nothing was sent),
+  not a provider failure that cools the provider down.
+- **Every command runs within the turn's budget.** A retried command gets a
+  `--timeout` of what is left of the turn, not a fresh full one, and a retry
+  is not started with under 10 s left. A command that is still running 15 s
+  past the turn's deadline (or 60 s for a command with no `--timeout` of its
+  own, such as a ChatGPT model switch) is killed and the turn answers `408`,
+  so a browser call that never returns no longer holds its tab until the
+  client gives up.
 - **A finished ChatGPT reply is read within about two seconds.** The patched
   adapter reads the reply every second (it was every 3 s) and still returns
   it only once the page has stopped generating and the same text has been
@@ -2882,10 +2893,36 @@ single list; the route patterns and the site registry in
   reached the site -- no composer yet ("requires an authenticated session
   with an active composer"), an attachment that never became ready ("prompt
   was not sent") -- is retried twice, 3 s apart; a failure after sending is
-  not, so a prompt is never put in a chat twice. Gemini's model picker does
-  not render in a hidden or covered window, and opencli then selects no model
-  at all ("model discovery returned no selectable models"); such a turn is
-  asked with the model Gemini already has rather than failing.
+  not, so a prompt is never put in a chat twice. A signed-out site
+  (`AUTH_REQUIRED`/`LOGIN_WALL`) is not retried. Such a refusal is classified
+  before its text is read for limit wording: a message quoting a chat id or
+  byte count that contains `429` is not a rate limit (the limit pattern only
+  takes `429` as a number of its own).
+- **A site's model is switched only when it changes.** Both sites' model is
+  an account setting that outlives the chat, so the bridge asks for it (a
+  ChatGPT `model` command, Gemini's `--model`) only when the turn wants a
+  different one than the bridge last put the site on. Gemini's picker was
+  opened, read and closed on every turn, which cost seconds and failed turns
+  whenever the window could not render it. A switch that failed is not
+  recorded, so the next turn asks for it again. Gemini's model picker does
+  not render in a hidden or covered window; when opencli cannot open it
+  ("Gemini model picker button was not found", "model discovery returned no
+  selectable models") or the thinking level is not available for the model,
+  the turn is asked at the model and level Gemini already has.
+- **A reply with a tool call the bridge cannot read is refused.** Calls are
+  read with single or double quotes, namespaced names (`[\w.:/-]`), from a
+  reply the site escaped as HTML, and when the reply ends inside its last
+  call. A `<tool_call` still left in the prose is answered as a refusal
+  (`UNUSABLE_REPLY`, the same type as a prompt that was never sent) instead
+  of reaching Codex as prose that ends the agent's turn; the chat it was
+  continued from is not continued again.
+- **The orchestrator bootstrap is sent once.** An orchestrator's first
+  prompt renders the bootstrap, the code-search prompt and the orchestration
+  skill in its role section, so the root-delegation hook's copy of the
+  bootstrap leaves the conversation (about 10 KB of a prompt Gemini caps at
+  100 KB); only its recovery note, which names the parent session, is kept.
+  The whole first prompt is rendered only when a turn sends it, not on every
+  continued turn.
 - **A Gemini model that is out of usage is its usage limit.** The site keeps
   such a model in its picker and replaces its description with "Limit
   resets Nov 9, 9:26 PM". The model keeps its id; `opencli gemini models`
@@ -2987,6 +3024,17 @@ single list; the route patterns and the site registry in
 - **Reply normalisation.** Each site spec's `reply` strips what the adapter
   adds around the model's text (opencli's `gemini ask` prefixes every reply
   with `💬 `), so the decoration never reaches Codex.
+- **Gemini's reply is read from the chat, never the page around it.** The
+  patched adapter reads a reply from the chat's structured turns, and treats
+  a chat that shows the prompt's turn but no answer yet as an answer still
+  coming, however long Gemini stays quiet on a long prompt. Its plain-text
+  transcript is read only from a page without that layout, and only from the
+  chat window with the side navigation removed: Gemini's `<main>` also holds
+  the sidebar's menu and chat titles, and a root turn (session
+  `01a1d23e-d01e-77b1-a353-70e46311cda7`) ended on that sidebar text as its
+  "reply" while Gemini's real answer, a tool call, sat in the chat unread.
+  The same holds for deciding that the prompt was taken: on a page with the
+  structured layout only the prompt's own turn says so.
 - **A turn that never reached the site is a refusal, not an outage.** A site
   can fail before the prompt reaches it: the tab had no composer, the page
   showed no file input, the site session was held by another command. The

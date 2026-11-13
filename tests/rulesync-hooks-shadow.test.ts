@@ -46,10 +46,16 @@ const hookPaths: Record<(typeof targets)[number], string> = {
 const sourceCommands = [
   "node ~/.codex/src/hooks/session-start.ts",
   "node ~/.codex/src/hooks/subagent-start.ts",
-  "node ~/.codex/src/hooks/root-delegation.ts",
   "node ~/.codex/src/hooks/block-ccc-cli.ts",
   "node ~/.codex/src/hooks/skill-read-telemetry.ts"
 ];
+/**
+ * The root-delegation bootstrap names Codex's spawn tools and code-mode
+ * `exec` cells, so only the hosts that route through AutoDev's Codex roots
+ * run it. Shared, it put about 8 KB of Codex-only instructions into every
+ * Claude Code prompt.
+ */
+const rootDelegation = "node ~/.codex/src/hooks/root-delegation.ts";
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -140,14 +146,27 @@ test("Rulesync hook source is the canonical four-section command subset", () => 
   const source = readJson(hookSourcePath);
   assert.deepEqual(
     Object.keys(source).sort(),
-    ["claudecode", "codexcli", "hooks"].sort()
+    ["claudecode", "codexcli", "copilot", "hooks"].sort()
   );
   assert.deepEqual(Object.keys(asObject(source.hooks)).sort(), [
-    "beforeSubmitPrompt",
     "preToolUse",
     "sessionStart",
     "subagentStart"
   ]);
+  // The bootstrap is no host's in common: Codex and Copilot run it, Claude
+  // Code never does.
+  for (const target of ["codexcli", "copilot"])
+    assert.deepEqual(
+      commands(asObject(source[target])).filter(
+        (command) => command === rootDelegation
+      ),
+      [rootDelegation],
+      target
+    );
+  assert.equal(
+    "beforeSubmitPrompt" in asObject(asObject(source.claudecode).hooks),
+    false
+  );
   assert.doesNotMatch(
     readFileSync(hookSourcePath, "utf8"),
     /prevent_idle_sleep/
@@ -202,11 +221,12 @@ test("target projections preserve their documented command losses", () => {
     codexcli: new Set(),
     claudecode: new Set(),
     copilot: new Set(["node ~/.codex/src/hooks/session-start.ts"]),
-    "antigravity-cli": new Set([
-      "node ~/.codex/src/hooks/subagent-start.ts",
-      "node ~/.codex/src/hooks/root-delegation.ts"
-    ])
+    "antigravity-cli": new Set(["node ~/.codex/src/hooks/subagent-start.ts"])
   };
+  assert.equal(projected.codexcli.has(rootDelegation), true);
+  assert.equal(projected.copilot.has(rootDelegation), true);
+  assert.equal(projected.claudecode.has(rootDelegation), false);
+  assert.equal(projected["antigravity-cli"].has(rootDelegation), false);
   for (const target of targets)
     assert.deepEqual(
       new Set(
@@ -236,8 +256,7 @@ test("target projections preserve their documented command losses", () => {
       "PreToolUse",
       "SessionEnd",
       "SessionStart",
-      "SubagentStart",
-      "UserPromptSubmit"
+      "SubagentStart"
     ]),
     copilot: new Set(["subagentStart", "userPromptSubmitted", "preToolUse"]),
     "antigravity-cli": new Set(["SessionStart", "PreToolUse"])
@@ -318,18 +337,12 @@ test("Codex and Claude get native memory capture without adding a Copilot hook",
     groupedCommands(codex).filter(
       (command) => !sourceCommands.includes(command)
     ),
-    ["node ~/.codex/src/hooks/memory-session-end.ts"]
+    [rootDelegation, "node ~/.codex/src/hooks/memory-session-end.ts"]
   );
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
     Object.keys(claude).sort(),
-    [
-      "PreToolUse",
-      "SessionEnd",
-      "SessionStart",
-      "SubagentStart",
-      "UserPromptSubmit"
-    ].sort()
+    ["PreToolUse", "SessionEnd", "SessionStart", "SubagentStart"].sort()
   );
   const claudeMemoryCapture =
     "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code node ~/.codex/src/hooks/memory-session-end.ts";
@@ -349,7 +362,8 @@ test("Codex and Claude get native memory capture without adding a Copilot hook",
     : [];
   assert.equal(
     asObject(targetPromptHooks[0]).statusMessage,
-    source.beforeSubmitPrompt?.[0]?.statusMessage
+    hooksAt(asObject(readJson(hookSourcePath).codexcli).hooks)
+      .beforeSubmitPrompt?.[0]?.statusMessage
   );
   assert.equal(codex.PreToolUse?.[0]?.matcher, source.preToolUse?.[0]?.matcher);
 });
@@ -359,14 +373,14 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   const copilotHooks = hooksAt(copilot.hooks);
   assert.deepEqual(Object.keys(copilotHooks), [
     "subagentStart",
-    "userPromptSubmitted",
-    "preToolUse"
+    "preToolUse",
+    "userPromptSubmitted"
   ]);
   assert.deepEqual(commands(copilot), [
     "node ~/.codex/src/hooks/subagent-start.ts",
-    "node ~/.codex/src/hooks/root-delegation.ts",
     "node ~/.codex/src/hooks/block-ccc-cli.ts",
-    "node ~/.codex/src/hooks/skill-read-telemetry.ts"
+    "node ~/.codex/src/hooks/skill-read-telemetry.ts",
+    "node ~/.codex/src/hooks/root-delegation.ts"
   ]);
   assert.deepEqual(
     copilotHooks.subagentStart?.map((hook) => hook.command),

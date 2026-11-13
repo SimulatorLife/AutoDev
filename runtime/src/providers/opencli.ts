@@ -37,6 +37,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   isOrchestratorRole,
+  orchestratorBootstrapHeading,
   resolveAgentRole,
   roleInstructions
 } from "@simulatorlife/autodev-runtime/agents";
@@ -107,6 +108,7 @@ import {
   type TranscriptEntry,
   transcriptSegments,
   UPLOADS_EXHAUSTED,
+  withoutHookBootstrap,
   uploadsRefused
 } from "./opencli-turn.ts";
 
@@ -279,6 +281,16 @@ export interface OpencliBridgeOptions {
   readonly sessionBusyRetryMs?: number;
   /** How long to wait before re-trying a command the site was not ready for. */
   readonly unsentRetryMs?: number;
+  /**
+   * How long past its limit a command may run before it is killed
+   * (`HARD_KILL_GRACE_MS`).
+   */
+  readonly commandGraceMs?: number;
+  /**
+   * How long a turn waiting to switch a site's model may be passed by turns
+   * at the model the site is on (`MODEL_SWITCH_PASS_MS`).
+   */
+  readonly modelSwitchPassMs?: number;
   /** Keep-alive cadence on a streamed turn. */
   readonly keepAliveMs?: number;
   /**
@@ -654,12 +666,16 @@ class SiteTabs {
   /** The model the site is on now, as far as the bridge knows. */
   private readonly siteLevel: (site: OpencliSite) => string | undefined;
 
+  private readonly switchPassMs: number;
+
   constructor(
     tabs: Readonly<Record<OpencliSite, number>>,
-    siteLevel: (site: OpencliSite) => string | undefined
+    siteLevel: (site: OpencliSite) => string | undefined,
+    switchPassMs: number
   ) {
     this.tabs = tabs;
     this.siteLevel = siteLevel;
+    this.switchPassMs = switchPassMs;
   }
 
   run<T>(
@@ -749,7 +765,7 @@ class SiteTabs {
       // A turn that cannot join waits for the site to drain. The turns
       // behind it may pass it only while it is young; once it has waited
       // long enough, nothing more is started until the site is free for it.
-      if (Date.now() - next.queuedAt >= MODEL_SWITCH_PASS_MS) return;
+      if (Date.now() - next.queuedAt >= this.switchPassMs) return;
       index += 1;
     }
   }
@@ -1204,8 +1220,10 @@ export function createOpencliBridge(
   // The model each site was last switched to by this bridge. A site whose
   // model is an account setting is switched only when a turn asks for another.
   const selectedModels = new Map<OpencliSite, string>();
-  const tabs = new SiteTabs(options.siteTabs, (site) =>
-    selectedModels.get(site)
+  const tabs = new SiteTabs(
+    options.siteTabs,
+    (site) => selectedModels.get(site),
+    options.modelSwitchPassMs ?? MODEL_SWITCH_PASS_MS
   );
   // The thinking level each site last answered at. A site that is already at
   // the level the turn asks for is not asked again: the switch costs the site
@@ -1368,18 +1386,26 @@ export function createOpencliBridge(
     }
     const spec = OPENCLI_SITE_SPECS[site];
     const tools = codexToolSurface(payload).tools;
-    const entries = transcriptEntries(payload.input);
+    // A root orchestrator's policy is the one role Codex does not carry whole
+    // (see roleSection), so it is added from the router's role header, as the
+    // CLI bridges do. A leaf's role instructions arrive intact in the input.
+    const agentRole = resolveAgentRole(request.headers);
+    const orchestrator = isOrchestratorRole(agentRole);
+    // The role section renders the bootstrap the hook also injected, so the
+    // hook's copy leaves the conversation (every turn alike, so the chat
+    // ledger's digests stay stable).
+    const entries = orchestrator
+      ? withoutHookBootstrap(
+          transcriptEntries(payload.input),
+          orchestratorBootstrapHeading()
+        )
+      : transcriptEntries(payload.input);
     const segments = entries.map((entry) => entry.text);
     const scope: OpencliChatScope = {
       site,
       thread: codexThread(request, payload)
     };
     const recorded = ledger.find(scope, prefixDigests(segments));
-    // A root orchestrator's policy is the one role Codex does not carry whole
-    // (see roleSection), so it is added from the router's role header, as the
-    // CLI bridges do. A leaf's role instructions arrive intact in the input.
-    const agentRole = resolveAgentRole(request.headers);
-    const orchestrator = isOrchestratorRole(agentRole);
     const instructions =
       typeof payload.instructions === "string" ? payload.instructions : "";
     const role = orchestrator ? roleInstructions(agentRole) : null;
@@ -1502,9 +1528,8 @@ export function createOpencliBridge(
           0,
           (timed.includes(TIMEOUT_FLAG)
             ? deadline
-            : Math.min(deadline, Date.now() + UNTIMED_COMMAND_MS)) -
-            Date.now()
-        ) + HARD_KILL_GRACE_MS
+            : Math.min(deadline, Date.now() + UNTIMED_COMMAND_MS)) - Date.now()
+        ) + (options.commandGraceMs ?? HARD_KILL_GRACE_MS)
       );
       try {
         return await options.run({
@@ -1814,7 +1839,8 @@ export function createOpencliBridge(
               throw error;
             });
           if (uploading) recordUpload(turn.site);
-          if (reply.modelSelected) selectedModels.set(turn.site, turn.siteModel);
+          if (reply.modelSelected)
+            selectedModels.set(turn.site, turn.siteModel);
           else selectedModels.delete(turn.site);
           // The site reports the level it answered at. A turn that asked for
           // a level the site would not take answers at the level the site

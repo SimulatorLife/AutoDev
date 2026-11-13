@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -10,6 +10,7 @@ import {
   geminiModelLimit,
   OpencliCommandError
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+import { type Browser, chromium } from "playwright-core";
 
 /**
  * The ChatGPT adapter AutoDev patches: how a prompt reaches the site.
@@ -673,4 +674,185 @@ test("a Gemini tab signed in as another account is reopened as the configured on
   // shows the other one: that is a sign-in for the operator to make.
   assert.equal(failure?.code, "AUTH_REQUIRED");
   assert.match(failure?.message ?? "", /someone@example\.com/u);
+});
+
+interface GeminiSnapshot {
+  readonly url: string;
+  readonly turns: readonly { Role: string; Text: string }[];
+  readonly transcriptLines: readonly string[];
+  readonly composerHasText: boolean;
+  readonly isGenerating: boolean;
+  readonly structuredTurnsTrusted: boolean;
+}
+
+interface GeminiReplyUtils {
+  waitForGeminiResponse: (
+    page: unknown,
+    baseline: {
+      snapshot: GeminiSnapshot;
+      userAnchorTurn: { Role: string; Text: string } | null;
+    },
+    promptText: string,
+    timeoutSeconds: number
+  ) => Promise<string>;
+  waitForGeminiSubmission: (
+    page: unknown,
+    before: GeminiSnapshot,
+    timeoutSeconds: number
+  ) => Promise<{ reason: string } | null>;
+  __test__: { readGeminiSnapshotScript: () => string };
+}
+
+const GEMINI_CHAT_URL = "https://gemini.google.com/app/c1f94246f36a5126";
+const GEMINI_PROMPT = "# Codex agent turn\n\nReview the codebase.";
+/** What Gemini's side navigation reads as, one line per entry. */
+const GEMINI_SIDEBAR_LINES = [
+  "Library",
+  "Images",
+  "OpenCLI Provider Optimization Delegation",
+  "# Codex agent turn"
+];
+
+/** A Gemini tab whose snapshot reads, poll by poll, as `snapshots`. */
+function geminiChat(snapshots: readonly GeminiSnapshot[]) {
+  let polls = 0;
+  return {
+    polls: (): number => polls,
+    page: {
+      evaluate: (script: string) => {
+        if (script === "window.location.href")
+          return Promise.resolve(GEMINI_CHAT_URL);
+        const snapshot = snapshots[Math.min(polls, snapshots.length - 1)];
+        polls += 1;
+        return Promise.resolve(snapshot);
+      },
+      wait: () => Promise.resolve()
+    }
+  };
+}
+
+function geminiSnapshot(
+  turns: GeminiSnapshot["turns"],
+  transcriptLines: readonly string[]
+): GeminiSnapshot {
+  return {
+    url: GEMINI_CHAT_URL,
+    turns,
+    transcriptLines,
+    composerHasText: false,
+    isGenerating: false,
+    structuredTurnsTrusted: true
+  };
+}
+
+test("a Gemini reply still coming is waited for, not read from the page around it", async () => {
+  // A long prompt keeps Gemini quiet for a while after its turn shows. The
+  // adapter took two quiet polls as a sign the chat had no structured layout
+  // and read the reply from the page's transcript instead -- the side
+  // navigation's menu and chat titles. Session
+  // 01a1d23e-d01e-77b1-a353-70e46311cda7 ended its root turn on "Gemini New
+  // chatLibraryImages...# Codex agent turn" while Gemini's actual reply, a
+  // tool call, sat in the chat unread.
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  const user = { Role: "User", Text: GEMINI_PROMPT };
+  const reply = '<tool_call name="exec">\ntext("ok")\n</tool_call>';
+  const asked = geminiSnapshot([user], [GEMINI_PROMPT]);
+  const thinking = geminiSnapshot(
+    [user],
+    [GEMINI_PROMPT, ...GEMINI_SIDEBAR_LINES]
+  );
+  const answered = geminiSnapshot(
+    [user, { Role: "Assistant", Text: reply }],
+    [GEMINI_PROMPT, ...GEMINI_SIDEBAR_LINES, reply]
+  );
+  const chat = geminiChat([
+    thinking,
+    thinking,
+    thinking,
+    thinking,
+    thinking,
+    answered,
+    answered
+  ]);
+  const response = await utils.waitForGeminiResponse(
+    chat.page,
+    { snapshot: asked, userAnchorTurn: user },
+    GEMINI_PROMPT,
+    60
+  );
+  assert.equal(response, reply);
+});
+
+test("a Gemini chat's changing sidebar is not taken for the prompt being sent", async () => {
+  // A new chat appears in the sidebar under its prompt's first words before
+  // the chat shows the prompt's turn. On a page with the structured layout
+  // only that turn says the prompt was taken.
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  const before = geminiSnapshot(
+    [{ Role: "User", Text: "an earlier prompt" }],
+    ["an earlier prompt"]
+  );
+  const titled = geminiSnapshot(before.turns, [
+    "an earlier prompt",
+    ...GEMINI_SIDEBAR_LINES
+  ]);
+  const user = { Role: "User", Text: GEMINI_PROMPT };
+  const sent = geminiSnapshot(
+    [...before.turns, user],
+    ["an earlier prompt", ...GEMINI_SIDEBAR_LINES, GEMINI_PROMPT]
+  );
+  const chat = geminiChat([titled, titled, sent]);
+  const submitted = await utils.waitForGeminiSubmission(chat.page, before, 10);
+  assert.equal(submitted?.reason, "user_turn");
+  assert.equal(chat.polls(), 3);
+});
+
+/** Headless Chromium, or null on a machine without playwright-core's browser. */
+async function headlessChromium(): Promise<Browser | null> {
+  if (!existsSync(chromium.executablePath())) return null;
+  return chromium.launch({ headless: true });
+}
+
+test("a Gemini transcript is read from the chat, never from the sidebar beside it", async () => {
+  // Gemini's <main> holds the side navigation as well as the chat. The
+  // transcript was read from all of <main>, and from a detached copy, whose
+  // innerText is its textContent: the sidebar came back as one glued line.
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  // A tree without a Chromium for playwright-core has no page to read.
+  const browser = await headlessChromium();
+  if (browser === null) return;
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body><chat-app><main>
+      <bard-sidenav><side-navigation-v2>
+        <span>Gemini</span><a>New chat</a><a>Library</a><a>Images</a>
+        <conversations-list>
+          <a href="/app/1">OpenCLI Provider Optimization Delegation</a>
+          <a href="/app/2"># Codex agent turn</a>
+        </conversations-list>
+      </side-navigation-v2></bard-sidenav>
+      <chat-window><div class="conversation-container">
+        <user-query><div class="query-text">
+          <p class="query-text-line"># Codex agent turn</p>
+          <p class="query-text-line">Review the codebase.</p>
+        </div></user-query>
+        <model-response><div class="model-response-text"></div></model-response>
+      </div></chat-window>
+    </main></chat-app></body></html>`);
+    const snapshot = (await page.evaluate(
+      utils.__test__.readGeminiSnapshotScript()
+    )) as GeminiSnapshot;
+    assert.deepEqual(snapshot.turns, [
+      { Role: "User", Text: "# Codex agent turn\nReview the codebase." }
+    ]);
+    assert.deepEqual(snapshot.transcriptLines, [
+      "# Codex agent turn",
+      "Review the codebase."
+    ]);
+  } finally {
+    await browser.close();
+  }
 });

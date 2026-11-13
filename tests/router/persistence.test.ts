@@ -333,3 +333,40 @@ test("convenience functions delegate to default persistence manager", async () =
 
   setDefaultPersistenceManager(null);
 });
+
+test("a state write that fails leaves no temporary file, and load removes those of exited processes", async () => {
+  const { mkdtempSync, readdirSync, rmSync, mkdirSync, writeFileSync } =
+    await import("node:fs");
+  const directory = mkdtempSync(join(tmpdir(), "autodev-router-state-"));
+  try {
+    // The rename fails: the state file's path is a directory.
+    const blocked = join(directory, "blocked.json");
+    mkdirSync(blocked);
+    const failing = new RouterPersistence({
+      stateFile: blocked,
+      getSnapshot: () => ({ control: true })
+    });
+    assert.equal(await failing.persistNow(), false);
+    assert.deepEqual(
+      readdirSync(directory).filter((name) => name.endsWith(".tmp")),
+      []
+    );
+
+    // Left behind by processes that are gone, and one by this process.
+    const state = join(directory, "state.json");
+    const gone = `state.json.999999999.1.tmp`;
+    const live = `state.json.${process.pid}.2.tmp`;
+    writeFileSync(join(directory, gone), "{}");
+    writeFileSync(join(directory, live), "{}");
+    new RouterPersistence({ stateFile: state }).load();
+    const left = readdirSync(directory);
+    assert.equal(left.includes(gone), false);
+    assert.equal(
+      left.includes(live),
+      true,
+      "a running process may be mid-write"
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

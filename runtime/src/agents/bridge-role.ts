@@ -125,6 +125,17 @@ function rolePromptName(role: string | null | undefined): string {
 }
 
 /**
+ * The first line of the orchestrator bootstrap: the heading the
+ * root-delegation hook's injected message starts with, so a bridge that
+ * renders the bootstrap itself can tell the hook's copy apart.
+ */
+export function orchestratorBootstrapHeading(): string {
+  const prompt = readFileSync(PROMPTS.orchestrator, "utf8").trim();
+  const end = prompt.indexOf("\n");
+  return end === -1 ? prompt : prompt.slice(0, end);
+}
+
+/**
  * The role-specific section of a provider prompt.
  *
  * This deliberately excludes the shared base and workspace sections. Keeping

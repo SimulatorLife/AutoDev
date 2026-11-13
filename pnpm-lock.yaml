@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@jackwener/opencli@2.0.3':
-    hash: a988a28be59fe4fe6f2cd403ae0b87d647b6458f37a2daf9890ac2aa735f9443
+    hash: 42577217ae1201f36631b2b91767d9082aa3b673178ea8c55654c9338ed36fbf
     path: patches/@jackwener__opencli@2.0.3.patch
 
 importers:
@@ -118,6 +118,9 @@ importers:
       lsp-mcp-server:
         specifier: ^1.1.20
         version: 1.1.20
+      playwright-core:
+        specifier: 1.63.0-alpha-2026-08-31
+        version: 1.63.0-alpha-2026-08-31
       prettier:
         specifier: ^3.9.8
         version: 3.9.8
@@ -217,7 +220,7 @@ importers:
     dependencies:
       '@jackwener/opencli':
         specifier: 2.0.3
-        version: 2.0.3(patch_hash=a988a28be59fe4fe6f2cd403ae0b87d647b6458f37a2daf9890ac2aa735f9443)
+        version: 2.0.3(patch_hash=42577217ae1201f36631b2b91767d9082aa3b673178ea8c55654c9338ed36fbf)
       '@letta-ai/trajectory':
         specifier: ^0.4.3
         version: 0.4.3
@@ -3236,7 +3239,7 @@ snapshots:
     dependencies:
       '@isaacs/balanced-match': 4.0.1
 
-  '@jackwener/opencli@2.0.3(patch_hash=a988a28be59fe4fe6f2cd403ae0b87d647b6458f37a2daf9890ac2aa735f9443)':
+  '@jackwener/opencli@2.0.3(patch_hash=42577217ae1201f36631b2b91767d9082aa3b673178ea8c55654c9338ed36fbf)':
     dependencies:
       '@mozilla/readability': 0.6.0
       acorn: 8.19.0

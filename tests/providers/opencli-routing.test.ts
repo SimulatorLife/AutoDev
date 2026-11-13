@@ -639,6 +639,7 @@ async function withBridge(
     readonly modelListTtlMs?: number;
     readonly now?: () => number;
     readonly uploadLogPath?: string;
+    readonly modelSwitchPassMs?: number;
     readonly run: (
       request: OpencliRunRequest,
       sites: FakeSites
@@ -659,6 +660,9 @@ async function withBridge(
     ...(options.uploadLogPath === undefined
       ? {}
       : { uploadLogPath: options.uploadLogPath }),
+    ...(options.modelSwitchPassMs === undefined
+      ? {}
+      : { modelSwitchPassMs: options.modelSwitchPassMs }),
     tempRoot,
     ledger: new OpencliConversationLedger(),
     sessionBusyRetryMs: 1,
@@ -1003,6 +1007,8 @@ test("a turn that wants another model waits for the site to drain and switches i
     {
       turnTimeoutSeconds: 30,
       siteTabs: { chatgpt: 3, gemini: 1 },
+      // The switch has waited its turn: nothing passes it any more.
+      modelSwitchPassMs: 0,
       run: asks.run
     },
     async (baseUrl) => {
@@ -1027,7 +1033,8 @@ test("a turn that wants another model waits for the site to drain and switches i
         turnRequest("switch", other, "model-switch")
       );
       await settle();
-      // A turn behind the switch waits for it, even at the site's model.
+      // A turn behind a switch that has waited its turn waits for it, even
+      // at the site's model, so a switch is never starved.
       const after = postTurn(
         baseUrl,
         turnRequest("after", MODEL.chatgpt, "model-after")
@@ -1054,6 +1061,57 @@ test("a turn that wants another model waits for the site to drain and switches i
         asks.commands.filter((command) => command.startsWith("model")),
         ["model advanced", "model balanced"]
       );
+    }
+  );
+});
+
+test("turns at the site's model take its free tabs while a model switch is young", async () => {
+  // A root at one level and its workers at another ran one at a time: every
+  // turn behind a waiting switch waited for the site to drain too.
+  const asks = new HeldAsks();
+  const other = "opencli-chatgpt-advanced";
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      siteTabs: { chatgpt: 3, gemini: 1 },
+      run: asks.run
+    },
+    async (baseUrl) => {
+      const first = postTurn(
+        baseUrl,
+        turnRequest("first", MODEL.chatgpt, "model-0")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await first).status, 200);
+      asks.commands.length = 0;
+
+      const running = postTurn(
+        baseUrl,
+        turnRequest("same", MODEL.chatgpt, "model-1")
+      );
+      await asks.waitForHeld(1);
+      const switching = postTurn(
+        baseUrl,
+        turnRequest("switch", other, "model-switch")
+      );
+      await settle();
+      const after = postTurn(
+        baseUrl,
+        turnRequest("after", MODEL.chatgpt, "model-after")
+      );
+      await asks.waitForHeld(2);
+      assert.equal(asks.inFlight, 2, "the same-model turn passed the switch");
+      assert.ok(!asks.commands.includes("model advanced"));
+
+      asks.releaseAll();
+      await asks.waitForHeld(1);
+      await settle();
+      assert.equal(asks.inFlight, 1, "the switching turn runs alone");
+      assert.ok(asks.commands.includes("model advanced"));
+      asks.releaseAll();
+      for (const response of await Promise.all([running, switching, after]))
+        assert.equal(response.status, 200);
     }
   );
 });

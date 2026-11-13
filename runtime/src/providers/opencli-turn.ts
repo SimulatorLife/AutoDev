@@ -179,7 +179,8 @@ export interface OpencliSiteSpec {
    * site, so it takes no tab and says nothing about whether the site's
    * account is signed in.
    */
-  readonly models: readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
+  readonly models:
+    readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
   /**
    * One turn: the commands that deliver the prompt into the right site
    * conversation with the right model and read back the reply, and the
@@ -843,6 +844,38 @@ export function transcriptEntries(input: unknown): TranscriptEntry[] {
     if (text) entries.push({ kind: transcriptItemKind(item), text });
   }
   return entries;
+}
+
+const RECOVERY_PREFLIGHT_HEADING = "## Current-parent recovery preflight";
+
+/**
+ * The conversation without the root-delegation hook's bootstrap, for a
+ * prompt whose role section already carries it.
+ *
+ * Codex hands the bridge the hook's message as a developer item: the
+ * orchestrator prompt and the code-search prompt, which the role section of
+ * an orchestrator's first prompt renders too (with the orchestration skill in
+ * full). The copy is about 10 KB of a first prompt that Gemini caps at
+ * 100 KB and ChatGPT types only up to 32 KB. Only the hook's recovery note --
+ * the parent session's id, which the role section cannot know -- is kept.
+ */
+export function withoutHookBootstrap(
+  entries: readonly TranscriptEntry[],
+  heading: string
+): TranscriptEntry[] {
+  const opening = `<developer>\n${heading}`;
+  return entries.flatMap((entry) => {
+    if (entry.kind !== "developer" || !entry.text.startsWith(opening))
+      return [entry];
+    const recovery = entry.text.indexOf(RECOVERY_PREFLIGHT_HEADING);
+    if (recovery === -1) return [];
+    return [
+      {
+        kind: entry.kind,
+        text: `<developer>\n${entry.text.slice(recovery)}`
+      }
+    ];
+  });
 }
 
 /** Each conversation item as the text it renders to. */

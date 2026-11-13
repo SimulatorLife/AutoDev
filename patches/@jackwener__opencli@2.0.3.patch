@@ -818,7 +818,7 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..8c1ccd83c5fa92f4e2d0999a4c9a332f
          // Step 3: Read model entries from the open menu.
          const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce00a59598 100644
+index 46bb5561dda401bf0a4446cbe3e4d555ea074260..7198c3141daf4180f4d8c76a0d67a72ce5d41384 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
 @@ -1,6 +1,34 @@
@@ -857,7 +857,166 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
  export const GEMINI_DEEP_RESEARCH_DEFAULT_CONFIRM_LABELS = [
      'Start research',
-@@ -1149,22 +1177,53 @@ function clickGeminiConversationByTitleScript(query) {
+@@ -347,18 +375,89 @@ function isGeminiConversationUrl(url) {
+         return false;
+     }
+ }
+-function getTranscriptLinesScript() {
++/**
++ * Page-script source for `clean` and `textOf`: layout-independent text of a
++ * node, with the block breaks innerText would give it.
++ *
++ * innerText needs layout, and a node that is not laid out -- an off-screen
++ * response, or a detached clone -- reads as its textContent, which glues every
++ * paragraph, list item and sidebar entry into one line.
++ */
++function geminiTextOfScript() {
+     return `
+-    (() => {
+       const clean = (value) => (value || '')
+         .replace(/\\u00a0/g, ' ')
+         .replace(/\\n{3,}/g, '\\n\\n')
+         .trim();
+ 
+-      const main = document.querySelector('main') || document.body;
+-      const root = main.cloneNode(true);
++      // Layout-independent text: Gemini lays out off-screen responses with zero
++      // height, so innerText is empty there even though the text is in the DOM.
++      // Plain textContent would glue paragraphs and list items together, so walk
++      // the tree and re-insert block breaks. The same node always yields the same
++      // text whether or not it is rendered, which keeps turn diffs stable while
++      // the conversation scrolls.
++      const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DIV', 'DL', 'DT',
++        'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'SECTION',
++        'TABLE', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'UL']);
++      const PARAGRAPH_TAGS = new Set(['P', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
++      const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BUTTON', 'MAT-ICON']);
++      const textOf = (root) => {
++        if (!root) return '';
++        let out = '';
++        const walk = (node, inPre) => {
++          if (node.nodeType === Node.TEXT_NODE) {
++            if (inPre) { out += node.nodeValue; return; }
++            const collapsed = node.nodeValue.replace(/\\s+/g, ' ');
++            out += (out === '' || out.endsWith('\\n')) ? collapsed.replace(/^ /, '') : collapsed;
++            return;
++          }
++          if (node.nodeType !== Node.ELEMENT_NODE) return;
++          const tag = node.tagName;
++          if (SKIP_TAGS.has(tag) || node.classList.contains('cdk-visually-hidden')) return;
++          if (tag === 'BR') { out += '\\n'; return; }
++          const pre = inPre || tag === 'PRE';
++          // Like innerText's "required line break count": adjacent block
++          // boundaries merge to the larger break instead of stacking.
++          const breaks = PARAGRAPH_TAGS.has(tag) ? 2 : BLOCK_TAGS.has(tag) ? 1 : 0;
++          const addBreak = () => {
++            if (!breaks || out === '') return;
++            out = out.replace(/ +$/, '');
++            const have = (out.match(/\\n*$/) || [''])[0].length;
++            if (breaks > have) out += '\\n'.repeat(breaks - have);
++          };
++          addBreak();
++          for (const child of node.childNodes) walk(child, pre);
++          addBreak();
++          if (tag === 'TD' || tag === 'TH') out += '\\t';
++        };
++        walk(root, false);
++        return clean(out.replace(/[ \\t]+\\n/g, '\\n'));
++      };
++  `;
++}
++function getTranscriptLinesScript() {
++    return `
++    (() => {
++      ${geminiTextOfScript()}
++
++      // Only the conversation is transcript. Gemini's <main> also holds the
++      // side navigation -- the app's menu and every chat's title, the new
++      // chat's own titled after its prompt -- and a reply read from it was
++      // that sidebar: an opencli-gemini root turn ended on "Gemini New
++      // chatLibraryImages...# Codex agent turn" while the model's real reply,
++      // a tool call, sat in the chat unread.
++      const conversation = document.querySelector('chat-window')
++        || document.querySelector('main')
++        || document.body;
++      const root = conversation.cloneNode(true);
+ 
+       const removableSelectors = [
++        'bard-sidenav',
++        'side-navigation-v2',
++        'side-navigation-content',
++        'conversations-list',
++        'mat-sidenav',
++        '[role="navigation"]',
+         'button',
+         'nav',
+         'header',
+@@ -413,7 +512,7 @@ function getTranscriptLinesScript() {
+         /^Tools$/,
+       ];
+ 
+-      return clean(root.innerText || root.textContent || '')
++      return textOf(root)
+         .split('\\n')
+         .map((line) => clean(line))
+         .filter((line) => line
+@@ -426,54 +525,7 @@ function getTranscriptLinesScript() {
+ function getTurnsScript() {
+     return `
+     (() => {
+-      const clean = (value) => (value || '')
+-        .replace(/\\u00a0/g, ' ')
+-        .replace(/\\n{3,}/g, '\\n\\n')
+-        .trim();
+-
+-      // Layout-independent text: Gemini lays out off-screen responses with zero
+-      // height, so innerText is empty there even though the text is in the DOM.
+-      // Plain textContent would glue paragraphs and list items together, so walk
+-      // the tree and re-insert block breaks. The same node always yields the same
+-      // text whether or not it is rendered, which keeps turn diffs stable while
+-      // the conversation scrolls.
+-      const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DIV', 'DL', 'DT',
+-        'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'SECTION',
+-        'TABLE', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'UL']);
+-      const PARAGRAPH_TAGS = new Set(['P', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+-      const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BUTTON', 'MAT-ICON']);
+-      const textOf = (root) => {
+-        if (!root) return '';
+-        let out = '';
+-        const walk = (node, inPre) => {
+-          if (node.nodeType === Node.TEXT_NODE) {
+-            if (inPre) { out += node.nodeValue; return; }
+-            const collapsed = node.nodeValue.replace(/\\s+/g, ' ');
+-            out += (out === '' || out.endsWith('\\n')) ? collapsed.replace(/^ /, '') : collapsed;
+-            return;
+-          }
+-          if (node.nodeType !== Node.ELEMENT_NODE) return;
+-          const tag = node.tagName;
+-          if (SKIP_TAGS.has(tag) || node.classList.contains('cdk-visually-hidden')) return;
+-          if (tag === 'BR') { out += '\\n'; return; }
+-          const pre = inPre || tag === 'PRE';
+-          // Like innerText's "required line break count": adjacent block
+-          // boundaries merge to the larger break instead of stacking.
+-          const breaks = PARAGRAPH_TAGS.has(tag) ? 2 : BLOCK_TAGS.has(tag) ? 1 : 0;
+-          const addBreak = () => {
+-            if (!breaks || out === '') return;
+-            out = out.replace(/ +$/, '');
+-            const have = (out.match(/\\n*$/) || [''])[0].length;
+-            if (breaks > have) out += '\\n'.repeat(breaks - have);
+-          };
+-          addBreak();
+-          for (const child of node.childNodes) walk(child, pre);
+-          addBreak();
+-          if (tag === 'TD' || tag === 'TH') out += '\\t';
+-        };
+-        walk(root, false);
+-        return clean(out.replace(/[ \\t]+\\n/g, '\\n'));
+-      };
++      ${geminiTextOfScript()}
+ 
+       // Current Gemini web DOM groups each exchange in a conversation-container,
+       // with the prompt under user-query-container (query-text-line per line) and
+@@ -1149,22 +1201,53 @@ function clickGeminiConversationByTitleScript(query) {
  function currentUrlScript() {
      return 'window.location.href';
  }
@@ -916,7 +1075,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      }
      // Reused adapter tabs can be inactive after another site ran. Gemini's
      // response animation then stays pending even when the model has finished.
-@@ -1225,7 +1284,7 @@ export async function startNewGeminiChat(page) {
+@@ -1225,7 +1308,7 @@ export async function startNewGeminiChat(page) {
      await ensureGeminiPage(page);
      const action = await page.evaluate(clickNewChatScript());
      if (action === 'navigate') {
@@ -925,7 +1084,19 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      }
      await page.wait(1);
      return action;
-@@ -1969,6 +2028,7 @@ function openModelPickerForThinkingScript() {
+@@ -1367,7 +1450,10 @@ export async function waitForGeminiSubmission(page, before, timeoutSeconds) {
+         // trust this signal only after Gemini has navigated into a concrete
+         // conversation URL. (Keep backwards compatibility for mocked snapshots
+         // that don't carry url.)
+-        const transcriptSubmissionAllowed = !current.url || isGeminiConversationUrl(String(current.url));
++        // A page with the structured layout says it took the prompt with the
++        // prompt's own turn, above; its transcript is no evidence of that.
++        const transcriptSubmissionAllowed = current.turns.length === 0
++            && (!current.url || isGeminiConversationUrl(String(current.url)));
+         if (!current.composerHasText && transcriptDelta.length > 0 && transcriptSubmissionAllowed) {
+             return {
+                 snapshot: current,
+@@ -1969,6 +2055,7 @@ function openModelPickerForThinkingScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -933,7 +1104,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -1983,6 +2043,18 @@ function openModelPickerForThinkingScript() {
+@@ -1983,6 +2070,18 @@ function openModelPickerForThinkingScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -952,7 +1123,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2072,10 +2144,18 @@ function clickThinkingToggleInMenuScript() {
+@@ -2072,10 +2171,18 @@ function clickThinkingToggleInMenuScript() {
          'GEM-MENU-ITEM',
        ];
  
@@ -973,7 +1144,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
        }
  
        if (menuItems.length === 0) {
-@@ -2109,21 +2189,93 @@ function clickThinkingToggleInMenuScript() {
+@@ -2109,21 +2216,93 @@ function clickThinkingToggleInMenuScript() {
   * already-open model-picker menu (after the thinking section has been
   * expanded).  Closes the menu after selection (or on failure).
   *
@@ -1072,7 +1243,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
  
        const isVisible = (el) => {
          if (!(el instanceof HTMLElement)) return false;
-@@ -2151,7 +2303,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2151,7 +2330,7 @@ function selectThinkingInMenuScript(thinkingValue) {
        const matchesThinking = (node) => {
          const combined = normalize(textOf(node));
          if (!combined) return false;
@@ -1081,7 +1252,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
        };
  
        // Search inside visible menu containers first.
-@@ -2191,8 +2343,8 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2191,8 +2370,8 @@ function selectThinkingInMenuScript(thinkingValue) {
        candidates.sort((a, b) => {
          const aText = normalize(textOf(a));
          const bText = normalize(textOf(b));
@@ -1092,7 +1263,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          if (aExact && !bExact) return -1;
          if (!aExact && bExact) return 1;
          return 0;
-@@ -2228,7 +2380,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2228,7 +2407,7 @@ function selectThinkingInMenuScript(thinkingValue) {
   *  6. Close the menu.
   *
   * @param {object} page - Puppeteer page object
@@ -1101,7 +1272,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
   * @returns {Promise<string>} matched label text, or empty string on failure
   */
  export async function selectGeminiThinking(page, thinkingValue) {
-@@ -2248,7 +2400,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2248,7 +2427,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
  
      if (toggleClicked) {
          // Step 4: Wait for the expanded thinking items to render.
@@ -1125,7 +1296,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      }
  
      // Step 5: Select the requested thinking level (also closes the menu).
-@@ -2260,7 +2427,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2260,7 +2454,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
          return matched;
      }
  
@@ -1200,7 +1371,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
  }
  
  // ── Current model detection ─────────────────────────────────────────
-@@ -2269,8 +2502,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2269,8 +2529,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
   * Browser evaluate script that reads the currently selected model from the
   * Gemini model-picker button and returns its canonical model ID.
   *
@@ -1212,7 +1383,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
   *
   * @returns a function string for page.evaluate()
   */
-@@ -2299,6 +2533,7 @@ function getCurrentGeminiModelScript() {
+@@ -2299,6 +2560,7 @@ function getCurrentGeminiModelScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -1220,7 +1391,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -2313,6 +2548,18 @@ function getCurrentGeminiModelScript() {
+@@ -2313,6 +2575,18 @@ function getCurrentGeminiModelScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -1239,7 +1410,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2355,35 +2602,13 @@ function getCurrentGeminiModelScript() {
+@@ -2355,35 +2629,13 @@ function getCurrentGeminiModelScript() {
          return null;
        };
  
@@ -1278,7 +1449,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      })()
      `;
  }
-@@ -2604,7 +2829,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2604,7 +2856,11 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
@@ -1291,7 +1462,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,6 +2886,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2657,10 +2913,20 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
                  structuredStableCount = 1;
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
@@ -1300,7 +1471,19 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
                  return structuredCandidate;
              }
              continue;
-@@ -2674,6 +2905,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+         }
++        // The transcript is the reading for a page without the structured
++        // layout, never a second opinion on one that has it. A chat that
++        // shows its turns but no reply yet is a reply still coming -- Gemini
++        // takes a while before the first words of an answer to a long prompt
++        // -- and the transcript read in the meantime is whatever else the page
++        // shows.
++        if (current.turns.length > 0)
++            continue;
+         transcriptMissCount += 1;
+         if (transcriptMissCount < 2)
+             continue;
+@@ -2674,6 +2940,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -1309,7 +1492,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
              return transcriptCandidate;
          }
      }
-@@ -2712,29 +2945,7 @@ function selectModelInMenuScript(modelId) {
+@@ -2712,29 +2980,7 @@ function selectModelInMenuScript(modelId) {
  
        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
  
@@ -1340,7 +1523,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
  
        const MENU_SELECTORS = [
          '[role="menu"] [role="menuitem"]',
-@@ -2771,10 +2982,12 @@ function selectModelInMenuScript(modelId) {
+@@ -2771,10 +3017,12 @@ function selectModelInMenuScript(modelId) {
        }
  
        let matched = null;
@@ -1355,7 +1538,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
            break;
          }
        }
-@@ -2783,6 +2996,10 @@ function selectModelInMenuScript(modelId) {
+@@ -2783,6 +3031,10 @@ function selectModelInMenuScript(modelId) {
          try { document.body.click(); } catch (_) {}
          return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
        }
@@ -1366,7 +1549,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
  
        try {
          matched.click();
-@@ -2829,6 +3046,7 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2829,6 +3081,7 @@ export async function selectGeminiModel(page, modelId) {
      // Find and click the matching menu item.
      const raw = await page.evaluate(selectModelInMenuScript(modelId));
      const result = unwrapGeminiEvaluateResult(raw, 'Gemini model selection');
@@ -1374,7 +1557,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
      if (!result || !result.ok) {
          throw new CommandExecutionError(
              result?.reason || 'Failed to select Gemini model "' + modelId + '"'
-@@ -2837,7 +3055,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +3090,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -1387,7 +1570,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..4a6d8d69d97309cc01686dee6b1518ce
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +3067,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +3102,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

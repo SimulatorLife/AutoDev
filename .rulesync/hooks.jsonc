@@ -14,13 +14,6 @@
         "command": "node ~/.codex/src/hooks/subagent-start.ts"
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "type": "command",
-        "command": "node ~/.codex/src/hooks/root-delegation.ts",
-        "statusMessage": "Applying root delegation policy"
-      }
-    ],
     "preToolUse": [
       {
         "type": "command",
@@ -38,10 +31,27 @@
   },
   "codexcli": {
     "hooks": {
+      "beforeSubmitPrompt": [
+        {
+          "type": "command",
+          "command": "node ~/.codex/src/hooks/root-delegation.ts",
+          "statusMessage": "Applying root delegation policy"
+        }
+      ],
       "sessionEnd": [
         {
           "type": "command",
           "command": "node ~/.codex/src/hooks/memory-session-end.ts"
+        }
+      ]
+    }
+  },
+  "copilot": {
+    "hooks": {
+      "beforeSubmitPrompt": [
+        {
+          "type": "command",
+          "command": "node ~/.codex/src/hooks/root-delegation.ts"
         }
       ]
     }

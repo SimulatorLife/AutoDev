@@ -599,7 +599,7 @@ test("a call is read whatever its quoting, namespace, escaping or missing close"
   );
   // A site that renders the reply as HTML escapes the call and its body.
   const escaped = parseOpencliReply(
-    'Next.\n&lt;tool_call name=&quot;exec&quot;&gt;a &amp;&amp; b&lt;/tool_call&gt;'
+    "Next.\n&lt;tool_call name=&quot;exec&quot;&gt;a &amp;&amp; b&lt;/tool_call&gt;"
   );
   assert.deepEqual(escaped.calls, [{ name: "exec", input: "a && b" }]);
   assert.equal(escaped.text, "Next.");
@@ -2187,4 +2187,304 @@ test("opencli launcher loads the Router bridge key from the private CODEX_HOME e
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+/** Serve one bridge for a test and close it afterwards. */
+async function serveBridge(
+  bridge: ReturnType<typeof createOpencliBridge>,
+  body: (baseUrl: string) => Promise<void>
+): Promise<void> {
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    await body(`http://127.0.0.1:${port}`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+test("a refusal that quotes a chat id holding 429 is a refusal, not a site limit", async () => {
+  // The page's chat ids and byte counts are not statuses. A bare `429` in
+  // one read as the site throttling the account and cooled the provider down.
+  const notSent = new OpencliCommandError(
+    "the tab shows chat 6a429c1e-0d2b-4c3a-9f51-1b2c3d4e5f60, not the turn's; prompt was not sent",
+    "COMMAND_EXEC",
+    1
+  );
+  await withBridge([notSent, notSent, notSent], async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 400);
+    const body = (await reply.json()) as {
+      error: { type: string; limit?: unknown };
+    };
+    assert.equal(body.error.type, "provider_request_unsupported");
+    assert.equal(body.error.limit, undefined);
+  });
+});
+
+test("a site session held past the turn's deadline is a refusal, not an outage", async () => {
+  // opencli never sent the prompt; the provider is serving somebody else.
+  let attempts = 0;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 1,
+    sessionBusyRetryMs: 50,
+    run: async () => {
+      attempts += 1;
+      throw new OpencliCommandError(
+        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
+        "SESSION_BUSY",
+        1
+      );
+    }
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 400);
+    assert.equal(
+      ((await reply.json()) as { error: { type: string } }).error.type,
+      "provider_request_unsupported"
+    );
+    assert.ok(attempts > 1, "the busy session was waited on first");
+  });
+});
+
+test("a retried command is given only what is left of the turn", async () => {
+  // A retry used to restart the first attempt's whole `--timeout`, so one
+  // turn could hold its tab for several of them.
+  const timeouts: number[] = [];
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    unsentRetryMs: 1100,
+    run: async ({ args }) => {
+      if (args[1] === "model") return [{ Status: "ok", Model: args[2] }];
+      timeouts.push(Number(args[args.indexOf("--timeout") + 1]));
+      if (timeouts.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        throw new OpencliCommandError(
+          "file input is missing",
+          "COMMAND_EXEC",
+          1
+        );
+      }
+      return [{ response: "done", conversation_id: "c1" }];
+    }
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 200);
+    assert.equal(timeouts.length, 2);
+    assert.equal(timeouts[0], 30);
+    assert.ok(timeouts[1]! <= 28, `the retry was given ${timeouts[1]}s`);
+  });
+});
+
+test("a command still running past the turn's deadline is stopped and the turn times out", async () => {
+  // opencli enforces its own `--timeout`, but a browser call that never
+  // returns held the tab until the client gave up.
+  let stopped = false;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 1,
+    commandGraceMs: 100,
+    run: ({ signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          stopped = true;
+          reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
+        });
+      })
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    const started = Date.now();
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 408);
+    assert.equal(stopped, true);
+    assert.ok(Date.now() - started < 5000);
+  });
+});
+
+test("a signed-out ChatGPT is not retried and stays signed out after a model listing", async () => {
+  // Each retry navigated the tab again before failing the same way, and the
+  // fixed ChatGPT model list, which never looks at the site, cleared the
+  // sign-in a turn had just found missing.
+  let asks = 0;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    unsentRetryMs: 1,
+    run: async ({ args }) => {
+      if (args[1] !== "ask-file") throw new Error(`unexpected ${args[1]}`);
+      asks += 1;
+      throw new OpencliCommandError(
+        "ChatGPT ask-file requires an authenticated session with an active composer.",
+        "AUTH_REQUIRED",
+        77
+      );
+    }
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 401);
+    assert.equal(asks, 1);
+    const listing = await fetch(
+      `${baseUrl}/v1/models?provider=opencli-chatgpt`
+    );
+    assert.equal(listing.status, 401);
+    assert.equal(
+      (await fetch(`${baseUrl}/health/liveliness?provider=opencli-chatgpt`))
+        .status,
+      401
+    );
+  });
+});
+
+test("a ChatGPT level switch that failed is asked for again on the next turn", async () => {
+  // The bridge recorded the level after any successful turn, so a switch the
+  // page refused was never tried again and the site stayed on another level.
+  let switches = 0;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async ({ args }) => {
+      if (args[1] === "model") {
+        switches += 1;
+        throw new OpencliCommandError(
+          "ChatGPT model picker not found",
+          "COMMAND_EXEC",
+          1
+        );
+      }
+      return [{ response: "done", conversation_id: `c${switches}` }];
+    }
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    for (const text of ["one", "two"])
+      assert.equal(
+        (
+          await post(baseUrl, {
+            model: "opencli-chatgpt-advanced",
+            input: text
+          })
+        ).status,
+        200
+      );
+    assert.equal(switches, 2);
+  });
+});
+
+test("Gemini answers at its current model when the model picker cannot be found", async () => {
+  // The real message did not match the fallback, so a hidden window failed
+  // the turn as a provider outage instead of answering at the site's model.
+  const calls: string[][] = [];
+  const reply = await OPENCLI_SITE_SPECS.gemini.turn(
+    {
+      prompt: "the prompt",
+      promptFile: "/unused",
+      typed: false,
+      conversationId: null,
+      siteModel: "3.1-pro",
+      siteThinking: null,
+      selectModel: true,
+      timeoutSeconds: 60
+    },
+    async (args) => {
+      calls.push([...args]);
+      if (args.includes("--model"))
+        throw new OpencliCommandError(
+          "Gemini model picker button was not found",
+          "COMMAND_EXEC",
+          1
+        );
+      return [{ response: "PONG", url: "https://gemini.google.com/app/abc" }];
+    }
+  );
+  assert.equal(reply.response, "PONG");
+  assert.equal(reply.modelSelected, false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]!.includes("--model"), false);
+});
+
+test("a reply holding a tool call the bridge cannot read is refused, not passed off as prose", async () => {
+  await withBridge(
+    [
+      {
+        response: "<tool_call exec>text(1);</tool_call>",
+        conversation_id: "c1"
+      }
+    ],
+    async (baseUrl) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [EXEC_TOOL],
+        input: "hi"
+      });
+      assert.equal(reply.status, 400);
+      const body = (await reply.json()) as {
+        error: { type: string; message: string };
+      };
+      assert.equal(body.error.type, "provider_request_unsupported");
+      assert.match(body.error.message, /tool call the bridge could not read/u);
+    }
+  );
+});
+
+test("an orchestrator's first prompt carries the hook's bootstrap once, keeping its recovery note", async () => {
+  // The role section renders the bootstrap, and Codex also hands the bridge
+  // the hook's copy: about 10 KB twice in a prompt Gemini caps at 100 KB.
+  const heading = "# Root orchestrator bootstrap";
+  await withBridge(
+    [{ response: "Delegating.", conversation_id: "c1" }],
+    async (baseUrl, runs) => {
+      await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: [
+            {
+              type: "message",
+              role: "developer",
+              content: [
+                {
+                  type: "input_text",
+                  text: `${heading}\n\nhook copy\n\n## Current-parent recovery preflight\nCurrent parent session: parent-1.`
+                }
+              ]
+            },
+            userMessage("Fix the bug.")
+          ]
+        },
+        { "x-autodev-agent-role": "orchestrator" }
+      );
+      const prompt = runs.prompts[0]!;
+      assert.equal(prompt.split(heading).length - 1, 1);
+      assert.doesNotMatch(prompt, /hook copy/u);
+      assert.match(prompt, /Current parent session: parent-1\./u);
+    }
+  );
 });
