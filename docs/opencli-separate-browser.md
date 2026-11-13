@@ -1,6 +1,8 @@
 # opencli in a separate browser: findings and design
 
-Status: **implemented; live occlusion and session-longevity acceptance remains.** This document records the
+Status: **implemented as an opt-in mode (the Console's Dedicated browser
+toggle, off by default); live occlusion and session-longevity acceptance
+remains.** This document records the
 2026-11-11 investigation into moving the opencli providers
 (`opencli-chatgpt`, `opencli-gemini`) out of the user's own Chrome. It is
 subordinate to [`provider-routing.md`](provider-routing.md), which remains the
@@ -8,12 +10,24 @@ authority for how the opencli bridge works today.
 
 ## Implementation status
 
-The bridge now owns a separate headed Chromium process, an AutoDev-private
+The dedicated browser is one of two modes, chosen by the **Dedicated browser**
+toggle on either opencli provider's Console page
+(`PATCH /control/providers/{provider}/browser`, stored in
+`$CODEX_HOME/run/opencli-browser.json`, see
+`runtime/src/shared/opencli-browser-setting.ts`). Off -- the default -- keeps
+the original path: the operator's own Chrome through the Browser Bridge
+extension, its "OpenCLI" tab group and `OPENCLI_SITE_SLOTS`. The bridge
+watches the setting and applies it to the next command; turning the
+dedicated browser on starts it, turning it off closes its window once its
+leased commands finish. The rest of this section describes the mode when it is
+on.
+
+The bridge a separate headed Chromium process, an AutoDev-private
 profile, a loopback-only ephemeral CDP port, and a per-site tab pool sized by
 the admitted route concurrency. Every opencli command gets the exact WebSocket
 target for its leased tab and uses `--site-session ephemeral`; AutoDev replaces
 a closed target before the next command. The Browser Bridge extension, its
-shared daemon, and `OPENCLI_SITE_SLOTS` are no longer part of this path. The
+shared daemon, and `OPENCLI_SITE_SLOTS` are not part of this mode. The
 typed installer places the Playwright-pinned Chromium in
 `$CODEX_HOME/provider-runtime/opencli/browsers`; user sign-in is kept in
 `$CODEX_HOME/run/opencli-browser-profile`. See [`local-setup.md`](local-setup.md)

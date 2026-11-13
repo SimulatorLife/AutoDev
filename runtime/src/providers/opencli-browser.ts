@@ -67,6 +67,8 @@ export class OpencliBrowser {
   private port: number | null = null;
   private starting: Promise<void> | null = null;
   private closing = false;
+  /** A stop that waits for the commands holding leases to finish. */
+  private stopWhenIdle = false;
   private lastError: string | null = null;
   private launchError: Error | null = null;
 
@@ -106,6 +108,7 @@ export class OpencliBrowser {
     command: (endpoint: string) => Promise<T>
   ): Promise<T> {
     let endpoint: string;
+    this.stopWhenIdle = false;
     try {
       await this.ensureReady();
       endpoint = await this.acquire(site, signal);
@@ -123,7 +126,31 @@ export class OpencliBrowser {
       return await command(endpoint);
     } finally {
       this.busy.delete(endpoint);
+      if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
     }
+  }
+
+  /**
+   * Shut the browser down when the operator turns the dedicated browser off.
+   *
+   * Unlike `close`, the owner stays usable: turning the setting back on starts
+   * the browser again. Commands already holding a tab finish first.
+   */
+  async stop(): Promise<void> {
+    await this.starting?.catch(() => undefined);
+    if (this.busy.size > 0) {
+      this.stopWhenIdle = true;
+      return;
+    }
+    await this.shutDown();
+  }
+
+  private async shutDown(): Promise<void> {
+    this.stopWhenIdle = false;
+    this.port = null;
+    this.slots.clear();
+    this.lastError = null;
+    await this.stopChild();
   }
 
   async close(): Promise<void> {

@@ -2412,7 +2412,7 @@ intended repository, and inspect the app task/log event for those failures.
 | MiniMax                         | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
 | Antigravity                     | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
 | GitHub Copilot                  | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
-| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge :4004 -> opencli site command -> AutoDev-owned signed-in Chromium tab | One provider per web chat site, each with its own site models. Requires the separately installed AutoDev Chromium and a site session signed into its private profile. Turns use a per-site tab pool sized to route concurrency. Opt-in: in no providerGroups tier by default. |
+| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge :4004 -> opencli site command -> signed-in browser tab (the operator's Chrome via the Browser Bridge extension by default; AutoDev's dedicated Chrome for Testing when the Console's Dedicated browser toggle is on) | One provider per web chat site, each with its own site models. Requires a site session signed into whichever browser is selected. Turns use a per-site tab pool sized to route concurrency. Opt-in: in no providerGroups tier by default. |
 | Local router                    | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
@@ -2492,12 +2492,25 @@ the workspace (observed 2026-09-18, worker thread
 ### opencli: web chat sites as models, Codex executes every tool
 
 [opencli](https://github.com/jackwener/opencli), pinned in Runtime, drives a
-chat site's web UI through an AutoDev-owned, signed-in Chromium profile and
-returns the reply as JSON. The normal installer provisions the matching headed
-Chromium build; the bridge starts it on demand, keeps CDP on loopback, and
-never attaches to the user's everyday Chrome or opencli's shared Browser
-Bridge daemon. Headless is not viable because ChatGPT's Cloudflare check blocks
-it; see the dedicated-browser investigation for setup and evidence. Each site
+chat site's web UI through a signed-in browser and returns the reply as JSON.
+Which browser is one operator setting shared by both opencli providers, the
+**Dedicated browser** toggle on either opencli provider's Console page
+(`PATCH /control/providers/{provider}/browser`, stored in
+`$CODEX_HOME/run/opencli-browser.json`):
+
+- **Off (the default):** the operator's everyday Chrome, through opencli's
+  Browser Bridge extension and its machine-wide daemon. Turns run in the
+  extension's "OpenCLI" tab group.
+- **On:** an AutoDev-owned Chrome for Testing with a private profile. The
+  normal installer provisions the matching headed build; the bridge starts it,
+  keeps CDP on loopback, and never touches the operator's Chrome, so agents
+  stop switching tabs under the operator. Headless is not viable because
+  ChatGPT's Cloudflare check blocks it; see
+  [`opencli-separate-browser.md`](opencli-separate-browser.md).
+
+The bridge watches the setting file and applies a change to its next command:
+turning the dedicated browser on starts it at once, and turning it off closes
+its window once the commands holding its tabs finish. Nothing restarts. Each site
 is its own provider -- `opencli-chatgpt` and `opencli-gemini` -- with its own route,
 catalog (`config/catalogs/<provider>-model-catalog.json`), discovery, and the
 models that site offers, so the Console assigns a site model per role as for
@@ -2879,17 +2892,26 @@ single list; the route patterns and the site registry in
   makes a root wait on all its children in one `wait_agent` call of at least
   300 s: a root polling at 10 s spent an Advanced-model turn, and one of the
   site's tabs, on every wake.
-- **Dedicated browser and tab pool.** A site runs its turns in as many
-  browser tabs as its route's `maxConcurrentRequests`, one turn per tab. The
-  bridge owns a separate visible Chromium process and persistent profile under
-  `$CODEX_HOME`; it launches Chromium with an ephemeral CDP port bound to
-  `127.0.0.1` and reads that port from the profile's `DevToolsActivePort`.
-  `OpencliBrowser` creates the initial site tabs and leases each command a
-  unique tab's exact `ws://127.0.0.1/...` target with `--site-session
-  ephemeral`. This replaces `OPENCLI_SITE_SLOTS` and the shared Browser Bridge
-  daemon: opencli's direct-CDP mode rejects that pool variable and otherwise
-  picks one best-matching target, which could make concurrent commands collide.
-  Missing targets are recreated before the next command. The bridge admits
+- **Tab pool.** A site runs its turns in as many browser tabs as its route's
+  `maxConcurrentRequests`, one turn per tab. With one tab per site, more than
+  half of a ChatGPT turn's time was spent queued behind other agents' turns.
+  How a command gets its tab depends on the browser setting
+  (`processRunner` in `opencli.ts`):
+  - *The operator's Chrome (default).* The bridge passes the pool to opencli as
+    `OPENCLI_SITE_SLOTS` (`chatgpt:3,gemini:1`): each command borrows a free
+    persistent tab (`site:<site>#<n>`) of the extension's "OpenCLI" tab group
+    from opencli's daemon and gives it back when it ends.
+  - *Dedicated browser.* The bridge owns a separate visible Chrome for Testing
+    process and persistent profile under `$CODEX_HOME`; it launches it with an
+    ephemeral CDP port bound to `127.0.0.1` and reads that port from the
+    profile's `DevToolsActivePort`. `OpencliBrowser` creates the initial site
+    tabs and leases each command a unique tab's exact `ws://127.0.0.1/...`
+    target with `--site-session ephemeral`, removing `OPENCLI_SITE_SLOTS`:
+    opencli's direct-CDP mode rejects that pool variable and otherwise picks
+    one best-matching target, which could make concurrent commands collide.
+    Missing targets are recreated before the next command.
+
+  In both, the bridge admits
   turns in arrival order, as many at once as the site has tabs (`SiteTabs` in
   `opencli.ts`). A site's model is an account setting
   (`chatgpt model` changes the account's last-used model), so turns share
@@ -2902,9 +2924,17 @@ single list; the route patterns and the site registry in
   level no longer serializes its workers at another. ChatGPT's upload
   allowance is checked once a turn has a tab, counting the uploads the site's
   other tabs are making, so concurrent turns cannot both spend the last one.
-  Different sites run in parallel. A cancelled command stops its CLI process
-  and releases the leased target; if the site's request was already sent, the
+  Different sites run in parallel. A cancelled command stops its CLI process;
+  in the dedicated browser that releases its leased target at once, while in
+  the operator's Chrome opencli's daemon keeps the tab until that command's
+  browser step finishes, and a refusal with `SESSION_BUSY` is waited out until
+  the turn's own deadline. If the site's request was already sent, the
   accepted-turn ledger governs recovery rather than assuming nothing happened.
+- **A daemon of another version is replaced, not fatal.** In the operator's
+  Chrome, opencli's daemon is shared machine-wide on one port, so the pinned
+  CLI can meet a daemon a global install left running. The CLI's own remedy is
+  to stop the daemon by hand; the bridge owns the CLI it runs, so it runs
+  `opencli daemon stop` and the command again, once per turn.
 
 - **Every command runs within the turn's budget.** A retried command gets a
   `--timeout` of what is left of the turn, not a fresh full one, and a retry
@@ -3104,15 +3134,19 @@ single list; the route patterns and the site registry in
   entry plus its `OPENCLI_SITE_SPECS` entry (turn commands and model list),
   route, catalog, and contract entry; the load-time check refuses a site
   without a spec.
-- **Prerequisites and health.** The normal installer installs the exact
-  Chromium build selected by Runtime's pinned `playwright-core` into
-  `$CODEX_HOME/provider-runtime/opencli/browsers`; the visible browser starts
-  on demand and stores its separate site sessions in
-  `$CODEX_HOME/run/opencli-browser-profile`. Browser startup/transport failure
-  is reported as `dedicated_browser_unavailable`, distinct from a site's
-  signed-out state. The operator signs in to both sites in this dedicated
-  browser; no Browser Bridge extension or machine-wide daemon is used. Gemini
-  account selection is configured with `OPENCLI_GEMINI_ACCOUNT` when needed.
+- **Prerequisites and health.** With the dedicated browser off, opencli's
+  daemon starts on demand, but its Browser Bridge Chrome extension and each
+  site's sign-in in the operator's Chrome are the operator's; check them with
+  `node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor`. The
+  normal installer always installs the exact Chrome for Testing build selected
+  by Runtime's pinned `playwright-core` into
+  `$CODEX_HOME/provider-runtime/opencli/browsers`, so the toggle works without
+  reinstalling; with it on, the browser stores its separate site sessions in
+  `$CODEX_HOME/run/opencli-browser-profile`, the operator signs in to both
+  sites there once, and a browser startup/transport failure is reported as
+  `dedicated_browser_unavailable`, distinct from a site's signed-out state.
+  Gemini account selection is configured with `OPENCLI_GEMINI_ACCOUNT` when
+  needed.
 
 ### Antigravity: agy executes its own tools, so its reasoning stream is the record
 
@@ -3520,7 +3554,7 @@ tool"):
 | `runtime/src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
 | `runtime/src/providers/copilot.ts`     | the `copilot` CLI's own login.                                                                                                                                                                                              |
 | `runtime/src/providers/minimax.ts`     | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
-| runtime/src/providers/opencli.ts | an AutoDev-owned signed-in Chromium profile for each chat site, through loopback CDP; cookies remain in the private profile and no credential reaches the bridge. |
+| runtime/src/providers/opencli.ts | the operator's own signed-in Chrome through opencli's Browser Bridge extension, or, with the dedicated browser on, an AutoDev-owned Chrome for Testing profile through loopback CDP; cookies stay in the browser and no credential reaches the bridge. |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have

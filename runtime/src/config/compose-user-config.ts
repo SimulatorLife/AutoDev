@@ -153,6 +153,17 @@ function composedPortableValue(
   return value;
 }
 
+/**
+ * Codex permission-profile keys. Codex applies a selected profile over
+ * `sandbox_mode`, `[sandbox_workspace_write]` and every role's `sandbox_mode`,
+ * so a profile selected outside the portable source (a `rulesync generate
+ * --features permissions` run wrote `default_permissions = "rulesync"` on
+ * 2026-11-10) silently replaced the portable policy: every role ran
+ * workspace-write with no network. The portable source owns the permission
+ * policy, so these keys are never carried over from existing state.
+ */
+const PERMISSION_PROFILE_KEYS = new Set(["default_permissions", "permissions"]);
+
 export function compose(portable: TomlTable, existing: TomlTable): TomlTable {
   const result: TomlTable = {};
   for (const [key, value] of Object.entries(portable)) {
@@ -160,7 +171,7 @@ export function compose(portable: TomlTable, existing: TomlTable): TomlTable {
     if (composed !== undefined) result[key] = composed;
   }
   for (const [key, value] of Object.entries(existing)) {
-    if (key in portable) continue;
+    if (key in portable || PERMISSION_PROFILE_KEYS.has(key)) continue;
     const kept = key === "hooks" ? hooksState(value) : value;
     if (kept !== undefined) result[key] = kept;
   }

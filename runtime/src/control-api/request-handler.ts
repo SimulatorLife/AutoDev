@@ -39,6 +39,8 @@ import {
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
   type ControlApiProviderAgentModelPatchResponse,
+  type ControlApiProviderBrowser,
+  type ControlApiProviderBrowserPatchResponse,
   type ControlApiProviderCheckResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderHealth,
@@ -232,6 +234,8 @@ const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
 const UNKNOWN_PROVIDER_ERROR = "autodev_control_api_unknown_provider";
 const UNKNOWN_PROVIDER_MESSAGE = "Unknown provider.";
 const PROVIDER_CHECK_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)\/check$/u;
+const PROVIDER_BROWSER_PATH =
+  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/browser$/u;
 const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
   process.env.AUTODEV_REPO_ROOT
@@ -793,6 +797,25 @@ export function setControlApiProviderCheckSource(
 ): void {
   providerCheckSource = source;
 }
+/**
+ * The opencli providers' browser setting.
+ *
+ * Registered by the router (`opencli-browser.ts`): a Control API that runs
+ * without a router publishes no browser and cannot change it.
+ */
+export interface ControlApiOpencliBrowserSource {
+  /** The provider's browser, or `undefined` for a provider that drives none. */
+  readonly read: (provider: string) => ControlApiProviderBrowser | undefined;
+  /** Persist the setting for every opencli provider; returns the value it replaced. */
+  readonly set: (dedicated: boolean) => boolean;
+}
+let opencliBrowserSource: ControlApiOpencliBrowserSource | null = null;
+
+export function setControlApiOpencliBrowserSource(
+  source: ControlApiOpencliBrowserSource | null
+): void {
+  opencliBrowserSource = source;
+}
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
 let liveSessionsSource: ControlApiLiveSessionsSource | null = null;
 let mcpObservationsSource: ControlApiMcpObservationsSource | null = null;
@@ -1086,6 +1109,7 @@ function providersView(now: number): Record<string, unknown> {
       ])
     );
     const links = ROUTING_POLICY.config.providers[provider]?.links;
+    const browser = opencliBrowserSource?.read(provider);
     return {
       id: provider,
       links: {
@@ -1168,6 +1192,7 @@ function providersView(now: number): Record<string, unknown> {
       ...(health?.[provider]?.quota === undefined
         ? {}
         : { quota: health[provider].quota }),
+      ...(browser === undefined ? {} : { browser }),
       reconciliation: providerReconciliationView(provider)
     };
   });
@@ -5464,6 +5489,151 @@ async function postProviderCheck(
   }
 }
 
+/**
+ * `PATCH /control/providers/:provider/browser` -- which browser the opencli
+ * providers drive. `{dedicated: false}` is the operator's own Chrome through
+ * the Browser Bridge extension (the default); `{dedicated: true}` is the
+ * AutoDev-owned Chrome for Testing. The setting is shared by every opencli
+ * provider, so either provider's path changes it for both. The opencli bridge
+ * watches the setting file and applies it to its next command; nothing
+ * restarts.
+ */
+async function patchProviderBrowser(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/browser`;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_provider_browser",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {})
+    });
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to change the opencli browser."
+    );
+    return;
+  }
+  if (!providerIsKnown(provider)) {
+    audit("error", null, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      UNKNOWN_PROVIDER_ERROR,
+      UNKNOWN_PROVIDER_MESSAGE
+    );
+    return;
+  }
+  const source = opencliBrowserSource;
+  if (source === null) {
+    audit("error", null, "browser_setting_unavailable");
+    sendControlError(
+      response,
+      503,
+      "autodev_control_api_provider_browser_unavailable",
+      "No router is running to change the opencli browser with."
+    );
+    return;
+  }
+  if (source.read(provider) === undefined) {
+    audit("error", null, "provider_has_no_browser");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_provider_has_no_browser",
+      "Only the opencli providers drive a browser."
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  if (Object.keys(body).length !== 1 || typeof body.dedicated !== "boolean") {
+    audit("error", null, "invalid_body");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Provider browser body must contain only a boolean dedicated field."
+    );
+    return;
+  }
+  const dedicated = body.dedicated;
+  let previous: boolean;
+  try {
+    previous = source.set(dedicated);
+  } catch {
+    audit("error", { dedicated }, "persistence_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_persistence_failed",
+      "The opencli browser setting could not be persisted."
+    );
+    return;
+  }
+  audit("ok", { dedicated, previous });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-provider-browser-v1",
+      provider,
+      dedicated,
+      previous,
+      actor: actor.actor
+    } satisfies ControlApiProviderBrowserPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+/** `/control/providers/:provider/browser`, or `false` for any other path. */
+async function providerBrowserRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string
+): Promise<boolean> {
+  const match = pathname.match(PROVIDER_BROWSER_PATH);
+  if (!match) return false;
+  if (method !== "PATCH") {
+    rejectUnsupportedMethod(
+      request,
+      response,
+      method,
+      pathname,
+      actor,
+      "PATCH",
+      "The opencli browser is mutated via PATCH only."
+    );
+    return true;
+  }
+  await patchProviderBrowser(request, response, actor, match[1]!);
+  return true;
+}
+
 async function patchProviderEnabled(
   request: IncomingMessage,
   response: ServerResponse,
@@ -8532,6 +8702,8 @@ async function handleMutationOnlyRoute(
     await resetProviders(request, response, actor);
     return true;
   }
+  if (await providerBrowserRoute(request, response, actor, method, pathname))
+    return true;
   const providerCheckMatch = pathname.match(PROVIDER_CHECK_PATH);
   if (providerCheckMatch) {
     if (method !== "POST") {

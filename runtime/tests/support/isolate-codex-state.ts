@@ -23,3 +23,12 @@ if (process.env.CODEX_ROUTER_STATE_FILE === undefined) {
     "codex-router-state.json"
   );
 }
+
+// The opencli browser setting lives beside the live router's state too: a
+// test that switches the browser must not switch the maintainer's bridge.
+if (process.env.OPENCLI_BROWSER_SETTING_FILE === undefined) {
+  process.env.OPENCLI_BROWSER_SETTING_FILE = join(
+    mkdtempSync(join(tmpdir(), "autodev-test-opencli-browser-")),
+    "opencli-browser.json"
+  );
+}

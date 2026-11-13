@@ -17,9 +17,14 @@ import {
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import {
+  opencliProviderBrowser,
+  setOpencliDedicatedBrowser
+} from "../control-api/opencli-browser.ts";
+import {
   getControlApiAvailability,
   handleControlApiRequest,
   setControlApiLiveSessionsSource,
+  setControlApiOpencliBrowserSource,
   setControlApiProviderCheckSource,
   setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
@@ -209,6 +214,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   if (quotaDiscovery) {
     quotaDiscovery.start();
   }
+  setControlApiOpencliBrowserSource({
+    read: opencliProviderBrowser,
+    set: setOpencliDedicatedBrowser
+  });
   setControlApiProviderCheckSource((provider) =>
     checkProvider(
       provider,
@@ -278,6 +287,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (cliVersions) setControlApiProviderCliVersionSource(null);
     quotaDiscovery?.stop();
     setControlApiProviderCheckSource(null);
+    setControlApiOpencliBrowserSource(null);
     setControlApiLiveSessionsSource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();

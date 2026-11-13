@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -33,11 +34,16 @@ import {
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource,
   setControlApiMcpObservationsSource,
+  setControlApiOpencliBrowserSource,
   setControlApiProviderCheckSource,
   setControlApiProviderHealthSource,
   setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
+import {
+  opencliProviderBrowser,
+  setOpencliDedicatedBrowser
+} from "@simulatorlife/autodev-runtime/control-api/opencli-browser";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   type RouterPersistence,
@@ -1225,6 +1231,92 @@ test("provider enablement disables globally while preserving its roles and limit
     ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
     ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("the opencli providers share one browser setting that defaults to the operator's Chrome", async () => {
+  const saved = saveEnv();
+  const settingFile = process.env.OPENCLI_BROWSER_SETTING_FILE!;
+  rmSync(settingFile, { force: true });
+  try {
+    configure();
+    // Without a router there is no browser source to publish or change.
+    const standalone = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/opencli-gemini/browser",
+      { actor: "operator-a", body: { dedicated: true } }
+    );
+    assert.equal(standalone.response.statusCode, 503);
+    setControlApiOpencliBrowserSource({
+      read: opencliProviderBrowser,
+      set: setOpencliDedicatedBrowser
+    });
+    const browserOf = async (provider: string) =>
+      (
+        (await call("GET", CONTROL_API_PATHS.providers, {
+          actor: "viewer-a"
+        })).body as {
+          providers: { id: string; browser?: { dedicated: boolean } }[];
+        }
+      ).providers.find((entry) => entry.id === provider)?.browser;
+    assert.deepEqual(await browserOf("opencli-chatgpt"), { dedicated: false });
+    assert.equal(await browserOf("claude"), undefined);
+
+    const path = CONTROL_API_PATHS.providers + "/opencli-gemini/browser";
+    const viewer = await call("PATCH", path, {
+      actor: "viewer-a",
+      body: { dedicated: true }
+    });
+    assert.equal(viewer.response.statusCode, 403);
+    const malformed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { dedicated: "yes" }
+    });
+    assert.equal(malformed.response.statusCode, 400);
+    const notOpencli = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/browser",
+      { actor: "operator-a", body: { dedicated: true } }
+    );
+    assert.equal(notOpencli.response.statusCode, 400);
+    assert.equal(
+      notOpencli.body.error.code,
+      "autodev_control_api_provider_has_no_browser"
+    );
+    assert.equal(existsSync(settingFile), false);
+
+    const captured = await captureAudit(() =>
+      call("PATCH", path, { actor: "operator-a", body: { dedicated: true } })
+    );
+    assert.equal(captured.result.response.statusCode, 200);
+    assert.deepEqual(
+      {
+        schema: captured.result.body.schema,
+        dedicated: captured.result.body.dedicated,
+        previous: captured.result.body.previous
+      },
+      {
+        schema: "autodev-control-provider-browser-v1",
+        dedicated: true,
+        previous: false
+      }
+    );
+    assert.ok(
+      captured.lines.some((line) => line.includes("patch_provider_browser"))
+    );
+    // Set through Gemini, read through ChatGPT: one browser for both.
+    assert.deepEqual(await browserOf("opencli-chatgpt"), { dedicated: true });
+
+    const off = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { dedicated: false }
+    });
+    assert.equal(off.body.previous, true);
+    assert.deepEqual(await browserOf("opencli-gemini"), { dedicated: false });
+  } finally {
+    setControlApiOpencliBrowserSource(null);
+    rmSync(settingFile, { force: true });
     restoreEnv(saved);
   }
 });

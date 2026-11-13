@@ -64,7 +64,8 @@ test("runtime distinguishes unavailable session evidence from an observed empty 
       partial: false,
       unattributedLiveActivityCount: 0
     });
-    assert.equal(CONTROL_API_CONTRACT.version, 31);
+    // `liveSessions` arrived in contract v31.
+    assert.ok(CONTROL_API_CONTRACT.version >= 31);
   } finally {
     setControlApiLiveSessionsSource(null);
     if (previousToken === undefined)

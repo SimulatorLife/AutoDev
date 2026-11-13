@@ -116,11 +116,15 @@
  * explicitly attributed by live AgentActivityTracker records, with list
  * truncation and unattributed activity reported separately from the legacy
  * concurrency `activeSessions` scalar.
+ * v32: the opencli providers publish which browser they drive (`browser`),
+ * and `PATCH /control/providers/{provider}/browser` switches them between the
+ * operator's own Chrome (Browser Bridge extension, the default) and a
+ * dedicated Chrome for Testing.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 31
+  version: 32
 } as const;
 
 export type ControlApiContractResponse = {

@@ -143,6 +143,12 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
   const rulesyncConfig = readJson("rulesync.jsonc");
   const features = rulesyncConfig.features as unknown[];
   assert.equal(features.includes("permissions"), false);
+  // Generating it selects a Codex permission profile that overrides the
+  // portable sandbox policy and every role's sandbox_mode.
+  assert.equal(
+    existsSync(join(repositoryRoot, ".rulesync", "permissions.jsonc")),
+    false
+  );
   assert.equal(features.includes("subagents"), false);
   assert.equal(
     existsSync(join(repositoryRoot, ".rulesync", "subagents")),

@@ -531,6 +531,11 @@ export interface ControlApiProviderRecord {
   readonly health: ControlApiProviderHealth | null;
   readonly quota?: ControlApiProviderQuota | null;
   /**
+   * The browser an opencli provider drives; present only on the opencli
+   * providers, which share one browser setting.
+   */
+  readonly browser?: ControlApiProviderBrowser;
+  /**
    * Desired-vs-actual state for the provider as a whole, alongside the
    * per-role convergence above.
    *
@@ -599,6 +604,25 @@ export interface ControlApiProviderAgentModelPatchResponse {
   readonly previous: string | null;
   readonly actor: string;
   readonly reconciliation: ReconciliationView;
+}
+
+/**
+ * Which browser the opencli providers drive. `dedicated: false` (the default)
+ * is the operator's own Chrome through opencli's Browser Bridge extension and
+ * its "OpenCLI" tab group; `true` is an AutoDev-owned Chrome for Testing with a
+ * private profile. One setting covers every opencli provider.
+ */
+export interface ControlApiProviderBrowser {
+  readonly dedicated: boolean;
+}
+
+/** Response of `PATCH /control/providers/:provider/browser`. */
+export interface ControlApiProviderBrowserPatchResponse {
+  readonly schema: "autodev-control-provider-browser-v1";
+  readonly provider: string;
+  readonly dedicated: boolean;
+  readonly previous: boolean;
+  readonly actor: string;
 }
 
 /** Response of `PATCH /control/providers/:provider/limits`. */

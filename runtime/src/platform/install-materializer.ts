@@ -147,6 +147,7 @@ export const RUNTIME_MODULES = [
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/request-handler.ts",
   "runtime/src/control-api/github.ts",
+  "runtime/src/control-api/opencli-browser.ts",
   "runtime/src/router/subagents.ts",
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
@@ -206,6 +207,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/copilot.ts",
   "runtime/src/providers/opencli.ts",
   "runtime/src/providers/opencli-browser.ts",
+  "runtime/src/shared/opencli-browser-setting.ts",
   "runtime/src/providers/opencli-turn.ts",
   "runtime/src/providers/antigravity.ts",
   "runtime/src/providers/claude.ts",
@@ -1013,7 +1015,10 @@ function removeObsoleteRuntimeArtifacts(
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs"),
     path.join(codexHome, "run", "autodev-otel-collector.pid"),
     // The ingress mode the router used to read before the telemetry cutover.
-    path.join(codexHome, "otel-ingress.mode")
+    path.join(codexHome, "otel-ingress.mode"),
+    // A `rulesync generate --features permissions` projection; Codex's
+    // command rules are `agents/rules/default.rules` alone.
+    path.join(codexHome, "rules", "rulesync.rules")
   ];
   removeStalePaths(obsoletePaths, "obsolete-runtime-path");
   removeStalePaths(

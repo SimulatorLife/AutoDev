@@ -56,6 +56,33 @@ test("composition preserves local state while AutoDev-owned keys win", () => {
   assert.equal(result.notify, "desktop");
 });
 
+test("composition drops a permission profile selected outside the portable source", () => {
+  // Codex applies a selected profile over sandbox_mode, the workspace-write
+  // network setting and every role's sandbox_mode; a stray rulesync profile
+  // ran every AutoDev role workspace-write with no network.
+  const result = compose(
+    {
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { network_access: true }
+    },
+    {
+      default_permissions: "rulesync",
+      permissions: {
+        rulesync: {
+          extends: ":workspace",
+          filesystem: { ":minimal": "read" }
+        }
+      },
+      notify: "desktop"
+    }
+  );
+  assert.equal(Object.hasOwn(result, "default_permissions"), false);
+  assert.equal(Object.hasOwn(result, "permissions"), false);
+  assert.equal(result.sandbox_mode, "workspace-write");
+  assert.deepEqual(result.sandbox_workspace_write, { network_access: true });
+  assert.equal(result.notify, "desktop");
+});
+
 test("the root config takes the orchestrator role's per-server MCP settings", async () => {
   const directory = await mkdtemp(join(tmpdir(), "autodev-root-role-"));
   try {

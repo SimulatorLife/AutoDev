@@ -23,6 +23,7 @@ import test from "node:test";
 import {
   createOpencliBridge,
   type OpencliRunRequest,
+  opencliSiteSlots,
   opencliTurnLogLine,
   processRunner,
   routedSiteTabs
@@ -70,6 +71,99 @@ test("each site gets as many tabs as its route takes concurrent requests", () =>
     ]),
     { chatgpt: 5, gemini: 1 }
   );
+  // In the operator's own Chrome, opencli pools every site's commands into
+  // that many tabs of the extension's tab group.
+  assert.equal(
+    opencliSiteSlots({ chatgpt: 3, gemini: 1 }),
+    "chatgpt:3,gemini:1"
+  );
+});
+
+/** A stand-in opencli that prints what it was run with. */
+const ECHO_OPENCLI = () => ({
+  command: process.execPath,
+  args: [
+    "-e",
+    "process.stdout.write(JSON.stringify({ok:true,data:{endpoint:process.env.OPENCLI_CDP_ENDPOINT??null,slots:process.env.OPENCLI_SITE_SLOTS??null,args:process.argv.slice(1)}}))"
+  ]
+});
+
+test("with the dedicated browser off, the process runner uses the extension's tab pool in the operator's Chrome", async () => {
+  const previousEndpoint = process.env.OPENCLI_CDP_ENDPOINT;
+  process.env.OPENCLI_CDP_ENDPOINT = "http://127.0.0.1:9999";
+  let browserUsed = false;
+  const browser = {
+    run: async () => {
+      browserUsed = true;
+      throw new Error("the dedicated browser was used");
+    },
+    close: async () => undefined
+  } as never;
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    { chatgpt: 3, gemini: 1 },
+    () => false,
+    new Set(),
+    browser
+  );
+  try {
+    const result = await runner({
+      args: ["chatgpt", "ask", "prompt"],
+      signal: AbortSignal.timeout(3000)
+    });
+    assert.equal(browserUsed, false);
+    assert.deepEqual(result, [
+      {
+        endpoint: null,
+        slots: "chatgpt:3,gemini:1",
+        args: ["chatgpt", "ask", "prompt"]
+      }
+    ]);
+  } finally {
+    await runner.close();
+    if (previousEndpoint === undefined) delete process.env.OPENCLI_CDP_ENDPOINT;
+    else process.env.OPENCLI_CDP_ENDPOINT = previousEndpoint;
+  }
+});
+
+test("the process runner follows the setting from one command to the next", async () => {
+  let dedicated = false;
+  const sites: string[] = [];
+  const browser = {
+    run: async (
+      site: string,
+      _signal: AbortSignal,
+      command: (endpoint: string) => Promise<unknown>
+    ) => {
+      sites.push(site);
+      return command("ws://127.0.0.1:9333/devtools/page/1");
+    },
+    close: async () => undefined
+  } as never;
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    { chatgpt: 1, gemini: 1 },
+    () => dedicated,
+    new Set(),
+    browser
+  );
+  try {
+    const signal = AbortSignal.timeout(3000);
+    const first = (await runner({ args: ["gemini", "ask", "a"], signal })) as {
+      endpoint: string | null;
+    }[];
+    dedicated = true;
+    const second = (await runner({ args: ["gemini", "ask", "b"], signal })) as {
+      endpoint: string | null;
+    }[];
+    // A daemon command is never a site's, so it never takes a dedicated tab.
+    await runner({ args: ["daemon", "stop"], signal });
+    assert.equal(first[0]?.endpoint, null);
+    assert.equal(second[0]?.endpoint, "ws://127.0.0.1:9333/devtools/page/1");
+    assert.deepEqual(sites, ["gemini"]);
+  } finally {
+    await runner.close();
+  }
 });
 
 test("process runner gives each command its exact CDP target without Browser Bridge pool settings", async () => {
@@ -88,14 +182,9 @@ test("process runner gives each command its exact CDP target without Browser Bri
     close: async () => undefined
   } as never;
   const runner = processRunner(
-    () => ({
-      command: process.execPath,
-      args: [
-        "-e",
-        "process.stdout.write(JSON.stringify({ok:true,data:{endpoint:process.env.OPENCLI_CDP_ENDPOINT,slots:process.env.OPENCLI_SITE_SLOTS??null,args:process.argv.slice(1)}}))"
-      ]
-    }),
+    ECHO_OPENCLI,
     { chatgpt: 1, gemini: 1 },
+    () => true,
     new Set(),
     browser
   );
@@ -1147,6 +1236,7 @@ async function withBridge(
     authToken,
     turnTimeoutSeconds: 30,
     tempRoot,
+    sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
     run: async (request) => {
       // Model switches and listings are answered here, not from `replies`.
@@ -1155,6 +1245,7 @@ async function withBridge(
       if (request.args[1] === "models")
         return [{ model: "3.8-flash" }, { model: "3.1-pro" }];
       runs.requests.push(request);
+      if (request.args[0] === "daemon") return [];
       const fileIndex = request.args.indexOf("--file");
       if (request.args[1] === "ask" || request.args[1] === "ask-file")
         runs.prompts.push(
@@ -1730,6 +1821,88 @@ test("a streamed turn that never reached the site says so in the stream", async 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("a daemon of another version is stopped, and the command runs again", async () => {
+  // In the operator's own Chrome, opencli's daemon is shared machine-wide, so
+  // the CLI of the version this repository pins can meet the daemon of
+  // another one. The CLI's own remedy is to stop the daemon by hand; the
+  // bridge owns the CLI it runs, so it does that itself instead of failing
+  // the turn.
+  await withBridge(
+    [
+      new OpencliCommandError(
+        "Stale daemon could not be replaced (A stale daemon (v2.0.3 ≠ v2.0.2) is running but did not shut down (graceful + SIGKILL both failed). Run manually: opencli daemon stop)",
+        "COMMAND_EXEC",
+        1
+      ),
+      { response: "done", conversation_id: "c1" }
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: "hi"
+      });
+      assert.equal(reply.status, 200);
+      assert.ok(
+        runs.requests.some((request) => request.args[0] === "daemon"),
+        "the stale daemon was not stopped"
+      );
+      assert.equal(runs.prompts.length, 2, "the turn ran the command twice");
+    }
+  );
+});
+
+test("a busy site session is waited out instead of failing the turn", async () => {
+  await withBridge(
+    [
+      new OpencliCommandError(
+        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
+        "SESSION_BUSY",
+        1
+      ),
+      { response: "done", conversation_id: "c1" }
+    ],
+    async (baseUrl, runs) => {
+      const reply = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        input: "hi"
+      });
+      assert.equal(reply.status, 200);
+      assert.equal(runs.requests.length, 2);
+    }
+  );
+});
+
+test("a site session held past the turn's deadline is a refusal, not an outage", async () => {
+  // opencli never sent the prompt; the provider is serving somebody else.
+  let attempts = 0;
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 1,
+    sessionBusyRetryMs: 50,
+    run: async () => {
+      attempts += 1;
+      throw new OpencliCommandError(
+        'Session "site:chatgpt" is busy: chatgpt/ask (pid 1) has been driving it for 30s.',
+        "SESSION_BUSY",
+        1
+      );
+    }
+  });
+  await serveBridge(bridge, async (baseUrl) => {
+    const reply = await post(baseUrl, {
+      model: "opencli-chatgpt-balanced",
+      input: "hi"
+    });
+    assert.equal(reply.status, 400);
+    assert.equal(
+      ((await reply.json()) as { error: { type: string } }).error.type,
+      "provider_request_unsupported"
+    );
+    assert.ok(attempts > 1, "the busy session was waited on first");
+  });
 });
 
 test("a Gemini worker turn continues its web conversation with only the new items", async () => {

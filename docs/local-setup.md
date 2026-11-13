@@ -202,7 +202,7 @@ started it every day.
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
 
 - **Portable runtime/provider source (`config/config.autodev.toml`):** Contains AutoDev-owned model/provider, telemetry, feature, and shell/runtime settings that are not canonical RuleSync agent-facing configuration. Agent/skill/MCP/hook/permission definitions belong in RuleSync where supported; `.rulesync/mcp.jsonc` is already canonical for MCP declarations.
-- **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source and the Rulesync-generated MCP projection with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved.
+- **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source and the Rulesync-generated MCP projection with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved. The exception is a Codex permission profile (`default_permissions`, `[permissions.*]`): Codex applies a selected profile over `sandbox_mode`, `[sandbox_workspace_write]` and every role's `sandbox_mode`, so the composer never carries one over from existing state. A one-off `rulesync generate --features permissions` run once selected `default_permissions = "rulesync"`, and from 2026-11-11 every role, including `danger-full-access` workers, ran workspace-write with no network (`listen EPERM` on any local dev server). Rulesync's `permissions` feature is not generated for Codex; `agents/rules/default.rules` holds the command rules, and the installer removes a leftover `$CODEX_HOME/rules/rulesync.rules`.
 - **Root role settings:** The root turn is the orchestrator, so the composer overlays `agents/roles/orchestrator.toml`'s per-server settings (`enabled`, `enabled_tools`, `default_tools_approval_mode`) onto each server the MCP projection declares, the same keys a child role's TOML owns for that child. Launch keys stay with the projection. Orchestrator entries the projection does not declare (the bridge-injected `autodev_spawn` and the plugin-owned `codex_app`) add nothing to `mcp_servers`. This is what gives native and Claude-served root turns the orchestrator's scoped CodeGraphContext tools rather than CGC's full surface.
 - **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills. Codex hooks are written only to `$CODEX_HOME/hooks.json` (a regular file rendered by Rulesync's user-level projection): Codex loads that file and the working project's `.codex/hooks.json`, so a repository copy ran every hook twice in AutoDev sessions; the installer removes it and trusts only the user-level path. `--check` validates those outputs, including that the repository carries no `.codex/hooks.json`. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`; Copilot projects `SubagentStart`, `UserPromptSubmitted`, and `PreToolUse` but not `SessionStart`; Antigravity projects `SessionStart` and `PreToolUse` but not `SubagentStart` or `UserPromptSubmitted`. The root-delegation `beforeSubmitPrompt` hook is declared per target, for `codexcli` and `copilot` only: it injects Codex's orchestrator bootstrap (spawn tools reached through code-mode `exec` cells), and as a shared hook it put about 8 KB of Codex-only instructions into every Claude Code prompt in this repository.
 - **Root delegation context and idempotency:** The hook emits its policy once per context window: when the session's `transcript_path` already carries the injected bootstrap (a Codex developer message or a Claude Code `hook_additional_context` attachment) after its last compaction record (Codex `compacted`, Claude Code `compact_boundary`), later prompts inject nothing, and the first prompt after a compaction (which drops hook context) injects it again. Tool output that only quotes the bootstrap does not count. An unreadable or missing transcript injects. Within a turn it also emits at most once per non-empty `session_id`, `turn_id`, and root model, so duplicate global/workspace submissions do not repeat context. A short-lived, bounded state file under `$CODEX_HOME/hooks` coordinates concurrent processes and stores only hashed turn identities with timestamps (never prompt content). The bootstrap points to the enabled orchestration skill rather than copying its full body, keeps lifecycle details in that canonical skill, and stays below the observed hook-message truncation limit; the recovery reminder is injected only as a compact exceptional-path summary. Missing identifiers are not deduplicated; different turns/models still receive policy.
@@ -825,16 +825,31 @@ install: it is the Runtime's pinned `@jackwener/opencli` dependency, installed
 by `pnpm install --frozen-lockfile` and reached from the installed tree through
 its `node_modules` link, so launchd's `PATH` never decides which opencli runs
 (`OPENCLI_BIN` overrides it). Its pnpm `postinstall` (shell completions only)
-is not needed. The normal typed installer also installs the pinned headed
-Chromium build into `$CODEX_HOME/provider-runtime/opencli/browsers`; it does
-not use or alter the operator's Chrome installation. The bridge starts this
-browser on demand with a private profile at
-`$CODEX_HOME/run/opencli-browser-profile`, exposes CDP only on loopback, and
-keeps one target per admitted turn. The browser window is visible because
-ChatGPT blocks headless Chromium. Sign in to ChatGPT and Gemini in that
-separate AutoDev window; the cookies remain in that profile and are not
-exported. You may need to sign in again when a site's session expires. If
-Gemini has multiple Google accounts in this dedicated profile, set
+is not needed.
+
+Which browser opencli drives is the **Dedicated browser** toggle on either
+opencli provider's page in the Console (Providers -> `opencli-chatgpt` or
+`opencli-gemini` -> Browser). It covers both providers, is stored in
+`$CODEX_HOME/run/opencli-browser.json`, and applies to the next turn without a
+restart.
+
+- **Off (the default): your own Chrome.** Install opencli's Browser Bridge
+  Chrome extension and sign in to each site once in your Chrome; turns run in
+  the extension's "OpenCLI" tab group. Confirm the extension with the
+  commands below.
+- **On: a dedicated Chrome for Testing.** The normal typed installer always
+  installs the pinned headed build into
+  `$CODEX_HOME/provider-runtime/opencli/browsers`, without using or altering
+  your Chrome installation, so the toggle needs no reinstall. The bridge
+  starts this browser with a private profile at
+  `$CODEX_HOME/run/opencli-browser-profile`, exposes CDP only on loopback, and
+  keeps one target per admitted turn. The window is visible because ChatGPT
+  blocks headless Chromium. Sign in to ChatGPT and Gemini in that separate
+  window once; the cookies remain in that profile and are not exported, and
+  you may need to sign in again when a site's session expires. Turning the
+  toggle off closes the window once its running turns finish.
+
+When the selected browser is signed in to several Google accounts, set
 `OPENCLI_GEMINI_ACCOUNT` to an account that has Gemini enabled in
 `$CODEX_HOME/.env`; otherwise Gemini may open under an account without app
 access:
@@ -843,15 +858,21 @@ access:
 echo 'OPENCLI_GEMINI_ACCOUNT=you@example.com' >> ~/.codex/.env
 ```
 
-The opencli proxy starts its dedicated browser before reporting healthy; after
-a normal install or proxy restart, sign in to the requested site in that
-separate browser window. Provider status in the Console reports
-browser startup/transport failures separately from a site's Sign-in required
-state. Site login is not a prerequisite for the bridge to start, and browser
-cookies are stored only in the private profile.
+```bash
+node runtime/node_modules/@jackwener/opencli/dist/src/main.js doctor
+```
 
-**What an opencli change has to refresh.** An opencli change lives in two
-places, and each one is live at a different moment:
+```bash
+node runtime/node_modules/@jackwener/opencli/dist/src/main.js chatgpt status
+```
+
+With the dedicated browser on, the opencli proxy starts that browser before
+reporting healthy, and Provider status in the Console reports browser
+startup/transport failures separately from a site's Sign-in required state.
+Site login is not a prerequisite for the bridge to start.
+
+**What an opencli change has to refresh.** An opencli change lives in up to
+three places, and each one is live at a different moment:
 
 - The **site adapter** (`clis/<site>/…` inside the `@jackwener/opencli` package)
   runs in the CLI process the bridge spawns for a turn. The bridge resolves
@@ -859,17 +880,25 @@ places, and each one is live at a different moment:
   the resolution for the life of the process — a link that moves under a
   running bridge does not move that bridge. A patch to the adapter is live
   only for processes started after the link moved.
+- In your own Chrome, the **daemon** (opencli's Browser Bridge session, shared
+  machine-wide on one port) also holds the adapter it loaded. A patch keeps the
+  package version, so the daemon cannot tell it is stale and the bridge's
+  stale-daemon recovery (which replaces a daemon of another *version*) never
+  fires: run `opencli daemon stop` after a patch. The dedicated browser has no
+  daemon.
 - The **bridge and browser owner** (`runtime/src/providers/opencli*.ts`) runs
   from the copy the installer writes to `$CODEX_HOME/src/providers/`, the file
-  `run-codex-opencli-proxy.sh` executes. The bridge owns Chromium's lifecycle
-  and CDP target pool; its private profile remains in `CODEX_HOME` across
-  restarts. The normal installer refreshes the bridge and ensures the Chromium
-  build pinned by Runtime's Playwright dependency is installed.
+  `run-codex-opencli-proxy.sh` executes. With the dedicated browser on, the
+  bridge owns Chrome for Testing's lifecycle and CDP target pool; its private
+  profile remains in `CODEX_HOME` across restarts. The normal installer
+  refreshes the bridge and ensures the build pinned by Runtime's Playwright
+  dependency is installed.
 
 After a patch: `pnpm install --frozen-lockfile` re-applies the patch and moves
 the link (live for processes started afterwards), then `bash scripts/install.sh`
-deploys the bridge, reconciles the pinned browser and reloads the proxy. There
-is no shared opencli daemon to stop.
+deploys the bridge, reconciles the pinned browser and reloads the proxy; in
+your own Chrome, `opencli daemon stop` then lets the next command start a
+daemon with the patched adapter.
 
 To enable the router authentication boundary during a planned restart, run:
 

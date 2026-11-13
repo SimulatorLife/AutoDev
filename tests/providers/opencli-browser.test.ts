@@ -269,6 +269,35 @@ test("does not leave Chromium running after shutdown", async () => {
   });
 });
 
+test("turning the dedicated browser off waits for leased commands, and turning it on starts it again", async () => {
+  await fixture(async ({ browser, args, children }) => {
+    let release: () => void = () => undefined;
+    const held = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve("done");
+        })
+    );
+    // Let the command take its lease before the setting changes.
+    while (args.length === 0) await delay(5);
+    await delay(20);
+    await browser.stop();
+    assert.equal(children[0]?.killed, false, "a leased command was cut off");
+    release();
+    assert.equal(await held, "done");
+    await delay(20);
+    assert.equal(children[0]?.killed, true);
+    assert.equal(browser.isReady, false);
+    assert.equal(browser.unavailableReason, null);
+    // Unlike shutdown, the owner stays usable.
+    await browser.run("gemini", AbortSignal.timeout(1000), async () => "again");
+    assert.equal(args.length, 2);
+    assert.equal(browser.isReady, true);
+  });
+});
+
 test("cleans up and retries after partial tab-pool startup", async () => {
   await fixture(async ({ browser, args, children, setNewFailures }) => {
     setNewFailures(1);

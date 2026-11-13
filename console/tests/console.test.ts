@@ -61,6 +61,7 @@ import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
+import * as providerBrowserRoute from "../app/api/providers/[provider]/browser/route.ts";
 import * as providerCheckRoute from "../app/api/providers/[provider]/check/route.ts";
 import * as providerLimitsRoute from "../app/api/providers/[provider]/limits/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
@@ -17070,6 +17071,7 @@ test("Providers mutation routes export only POST", () => {
     providerRoute,
     providerCheckRoute,
     providerLimitsRoute,
+    providerBrowserRoute,
     modelRoute
   ]) {
     assert.equal(typeof route.POST, "function");
@@ -17078,6 +17080,61 @@ test("Providers mutation routes export only POST", () => {
     assert.equal("PUT" in route, false);
     assert.equal("DELETE" in route, false);
   }
+});
+
+test("provider browser Console route forwards the Dedicated browser toggle to Runtime", async () => {
+  const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+  await withControlRouteEnvironment(
+    "provider-browser-route-token",
+    async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        body: JSON.parse(String(init?.body))
+      });
+      return Response.json({
+        schema: "autodev-control-provider-browser-v1",
+        provider: "opencli-chatgpt",
+        dedicated: true,
+        previous: false,
+        actor: "operator"
+      });
+    },
+    async () => {
+      const send = (fields: Record<string, string>) =>
+        providerBrowserRoute.POST(
+          sameOriginFormRequest(
+            "/api/providers/opencli-chatgpt/browser",
+            new URLSearchParams(fields).toString()
+          ),
+          { params: Promise.resolve({ provider: "opencli-chatgpt" }) }
+        );
+      const returnTo = "/providers/opencli-chatgpt";
+      const ok = await send({
+        provider: "opencli-chatgpt",
+        dedicated: "true",
+        returnTo
+      });
+      assert.equal(ok.status, 303);
+      assert.equal(ok.headers.get("location"), returnTo);
+      assert.equal(requests.length, 1);
+      assert.match(
+        requests[0]!.url,
+        /\/control\/providers\/opencli-chatgpt\/browser$/u
+      );
+      assert.equal(requests[0]!.method, "PATCH");
+      assert.deepEqual(requests[0]!.body, { dedicated: true });
+
+      const invalid = await send({
+        provider: "opencli-chatgpt",
+        dedicated: "maybe",
+        returnTo
+      });
+      assert.equal(invalid.status, 303);
+      assert.notEqual(invalid.headers.get("location"), returnTo);
+      assert.equal(requests.length, 1, "an invalid toggle reached Runtime");
+    }
+  );
 });
 
 test("provider check Console route asks Runtime to re-check the provider and returns to Providers", async () => {

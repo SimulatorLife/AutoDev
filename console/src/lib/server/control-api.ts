@@ -75,6 +75,7 @@ import {
   type ControlApiPromptVersionsResponse,
   type ControlApiProviderAgentLimits,
   type ControlApiProviderAgentModelPatchResponse,
+  type ControlApiProviderBrowserPatchResponse,
   type ControlApiProviderCheckResponse,
   type ControlApiProviderCliVersion,
   type ControlApiProviderEnabledPatchResponse,
@@ -1466,6 +1467,26 @@ export function patchProviderEnabled(
     "PATCH",
     providerControlPath(provider),
     { disabled },
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed PATCH choosing the browser the opencli providers drive:
+ * the operator's own Chrome (`false`) or the dedicated Chrome for Testing
+ * (`true`). One setting covers every opencli provider.
+ */
+export function patchProviderBrowser(
+  provider: string,
+  dedicated: boolean,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderBrowserPatchResponse>> {
+  return mutateControlApi<ControlApiProviderBrowserPatchResponse>(
+    "PATCH",
+    providerControlPath(provider, "browser"),
+    { dedicated },
     config,
     options
   );

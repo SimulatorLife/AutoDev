@@ -59,6 +59,7 @@ import {
   resolveModelQuota,
   resolveProviderQuota
 } from "./provider-status.ts";
+import { ProviderBrowserControls } from "./ProviderBrowserControls.ts";
 import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
@@ -187,6 +188,36 @@ function ProviderLimitsPanel({
       )
     ),
     React.createElement(ProviderLimitsControls, { provider, returnTo })
+  );
+}
+
+/** The opencli providers' browser; only they carry one. */
+function ProviderBrowserPanel({
+  provider,
+  returnTo
+}: {
+  readonly provider: ControlApiProviderRecord;
+  readonly returnTo: string;
+}): React.JSX.Element | null {
+  if (provider.browser === undefined) return null;
+  return React.createElement(
+    "section",
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-browser" },
+    React.createElement(
+      "div",
+      { className: "mb-3" },
+      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Browser"),
+      React.createElement(
+        "p",
+        { className: `mt-1 ${MUTED_META_CLASS}` },
+        "Shared by every opencli provider. A change applies to the next turn."
+      )
+    ),
+    React.createElement(ProviderBrowserControls, {
+      provider: provider.id,
+      browser: provider.browser,
+      returnTo
+    })
   );
 }
 
@@ -899,6 +930,7 @@ export function ProviderDetailView({
       returnTo
     }),
     React.createElement(ProviderLimitsPanel, { provider, returnTo }),
+    React.createElement(ProviderBrowserPanel, { provider, returnTo }),
     React.createElement(ModelsPanel, {
       provider,
       models,
