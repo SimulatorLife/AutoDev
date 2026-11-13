@@ -75,12 +75,6 @@ jobs:
       - name: Validate Shell scripts
         run: pnpm run validate:shell
 
-      - name: Show formatter output for PR review
-        run: |
-          pnpm exec prettier tests/self-improvement-review-command.test.ts
-          pnpm exec prettier runtime/src/router/index.ts > /tmp/router-prettier.ts
-          diff -u runtime/src/router/index.ts /tmp/router-prettier.ts || true
-
       - name: Validate formatting and lint
         run: |
           pnpm run format:check
