@@ -54,3 +54,18 @@
 - [ ] **JUICE**: The intensity/opacity/size of the power-bank's electricity effect/shader should be increased to make it more visible and noticeable; it is currently way too faint and can barely be seen.
 - [ ] **FEAT**: The Console's 5,049-line control-api.ts contains dozens of handwritten is* validation functions checking nested API responses. Replace those guards with shared Zod schemas in Core, reused by the runtime and Console. This could eliminate substantial repetitive validation logic while making types and runtime contracts agree. Update the target-state doc as/where needed to clarify/specify that Zod schemas are the source of truth for API contracts, and that the runtime and Console should use them to validate and enforce the expected structure and types of API responses.
 - [ ] **FEAT**: AutoDev maintains a 681-line GitHub Actions adapter implementing HTTP requests, authentication headers, JSON decoding, error handling, and workflow/run retrieval. Octokit supplies typed GitHub REST operations and pagination, eliminating much of the HTTP plumbing. Retain AutoDev-specific statistics, response-size limits, timeouts, and fail-closed handling for partial results. Update the target-state doc as/where needed to clarify/specify that Octokit should be used for GitHub API interactions instead of handwritten HTTP requests.
+
+## Dependency replacement backlog
+
+Migrate through maintained public dependencies, preserve the [target-state contracts](autodev-console-target-state.md), verify parity, and delete superseded implementations. Existing TODOs already cover Zod and Octokit; `quota-axi` collection has been implemented.
+
+- [ ] **MAINT**: Adopt `cockatiel` for generic retry, backoff, timeout, circuit-breaker, bulkhead and fallback mechanics in Router and Console; retain scoped request-outcome cooldown classification, persistence, cancellation and single-layer retries.
+- [ ] **MAINT**: Replace custom FIFO provider admission and shared query-scheduling queues with `p-queue` where it preserves cancellation, FIFO fairness, concurrency, and accounting; delete duplicate queues.
+- [ ] **MAINT**: Migrate ACP-capable leaf-agent sessions/process transport to `acpx/runtime` only after the target-state parity gate; use the ACP TypeScript SDK only if needed. Preserve direct CLI/Responses and Codex-owned root tools.
+- [ ] **MAINT**: Replace handwritten Codex concurrency TOML scanning with existing `smol-toml`; preserve missing, invalid, and unreadable configuration states.
+- [ ] **MAINT**: Replace generic custom Console table models/behavior with `@tanstack/react-table` across tables, deleting redundant row/column, sorting, filtering, and pagination logic. Keep accessible markup, responsive widths/overflow, URL navigation, and styling in the shared renderer.
+- [ ] **MAINT**: Replace manual command-palette dialog/combobox keyboard and focus handling with `@ariakit/react`; coordinate with the existing cross-resource search TODO.
+- [ ] **MAINT**: Replace handwritten atomic-write mechanics with `write-file-atomic` where it preserves permissions, concurrent writes, crash recovery, and compare-and-swap behavior.
+- [ ] **MAINT**: Adopt `execa` for short-lived CLI/version checks where it eliminates custom process/timeout/output plumbing; avoid a second agent-process owner alongside ACP.
+- [ ] **MAINT**: Evaluate `eventsource-parser` for direct Responses SSE framing only if passthrough bytes, partial output, event rewriting, cancellation, and telemetry remain equivalent.
+- [ ] **MAINT**: Evaluate the official `openai` TypeScript SDK for OpenAI-compatible memory embeddings; preserve routed endpoints, vector dimensions, response bounds, and telemetry.
