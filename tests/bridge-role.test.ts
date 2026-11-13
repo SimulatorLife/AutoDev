@@ -47,9 +47,7 @@ const installedOrchestration = join(
 );
 mkdirSync(join(skillHome, ".agents", "skills"), { recursive: true });
 symlinkSync(
-  fileURLToPath(
-    new URL("../.rulesync/skills/orchestration", import.meta.url)
-  ),
+  fileURLToPath(new URL("../.rulesync/skills/orchestration", import.meta.url)),
   installedOrchestration
 );
 process.env.HOME = skillHome;
@@ -651,7 +649,10 @@ test("the orchestrator's inlined skill names the installed directory its referen
       `Installed at ${installedOrchestration}; resolve its relative \`references/\``
     )
   );
-  const references = Array.from(orchestrator.matchAll(/`(references\/[^`]+\.md)`/g), (match) => match[1]!);
+  const references = Array.from(
+    orchestrator.matchAll(/`(references\/[^`]+\.md)`/g),
+    (match) => match[1]!
+  );
   assert.ok(references.length > 0, "the inlined skill names its references");
   for (const reference of references)
     assert.ok(existsSync(join(installedOrchestration, reference)), reference);

@@ -157,10 +157,7 @@ export function roleInstructions(role: string | null | undefined): string {
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
   const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
-  const canonical =
-    key === "orchestrator"
-      ? orchestrationSkillSection()
-      : "";
+  const canonical = key === "orchestrator" ? orchestrationSkillSection() : "";
   const codeSearch =
     contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&
     contract.mcp.includes(MCP_SERVER_LSP) &&

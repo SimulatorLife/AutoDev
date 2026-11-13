@@ -528,7 +528,10 @@ test("root delegation points at the installed skill directory, where its referen
     assert.ok(context.includes(`Source: ${join(directory, "SKILL.md")}`));
     assert.ok(context.includes(`paths against ${directory}`));
     const skill = readFileSync(join(directory, "SKILL.md"), "utf8");
-    const references = Array.from(skill.matchAll(/`(references\/[^`]+\.md)`/g), (match) => match[1]!);
+    const references = Array.from(
+      skill.matchAll(/`(references\/[^`]+\.md)`/g),
+      (match) => match[1]!
+    );
     assert.ok(references.length > 0, "the skill names its references");
     for (const reference of references)
       assert.ok(
