@@ -56,6 +56,7 @@ export {
   subagentStatus,
   type SubagentTelemetry,
   type SubagentThreadEntry,
-  subagentThreadInfo} from "./subagents.ts";
+  subagentThreadInfo
+} from "./subagents.ts";
 export * from "./telemetry.ts";
 export * from "./tool-call-ownership/index.ts";
