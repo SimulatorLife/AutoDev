@@ -28,7 +28,8 @@ import {
   findCodexBinary,
   findCopilotBinary,
   findMiniMaxBinary,
-  findOpencliCommand} from "@simulatorlife/autodev-runtime/shared/executables";
+  findOpencliCommand
+} from "@simulatorlife/autodev-runtime/shared/executables";
 
 import { ROUTING_POLICY } from "../router/routing.ts";
 
@@ -61,7 +62,13 @@ export const CLI_VERSION_REFRESH_INTERVAL_MS = 10 * 60_000;
  * the version in every one of them, so the parser reads that rather than
  * demanding one shape and reporting the rest as unreadable.
  */
-const VERSION_PATTERN = /\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?/u;
+const VERSION_PATTERN = /\d+\.\d+/u;
+
+/** The patch number, read only where major.minor ends. */
+const VERSION_PATCH_PATTERN = /\.\d+/uy;
+
+/** A pre-release or build suffix, read only where the version number ends. */
+const VERSION_SUFFIX_PATTERN = /[-+][0-9A-Za-z.-]+/uy;
 
 /**
  * How one provider's CLI is run.
@@ -210,7 +217,14 @@ export function providerCliCommand(
  */
 export function parseCliVersion(output: string): string | null {
   const match = VERSION_PATTERN.exec(output);
-  return match ? match[0] : null;
+  if (!match) return null;
+  let version = match[0];
+  for (const pattern of [VERSION_PATCH_PATTERN, VERSION_SUFFIX_PATTERN]) {
+    pattern.lastIndex = match.index + version.length;
+    const part = pattern.exec(output);
+    if (part) version += part[0];
+  }
+  return version;
 }
 
 /** The outcome of reading one CLI's version. */

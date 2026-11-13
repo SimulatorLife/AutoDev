@@ -9,10 +9,10 @@ import {
 } from "../src/index.ts";
 
 test("PROVIDER_HARD_LIMIT_CLASSES classifies quota_exhausted and session_limit", () => {
-  assert.deepEqual([...PROVIDER_HARD_LIMIT_CLASSES], [
-    "quota_exhausted",
-    "session_limit"
-  ]);
+  assert.deepEqual(
+    [...PROVIDER_HARD_LIMIT_CLASSES],
+    ["quota_exhausted", "session_limit"]
+  );
   assert.equal(isHardLimitClass("quota_exhausted"), true);
   assert.equal(isHardLimitClass("session_limit"), true);
   assert.equal(isHardLimitClass("throttled"), false);

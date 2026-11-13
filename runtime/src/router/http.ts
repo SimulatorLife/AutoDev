@@ -21,10 +21,6 @@ import {
   resolveAgentActivityTtlMs
 } from "@simulatorlife/autodev-runtime/agents";
 import {
-  getDefaultMcpProcessRegistry,
-  registerLogical
-} from "@simulatorlife/autodev-runtime/mcp/process-registry";
-import {
   authStatus,
   routerAuthorizationValid
 } from "@simulatorlife/autodev-runtime/router/auth";
@@ -56,10 +52,7 @@ import {
   RouterLifecycle,
   setDefaultRouterLifecycle
 } from "@simulatorlife/autodev-runtime/router/lifecycle";
-import {
-  type LiveFeedCategory,
-  LiveFeedRecorder
-} from "@simulatorlife/autodev-runtime/router/live-feed";
+import { LiveFeedRecorder } from "@simulatorlife/autodev-runtime/router/live-feed";
 import {
   effectiveStateFile,
   getDefaultPersistenceManager,
@@ -89,10 +82,6 @@ import {
   resolveCwd,
   WORKSPACE_KEYS
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
-import {
-  dropUnresolvableReasoning,
-  normalizeInputItemIds
-} from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
 import {
   handleControlApiRequest,
@@ -105,21 +94,16 @@ import {
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
 import { getCachedProviderQuota } from "../providers/quota-discovery.ts";
+import { createAgentEventIngest } from "./agent-event-ingest.ts";
 import {
   correlationSnapshot,
   correlationStatus,
   CorrelationTracker,
   MCP_OBSERVATION_TTL_MS,
   mcpServerObservations,
-  recordBridgeMcpExposure,
-  recordBridgeSkillExposure,
-  recordBridgeSkillFailed,
-  recordBridgeSkillUsed,
-  recordBridgeToolObservation,
   restoreCorrelation,
   setDefaultCorrelationTracker
 } from "./correlation.ts";
-import { safeMetricLabel } from "./metric-label.ts";
 import {
   activeProviderRequests,
   activitySubjectFor,
@@ -146,25 +130,16 @@ import {
   UPSTREAM_TIMEOUT_MS,
   UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
-import { setUpstreamShapeHooks } from "./responses.ts";
 import {
   AGENT_EVENTS_PATH,
-  type BridgeRequestContext,
-  bridgeSubagentKey,
   closeBridgeSubagentsForRequest,
-  closeBridgeSubagentUsage,
   getDefaultExecutionContract,
-  getDefaultSubagentRegistry,
   getWorkspaceMetadata,
-  lookupBridgeSessionContext,
-  openBridgeSubagentUsage,
   orchestratorProviderForSession,
   providerCapabilities,
-  recallBridgeSessionRequestId,
   recordSpawnFailure,
   recordSubagentSpawn,
   rememberWorkspaceMetadata,
-  reportedChildren,
   resetSpawnFailureTelemetry,
   resetSubagentTelemetry,
   setDefaultSubagentRegistry,
@@ -176,6 +151,7 @@ import {
   observeRouterWorkspaceGitCommits,
   withExtractedTraceContext
 } from "./telemetry.ts";
+import { installUpstreamShapeHooks } from "./upstream-shape-hooks.ts";
 import {
   getDefaultUsageTracker,
   type RecordUsageEventParams,
@@ -242,6 +218,11 @@ const MAX_RECENT_EVENTS = Number.parseInt(
   process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
 );
 const liveFeedEvents = new LiveFeedRecorder();
+
+export const ingestAgentEvents = createAgentEventIngest({
+  agentActivity,
+  liveFeedEvents
+});
 
 function usageWorkspaceForEvent(
   workspaceKey: string | null,
@@ -317,6 +298,37 @@ function isNonProviderHealthFailure(event: RouterEvent): boolean {
   );
 }
 
+/** Fold one routing event into the provider's health counters. */
+function applyProviderHealthEvent(event: RouterEvent): void {
+  const state = event.provider ? providerState(event.provider) : null;
+  if (state && event.phase === "selected") {
+    state.attempts += 1;
+    state.lastAttemptAt = event.timestamp;
+  } else if (state && event.phase === "skipped") {
+    state.skipped += 1;
+    if (!isNonProviderHealthFailure(event)) {
+      state.lastFailureClass = event.failureClass;
+    }
+  } else if (state && event.phase === "result") {
+    if (event.outcome === "success") {
+      state.successes += 1;
+      state.lastSuccessAt = event.timestamp;
+      state.lastFailureClass = null;
+      state.lastFailure = null;
+    } else if (!isNonProviderHealthFailure(event)) {
+      state.failures += 1;
+      state.lastFailureAt = event.timestamp;
+      state.lastFailureClass = event.failureClass;
+      state.lastFailure = {
+        timestamp: event.timestamp,
+        class: event.failureClass,
+        status: event.status,
+        ...(event.model ? { model: event.model } : {})
+      };
+    }
+  }
+}
+
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
@@ -369,33 +381,7 @@ const routerEvents = new RouterEventRecorder({
         String(event.outcome ?? "") as "success" | "failure",
         event.elapsedMs
       );
-    const state = event.provider ? providerState(event.provider) : null;
-    if (state && event.phase === "selected") {
-      state.attempts += 1;
-      state.lastAttemptAt = event.timestamp;
-    } else if (state && event.phase === "skipped") {
-      state.skipped += 1;
-      if (!isNonProviderHealthFailure(event)) {
-        state.lastFailureClass = event.failureClass;
-      }
-    } else if (state && event.phase === "result") {
-      if (event.outcome === "success") {
-        state.successes += 1;
-        state.lastSuccessAt = event.timestamp;
-        state.lastFailureClass = null;
-        state.lastFailure = null;
-      } else if (!isNonProviderHealthFailure(event)) {
-        state.failures += 1;
-        state.lastFailureAt = event.timestamp;
-        state.lastFailureClass = event.failureClass;
-        state.lastFailure = {
-          timestamp: event.timestamp,
-          class: event.failureClass,
-          status: event.status,
-          ...(event.model ? { model: event.model } : {})
-        };
-      }
-    }
+    applyProviderHealthEvent(event);
     scheduleRouterStatePersist();
   }
 });
@@ -450,38 +436,7 @@ COOLDOWNS.setRuntime({
   isKnownProvider: (provider) => Object.hasOwn(ROUTING.providers, provider),
   lastFailureClass: (provider) => providerState(provider).lastFailureClass
 });
-setUpstreamShapeHooks({
-  dropUnresolvableReasoning: (input) => {
-    const result = dropUnresolvableReasoning(input);
-    return { input: result.input, dropped: result.dropped };
-  },
-  normalizeInputItemIds: (input) => {
-    const result = normalizeInputItemIds(input);
-    return { input: result.input, changed: result.changed };
-  },
-  shouldNormalizeItemIds: true,
-  shouldDropUnresolvableReasoning: true,
-  recordEvent: (event) => {
-    if (typeof event.requestId !== "string" || event.requestId.length === 0)
-      return;
-    recordRouterEvent({
-      phase: String(event.phase ?? "router_transform"),
-      requestId: event.requestId,
-      requestedModel:
-        typeof event.requestedModel === "string" ? event.requestedModel : null,
-      provider: typeof event.provider === "string" ? event.provider : null,
-      model: typeof event.model === "string" ? event.model : null,
-      droppedReasoningItems:
-        typeof event.droppedReasoningItems === "number"
-          ? event.droppedReasoningItems
-          : 0,
-      normalizedItemIds:
-        typeof event.normalizedItemIds === "number"
-          ? event.normalizedItemIds
-          : 0
-    });
-  }
-});
+installUpstreamShapeHooks();
 
 export const codexState = {
   collector: new CodexStateCollector(loadCodexStateCollectorConfig()),
@@ -908,393 +863,6 @@ export function recordConcurrencyDenial(denial: unknown): void {
   });
 }
 
-export const INGESTED_AGENT_EVENTS = Object.freeze(
-  new Set([
-    "subagent_spawn",
-    "subagent_result",
-    "subagent_tools_unavailable",
-    "tool_executed",
-    "tool_requested",
-    "tool_unavailable",
-    "skill_exposed",
-    "skill_used",
-    "skill_failed",
-    "mcp_exposed",
-    "activity",
-    "heartbeat"
-  ])
-);
-
-/**
- * The lifecycle facts a bridge may report: only what the router cannot see.
- *
- * The router settles every request itself (`endRequest`), from the response it
- * relays: whether it ended in a tool call, needs input, failed, or left live
- * children. A bridge's own `tool_wait`/`user_wait`/`finished`/`failed` for the
- * same request only repeat that -- late, over a separate channel, and about
- * the request rather than the agent -- so a per-response `finished` arriving
- * after the router had put the agent in `tool_wait` ended the agent between
- * two of its tool calls. What a bridge alone knows is its own in-CLI
- * delegation: `subagent_wait` while bridge-native children run, and `resumed`
- * once they report back. Heartbeats keep a long request visibly alive.
- */
-export const REPORTABLE_AGENT_ACTIVITY_STATES = Object.freeze(
-  new Set(["subagent_wait", "resumed", "heartbeat"])
-);
-
-// Per-event helpers used by ingestAgentEvents. Each handles exactly one
-// event type and reports any counters it changes back to the caller so
-// cognitive complexity stays bounded.
-function isValidAgentEvent(event: unknown): event is Record<string, unknown> {
-  if (!event || typeof event !== "object") return false;
-  return INGESTED_AGENT_EVENTS.has(
-    (event as Record<string, unknown>).type as string
-  );
-}
-
-function touchAgentActivity(context: BridgeRequestContext): void {
-  agentActivity.touch(context.activitySubject);
-  if (context.sessionKey)
-    getDefaultConcurrencyManager().touchOpenSubagentSlots(context.sessionKey);
-}
-
-function noteBridgeAgentActivity(
-  state: string,
-  context: BridgeRequestContext
-): void {
-  if (state === "subagent_wait") {
-    agentActivity.noteSubagentWait(context.activitySubject, {
-      provider: context.provider ?? null,
-      model: context.model ?? null,
-      role: context.role ?? null,
-      workspace: context.workspace ?? null
-    });
-  } else {
-    // `resumed` resolves a bridge-native delegation; it is a no-op for an
-    // agent that was not waiting on one.
-    agentActivity.noteSubagentResolved(context.activitySubject);
-  }
-}
-
-function isHeartbeatAgentEvent(event: Record<string, unknown>): boolean {
-  return (
-    event.type === "heartbeat" ||
-    (event.type === "activity" &&
-      (event.state === "heartbeat" ||
-        (typeof event.state === "string" &&
-          event.state.trim() === "heartbeat")))
-  );
-}
-
-function resolveIngestContext(requestId: string): BridgeRequestContext | null {
-  let context = requestId
-    ? getDefaultSubagentRegistry().getBridgeRequestContext(requestId)
-    : undefined;
-  if (!context && requestId) {
-    const sessionKey = requestId;
-    const sessionContext = lookupBridgeSessionContext(sessionKey);
-    const sessionRequestId = recallBridgeSessionRequestId(sessionKey);
-    if (sessionContext && sessionRequestId) {
-      // Reported against the session itself, so it describes the session's
-      // own agent, not whichever request of the session was noted last.
-      context = { ...sessionContext, activitySubject: sessionKey };
-    }
-  }
-  if (!context && requestId) {
-    // Last-resort fallback: Codex Desktop child threads fire BeforeToolCall
-    // hooks before the router has registered the session for the parent
-    // /v1/responses request (and may never, in the case of a turn that
-    // never opened one). When the registry has nothing under the request id
-    // AND nothing under the session id, treat the post as belonging to the
-    // workspace the hook stamped on the session. We attribute it to the
-    // session key as the activity subject so the post lands in the right
-    // workspace bucket instead of being silently dropped.
-    const fallback = sessionFallbackContext(requestId);
-    if (fallback) context = fallback;
-  }
-  return context ?? null;
-}
-
-/**
- * Best-effort session-id fallback for /v1/agent-events posts that arrive
- * before the router has had a chance to register the parent request.
- * Returns null when no workspace metadata can be recovered.
- */
-function sessionFallbackContext(
-  sessionKey: string
-): BridgeRequestContext | null {
-  // The registry only knows about request ids, but the post arrived keyed
-  // on a Codex session id. Look up any workspace metadata cached against
-  // that session and synthesize a minimal context.
-  const remembered = lookupBridgeSessionContext(sessionKey);
-  if (remembered) {
-    return { ...remembered, activitySubject: sessionKey };
-  }
-  return null;
-}
-
-function applyAgentActivityEvent(
-  event: Record<string, unknown>,
-  context: BridgeRequestContext,
-  counters: AgentEventCounters
-): void {
-  const state = typeof event.state === "string" ? event.state.trim() : "";
-  if (!REPORTABLE_AGENT_ACTIVITY_STATES.has(state)) {
-    counters.rejected += 1;
-    return;
-  }
-  noteBridgeAgentActivity(state, context);
-  counters.accepted += 1;
-}
-
-function closeSubagentResultUsage(
-  event: Record<string, unknown>,
-  requestId: string,
-  counters: AgentEventCounters
-): void {
-  const outcome = event.outcome === "failure" ? "failure" : "success";
-  const durationMs = Number.isFinite(event.durationMs)
-    ? Math.max(0, event.durationMs as number)
-    : null;
-  for (const child of reportedChildren(event)) {
-    if (
-      closeBridgeSubagentUsage(bridgeSubagentKey(requestId, child.id), {
-        outcome,
-        elapsedMs: durationMs,
-        failureClass: outcome === "failure" ? "subagent_failed" : null
-      })
-    ) {
-      counters.closed += 1;
-    }
-  }
-}
-
-function recordSubagentSpawnUsage(
-  event: Record<string, unknown>,
-  context: BridgeRequestContext,
-  requestId: string,
-  counters: AgentEventCounters
-): void {
-  const role =
-    typeof event.role === "string" && event.role.trim()
-      ? safeMetricLabel(event.role)
-      : null;
-  const children = reportedChildren(event);
-  const count = children.length;
-  recordSubagentSpawn({
-    mechanism: "bridge_native",
-    provider: context.provider,
-    role,
-    status:
-      typeof event.status === "string" && event.status.trim()
-        ? safeMetricLabel(event.status)
-        : "started",
-    tool:
-      typeof event.tool === "string" && event.tool.trim()
-        ? safeMetricLabel(event.tool)
-        : null,
-    requestId,
-    workspace: context.workspace ?? null,
-    count
-  });
-  for (const child of children) {
-    openBridgeSubagentUsage({
-      requestId,
-      context,
-      role,
-      childId: child.id,
-      model: child.model
-    });
-  }
-  counters.accepted += count;
-}
-
-function liveFeedCategoryForAgentEvent(type: string): LiveFeedCategory {
-  if (type.startsWith("tool_")) return "tools";
-  if (type.startsWith("skill_")) return "skills";
-  if (type.startsWith("mcp_")) return "mcp";
-  if (type.startsWith("hook_")) return "hooks";
-  return "runtime";
-}
-
-function recordAgentLiveFeedEvent(
-  event: Record<string, unknown>,
-  context: BridgeRequestContext,
-  requestId: string
-): void {
-  const type = typeof event.type === "string" ? event.type : "agent_event";
-  const tool = agentEventText(event, "tool");
-  const skill = agentEventText(event, "skill");
-  const server = agentEventText(event, "server");
-  const hook = agentEventText(event, "hook_name");
-  const name = tool ?? skill ?? server ?? hook;
-  liveFeedEvents.record({
-    category: liveFeedCategoryForAgentEvent(type),
-    type,
-    summary: name ? `${type}: ${name}` : type,
-    timestamp: agentEventText(event, "timestamp"),
-    requestId,
-    provider: context.provider,
-    model: context.model,
-    role: context.role,
-    workspace: context.workspace,
-    phase: agentEventText(event, "phase"),
-    outcome: agentEventText(event, "outcome"),
-    status: agentEventStatus(event),
-    failureClass: agentEventText(event, "failureClass"),
-    durationMs: agentEventDuration(event),
-    name,
-    server,
-    source: agentEventText(event, "source"),
-    tool,
-    skill,
-    hook,
-    handlerType: agentEventText(event, "handler_type")
-  });
-}
-
-function agentEventText(
-  event: Record<string, unknown>,
-  key: string
-): string | null {
-  const value = event[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function agentEventStatus(
-  event: Record<string, unknown>
-): string | number | null {
-  const status = event.status;
-  if (typeof status === "string" && status.trim()) return status.trim();
-  return typeof status === "number" && Number.isFinite(status) ? status : null;
-}
-
-function agentEventDuration(event: Record<string, unknown>): number | null {
-  const duration = Number(event.durationMs);
-  return Number.isFinite(duration) && duration >= 0 ? duration : null;
-}
-
-function applyAgentEvent(
-  event: Record<string, unknown>,
-  context: BridgeRequestContext,
-  requestId: string,
-  counters: AgentEventCounters
-): void {
-  const type = event.type as string;
-  recordAgentLiveFeedEvent(event, context, requestId);
-  if (type === "subagent_tools_unavailable") {
-    recordSpawnFailure({
-      requestId,
-      role: null,
-      requestedModel: context.model ?? null,
-      reason: "spawn_tool_unavailable"
-    });
-    counters.unavailable += 1;
-    return;
-  }
-  if (
-    type === "tool_executed" ||
-    type === "tool_requested" ||
-    type === "tool_unavailable"
-  ) {
-    recordBridgeToolObservation({ event, context });
-    touchAgentActivity(context);
-    return;
-  }
-  if (type === "skill_exposed") {
-    recordBridgeSkillExposure({ event, context });
-    return;
-  }
-  if (type === "skill_used") {
-    if (recordBridgeSkillUsed({ event, context })) counters.accepted += 1;
-    return;
-  }
-  if (type === "skill_failed") {
-    if (recordBridgeSkillFailed({ event, context })) counters.accepted += 1;
-    return;
-  }
-  if (type === "mcp_exposed") {
-    recordBridgeMcpExposure({ event, context, requestId });
-    const server =
-      typeof event.server === "string" && event.server.trim()
-        ? event.server.trim()
-        : null;
-    const sessionKey = context.sessionKey ?? context.activitySubject;
-    if (server && typeof sessionKey === "string" && sessionKey.trim()) {
-      try {
-        registerLogical(sessionKey, server, getDefaultMcpProcessRegistry());
-      } catch {
-        // Defensive: registration must never fail an ingest.
-      }
-    }
-    return;
-  }
-  if (isHeartbeatAgentEvent(event)) {
-    touchAgentActivity(context);
-    counters.accepted += 1;
-    return;
-  }
-  if (type === "activity") {
-    applyAgentActivityEvent(event, context, counters);
-    return;
-  }
-  if (type === "subagent_result") {
-    closeSubagentResultUsage(event, requestId, counters);
-    return;
-  }
-  // Default: bridge-native subagent_spawn reporting.
-  recordSubagentSpawnUsage(event, context, requestId, counters);
-}
-
-type AgentEventCounters = {
-  accepted: number;
-  closed: number;
-  unavailable: number;
-  rejected: number;
-};
-
-export function ingestAgentEvents(
-  payload: Record<string, unknown>
-): AgentEventCounters & { reason: string | null } {
-  const requestId =
-    typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
-  const sessionId =
-    typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
-  // The request id is the primary key, and the session id is the fallback:
-  // the router's registry of live requests is in memory, so a restart loses
-  // it while a long CLI turn keeps reporting against the request it started
-  // with. The session outlives the restart.
-  const context =
-    resolveIngestContext(requestId) ??
-    (sessionId ? resolveIngestContext(sessionId) : null);
-  if (!context) {
-    return {
-      accepted: 0,
-      closed: 0,
-      unavailable: 0,
-      rejected: Array.isArray(payload?.events) ? payload.events.length : 0,
-      reason: "unknown_request_id"
-    };
-  }
-  const events = Array.isArray(payload.events)
-    ? (payload.events as Array<Record<string, unknown>>)
-    : [];
-  const counters: AgentEventCounters = {
-    accepted: 0,
-    closed: 0,
-    unavailable: 0,
-    rejected: 0
-  };
-  for (const event of events) {
-    if (!isValidAgentEvent(event)) {
-      counters.rejected += 1;
-      continue;
-    }
-    applyAgentEvent(event, context, requestId, counters);
-  }
-  return { ...counters, reason: null };
-}
-
 function providerTierPriorities(provider: string): string[] {
   return Object.entries(ROUTING_POLICY.effectiveTierGroups()).flatMap(
     ([tier, groups]) => {
@@ -1334,6 +902,38 @@ function scopedProviderCooldowns(
   };
 }
 
+/** A provider's cooldown as the status response states it; all-clear when none. */
+function providerCooldownFields(
+  cooldown: CooldownEntry | null,
+  now: number
+): {
+  cooldownKind: CooldownEntry["kind"] | null;
+  cooldownFailureClass: string | null;
+  cooldownResetsAt: string | null;
+  cooldownUntil: string | null;
+  cooldownRemainingMs: number;
+  lastResortEligible: boolean;
+} {
+  if (cooldown === null) {
+    return {
+      cooldownKind: null,
+      cooldownFailureClass: null,
+      cooldownResetsAt: null,
+      cooldownUntil: null,
+      cooldownRemainingMs: 0,
+      lastResortEligible: true
+    };
+  }
+  return {
+    cooldownKind: cooldown.kind,
+    cooldownFailureClass: cooldown.failureClass ?? null,
+    cooldownResetsAt: cooldown.resetsAt ?? null,
+    cooldownUntil: new Date(cooldown.until).toISOString(),
+    cooldownRemainingMs: cooldown.until - now,
+    lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now)
+  };
+}
+
 function routerProviderStatus(
   route: (typeof ROUTES)[number],
   now: number,
@@ -1348,7 +948,6 @@ function routerProviderStatus(
   const cooldown = COOLDOWNS.get(route.provider, now);
   const inFlightRequests = getActiveRequests(route.provider);
   const active = projection.byProvider[route.provider] ?? 0;
-  const coolingDown = cooldown !== null;
   const orchestratorEnabled = ROUTING_POLICY.isProviderEnabledForRole(
     route.provider,
     "orchestrator"
@@ -1363,57 +962,29 @@ function routerProviderStatus(
     "subagent"
   );
   const tierPrios = providerTierPriorities(route.provider);
+  const readiness = cooldown
+    ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
+    : "ready";
+  const cooldownFields = providerCooldownFields(cooldown, now);
   return [
     route.provider,
     {
       orchestratorEnabled,
       orchestratorCapable,
       subagentEnabled,
-      status: coolingDown
-        ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
-        : "ready",
-      orchestratorStatus: !orchestratorEnabled
-        ? "disabled"
-        : !orchestratorCapable
-          ? "cannot_delegate"
-          : coolingDown
-            ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
-            : "ready",
-      subagentStatus: subagentEnabled
-        ? coolingDown
-          ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
-          : "ready"
+      status: readiness,
+      orchestratorStatus: orchestratorEnabled
+        ? orchestratorCapable
+          ? readiness
+          : "cannot_delegate"
         : "disabled",
+      subagentStatus: subagentEnabled ? readiness : "disabled",
       routingPriority: tierPrios.length > 0 ? tierPrios.join(" · ") : "—",
-      limits: {
-        cooldownKind: coolingDown ? cooldown.kind : null,
-        cooldownFailureClass: coolingDown
-          ? (cooldown.failureClass ?? null)
-          : null,
-        cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
-        cooldownUntil: coolingDown
-          ? new Date(cooldown.until).toISOString()
-          : null,
-        cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
-        lastResortEligible: coolingDown
-          ? COOLDOWNS.allowsLastResort(cooldown, now)
-          : true
-      },
+      limits: cooldownFields,
       ...scopedProviderCooldowns(route.provider, now),
       active,
       inFlightRequests,
-      cooldownUntil: coolingDown
-        ? new Date(cooldown.until).toISOString()
-        : null,
-      cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
-      cooldownKind: coolingDown ? cooldown.kind : null,
-      cooldownFailureClass: coolingDown
-        ? (cooldown.failureClass ?? null)
-        : null,
-      cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
-      lastResortEligible: coolingDown
-        ? COOLDOWNS.allowsLastResort(cooldown, now)
-        : true,
+      ...cooldownFields,
       failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
       probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
       configuredModels: ROUTING_POLICY.effectiveModels(route.provider),
@@ -1441,8 +1012,8 @@ function serializeProviderCooldown(
     until: new Date(cooldown.until).toISOString(),
     resetsAt: cooldown.resetsAt ?? null,
     lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now),
-    ...(cooldown.model !== undefined ? { scope: "model" as const } : {}),
-    ...(cooldown.model !== undefined ? { model: cooldown.model } : {})
+    ...(cooldown.model === undefined ? {} : { scope: "model" as const }),
+    ...(cooldown.model === undefined ? {} : { model: cooldown.model })
   };
 }
 
@@ -1486,9 +1057,9 @@ function controlApiProviderHealth(
               at: activeLastFailure.timestamp,
               failureClass: activeLastFailure.class,
               status: activeLastFailure.status ?? null,
-              ...(activeLastFailure.model !== undefined
-                ? { model: activeLastFailure.model }
-                : {})
+              ...(activeLastFailure.model === undefined
+                ? {}
+                : { model: activeLastFailure.model })
             }
           : null,
         lastCheck: state.lastCheck,

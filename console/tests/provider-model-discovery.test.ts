@@ -251,11 +251,19 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
     }
   ]);
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity-gemini", "gemini-3.8-flash-low"),
+    providerModelAvailability(
+      discovery,
+      "antigravity-gemini",
+      "gemini-3.8-flash-low"
+    ),
     { status: "observed", source: "agy models" }
   );
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity-gemini", "gpt-oss-120b-medium"),
+    providerModelAvailability(
+      discovery,
+      "antigravity-gemini",
+      "gpt-oss-120b-medium"
+    ),
     {
       status: "unsupported",
       reason: "Runtime has no route for this model ID.",
@@ -263,7 +271,11 @@ test("provider availability keeps observed, stale, unsupported, and unavailable 
     }
   );
   assert.deepEqual(
-    providerModelAvailability(discovery, "antigravity-gemini", "no-longer-listed"),
+    providerModelAvailability(
+      discovery,
+      "antigravity-gemini",
+      "no-longer-listed"
+    ),
     {
       status: "not-listed",
       reason: "The current provider listing does not include this model."

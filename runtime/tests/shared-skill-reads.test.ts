@@ -104,7 +104,7 @@ test("matchSkillReadTarget and matchSkillReadPath validate canonical SKILL.md", 
   assert.equal(target?.skill, "orchestration");
   assert.ok(
     target?.root.endsWith(".rulesync/skills") ||
-      target?.root.endsWith(".rulesync\\skills")
+      target?.root.endsWith(String.raw`.rulesync\skills`)
   );
 
   assert.equal(matchSkillReadPath(CANONICAL_SKILL), "orchestration");

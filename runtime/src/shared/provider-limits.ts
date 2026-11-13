@@ -1,20 +1,4 @@
-import {
-  isHardLimitClass,
-  isTransientFailureClass,
-  PROVIDER_HARD_LIMIT_CLASSES,
-  PROVIDER_TRANSIENT_FAILURE_CLASSES,
-  type ProviderHardLimitClass,
-  type ProviderTransientFailureClass
-} from "@simulatorlife/autodev-core";
-
-export {
-  isHardLimitClass,
-  isTransientFailureClass,
-  PROVIDER_HARD_LIMIT_CLASSES,
-  PROVIDER_TRANSIENT_FAILURE_CLASSES,
-  type ProviderHardLimitClass,
-  type ProviderTransientFailureClass
-};
+export { type ProviderTransientFailureClass } from "@simulatorlife/autodev-core";
 
 // Shared vocabulary for provider usage limits and for closing a turn that a
 // limit cut short.
@@ -67,7 +51,6 @@ export const INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted";
 export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
 
 // Re-export the canonical Core hard limit classes
-export const HARD_LIMIT_CLASSES = PROVIDER_HARD_LIMIT_CLASSES;
 
 /** A bounded, provider-supplied failure classification safe to return downstream. */
 export interface ProviderFailureDiagnostic {
@@ -545,3 +528,12 @@ function messageDoneEvents(
     [OUTPUT_ITEM_DONE, { type: OUTPUT_ITEM_DONE, output_index: 1, item }]
   ];
 }
+
+export {
+  PROVIDER_HARD_LIMIT_CLASSES as HARD_LIMIT_CLASSES,
+  isHardLimitClass,
+  isTransientFailureClass,
+  PROVIDER_HARD_LIMIT_CLASSES,
+  PROVIDER_TRANSIENT_FAILURE_CLASSES,
+  type ProviderHardLimitClass
+} from "@simulatorlife/autodev-core";

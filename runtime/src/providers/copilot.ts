@@ -55,6 +55,12 @@ import {
   resolveCwd,
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  extractSkillReadPath,
+  matchSkillReadPath,
+  normaliseSkillReadPath
+} from "@simulatorlife/autodev-runtime/shared/skill-reads";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -152,13 +158,6 @@ function readOnlyHeaderValue(
 }
 
 const spawnSessions = new SpawnSessionRegistry();
-
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import {
-  extractSkillReadPath,
-  matchSkillReadPath,
-  normaliseSkillReadPath
-} from "@simulatorlife/autodev-runtime/shared/skill-reads";
 
 const REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
@@ -583,6 +582,33 @@ function copilotAdditionalServer(
   };
 }
 
+/** Switch off every user-level MCP server the role was not granted. */
+function disabledUserServerArgs(
+  userServers: ReadonlySet<string>,
+  granted: readonly string[]
+): string[] {
+  const args: string[] = [];
+  for (const name of userServers) {
+    if (!granted.includes(name)) args.push("--disable-mcp-server", name);
+  }
+  return args;
+}
+
+/**
+ * The CLI cannot reach Codex directly. Give only this identified root turn
+ * a per-request MCP server whose call is collected and returned as a
+ * synthetic Codex exec item after the CLI turn completes.
+ */
+function copilotSpawnShimServer(spawnSession: string): JsonRecord {
+  return {
+    type: "stdio",
+    ...spawnShimMcpServer(
+      { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+      spawnSession
+    )
+  };
+}
+
 function copilotMcpArgs(
   agentRole: string | null,
   spawnSession: string | null = null,
@@ -594,10 +620,10 @@ function copilotMcpArgs(
   );
   const catalogue = bridgeMcpCatalogue();
   const userServers = new Set(userMcpServerNames());
-  const args: string[] = ["--disable-builtin-mcps"];
-  for (const name of userServers) {
-    if (!granted.includes(name)) args.push("--disable-mcp-server", name);
-  }
+  const args: string[] = [
+    "--disable-builtin-mcps",
+    ...disabledUserServerArgs(userServers, granted)
+  ];
   const additional: Record<string, JsonRecord> = {};
   for (const name of granted) {
     const server = catalogue[name];
@@ -630,16 +656,7 @@ function copilotMcpArgs(
     );
   }
   if (isOrchestratorRole(agentRole) && spawnSession) {
-    // The CLI cannot reach Codex directly. Give only this identified root turn
-    // a per-request MCP server whose call is collected and returned as a
-    // synthetic Codex exec item after the CLI turn completes.
-    additional.autodev_spawn = {
-      type: "stdio",
-      ...spawnShimMcpServer(
-        { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
-        spawnSession
-      )
-    };
+    additional.autodev_spawn = copilotSpawnShimServer(spawnSession);
   }
   if (Object.keys(additional).length > 0)
     args.push(
@@ -1865,10 +1882,8 @@ if (IS_MAIN) {
 export {
   copilotMcpArgs,
   copilotToolOutcome,
-  extractSkillReadPath,
   inputText,
   isResearchRole,
-  matchSkillReadPath,
   MCP_EXPOSURE_SOURCE,
   reportToolObservation,
   RESEARCH_CAPABLE_ROLES,
@@ -1876,3 +1891,8 @@ export {
   SKILL_EXPOSURE_SOURCE,
   skillReadEvent
 };
+
+export {
+  extractSkillReadPath,
+  matchSkillReadPath
+} from "@simulatorlife/autodev-runtime/shared/skill-reads";

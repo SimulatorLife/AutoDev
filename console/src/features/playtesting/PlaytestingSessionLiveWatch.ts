@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation.js";
 import React, { useEffect } from "react";
 
 import {
-  type VisibilitySource,
-  browserVisibilitySource
-} from "../../lib/visibility.ts";
+  browserVisibilitySource,
+  type VisibilitySource
+} from "../../components/navigation/visibility.ts";
 
 export function PlaytestingSessionLiveWatch({
   isLive,
@@ -55,9 +55,7 @@ export function PlaytestingSessionLiveWatch({
       router.refresh();
     };
     const timer = setInterval(refreshIfVisible, intervalMs);
-    const stopWatchingVisibility = visibilitySource.onVisible(
-      refreshIfVisible
-    );
+    const stopWatchingVisibility = visibilitySource.onVisible(refreshIfVisible);
     return () => {
       clearInterval(timer);
       stopWatchingVisibility();

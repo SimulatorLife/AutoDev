@@ -15,13 +15,87 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
-  type ProviderUsageReading,
-  providerUsagePath
+  providerUsagePath,
+  type ProviderUsageReading
 } from "./provider-usage.ts";
 
 const PROVIDER_USAGE_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
 });
+
+function usageBadge(reading: ProviderUsageReading): {
+  readonly status: string;
+  readonly label: string;
+} {
+  switch (reading.status) {
+    case "observed": {
+      return { status: "valid", label: "Observed" };
+    }
+    case NOT_OBSERVED_STATUS: {
+      return { status: NOT_OBSERVED_STATUS, label: "Not observed" };
+    }
+    case "pending": {
+      return { status: "pending", label: "Pending" };
+    }
+    case "not-configured": {
+      return { status: "unavailable", label: "Not configured" };
+    }
+    default: {
+      return { status: "unavailable", label: "Unavailable" };
+    }
+  }
+}
+
+function usageMessage(reading: ProviderUsageReading): string {
+  switch (reading.status) {
+    case "not-configured": {
+      return "Usage telemetry credentials are not configured; provider-attempt counts are unavailable.";
+    }
+    case NOT_OBSERVED_STATUS: {
+      return "Provider-attempt telemetry was not observed in the last 7 days.";
+    }
+    default: {
+      return "Usage telemetry could not be read; provider-attempt counts remain unavailable.";
+    }
+  }
+}
+
+function usageEvidence(reading: ProviderUsageReading): React.ReactNode {
+  if (reading.status === "observed") {
+    return React.createElement(
+      DetailGrid,
+      { columns: 2 },
+      React.createElement(
+        DetailValue,
+        { label: "Physical attempts · last 7 days" },
+        PROVIDER_USAGE_COUNT_FORMATTER.format(reading.attempts)
+      ),
+      React.createElement(
+        DetailValue,
+        { label: "Failed attempts · last 7 days" },
+        reading.failures === null
+          ? NOT_OBSERVED_LABEL
+          : PROVIDER_USAGE_COUNT_FORMATTER.format(reading.failures)
+      )
+    );
+  }
+  if (reading.status === "pending") {
+    return React.createElement(
+      "p",
+      {
+        className: MUTED_BODY_CLASS,
+        "data-provider-usage-message": true,
+        "aria-busy": "true"
+      },
+      "The Usage telemetry read has not answered yet; provider-attempt counts are not rendered as zero."
+    );
+  }
+  return React.createElement(
+    "p",
+    { className: MUTED_BODY_CLASS, "data-provider-usage-message": true },
+    usageMessage(reading)
+  );
+}
 
 /**
  * The provider's usage panel.
@@ -43,63 +117,8 @@ export function providerUsageView({
   readonly provider: ControlApiProviderRecord;
   readonly reading: ProviderUsageReading;
 }): React.JSX.Element {
-  const status =
-    reading.status === "observed"
-      ? "valid"
-      : reading.status === NOT_OBSERVED_STATUS
-        ? NOT_OBSERVED_STATUS
-        : reading.status === "pending"
-          ? "pending"
-          : "unavailable";
-  const label =
-    reading.status === "observed"
-      ? "Observed"
-      : reading.status === NOT_OBSERVED_STATUS
-        ? "Not observed"
-        : reading.status === "pending"
-          ? "Pending"
-          : reading.status === "not-configured"
-            ? "Not configured"
-            : "Unavailable";
-  let evidence: React.ReactNode;
-  if (reading.status === "observed") {
-    evidence = React.createElement(
-      DetailGrid,
-      { columns: 2 },
-      React.createElement(
-        DetailValue,
-        { label: "Physical attempts · last 7 days" },
-        PROVIDER_USAGE_COUNT_FORMATTER.format(reading.attempts)
-      ),
-      React.createElement(
-        DetailValue,
-        { label: "Failed attempts · last 7 days" },
-        reading.failures === null
-          ? NOT_OBSERVED_LABEL
-          : PROVIDER_USAGE_COUNT_FORMATTER.format(reading.failures)
-      )
-    );
-  } else if (reading.status === "pending") {
-    evidence = React.createElement(
-      "p",
-      {
-        className: MUTED_BODY_CLASS,
-        "data-provider-usage-message": true,
-        "aria-busy": "true"
-      },
-      "The Usage telemetry read has not answered yet; provider-attempt counts are not rendered as zero."
-    );
-  } else {
-    evidence = React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS, "data-provider-usage-message": true },
-      reading.status === "not-configured"
-        ? "Usage telemetry credentials are not configured; provider-attempt counts are unavailable."
-        : reading.status === NOT_OBSERVED_STATUS
-          ? "Provider-attempt telemetry was not observed in the last 7 days."
-          : "Usage telemetry could not be read; provider-attempt counts remain unavailable."
-    );
-  }
+  const { status, label } = usageBadge(reading);
+  const evidence = usageEvidence(reading);
 
   return React.createElement(
     "section",

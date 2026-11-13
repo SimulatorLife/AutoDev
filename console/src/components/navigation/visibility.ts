@@ -59,6 +59,27 @@ function readBrowserDocument(): VisibilityDocumentLike | undefined {
   return candidate ?? undefined;
 }
 
+/** The unsubscribe of a source that never notifies. */
+function unsubscribeNothing(): void {}
+
+function isDocumentVisible(documentRef: VisibilityDocumentLike): boolean {
+  return documentRef.visibilityState !== "hidden";
+}
+
+function watchVisibility(
+  documentRef: VisibilityDocumentLike,
+  listener: () => void
+): () => void {
+  const handleVisibilityChange = (): void => {
+    if (!isDocumentVisible(documentRef)) return;
+    listener();
+  };
+  documentRef.addEventListener("visibilitychange", handleVisibilityChange);
+  return () => {
+    documentRef.removeEventListener("visibilitychange", handleVisibilityChange);
+  };
+}
+
 /**
  * The browser's own visibility answer.
  *
@@ -71,27 +92,11 @@ export function browserVisibilitySource(
   if (documentRef === undefined) {
     return {
       isVisible: () => true,
-      onVisible: () => () => undefined
+      onVisible: () => unsubscribeNothing
     };
   }
-  const isVisible = (): boolean => documentRef.visibilityState !== "hidden";
   return {
-    isVisible,
-    onVisible: (listener: () => void) => {
-      const handleVisibilityChange = (): void => {
-        if (!isVisible()) return;
-        listener();
-      };
-      documentRef.addEventListener(
-        "visibilitychange",
-        handleVisibilityChange
-      );
-      return () => {
-        documentRef.removeEventListener(
-          "visibilitychange",
-          handleVisibilityChange
-        );
-      };
-    }
+    isVisible: () => isDocumentVisible(documentRef),
+    onVisible: (listener: () => void) => watchVisibility(documentRef, listener)
   };
 }

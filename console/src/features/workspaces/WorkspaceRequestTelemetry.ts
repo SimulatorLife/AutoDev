@@ -8,8 +8,8 @@ import {
 } from "../usage/use-usage-telemetry.ts";
 import {
   type WorkspaceRequestLookup,
-  type WorkspaceRequestReading,
   workspaceRequestLookup,
+  type WorkspaceRequestReading,
   workspaceRequestValue
 } from "./workspace-usage.ts";
 

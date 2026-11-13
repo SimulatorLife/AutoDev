@@ -523,7 +523,7 @@ test("fetchProviders accepts each Antigravity provider's quota from the Control 
     },
     {
       fetchImpl: async () =>
-        new Response(JSON.stringify(fixture), {
+        Response.json(fixture, {
           status: 200,
           headers: { "content-type": "application/json" }
         })

@@ -797,9 +797,18 @@ test("Usage Active Sessions is a runtime-scoped selection, not a time range", ()
     migration,
     /Active Sessions is implemented as a distinct scope over the Runtime read-only/u
   );
-  assert.match(migration, /Runtime v3 source now exposes bounded live identities/u);
-  assert.match(migration, /OpenLIT patch 77 deployment and live acceptance are pending/u);
-  assert.match(migration, /236 of 251 90-day provider hops have no source-reported workspace/u);
+  assert.match(
+    migration,
+    /Runtime v3 source now exposes bounded live identities/u
+  );
+  assert.match(
+    migration,
+    /OpenLIT patch 77 deployment and live acceptance are pending/u
+  );
+  assert.match(
+    migration,
+    /236 of 251 90-day provider hops have no source-reported workspace/u
+  );
 });
 
 test("Usage cost and unavailable evidence remain honest", () => {
@@ -968,7 +977,10 @@ test("git change metrics are defined with exact counting and cardinality rules",
     migration,
     /The 90-day live Data snapshot reported 91 commits, 91 files changed/u
   );
-  assert.match(migration, /withholds total lines added\/removed while preserving measured file counts/u);
+  assert.match(
+    migration,
+    /withholds total lines added\/removed while preserving measured file counts/u
+  );
   assert.match(migration, /cumulative temporality/u);
 });
 
@@ -1979,22 +1991,40 @@ test("unified target has one source of authority and nonduplicated subsystem con
       "Missing or duplicated target-state section: " + heading
     );
   }
-  assert.equal(existsSync(new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)), false);
+  assert.equal(
+    existsSync(
+      new URL("docs/autodev_hybrid_cli_target_state_v2.md", repositoryRoot)
+    ),
+    false
+  );
 });
 
 test("resilience and ACP gates have reviewable structural tables", () => {
   const doc = readFileSync(targetStatePath, "utf8");
   const policy = doc.slice(
     doc.indexOf("### Resilience mechanics and provider cooldown policy"),
-    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses")
+    doc.indexOf(
+      "### Agent execution transport contract: ACP, MCP and Responses"
+    )
   );
-  assert.match(policy, /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u);
+  assert.match(
+    policy,
+    /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u
+  );
   for (const kind of ["transient", "hard", "probe", "config"]) {
-    assert.ok(policy.includes("| " + String.fromCharCode(96) + kind + String.fromCharCode(96) + " |"));
+    assert.ok(
+      policy.includes(
+        "| " + String.fromCharCode(96) + kind + String.fromCharCode(96) + " |"
+      )
+    );
   }
-  const acp = doc.slice(
-    doc.indexOf("### Agent execution transport contract: ACP, MCP and Responses"),
-    doc.indexOf("### Dependency ownership and maintainability")
+  const acp = new Set(
+    doc.slice(
+      doc.indexOf(
+        "### Agent execution transport contract: ACP, MCP and Responses"
+      ),
+      doc.indexOf("### Dependency ownership and maintainability")
+    )
   );
   for (const criterion of [
     "Tool/child continuity",
@@ -2003,7 +2033,10 @@ test("resilience and ACP gates have reviewable structural tables", () => {
     "Observability and memory",
     "Engineering decision"
   ]) {
-    assert.ok(acp.includes("| " + criterion + " |"), "Missing ACP gate: " + criterion);
+    assert.ok(
+      acp.has("| " + criterion + " |"),
+      "Missing ACP gate: " + criterion
+    );
   }
 });
 
@@ -2015,7 +2048,10 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
   };
-  const yaml = readFileSync(new URL("pnpm-workspace.yaml", repositoryRoot), "utf8");
+  const yaml = readFileSync(
+    new URL("pnpm-workspace.yaml", repositoryRoot),
+    "utf8"
+  );
   const manifests = new Map<string, Manifest>();
   const baseline = ["core", "data", "runtime", "console"];
   const registered = yaml
@@ -2023,14 +2059,19 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
     .map((line) => /^\s*-\s*([a-z][a-z0-9-]*)\s*$/u.exec(line)?.[1])
     .filter((folder): folder is string => folder !== undefined);
   for (const folder of baseline) {
-    assert.ok(registered.includes(folder), "Missing baseline workspace: " + folder);
+    assert.ok(
+      registered.includes(folder),
+      "Missing baseline workspace: " + folder
+    );
   }
   for (const folder of registered) {
     const manifest = JSON.parse(
       readFileSync(new URL(folder + "/package.json", repositoryRoot), "utf8")
     ) as Manifest;
     assert.ok(manifest.name.startsWith("@simulatorlife/autodev-"));
-    assert.ok(manifest.exports !== undefined || typeof manifest.main === "string");
+    assert.ok(
+      manifest.exports !== undefined || typeof manifest.main === "string"
+    );
     manifests.set(manifest.name, manifest);
   }
   const dependencies = new Map<string, string[]>();
@@ -2041,8 +2082,14 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
       ...manifest.devDependencies
     })) {
       if (!dependency.startsWith("@simulatorlife/autodev-")) continue;
-      assert.ok(version.startsWith("workspace:"), "Expected a workspace protocol for " + dependency);
-      assert.ok(manifests.has(dependency), "Missing required workspace " + dependency);
+      assert.ok(
+        version.startsWith("workspace:"),
+        "Expected a workspace protocol for " + dependency
+      );
+      assert.ok(
+        manifests.has(dependency),
+        "Missing required workspace " + dependency
+      );
       owned.push(dependency);
     }
     dependencies.set(name, owned);
@@ -2060,4 +2107,3 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
   for (const name of manifests.keys()) check(name);
   assert.deepEqual(dependencies.get("@simulatorlife/autodev-core"), []);
 });
-

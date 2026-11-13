@@ -244,8 +244,14 @@ test("the observed counts are reported, and an unobserved skill is not a zero", 
   const telemetry = {
     observed: true,
     bySkill: new Map([
-      ["opentelemetry", { observedExposure: 3, observedUse: 1, observedError: 2 }],
-      ["code-review", { observedExposure: 0, observedUse: 0, observedError: 0 }],
+      [
+        "opentelemetry",
+        { observedExposure: 3, observedUse: 1, observedError: 2 }
+      ],
+      [
+        "code-review",
+        { observedExposure: 0, observedUse: 0, observedError: 0 }
+      ],
       [
         "playtest-analysis",
         { observedExposure: null, observedUse: null, observedError: null }

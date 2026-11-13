@@ -214,41 +214,53 @@ export function formatQuotaResetRemaining(
 
 function shortWindowLabel(window: ControlApiQuotaWindow): string {
   switch (window.kind) {
-    case "five_hour":
+    case "five_hour": {
       return "5h";
-    case "weekly":
+    }
+    case "weekly": {
       return "7d";
-    case "monthly":
+    }
+    case "monthly": {
       return "Monthly";
-    case "daily":
+    }
+    case "daily": {
       return "24h";
-    default:
+    }
+    default: {
       return window.label;
+    }
   }
 }
 
 function quotaToneClass(status: ControlApiQuotaStatus): string {
   switch (status) {
-    case "exhausted":
+    case "exhausted": {
       return "text-danger";
-    case "warning":
+    }
+    case "warning": {
       return "text-warning";
+    }
     case "available":
-    case "unlimited":
+    case "unlimited": {
       return "text-fg-secondary";
-    default:
+    }
+    default: {
       return MUTED_TEXT_CLASS;
+    }
   }
 }
 
 function quotaBarColorClass(status: ControlApiQuotaStatus): string {
   switch (status) {
-    case "exhausted":
+    case "exhausted": {
       return "bg-danger";
-    case "warning":
+    }
+    case "warning": {
       return "bg-warning";
-    default:
+    }
+    default: {
       return "bg-accent";
+    }
   }
 }
 

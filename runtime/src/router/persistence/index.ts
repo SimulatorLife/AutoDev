@@ -196,7 +196,9 @@ function removeAbandonedTemporaryFiles(stateFile: string): void {
   }
   for (const name of names) {
     if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
-    const pid = Number(name.slice(prefix.length).split(".")[0]);
+    const tail = name.slice(prefix.length);
+    const dot = tail.indexOf(".");
+    const pid = Number(dot === -1 ? tail : tail.slice(0, dot));
     if (!Number.isInteger(pid) || pid <= 0 || processRunning(pid)) continue;
     try {
       unlinkSync(path.join(directory, name));
@@ -289,6 +291,32 @@ export class RouterPersistence {
     }
   }
 
+  private async writeState(
+    targetFile: string,
+    temporaryFile: string
+  ): Promise<boolean> {
+    try {
+      await writeFile(temporaryFile, this.serialize(), {
+        encoding: "utf8",
+        mode: 0o600
+      });
+      await rename(temporaryFile, targetFile);
+      this.persistedStateUpdatedAt = new Date().toISOString();
+      return true;
+    } catch (error) {
+      writeErrorLine(
+        "Warning: could not persist router state to " +
+          targetFile +
+          ": " +
+          errorMessage(error)
+      );
+      // A write that never became the state file must not stay beside it:
+      // 98 of them, up to 29 MB each, had collected in CODEX_HOME.
+      await rm(temporaryFile, { force: true }).catch(() => undefined);
+      return false;
+    }
+  }
+
   persistNow(file?: string): Promise<boolean> {
     if (this.persistTimeout) {
       clearTimeout(this.persistTimeout);
@@ -300,27 +328,7 @@ export class RouterPersistence {
 
     this.persistChain = this.persistChain
       .catch(() => false)
-      .then(async () => {
-        await writeFile(temporaryFile, this.serialize(), {
-          encoding: "utf8",
-          mode: 0o600
-        });
-        await rename(temporaryFile, targetFile);
-        this.persistedStateUpdatedAt = new Date().toISOString();
-        return true;
-      })
-      .catch(async (error) => {
-        writeErrorLine(
-          "Warning: could not persist router state to " +
-            targetFile +
-            ": " +
-            errorMessage(error)
-        );
-        // A write that never became the state file must not stay beside it:
-        // 98 of them, up to 29 MB each, had collected in CODEX_HOME.
-        await rm(temporaryFile, { force: true }).catch(() => undefined);
-        return false;
-      });
+      .then(() => this.writeState(targetFile, temporaryFile));
 
     return this.persistChain;
   }

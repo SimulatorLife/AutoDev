@@ -92,6 +92,11 @@ import {
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
+  extractSkillReadPath,
+  matchSkillReadPath,
+  normaliseSkillReadPath
+} from "@simulatorlife/autodev-runtime/shared/skill-reads";
+import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
   REQUEST_ID_HEADER,
@@ -691,12 +696,6 @@ function isSpawnToolName(
 // mechanism made the skill available rather than only that something did.
 const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
 const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
-
-import {
-  extractSkillReadPath,
-  matchSkillReadPath,
-  normaliseSkillReadPath
-} from "@simulatorlife/autodev-runtime/shared/skill-reads";
 
 const REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
@@ -1862,6 +1861,7 @@ function responsePayload(
   };
 }
 
+const EVENT_RESPONSE_CREATED = "response.created";
 const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
 const EVENT_CONTENT_PART_ADDED = "response.content_part.added";
 const EVENT_CONTENT_PART_DONE = "response.content_part.done";
@@ -3857,8 +3857,8 @@ class ResponseEventStream {
   }
 
   emitPreamble(model: JsonValue): void {
-    this.emit("response.created", {
-      type: "response.created",
+    this.emit(EVENT_RESPONSE_CREATED, {
+      type: EVENT_RESPONSE_CREATED,
       response: {
         id: this.responseId,
         object: "response",
@@ -4081,8 +4081,8 @@ class ResponseEventStream {
     // The preamble was buffered until provider work arrived. Never flush its
     // output-item additions on a turn that failed before output began.
     this.pending.length = 0;
-    this.emit("response.created", {
-      type: "response.created",
+    this.emit(EVENT_RESPONSE_CREATED, {
+      type: EVENT_RESPONSE_CREATED,
       response: responsePayload(
         model,
         "",
@@ -4889,11 +4889,9 @@ export {
   createSpawnTracker,
   createToolObserver,
   decideCloseOnDelegation,
-  extractSkillReadPath,
   isCommandStep,
   isDelegationActive,
   isWaitStep,
-  matchSkillReadPath,
   modelEffort,
   promptFromInput,
   resolveEffort,
@@ -4905,3 +4903,8 @@ export {
   updateDelegationState
 };
 export type { CloseDecision, DelegationState, DelegationTransition };
+
+export {
+  extractSkillReadPath,
+  matchSkillReadPath
+} from "@simulatorlife/autodev-runtime/shared/skill-reads";

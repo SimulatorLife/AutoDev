@@ -136,5 +136,5 @@ test("subagent-start calls typed provider owners in order and fails closed", asy
 });
 
 test("root-delegation skips configured leaf models", async () => {
-  assert.equal(await runRootDelegation('{"model":"autodev/worker"}'), 0);
+  assert.equal(runRootDelegation('{"model":"autodev/worker"}'), 0);
 });

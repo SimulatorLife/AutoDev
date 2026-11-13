@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 
 import type { Span } from "@opentelemetry/api";
@@ -66,6 +65,7 @@ import {
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
+import { loadCodexAuth } from "../providers/codex-auth.ts";
 import {
   parseCodexResponseRateLimitHeaders,
   setCachedProviderQuota
@@ -123,9 +123,6 @@ import {
   usageOrigin
 } from "./usage.ts";
 
-const CODEX_HOME =
-  process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
-
 /**
  * Pull the `<skill>...</skill>` body the orchestrator received from its
  * host's skills.instructions input item. The router forwards it to bridge
@@ -166,14 +163,9 @@ export function extractSelectedSkillContext(payload: unknown): string | null {
   return null;
 }
 
-/**
- * The Codex auth file the router authenticates the codex route with. It is
- * resolved per call so a deployment -- or a test -- can point the router at a
- * specific file without restarting the process.
- */
-function codexAuthFile(): string {
-  return process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json`;
-}
+/** How an upstream timeout words itself when its error is not a named one. */
+const TIMEOUT_MESSAGE_PATTERN = /timeout|timed out/iu;
+
 const ROUTER_LISTENER_HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const ROUTER_LISTENER_PORT = Number.parseInt(
   process.env.CODEX_MODEL_ROUTER_PORT ?? "4100"
@@ -308,11 +300,11 @@ function providerAtCapacity(route: ProviderRoute): boolean {
 }
 
 /** Reserve capacity before dispatch; cancellable FIFO waiting when all slots are held. */
-async function acquireProviderCapacity(
+function acquireProviderCapacity(
   route: ProviderRoute,
   signal: AbortSignal | null
 ): Promise<(() => void) | null> {
-  if (signal?.aborted) return null;
+  if (signal?.aborted) return Promise.resolve(null);
   const release = (): (() => void) => {
     let released = false;
     return () => {
@@ -327,7 +319,7 @@ async function acquireProviderCapacity(
     (!providerCapacityWaiters.has(route.provider) && !providerAtCapacity(route))
   ) {
     incrementActiveRequests(route.provider);
-    return release();
+    return Promise.resolve(release());
   }
   return new Promise((resolve) => {
     const waiters = providerCapacityWaiters.get(route.provider) ?? [];
@@ -459,21 +451,6 @@ export async function jitteredBackoff(): Promise<number> {
     setTimeout(resolve, delayMs);
   });
   return delayMs;
-}
-
-export async function loadCodexAuth(): Promise<{
-  token: string;
-  accountId: string;
-}> {
-  const file = codexAuthFile();
-  const auth = JSON.parse(await readFile(file, "utf8"));
-  const token = auth.tokens?.access_token;
-  const accountId = auth.tokens?.account_id;
-  if (!token || !accountId)
-    throw new Error(
-      `Codex auth is missing access_token or account_id in ${file}`
-    );
-  return { token, accountId };
 }
 
 /** A request's identity, as `requestSession` resolves it. */
@@ -870,7 +847,7 @@ export async function probeProvider(
     first.error instanceof Error &&
     (first.error.name === "TimeoutError" ||
       first.error.name === "AbortError" ||
-      /timeout|timed out/i.test(first.error.message));
+      TIMEOUT_MESSAGE_PATTERN.test(first.error.message));
 
   if (isTimeout) {
     const second = await attemptProbe(PROBE_RETRY_TIMEOUT_MS);
@@ -904,7 +881,8 @@ export async function probeProvider(
 export async function providerAvailable(
   route: ProviderRoute
 ): Promise<boolean> {
-  return (await probeProvider(route)).ok;
+  const probe = await probeProvider(route);
+  return probe.ok;
 }
 
 export function payloadForCandidate(
@@ -1351,9 +1329,9 @@ function flushSseBuffer(args: {
     // three passes over the same bytes -- see processSseEvent.
     const processed = processSseEvent(event, {
       publicModel: args.publicModel,
-      ...(args.minimumInputTokens !== undefined
-        ? { minimumInputTokens: args.minimumInputTokens }
-        : {}),
+      ...(args.minimumInputTokens === undefined
+        ? {}
+        : { minimumInputTokens: args.minimumInputTokens }),
       seenToolCalls: args.seenToolCalls,
       onParsed: (parsed) =>
         applyParsedSseEvent(
@@ -1374,9 +1352,9 @@ function flushSseBuffer(args: {
   if (args.flush && working && args.isWritable()) {
     const processed = processSseEvent(working, {
       publicModel: args.publicModel,
-      ...(args.minimumInputTokens !== undefined
-        ? { minimumInputTokens: args.minimumInputTokens }
-        : {}),
+      ...(args.minimumInputTokens === undefined
+        ? {}
+        : { minimumInputTokens: args.minimumInputTokens }),
       seenToolCalls: args.seenToolCalls,
       onParsed: (parsed) =>
         applyParsedSseEvent(
@@ -1576,7 +1554,7 @@ export async function writeResponseStream(
       isWritable,
       safeWrite,
       publicModel,
-      ...(minimumInputTokens !== undefined ? { minimumInputTokens } : {}),
+      ...(minimumInputTokens === undefined ? {} : { minimumInputTokens }),
       seenToolCalls,
       toolCallIds,
       streamState,
@@ -2250,7 +2228,7 @@ async function writeProviderResponse(
     publicModel,
     requestId,
     resolvedModel,
-    ...(minimumInputTokens !== undefined ? { minimumInputTokens } : {}),
+    ...(minimumInputTokens === undefined ? {} : { minimumInputTokens }),
     responseHeaders: {
       "x-autodev-provider": route.provider,
       "x-autodev-model": resolvedModel,

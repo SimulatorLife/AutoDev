@@ -5,8 +5,8 @@ import type { ToolCatalogItem } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToolDetailView } from "../src/features/tools/ToolDetailView.ts";
 import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
+import { ToolDetailView } from "../src/features/tools/ToolDetailView.ts";
 
 /**
  * Every other detail view marks its panels with `data-section` --

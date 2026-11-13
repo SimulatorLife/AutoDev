@@ -1,7 +1,7 @@
 import {
-  type VisibilitySource,
-  browserVisibilitySource
-} from "../../lib/visibility.ts";
+  browserVisibilitySource,
+  type VisibilitySource
+} from "./visibility.ts";
 import { isWholePageNavigationPending } from "./whole-page-navigation.ts";
 
 /**

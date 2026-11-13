@@ -1763,14 +1763,14 @@ test(
       const url = String(input);
       responseCalls.push(url);
       if (url === "http://minimax.test/v1/responses") {
-        return new Response(
-          JSON.stringify({
+        return Response.json(
+          {
             error: {
               message: "invalid params, context window exceeds limit (2013)",
               type: "invalid_request_error",
               code: "invalid_request_error"
             }
-          }),
+          },
           { status: 400, headers: { "content-type": "application/json" } }
         );
       }

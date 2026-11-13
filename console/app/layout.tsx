@@ -3,8 +3,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 import React from "react";
 
-import { ConsoleLoadingShell } from "../src/components/layout/AppShell.ts";
 import { SUBMIT_ON_CHANGE_SCRIPT } from "../src/components/forms/submit-on-change.ts";
+import { ConsoleLoadingShell } from "../src/components/layout/AppShell.ts";
 import { FormNavigationOwner } from "../src/components/navigation/FormNavigationOwner.ts";
 
 export const metadata: Metadata = {

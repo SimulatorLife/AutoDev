@@ -161,7 +161,7 @@ export function usageTelemetryCacheKey(
  * running shares that read; a caller that arrives after either gets a read
  * of its own.
  */
-export async function readUsageTelemetry(
+export function readUsageTelemetry(
   selection: UsageFilterSelection,
   options: UsageTelemetryOptions = {}
 ): Promise<ConsoleUsageResult> {
@@ -170,7 +170,7 @@ export async function readUsageTelemetry(
   const ttlMs = options.ttlMs ?? USAGE_TELEMETRY_TTL_MS;
   const cached = USAGE_TELEMETRY_CACHE.get(key);
   if (cached !== undefined) {
-    if (cached.expiresAt > now()) return cached.result;
+    if (cached.expiresAt > now()) return Promise.resolve(cached.result);
     // The entry has expired. It is dropped rather than kept: a stale answer
     // is not an answer, and leaving it in the map would let a later caller
     // read it as one.

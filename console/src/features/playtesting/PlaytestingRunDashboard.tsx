@@ -706,7 +706,11 @@ function VisualPlaytestLaunchCockpit({
             React.createElement(
               "span",
               { className: "inline-flex items-center gap-1" },
-              React.createElement(Icon, { name: "globe", size: 12, className: MUTED_TEXT_CLASS }),
+              React.createElement(Icon, {
+                name: "globe",
+                size: 12,
+                className: MUTED_TEXT_CLASS
+              }),
               React.createElement(
                 "code",
                 { className: "font-mono text-fg font-medium" },
@@ -716,7 +720,11 @@ function VisualPlaytestLaunchCockpit({
             React.createElement(
               "span",
               { className: "inline-flex items-center gap-1" },
-              React.createElement(Icon, { name: "gamepad", size: 12, className: MUTED_TEXT_CLASS }),
+              React.createElement(Icon, {
+                name: "gamepad",
+                size: 12,
+                className: MUTED_TEXT_CLASS
+              }),
               "Controls: ",
               React.createElement(
                 "span",
@@ -729,7 +737,11 @@ function VisualPlaytestLaunchCockpit({
             React.createElement(
               "span",
               { className: "inline-flex items-center gap-1" },
-              React.createElement(Icon, { name: "clock", size: 12, className: MUTED_TEXT_CLASS }),
+              React.createElement(Icon, {
+                name: "clock",
+                size: 12,
+                className: MUTED_TEXT_CLASS
+              }),
               "Timing: ",
               React.createElement(
                 "span",
@@ -869,7 +881,10 @@ function VisualPlaytestLaunchCockpit({
             },
             React.createElement(
               "span",
-              { className: "flex items-center gap-1.5 text-sm font-semibold text-fg" },
+              {
+                className:
+                  "flex items-center gap-1.5 text-sm font-semibold text-fg"
+              },
               React.createElement(Icon, { name: preset.icon, size: 16 }),
               preset.title
             ),

@@ -419,8 +419,14 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
   assert.equal(orchestratorProviderForSession("sess-default"), "claude");
 
   noteSubagentSession("sub-sess-default", "worker", "antigravity");
-  assert.equal(subagentProviderForSession("sub-sess-default", "worker"), "antigravity");
-  assert.equal(subagentSessionInfo("sub-sess-default", "worker")?.provider, "antigravity");
+  assert.equal(
+    subagentProviderForSession("sub-sess-default", "worker"),
+    "antigravity"
+  );
+  assert.equal(
+    subagentSessionInfo("sub-sess-default", "worker")?.provider,
+    "antigravity"
+  );
 
   rememberWorkspaceMetadata("sess-default", "/test/workspace");
   assert.ok(getWorkspaceMetadata("sess-default")?.includes("/test/workspace"));

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -7,6 +7,7 @@ import {
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   MCP_SERVER_COCOINDEX,
@@ -32,13 +33,6 @@ const PROMPTS = Object.freeze({
   orchestrator: path.join(promptRoot, "orchestrator.md"),
   roleDirectory: path.join(promptRoot, "roles")
 });
-const ORCHESTRATION_SKILL_CANDIDATES = [
-  path.join(REPO_ROOT, ".rulesync", "skills", "orchestration", "SKILL.md"),
-  path.join(REPO_ROOT, ".agents", "skills", "orchestration", "SKILL.md")
-];
-const ORCHESTRATION_SKILL =
-  ORCHESTRATION_SKILL_CANDIDATES.find((filePath) => existsSync(filePath)) ??
-  ORCHESTRATION_SKILL_CANDIDATES[0]!;
 const ROLE_PROMPT_NAMES = new Set([
   "browser-tester",
   "default",
@@ -136,6 +130,19 @@ export function orchestratorBootstrapHeading(): string {
 }
 
 /**
+ * The canonical orchestration skill, inlined from its installed directory.
+ *
+ * The skill names its lifecycle procedures by relative `references/` paths, so
+ * the section also names the installed directory those paths resolve against;
+ * the body alone would send the provider to paths it cannot find.
+ */
+function orchestrationSkillSection(): string {
+  const directory = installedSkillDirectory("orchestration");
+  const body = readFileSync(path.join(directory, "SKILL.md"), "utf8").trim();
+  return `\n\n## Canonical orchestration skill\n\nInstalled at ${directory}; resolve its relative \`references/\` paths against that directory.\n\n${body}`;
+}
+
+/**
  * The role-specific section of a provider prompt.
  *
  * This deliberately excludes the shared base and workspace sections. Keeping
@@ -152,7 +159,7 @@ export function roleInstructions(role: string | null | undefined): string {
   const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
   const canonical =
     key === "orchestrator"
-      ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
+      ? orchestrationSkillSection()
       : "";
   const codeSearch =
     contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&

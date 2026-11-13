@@ -1,7 +1,7 @@
 "use client";
 
 import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
-import React from "react";
+import type React from "react";
 
 import { useUsageTelemetry } from "../usage/use-usage-telemetry.ts";
 import {

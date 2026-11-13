@@ -100,11 +100,11 @@ function ModelQuotaLimitsPanel({
   const usedSummary =
     modelQuota.status === "unlimited"
       ? "Unlimited"
-      : modelQuota.usedPercent !== null
-        ? `${Math.round(modelQuota.usedPercent)}% used (${Math.round(
+      : modelQuota.usedPercent === null
+        ? modelQuota.status
+        : `${Math.round(modelQuota.usedPercent)}% used (${Math.round(
             modelQuota.remainingPercent ?? 100 - modelQuota.usedPercent
-          )}% remaining)`
-        : modelQuota.status;
+          )}% remaining)`;
 
   return React.createElement(
     "section",
@@ -179,9 +179,9 @@ function ModelQuotaLimitsPanel({
         const winUsed =
           window.status === "unlimited"
             ? "Unlimited"
-            : window.usedPercent !== null
-              ? `${Math.round(window.usedPercent)}% used`
-              : window.status;
+            : window.usedPercent === null
+              ? window.status
+              : `${Math.round(window.usedPercent)}% used`;
         return React.createElement(
           DetailValue,
           { key: window.id, label: window.label },

@@ -49,7 +49,7 @@ test("RuleSync owns root instructions and targets only the shared AGENTS.md outp
   assert.ok((config.features as string[]).includes("rules"));
 
   const source = readFileSync(ruleSourcePath, "utf8");
-  assert.match(source, /^---\nroot: true\ntargets:\n  - agentsmd\n---\n/u);
+  assert.match(source, /^---\nroot: true\ntargets:\n {2}- agentsmd\n---\n/u);
   const frontmatterEnd = source.indexOf("\n---\n", 4);
   assert.notEqual(frontmatterEnd, -1, "rule source has closing frontmatter");
   const sourceBody = source.slice(frontmatterEnd + 5);
@@ -91,11 +91,11 @@ test("RuleSync owns root instructions and targets only the shared AGENTS.md outp
     join(repositoryRoot, ".github/workflows/rulesync-mcp-shadow-drift.yml"),
     "utf8"
   );
-  const pushPathFilter = /^  push:\n([\s\S]*?)(?=^  pull_request:)/mu.exec(
+  const pushPathFilter = /^ {2}push:\n([\s\S]*?)(?=^ {2}pull_request:)/mu.exec(
     workflow
   )?.[1];
   const pullRequestPathFilter =
-    /^  pull_request:\n([\s\S]*?)(?=^permissions:)/mu.exec(workflow)?.[1];
+    /^ {2}pull_request:\n([\s\S]*?)(?=^permissions:)/mu.exec(workflow)?.[1];
   assert.ok(pushPathFilter?.includes('      - "AGENTS.md"'));
   assert.ok(pullRequestPathFilter?.includes('      - "AGENTS.md"'));
 });

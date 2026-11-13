@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile
 } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -82,6 +83,12 @@ process.stdout.write(JSON.stringify({ type: "result", text: "done" }) + "\n");
   const isolatedUserHome = join(temp, "user");
   await mkdir(join(isolatedCodexHome, "provider-runtime"), { recursive: true });
   await mkdir(join(isolatedUserHome, ".gemini"), { recursive: true });
+  // The bridge inlines the orchestration skill from its installed link.
+  await mkdir(join(isolatedUserHome, ".agents", "skills"), { recursive: true });
+  await symlink(
+    join(REPO_ROOT, ".rulesync", "skills", "orchestration"),
+    join(isolatedUserHome, ".agents", "skills", "orchestration")
+  );
   await writeFile(
     join(isolatedCodexHome, "provider-runtime", "mcp-servers.json"),
     JSON.stringify({

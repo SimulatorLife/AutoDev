@@ -22,8 +22,7 @@ import type { ToolUsageEvidence } from "@simulatorlife/autodev-core";
  */
 export function toolUsageEvidence(
   callsByTool:
-    | readonly { readonly tool: string; readonly count: number }[]
-    | null,
+    readonly { readonly tool: string; readonly count: number }[] | null,
   identities: readonly string[]
 ): ToolUsageEvidence {
   let observedCalls: number | null = null;

@@ -4,7 +4,6 @@ import test from "node:test";
 import type { UsageFilterSelection } from "@simulatorlife/autodev-core";
 
 import type { ConsoleUsageResult } from "../src/lib/server/openlit-usage.ts";
-
 import {
   clearUsageTelemetryCacheForTests,
   readUsageTelemetry,
@@ -42,7 +41,11 @@ test("a second read inside the window is served from the cache", async () => {
   const second = await readUsageTelemetry(SELECTION, { load });
 
   assert.equal(calls.count, 1, "the read happened once, not twice");
-  assert.deepEqual(second, first, "the second caller got the first read's answer");
+  assert.deepEqual(
+    second,
+    first,
+    "the second caller got the first read's answer"
+  );
 });
 
 test("the window is five minutes", () => {
@@ -57,7 +60,7 @@ test("two concurrent reads share one read", async () => {
     release = resolve;
   });
   const load = async (
-    selection: UsageFilterSelection
+    _selection: UsageFilterSelection
   ): Promise<ConsoleUsageResult> => {
     calls.count += 1;
     await gate;
@@ -83,16 +86,16 @@ test("an expired entry is read again", async () => {
   clearUsageTelemetryCacheForTests();
   const calls = { count: 0 };
   const load = countingLoader(calls);
-  let clock = 1_000;
+  let clock = 1000;
   const now = (): number => clock;
 
-  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5_000 });
-  clock = 4_000;
-  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5_000 });
+  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5000 });
+  clock = 4000;
+  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5000 });
   assert.equal(calls.count, 1, "the entry is still inside its window");
 
-  clock = 6_001;
-  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5_000 });
+  clock = 6001;
+  await readUsageTelemetry(SELECTION, { load, now, ttlMs: 5000 });
   assert.equal(calls.count, 2, "the entry past its window was read again");
 });
 
@@ -167,7 +170,10 @@ test("the cache key is the canonical form of the selection", () => {
   );
   assert.notEqual(
     usageTelemetryCacheKey(one),
-    usageTelemetryCacheKey({ range: "24H", values: { provider: ["claude", "codex"] } }),
+    usageTelemetryCacheKey({
+      range: "24H",
+      values: { provider: ["claude", "codex"] }
+    }),
     "a different window is a different question"
   );
   assert.notEqual(

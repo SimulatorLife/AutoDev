@@ -249,9 +249,7 @@ export interface LiveDotProps {
  * beside a word that already says what it means ("Following live"), so naming
  * it would only repeat it.
  */
-export function LiveDot({
-  className
-}: LiveDotProps): React.JSX.Element {
+export function LiveDot({ className }: LiveDotProps): React.JSX.Element {
   return React.createElement("span", {
     className: `inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent${
       className === undefined ? "" : ` ${className}`

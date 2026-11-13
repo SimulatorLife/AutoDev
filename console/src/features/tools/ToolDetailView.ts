@@ -21,7 +21,6 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { FieldBox, gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
-  NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";

@@ -11,8 +11,8 @@ import {
   workspaceRequestLookup,
   workspaceRequestValue
 } from "../src/features/workspaces/workspace-usage.ts";
-import { workspaceRequestReadings } from "../src/features/workspaces/WorkspaceRequestTelemetry.ts";
 import { WorkspaceDetailView } from "../src/features/workspaces/WorkspaceDetailView.ts";
+import { workspaceRequestReadings } from "../src/features/workspaces/WorkspaceRequestTelemetry.ts";
 import { WorkspacesView } from "../src/features/workspaces/WorkspacesView.ts";
 
 const WORKSPACE_ID = "SimulatorLife/FixtureGame";
@@ -196,10 +196,10 @@ test("a reading that has not arrived is pending, and pending is not zero", () =>
 });
 
 test("the rows are pending until the breakdown arrives", () => {
-  const pending = workspaceRequestReadings(
-    { status: "pending" },
-    [WORKSPACE_ID, OTHER_WORKSPACE_ID]
-  );
+  const pending = workspaceRequestReadings({ status: "pending" }, [
+    WORKSPACE_ID,
+    OTHER_WORKSPACE_ID
+  ]);
 
   assert.deepEqual(pending.get(WORKSPACE_ID), { kind: "pending" });
   assert.deepEqual(pending.get(OTHER_WORKSPACE_ID), { kind: "pending" });
@@ -208,13 +208,15 @@ test("the rows are pending until the breakdown arrives", () => {
 test("a read that failed leaves every row unavailable, not empty", () => {
   // A source the Console could not read is a source that reported nothing.
   // The rows must say so rather than render a zero.
-  const unavailable = workspaceRequestReadings(
-    { status: "unavailable" },
-    [WORKSPACE_ID, OTHER_WORKSPACE_ID]
-  );
+  const unavailable = workspaceRequestReadings({ status: "unavailable" }, [
+    WORKSPACE_ID,
+    OTHER_WORKSPACE_ID
+  ]);
 
   assert.deepEqual(unavailable.get(WORKSPACE_ID), { kind: "unavailable" });
-  assert.deepEqual(unavailable.get(OTHER_WORKSPACE_ID), { kind: "unavailable" });
+  assert.deepEqual(unavailable.get(OTHER_WORKSPACE_ID), {
+    kind: "unavailable"
+  });
 });
 
 test("the breakdown the endpoint answered with resolves every row", () => {
@@ -267,10 +269,7 @@ test("the workspaces page does not await a Usage read", () => {
 
 test("the workspace detail page does not await a Usage read", () => {
   const source = readFileSync(
-    new URL(
-      "../app/workspaces/[owner]/[repository]/page.tsx",
-      import.meta.url
-    ),
+    new URL("../app/workspaces/[owner]/[repository]/page.tsx", import.meta.url),
     "utf8"
   );
 

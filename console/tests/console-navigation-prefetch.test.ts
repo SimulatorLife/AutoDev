@@ -99,7 +99,7 @@ test("the playtesting poll loop is not re-created when the watch state flips", (
   );
   assert.match(
     source,
-    /shouldContinue: \(\) =>\s*\n?\s*!pausedRef\.current && isWatching\(runsRef\.current\)/u,
+    /shouldContinue: \(\) =>\s*!pausedRef\.current && isWatching\(runsRef\.current\)/u,
     "the loop reads the watch state from the runs it just merged, which are current the moment they exist"
   );
 });

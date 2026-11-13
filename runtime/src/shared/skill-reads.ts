@@ -136,15 +136,29 @@ export function matchExecReadPaths(raw: unknown): string[] {
     const word = tokens[i] ?? "";
     const isSedPrint = word === "sed" && tokens[i + 1] === "-n";
     if (!SKILL_READ_COMMANDS.has(word) && !isSedPrint) continue;
-    const start = isSedPrint ? i + 2 : i + 1;
-    for (let j = start; j < tokens.length && j < start + 8; j++) {
-      const next = tokens[j] ?? "";
-      if (SHELL_CONTROL_TOKENS.has(next)) break;
-      const candidate = isPathLikeToken(next);
-      if (candidate) candidates.push(candidate);
-    }
+    candidates.push(...pathArguments(tokens, isSedPrint ? i + 2 : i + 1));
   }
   return candidates;
+}
+
+/** The path-like arguments of a command, up to the next shell control token. */
+function pathArguments(tokens: readonly string[], start: number): string[] {
+  const paths: string[] = [];
+  for (let j = start; j < tokens.length && j < start + 8; j++) {
+    const next = tokens[j] ?? "";
+    if (SHELL_CONTROL_TOKENS.has(next)) break;
+    const candidate = isPathLikeToken(next);
+    if (candidate) paths.push(candidate);
+  }
+  return paths;
+}
+
+function isSkillMarkdownPath(candidate: string): boolean {
+  return (
+    candidate.endsWith(path.sep + "SKILL.md") ||
+    candidate.endsWith("/SKILL.md") ||
+    candidate === "SKILL.md"
+  );
 }
 
 export function matchSkillReadTarget(
@@ -153,13 +167,7 @@ export function matchSkillReadTarget(
 ): { skill: string; root: string } | null {
   if (!filePath) return null;
   const normalised = filePath.replaceAll(/[\\/]+/g, path.sep);
-  if (
-    !normalised.endsWith(path.sep + "SKILL.md") &&
-    !normalised.endsWith("/SKILL.md") &&
-    normalised !== "SKILL.md"
-  ) {
-    return null;
-  }
+  if (!isSkillMarkdownPath(normalised)) return null;
   const roots = customRoots ?? resolveSkillRoots();
   for (const rootRaw of roots) {
     const root = rootRaw.replaceAll(/[\\/]+/g, path.sep);
@@ -168,12 +176,7 @@ export function matchSkillReadTarget(
     const relative = normalised
       .slice(root.length)
       .replace(LEADING_SEPARATORS, "");
-    if (
-      !relative.endsWith(path.sep + "SKILL.md") &&
-      !relative.endsWith("/SKILL.md") &&
-      relative !== "SKILL.md"
-    )
-      continue;
+    if (!isSkillMarkdownPath(relative)) continue;
     const segments = relative.split(path.sep).filter(Boolean);
     const skill = segments[0];
     if (!skill || skill.includes("..") || segments.length > 2) continue;
@@ -189,6 +192,39 @@ export function matchSkillReadPath(
   return matchSkillReadTarget(filePath, customRoots)?.skill ?? null;
 }
 
+/** The path a direct file-read tool names in its arguments, if it names one. */
+function directReadPath(args: Record<string, unknown>): string | null {
+  for (const key of DIRECT_PATH_KEYS) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  for (const key of ARRAY_PATH_KEYS) {
+    const value = args[key];
+    if (!Array.isArray(value)) continue;
+    const first = value.find(
+      (entry) => typeof entry === "string" && entry.trim()
+    );
+    if (typeof first === "string") return first.trim();
+  }
+  return null;
+}
+
+/** The path a shell command reads, preferring one that is a skill's SKILL.md. */
+function execReadPath(
+  argsObject: unknown,
+  args: Record<string, unknown>
+): string | null {
+  const command =
+    typeof argsObject === "string"
+      ? argsObject
+      : (args.command ?? args.cmd ?? argsObject);
+  const candidates = matchExecReadPaths(command);
+  const skillRead = candidates.find((candidate) =>
+    matchSkillReadPath(normaliseSkillReadPath(candidate))
+  );
+  return skillRead ?? candidates[0] ?? null;
+}
+
 export function extractSkillReadPath(
   toolName: unknown,
   argsObject: unknown
@@ -201,36 +237,7 @@ export function extractSkillReadPath(
     argsObject && typeof argsObject === "object" && !Array.isArray(argsObject);
   const args = isObject ? (argsObject as Record<string, unknown>) : {};
 
-  if (SKILL_READ_TOOL_NAMES.has(name)) {
-    for (const key of DIRECT_PATH_KEYS) {
-      const value = args[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    for (const key of ARRAY_PATH_KEYS) {
-      const value = args[key];
-      if (Array.isArray(value) && value.length > 0) {
-        const first = value.find(
-          (entry) => typeof entry === "string" && entry.trim()
-        );
-        if (typeof first === "string") return first.trim();
-      }
-    }
-    return null;
-  }
-
-  if (SKILL_EXEC_TOOL_NAMES.has(name)) {
-    const command =
-      typeof argsObject === "string"
-        ? argsObject
-        : (args.command ?? args.cmd ?? argsObject);
-    const candidates = matchExecReadPaths(command);
-    for (const candidate of candidates) {
-      if (matchSkillReadPath(normaliseSkillReadPath(candidate))) {
-        return candidate;
-      }
-    }
-    return candidates[0] ?? null;
-  }
-
+  if (SKILL_READ_TOOL_NAMES.has(name)) return directReadPath(args);
+  if (SKILL_EXEC_TOOL_NAMES.has(name)) return execReadPath(argsObject, args);
   return null;
 }

@@ -349,7 +349,9 @@ describe("cooldown behavior", () => {
         if (!last) continue;
         cleanState();
         const sentinel =
-          last.provider === "antigravity-gemini" ? "claude" : "antigravity-gemini";
+          last.provider === "antigravity-gemini"
+            ? "claude"
+            : "antigravity-gemini";
         const final = cooldowns.cooldownProvider(sentinel, {
           now: NOW,
           ...last.args

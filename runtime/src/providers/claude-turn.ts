@@ -418,7 +418,8 @@ export class ResponseStream {
 
   private end(
     payload: JsonRecord,
-    terminalEvent: "response.completed" | "response.failed" = "response.completed"
+    terminalEvent:
+      "response.completed" | "response.failed" = "response.completed"
   ): void {
     if (this.ended) return;
     const { response } = this.options;

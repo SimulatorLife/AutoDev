@@ -302,6 +302,26 @@ function unresolvedAssignmentsSection(
   );
 }
 
+function configuredSkillCount(
+  sourceValidity: boolean | null,
+  installedCount: number
+): number | string {
+  if (sourceValidity === true) return installedCount;
+  return sourceValidity === false ? "Invalid" : NOT_OBSERVED_LABEL;
+}
+
+function sumObserved(
+  skills: SkillsViewProps["skills"],
+  telemetry: SkillsViewProps["telemetry"],
+  field: "observedExposure" | "observedUse" | "observedError"
+): number {
+  let total = 0;
+  for (const skill of skills) {
+    total += telemetry.bySkill.get(skill.name)?.[field] ?? 0;
+  }
+  return total;
+}
+
 export function SkillsView({
   skills,
   eligibility,
@@ -326,12 +346,10 @@ export function SkillsView({
   // Counting it as configured would say a skill is live when no agent can
   // invoke it.
   const installedSkills = skills.filter((skill) => skill.scope !== null);
-  const configuredCount =
-    sourceValidity === true
-      ? installedSkills.length
-      : sourceValidity === false
-        ? "Invalid"
-        : NOT_OBSERVED_LABEL;
+  const configuredCount = configuredSkillCount(
+    sourceValidity,
+    installedSkills.length
+  );
   const assignedCount =
     sourceValidity === true && executionContractObserved
       ? eligibleSkills.size
@@ -341,21 +359,13 @@ export function SkillsView({
   // observed, and a skill with no observation contributes nothing rather than
   // a zero: "no evidence" and "observed and never happened" are different
   // facts, and the cards below say which one they are.
-  const observedExposureTotal = skills.reduce(
-    (total, skill) =>
-      total + (telemetry.bySkill.get(skill.name)?.observedExposure ?? 0),
-    0
+  const observedExposureTotal = sumObserved(
+    skills,
+    telemetry,
+    "observedExposure"
   );
-  const observedUseTotal = skills.reduce(
-    (total, skill) =>
-      total + (telemetry.bySkill.get(skill.name)?.observedUse ?? 0),
-    0
-  );
-  const observedErrorTotal = skills.reduce(
-    (total, skill) =>
-      total + (telemetry.bySkill.get(skill.name)?.observedError ?? 0),
-    0
-  );
+  const observedUseTotal = sumObserved(skills, telemetry, "observedUse");
+  const observedErrorTotal = sumObserved(skills, telemetry, "observedError");
 
   // The roles each skill is assigned to, by name. The narrowing is applied
   // here rather than by the page, because the facts above it are about the

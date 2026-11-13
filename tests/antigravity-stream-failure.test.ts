@@ -314,15 +314,26 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     const limitedBody = await limited.text();
     const limitEvents = limitedBody
       .split("\n")
-      .filter((line) => line.startsWith("data: {") )
+      .filter((line) => line.startsWith("data: {"))
       .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
-    const limitFailures = limitEvents.filter((event) => event.type === "response.failed");
+    const limitFailures = limitEvents.filter(
+      (event) => event.type === "response.failed"
+    );
     assert.equal(limitFailures.length, 1, limitedBody);
-    assert.equal(limitEvents.some((event) => event.type === "response.output_item.added"), false);
-    assert.equal(limitEvents.some((event) => event.type === "response.completed"), false);
+    assert.equal(
+      limitEvents.some((event) => event.type === "response.output_item.added"),
+      false
+    );
+    assert.equal(
+      limitEvents.some((event) => event.type === "response.completed"),
+      false
+    );
     assert.equal(limitFailures[0]?.response?.status, "failed");
     assert.deepEqual(limitFailures[0]?.response?.output, []);
-    assert.equal(limitFailures[0]?.response?.error?.limit?.class, "quota_exhausted");
+    assert.equal(
+      limitFailures[0]?.response?.error?.limit?.class,
+      "quota_exhausted"
+    );
     assert.equal(limitFailures[0]?.response?.error?.requestId, "req-outcome");
     assert.match(limitedBody, /data: \[DONE\]/);
 
@@ -335,11 +346,21 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     assert.equal(crashed.status, 200);
     const crashEvents = (await crashed.text())
       .split("\n")
-      .filter((line) => line.startsWith("data: {") )
+      .filter((line) => line.startsWith("data: {"))
       .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
-    assert.equal(crashEvents.filter((event) => event.type === "response.failed").length, 1);
-    assert.equal(crashEvents.some((event) => event.type === "response.output_item.added"), false);
-    assert.equal(crashEvents.find((event) => event.type === "response.failed")?.response?.error?.limit, undefined);
+    assert.equal(
+      crashEvents.filter((event) => event.type === "response.failed").length,
+      1
+    );
+    assert.equal(
+      crashEvents.some((event) => event.type === "response.output_item.added"),
+      false
+    );
+    assert.equal(
+      crashEvents.find((event) => event.type === "response.failed")?.response
+        ?.error?.limit,
+      undefined
+    );
 
     // A limit after streamed text keeps the partial result and closes incomplete.
     const partial = await postTurn(port, {
@@ -351,14 +372,27 @@ test("Antigravity turn outcomes keep their HTTP status, body, headers, and usage
     assert.equal(partial.status, 200, partialBody);
     const partialEvents = partialBody
       .split("\n")
-      .filter((line) => line.startsWith("data: {") )
+      .filter((line) => line.startsWith("data: {"))
       .map((line) => JSON.parse(line.slice(6)) as Record<string, any>);
-    assert.ok(partialEvents.some((event) => event.type === "response.output_item.added"), partialBody);
-    assert.equal(partialEvents.some((event) => event.type === "response.failed"), false);
-    const incomplete = partialEvents.find((event) => event.type === "response.completed")?.response;
+    assert.ok(
+      partialEvents.some(
+        (event) => event.type === "response.output_item.added"
+      ),
+      partialBody
+    );
+    assert.equal(
+      partialEvents.some((event) => event.type === "response.failed"),
+      false
+    );
+    const incomplete = partialEvents.find(
+      (event) => event.type === "response.completed"
+    )?.response;
     assert.equal(incomplete?.status, "incomplete", partialBody);
     assert.match(incomplete?.output_text ?? "", /partial answer/);
-    assert.equal(incomplete?.incomplete_details?.provider_limit?.class, "quota_exhausted");
+    assert.equal(
+      incomplete?.incomplete_details?.provider_limit?.class,
+      "quota_exhausted"
+    );
 
     // A request whose workspace cannot be resolved is rejected before agy
     // starts.

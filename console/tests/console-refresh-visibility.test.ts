@@ -7,9 +7,9 @@ import {
   startLiveCountRefresh
 } from "../src/components/navigation/live-count-refresh.ts";
 import {
-  type VisibilitySource,
-  browserVisibilitySource
-} from "../src/lib/visibility.ts";
+  browserVisibilitySource,
+  type VisibilitySource
+} from "../src/components/navigation/visibility.ts";
 
 /**
  * A visibility source the test controls.
@@ -37,23 +37,17 @@ function fakeVisibility(visible: boolean): VisibilitySource & {
 }
 
 function fakeScheduler(): {
-  readonly scheduler: Pick<
-    typeof globalThis,
-    "setInterval" | "clearInterval"
-  >;
+  readonly scheduler: Pick<typeof globalThis, "setInterval" | "clearInterval">;
   readonly tick: () => void;
 } {
   let scheduled: (() => void) | null = null;
-  let cleared: unknown = null;
   return {
     scheduler: {
       setInterval: (callback: () => void) => {
         scheduled = callback;
         return "handle";
       },
-      clearInterval: (value: unknown) => {
-        cleared = value;
-      }
+      clearInterval: () => undefined
     } as unknown as Pick<typeof globalThis, "setInterval" | "clearInterval">,
     tick: () => {
       scheduled?.();
@@ -124,7 +118,11 @@ test("the refresh interval is the Console's live-count cadence", () => {
     clearInterval: () => undefined
   } as unknown as Pick<typeof globalThis, "setInterval" | "clearInterval">;
 
-  const cleanup = startLiveCountRefresh(() => undefined, handle, fakeVisibility(true));
+  const cleanup = startLiveCountRefresh(
+    () => undefined,
+    handle,
+    fakeVisibility(true)
+  );
   assert.equal(interval, LIVE_COUNT_REFRESH_INTERVAL_MS);
   cleanup();
   assert.notEqual(scheduler, undefined);

@@ -4,7 +4,6 @@ import {
 } from "@simulatorlife/autodev-runtime/router/subagents";
 
 import type { SpawnChild } from "./spawn-tools.ts";
-export type { SpawnChild };
 
 function parseChildCandidate(child: unknown): {
   message: string;
@@ -576,3 +575,5 @@ export function openSpawnSession(
   }
   return session;
 }
+
+export { type SpawnChild } from "./spawn-tools.ts";

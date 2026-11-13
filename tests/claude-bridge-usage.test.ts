@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { before, after } from "node:test";
+import test, { after, before } from "node:test";
 
 /**
  * The Claude bridge's token reporting.
@@ -46,7 +46,10 @@ async function withBridge(
     signal: AbortSignal;
   }) => Promise<void>
 ): Promise<void> {
-  const fixture = join(temp, `fixture-${Math.random().toString(36).slice(2)}.json`);
+  const fixture = join(
+    temp,
+    `fixture-${Math.random().toString(36).slice(2)}.json`
+  );
   await writeFile(fixture, JSON.stringify({ events }), "utf8");
   try {
     await run({
@@ -59,14 +62,13 @@ async function withBridge(
   }
 }
 
-async function collect(
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    signal: AbortSignal;
-  }
-): Promise<unknown[]> {
-  const { runClaudeStream } = await import("../runtime/src/providers/claude.ts");
+async function collect(options: {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+}): Promise<unknown[]> {
+  const { runClaudeStream } =
+    await import("../runtime/src/providers/claude.ts");
   const events: unknown[] = [];
   for await (const event of runClaudeStream(
     [{ type: "text", text: "prompt" }],

@@ -150,7 +150,9 @@ test("pre-output streaming limit emits response.failed with structured limit and
     }
   };
   recorder.stream.fail(failure, "claude");
-  const failures = recorder.events.filter((event) => event.type === "response.failed");
+  const failures = recorder.events.filter(
+    (event) => event.type === "response.failed"
+  );
   assert.equal(recorder.httpStatus, 200);
   assert.equal(failures.length, 1, recorder.wire);
   assert.equal(failures[0]?.response?.status, "failed");
@@ -162,45 +164,79 @@ test("pre-output streaming limit emits response.failed with structured limit and
     resets_at: "2026-11-12T00:00:00Z",
     source: "reported"
   });
-  assert.equal(recorder.events.some((event) => event.type === "response.output_item.added"), false);
-  assert.equal(recorder.events.some((event) => event.type === "response.completed"), false);
+  assert.equal(
+    recorder.events.some(
+      (event) => event.type === "response.output_item.added"
+    ),
+    false
+  );
+  assert.equal(
+    recorder.events.some((event) => event.type === "response.completed"),
+    false
+  );
   assert.match(recorder.wire, /data: \[DONE\]/);
   assert.equal(recorder.stream.isEnded, true);
   recorder.stream.fail(failure, "claude");
-  assert.equal(recorder.events.filter((event) => event.type === "response.failed").length, 1);
+  assert.equal(
+    recorder.events.filter((event) => event.type === "response.failed").length,
+    1
+  );
 });
 
 test("pre-output streaming crash emits a single failure without invented limit", () => {
   const recorder = makeRecordingStream(true);
-  recorder.stream.fail({ error: new Error("CLI crashed"), reason: "interrupted", limit: null }, "claude");
-  const failures = recorder.events.filter((event) => event.type === "response.failed");
+  recorder.stream.fail(
+    { error: new Error("CLI crashed"), reason: "interrupted", limit: null },
+    "claude"
+  );
+  const failures = recorder.events.filter(
+    (event) => event.type === "response.failed"
+  );
   assert.equal(failures.length, 1, recorder.wire);
   assert.equal(failures[0]?.response?.error?.message, "CLI crashed");
   assert.equal(failures[0]?.response?.error?.type, "upstream_error");
   assert.equal(failures[0]?.response?.error?.limit, undefined);
   assert.deepEqual(failures[0]?.response?.output, []);
-  assert.equal(recorder.events.some((event) => event.type === "response.completed"), false);
+  assert.equal(
+    recorder.events.some((event) => event.type === "response.completed"),
+    false
+  );
 });
 
 test("post-output streaming failure preserves partial output and closes incomplete", () => {
   const recorder = makeRecordingStream(true);
   recorder.stream.text("partial answer");
-  recorder.stream.fail({
-    error: new Error("quota exhausted"),
-    reason: "provider_limit",
-    limit: { limitClass: "quota_exhausted", source: "reported" }
-  }, "claude");
-  const completed = recorder.events.find((event) => event.type === "response.completed")?.response;
-  assert.equal(recorder.events.some((event) => event.type === "response.failed"), false);
+  recorder.stream.fail(
+    {
+      error: new Error("quota exhausted"),
+      reason: "provider_limit",
+      limit: { limitClass: "quota_exhausted", source: "reported" }
+    },
+    "claude"
+  );
+  const completed = recorder.events.find(
+    (event) => event.type === "response.completed"
+  )?.response;
+  assert.equal(
+    recorder.events.some((event) => event.type === "response.failed"),
+    false
+  );
   assert.equal(completed?.status, "incomplete");
   assert.match(completed?.output_text ?? "", /partial answer/);
-  assert.equal(completed?.incomplete_details?.provider_limit?.class, "quota_exhausted");
+  assert.equal(
+    completed?.incomplete_details?.provider_limit?.class,
+    "quota_exhausted"
+  );
   assert.match(recorder.wire, /data: \[DONE\]/);
 });
 
 test("pre-output non-streaming failure still delegates to HTTP error handler", () => {
   const recorder = makeRecordingStream(false);
-  const failure = { error: new Error("quota exhausted"), reason: "provider_limit", limit: null };
+  const failure = {
+    error: new Error("quota exhausted"),
+    reason: "provider_limit",
+    limit: null
+  };
   recorder.stream.fail(failure, "claude");
   assert.deepEqual(recorder.errors, [failure]);
   assert.equal(recorder.wire, "");

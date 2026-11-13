@@ -42,11 +42,11 @@ import {
   workspaceAvailabilityBadgeLabel,
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
+import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 import {
   WorkspaceRequestCell,
   WorkspaceRequestTelemetryProvider
 } from "./WorkspaceRequestTelemetry.ts";
-import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 
 /**
  * One workspace's most recently read playtesting approval, keyed by
@@ -332,15 +332,14 @@ export function WorkspacesView({
       ),
       React.createElement(WorkspaceRequestTelemetryProvider, {
         workspaceIds: workspaces.map((workspace) => workspace.id),
-        children: React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(
-          DataTable,
-          {
-            data: workspaces,
-            columns,
-            keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
-            emptyMessage: "No workspace entries are configured."
-          }
-        )
+        children: React.createElement<
+          DataTableProps<ControlApiWorkspaceRecord>
+        >(DataTable, {
+          data: workspaces,
+          columns,
+          keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
+          emptyMessage: "No workspace entries are configured."
+        })
       })
     )
   );

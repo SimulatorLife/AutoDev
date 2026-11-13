@@ -69,6 +69,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/resource-context/index.ts",
   "runtime/src/telemetry/workspace-commit-observer.ts",
   "runtime/src/router/responses.ts",
+  "runtime/src/router/agent-event-ingest.ts",
+  "runtime/src/router/upstream-shape-hooks.ts",
   "runtime/src/router/memory-injection.ts",
   "runtime/src/control-api/memory.ts",
   "runtime/src/control-api/claude-code-binding.ts",
@@ -126,6 +128,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/executables.ts",
   "runtime/src/shared/runtime-secrets.ts",
   "runtime/src/shared/runtime-source-root.ts",
+  "runtime/src/shared/installed-skills.ts",
   "runtime/src/shared/agent-context-headers.ts",
   "runtime/src/shared/env.ts",
   "runtime/src/shared/execution-contract.ts",
@@ -191,6 +194,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/github-metrics.ts",
   "runtime/src/telemetry/provider-phases.ts",
   "runtime/src/providers/minimax.ts",
+  "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/cli-versions.ts",
   "runtime/src/providers/quota-discovery.ts",
@@ -252,8 +256,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-check.ts",
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/hooks/root-delegation.ts",
-  "runtime/src/hooks/block-ccc-cli.ts",
-  ".rulesync/skills/orchestration/SKILL.md"
+  "runtime/src/hooks/block-ccc-cli.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
   "src/shared/otel-resource-context.ts",
@@ -1036,6 +1039,13 @@ function removeObsoleteRuntimeArtifacts(
   );
   // Claude reads skills through Codex's tools now, so its generated per-role
   // skill views have no reader.
+  // The runtime tree once carried a lone copy of the orchestration skill's
+  // SKILL.md without the references it names; skills are read only from their
+  // installed link under `$HOME/.agents/skills`.
+  removeStalePaths(
+    [path.join(codexHome, ".rulesync")],
+    OBSOLETE_RUNTIME_DIRECTORY
+  );
   removeStalePaths(
     [path.join(codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS)],
     OBSOLETE_RUNTIME_DIRECTORY

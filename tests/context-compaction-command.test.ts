@@ -9,12 +9,12 @@ const source = readFileSync(
 const match = /^---\n([\s\S]*?)\n---\n/u.exec(source);
 assert.ok(match, "RuleSync frontmatter is required");
 const metadata = match[1];
+assert.ok(metadata !== undefined, "RuleSync frontmatter is empty");
 const prompt = source.slice(match[0].length);
 const openTags = [...prompt.matchAll(/^<compacted-summary>$/gmu)];
 const closeTags = [...prompt.matchAll(/^<\/compacted-summary>$/gmu)];
-const template = /^<compacted-summary>\n([\s\S]*?)\n<\/compacted-summary>$/mu.exec(
-  prompt
-);
+const template =
+  /^<compacted-summary>\n([\s\S]*?)\n<\/compacted-summary>$/mu.exec(prompt);
 
 test("command sources are metadata, not injected prompt text", () => {
   assert.match(metadata, /^targets: \["\*"\]$/mu);
@@ -33,10 +33,10 @@ test("command sources are metadata, not injected prompt text", () => {
 test("checkpoint wrapper and sections are stable", () => {
   assert.equal(openTags.length, 1);
   assert.equal(closeTags.length, 1);
-  assert.ok(template);
+  assert.ok(template?.[1] !== undefined);
   assert.ok(prompt.trimEnd().endsWith("</compacted-summary>"));
   assert.deepEqual(
-    [...template[1].matchAll(/^## (.+)$/gmu)].map((heading) => heading[1]),
+    Array.from(template[1].matchAll(/^## (.+)$/gmu), (heading) => heading[1]),
     [
       "Objective",
       "Requirements",
@@ -92,7 +92,7 @@ const policyCases: Record<string, RegExp[]> = {
 
 const fixtures = JSON.parse(
   readFileSync(
-    new URL("./fixtures/context-compaction-evaluations.json", import.meta.url),
+    new URL("fixtures/context-compaction-evaluations.json", import.meta.url),
     "utf8"
   )
 ) as Array<{

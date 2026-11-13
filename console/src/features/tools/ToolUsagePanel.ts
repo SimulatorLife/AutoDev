@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import type React from "react";
 
 import { useUsageTelemetry } from "../usage/use-usage-telemetry.ts";
 import { toolUsageEvidence, type ToolUsageState } from "./tool-usage.ts";

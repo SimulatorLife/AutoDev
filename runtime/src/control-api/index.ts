@@ -5239,7 +5239,8 @@ async function patchProviderRole(
   }
 
   const isAgyFixed =
-    isAntigravityProvider(provider) && Boolean(modelEffort(assignedModel ?? ""));
+    isAntigravityProvider(provider) &&
+    Boolean(modelEffort(assignedModel ?? ""));
   const effectiveReasoningEffort = isAgyFixed
     ? modelEffort(assignedModel ?? "")
     : (reasoningEffort ?? modelInfo?.defaultLevel ?? null);
@@ -5505,9 +5506,9 @@ async function patchProviderAgentModel(
     const previous = ROUTING_POLICY.agentModelFor(provider, role) ?? null;
     if (
       Object.keys(body).length !== 1 ||
-      model !== null &&
+      (model !== null &&
         (typeof model !== "string" ||
-          !isProviderModelChoice(provider, model, previous))
+          !isProviderModelChoice(provider, model, previous)))
     ) {
       audit("error", null, "invalid_body");
       sendControlError(

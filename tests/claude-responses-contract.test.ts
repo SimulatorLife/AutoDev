@@ -68,7 +68,7 @@ function freePort(): Promise<number> {
 async function waitForHealth(
   port: number,
   child?: any,
-  timeoutMs = 15000
+  timeoutMs = 15_000
 ): Promise<void> {
   let stderr = "";
   if (child?.stderr) {
@@ -688,7 +688,11 @@ async function runPreOutputLimitCase(
     assert.doesNotMatch(body, new RegExp(PRIVACY_TOKEN));
     const payload = JSON.parse(body);
     assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
-    assert.deepEqual(payload.error?.limit, item.expected.limit, `${name}: limit`);
+    assert.deepEqual(
+      payload.error?.limit,
+      item.expected.limit,
+      `${name}: limit`
+    );
   } finally {
     await stop(child);
     await rm(temp, { recursive: true, force: true });

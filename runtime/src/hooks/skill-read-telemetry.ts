@@ -22,11 +22,16 @@
 // bounded so a stuck hook cannot leak disk.
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+
+import {
+  extractSkillReadPath,
+  matchSkillReadTarget,
+  normaliseSkillReadPath
+} from "../shared/skill-reads.ts";
 
 const STATE_DIR = path.join(homedir(), ".codex", "run", "skill-read-telemetry");
 const SEEN_KEYS_LIMIT = 4096;
@@ -62,12 +67,6 @@ function asSeenState(value: JsonValue): SeenState {
     : [];
   return { turns, keys };
 }
-
-import {
-  extractSkillReadPath,
-  matchSkillReadTarget,
-  normaliseSkillReadPath
-} from "../shared/skill-reads.ts";
 
 const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"];
 const ARGUMENT_KEYS = [

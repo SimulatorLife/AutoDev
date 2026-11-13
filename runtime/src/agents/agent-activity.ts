@@ -937,3 +937,7 @@ export function createAgentActivityTracker({
     reset
   };
 }
+
+export type AgentActivityTracker = ReturnType<
+  typeof createAgentActivityTracker
+>;

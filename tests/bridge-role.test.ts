@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +35,24 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 import { normalizedSource } from "./source-text.ts";
+
+// The bridge inlines the orchestration skill from its installed link, as the
+// installer lays it out; give this process a home with that link only.
+const skillHome = mkdtempSync(join(tmpdir(), "autodev-bridge-role-home-"));
+const installedOrchestration = join(
+  skillHome,
+  ".agents",
+  "skills",
+  "orchestration"
+);
+mkdirSync(join(skillHome, ".agents", "skills"), { recursive: true });
+symlinkSync(
+  fileURLToPath(
+    new URL("../.rulesync/skills/orchestration", import.meta.url)
+  ),
+  installedOrchestration
+);
+process.env.HOME = skillHome;
 
 const read = (path: string): string => {
   const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -342,7 +368,10 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   assert.match(orchestrator, /Promise\.allSettled/);
   // The parent host may not list the role MCP, while the routed provider does.
   assert.match(orchestrator, /Root and child MCP capabilities can differ/);
-  assert.match(orchestrator, /do not infer exposure from root tools or telemetry/);
+  assert.match(
+    orchestrator,
+    /do not infer exposure from root tools or telemetry/
+  );
   assert.match(orchestrator, /browser-tester.*Playwright/);
   assert.match(orchestrator, /provider-bridge shim, not a Codex MCP server/);
   // Provider-specific bootstrap stays here; generic child lifecycle belongs to
@@ -354,15 +383,18 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   );
   assert.match(runtimeContract, /Wait timeouts and running children/);
   assert.match(runtimeContract, /Parking and session reuse/);
-  assert.match(runtimeContract, /pass their IDs together to one `wait_agent` call/);
-  assert.match(runtimeContract, /returns when the first target reaches a final status/);
+  assert.match(
+    runtimeContract,
+    /pass their IDs together to one `wait_agent` call/
+  );
+  assert.match(
+    runtimeContract,
+    /returns when the first target reaches a final status/
+  );
   assert.match(runtimeContract, /minutes when appropriate.*repeated short/);
   assert.match(runtimeContract, /Never perform global cleanup/);
   // The dedicated runner remains restricted to trusted Runtime context.
-  assert.match(
-    orchestrator,
-    /Playtest requires Runtime-bound authorization/
-  );
+  assert.match(orchestrator, /Playtest requires Runtime-bound authorization/);
 });
 
 test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {
@@ -491,8 +523,7 @@ test("the installer ships every shared module the bridges import", () => {
     "agents/prompts/base.md",
     "agents/prompts/leaf.md",
     "agents/prompts/orchestrator.md",
-    "agents/prompts/code-search.md",
-    ".rulesync/skills/orchestration/SKILL.md"
+    "agents/prompts/code-search.md"
   ]) {
     assert.ok(
       materializer.includes(asset),
@@ -611,4 +642,17 @@ test("resolveSkillContextFromHeaders returns the propagated skill body", async (
     resolveSkillContextFromHeaders({ "x-autodev-skill-context": "  " }),
     null
   );
+});
+
+test("the orchestrator's inlined skill names the installed directory its references resolve against", () => {
+  const orchestrator = roleInstructions("orchestrator");
+  assert.ok(
+    orchestrator.includes(
+      `Installed at ${installedOrchestration}; resolve its relative \`references/\``
+    )
+  );
+  const references = Array.from(orchestrator.matchAll(/`(references\/[^`]+\.md)`/g), (match) => match[1]!);
+  assert.ok(references.length > 0, "the inlined skill names its references");
+  for (const reference of references)
+    assert.ok(existsSync(join(installedOrchestration, reference)), reference);
 });

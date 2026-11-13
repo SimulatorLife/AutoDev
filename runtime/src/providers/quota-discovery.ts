@@ -21,7 +21,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { antigravityProvider } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
-import { loadCodexAuth } from "../router/proxy.ts";
+import { loadCodexAuth } from "./codex-auth.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -250,6 +250,36 @@ export function parseMinimaxQuotaOutput(
   };
 }
 
+/** One Codex rate-limit window, named by its length when the length is known. */
+function codexQuotaWindow({
+  usedPercent,
+  windowSeconds,
+  resetsAt,
+  fallbackId,
+  fallbackLabel
+}: {
+  readonly usedPercent: number;
+  readonly windowSeconds: number | null;
+  readonly resetsAt: ControlApiQuotaWindow["resetsAt"];
+  readonly fallbackId: string;
+  readonly fallbackLabel: string;
+}): ControlApiQuotaWindow {
+  const kind = windowKindFromSeconds(windowSeconds);
+  let id = fallbackId;
+  if (kind === "five_hour") id = "codex-5h";
+  else if (kind === "weekly") id = "codex-weekly";
+  return {
+    id,
+    label: windowLabelFromKind(kind, fallbackLabel),
+    kind,
+    status: statusFromUsedPercent(usedPercent),
+    usedPercent,
+    remainingPercent: clampPercent(100 - usedPercent),
+    windowSeconds,
+    resetsAt
+  };
+}
+
 /**
  * Parse ChatGPT/Codex `/backend-api/wham/usage` payload.
  */
@@ -281,32 +311,21 @@ export function parseCodexWhamUsage(
       limitReached && key === "primary_window"
         ? Math.max(100, rawUsed)
         : rawUsed;
-    const remainingPercent = clampPercent(100 - usedPercent);
     const windowSeconds =
       typeof win.limit_window_seconds === "number" &&
       Number.isFinite(win.limit_window_seconds)
         ? win.limit_window_seconds
         : null;
-    const kind = windowKindFromSeconds(windowSeconds);
-    const resetsAt = canonicalIso(win.reset_at);
-    windows.push({
-      id:
-        kind === "five_hour"
-          ? "codex-5h"
-          : kind === "weekly"
-            ? "codex-weekly"
-            : fallbackId,
-      label: windowLabelFromKind(
-        kind,
-        key === "primary_window" ? "Primary window" : "Secondary window"
-      ),
-      kind,
-      status: statusFromUsedPercent(usedPercent),
-      usedPercent,
-      remainingPercent,
-      windowSeconds,
-      resetsAt
-    });
+    windows.push(
+      codexQuotaWindow({
+        usedPercent,
+        windowSeconds,
+        resetsAt: canonicalIso(win.reset_at),
+        fallbackId,
+        fallbackLabel:
+          key === "primary_window" ? "Primary window" : "Secondary window"
+      })
+    );
   }
 
   if (windows.length === 0) return null;
@@ -339,35 +358,24 @@ export function parseCodexResponseRateLimitHeaders(
     const usedNum = Number(usedRaw);
     if (!Number.isFinite(usedNum)) continue;
     const usedPercent = clampPercent(usedNum);
-    const remainingPercent = clampPercent(100 - usedPercent);
     const minutesRaw = headers.get(`x-codex-${prefix}-window-minutes`);
     const minutes = minutesRaw === null ? Number.NaN : Number(minutesRaw);
     const windowSeconds =
       Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null;
-    const kind = windowKindFromSeconds(windowSeconds);
     const resetRaw = headers.get(`x-codex-${prefix}-reset-at`);
     const resetNum = resetRaw === null ? Number.NaN : Number(resetRaw);
-    const resetsAt = Number.isFinite(resetNum)
-      ? canonicalIso(resetNum)
-      : canonicalIso(resetRaw);
-    windows.push({
-      id:
-        kind === "five_hour"
-          ? "codex-5h"
-          : kind === "weekly"
-            ? "codex-weekly"
-            : `codex-${prefix}`,
-      label: windowLabelFromKind(
-        kind,
-        prefix === "primary" ? "Primary window" : "Secondary window"
-      ),
-      kind,
-      status: statusFromUsedPercent(usedPercent),
-      usedPercent,
-      remainingPercent,
-      windowSeconds,
-      resetsAt
-    });
+    windows.push(
+      codexQuotaWindow({
+        usedPercent,
+        windowSeconds,
+        resetsAt: Number.isFinite(resetNum)
+          ? canonicalIso(resetNum)
+          : canonicalIso(resetRaw),
+        fallbackId: `codex-${prefix}`,
+        fallbackLabel:
+          prefix === "primary" ? "Primary window" : "Secondary window"
+      })
+    );
   }
   if (windows.length === 0) return null;
   const plan = headers.get("x-codex-plan-type")?.trim() || null;
@@ -382,6 +390,9 @@ export function parseCodexResponseRateLimitHeaders(
     windows
   };
 }
+
+/** The label of a window whose kind says nothing more specific. */
+const USAGE_LIMIT_LABEL = "Usage limit";
 
 /** The quota window kinds Antigravity reports, in display order. */
 const ANTIGRAVITY_WINDOW_KINDS = ["five_hour", "weekly"] as const;
@@ -440,7 +451,7 @@ export function parseAntigravityAvailableModelsQuota(
       remainingSec !== null && remainingSec > 86_400 ? "weekly" : "five_hour";
     const win: ControlApiQuotaWindow = {
       id: `${provider}-${modelId}`,
-      label: windowLabelFromKind(kind, "Usage limit"),
+      label: windowLabelFromKind(kind, USAGE_LIMIT_LABEL),
       kind,
       status,
       usedPercent,
@@ -496,7 +507,7 @@ export function parseAntigravityAvailableModelsQuota(
       const usedPercent = mostUsed.usedPercent;
       const window: ControlApiQuotaWindow = {
         id: `${provider}-${kind}`,
-        label: windowLabelFromKind(kind, "Usage limit"),
+        label: windowLabelFromKind(kind, USAGE_LIMIT_LABEL),
         kind,
         status: statusFromUsedPercent(usedPercent),
         usedPercent,
@@ -607,7 +618,7 @@ function antigravitySummaryWindow(
   const usedPercent = clampPercent(100 - remainingPercent);
   return {
     id: `${provider}-${kind}`,
-    label: windowLabelFromKind(kind, "Usage limit"),
+    label: windowLabelFromKind(kind, USAGE_LIMIT_LABEL),
     kind,
     status: statusFromUsedPercent(usedPercent),
     usedPercent,
@@ -648,7 +659,7 @@ export function mergeAntigravityQuotas(
       (kind): ControlApiQuotaWindow =>
         reported.find((window) => window.kind === kind) ?? {
           id: `${provider}-${kind}`,
-          label: windowLabelFromKind(kind, "Usage limit"),
+          label: windowLabelFromKind(kind, USAGE_LIMIT_LABEL),
           kind,
           status: "unavailable",
           usedPercent: null,
@@ -667,6 +678,81 @@ export function mergeAntigravityQuotas(
     };
   }
   return merged;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The remaining and used shares of a Copilot snapshot, null when unreported. */
+function copilotShares(
+  unlimited: boolean,
+  remainingPercent: number | null
+): { remainingPercent: number | null; usedPercent: number | null } {
+  if (unlimited) return { remainingPercent: 100, usedPercent: 0 };
+  return {
+    remainingPercent,
+    usedPercent:
+      remainingPercent === null ? null : clampPercent(100 - remainingPercent)
+  };
+}
+
+function copilotPremiumWindow(
+  snap: Record<string, unknown>,
+  resetsAt: ControlApiQuotaWindow["resetsAt"]
+): ControlApiQuotaWindow {
+  const unlimited = snap.unlimited === true;
+  const entitlement = finiteNumberOrNull(snap.entitlement);
+  const remaining =
+    finiteNumberOrNull(snap.quota_remaining) ??
+    finiteNumberOrNull(snap.remaining);
+  const reportedUsed = finiteNumberOrNull(snap.credits_used);
+  let used = reportedUsed;
+  if (used === null && entitlement !== null && remaining !== null) {
+    used = Math.max(0, Math.round((entitlement - remaining) * 10) / 10);
+  }
+  const reportedPercent = finiteNumberOrNull(snap.percent_remaining);
+  let remainingPercent: number | null = null;
+  if (reportedPercent !== null)
+    remainingPercent = clampPercent(reportedPercent);
+  else if (entitlement && remaining !== null && entitlement > 0) {
+    remainingPercent = clampPercent((remaining / entitlement) * 100);
+  }
+  const shares = copilotShares(unlimited, remainingPercent);
+  return {
+    id: "copilot-premium",
+    label: "Monthly premium requests",
+    kind: "monthly",
+    status: statusFromUsedPercent(shares.usedPercent, unlimited),
+    usedPercent: shares.usedPercent,
+    remainingPercent: shares.remainingPercent,
+    used,
+    limit: entitlement,
+    unit: "requests",
+    resetsAt
+  };
+}
+
+function copilotChatWindow(
+  snap: Record<string, unknown>,
+  resetsAt: ControlApiQuotaWindow["resetsAt"]
+): ControlApiQuotaWindow {
+  const unlimited = snap.unlimited === true;
+  const reportedPercent =
+    typeof snap.percent_remaining === "number" ? snap.percent_remaining : null;
+  const shares = copilotShares(
+    unlimited,
+    reportedPercent === null ? null : clampPercent(reportedPercent)
+  );
+  return {
+    id: "copilot-chat",
+    label: "Chat requests",
+    kind: "monthly",
+    status: statusFromUsedPercent(shares.usedPercent, unlimited),
+    usedPercent: shares.usedPercent,
+    remainingPercent: shares.remainingPercent,
+    resetsAt
+  };
 }
 
 /**
@@ -688,75 +774,12 @@ export function parseCopilotUserQuota(
   const windows: ControlApiQuotaWindow[] = [];
 
   if (isRecord(snapshots.premium_interactions)) {
-    const snap = snapshots.premium_interactions;
-    const unlimited = snap.unlimited === true;
-    const entitlement =
-      typeof snap.entitlement === "number" && Number.isFinite(snap.entitlement)
-        ? snap.entitlement
-        : null;
-    const remaining =
-      typeof snap.quota_remaining === "number" &&
-      Number.isFinite(snap.quota_remaining)
-        ? snap.quota_remaining
-        : typeof snap.remaining === "number" && Number.isFinite(snap.remaining)
-          ? snap.remaining
-          : null;
-    const used =
-      typeof snap.credits_used === "number" &&
-      Number.isFinite(snap.credits_used)
-        ? snap.credits_used
-        : entitlement !== null && remaining !== null
-          ? Math.max(0, Math.round((entitlement - remaining) * 10) / 10)
-          : null;
-    const remainingPercent = unlimited
-      ? 100
-      : typeof snap.percent_remaining === "number" &&
-          Number.isFinite(snap.percent_remaining)
-        ? clampPercent(snap.percent_remaining)
-        : entitlement && remaining !== null && entitlement > 0
-          ? clampPercent((remaining / entitlement) * 100)
-          : null;
-    const usedPercent = unlimited
-      ? 0
-      : remainingPercent === null
-        ? null
-        : clampPercent(100 - remainingPercent);
-    windows.push({
-      id: "copilot-premium",
-      label: "Monthly premium requests",
-      kind: "monthly",
-      status: statusFromUsedPercent(usedPercent, unlimited),
-      usedPercent,
-      remainingPercent,
-      used,
-      limit: entitlement,
-      unit: "requests",
-      resetsAt
-    });
+    windows.push(
+      copilotPremiumWindow(snapshots.premium_interactions, resetsAt)
+    );
   }
-
   if (isRecord(snapshots.chat)) {
-    const snap = snapshots.chat;
-    const unlimited = snap.unlimited === true;
-    const remainingPercent = unlimited
-      ? 100
-      : typeof snap.percent_remaining === "number"
-        ? clampPercent(snap.percent_remaining)
-        : null;
-    const usedPercent = unlimited
-      ? 0
-      : remainingPercent === null
-        ? null
-        : clampPercent(100 - remainingPercent);
-    windows.push({
-      id: "copilot-chat",
-      label: "Chat requests",
-      kind: "monthly",
-      status: statusFromUsedPercent(usedPercent, unlimited),
-      usedPercent,
-      remainingPercent,
-      resetsAt
-    });
+    windows.push(copilotChatWindow(snapshots.chat, resetsAt));
   }
 
   if (windows.length === 0) return null;
@@ -771,6 +794,8 @@ export function parseCopilotUserQuota(
     windows
   };
 }
+
+const CLAUDE_PRO_PLAN = "Claude Pro Plan";
 
 /** Claude's usage windows, in display order: the 5-hour session window first. */
 const CLAUDE_USAGE_WINDOWS = [
@@ -843,7 +868,7 @@ export function parseClaudeOAuthUsage(
   if (windows.length === 0) return null;
   return claudeProviderQuota(
     "anthropic-oauth-usage",
-    "Claude Pro Plan",
+    CLAUDE_PRO_PLAN,
     windows,
     nowMs
   );
@@ -963,7 +988,7 @@ export function parseClaudeRateLimitEvent(
   }
   return claudeProviderQuota(
     "claude-cli-rate-limit-event",
-    "Claude Pro Plan",
+    CLAUDE_PRO_PLAN,
     windows,
     nowMs
   );
@@ -1330,56 +1355,44 @@ export interface ClaudePlanMetadata {
   readonly displayName?: string | null;
 }
 
-export async function readClaudePlanMetadata(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+function trimmedString(value: unknown): string | null {
+  return typeof value === "string" ? value.trim() : null;
+}
+
+/** The plan `~/.claude.json` names for the signed-in account, if it names one. */
+async function planFromClaudeJson(
+  home: string
 ): Promise<ClaudePlanMetadata | null> {
-  const claudeJsonPath = path.join(home, ".claude.json");
   try {
-    const raw = await readFile(claudeJsonPath, "utf8");
+    const raw = await readFile(path.join(home, ".claude.json"), "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    if (isRecord(parsed) && isRecord(parsed.oauthAccount)) {
-      const account = parsed.oauthAccount;
-      const orgType =
-        typeof account.organizationType === "string"
-          ? account.organizationType.trim()
-          : "";
-      const billingType =
-        typeof account.billingType === "string"
-          ? account.billingType.trim()
-          : null;
-      const rateLimitTier =
-        typeof account.organizationRateLimitTier === "string"
-          ? account.organizationRateLimitTier.trim()
-          : null;
-      const displayName =
-        typeof account.displayName === "string"
-          ? account.displayName.trim()
-          : null;
-      if (orgType === "claude_pro" || billingType === "stripe_subscription") {
-        return {
-          plan: "Claude Pro Plan",
-          billingType,
-          rateLimitTier,
-          displayName
-        };
-      }
-      if (orgType) {
-        return {
-          plan: orgType
-            .replaceAll("_", " ")
-            .replaceAll(/\b\w/g, (c) => c.toUpperCase()),
-          billingType,
-          rateLimitTier,
-          displayName
-        };
-      }
+    if (!isRecord(parsed) || !isRecord(parsed.oauthAccount)) return null;
+    const account = parsed.oauthAccount;
+    const orgType = trimmedString(account.organizationType) ?? "";
+    const billingType = trimmedString(account.billingType);
+    const details = {
+      billingType,
+      rateLimitTier: trimmedString(account.organizationRateLimitTier),
+      displayName: trimmedString(account.displayName)
+    };
+    if (orgType === "claude_pro" || billingType === "stripe_subscription") {
+      return { plan: CLAUDE_PRO_PLAN, ...details };
     }
+    if (!orgType) return null;
+    return {
+      plan: orgType
+        .replaceAll("_", " ")
+        .replaceAll(/\b\w/g, (c) => c.toUpperCase()),
+      ...details
+    };
   } catch {
     // .claude.json not present or unreadable
+    return null;
   }
+}
 
-  // Fallback to macOS Keychain
+/** The plan the macOS Keychain credentials name, if they name one. */
+async function planFromKeychain(): Promise<ClaudePlanMetadata | null> {
   try {
     const { stdout } = await execFileAsync(
       "security",
@@ -1387,37 +1400,32 @@ export async function readClaudePlanMetadata(
       { timeout: 2500 }
     );
     const creds = JSON.parse(stdout.trim()) as unknown;
-    if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
-      const oauth = creds.claudeAiOauth;
-      const subType =
-        typeof oauth.subscriptionType === "string"
-          ? oauth.subscriptionType.trim()
-          : "";
-      const rateLimitTier =
-        typeof oauth.rateLimitTier === "string"
-          ? oauth.rateLimitTier.trim()
-          : null;
-      if (subType === "pro") {
-        return {
-          plan: "Claude Pro Plan",
-          billingType: null,
-          rateLimitTier,
-          displayName: null
-        };
-      }
-      if (subType) {
-        return {
-          plan: `Claude ${subType.charAt(0).toUpperCase()}${subType.slice(1)} Plan`,
-          billingType: null,
-          rateLimitTier,
-          displayName: null
-        };
-      }
-    }
+    if (!isRecord(creds) || !isRecord(creds.claudeAiOauth)) return null;
+    const oauth = creds.claudeAiOauth;
+    const subType = trimmedString(oauth.subscriptionType) ?? "";
+    const details = {
+      billingType: null,
+      rateLimitTier: trimmedString(oauth.rateLimitTier),
+      displayName: null
+    };
+    if (subType === "pro") return { plan: CLAUDE_PRO_PLAN, ...details };
+    if (!subType) return null;
+    return {
+      plan: `Claude ${subType.charAt(0).toUpperCase()}${subType.slice(1)} Plan`,
+      ...details
+    };
   } catch {
     // Keychain lookup failed
+    return null;
   }
-  return null;
+}
+
+export async function readClaudePlanMetadata(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): Promise<ClaudePlanMetadata | null> {
+  const fromJson = await planFromClaudeJson(home);
+  return fromJson ?? planFromKeychain();
 }
 
 export async function readPersistedClaudeRateLimit(
@@ -1455,37 +1463,41 @@ export function buildClaudeSubscriptionQuota(
   );
 }
 
-async function discoverClaudeQuota(
+/** The rate limit the local Claude bridge reports through its health endpoint. */
+async function claudeQuotaFromBridge(
   nowMs: number
 ): Promise<ControlApiProviderQuota | null> {
   try {
     const bridgeResponse = await fetch(CLAUDE_BRIDGE_HEALTH_URL, {
       signal: AbortSignal.timeout(2500)
     }).catch(() => null);
-    if (bridgeResponse?.ok) {
-      const body = (await bridgeResponse.json().catch(() => null)) as unknown;
-      if (isRecord(body) && body.rateLimitInfo) {
-        const parsedEvent = parseClaudeRateLimitEvent(
-          body.rateLimitInfo,
-          nowMs
-        );
-        if (parsedEvent) return parsedEvent;
-      }
-    }
+    if (!bridgeResponse?.ok) return null;
+    const body = (await bridgeResponse.json().catch(() => null)) as unknown;
+    if (!isRecord(body) || !body.rateLimitInfo) return null;
+    return parseClaudeRateLimitEvent(body.rateLimitInfo, nowMs);
   } catch {
     // Ignore local bridge health errors.
+    return null;
   }
+}
 
+/** The rate limit the Claude bridge last persisted to disk. */
+async function claudeQuotaFromPersistedLimit(
+  nowMs: number
+): Promise<ControlApiProviderQuota | null> {
   try {
     const persisted = await readPersistedClaudeRateLimit();
-    if (persisted) {
-      const parsedEvent = parseClaudeRateLimitEvent(persisted, nowMs);
-      if (parsedEvent) return parsedEvent;
-    }
+    return persisted ? parseClaudeRateLimitEvent(persisted, nowMs) : null;
   } catch {
     // Ignore persisted read errors.
+    return null;
   }
+}
 
+/** The usage the Anthropic OAuth endpoint reports for the Keychain credentials. */
+async function claudeQuotaFromOAuth(
+  nowMs: number
+): Promise<ControlApiProviderQuota | null> {
   try {
     const { stdout } = await execFileAsync(
       "security",
@@ -1493,42 +1505,54 @@ async function discoverClaudeQuota(
       { timeout: 3000 }
     );
     const creds = JSON.parse(stdout.trim()) as unknown;
-    if (isRecord(creds) && isRecord(creds.claudeAiOauth)) {
-      const oauth = creds.claudeAiOauth;
-      const accessToken =
-        typeof oauth.accessToken === "string" ? oauth.accessToken.trim() : "";
-      const expiresAt =
-        typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
-      if (accessToken && (expiresAt === 0 || expiresAt > nowMs)) {
-        const response = await fetch(ANTHROPIC_OAUTH_USAGE_URL, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "anthropic-beta": "oauth-2025-04-20",
-            Accept: "application/json"
-          },
-          signal: AbortSignal.timeout(QUOTA_DISCOVERY_TIMEOUT_MS)
-        });
-        if (response.ok) {
-          const payload = await response.json();
-          const parsed = parseClaudeOAuthUsage(payload, nowMs);
-          if (parsed) return parsed;
-        }
-      }
-    }
+    if (!isRecord(creds) || !isRecord(creds.claudeAiOauth)) return null;
+    const oauth = creds.claudeAiOauth;
+    const accessToken = trimmedString(oauth.accessToken) ?? "";
+    const expiresAt = typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
+    if (!accessToken || (expiresAt !== 0 && expiresAt <= nowMs)) return null;
+    const response = await fetch(ANTHROPIC_OAUTH_USAGE_URL, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(QUOTA_DISCOVERY_TIMEOUT_MS)
+    });
+    if (!response.ok) return null;
+    return parseClaudeOAuthUsage(await response.json(), nowMs);
   } catch {
     // OAuth usage endpoint unavailable or forbidden
+    return null;
   }
+}
 
+/** The plan-only quota, for when no source reports usage. */
+async function claudeQuotaFromPlan(
+  nowMs: number
+): Promise<ControlApiProviderQuota | null> {
   try {
     const planMeta = await readClaudePlanMetadata();
-    if (planMeta) {
-      return buildClaudeSubscriptionQuota(planMeta, nowMs);
-    }
+    return planMeta ? buildClaudeSubscriptionQuota(planMeta, nowMs) : null;
   } catch {
     // Plan metadata unreadable
+    return null;
   }
+}
 
-  return null;
+function discoverClaudeQuota(
+  nowMs: number
+): Promise<ControlApiProviderQuota | null> {
+  const sources = [
+    claudeQuotaFromBridge,
+    claudeQuotaFromPersistedLimit,
+    claudeQuotaFromOAuth,
+    claudeQuotaFromPlan
+  ];
+  // Each source is tried only when every earlier one came back empty.
+  return sources.reduce<Promise<ControlApiProviderQuota | null>>(
+    (previous, source) => previous.then((found) => found ?? source(nowMs)),
+    Promise.resolve(null)
+  );
 }
 
 export async function discoverProviderQuota(
@@ -1536,7 +1560,7 @@ export async function discoverProviderQuota(
   options: { now?: number; syncCooldowns?: boolean } = {}
 ): Promise<ControlApiProviderQuota | null> {
   const nowMs = options.now ?? Date.now();
-  let discovered: ControlApiProviderQuota | null = null;
+  let discovered: ControlApiProviderQuota | null;
   switch (provider) {
     case "minimax": {
       discovered = await discoverMinimaxQuota(nowMs);
@@ -1619,21 +1643,16 @@ export function createProviderQuotaDiscoveryService(
   let inFlight: Promise<Record<string, ControlApiProviderQuota | null>> | null =
     null;
 
-  const refresh = async (): Promise<
+  const refresh = (): Promise<
     Record<string, ControlApiProviderQuota | null>
   > => {
     if (inFlight) return inFlight;
-    inFlight = (async () => {
-      try {
-        const nowMs = now();
-        return await refreshAllProviderQuotas(providers, {
-          now: nowMs,
-          syncCooldowns: true
-        });
-      } finally {
-        inFlight = null;
-      }
-    })();
+    inFlight = refreshAllProviderQuotas(providers, {
+      now: now(),
+      syncCooldowns: true
+    }).finally(() => {
+      inFlight = null;
+    });
     return inFlight;
   };
 

@@ -331,8 +331,7 @@ test("provider model discovery is an authenticated read-only snapshot, separate 
                 displayName: "GPT OSS Medium",
                 routeability: {
                   status: "unsupported",
-                  reason:
-                    "Runtime has no route for this model ID."
+                  reason: "Runtime has no route for this model ID."
                 }
               }
             ]
@@ -1027,7 +1026,8 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     );
 
     // 5. Antigravity provider with fixed model slug (gemini-3.8-flash-high)
-    const agyPath = CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent";
+    const agyPath =
+      CONTROL_API_PATHS.providers + "/antigravity-gemini/roles/subagent";
     const agyPatch = await call("PATCH", agyPath, {
       actor: "operator-a",
       body: {
@@ -1054,7 +1054,8 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
         "subagent",
         previousAgy
       );
-    else ROUTING_POLICY.clearProviderAssignment("antigravity-gemini", "subagent");
+    else
+      ROUTING_POLICY.clearProviderAssignment("antigravity-gemini", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }

@@ -46,6 +46,15 @@ export const runtime = "nodejs";
  */
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
+/** What a source that could not be read is reported as. */
+const UNAVAILABLE = { kind: "unavailable" } as const;
+
+/** What a source that is not set up is reported as. */
+const NOT_CONFIGURED = { kind: "not-configured" } as const;
+
+/** Every answer the route gives is a live read that must not be cached downstream. */
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
 /**
  * The refusal a request the route cannot scope receives.
  *
@@ -57,14 +66,14 @@ const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 function refuse(message: string): NextResponse {
   return NextResponse.json(
     { error: message },
-    { status: 400, headers: { "Cache-Control": "no-store" } }
+    { status: 400, headers: NO_STORE_HEADERS }
   );
 }
 
-function payload(payload: UsageApiPayload): NextResponse {
-  return NextResponse.json(payload, {
+function ok(body: UsageApiPayload): NextResponse {
+  return NextResponse.json(body, {
     status: 200,
-    headers: { "Cache-Control": "no-store" }
+    headers: NO_STORE_HEADERS
   });
 }
 
@@ -79,7 +88,7 @@ function payload(payload: UsageApiPayload): NextResponse {
  */
 async function workspaceRequestSource(): Promise<UsageWorkspaceRequestSource> {
   const result = await readUsageTelemetry({ range: "24H", values: {} });
-  if (result.kind !== "ok") return { kind: "unavailable" };
+  if (result.kind !== "ok") return UNAVAILABLE;
   const breakdown = result.data.metrics.requestsByWorkspace;
   if (breakdown === null) return { kind: "not-observed" };
   return { kind: "observed", breakdown };
@@ -100,8 +109,8 @@ async function providerAttemptSource(
     range: "7D",
     values: { provider: [provider] }
   });
-  if (result.kind === "not-configured") return { kind: "not-configured" };
-  if (result.kind !== "ok") return { kind: "unavailable" };
+  if (result.kind === "not-configured") return NOT_CONFIGURED;
+  if (result.kind !== "ok") return UNAVAILABLE;
   return {
     kind: "available",
     attemptsByProvider: result.data.metrics.attemptsByProvider,
@@ -125,8 +134,8 @@ async function toolCallSource(
     values: {},
     customRange: { startDate, endDate }
   });
-  if (result.kind === "not-configured") return { kind: "not-configured" };
-  if (result.kind !== "ok") return { kind: "unavailable" };
+  if (result.kind === "not-configured") return NOT_CONFIGURED;
+  if (result.kind !== "ok") return UNAVAILABLE;
   return { kind: "available", callsByTool: result.data.metrics.callsByTool };
 }
 
@@ -135,7 +144,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const scope = params.get("scope");
 
   if (scope === "workspace-requests") {
-    return payload({
+    return ok({
       schema: USAGE_API_SCHEMA,
       scope: "workspace-requests",
       source: await workspaceRequestSource()
@@ -152,7 +161,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!isUsageProviderId(provider)) {
       return refuse("A provider scope is required and must name a provider.");
     }
-    return payload({
+    return ok({
       schema: USAGE_API_SCHEMA,
       scope: "provider-usage",
       provider,
@@ -169,7 +178,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ) {
       return refuse("A window must name its bounds as YYYY-MM-DD.");
     }
-    return payload({
+    return ok({
       schema: USAGE_API_SCHEMA,
       scope: "tool-usage",
       source: await toolCallSource(startDate, endDate)

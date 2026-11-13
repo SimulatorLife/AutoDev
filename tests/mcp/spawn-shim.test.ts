@@ -92,7 +92,10 @@ async function withBridge(
         };
         requests.push(record);
         const payload = handler(requests);
-        const status = typeof (payload as any)?.status === "number" ? (payload as any).status : 200;
+        const status =
+          typeof (payload as any)?.status === "number"
+            ? (payload as any).status
+            : 200;
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(payload));
       });
@@ -277,7 +280,9 @@ test("spawn shim forwards target for parked session reuse", async () => {
           }
         });
         assert.deepEqual(response.result, {
-          content: [{ type: "text", text: "Reused 1 subagent: reuse:child-parked-xyz." }]
+          content: [
+            { type: "text", text: "Reused 1 subagent: reuse:child-parked-xyz." }
+          ]
         });
         const call = requests.find((request) => request.path.endsWith("/call"));
         assert.deepEqual(call?.body.children, [
@@ -299,7 +304,11 @@ test("spawn shim returns model-readable tool error when bridge rejects target re
   await withBridge(
     (requests) =>
       requests.at(-1)?.path.endsWith("/call")
-        ? { status: 409, error: 'Cannot reuse subagent "foreign-child": subagent belongs to a different parent session.' }
+        ? {
+            status: 409,
+            error:
+              'Cannot reuse subagent "foreign-child": subagent belongs to a different parent session.'
+          }
         : { spawnAllowed: true },
     async (url) => {
       const child = spawn(process.execPath, [shimPath], {
@@ -328,7 +337,8 @@ test("spawn shim returns model-readable tool error when bridge rejects target re
             }
           }
         });
-        const result = response.result as { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
+        const result = response.result as
+          { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
         assert.equal(result?.isError, true);
         assert.match(
           result?.content?.[0]?.text ?? "",

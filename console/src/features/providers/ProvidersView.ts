@@ -458,9 +458,9 @@ function modelColumns(
                 [
                   modelQuota.status === "unlimited"
                     ? "Unlimited"
-                    : modelQuota.usedPercent !== null
-                      ? `${Math.round(modelQuota.usedPercent)}% used`
-                      : modelQuota.status,
+                    : modelQuota.usedPercent === null
+                      ? modelQuota.status
+                      : `${Math.round(modelQuota.usedPercent)}% used`,
                   quotaReset ? `resets ${quotaReset}` : null
                 ]
                   .filter(Boolean)

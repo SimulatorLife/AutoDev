@@ -328,6 +328,10 @@ test("installer delegates repository skill generation and checking to typed mate
   assert.match(materializer, /ensureExclude/);
   assert.doesNotMatch(materializer, /renderProviderSkillViews/);
   assert.match(materializer, /OBSOLETE_CLAUDE_SKILL_VIEWS/);
+  // Skills are read only from their installed link; the runtime tree carries
+  // none, and an earlier lone SKILL.md copy there is removed on install.
+  assert.doesNotMatch(materializer, /"\.rulesync\/skills\//);
+  assert.match(materializer, /path\.join\(codexHome, "\.rulesync"\)/);
 });
 
 test("Copilot cloud setup generates repository skills after installing dependencies", () => {

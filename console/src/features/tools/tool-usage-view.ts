@@ -13,6 +13,9 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { type ToolUsageState } from "./tool-usage.ts";
 
+const STACK_CLASS = "flex flex-col gap-2";
+const UNAVAILABLE_STATUS = "unavailable";
+
 function formatCount(value: number | null): string {
   return value === null
     ? NOT_OBSERVED_LABEL
@@ -51,7 +54,7 @@ export function toolUsageView({
   if (state.kind === "pending") {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2", "aria-busy": "true" },
+      { className: STACK_CLASS, "aria-busy": "true" },
       React.createElement(StatusBadge, {
         status: "pending",
         label: "Usage evidence pending"
@@ -67,9 +70,9 @@ export function toolUsageView({
   if (state.kind === "unavailable") {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2" },
+      { className: STACK_CLASS },
       React.createElement(StatusBadge, {
-        status: "unavailable",
+        status: UNAVAILABLE_STATUS,
         label: "Usage telemetry unavailable"
       }),
       React.createElement(
@@ -83,9 +86,9 @@ export function toolUsageView({
   if (state.kind === "not-configured") {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2" },
+      { className: STACK_CLASS },
       React.createElement(StatusBadge, {
-        status: "unavailable",
+        status: UNAVAILABLE_STATUS,
         label: "Usage telemetry not configured"
       }),
       React.createElement(
@@ -99,7 +102,7 @@ export function toolUsageView({
   if (state.kind === "not-observed") {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2" },
+      { className: STACK_CLASS },
       React.createElement(StatusBadge, {
         status: NOT_OBSERVED_STATUS,
         label: "No recorded tool calls"

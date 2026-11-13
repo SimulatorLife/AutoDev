@@ -179,10 +179,7 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     texts["runtime/src/shared/executables.ts"]!,
     /export function resolveAgyBinary/
   );
-  assert.match(
-    texts["runtime/src/shared/executables.ts"]!,
-    /AGY_CLI_PATH/
-  );
+  assert.match(texts["runtime/src/shared/executables.ts"]!, /AGY_CLI_PATH/);
   assert.match(
     texts["runtime/src/providers/antigravity.ts"]!,
     /const CLI = resolveAgyBinary\(\);/

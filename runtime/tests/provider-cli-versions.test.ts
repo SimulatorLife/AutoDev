@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { ChildProcess, type spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -7,7 +8,8 @@ import {
   parseCliVersion,
   providerCliCommand,
   providerCliName,
-  ProviderCliVersionService} from "../src/providers/cli-versions.ts";
+  ProviderCliVersionService
+} from "../src/providers/cli-versions.ts";
 
 /**
  * A child process that prints `output` and exits, without starting anything.
@@ -17,13 +19,13 @@ import {
  * machine that runs the suite, and a test that depended on one would fail
  * for a reason that has nothing to do with the code under test.
  */
-class FakeChild extends EventEmitter {
-  stdout = new EventEmitter();
-  stderr = new EventEmitter();
-  readonly killed: string[] = [];
+class FakeChild extends ChildProcess {
+  override readonly stdout = new PassThrough();
+  override readonly stderr = new PassThrough();
+  readonly signals: Array<NodeJS.Signals | number | undefined> = [];
 
-  kill(signal: string): boolean {
-    this.killed.push(signal);
+  override kill(signal?: NodeJS.Signals | number): boolean {
+    this.signals.push(signal);
     return true;
   }
 }
@@ -32,7 +34,7 @@ function fakeSpawn(
   output: string,
   exitCode = 0
 ): {
-  spawnProcess: typeof import("node:child_process").spawn;
+  spawnProcess: typeof spawn;
   child: FakeChild;
 } {
   const child = new FakeChild();
@@ -41,10 +43,8 @@ function fakeSpawn(
       child.stdout.emit("data", Buffer.from(output, "utf8"));
       child.emit("close", exitCode);
     });
-    return child as unknown as ReturnType<
-      typeof import("node:child_process").spawn
-    >;
-  }) as unknown as typeof import("node:child_process").spawn;
+    return child;
+  }) as unknown as typeof spawn;
   return { spawnProcess, child };
 }
 
@@ -125,8 +125,7 @@ test("a CLI that prints no version is not read as one", async () => {
 
 test("a CLI that hangs is stopped rather than waited for", async () => {
   const child = new FakeChild();
-  const spawnProcess = (() =>
-    child) as unknown as typeof import("node:child_process").spawn;
+  const spawnProcess = (() => child) as unknown as typeof spawn;
   const capture = await captureCliVersion(
     { command: "codex", program: "/opt/bin/codex", args: [] },
     { spawnProcess },
@@ -137,7 +136,7 @@ test("a CLI that hangs is stopped rather than waited for", async () => {
     capture.ok ? "" : capture.reason,
     "Reading the codex CLI's version timed out."
   );
-  assert.deepEqual(child.killed, ["SIGTERM"]);
+  assert.deepEqual(child.signals, ["SIGTERM"]);
 });
 
 test("the service reports the version it read and the reason for the one it could not", async () => {

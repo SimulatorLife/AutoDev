@@ -338,10 +338,7 @@ function floorUsageRecordSharing(
   minimumInputTokens: number,
   trace: RewriteTrace
 ): Record<string, unknown> {
-  if (
-    !Number.isSafeInteger(minimumInputTokens) ||
-    minimumInputTokens <= 0
-  ) {
+  if (!Number.isSafeInteger(minimumInputTokens) || minimumInputTokens <= 0) {
     return usage;
   }
   const rawInput =

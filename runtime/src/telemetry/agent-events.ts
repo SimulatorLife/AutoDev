@@ -61,9 +61,8 @@ export const SKILL_READ_SOURCE = "skill_read";
  */
 export type SkillFailureOutcome = "unavailable" | "error";
 
-export const SKILL_FAILURE_OUTCOMES: ReadonlySet<string> = new Set<
-  SkillFailureOutcome
->(["unavailable", "error"]);
+export const SKILL_FAILURE_OUTCOMES: ReadonlySet<string> =
+  new Set<SkillFailureOutcome>(["unavailable", "error"]);
 
 function trimmedStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -552,7 +551,9 @@ export class AgentEventReporter {
       source:
         typeof source === "string" && source.trim() ? source.trim() : null,
       pluginId:
-        typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
+        typeof pluginId === "string" && pluginId.trim()
+          ? pluginId.trim()
+          : null,
       outcome
     };
     if (typeof eventId === "string" && eventId.trim())

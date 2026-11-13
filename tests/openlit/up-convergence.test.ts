@@ -425,15 +425,11 @@ test("the OpenLIT runner bounds the retention of every diagnostic log it finds",
       join(fixture.state, "retention-statements.sql"),
       "utf8"
     );
-    for (const table of [
-      "processors_profile_log",
-      "query_log",
-      "trace_log"
-    ]) {
+    for (const table of ["processors_profile_log", "query_log", "trace_log"]) {
       assert.match(
         statements,
         new RegExp(
-          `ALTER TABLE system\\.${table} MODIFY TTL event_date \\+ INTERVAL 604800 SECOND;`,
+          String.raw`ALTER TABLE system\.${table} MODIFY TTL event_date \+ INTERVAL 604800 SECOND;`,
           "u"
         ),
         `the retention must be applied to ${table}`
@@ -454,7 +450,8 @@ test("the ClickHouse configuration states one retention window for the diagnosti
     "utf8"
   );
   const windows = new Set(
-    [...configuration.matchAll(/<table_ttl>(\d+)<\/table_ttl>/gu)].map(
+    Array.from(
+      configuration.matchAll(/<table_ttl>(\d+)<\/table_ttl>/gu),
       (match) => match[1]
     )
   );
@@ -467,13 +464,7 @@ test("the ClickHouse configuration states one retention window for the diagnosti
 
 test("the ClickHouse user profile stops the diagnostic logs from growing without bound", () => {
   const users = readFileSync(
-    join(
-      repositoryRoot,
-      "config",
-      "openlit",
-      "assets",
-      "clickhouse-users.xml"
-    ),
+    join(repositoryRoot, "config", "openlit", "assets", "clickhouse-users.xml"),
     "utf8"
   );
   assert.match(

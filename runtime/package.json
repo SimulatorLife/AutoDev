@@ -91,6 +91,7 @@
     "./shared/error-message": "./src/shared/error-message.ts",
     "./shared/executables": "./src/shared/executables.ts",
     "./shared/execution-contract": "./src/shared/execution-contract.ts",
+    "./shared/installed-skills": "./src/shared/installed-skills.ts",
     "./shared/opencli-version": "./src/shared/opencli-version.ts",
     "./shared/output": "./src/shared/output.ts",
     "./shared/provider-http": "./src/shared/provider-http.ts",

@@ -43,8 +43,8 @@ import {
   spawnShimMcpServer
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
-import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveClaudeBinary } from "@simulatorlife/autodev-runtime/shared/executables";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,

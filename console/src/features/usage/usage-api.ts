@@ -21,9 +21,7 @@
  * in a telemetry panel is worse than no number at all.
  */
 
-import type {
-  UsageWorkspaceRequestBreakdown
-} from "@simulatorlife/autodev-core";
+import type { UsageWorkspaceRequestBreakdown } from "@simulatorlife/autodev-core";
 
 /** The version of the contract this Console speaks. */
 export const USAGE_API_SCHEMA = "autodev-console-usage-v1";
@@ -37,10 +35,14 @@ export const USAGE_API_SCHEMA = "autodev-console-usage-v1";
  * breakdown, a provider panel wants one provider's attempts, and a tool
  * panel wants one tool's calls.
  */
+const WORKSPACE_REQUESTS_SCOPE = "workspace-requests";
+const PROVIDER_USAGE_SCOPE = "provider-usage";
+const TOOL_USAGE_SCOPE = "tool-usage";
+
 export const USAGE_API_SCOPES = [
-  "workspace-requests",
-  "provider-usage",
-  "tool-usage"
+  WORKSPACE_REQUESTS_SCOPE,
+  PROVIDER_USAGE_SCOPE,
+  TOOL_USAGE_SCOPE
 ] as const;
 
 export type UsageApiScope = (typeof USAGE_API_SCOPES)[number];
@@ -63,7 +65,7 @@ export const MAX_USAGE_PROVIDER_ID_LENGTH = 128;
  * else is a character the id never has, and an id that carries one is not a
  * provider the Console can scope a read to.
  */
-const USAGE_PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/u;
+const USAGE_PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
 
 /**
  * Is this string a provider id the endpoint will scope a read to?
@@ -236,75 +238,90 @@ function isBreakdown(value: unknown): value is UsageWorkspaceRequestBreakdown {
  * cannot read becomes an unavailable state, which the surfaces render as
  * the absence of evidence rather than as a measurement.
  */
-export function parseUsageApiPayload(
-  json: unknown
-): UsageApiPayload | null {
+export function parseUsageApiPayload(json: unknown): UsageApiPayload | null {
   if (!isRecord(json)) return null;
   if (json.schema !== USAGE_API_SCHEMA) return null;
   const source = json.source;
   if (!isRecord(source)) return null;
-  if (json.scope === "workspace-requests") {
-    if (source.kind === "unavailable" || source.kind === "not-observed") {
-      return {
-        schema: USAGE_API_SCHEMA,
-        scope: "workspace-requests",
-        source: { kind: source.kind }
-      };
-    }
-    if (source.kind === "observed" && isBreakdown(source.breakdown)) {
-      return {
-        schema: USAGE_API_SCHEMA,
-        scope: "workspace-requests",
-        source: { kind: "observed", breakdown: source.breakdown }
-      };
-    }
-    return null;
+  if (json.scope === WORKSPACE_REQUESTS_SCOPE) {
+    return parseWorkspaceRequestsPayload(source);
   }
-  if (json.scope === "provider-usage") {
-    if (typeof json.provider !== "string") return null;
-    if (source.kind === "not-configured" || source.kind === "unavailable") {
-      return {
-        schema: USAGE_API_SCHEMA,
-        scope: "provider-usage",
-        provider: json.provider,
-        source: { kind: source.kind }
-      };
-    }
-    if (source.kind !== "available") return null;
-    const attempts = source.attemptsByProvider;
-    const errors = source.attemptErrorsByProvider;
-    if (attempts !== null && !Array.isArray(attempts)) return null;
-    if (errors !== null && !Array.isArray(errors)) return null;
-    if (attempts !== null && !attempts.every(isCountRow)) return null;
-    if (errors !== null && !errors.every(isCountRow)) return null;
+  if (json.scope === PROVIDER_USAGE_SCOPE) {
+    return parseProviderUsagePayload(json.provider, source);
+  }
+  if (json.scope === TOOL_USAGE_SCOPE) return parseToolUsagePayload(source);
+  return null;
+}
+
+function parseWorkspaceRequestsPayload(
+  source: Record<string, unknown>
+): UsageApiPayload | null {
+  if (source.kind === "unavailable" || source.kind === "not-observed") {
     return {
       schema: USAGE_API_SCHEMA,
-      scope: "provider-usage",
-      provider: json.provider,
-      source: {
-        kind: "available",
-        attemptsByProvider: attempts,
-        attemptErrorsByProvider: errors
-      }
+      scope: WORKSPACE_REQUESTS_SCOPE,
+      source: { kind: source.kind }
     };
   }
-  if (json.scope === "tool-usage") {
-    if (source.kind === "not-configured" || source.kind === "unavailable") {
-      return {
-        schema: USAGE_API_SCHEMA,
-        scope: "tool-usage",
-        source: { kind: source.kind }
-      };
-    }
-    if (source.kind !== "available") return null;
-    const calls = source.callsByTool;
-    if (calls !== null && !Array.isArray(calls)) return null;
-    if (calls !== null && !calls.every(isToolCountRow)) return null;
+  if (source.kind === "observed" && isBreakdown(source.breakdown)) {
     return {
       schema: USAGE_API_SCHEMA,
-      scope: "tool-usage",
-      source: { kind: "available", callsByTool: calls }
+      scope: WORKSPACE_REQUESTS_SCOPE,
+      source: { kind: "observed", breakdown: source.breakdown }
     };
   }
   return null;
+}
+
+function parseProviderUsagePayload(
+  provider: unknown,
+  source: Record<string, unknown>
+): UsageApiPayload | null {
+  if (typeof provider !== "string") return null;
+  if (source.kind === "not-configured" || source.kind === "unavailable") {
+    return {
+      schema: USAGE_API_SCHEMA,
+      scope: PROVIDER_USAGE_SCOPE,
+      provider,
+      source: { kind: source.kind }
+    };
+  }
+  if (source.kind !== "available") return null;
+  const attempts = source.attemptsByProvider;
+  const errors = source.attemptErrorsByProvider;
+  if (attempts !== null && !Array.isArray(attempts)) return null;
+  if (errors !== null && !Array.isArray(errors)) return null;
+  if (attempts !== null && !attempts.every(isCountRow)) return null;
+  if (errors !== null && !errors.every(isCountRow)) return null;
+  return {
+    schema: USAGE_API_SCHEMA,
+    scope: PROVIDER_USAGE_SCOPE,
+    provider,
+    source: {
+      kind: "available",
+      attemptsByProvider: attempts,
+      attemptErrorsByProvider: errors
+    }
+  };
+}
+
+function parseToolUsagePayload(
+  source: Record<string, unknown>
+): UsageApiPayload | null {
+  if (source.kind === "not-configured" || source.kind === "unavailable") {
+    return {
+      schema: USAGE_API_SCHEMA,
+      scope: TOOL_USAGE_SCOPE,
+      source: { kind: source.kind }
+    };
+  }
+  if (source.kind !== "available") return null;
+  const calls = source.callsByTool;
+  if (calls !== null && !Array.isArray(calls)) return null;
+  if (calls !== null && !calls.every(isToolCountRow)) return null;
+  return {
+    schema: USAGE_API_SCHEMA,
+    scope: TOOL_USAGE_SCOPE,
+    source: { kind: "available", callsByTool: calls }
+  };
 }

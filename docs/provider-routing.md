@@ -1834,8 +1834,9 @@ is the enforcement: this repository carries no `.claude/settings.json`, so a
 direct Claude Code session opened here is not bounded by it. Whether a Claude
 turn may spawn is decided by Codex, exactly as for a Codex-served turn: only
 the orchestrator's `tools` global carries `multi_agent_v1__spawn_agent`.
-The root-delegation hook also exempts Claude model aliases,
-while native `autodev/*` roles are excluded by their role alias, so leaf
+The root-delegation hook also exempts Claude model aliases and any host
+whose payload reports no model (Claude Code CLI and desktop app never do; Codex
+always does), while native `autodev/*` roles are excluded by their role alias, so leaf
 providers do not receive the parent-only instruction to spawn more agents.
 Keep these restrictions at the CLI/gateway boundary rather than
 relying only on role prompt text. Provider bridges must treat the active
@@ -1875,8 +1876,15 @@ transport responsible only for composing them:
 The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
-hook injects the same skill content and recovery preflight; the Antigravity and
+hook points at the skill and adds the recovery preflight; the Antigravity and
 Copilot bridges use `runtime/src/agents/bridge-role.ts` to assemble the same role prompt,
+inlining the skill body. Both read the skill only from its installed link,
+`$HOME/.agents/skills/orchestration` (`runtime/src/shared/installed-skills.ts`),
+and name that directory, because `SKILL.md` names its lifecycle procedures by
+relative `references/` paths. The runtime tree under `$CODEX_HOME` carries no
+skills: an earlier lone `SKILL.md` copy there, without its `references/`, made
+a root refuse its task as a capability failure, and the installer now removes
+`$CODEX_HOME/.rulesync`.
 and the Claude bridge passes Codex's own context through unchanged. Execution-contract JSON is a
 generated projection for provider diagnostics; it is not a second editable role
 capability list. Native child calls carry only `agent_type` and the task message.

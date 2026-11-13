@@ -42,13 +42,13 @@ import {
   workspaceAvailabilityBadgeLabel,
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
+import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
+import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
+import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
   WorkspaceRequestCell,
   WorkspaceRequestTelemetryProvider
 } from "./WorkspaceRequestTelemetry.ts";
-import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
-import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
-import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
   WorkspaceVisualPlaytestTargetManager,
   type WorkspaceVisualTargetUnavailable

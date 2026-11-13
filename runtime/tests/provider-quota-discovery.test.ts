@@ -9,8 +9,8 @@ import {
   clearProviderQuotaCacheForTests,
   createProviderQuotaDiscoveryService,
   DEFAULT_QUOTA_PROVIDERS,
-  MINIMAX_CONFIGURED_MODELS,
   mergeAntigravityQuotas,
+  MINIMAX_CONFIGURED_MODELS,
   overlayRouterCooldownsOnQuota,
   parseAntigravityAvailableModelsQuota,
   parseAntigravityQuotaSummary,
@@ -21,9 +21,7 @@ import {
   parseCopilotUserQuota,
   parseMinimaxQuotaOutput,
   PROVIDER_QUOTA_REFRESH_INTERVAL_MS,
-  readClaudePlanMetadata,
   readMinimaxAuth,
-  readPersistedClaudeRateLimit,
   syncQuotaToCooldowns
 } from "../src/providers/quota-discovery.ts";
 
@@ -273,7 +271,7 @@ test("parseClaudeRateLimitEvent reports the 5-hour window alongside the weekly w
       rateLimitType: "seven_day",
       resetsAt: nowSec + 86_400,
       unifiedWindows: {
-        five_hour: { utilization: 0.4, resetsAt: nowSec + 3_600 },
+        five_hour: { utilization: 0.4, resetsAt: nowSec + 3600 },
         seven_day: { utilization: 0.9, resetsAt: nowSec + 86_400 }
       }
     },
@@ -299,7 +297,7 @@ test("parseClaudeRateLimitEvent reports a window whose reset has passed as unrep
       rateLimitType: "seven_day",
       resetsAt: nowSec + 86_400,
       unifiedWindows: {
-        five_hour: { utilization: 0.7, resetsAt: nowSec - 7_200 },
+        five_hour: { utilization: 0.7, resetsAt: nowSec - 7200 },
         seven_day: { utilization: 0.38, resetsAt: nowSec + 86_400 }
       }
     },
@@ -329,7 +327,7 @@ test("parseClaudeRateLimitEvent yields no quota when every window has rolled ove
       rateLimitType: "seven_day",
       resetsAt: nowSec - 60,
       unifiedWindows: {
-        five_hour: { utilization: 0, resetsAt: nowSec - 7_200 },
+        five_hour: { utilization: 0, resetsAt: nowSec - 7200 },
         seven_day: { utilization: 1, resetsAt: nowSec - 60 }
       }
     },
@@ -381,7 +379,7 @@ test("the Antigravity quota summary gives each provider its 5-hour and weekly li
               bucketId: "3p-weekly",
               window: "weekly",
               resetTime: "2026-11-15T18:06:00Z",
-              remainingFraction: 0.4860588
+              remainingFraction: 0.486_058_8
             },
             {
               bucketId: "3p-5h",
@@ -454,7 +452,7 @@ test("the Antigravity quota summary gives each provider its 5-hour and weekly li
         models: {
           "claude-opus-5-5-high": {
             quotaInfo: {
-              remainingFraction: 0.4860588,
+              remainingFraction: 0.486_058_8,
               resetTime: "2026-11-15T18:06:00Z"
             }
           },
@@ -589,24 +587,24 @@ test("parseMinimaxQuotaOutput handles direct REST API JSON payload and matches m
     model_remains: [
       {
         model_name: "general",
-        start_time: 1794254400000,
-        end_time: 1794268800000,
-        remains_time: 10507443,
+        start_time: 1_794_254_400_000,
+        end_time: 1_794_268_800_000,
+        remains_time: 10_507_443,
         current_interval_total_count: 0,
         current_interval_usage_count: 0,
         current_interval_status: 1,
         current_interval_remaining_percent: 100,
-        weekly_start_time: 1794182400000,
-        weekly_end_time: 1794787200000,
-        weekly_remains_time: 528907443,
+        weekly_start_time: 1_794_182_400_000,
+        weekly_end_time: 1_794_787_200_000,
+        weekly_remains_time: 528_907_443,
         current_weekly_status: 1,
         current_weekly_remaining_percent: 60
       },
       {
         model_name: "video",
-        start_time: 1794182400000,
-        end_time: 1794268800000,
-        remains_time: 10507443,
+        start_time: 1_794_182_400_000,
+        end_time: 1_794_268_800_000,
+        remains_time: 10_507_443,
         current_interval_remaining_percent: 100,
         current_weekly_remaining_percent: 100
       }

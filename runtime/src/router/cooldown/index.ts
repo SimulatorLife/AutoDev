@@ -143,12 +143,7 @@ export class ProviderCooldowns {
     if (providerEntry) return providerEntry;
     if (model === null) return null;
 
-    const modelEntry = liveEntry(
-      this.modelCooldowns,
-      modelKey(provider, model),
-      now
-    );
-    return modelEntry;
+    return liveEntry(this.modelCooldowns, modelKey(provider, model), now);
   }
 
   getModelCooldowns(

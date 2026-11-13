@@ -2,8 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch:
-    "**/{command-palette,text-contrast}-acceptance.spec.ts",
+  testMatch: "**/{command-palette,text-contrast}-acceptance.spec.ts",
   fullyParallel: false,
   workers: 1,
   retries: 0,

@@ -7,12 +7,12 @@ import {
   copilotMcpArgs,
   runCopilot
 } from "@simulatorlife/autodev-runtime/providers/copilot";
+import { findCodexAppMcpServer } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   EXECUTION_CONTRACT,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
-import { findCodexAppMcpServer } from "@simulatorlife/autodev-runtime/shared/executables";
 
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 

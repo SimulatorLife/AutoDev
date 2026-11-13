@@ -666,6 +666,84 @@ function HealthPanel({
   );
 }
 
+type ProviderQuotaWindow = NonNullable<
+  ReturnType<typeof resolveProviderQuota>
+>["windows"][number];
+
+function quotaUsedSummary(window: ProviderQuotaWindow): string {
+  if (window.status === "unlimited") return "Unlimited";
+  if (window.usedPercent === null) {
+    return window.status === "unavailable" ? "Not reported" : window.status;
+  }
+  return `${Math.round(window.usedPercent)}% used (${Math.round(
+    window.remainingPercent ?? 100 - window.usedPercent
+  )}% remaining)`;
+}
+
+function quotaWindowValue(
+  window: ProviderQuotaWindow,
+  nowMs: number
+): React.JSX.Element {
+  const resetRemaining = formatQuotaResetRemaining(window.resetsAt, nowMs);
+  const usedSummary = quotaUsedSummary(window);
+  const countSummary =
+    window.used != null && window.limit != null
+      ? `${window.used} / ${window.limit}${window.unit ? ` ${window.unit}` : ""}`
+      : null;
+  return React.createElement(
+    DetailValue,
+    {
+      key: window.id,
+      label: window.label
+    },
+    React.createElement(
+      "div",
+      {
+        className: "flex flex-col gap-1 tabular-nums",
+        "data-quota-window": window.id
+      },
+      React.createElement(
+        "span",
+        { className: "font-mono text-xs text-fg" },
+        [usedSummary, countSummary].filter(Boolean).join(" · ")
+      ),
+      window.usedPercent === null
+        ? null
+        : React.createElement(
+            "div",
+            {
+              className:
+                "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
+            },
+            React.createElement("div", {
+              className:
+                window.status === "exhausted"
+                  ? "h-full bg-danger"
+                  : window.status === "warning"
+                    ? "h-full bg-warning"
+                    : "h-full bg-accent",
+              style: {
+                width: `${Math.max(
+                  0,
+                  Math.min(100, Math.round(window.usedPercent))
+                )}%`
+              }
+            })
+          ),
+      window.resetsAt
+        ? React.createElement(
+            "span",
+            { className: MUTED_META_CLASS },
+            "Resets ",
+            resetRemaining ? `${resetRemaining} (` : "",
+            formatTimestamp(window.resetsAt),
+            resetRemaining ? ")" : ""
+          )
+        : null
+    )
+  );
+}
+
 export function ProviderQuotaLimitsPanel({
   provider,
   nowMs = Date.now()
@@ -719,78 +797,7 @@ export function ProviderQuotaLimitsPanel({
       ? React.createElement(
           DetailGrid,
           { columns: 2, className: "mb-4" },
-          ...quota.windows.map((window) => {
-            const resetRemaining = formatQuotaResetRemaining(
-              window.resetsAt,
-              nowMs
-            );
-            const usedSummary =
-              window.status === "unlimited"
-                ? "Unlimited"
-                : window.usedPercent === null
-                  ? window.status === "unavailable"
-                    ? "Not reported"
-                    : window.status
-                  : `${Math.round(window.usedPercent)}% used (${Math.round(
-                      window.remainingPercent ?? 100 - window.usedPercent
-                    )}% remaining)`;
-            const countSummary =
-              window.used != null && window.limit != null
-                ? `${window.used} / ${window.limit}${window.unit ? ` ${window.unit}` : ""}`
-                : null;
-            return React.createElement(
-              DetailValue,
-              {
-                key: window.id,
-                label: window.label
-              },
-              React.createElement(
-                "div",
-                {
-                  className: "flex flex-col gap-1 tabular-nums",
-                  "data-quota-window": window.id
-                },
-                React.createElement(
-                  "span",
-                  { className: "font-mono text-xs text-fg" },
-                  [usedSummary, countSummary].filter(Boolean).join(" · ")
-                ),
-                window.usedPercent === null
-                  ? null
-                  : React.createElement(
-                      "div",
-                      {
-                        className:
-                          "h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-raised"
-                      },
-                      React.createElement("div", {
-                        className:
-                          window.status === "exhausted"
-                            ? "h-full bg-danger"
-                            : window.status === "warning"
-                              ? "h-full bg-warning"
-                              : "h-full bg-accent",
-                        style: {
-                          width: `${Math.max(
-                            0,
-                            Math.min(100, Math.round(window.usedPercent))
-                          )}%`
-                        }
-                      })
-                    ),
-                window.resetsAt
-                  ? React.createElement(
-                      "span",
-                      { className: MUTED_META_CLASS },
-                      "Resets ",
-                      resetRemaining ? `${resetRemaining} (` : "",
-                      formatTimestamp(window.resetsAt),
-                      resetRemaining ? ")" : ""
-                    )
-                  : null
-              )
-            );
-          })
+          ...quota.windows.map((window) => quotaWindowValue(window, nowMs))
         )
       : null
   );

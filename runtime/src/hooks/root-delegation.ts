@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { codexHome, repositoryRoot } from "./command-utils.ts";
@@ -101,90 +102,117 @@ function shouldInjectOnce(input: HookInput, model: string): boolean {
     return true;
   }
 
-  // mkdir is the cross-process atomic claim. State holds only hashed turn keys
-  // and timestamps; no prompt content, model input, or credentials are stored.
-  const waitArray = new Int32Array(new SharedArrayBuffer(4));
-  const deadline = Date.now() + 5_000;
-  while (true) {
-    if (Date.now() >= deadline) return true;
-    try {
-      mkdirSync(lockDir);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return true;
-      let lockAge: number;
-      try {
-        lockAge = Date.now() - statSync(lockDir).mtimeMs;
-      } catch {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) return true;
-        Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
-        continue;
-      }
-      if (lockAge > LOCK_STALE_MS) {
-        try {
-          rmSync(lockDir, { recursive: true, force: true });
-        } catch {
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) return true;
-          Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
-        }
-        continue;
-      }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return true;
-      Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
-    }
-  }
-
+  if (!acquireStateLock(lockDir)) return true;
   try {
     const now = Date.now();
-    let entries: Record<string, number> = {};
-    try {
-      const stored: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
-      if (
-        stored !== null &&
-        typeof stored === "object" &&
-        !Array.isArray(stored)
-      ) {
-        entries = Object.fromEntries(
-          Object.entries(stored).filter(
-            (entry): entry is [string, number] =>
-              typeof entry[1] === "number" &&
-              Number.isFinite(entry[1]) &&
-              now - entry[1] < DEDUP_TTL_MS
-          )
-        );
-      }
-    } catch {
-      // Missing or corrupt state starts a fresh bounded window.
-    }
+    const entries = readDedupEntries(stateFile, now);
     const duplicate = Object.hasOwn(entries, key);
     if (!duplicate) entries[key] = now;
-    const boundedEntries = Object.fromEntries(
-      Object.entries(entries)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, DEDUP_MAX_ENTRIES)
-    );
-    const temporary = `${stateFile}.${process.pid}.tmp`;
-    try {
-      writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
-      renameSync(temporary, stateFile);
-      return !duplicate;
-    } catch {
-      try {
-        rmSync(temporary, { force: true });
-      } catch {
-        // State cleanup is best effort; always fail open and emit root policy.
-      }
-      return true;
-    }
+    return writeDedupEntries(stateFile, entries) ? !duplicate : true;
   } finally {
     try {
       rmSync(lockDir, { recursive: true, force: true });
     } catch {
       // A stale lock expires; never let state cleanup suppress root policy.
     }
+  }
+}
+
+/** Sleep up to 10ms, but never past the deadline. Returns false once it has passed. */
+function waitForLock(waitArray: Int32Array, deadline: number): boolean {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return false;
+  Atomics.wait(waitArray, 0, 0, Math.min(10, remaining));
+  return true;
+}
+
+/** Whether a lock directory is old enough that its holder must have died. */
+function lockIsStale(lockDir: string): boolean | null {
+  try {
+    return Date.now() - statSync(lockDir).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * mkdir is the cross-process atomic claim. State holds only hashed turn keys
+ * and timestamps; no prompt content, model input, or credentials are stored.
+ * Returns false when the lock could not be taken, and the caller fails open.
+ */
+function acquireStateLock(lockDir: string): boolean {
+  const waitArray = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(lockDir);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    }
+    const stale = lockIsStale(lockDir);
+    if (stale === true) {
+      try {
+        rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      } catch {
+        // Fall through and wait before retrying.
+      }
+    }
+    if (!waitForLock(waitArray, deadline)) return false;
+  }
+  return false;
+}
+
+function readDedupEntries(
+  stateFile: string,
+  now: number
+): Record<string, number> {
+  try {
+    const stored: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
+    if (
+      stored === null ||
+      typeof stored !== "object" ||
+      Array.isArray(stored)
+    ) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(stored).filter(
+        (entry): entry is [string, number] =>
+          typeof entry[1] === "number" &&
+          Number.isFinite(entry[1]) &&
+          now - entry[1] < DEDUP_TTL_MS
+      )
+    );
+  } catch {
+    // Missing or corrupt state starts a fresh bounded window.
+    return {};
+  }
+}
+
+/** Persist the newest entries; false when the state could not be written. */
+function writeDedupEntries(
+  stateFile: string,
+  entries: Record<string, number>
+): boolean {
+  const boundedEntries = Object.fromEntries(
+    Object.entries(entries)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, DEDUP_MAX_ENTRIES)
+  );
+  const temporary = `${stateFile}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
+    renameSync(temporary, stateFile);
+    return true;
+  } catch {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // State cleanup is best effort; always fail open and emit root policy.
+    }
+    return false;
   }
 }
 
@@ -231,22 +259,20 @@ function buildRecoveryContext(parentId: string | null): string {
   );
 }
 
-export async function runRootDelegation(
-  raw = readFileSync(0, "utf8")
-): Promise<number> {
+export function runRootDelegation(raw = readFileSync(0, "utf8")): number {
   const input = parseInput(raw);
   logInput(input);
   const model = typeof input.model === "string" ? input.model : "";
+  // Codex always reports the turn's model. Claude Code (CLI and desktop app)
+  // never does, and the delegation policy is a Codex root-orchestrator
+  // contract that does not apply to it, so a payload without a model is not a
+  // root turn.
+  if (!model) return 0;
   if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
   const root = repositoryRoot();
   const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
-  const skillFile = path.join(
-    root,
-    ".rulesync",
-    "skills",
-    "orchestration",
-    "SKILL.md"
-  );
+  const skillDirectory = installedSkillDirectory("orchestration");
+  const skillFile = path.join(skillDirectory, "SKILL.md");
   const codeSearchFile = path.join(root, "agents", "prompts", "code-search.md");
   if (!existsSync(promptFile)) {
     writeErrorLine(
@@ -266,7 +292,7 @@ export async function runRootDelegation(
     return 0;
   if (!shouldInjectOnce(input, model)) return 0;
   const skill = existsSync(skillFile)
-    ? `\n\n## Canonical orchestration skill\n\nRead and follow the installed \`orchestration\` skill before substantial work. It is the sole authority for delegation, child lifecycle, recovery, workspace boundaries, and validation. Source: ${skillFile}. The hook points to the skill instead of copying its full body.`
+    ? `\n\n## Canonical orchestration skill\n\nRead and follow the installed \`orchestration\` skill before substantial work. It is the sole authority for delegation, child lifecycle, recovery, workspace boundaries, and validation. Source: ${skillFile}; resolve its relative \`references/\` paths against ${skillDirectory}. The hook points to the skill instead of copying its full body.`
     : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;
   const codeSearch = existsSync(codeSearchFile)
     ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
@@ -286,5 +312,5 @@ export async function runRootDelegation(
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exitCode = await runRootDelegation();
+  process.exitCode = runRootDelegation();
 }

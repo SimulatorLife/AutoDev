@@ -66,6 +66,10 @@ const DEFAULT_CONFIG_SCHEMA = {
   }
 };
 
+/** The opencli providers, one per signed-in web chat. */
+const OPENCLI_CHATGPT = "opencli-chatgpt";
+const OPENCLI_GEMINI = "opencli-gemini";
+
 /** The Antigravity providers, one per agy subscription quota. */
 const ANTIGRAVITY_GEMINI = "antigravity-gemini";
 const ANTIGRAVITY_ARGON = "antigravity-argon";
@@ -127,7 +131,7 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
       isDefault: true
     },
     {
-      providerId: "opencli-chatgpt",
+      providerId: OPENCLI_CHATGPT,
       displayName: "ChatGPT (opencli)",
       description:
         "ChatGPT web chat driven through opencli and the signed-in browser",
@@ -136,7 +140,7 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
       isDefault: true
     },
     {
-      providerId: "opencli-gemini",
+      providerId: OPENCLI_GEMINI,
       displayName: "Gemini (opencli)",
       description:
         "Gemini web chat driven through opencli and the signed-in browser",
@@ -420,7 +424,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     // opencli web chat sites: the user's own signed-in subscription, which
     // reports no tokens and bills nothing per token.
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-fast",
       displayName: "ChatGPT Fast (opencli)",
       modelType: "chat",
@@ -433,7 +437,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-balanced",
       displayName: "ChatGPT Balanced (opencli)",
       modelType: "chat",
@@ -446,7 +450,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-advanced",
       displayName: "ChatGPT Advanced (opencli)",
       modelType: "chat",
@@ -459,7 +463,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-xhigh",
       displayName: "ChatGPT Very High (opencli)",
       modelType: "chat",
@@ -472,7 +476,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-pro",
       displayName: "ChatGPT Pro (opencli)",
       modelType: "chat",
@@ -485,7 +489,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-chatgpt",
+      provider: OPENCLI_CHATGPT,
       modelId: "opencli-chatgpt-gpt-5.6-pro",
       displayName: "ChatGPT GPT-5.6 Pro (opencli)",
       modelType: "chat",
@@ -498,7 +502,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-gemini",
+      provider: OPENCLI_GEMINI,
       modelId: "opencli-gemini-3.5-flash-lite",
       displayName: "Gemini 3.5 Flash Lite (opencli)",
       modelType: "chat",
@@ -511,7 +515,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-gemini",
+      provider: OPENCLI_GEMINI,
       modelId: "opencli-gemini-3.8-flash",
       displayName: "Gemini 3.8 Flash (opencli)",
       modelType: "chat",
@@ -524,7 +528,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-gemini",
+      provider: OPENCLI_GEMINI,
       modelId: "opencli-gemini-3.1-pro",
       displayName: "Gemini 3.1 Pro (opencli)",
       modelType: "chat",
@@ -537,7 +541,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-gemini",
+      provider: OPENCLI_GEMINI,
       modelId: "opencli-gemini-4-argon",
       displayName: "Gemini 4 Argon (opencli)",
       modelType: "chat",
@@ -550,7 +554,7 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       isDefault: false
     },
     {
-      provider: "opencli-gemini",
+      provider: OPENCLI_GEMINI,
       modelId: "opencli-gemini-4-carbon",
       displayName: "Gemini 4 Carbon (opencli)",
       modelType: "chat",

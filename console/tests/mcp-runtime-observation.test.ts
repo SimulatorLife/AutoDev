@@ -69,7 +69,10 @@ test("the Console still refuses an MCP runtime observation it cannot read", asyn
   for (const broken of [
     { ...RUNTIME_PUBLISHED, schema: "autodev-control-mcp-runtime-v0" },
     { ...RUNTIME_PUBLISHED, observedServers: "1" },
-    { ...RUNTIME_PUBLISHED, health: { ...RUNTIME_PUBLISHED.health, ready: "1" } },
+    {
+      ...RUNTIME_PUBLISHED,
+      health: { ...RUNTIME_PUBLISHED.health, ready: "1" }
+    },
     { ...RUNTIME_PUBLISHED, servers: {} },
     // A verdict outside the Runtime's vocabulary is not a readiness claim, so
     // it must not be rendered as one.

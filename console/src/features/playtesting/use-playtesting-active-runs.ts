@@ -177,8 +177,7 @@ export function usePlaytestingActiveRuns({
       // the poll that changed it, so the rendered state is still the
       // previous one at that moment. The merged runs are the answer the
       // poll itself produced, and they are current the moment they exist.
-      shouldContinue: () =>
-        !pausedRef.current && isWatching(runsRef.current),
+      shouldContinue: () => !pausedRef.current && isWatching(runsRef.current),
       delayFor: () => nextPollDelayMs(failures.current)
     });
     loop.start();

@@ -42,7 +42,9 @@ export function useUsageTelemetry(
   params: Readonly<Record<string, string>> = {}
 ): UsageTelemetryState {
   const url = usageApiUrl(scope, params);
-  const [state, setState] = useState<UsageTelemetryState>({ status: "pending" });
+  const [state, setState] = useState<UsageTelemetryState>({
+    status: "pending"
+  });
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -59,7 +61,9 @@ export function useUsageTelemetry(
         const payload = parseUsageApiPayload(await response.json());
         if (cancelled) return;
         setState(
-          payload === null ? { status: "unavailable" } : { status: "ready", payload }
+          payload === null
+            ? { status: "unavailable" }
+            : { status: "ready", payload }
         );
       } catch {
         // The read failed in transport, or the panel was unmounted before it

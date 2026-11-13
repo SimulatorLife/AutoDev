@@ -16,9 +16,9 @@ import {
   type OpencliProvider
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
-import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
 import { readClaudeOAuthToken } from "./claude-credential.ts";
+import { loadCodexAuth } from "./codex-auth.ts";
 
 /** The marker `boundedResponseText` puts in an oversized-body error. */
 const SIZE_BOUND_MESSAGE = "size bound";

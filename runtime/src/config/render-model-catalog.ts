@@ -63,7 +63,7 @@ export function autoCompactTokenLimit(contextWindow: number): number {
  * Codex keeps the head and tail of a truncated result, so the model still sees
  * where to narrow. Byte-truncated provider catalogs already sit below this.
  */
-export const TOOL_OUTPUT_TOKEN_LIMIT = 6_000;
+export const TOOL_OUTPUT_TOKEN_LIMIT = 6000;
 
 const STANDARD_REASONING_LEVELS = [
   { effort: "low", description: "Low reasoning" },

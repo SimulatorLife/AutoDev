@@ -147,8 +147,7 @@ export interface RouterEventRecorderOptions {
     | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   onEvent?:
-    | ((event: RouterEvent, input: RecordRouterEventInput) => void)
-    | undefined;
+    ((event: RouterEvent, input: RecordRouterEventInput) => void) | undefined;
 }
 
 export class RouterEventRecorder {
@@ -167,8 +166,7 @@ export class RouterEventRecorder {
     | ((role: string | null | undefined) => string | null | undefined)
     | undefined;
   private readonly onEventListener?:
-    | ((event: RouterEvent, input: RecordRouterEventInput) => void)
-    | undefined;
+    ((event: RouterEvent, input: RecordRouterEventInput) => void) | undefined;
 
   constructor(options: RouterEventRecorderOptions = {}) {
     const rawMax =

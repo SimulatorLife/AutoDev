@@ -399,7 +399,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1"/u
   );
   assert.match(usageSessionRoute, /runUsageQuery\(\(\) => adapter\.listSpans/u);
-  assert.match(usageSessionRoute, /key: "autodev\.session\.id"[\s\S]*?value: sessionId/u);
+  assert.match(
+    usageSessionRoute,
+    /key: "autodev\.session\.id"[\s\S]*?value: sessionId/u
+  );
   assert.match(usageSessionRoute, /limit: SESSION_SPAN_LIMIT/u);
   assert.match(usageSessionRoute, /SESSION_SPAN_LIMIT = 200/u);
   assert.doesNotMatch(
@@ -425,7 +428,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     );
   }
   const usageSessionTests = readFileSync(
-    join(dir, "src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts"),
+    join(
+      dir,
+      "src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts"
+    ),
     "utf8"
   );
   assert.match(usageSessionTests, /autodev-openlit-session-usage-v1/u);

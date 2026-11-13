@@ -98,8 +98,8 @@ import {
   type OpencliReply,
   type OpencliSiteSpec,
   opencliToolCallItem,
-  parseOpencliOutput,
   type ParsedReply,
+  parseOpencliOutput,
   parseOpencliReply,
   prefixDigests,
   renderOpencliContinuation,
@@ -108,8 +108,8 @@ import {
   type TranscriptEntry,
   transcriptSegments,
   UPLOADS_EXHAUSTED,
-  withoutHookBootstrap,
-  uploadsRefused
+  uploadsRefused,
+  withoutHookBootstrap
 } from "./opencli-turn.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -1192,7 +1192,7 @@ const MIN_RETRY_BUDGET_MS = 10_000;
 /** The command with its `--timeout` set to what is left of the turn. */
 function withTimeout(args: readonly string[], deadline: number): string[] {
   const index = args.indexOf(TIMEOUT_FLAG);
-  if (index < 0 || index + 1 >= args.length) return [...args];
+  if (index === -1 || index + 1 >= args.length) return [...args];
   const timed = [...args];
   timed[index + 1] = String(remainingSeconds(deadline));
   return timed;
@@ -1416,15 +1416,17 @@ export function createOpencliBridge(
     // compacted to fit -- is work every continued turn of a long session paid
     // for a prompt it then never sent.
     let rendered: string | null = null;
-    const fullPrompt = () =>
-      (rendered ??= firstPromptForSite(
+    const fullPrompt = (): string => {
+      rendered ??= firstPromptForSite(
         site,
         spec,
         tools,
         segments,
         instructions,
         role
-      ));
+      );
+      return rendered;
+    };
     const fits = (text: string) =>
       spec.attachesPrompt || Buffer.byteLength(text) <= MAX_ARGV_PROMPT_BYTES;
     const continuation = recorded
@@ -1536,7 +1538,7 @@ export function createOpencliBridge(
           args: timed,
           signal: AbortSignal.any([signal, hardLimit])
         });
-      } catch (caught) {
+      } catch (error_) {
         const error =
           hardLimit.aborted && !signal.aborted
             ? new OpencliCommandError(
@@ -1544,7 +1546,7 @@ export function createOpencliBridge(
                 "TIMEOUT",
                 null
               )
-            : caught;
+            : error_;
         if (!(error instanceof OpencliCommandError)) throw error;
         if (STALE_DAEMON.test(error.message) && !daemonStopped) {
           daemonStopped = true;

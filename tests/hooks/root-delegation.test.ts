@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -24,8 +25,22 @@ const hookModule = fileURLToPath(
   new URL("../../runtime/src/hooks/root-delegation.ts", import.meta.url)
 );
 
+/**
+ * Install the checkout's orchestration skill the way the installer does: a
+ * link from the user's skills directory to the canonical skill directory.
+ */
+function installOrchestrationSkill(home: string): void {
+  const skills = join(home, ".agents", "skills");
+  if (existsSync(join(skills, "orchestration"))) return;
+  mkdirSync(skills, { recursive: true });
+  symlinkSync(
+    join(repositoryRoot, ".rulesync", "skills", "orchestration"),
+    join(skills, "orchestration")
+  );
+}
+
 function runHook(
-  model: string,
+  model: string | undefined,
   sessionId?: string,
   turnId?: string,
   sharedHome?: string,
@@ -40,9 +55,7 @@ function runHook(
   const promptRoot = join(hooksRoot, "codex", "prompts");
   try {
     mkdirSync(promptRoot, { recursive: true });
-    mkdirSync(join(codexHome, ".rulesync", "skills", "orchestration"), {
-      recursive: true
-    });
+    installOrchestrationSkill(home);
     writeFileSync(
       join(promptRoot, "orchestrator.md"),
       "# Root orchestrator bootstrap\n"
@@ -50,10 +63,6 @@ function runHook(
     writeFileSync(
       join(promptRoot, "code-search.md"),
       "## Shared codebase navigation\n"
-    );
-    writeFileSync(
-      join(codexHome, ".rulesync", "skills", "orchestration", "SKILL.md"),
-      "## Canonical orchestration skill\n"
     );
     const input = JSON.stringify({
       model,
@@ -214,9 +223,7 @@ test("root delegation atomically suppresses concurrent duplicate submissions", a
   const codexHome = join(home, ".codex");
   const prompts = join(codexHome, "hooks", "codex", "prompts");
   mkdirSync(prompts, { recursive: true });
-  mkdirSync(join(codexHome, ".rulesync", "skills", "orchestration"), {
-    recursive: true
-  });
+  installOrchestrationSkill(home);
   writeFileSync(
     join(prompts, "orchestrator.md"),
     "# Root orchestrator bootstrap\n"
@@ -224,10 +231,6 @@ test("root delegation atomically suppresses concurrent duplicate submissions", a
   writeFileSync(
     join(prompts, "code-search.md"),
     "## Shared codebase navigation\n"
-  );
-  writeFileSync(
-    join(codexHome, ".rulesync", "skills", "orchestration", "SKILL.md"),
-    "## Canonical orchestration skill\n"
   );
   const input = JSON.stringify({
     model: "autodev/orchestrator",
@@ -373,7 +376,7 @@ test("root delegation bounds retries when the lock cannot be inspected", () => {
         "session-with-uninspectable-lock",
         "turn-with-uninspectable-lock",
         home,
-        8_000
+        8000
       ),
       /Root orchestrator bootstrap/
     );
@@ -390,14 +393,14 @@ test("root delegation injects the typed policy and canonical sources for a paren
   assert.match(context, /# Root orchestrator bootstrap/);
   assert.match(context, /## Canonical orchestration skill/);
   assert.match(context, /Read and follow the installed `orchestration` skill/);
-  assert.match(context, /\.rulesync\/skills\/orchestration\/SKILL\.md/);
+  assert.match(context, /\.agents\/skills\/orchestration\/SKILL\.md/);
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
   // Every wake is a full model turn, so the root waits long, not in a loop.
   assert.match(context, /`timeout_ms` of at least 300000/);
   assert.match(context, /parent-test-1/);
   assert.ok(
-    context.length < 9_500,
+    context.length < 9500,
     `root hook context is ${context.length} chars`
   );
 });
@@ -414,7 +417,7 @@ test("root delegation injects the typed policy for autodev/orchestrator alias", 
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /orchestrator-test-1/);
   assert.ok(
-    context.length < 9_500,
+    context.length < 9500,
     `root hook context is ${context.length} chars`
   );
 });
@@ -430,6 +433,12 @@ test("the root role enables the canonical skill referenced by the compact hook",
   );
   assert.match(role, /name = "orchestration"\s*\nenabled = true/);
   assert.match(skill, /source of truth for orchestration policy/);
+});
+
+test("root delegation does not apply to hosts that report no model", () => {
+  // Claude Code (CLI and desktop app) UserPromptSubmit payloads carry no model.
+  assert.equal(runHook(undefined, "claude-session"), "");
+  assert.equal(runHook("", "claude-session"), "");
 });
 
 test("root delegation suppresses policy for leaf models", () => {
@@ -448,9 +457,7 @@ test("root delegation logs hook input without putting it in the injected policy"
   const promptRoot = join(hooksRoot, "codex", "prompts");
   try {
     mkdirSync(promptRoot, { recursive: true });
-    mkdirSync(join(codexHome, ".rulesync", "skills", "orchestration"), {
-      recursive: true
-    });
+    installOrchestrationSkill(home);
     writeFileSync(
       join(promptRoot, "orchestrator.md"),
       "# Root orchestrator bootstrap\n"
@@ -458,10 +465,6 @@ test("root delegation logs hook input without putting it in the injected policy"
     writeFileSync(
       join(promptRoot, "code-search.md"),
       "## Shared codebase navigation\n"
-    );
-    writeFileSync(
-      join(codexHome, ".rulesync", "skills", "orchestration", "SKILL.md"),
-      "## Canonical orchestration skill\n"
     );
     execFileSync(process.execPath, [hookModule], {
       cwd: repositoryRoot,
@@ -504,7 +507,67 @@ test("root delegation keeps recovery context compact and owner-scoped", () => {
   assert.doesNotMatch(context, /```js/);
   assert.doesNotMatch(context, /const recoveryObjects/);
   assert.ok(
-    context.length < 9_500,
+    context.length < 9500,
     `root hook context is ${context.length} chars`
   );
+});
+
+test("root delegation points at the installed skill directory, where its references resolve", () => {
+  // Observed 2026-11-12 (session 01a1d2be): the hook named a lone SKILL.md
+  // copied into the runtime tree without its references/, so the root refused
+  // the task as a capability failure.
+  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-skill-"));
+  try {
+    const context =
+      (
+        JSON.parse(
+          runHook("autodev/orchestrator", "skill-dir-test", "t1", home)
+        ) as HookOutput
+      ).hookSpecificOutput?.additionalContext ?? "";
+    const directory = join(home, ".agents", "skills", "orchestration");
+    assert.ok(context.includes(`Source: ${join(directory, "SKILL.md")}`));
+    assert.ok(context.includes(`paths against ${directory}`));
+    const skill = readFileSync(join(directory, "SKILL.md"), "utf8");
+    const references = Array.from(skill.matchAll(/`(references\/[^`]+\.md)`/g), (match) => match[1]!);
+    assert.ok(references.length > 0, "the skill names its references");
+    for (const reference of references)
+      assert.ok(
+        existsSync(join(directory, reference)),
+        `${reference} resolves against the installed skill directory`
+      );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("root delegation reports a missing installed skill instead of naming a path", () => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-root-delegation-noskill-"));
+  const prompts = join(home, ".codex", "hooks", "codex", "prompts");
+  try {
+    mkdirSync(prompts, { recursive: true });
+    const context =
+      (
+        JSON.parse(
+          execFileSync(process.execPath, [hookModule], {
+            cwd: repositoryRoot,
+            env: {
+              ...process.env,
+              HOME: home,
+              CODEX_HOME: join(home, ".codex"),
+              AUTODEV_REPO_ROOT: repositoryRoot
+            },
+            input: JSON.stringify({
+              model: "autodev/orchestrator",
+              session_id: "no-skill",
+              turn_id: "t1"
+            }),
+            encoding: "utf8"
+          })
+        ) as HookOutput
+      ).hookSpecificOutput?.additionalContext ?? "";
+    assert.match(context, /Canonical orchestration skill is unavailable at/);
+    assert.doesNotMatch(context, /Read and follow the installed/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
