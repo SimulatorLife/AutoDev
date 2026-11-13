@@ -2568,7 +2568,8 @@ function isMcpAppliedServer(value: unknown): boolean {
     (value.url === null || typeof value.url === "string") &&
     (value.bearerTokenEnvVar === null ||
       typeof value.bearerTokenEnvVar === "string") &&
-    isStringRecord(value.httpHeaders)
+    Array.isArray(value.httpHeaderNames) &&
+    value.httpHeaderNames.every((name) => typeof name === "string")
   );
 }
 
@@ -2577,7 +2578,7 @@ function isControlApiMcpAppliedResponse(
 ): value is ControlApiMcpAppliedResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-mcp-applied-v2" &&
+    value.schema === "autodev-control-mcp-applied-v3" &&
     typeof value.source === "string" &&
     value.declarationSource === ".rulesync/mcp.jsonc" &&
     typeof value.target === "string" &&
@@ -2998,7 +2999,7 @@ export async function fetchMcpApplied(
   if (result.kind !== "ok") return result;
   return isControlApiMcpAppliedResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidResponse("McpApplied", "autodev-control-mcp-applied-v2");
+    : invalidResponse("McpApplied", "autodev-control-mcp-applied-v3");
 }
 
 export async function fetchTools(
@@ -3054,23 +3055,6 @@ function isConvergenceStatus(value: unknown): value is ConvergenceStatus {
 function isStringList(value: unknown): value is readonly string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
-  );
-}
-
-/**
- * Narrows a record whose every value is a string.
- *
- * The applied MCP catalogue's HTTP headers are the one free-form map the
- * contract carries, so they are checked rather than trusted: a header value
- * that is not a string would render as a configuration the Runtime never
- * published.
- */
-function isStringRecord(
-  value: unknown
-): value is Readonly<Record<string, string>> {
-  return (
-    isRecord(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
   );
 }
 

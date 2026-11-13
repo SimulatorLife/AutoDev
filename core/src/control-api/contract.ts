@@ -120,11 +120,14 @@
  * and `PATCH /control/providers/{provider}/browser` switches them between the
  * operator's own Chrome (Browser Bridge extension, the default) and a
  * dedicated Chrome for Testing.
+ * v33: the MCP applied read (v3) and MCP write response (v2) publish HTTP
+ * header names only (httpHeaderNames); header values are credentials and
+ * never leave the Runtime.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 32
+  version: 33
 } as const;
 
 export type ControlApiContractResponse = {

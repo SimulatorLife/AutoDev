@@ -5637,7 +5637,7 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
     roles: ["docs-researcher"]
   };
   const applied: ControlApiMcpAppliedResponse = {
-    schema: "autodev-control-mcp-applied-v2",
+    schema: "autodev-control-mcp-applied-v3",
     source: "/codex/provider-runtime/mcp-servers.json",
     declarationSource: ".rulesync/mcp.jsonc",
     target: "codexcli",
@@ -5650,7 +5650,7 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
         cwd: null,
         url: "https://mcp.context7.com/mcp",
         bearerTokenEnvVar: "CONTEXT7_API_KEY",
-        httpHeaders: {}
+        httpHeaderNames: []
       }
     ],
     servers: [
@@ -5661,7 +5661,7 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
         cwd: null,
         url: "https://mcp.context7.com/mcp",
         bearerTokenEnvVar: "CONTEXT7_API_KEY",
-        httpHeaders: {}
+        httpHeaderNames: []
       }
     ],
     reconciliation: {
@@ -5744,7 +5744,7 @@ test("McpDetailView offers the canonical MCP declaration as the edit surface", (
     roles: ["docs-researcher"]
   };
   const applied: ControlApiMcpAppliedResponse = {
-    schema: "autodev-control-mcp-applied-v2",
+    schema: "autodev-control-mcp-applied-v3",
     source: "/codex/provider-runtime/mcp-servers.json",
     declarationSource: ".rulesync/mcp.jsonc",
     target: "codexcli",
@@ -5757,7 +5757,7 @@ test("McpDetailView offers the canonical MCP declaration as the edit surface", (
         cwd: null,
         url: "https://mcp.context7.com/mcp",
         bearerTokenEnvVar: "CONTEXT7_API_KEY",
-        httpHeaders: {}
+        httpHeaderNames: []
       }
     ],
     servers: [],
@@ -15013,7 +15013,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // reconciliation are what the page compares the declaration against, so a
   // payload the Console cannot read must not reach the page.
   const mcpApplied = {
-    schema: "autodev-control-mcp-applied-v2",
+    schema: "autodev-control-mcp-applied-v3",
     source: "/codex/provider-runtime/mcp-servers.json",
     declarationSource: ".rulesync/mcp.jsonc",
     target: "codexcli",
@@ -15026,7 +15026,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
         cwd: null,
         url: "https://mcp.context7.com/mcp",
         bearerTokenEnvVar: "CONTEXT7_API_KEY",
-        httpHeaders: {}
+        httpHeaderNames: []
       }
     ],
     servers: [
@@ -15037,7 +15037,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
         cwd: null,
         url: null,
         bearerTokenEnvVar: null,
-        httpHeaders: {}
+        httpHeaderNames: []
       }
     ],
     reconciliation: {
@@ -15072,7 +15072,18 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     },
     {
       ...mcpApplied,
-      servers: [{ ...mcpApplied.servers[0], httpHeaders: { a: 7 } }]
+      servers: [{ ...mcpApplied.servers[0], httpHeaderNames: [7] }]
+    },
+    // The retired shape that carried header values is refused outright.
+    {
+      ...mcpApplied,
+      servers: [
+        {
+          ...mcpApplied.servers[0],
+          httpHeaderNames: undefined,
+          httpHeaders: { Authorization: "x" }
+        }
+      ]
     }
   ]) {
     assert.equal(
@@ -17083,7 +17094,11 @@ test("Providers mutation routes export only POST", () => {
 });
 
 test("provider browser Console route forwards the Dedicated browser toggle to Runtime", async () => {
-  const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+  const requests: Array<{
+    url: string;
+    method: string | undefined;
+    body: unknown;
+  }> = [];
   await withControlRouteEnvironment(
     "provider-browser-route-token",
     async (input, init) => {
@@ -24046,7 +24061,7 @@ test("the MCP declaration route writes the server's launch configuration through
       body: String(init?.body ?? "")
     });
     return Response.json({
-      schema: "autodev-control-mcp-server-patch-v1",
+      schema: "autodev-control-mcp-server-patch-v2",
       name: "openaiDeveloperDocs",
       target: "codexcli",
       revision: "b".repeat(64),
@@ -24058,7 +24073,7 @@ test("the MCP declaration route writes the server's launch configuration through
         cwd: null,
         url: "https://developers.openai.com/edited-mcp",
         bearerTokenEnvVar: null,
-        httpHeaders: {}
+        httpHeaderNames: []
       },
       reconciliation: {
         status: {

@@ -140,7 +140,7 @@ async function readApplied(options: {
 test("the applied MCP read converges when the applied catalogue matches the declaration", async () => {
   const options = fixture(APPLIED);
   const body = await readApplied(options);
-  assert.equal(body.schema, "autodev-control-mcp-applied-v2");
+  assert.equal(body.schema, "autodev-control-mcp-applied-v3");
   assert.equal(body.declarationSource, ".rulesync/mcp.jsonc");
   assert.equal(body.target, "codexcli");
   assert.equal(body.available, true);
@@ -238,4 +238,56 @@ test("the applied MCP read is refused without the operator credential", async ()
     options
   );
   assert.notEqual(response.statusCode, 200);
+});
+
+test("the applied MCP read publishes header names, never values, and still reconciles on values", async () => {
+  const read = async (declared: string, applied: string) => {
+    const options = fixture({
+      ...APPLIED,
+      docs: { ...APPLIED.docs, http_headers: { Authorization: applied } }
+    });
+    writeFileSync(
+      path.join(options.repositoryRoot, ".rulesync", "mcp.jsonc"),
+      DECLARATION.replaceAll(
+        '"bearer_token_env_var": "DOCS_TOKEN"',
+        `"bearer_token_env_var": "DOCS_TOKEN", "http_headers": { "Authorization": "${declared}" }`
+      ),
+      "utf8"
+    );
+    return readApplied(options);
+  };
+  const headerNames = (body: Record<string, unknown>) =>
+    [...(body.declaredServers as []), ...(body.servers as [])]
+      .filter((server: { name: string }) => server.name === "docs")
+      .map((server: { httpHeaderNames: string[] }) => server.httpHeaderNames);
+
+  const converged = await read(
+    "Bearer FIXTURE_SECRET",
+    "Bearer FIXTURE_SECRET"
+  );
+  assert.deepEqual(headerNames(converged), [
+    ["Authorization"],
+    ["Authorization"]
+  ]);
+  assert.equal(JSON.stringify(converged).includes("FIXTURE_SECRET"), false);
+  assert.equal(
+    (converged.reconciliation as { status: { convergence: string } }).status
+      .convergence,
+    "converged"
+  );
+
+  // A value-only change is pending, and the payload still holds no value.
+  const drifted = await read("Bearer FIXTURE_SECRET", "Bearer ROTATED_SECRET");
+  const status = (
+    drifted.reconciliation as {
+      status: {
+        convergence: string;
+        desiredGeneration: string;
+        observedGeneration: string;
+      };
+    }
+  ).status;
+  assert.equal(status.convergence, "pending");
+  assert.notEqual(status.desiredGeneration, status.observedGeneration);
+  assert.equal(JSON.stringify(drifted).includes("SECRET"), false);
 });

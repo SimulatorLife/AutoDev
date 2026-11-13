@@ -61,7 +61,7 @@ function request(method: string, url: string, body?: unknown): IncomingMessage {
  * the Codex home, so the fixture carries the repository's own configuration
  * and roles: they are what the projection is rendered against.
  */
-function fixture(): {
+function fixture(declaration: string = DECLARATION): {
   readonly repositoryRoot: string;
   readonly codexHome: string;
 } {
@@ -71,7 +71,7 @@ function fixture(): {
   mkdirSync(path.join(repositoryRoot, ".rulesync"), { recursive: true });
   writeFileSync(
     path.join(repositoryRoot, ".rulesync", "mcp.jsonc"),
-    DECLARATION,
+    declaration,
     "utf8"
   );
   cpSync(
@@ -154,7 +154,7 @@ test("a canonical MCP write changes the declaration and the applied configuratio
     launch: { command: "node", args: ["server.js"] }
   });
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-control-mcp-server-patch-v1");
+  assert.equal(result.body?.schema, "autodev-control-mcp-server-patch-v2");
   assert.equal(result.body?.name, "lsp");
   assert.equal(result.body?.target, "codexcli");
   assert.equal(result.body?.changed, true);
@@ -282,4 +282,44 @@ test("the MCP declaration a write targets is the one the runtime applies", async
   ) as Record<string, { url?: string }>;
   assert.equal(catalogue.openaiDeveloperDocs?.url, "https://other.test/mcp");
   assert.ok(existsSync(path.join(options.codexHome, "config.toml")));
+});
+
+const HEADER_SECRET = "Bearer FIXTURE_SECRET";
+
+test("a canonical MCP write preserves header values and publishes only header names", async () => {
+  // A server no role uses, so the role renderer is not asked to carry the
+  // header value this test is about.
+  const probe = (indent: string): string =>
+    [
+      '"headerProbe": {',
+      '  "url": "https://probe.example.test/mcp",',
+      '  "headers": { "Authorization": "' + HEADER_SECRET + '" }',
+      "},"
+    ]
+      .map((line) => indent + line)
+      .join("\n");
+  const declaration = DECLARATION.replace(
+    /("mcpServers": \{\n)/gu,
+    (opening: string) => opening + probe("    ") + "\n"
+  );
+  const options = fixture(declaration);
+  const catalog = await call("GET", "/control/mcps", options);
+  const result = await call("PATCH", "/control/mcps/headerProbe", options, {
+    expectedRevision: String(catalog.body?.revision),
+    launch: { url: "https://probe.example.test/changed" }
+  });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(
+    (result.body?.launch as { httpHeaderNames: string[] }).httpHeaderNames,
+    ["Authorization"]
+  );
+  assert.equal(JSON.stringify(result.body).includes("FIXTURE_SECRET"), false);
+
+  // The canonical source keeps the raw value.
+  const written = readFileSync(
+    path.join(options.repositoryRoot, ".rulesync", "mcp.jsonc"),
+    "utf8"
+  );
+  assert.ok(written.includes(HEADER_SECRET));
+  assert.match(written, /changed/u);
 });

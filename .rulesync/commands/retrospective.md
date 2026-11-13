@@ -1,23 +1,11 @@
 ---
 targets: ["*"]
 description: Review completed agent work for verified, reusable lessons and propose safely scoped improvements.
-# Design references (source metadata; not part of the rendered command):
-# https://github.com/NousResearch/hermes-agent/blob/main/agent/background_review.py
-# https://github.com/Orkas-AI/Orkas/blob/main/src/core-agent/src/evolution/metacognition.ts
-# https://github.com/affaan-m/ECC/blob/main/skills/continuous-learning-v2/agents/observer-loop.sh
-# https://github.com/BayramAnnakov/claude-reflect/blob/main/commands/reflect.md
-# https://github.com/pskoett/self-improving-agent/blob/master/self-improving-agent/SKILL.md
-# https://github.com/Kulaxyz/self-learning-skills/blob/main/skills/self-learning/SKILL.md
-# https://github.com/EfficientStreet/hindsight/blob/main/SKILL.md
-# Reflexio: historical/inactive aggregation template, referenced for its playbook shape:
-# https://github.com/ReflexioAI/reflexio/blob/main/reflexio/server/prompt/prompt_bank/playbook_aggregation/v2.1.0.prompt.md
-# https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md
-# https://github.com/gepa-ai/gepa/blob/main/docs/docs/guides/faq.md
 ---
 
 # Self-Improvement Review
 
-- **Scope:** Last completed task/turn, including corrections and outcome; expand to a session or supplied history only on request.
+- **Scope:** Last completed task/turn/session, including corrections, outcome and captured telemetry; expand to more sessions or supplied history only on request.
 - **Limits:** Retrieve task-relevant prior evidence only, stopping when sufficient. Do not scan all history, reopen tasks, or run agent rollouts during reflection.
 
 ## Inspect
@@ -42,11 +30,11 @@ Separate **proved** from **suggested** lessons using these gates:
 
 A verified exceptional procedure may be promoted with explicit scoped approval; otherwise keep it uncertain. A verified setup fix/retry may be a narrow troubleshooting candidate, not a permanent tool prohibition.
 
-Use the existing memory candidate schema (AutoDev: `docs/memory-target-state.md` §6). For review-specific guidance, keep **trigger** and **action/claim** separate, with optional **reason**, distinct task/occurrence references, a testable success criterion, and proposed disposition. Generalize only within verified scope.
+For review-specific guidance, keep **trigger** and **action/claim** separate, with optional **reason**, distinct task/occurrence references, a testable success criterion, and proposed disposition. Generalize only within verified scope.
 
 ## Route and authorize
 
-- **Deduplicate:** Compare existing memories, skills, RuleSync instructions, and tool docs. Skip equivalent guidance; propose in-place correction/supersession for contradicted or overly broad claims. Reconcile against canonical current state (AutoDev: `docs/memory-target-state.md` §§1, 4).
+- **Deduplicate:** Compare existing memories, skills, RuleSync instructions, and tool docs. Skip equivalent guidance; propose in-place correction/supersession for contradicted or overly broad claims. Reconcile against canonical current state and avoid creating new skills or rules unless authorized.
 - **Scope:** Default to the narrowest useful task/role/repository/user scope.
 
 | Observation | Destination |
@@ -56,8 +44,7 @@ Use the existing memory candidate schema (AutoDev: `docs/memory-target-state.md`
 | Environment fact or demonstrated capability | Appropriately scoped semantic memory |
 | Reusable verified method | Procedural memory; eligible skill/rule/test/doc when promoted |
 
-- **Skills:** Prefer updating the canonical existing skill. Create a class-level skill only if none covers a qualified procedure. Document ordered steps, working commands, decisions, checks, and step-local pitfalls—not an incident diary.
-- **Lifecycle:** Follow the workspace's canonical memory lifecycle (AutoDev: `docs/memory-target-state.md` §§6, 8); revalidate or supersede without erasing history. Keep unverified watch-items in an existing authorized uncertain store, or report them.
+- **Skills:** Prefer updating the canonical existing skill. Create a new skill only if none covers a qualified procedure, or if an existing skill needs to be split into multiple skills. Document ordered steps, working commands, decisions, checks, and step-local pitfalls—not an incident diary.
 - **Authorization:** Propose by default. Persist only when the target and action are explicitly authorized and required curator/elevated approvals exist, including for shared/global, cross-project, always-loaded, or security-sensitive changes. Otherwise report the proposal. Never alter the reviewed task's artifacts.
 
 ## Validate and report

@@ -914,7 +914,7 @@ interface McpLaunchServer {
   readonly cwd: string | null;
   readonly url: string | null;
   readonly bearerTokenEnvVar: string | null;
-  readonly httpHeaders: Readonly<Record<string, string>>;
+  readonly httpHeaderNames: readonly string[];
 }
 
 interface McpDeclarationState {
@@ -940,7 +940,7 @@ const MCP_DECLARED_DOCS: McpLaunchServer = {
   cwd: null,
   url: "https://docs.example.test/mcp",
   bearerTokenEnvVar: null,
-  httpHeaders: {}
+  httpHeaderNames: []
 };
 
 /**
@@ -1311,7 +1311,7 @@ async function applyMcpDeclarationWrite(
       launch.bearerTokenEnvVar,
       current.bearerTokenEnvVar
     ),
-    httpHeaders: current.httpHeaders
+    httpHeaderNames: current.httpHeaderNames
   };
   const declaredServers = mcpDeclaration.declaredServers.map((entry) =>
     entry.name === server ? written : entry
@@ -1329,7 +1329,7 @@ async function applyMcpDeclarationWrite(
     converged: true
   };
   sendJson(response, {
-    schema: "autodev-control-mcp-server-patch-v1",
+    schema: "autodev-control-mcp-server-patch-v2",
     name: server,
     target: "codexcli",
     revision,
@@ -5513,7 +5513,7 @@ function handleCatalogResourceRead(
     // other two are not, so the page can tell an applied server from one that
     // was never applied -- and the verdict is the Runtime's own.
     sendJson(response, {
-      schema: "autodev-control-mcp-applied-v2",
+      schema: "autodev-control-mcp-applied-v3",
       source: "/codex/provider-runtime/mcp-servers.json",
       declarationSource: ".rulesync/mcp.jsonc",
       target: "codexcli",

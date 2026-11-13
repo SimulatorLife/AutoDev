@@ -877,7 +877,11 @@ export interface ControlApiMcpAppliedServer {
   readonly cwd: string | null;
   readonly url: string | null;
   readonly bearerTokenEnvVar: string | null;
-  readonly httpHeaders: Readonly<Record<string, string>>;
+  /**
+   * The names of the HTTP headers the server is launched with, sorted. The
+   * values are credentials and never leave the Runtime.
+   */
+  readonly httpHeaderNames: readonly string[];
 }
 
 /**
@@ -895,7 +899,11 @@ export interface ControlApiMcpDeclaredServer {
   readonly cwd: string | null;
   readonly url: string | null;
   readonly bearerTokenEnvVar: string | null;
-  readonly httpHeaders: Readonly<Record<string, string>>;
+  /**
+   * The names of the HTTP headers the server is launched with, sorted. The
+   * values are credentials and never leave the Runtime.
+   */
+  readonly httpHeaderNames: readonly string[];
 }
 
 /**
@@ -908,7 +916,7 @@ export interface ControlApiMcpDeclaredServer {
  * is the Runtime's, and the Console renders it.
  */
 export interface ControlApiMcpAppliedResponse {
-  readonly schema: "autodev-control-mcp-applied-v2";
+  readonly schema: "autodev-control-mcp-applied-v3";
   /** Where the applied configuration was read from. */
   readonly source: string;
   /** The canonical declaration the applied configuration is compared against. */
@@ -945,7 +953,7 @@ export interface ControlApiMcpAppliedResponse {
  * the projection was applied.
  */
 export interface ControlApiMcpServerPatchResponse {
-  readonly schema: "autodev-control-mcp-server-patch-v1";
+  readonly schema: "autodev-control-mcp-server-patch-v2";
   /** The server whose launch configuration was written. */
   readonly name: string;
   /** The target whose declaration was written. */

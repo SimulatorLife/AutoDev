@@ -1504,8 +1504,8 @@ function mcpAppliedState(
   codexHome: string | undefined = defaultCodexHomeForReconciliation()
 ): {
   readonly available: boolean;
-  readonly declaredServers: readonly ControlApiMcpDeclaredServer[];
-  readonly servers: readonly ControlApiMcpAppliedServer[];
+  readonly declaredServers: readonly McpLaunchEntry[];
+  readonly servers: readonly McpLaunchEntry[];
   readonly desiredGeneration: string | null;
   readonly observedGeneration: string | null;
   readonly reconciliation: ReconciliationView;
@@ -1514,8 +1514,8 @@ function mcpAppliedState(
     MCP_APPLIED_TARGET
   );
   const applied = readAppliedMcpCatalogue(codexHome);
-  const declaredServers: ControlApiMcpDeclaredServer[] =
-    declaration.servers.map((server) => ({
+  const declaredServers: McpLaunchEntry[] = declaration.servers.map(
+    (server) => ({
       name: server.name,
       command: server.command ?? null,
       args: server.args ?? [],
@@ -1523,7 +1523,8 @@ function mcpAppliedState(
       url: server.url ?? null,
       bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
       httpHeaders: server.httpHeaders ?? {}
-    }));
+    })
+  );
   const desiredGeneration =
     declaration.valid === true && declaredServers.length > 0
       ? mcpLaunchGeneration(declaredServers)
@@ -1555,19 +1556,30 @@ function mcpAppliedState(
   };
 }
 
+/**
+ * The public shape of one launch configuration: the header names, never the
+ * values, which are credentials the browser must not see.
+ */
+function publicMcpLaunch(
+  entry: McpLaunchEntry
+): ControlApiMcpDeclaredServer & ControlApiMcpAppliedServer {
+  const { httpHeaders, ...launch } = entry;
+  return { ...launch, httpHeaderNames: Object.keys(httpHeaders).sort() };
+}
+
 function mcpAppliedView(
   repositoryRoot: string = DEFAULT_REPO_ROOT,
   codexHome: string | undefined = defaultCodexHomeForReconciliation()
 ): Record<string, unknown> {
   const state = mcpAppliedState(repositoryRoot, codexHome);
   return {
-    schema: "autodev-control-mcp-applied-v2",
+    schema: "autodev-control-mcp-applied-v3",
     source: path.join(codexHome, "provider-runtime", "mcp-servers.json"),
     declarationSource: ".rulesync/mcp.jsonc",
     target: MCP_APPLIED_TARGET,
     available: state.available,
-    declaredServers: state.declaredServers,
-    servers: state.servers,
+    declaredServers: state.declaredServers.map(publicMcpLaunch),
+    servers: state.servers.map(publicMcpLaunch),
     reconciliation: state.reconciliation
   };
 }
@@ -7017,12 +7029,12 @@ async function patchMcpServer(
     response,
     200,
     {
-      schema: "autodev-control-mcp-server-patch-v1",
+      schema: "autodev-control-mcp-server-patch-v2",
       name,
       target: MCP_APPLIED_TARGET,
       revision: updated.revision,
       changed: updated.revision !== body.expectedRevision,
-      launch: {
+      launch: publicMcpLaunch({
         name,
         command: updated.launch.command ?? null,
         args: updated.launch.args ?? [],
@@ -7030,7 +7042,7 @@ async function patchMcpServer(
         url: updated.launch.url ?? null,
         bearerTokenEnvVar: updated.launch.bearerTokenEnvVar ?? null,
         httpHeaders: updated.launch.httpHeaders ?? {}
-      },
+      }),
       reconciliation
     } satisfies ControlApiMcpServerPatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }

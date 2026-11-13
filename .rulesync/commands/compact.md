@@ -1,11 +1,6 @@
 ---
 targets: ["*"]
 description: Generate a handoff summary for manual or runtime context compaction.
-# Design references (source metadata; not part of the rendered command):
-# https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/compact/prompt.md
-# https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/compaction.ts
-# https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/prompts/snippets.ts
-# https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/compaction/compaction-basic/README.md
 ---
 
 # Context Compaction
