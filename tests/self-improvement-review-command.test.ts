@@ -69,9 +69,10 @@ test("RuleSync parser accepts the command and hides source metadata", () => {
   assert.match(command.description ?? "", /Review completed agent work/u);
   assert.ok(command.prompt.length > 0);
   const metadata = source.slice(0, source.indexOf("\n---\n"));
-  const references = [
-    ...metadata.matchAll(/^# (https:\/\/github\.com\/\S+)$/gmu)
-  ].map((match) => match[1]!);
+  const references = Array.from(
+    metadata.matchAll(/^# (https:\/\/github\.com\/\S+)$/gmu),
+    (match) => match[1]!
+  );
   assert.equal(references.length, 10);
   assert.equal(new Set(references).size, references.length);
   for (const reference of references) {
@@ -82,7 +83,7 @@ test("RuleSync parser accepts the command and hides source metadata", () => {
 
 test("command stages and outcome statuses are defined", () => {
   assert.deepEqual(
-    [...command.prompt.matchAll(/^## (.+)$/gmu)].map((match) => match[1]),
+    Array.from(command.prompt.matchAll(/^## (.+)$/gmu), (match) => match[1]),
     ["Inspect", "Qualify", "Route and authorize", "Validate and report"]
   );
   for (const status of statuses) {
