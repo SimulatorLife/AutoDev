@@ -5,7 +5,7 @@ description: Review completed agent work for verified, reusable lessons and prop
 
 # Self-Improvement Review
 
-- **Scope:** Last completed task/turn/session, including corrections, outcome and captured telemetry; expand to more sessions or supplied history only on request.
+- **Scope:** Last completed task/turn/session, unless a specific session is requested. Should include corrections, outcome and captured telemetry; expand to more sessions or supplied history only on request.
 - **Limits:** Retrieve task-relevant prior evidence only, stopping when sufficient. Do not scan all history, reopen tasks, or run agent rollouts during reflection.
 
 ## Inspect
@@ -25,6 +25,7 @@ Separate **proved** from **suggested** lessons using these gates:
 | Standing preference | Explicit attributable user instruction; verify associated technical claims separately |
 | Environment fact | Current authoritative source |
 | Failure | Observed condition and confirmed cause |
+| Agent-reported gap/limitation | Verified failure, missing capability, code-trace |
 | Procedure | Named failure class, passing check, ruled-out dead end; independently repeated verified success before promotion |
 | Capability | Repeated verified success contradicting a recorded limitation |
 
@@ -34,7 +35,7 @@ For review-specific guidance, keep **trigger** and **action/claim** separate, wi
 
 ## Route and authorize
 
-- **Deduplicate:** Compare existing memories, skills, RuleSync instructions, and tool docs. Skip equivalent guidance; propose in-place correction/supersession for contradicted or overly broad claims. Reconcile against canonical current state and avoid creating new skills or rules unless authorized.
+- **Deduplicate:** Compare existing memories, skills, instructions/prompts, and tool docs. Skip equivalent guidance; propose in-place correction/supersession for contradicted or overly broad claims. Reconcile against canonical current state and avoid creating new skills or rules unless authorized.
 - **Scope:** Default to the narrowest useful task/role/repository/user scope.
 
 | Observation | Destination |
@@ -42,10 +43,10 @@ For review-specific guidance, keep **trigger** and **action/claim** separate, wi
 | Incident or unverified attempt | Episodic evidence |
 | User preference | Distinct user-scoped semantic memory |
 | Environment fact or demonstrated capability | Appropriately scoped semantic memory |
-| Reusable verified method | Procedural memory; eligible skill/rule/test/doc when promoted |
+| Reusable verified method | Eligible memory/skill/rule/test/doc/prompt/skill-resource |
 
-- **Skills:** Prefer updating the canonical existing skill. Create a new skill only if none covers a qualified procedure, or if an existing skill needs to be split into multiple skills. Document ordered steps, working commands, decisions, checks, and step-local pitfalls—not an incident diary.
-- **Authorization:** Propose by default. Persist only when the target and action are explicitly authorized and required curator/elevated approvals exist, including for shared/global, cross-project, always-loaded, or security-sensitive changes. Otherwise report the proposal. Never alter the reviewed task's artifacts.
+- **Skills:** Prefer updating/improving existing skill(s); create a new skill only if none covers a qualified procedure, or if an existing skill needs to be split into multiple skills. Document ordered steps, working commands, decisions, checks, and step-local pitfalls—not an incident diary.
+- **Authorization:** Propose by default. Persist only when the target and action are explicitly authorized/approval exists, including for shared/global, cross-project, always-loaded, or security-sensitive changes. Otherwise, report the proposal. Never alter the reviewed task's artifacts.
 
 ## Validate and report
 
@@ -59,4 +60,4 @@ If a separate evaluation is authorized, compare baseline and candidate on repres
 | `APPLIED` | Authorized write verified |
 | `BLOCKED` | Authorized write attempted but failed |
 
-**Output:** Status, qualified candidates using the record above, verified edits/checks, pending approvals, and watch-items. If storage is unavailable, provide a standalone evidence-backed lesson marked **not saved**. Say “Nothing to save.” only for `NO_CHANGE`; never invent writes or results.
+**Output:** Status, qualified candidates using the record above, verified edits/checks, pending approvals, and watch-items. If storing/retention is unavailable, provide a standalone evidence-backed lesson marked **not saved**. Say “Nothing to save.” only for `NO_CHANGE`; never invent writes or results.
