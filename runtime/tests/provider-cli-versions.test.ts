@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { ChildProcess, type spawn } from "node:child_process";
-import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -11,41 +9,12 @@ import {
   ProviderCliVersionService
 } from "../src/providers/cli-versions.ts";
 
-/**
- * A child process that prints `output` and exits, without starting anything.
- *
- * The version read is the only place the Runtime starts a provider's CLI, so
- * the tests start a fake one: the real CLIs are not installed on every
- * machine that runs the suite, and a test that depended on one would fail
- * for a reason that has nothing to do with the code under test.
- */
-class FakeChild extends ChildProcess {
-  override readonly stdout = new PassThrough();
-  override readonly stderr = new PassThrough();
-  readonly signals: Array<NodeJS.Signals | number | undefined> = [];
-
-  override kill(signal?: NodeJS.Signals | number): boolean {
-    this.signals.push(signal);
-    return true;
-  }
-}
-
-function fakeSpawn(
-  output: string,
-  exitCode = 0
-): {
-  spawnProcess: typeof spawn;
-  child: FakeChild;
-} {
-  const child = new FakeChild();
-  const spawnProcess = (() => {
-    setImmediate(() => {
-      child.stdout.emit("data", Buffer.from(output, "utf8"));
-      child.emit("close", exitCode);
-    });
-    return child;
-  }) as unknown as typeof spawn;
-  return { spawnProcess, child };
+function nodeCommand(command: string, script: string) {
+  return {
+    command,
+    program: process.execPath,
+    args: ["-e", script, "--"]
+  };
 }
 
 test("the version is read from the output shapes the CLIs actually print", () => {
@@ -102,19 +71,28 @@ test("a CLI that is not installed has no command to run", () => {
 });
 
 test("the version read is the version the CLI printed", async () => {
-  const { spawnProcess } = fakeSpawn("2.1.280 (Claude Code)\n");
   const capture = await captureCliVersion(
-    { command: "claude", program: "/opt/bin/claude", args: [] },
-    { spawnProcess }
+    nodeCommand(
+      "claude",
+      String.raw`process.stdout.write('2.1.280 (Claude Code)\n')`
+    )
+  );
+  assert.deepEqual(capture, { ok: true, version: "2.1.280" });
+});
+
+test("the version can be read when a CLI prints it on stderr", async () => {
+  const capture = await captureCliVersion(
+    nodeCommand("claude", "process.stderr.write('2.1.280 (Claude Code)')")
   );
   assert.deepEqual(capture, { ok: true, version: "2.1.280" });
 });
 
 test("a CLI that prints no version is not read as one", async () => {
-  const { spawnProcess } = fakeSpawn("command not found\n", 127);
   const capture = await captureCliVersion(
-    { command: "mmx", program: "/opt/bin/mmx", args: [] },
-    { spawnProcess }
+    nodeCommand(
+      "mmx",
+      String.raw`process.stdout.write('command not found\n'); process.exitCode = 127`
+    )
   );
   assert.equal(capture.ok, false);
   assert.equal(
@@ -124,11 +102,8 @@ test("a CLI that prints no version is not read as one", async () => {
 });
 
 test("a CLI that hangs is stopped rather than waited for", async () => {
-  const child = new FakeChild();
-  const spawnProcess = (() => child) as unknown as typeof spawn;
   const capture = await captureCliVersion(
-    { command: "codex", program: "/opt/bin/codex", args: [] },
-    { spawnProcess },
+    nodeCommand("codex", "setInterval(() => {}, 1_000)"),
     20
   );
   assert.equal(capture.ok, false);
@@ -136,7 +111,33 @@ test("a CLI that hangs is stopped rather than waited for", async () => {
     capture.ok ? "" : capture.reason,
     "Reading the codex CLI's version timed out."
   );
-  assert.deepEqual(child.signals, ["SIGTERM"]);
+});
+
+test("a CLI cannot exceed the combined stdout and stderr output bound", async () => {
+  const capture = await captureCliVersion(
+    nodeCommand(
+      "copilot",
+      "process.stdout.write('x'.repeat(5_000)); process.stderr.write('x'.repeat(5_000)); setInterval(() => {}, 1_000)"
+    ),
+    1000
+  );
+  assert.equal(capture.ok, false);
+  assert.equal(
+    capture.ok ? "" : capture.reason,
+    "The copilot CLI's version output exceeded the size bound."
+  );
+});
+
+test("a CLI that cannot start is reported as unavailable", async () => {
+  const capture = await captureCliVersion({
+    command: "claude",
+    program: "/no/such/autodev-cli",
+    args: []
+  });
+  assert.deepEqual(capture, {
+    ok: false,
+    reason: "The claude CLI could not be started."
+  });
 });
 
 test("the service reports the version it read and the reason for the one it could not", async () => {

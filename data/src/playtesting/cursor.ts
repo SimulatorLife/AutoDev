@@ -11,16 +11,13 @@
  */
 
 import { PlaytestInvalidCursorError } from "./errors.ts";
+import { isRecord } from "./object-guards.ts";
 
 export interface PlaytestKeysetCursor {
   /** The ISO-8601 value of the row's primary ORDER BY column. */
   readonly orderedAt: string;
   /** The row's unique id column, used to break ties within one timestamp. */
   readonly tiebreakId: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Encode a cursor as an opaque, URL-safe token. */

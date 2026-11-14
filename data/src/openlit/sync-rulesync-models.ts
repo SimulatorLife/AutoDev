@@ -968,8 +968,10 @@ export async function syncRulesyncModels(
   const providers = getAutoDevProviders();
   const models = getAutoDevModels();
 
-  const existingProviders = await fetchExistingProviders(endpoint);
-  const existingModels = await fetchExistingModels(endpoint);
+  const [existingProviders, existingModels] = await Promise.all([
+    fetchExistingProviders(endpoint),
+    fetchExistingModels(endpoint)
+  ]);
 
   const providersToInsert: ProviderCatalogEntry[] = [];
   const providersInserted: string[] = [];
@@ -983,8 +985,6 @@ export async function syncRulesyncModels(
       providersInserted.push(p.providerId);
     }
   }
-
-  await insertProviders(endpoint, providersToInsert);
 
   const modelsToInsert: ModelCatalogEntry[] = [];
   const modelsInserted: string[] = [];
@@ -1010,7 +1010,14 @@ export async function syncRulesyncModels(
     }
   }
 
-  await insertModels(endpoint, modelsToInsert);
+  await Promise.all([
+    providersToInsert.length > 0
+      ? insertProviders(endpoint, providersToInsert)
+      : Promise.resolve(),
+    modelsToInsert.length > 0
+      ? insertModels(endpoint, modelsToInsert)
+      : Promise.resolve()
+  ]);
 
   return {
     totalProviders: providers.length,

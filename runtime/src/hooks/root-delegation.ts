@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { codexHome, repositoryRoot } from "./command-utils.ts";
+import { codexHome, repositoryRoot } from "./hook-roots.ts";
 
 type HookInput = {
   model?: unknown;

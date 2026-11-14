@@ -15,7 +15,7 @@ import {
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform";
 
-import { repositoryRoot } from "./command-utils.ts";
+import { repositoryRoot } from "./hook-roots.ts";
 
 export function runRepoBootstrapSync(cwd = process.cwd()): number {
   const scriptCandidates = [

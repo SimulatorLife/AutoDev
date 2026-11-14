@@ -35,6 +35,7 @@ import {
   warmupDefaultPlaytestingRepository
 } from "../control-api/request-handler.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
+import { claudeQuotaAxiEnvironment } from "../providers/claude-credential.ts";
 import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
@@ -229,7 +230,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         {
           cwd: runtimePackageRoot,
           encoding: "utf8",
-          env: {
+          env: claudeQuotaAxiEnvironment({
             ...process.env,
             PATH: [
               runtimeBinDirectory,
@@ -238,7 +239,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             ]
               .filter(Boolean)
               .join(path.delimiter)
-          }
+          })
         },
         (error, stdout) => {
           // quota-axi returns 1 when every provider failed, but still emits its

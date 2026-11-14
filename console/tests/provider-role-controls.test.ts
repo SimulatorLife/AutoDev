@@ -648,7 +648,7 @@ test("a role change the Runtime refuses is logged with its status and code", asy
   }
 });
 
-test("the Subagent model is one hierarchical select: all subagents, then each agent role", () => {
+test("the closed Subagent model defers its levels but preserves their native forms", () => {
   const html = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
       subagentLayout: "hierarchical",
@@ -674,14 +674,13 @@ test("the Subagent model is one hierarchical select: all subagents, then each ag
     html,
     /<span id="select-model-claude-subagent" title="sonnet \+1"[^>]*appearance-none/u
   );
-  // Its levels: All subagents, then each agent role with the model it runs.
-  assert.match(
-    html,
-    /data-hierarchical-level="subagent"[\s\S]*?All subagents/u
-  );
-  assert.match(html, /data-hierarchical-level="explorer"[\s\S]*?>sonnet</u);
-  assert.match(html, /data-hierarchical-level="smart"[\s\S]*?>Auto \(opus\)</u);
-  // Each level posts its own form, rendered outside the role's form.
+  // The closed menu keeps its target data out of the initial DOM. The
+  // browser acceptance opens the control and checks the levels and choices.
+  assert.match(html, /aria-expanded="false"/u);
+  assert.doesNotMatch(html, /data-hierarchical-level=/u);
+  assert.doesNotMatch(html, /<button[^>]+form="select-model-claude-subagent-/u);
+  // Each level's native form is still rendered outside the role's form, ready
+  // for the lazily mounted option buttons to target when opened.
   const roleFormStart = html.indexOf('data-role-form="claude-subagent"');
   for (const [level, action] of [
     ["subagent", "/api/providers/claude/roles/subagent"],
@@ -700,18 +699,10 @@ test("the Subagent model is one hierarchical select: all subagents, then each ag
       )
     );
     assert.match(
-      html,
-      new RegExp(
-        `<button type="submit" form="select-model-claude-subagent-${level}-form" value=""[^>]*name="model"`,
-        "u"
-      )
+      html.slice(formAt),
+      /<input type="hidden" name="provider" value="claude"\/>/u
     );
   }
-  // The explorer's own model is the pressed choice in its level.
-  assert.match(
-    html,
-    /form="select-model-claude-subagent-explorer-form" value="sonnet" aria-pressed="true"/u
-  );
   // The role's own form still carries the current model for its other fields.
   assert.match(
     html.slice(roleFormStart),

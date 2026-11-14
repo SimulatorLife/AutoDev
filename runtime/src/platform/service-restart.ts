@@ -53,6 +53,50 @@ export const MANAGED_SERVICE_LABELS = [
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
 export type KillSignal = "SIGTERM" | "SIGKILL";
 
+interface ManagedServicePaths {
+  readonly launcher: string;
+  readonly root: "repository" | "codex";
+  readonly executable: readonly string[];
+}
+
+const SERVICE_PATHS = {
+  [CONSOLE_SERVICE_LABEL]: {
+    launcher: "run-codex-console.sh",
+    root: "repository",
+    executable: ["console", "node_modules", "next", "dist", "bin", "next"]
+  },
+  [LABEL_MODEL_ROUTER]: {
+    launcher: "run-codex-model-router.sh",
+    root: "codex",
+    executable: ["src", "router", "server.ts"]
+  },
+  [LABEL_CLAUDE_BRIDGE]: {
+    launcher: "run-codex-claude-bridge.sh",
+    root: "codex",
+    executable: ["src", "providers", "claude.ts"]
+  },
+  [LABEL_ANTIGRAVITY_PROXY]: {
+    launcher: "run-codex-antigravity-proxy.sh",
+    root: "codex",
+    executable: ["src", "providers", "antigravity.ts"]
+  },
+  [LABEL_COPILOT_PROXY]: {
+    launcher: "run-codex-copilot-cli-responses-proxy.sh",
+    root: "codex",
+    executable: ["src", "providers", "copilot.ts"]
+  },
+  [LABEL_OPENCLI_PROXY]: {
+    launcher: "run-codex-opencli-proxy.sh",
+    root: "codex",
+    executable: ["src", "providers", "opencli.ts"]
+  },
+  [LABEL_MINIMAX_PROXY]: {
+    launcher: "ensure-codex-minimax-proxy.sh",
+    root: "codex",
+    executable: ["src", "providers", "minimax.ts"]
+  }
+} satisfies Readonly<Record<ManagedServiceLabel, ManagedServicePaths>>;
+
 export interface ServiceRestartOptions {
   readonly repositoryRoot: string;
   readonly home: string;
@@ -379,77 +423,18 @@ function plistPath(
   return path.join(options.home, "Library", "LaunchAgents", `${label}.plist`);
 }
 
-function serviceLauncher(
+function servicePaths(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
-): string {
-  const hooks = path.join(options.codexHome, "hooks");
-  switch (label) {
-    case CONSOLE_SERVICE_LABEL: {
-      return path.join(hooks, "run-codex-console.sh");
-    }
-    case LABEL_MODEL_ROUTER: {
-      return path.join(hooks, "run-codex-model-router.sh");
-    }
-    case LABEL_CLAUDE_BRIDGE: {
-      return path.join(hooks, "run-codex-claude-bridge.sh");
-    }
-    case LABEL_ANTIGRAVITY_PROXY: {
-      return path.join(hooks, "run-codex-antigravity-proxy.sh");
-    }
-    case LABEL_COPILOT_PROXY: {
-      return path.join(hooks, "run-codex-copilot-cli-responses-proxy.sh");
-    }
-    case LABEL_OPENCLI_PROXY: {
-      return path.join(hooks, "run-codex-opencli-proxy.sh");
-    }
-    case LABEL_MINIMAX_PROXY: {
-      return path.join(hooks, "ensure-codex-minimax-proxy.sh");
-    }
-    default: {
-      throw new Error(`unknown managed service label: ${label}`);
-    }
-  }
-}
-
-function serviceHook(
-  options: ServiceRestartOptions,
-  label: ManagedServiceLabel
-): string {
-  switch (label) {
-    case CONSOLE_SERVICE_LABEL: {
-      return path.join(
-        options.repositoryRoot,
-        "console",
-        "node_modules",
-        "next",
-        "dist",
-        "bin",
-        "next"
-      );
-    }
-    case LABEL_MODEL_ROUTER: {
-      return path.join(options.codexHome, "src", "router", "server.ts");
-    }
-    case LABEL_CLAUDE_BRIDGE: {
-      return path.join(options.codexHome, "src", "providers", "claude.ts");
-    }
-    case LABEL_ANTIGRAVITY_PROXY: {
-      return path.join(options.codexHome, "src", "providers", "antigravity.ts");
-    }
-    case LABEL_COPILOT_PROXY: {
-      return path.join(options.codexHome, "src", "providers", "copilot.ts");
-    }
-    case LABEL_OPENCLI_PROXY: {
-      return path.join(options.codexHome, "src", "providers", "opencli.ts");
-    }
-    case LABEL_MINIMAX_PROXY: {
-      return path.join(options.codexHome, "src", "providers", "minimax.ts");
-    }
-    default: {
-      throw new Error(`unknown managed service label: ${label}`);
-    }
-  }
+): { readonly launcher: string; readonly hook: string } {
+  const service = SERVICE_PATHS[label];
+  if (!service) throw new Error(`unknown managed service label: ${label}`);
+  const root =
+    service.root === "repository" ? options.repositoryRoot : options.codexHome;
+  return {
+    launcher: path.join(options.codexHome, "hooks", service.launcher),
+    hook: path.join(root, ...service.executable)
+  };
 }
 
 interface ServiceOwnership {
@@ -483,7 +468,7 @@ function serviceOwnership(
       workingDirectory: path.join(options.repositoryRoot, "console")
     };
   return {
-    commandLinePaths: [serviceHook(options, label)],
+    commandLinePaths: [servicePaths(options, label).hook],
     workingDirectory: null
   };
 }
@@ -628,7 +613,7 @@ function isOwnedService(
   label: ManagedServiceLabel,
   jobDump: string
 ): boolean {
-  if (jobDump.includes(serviceLauncher(options, label))) return true;
+  if (jobDump.includes(servicePaths(options, label).launcher)) return true;
   const hooks = path.join(options.codexHome, "hooks");
   return jobDump.includes(options.codexHome) || jobDump.includes(hooks);
 }
@@ -969,7 +954,7 @@ export async function restartServices(
     return 0;
   }
   const consolePlist = plistPath(options, CONSOLE_SERVICE_LABEL);
-  const consoleLauncher = serviceLauncher(options, CONSOLE_SERVICE_LABEL);
+  const consoleLauncher = servicePaths(options, CONSOLE_SERVICE_LABEL).launcher;
   if (!deps.fileExists(consolePlist) || !deps.fileExists(consoleLauncher)) {
     writeErrorLine(
       "the managed Console LaunchAgent and launcher must be materialized before publishing a production build."

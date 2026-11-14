@@ -32,6 +32,7 @@ export * from "./control-api/operation-history.ts";
 export * from "./evaluations/index.ts";
 export * from "./execution-contract.ts";
 export * from "./github/github-actions-adapter.ts";
+export * from "./github/github-run-stats.ts";
 export * from "./github/github-workflow-repository.ts";
 export * from "./memory/index.ts";
 export * as openlit from "./openlit/index.ts";

@@ -79,12 +79,16 @@ if [[ ! -d "$target_dir" ]]; then
   exit 1
 fi
 
-if ! repo_root="$(cd -- "$target_dir" && git rev-parse --show-toplevel 2>/dev/null)"; then
-  echo "bootstrap-repo-exclusions: $target_dir is not inside a git repository" >&2
-  exit 1
+if [[ -d "$target_dir/.git" && -e "$target_dir/.git/HEAD" ]]; then
+  repo_root="$(cd -- "$target_dir" && pwd)"
+  exclude_path="$repo_root/.git/info/exclude"
+else
+  if ! repo_root="$(cd -- "$target_dir" && git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "bootstrap-repo-exclusions: $target_dir is not inside a git repository" >&2
+    exit 1
+  fi
+  exclude_path="$(git -C "$repo_root" rev-parse --path-format=absolute --git-path info/exclude)"
 fi
-
-exclude_path="$(git -C "$repo_root" rev-parse --path-format=absolute --git-path info/exclude)"
 gitignore_path="$repo_root/.gitignore"
 
 # --- 1. Inspect and verify operator's global Git excludes ---

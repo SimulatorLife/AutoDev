@@ -4,7 +4,9 @@ import path from "node:path";
 import {
   AGENT_ROLE_HEADER,
   SANDBOX_MODE_HEADER,
-  SKILL_CONTEXT_HEADER
+  SKILL_CONTEXT_HEADER,
+  contextHeaderValue,
+  readContextHeader
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";
@@ -58,28 +60,13 @@ const cache = new Map<string, string>();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
 const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
-function headerValue(
-  headers: Record<string, unknown> | null | undefined,
-  name: string
-): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  // Node lowercases inbound header names, but LiteLLM and other intermediaries
-  // can preserve the case the router sent, so match without regard to it.
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  const value = key === undefined ? undefined : headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim()
-    ? single.trim().toLowerCase()
-    : null;
-}
-
 /** The sandbox mode the router assigned to this request, or null when it sent none. */
 export function resolveSandboxModeFromHeaders(
   headers: Record<string, unknown> | null | undefined
 ): "read-only" | "workspace-write" | null {
-  const raw = headerValue(headers, SANDBOX_MODE_HEADER);
+  const raw = contextHeaderValue(headers, SANDBOX_MODE_HEADER, {
+    lowercase: true
+  });
   if (raw === "read-only" || raw === "workspace-write") return raw;
   return null;
 }
@@ -88,21 +75,15 @@ export function resolveSandboxModeFromHeaders(
 export function resolveSkillContextFromHeaders(
   headers: Record<string, unknown> | null | undefined
 ): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === SKILL_CONTEXT_HEADER
-  );
-  if (key === undefined) return null;
-  const value = headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single : null;
+  const value = readContextHeader(headers, SKILL_CONTEXT_HEADER);
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 /** The agent role the router assigned to this request, or null when it sent none. */
 export function resolveAgentRole(
   headers: Record<string, unknown> | null | undefined
 ): string | null {
-  return headerValue(headers, AGENT_ROLE_HEADER);
+  return contextHeaderValue(headers, AGENT_ROLE_HEADER, { lowercase: true });
 }
 
 export function isOrchestratorRole(role: string | null | undefined): boolean {

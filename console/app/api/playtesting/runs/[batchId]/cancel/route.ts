@@ -1,6 +1,7 @@
 /** Server-only, same-origin cancellation request for an active Playtesting run. */
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -17,17 +18,6 @@ export const runtime = "nodejs";
 const MAX_BODY_BYTES = 1024;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-
-function sendError(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
 
 function failureStatus(
   result: Exclude<
@@ -46,7 +36,7 @@ export async function POST(
   context: { readonly params: Promise<{ readonly batchId: string }> }
 ): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
-    return sendError(
+    return jsonErrorResponse(
       403,
       "autodev_console_playtesting_origin_refused",
       "Cancellation requests must come from the Console's same origin."
@@ -60,7 +50,7 @@ export async function POST(
     [...form.keys()].some((key) => key !== "workspaceId") ||
     form.getAll("workspaceId").length !== 1
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_cancel_request",
       "A valid batchId and single workspaceId are required."
@@ -68,7 +58,7 @@ export async function POST(
   }
   const workspaceId = form.get("workspaceId")!.trim();
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_cancel_request",
       "A canonical workspaceId is required."
@@ -76,7 +66,7 @@ export async function POST(
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -84,7 +74,7 @@ export async function POST(
   }
   const result = await cancelPlaytestingRun(workspaceId, batchId, config);
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       failureStatus(result),
       controlApiFailureCode(result),
       result.message

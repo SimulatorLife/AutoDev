@@ -14,6 +14,8 @@
  * game actually produced.
  */
 
+import { isPlainObject } from "./object-guards.ts";
+
 /** The protocol methods a binding may supply. */
 export const PLAYTESTS_BINDABLE_METHODS = [
   "capabilities",
@@ -184,12 +186,8 @@ const EXPORT_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const PATH_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const RNG_VERSION_PATTERN = /^[A-Za-z\d][A-Za-z\d._:+@-]{0,127}$/u;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function validReference(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.export !== "string") return false;
+  if (!isPlainObject(value) || typeof value.export !== "string") return false;
   if (!EXPORT_NAME_PATTERN.test(value.export)) return false;
   if (value.path === undefined) return true;
   if (typeof value.path !== "string" || value.path.length === 0) return false;
@@ -222,7 +220,7 @@ function bindingHeaderError(value: Record<string, unknown>): string | null {
   ) {
     return "The adapter binding must name a factory export.";
   }
-  if (!isRecord(value.bindings)) {
+  if (!isPlainObject(value.bindings)) {
     return "The adapter binding must declare its protocol bindings.";
   }
   return null;
@@ -241,8 +239,10 @@ function bindingRngError(value: Record<string, unknown>): string | null {
 
 function bindingSchemaError(value: Record<string, unknown>): string | null {
   for (const key of ["observation", "action", "event"]) {
-    const schema = isRecord(value.schemas) ? value.schemas[key] : undefined;
-    if (!isRecord(schema)) {
+    const schema = isPlainObject(value.schemas)
+      ? value.schemas[key]
+      : undefined;
+    if (!isPlainObject(schema)) {
       return `The adapter binding must declare the game's ${key} schema.`;
     }
   }
@@ -272,7 +272,7 @@ function bindingMethodsError(value: Record<string, unknown>): string | null {
 export function resolvePlaytestAdapterBinding(
   value: unknown
 ): PlaytestBindingResolution {
-  if (!isRecord(value)) {
+  if (!isPlainObject(value)) {
     return {
       kind: "rejected",
       message: "The adapter binding must be an object."

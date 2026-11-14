@@ -9,6 +9,7 @@ import {
   PLAYTEST_EXECUTION_MODES,
   type PlaytestExecutionMode
 } from "./launch-request.ts";
+import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestPlayerDebriefForEpisode } from "./player-debrief.ts";
 
 export const PLAYTEST_EPISODE_EXECUTION_MODES = [
@@ -103,10 +104,6 @@ const BROWSER_UI = "browser-ui" as const;
 const BROWSER_INPUT = "browser-input" as const;
 const RECORDED_TRACE = "recorded-trace" as const;
 const SCRIPTED_CONTROL = "scripted-control" as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isNonEmptyText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -214,7 +211,7 @@ function assertModeChannels(
 function assertDerivedFrom(value: unknown): void {
   if (value === null) return;
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     typeof value.episodeId !== "string" ||
     !RECORD_ID_PATTERN.test(value.episodeId) ||
     !Number.isSafeInteger(value.stepId) ||
@@ -231,7 +228,7 @@ function assertDerivedFrom(value: unknown): void {
 export function assertPlaytestExecutionProvenance(
   value: unknown
 ): asserts value is PlaytestExecutionProvenance {
-  if (!isRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError("Execution provenance must be an object.");
   }
   const source = value.source;
@@ -239,7 +236,7 @@ export function assertPlaytestExecutionProvenance(
     !PLAYTEST_EPISODE_EXECUTION_MODES.includes(
       value.mode as PlaytestEpisodeExecutionMode
     ) ||
-    !isRecord(source) ||
+    !isPlainObject(source) ||
     !PLAYTEST_EXECUTION_SOURCE_KINDS.includes(
       source.kind as PlaytestExecutionSourceKind
     ) ||
@@ -294,7 +291,7 @@ export function assertPlaytestEpisodeIdentityForMode(
   identity: unknown,
   provenance: PlaytestExecutionProvenance
 ): asserts identity is PlaytestEpisodeIdentity {
-  if (!isRecord(identity)) {
+  if (!isPlainObject(identity)) {
     throw new TypeError("Playtest episode identity must be an object.");
   }
   const workspaceId = identity.workspaceId;

@@ -1,4 +1,5 @@
 import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
+import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
 import type {
   GameRngCheckpoint,
@@ -1126,12 +1127,6 @@ const MAX_OBSERVATION_PATH_SEGMENTS = 32;
 const MAX_OBSERVATION_ARRAY_INDEX = 4095;
 const MAX_OBSERVATION_FIELDS = 4096;
 
-function isPlainRecord(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function assertOnlyKeys(
   value: Readonly<Record<string, unknown>>,
   allowed: readonly string[],
@@ -1153,7 +1148,7 @@ function assertNonEmptyArtifactString(
 }
 
 function assertObservationField(value: unknown, seenPaths: Set<string>): void {
-  if (!isPlainRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError("Observation allowlist entry must be an object.");
   assertOnlyKeys(value, OBSERVATION_FIELD_PROPERTIES, "Observation field");
   const fieldPath = value.fieldPath;
@@ -1203,7 +1198,7 @@ function assertObservationField(value: unknown, seenPaths: Set<string>): void {
 export function assertPlaytestObservationContract(
   value: unknown
 ): asserts value is PlaytestObservationContract {
-  if (!isPlainRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError("Observation contract must be an object.");
   assertOnlyKeys(value, OBSERVATION_CONTRACT_FIELDS, "Observation contract");
   if (value.schemaVersion !== 1)

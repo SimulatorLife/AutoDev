@@ -61,6 +61,7 @@
 
 import type { PlaytestBenchmark } from "./artifacts.ts";
 import { assertPlaytestCohortWeights } from "./benchmark.ts";
+import { isPlainObject } from "./object-guards.ts";
 
 export const PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA =
   "autodev-playtest-cohort-standardization-v1" as const;
@@ -193,12 +194,6 @@ export interface PlaytestCohortStandardizationResult {
 
 /** ---------- internal validation helpers (typed `unknown` -> assertion) ---------- */
 
-function isPlainRecord(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -216,7 +211,7 @@ function assertPlaytestCohortObservation(
   value: unknown,
   label: string
 ): asserts value is PlaytestCohortObservation {
-  if (!isPlainRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
   assertNonNegativeSafeInteger(value.numerator, `${label}.numerator`);
@@ -241,13 +236,13 @@ function assertPlaytestBuildCohortObservations(
   label: string,
   benchmarkKeys: ReadonlySet<string>
 ): asserts value is PlaytestBuildCohortObservations {
-  if (!isPlainRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
   if (!nonEmptyString(value.buildId)) {
     throw new TypeError(`${label}.buildId must be a non-empty string.`);
   }
-  if (!isPlainRecord(value.cohortObservations)) {
+  if (!isPlainObject(value.cohortObservations)) {
     throw new TypeError(`${label}.cohortObservations must be an object.`);
   }
   const cohortKeys = Object.keys(value.cohortObservations);
@@ -287,10 +282,10 @@ function assertPlaytestCohortStandardizationInput(
   value: unknown,
   label: string
 ): asserts value is PlaytestCohortStandardizationInput {
-  if (!isPlainRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
-  if (!isPlainRecord(value.benchmark)) {
+  if (!isPlainObject(value.benchmark)) {
     throw new TypeError(`${label}.benchmark must be an object.`);
   }
   // Re-validate cohortWeights defensively. The canonical validator lives
@@ -337,7 +332,7 @@ function assertPlaytestCohortStandardizationInput(
   for (let index = 0; index < value.builds.length; index += 1) {
     const build = value.builds[index];
     const labelForBuild = `${label}.builds[${String(index)}]`;
-    if (!isPlainRecord(build)) {
+    if (!isPlainObject(build)) {
       throw new TypeError(`${labelForBuild} must be an object.`);
     }
     if (!nonEmptyString(build.buildId)) {

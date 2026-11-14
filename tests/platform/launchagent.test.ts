@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -200,4 +201,21 @@ test("resolveLaunchAgentValues derives the console port the installer renders", 
       /AUTODEV_CONSOLE_PORT must be an integer/u,
       "a bad override must fail at install time rather than reach launchd"
     );
+  }));
+
+test("renderLaunchAgent skips rewriting identical target plists", () =>
+  withTempDir((directory) => {
+    const template = join(directory, "template.plist");
+    const target = join(directory, "service.plist");
+    writeFileSync(template, "<string>__CODEX_HOME__</string>\n");
+
+    renderLaunchAgent(template, target, RENDERED_VALUES);
+    const firstStat = lstatSync(target);
+    renderLaunchAgent(template, target, RENDERED_VALUES);
+    const secondStat = lstatSync(target);
+    assert.equal(secondStat.ino, firstStat.ino);
+
+    writeFileSync(template, "<string>__HOME__</string>\n");
+    renderLaunchAgent(template, target, RENDERED_VALUES);
+    assert.equal(readFileSync(target, "utf8"), `<string>${RENDERED_VALUES.home}</string>\n`);
   }));

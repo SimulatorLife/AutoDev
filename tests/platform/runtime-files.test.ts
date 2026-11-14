@@ -16,14 +16,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  computeRepoPathsFingerprint,
   linkRuntimeSource,
   linkSkillSource,
   materializeRuntimeFile,
+  readRepoInstallCache,
   resolveCommandOnPath,
   runtimeFileMatches,
   runtimeLinkMatches,
   runtimeTarget,
-  skillLinkMatches
+  skillLinkMatches,
+  writeRepoInstallCache
 } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -266,4 +269,48 @@ test("resolveCommandOnPath locates executable binaries without spawning a shell"
     assert.equal(resolveCommandOnPath("missing-tool", env), null);
     assert.equal(resolveCommandOnPath(realExec, env), realExec);
     assert.equal(resolveCommandOnPath(nonExec, env), null);
+  }));
+
+test("repo install cache persists across reads and fingerprints detect file modifications", () =>
+  withTempDir((directory) => {
+    mkdirSync(join(directory, ".git"), { recursive: true });
+    mkdirSync(join(directory, ".rulesync", "skills", "demo"), {
+      recursive: true
+    });
+    const skillFile = join(directory, ".rulesync", "skills", "demo", "SKILL.md");
+    writeFileSync(skillFile, "# demo v1\n");
+
+    const initialFingerprint = computeRepoPathsFingerprint(
+      directory,
+      [".rulesync"],
+      ["rulesync:test"]
+    );
+    assert.equal(
+      computeRepoPathsFingerprint(directory, [".rulesync"], ["rulesync:test"]),
+      initialFingerprint
+    );
+
+    writeRepoInstallCache(directory, {
+      schema: "autodev-install-cache-v1",
+      rulesyncInstallFingerprint: initialFingerprint,
+      rulesyncGenerate: { skills: initialFingerprint },
+      openlitWorkspacesSync: { stamp: "ws-stamp" }
+    });
+    writeRepoInstallCache(directory, {
+      schema: "autodev-install-cache-v1",
+      rulesyncInstallFingerprint: initialFingerprint,
+      rulesyncGenerate: { skills: initialFingerprint }
+    });
+    const loaded = readRepoInstallCache(directory);
+    assert.equal(loaded.rulesyncInstallFingerprint, initialFingerprint);
+    assert.equal(loaded.rulesyncGenerate?.skills, initialFingerprint);
+    assert.deepEqual(loaded.openlitWorkspacesSync, { stamp: "ws-stamp" });
+
+    writeFileSync(skillFile, "# demo v2\n");
+    const updatedFingerprint = computeRepoPathsFingerprint(
+      directory,
+      [".rulesync"],
+      ["rulesync:test"]
+    );
+    assert.notEqual(updatedFingerprint, initialFingerprint);
   }));

@@ -1,4 +1,12 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,6 +16,82 @@ import type { WorkspaceEntry } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "../config/config-repository.ts";
 
 const execFileAsync = promisify(execFile);
+const INSTALL_CACHE_SCHEMA = "autodev-install-cache-v1";
+
+interface CachedWorkspaceSyncRecord {
+  readonly stamp: string;
+  readonly result: SyncWorkspacesResult;
+}
+
+const memoryWorkspaceSyncCache = new Map<string, CachedWorkspaceSyncRecord>();
+
+function resolveInstallCacheFile(repositoryRoot: string): string | null {
+  const gitDir = path.join(path.resolve(repositoryRoot), ".git");
+  try {
+    if (!lstatSync(gitDir).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return path.join(gitDir, "autodev-install-cache.json");
+}
+
+function readCachedWorkspaceSync(
+  repositoryRoot: string
+): CachedWorkspaceSyncRecord | null {
+  const resolved = path.resolve(repositoryRoot);
+  const cachePath = resolveInstallCacheFile(resolved);
+  if (cachePath && existsSync(cachePath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as {
+        schema?: unknown;
+        openlitWorkspacesSync?: CachedWorkspaceSyncRecord;
+      };
+      if (
+        parsed.schema === INSTALL_CACHE_SCHEMA &&
+        parsed.openlitWorkspacesSync &&
+        typeof parsed.openlitWorkspacesSync.stamp === "string" &&
+        parsed.openlitWorkspacesSync.result
+      ) {
+        memoryWorkspaceSyncCache.set(resolved, parsed.openlitWorkspacesSync);
+        return parsed.openlitWorkspacesSync;
+      }
+    } catch {
+      /* Ignore unreadable cache files. */
+    }
+  }
+  return memoryWorkspaceSyncCache.get(resolved) ?? null;
+}
+
+function writeCachedWorkspaceSync(
+  repositoryRoot: string,
+  record: CachedWorkspaceSyncRecord
+): void {
+  const resolved = path.resolve(repositoryRoot);
+  memoryWorkspaceSyncCache.set(resolved, record);
+  const cachePath = resolveInstallCacheFile(resolved);
+  if (!cachePath) return;
+  try {
+    let existing: Record<string, unknown> = { schema: INSTALL_CACHE_SCHEMA };
+    if (existsSync(cachePath)) {
+      const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      if (parsed && parsed.schema === INSTALL_CACHE_SCHEMA) {
+        existing = parsed;
+      }
+    }
+    const tmpPath = `${cachePath}.${process.pid}.tmp`;
+    writeFileSync(
+      tmpPath,
+      `${JSON.stringify({ ...existing, openlitWorkspacesSync: record }, null, 2)}\n`,
+      "utf8"
+    );
+    renameSync(tmpPath, cachePath);
+  } catch {
+    /* Non-fatal if cache cannot be persisted. */
+  }
+}
 
 export interface SyncWorkspacesOptions {
   readonly repositoryRoot?: string;
@@ -266,6 +350,21 @@ export async function syncRulesyncWorkspaces(
   const workspaces = loadRulesyncWorkspaces(repositoryRoot);
   const workspaceIds = workspaces.map((workspace) => workspace.id);
   const script = buildPrismaSyncScript(workspaceIds);
+  const stamp = createHash("sha256")
+    .update(containerName)
+    .update("\0")
+    .update(script)
+    .digest("hex");
+
+  if (process.env.AUTODEV_FORCE_OPENLIT_SYNC !== "1") {
+    const cached = readCachedWorkspaceSync(repositoryRoot);
+    if (cached && cached.stamp === stamp) {
+      return {
+        ...cached.result,
+        collapsedProjects: []
+      };
+    }
+  }
 
   const { stdout } = await execFileAsync(
     "docker",
@@ -281,7 +380,7 @@ export async function syncRulesyncWorkspaces(
     workspaces?: string[];
   };
 
-  return {
+  const result: SyncWorkspacesResult = {
     organisation: parsed.organisation ?? "SimulatorLife",
     project: parsed.project ?? "AutoDev",
     environment: parsed.environment ?? "production",
@@ -289,6 +388,14 @@ export async function syncRulesyncWorkspaces(
     workspaces: parsed.workspaces ?? workspaceIds,
     collapsedProjects: parsed.collapsedProjects ?? []
   };
+  writeCachedWorkspaceSync(repositoryRoot, {
+    stamp,
+    result: {
+      ...result,
+      collapsedProjects: []
+    }
+  });
+  return result;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

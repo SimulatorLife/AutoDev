@@ -1,12 +1,26 @@
+import { Octokit } from "@octokit/rest";
 import type {
   GithubActionsRunStats,
   GithubWorkflowRun
 } from "@simulatorlife/autodev-core";
 
+import { computeRunStats } from "./github-run-stats.ts";
+
 const GITHUB_API_ORIGIN = "https://api.github.com";
 const GITHUB_API_VERSION = "2026-03-10";
+const GITHUB_API_HEADERS = {
+  accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": GITHUB_API_VERSION
+};
+const OCTOKIT_SILENT_LOGGER = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {}
+};
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
+const RESPONSE_TOO_LARGE_CODE = "response_too_large";
 const MAX_WORKFLOWS = 100;
 const MAX_BOUNDED_RUNS = 100;
 const DEFAULT_RUNS_LIMIT = 30;
@@ -81,30 +95,24 @@ function assertRequestWithinTimeout(
   }
 }
 
-async function readBoundedJson(
+interface BoundedResponseBody {
+  readonly bytes: Uint8Array;
+  readonly tooLarge: boolean;
+}
+
+async function readBoundedBody(
   response: Response,
-  token: string | undefined,
   controller: AbortController,
   startedAt: number,
   timeoutMs: number
-): Promise<unknown> {
+): Promise<BoundedResponseBody> {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
     void response.body?.cancel().catch(() => {});
-    throw new GithubActionsApiError(
-      `GitHub Actions API response exceeded the ${MAX_RESPONSE_BYTES}-byte limit`,
-      502,
-      "response_too_large"
-    );
+    return { bytes: new Uint8Array(), tooLarge: true };
   }
 
-  if (!response.body) {
-    throw new GithubActionsApiError(
-      "GitHub Actions API returned an empty response body",
-      502,
-      "invalid_json"
-    );
-  }
+  if (!response.body) return { bytes: new Uint8Array(), tooLarge: false };
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -126,11 +134,7 @@ async function readBoundedJson(
       totalBytes += value.byteLength;
       if (totalBytes > MAX_RESPONSE_BYTES) {
         void reader.cancel().catch(() => {});
-        throw new GithubActionsApiError(
-          `GitHub Actions API response exceeded the ${MAX_RESPONSE_BYTES}-byte limit`,
-          502,
-          "response_too_large"
-        );
+        return { bytes: new Uint8Array(), tooLarge: true };
       }
       chunks.push(value);
     }
@@ -146,25 +150,197 @@ async function readBoundedJson(
     offset += chunk.byteLength;
   }
 
+  return { bytes, tooLarge: false };
+}
+
+function responseWithBody(
+  response: Response,
+  bytes: Uint8Array,
+  requestUrl: string
+): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  const responseBytes = new Uint8Array(bytes.byteLength);
+  responseBytes.set(bytes);
+  const boundedResponse = new Response(
+    responseBytes.byteLength > 0 ? responseBytes : null,
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers
+    }
+  );
+  Object.defineProperty(boundedResponse, "url", {
+    value: response.url || requestUrl
+  });
+  return boundedResponse;
+}
+
+function internalErrorResponse(
+  code: string,
+  message: string,
+  originalStatus?: number
+): Response {
+  return Response.json(
+    {
+      autodevErrorCode: code,
+      message,
+      ...(originalStatus === undefined ? {} : { originalStatus })
+    },
+    { status: 502 }
+  );
+}
+
+function paginationConflictResponse(response: Response): Response | null {
+  if (response.status !== 409) return null;
+  return internalErrorResponse(
+    "api_error",
+    "GitHub Actions API request failed with status 409",
+    response.status
+  );
+}
+
+function invalidSuccessPayload(
+  bytes: Uint8Array,
+  collectionField: string
+): string | undefined {
+  let data: unknown;
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    assertRequestWithinTimeout(controller, startedAt, timeoutMs);
-    const data: unknown = JSON.parse(text);
-    assertRequestWithinTimeout(controller, startedAt, timeoutMs);
-    return data;
-  } catch (error: unknown) {
-    if (error instanceof GithubActionsApiError) throw error;
-    const raw = error instanceof Error ? error.message : String(error);
-    throw new GithubActionsApiError(
-      `GitHub Actions API returned invalid JSON: ${sanitizeErrorMessage(raw, token)}`,
-      502,
-      "invalid_json"
-    );
+    data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return "invalid_json";
   }
+  return isRecord(data) && Array.isArray(data[collectionField])
+    ? undefined
+    : "invalid_payload";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+interface CollectionPage {
+  readonly items: readonly unknown[];
+  readonly totalCount: unknown;
+  readonly incompleteResults: unknown;
+}
+
+function collectionPage(data: unknown, field: string): CollectionPage {
+  if (Array.isArray(data)) {
+    const metadata = data as unknown as Record<string, unknown>;
+    return {
+      items: data,
+      totalCount: metadata.total_count,
+      incompleteResults: metadata.incomplete_results
+    };
+  }
+  if (isRecord(data) && Array.isArray(data[field])) {
+    return {
+      items: data[field],
+      totalCount: data.total_count,
+      incompleteResults: data.incomplete_results
+    };
+  }
+  throw new GithubActionsApiError(
+    typeof data === "string"
+      ? "GitHub Actions API returned invalid JSON"
+      : `GitHub Actions API returned an invalid ${field} array`,
+    502,
+    typeof data === "string" ? "invalid_json" : "invalid_payload"
+  );
+}
+
+interface PaginatedResponse {
+  readonly data: unknown;
+  readonly headers: { readonly link?: string };
+}
+
+function throwPartialResult(message: string): never {
+  throw new GithubActionsApiError(message, 502, "partial_result");
+}
+
+function validateWorkflowPage(
+  page: CollectionPage,
+  currentCount: number,
+  hasNextPage: boolean,
+  totalCount: unknown,
+  limit: number
+): unknown {
+  if (page.totalCount !== undefined) {
+    if (
+      typeof page.totalCount !== "number" ||
+      !Number.isSafeInteger(page.totalCount) ||
+      page.totalCount < 0
+    ) {
+      throw new GithubActionsApiError(
+        "GitHub Actions API returned an invalid workflow total_count",
+        502,
+        "invalid_payload"
+      );
+    }
+    if (totalCount !== undefined && page.totalCount !== totalCount) {
+      throw new GithubActionsApiError(
+        "GitHub Actions API workflow total_count changed during pagination",
+        502,
+        "invalid_payload"
+      );
+    }
+    if (page.totalCount > limit) {
+      throwPartialResult(
+        `GitHub Actions workflow result is partial; more than ${limit} workflows may exist`
+      );
+    }
+  }
+  if (currentCount + page.items.length > limit) {
+    throwPartialResult(
+      `GitHub Actions workflow result is partial; more than ${limit} workflows may exist`
+    );
+  }
+  if (currentCount + page.items.length === limit && hasNextPage) {
+    throwPartialResult(
+      `GitHub Actions workflow result is partial; more than ${limit} workflows may exist`
+    );
+  }
+  return page.totalCount ?? totalCount;
+}
+
+async function collectPaginatedItems(
+  pages: AsyncIterable<PaginatedResponse>,
+  field: string,
+  limit: number,
+  rejectOverflow: boolean
+): Promise<{ items: unknown[]; totalCount: unknown }> {
+  const items: unknown[] = [];
+  let totalCount: unknown;
+
+  for await (const response of pages) {
+    const page = collectionPage(response.data, field);
+    const hasNextPage = response.headers.link?.includes('rel="next"') ?? false;
+    if (
+      page.incompleteResults === true ||
+      (page.items.length === 0 && hasNextPage)
+    ) {
+      throwPartialResult(
+        `GitHub Actions API returned an incomplete ${field} collection`
+      );
+    }
+    if (rejectOverflow) {
+      totalCount = validateWorkflowPage(
+        page,
+        items.length,
+        hasNextPage,
+        totalCount,
+        limit
+      );
+    }
+    items.push(...page.items);
+    if (items.length >= limit) {
+      break;
+    }
+  }
+
+  return { items, totalCount };
 }
 
 function invalidRecord(
@@ -323,7 +499,7 @@ function parseWorkflowRun(item: unknown, index: number): GithubWorkflowRun {
 }
 
 function throwHttpError(
-  response: Response,
+  status: number,
   data: unknown,
   token: string | undefined
 ): never {
@@ -350,12 +526,12 @@ function throwHttpError(
       code: "not_found"
     }
   };
-  const known = knownErrors[response.status];
+  const known = knownErrors[status];
   throw new GithubActionsApiError(
     known
       ? `${known.message}${errorDetail}`
-      : `GitHub Actions API request failed with status ${response.status}${errorDetail}`,
-    response.status,
+      : `GitHub Actions API request failed with status ${status}${errorDetail}`,
+    status,
     known?.code ?? "api_error"
   );
 }
@@ -368,10 +544,14 @@ function rethrowRequestError(
   token: string | undefined
 ): never {
   if (error instanceof GithubActionsApiError) throw error;
+  const errorRecord = isRecord(error) ? error : undefined;
+  const cause = errorRecord?.cause;
   const errorName =
-    error && typeof error === "object" && "name" in error
-      ? (error as { name: string }).name
-      : "";
+    errorRecord && typeof errorRecord.name === "string"
+      ? errorRecord.name
+      : cause && typeof cause === "object" && "name" in cause
+        ? (cause as { name: string }).name
+        : "";
   if (
     timedOut ||
     controller.signal.aborted ||
@@ -380,7 +560,32 @@ function rethrowRequestError(
   ) {
     throw requestTimeoutError(timeoutMs);
   }
-  const rawMessage = error instanceof Error ? error.message : String(error);
+
+  if (cause instanceof GithubActionsApiError) throw cause;
+
+  const response = errorRecord?.response;
+  if (isRecord(response) && typeof response.status === "number") {
+    const data = response.data;
+    if (
+      isRecord(data) &&
+      typeof data.autodevErrorCode === "string" &&
+      typeof data.message === "string"
+    ) {
+      throw new GithubActionsApiError(
+        data.message,
+        data.originalStatus === 409 ? 409 : response.status,
+        data.autodevErrorCode
+      );
+    }
+    throwHttpError(response.status, data, token);
+  }
+
+  const rawMessage =
+    cause instanceof Error
+      ? cause.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
   throw new GithubActionsApiError(
     `GitHub Actions API network failure: ${sanitizeErrorMessage(rawMessage, token)}`,
     502,
@@ -433,67 +638,6 @@ function sanitizeErrorMessage(
   return message.replaceAll(token, "[REDACTED]");
 }
 
-/**
- * Compute run statistics precisely scoped to the returned/time-filtered set.
- * Success rate is successful conclusions divided by completed sampled runs;
- * non-success or missing conclusions remain in the denominator.
- * Returns non-null stats only over actual observed runs; callers must NOT
- * synthesize 0/healthy when runtime data is absent or unavailable.
- */
-export function computeRunStats(
-  runs: readonly GithubWorkflowRun[]
-): GithubActionsRunStats {
-  const totalRuns = runs.length;
-  let completedRuns = 0;
-  let successfulRuns = 0;
-  let failedRuns = 0;
-  let inProgressRuns = 0;
-  let cancelledRuns = 0;
-
-  for (const run of runs) {
-    const isProgress =
-      run.status === "in_progress" ||
-      run.status === "queued" ||
-      run.status === "waiting" ||
-      run.status === "requested" ||
-      run.status === "pending";
-
-    if (isProgress) {
-      inProgressRuns++;
-    }
-
-    if (run.status !== "completed") continue;
-    completedRuns++;
-
-    if (run.conclusion === "success") {
-      successfulRuns++;
-    } else if (
-      run.conclusion === "failure" ||
-      run.conclusion === "timed_out" ||
-      run.conclusion === "action_required" ||
-      run.conclusion === "startup_failure"
-    ) {
-      failedRuns++;
-    } else if (run.conclusion === "cancelled") {
-      cancelledRuns++;
-    }
-  }
-
-  const successRate =
-    completedRuns > 0
-      ? Math.round((successfulRuns / completedRuns) * 1000) / 1000
-      : null;
-
-  return {
-    totalRuns,
-    successfulRuns,
-    failedRuns,
-    inProgressRuns,
-    cancelledRuns,
-    successRate
-  };
-}
-
 export class GithubActionsAdapter {
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
@@ -526,12 +670,10 @@ export class GithubActionsAdapter {
     return { owner, repo };
   }
 
-  private async request(
-    endpoint: string,
-    token: string | undefined
-  ): Promise<Record<string, unknown>> {
-    // Origin is fixed to GITHUB_API_ORIGIN; caller-supplied hosts are forbidden.
-    const url = `${GITHUB_API_ORIGIN}${endpoint}`;
+  private async withOctokit<T>(
+    token: string | undefined,
+    operation: (octokit: Octokit) => Promise<T>
+  ): Promise<T> {
     const controller = new AbortController();
     const startedAt = performance.now();
     let timedOut = false;
@@ -541,54 +683,112 @@ export class GithubActionsAdapter {
     }, this.timeoutMs);
     timer.unref();
 
-    try {
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": "AutoDev-Control-API"
-      };
-      if (token?.trim()) headers.Authorization = `Bearer ${token.trim()}`;
-      const response = await this.fetchFn(url, {
-        method: "GET",
-        headers,
+    const fetchBounded: typeof fetch = async (input, init) => {
+      const url = new URL(
+        typeof input === "string" || input instanceof URL ? input : input.url
+      );
+      if (url.origin !== GITHUB_API_ORIGIN) {
+        throw new GithubActionsApiError(
+          "GitHub Actions API pagination attempted to leave the fixed API origin",
+          502,
+          "invalid_pagination"
+        );
+      }
+      const method =
+        init?.method ?? (input instanceof Request ? input.method : "GET");
+      if (method.toUpperCase() !== "GET") {
+        throw new GithubActionsApiError(
+          "GitHub Actions API adapter only permits GET requests",
+          502,
+          "invalid_request"
+        );
+      }
+
+      assertRequestWithinTimeout(controller, startedAt, this.timeoutMs);
+      const response = await this.fetchFn(input, {
+        ...init,
+        method,
         signal: controller.signal,
         redirect: "error"
       });
-
-      if (!response.ok) {
-        let errorBody: unknown = null;
-        try {
-          errorBody = await readBoundedJson(
-            response,
-            token,
-            controller,
-            startedAt,
-            this.timeoutMs
-          );
-        } catch {
-          // The HTTP status remains authoritative if its optional body is
-          // malformed, too large, or otherwise unreadable.
-        }
-        throwHttpError(response, errorBody, token);
-      }
-
-      const data: unknown = await readBoundedJson(
-        response,
-        token,
-        controller,
-        startedAt,
-        this.timeoutMs
-      );
       assertRequestWithinTimeout(controller, startedAt, this.timeoutMs);
 
-      if (!isRecord(data)) {
-        throw new GithubActionsApiError(
-          "GitHub Actions API returned an invalid JSON object",
-          502,
-          "invalid_payload"
+      let body: BoundedResponseBody;
+      try {
+        body = await readBoundedBody(
+          response,
+          controller,
+          startedAt,
+          this.timeoutMs
+        );
+      } catch (error: unknown) {
+        if (!response.ok && !timedOut && !controller.signal.aborted) {
+          return (
+            paginationConflictResponse(response) ??
+            responseWithBody(response, new Uint8Array(), url.href)
+          );
+        }
+        throw error;
+      }
+      assertRequestWithinTimeout(controller, startedAt, this.timeoutMs);
+
+      if (body.tooLarge) {
+        if (!response.ok) {
+          return (
+            paginationConflictResponse(response) ??
+            responseWithBody(response, new Uint8Array(), url.href)
+          );
+        }
+        return internalErrorResponse(
+          RESPONSE_TOO_LARGE_CODE,
+          `GitHub Actions API response exceeded the ${MAX_RESPONSE_BYTES}-byte limit`
         );
       }
-      return data;
+
+      // Octokit's iterator must not reinterpret a 409 response as an empty page.
+      const paginationError = paginationConflictResponse(response);
+      if (paginationError) return paginationError;
+
+      if (response.ok) {
+        const collectionField = url.pathname.endsWith("/actions/workflows")
+          ? "workflows"
+          : "workflow_runs";
+        const invalidPayload = invalidSuccessPayload(
+          body.bytes,
+          collectionField
+        );
+        if (invalidPayload === "invalid_json") {
+          return internalErrorResponse(
+            invalidPayload,
+            "GitHub Actions API returned invalid JSON"
+          );
+        }
+        if (invalidPayload) {
+          return internalErrorResponse(
+            invalidPayload,
+            "GitHub Actions API returned an invalid JSON object"
+          );
+        }
+      }
+      return responseWithBody(response, body.bytes, url.href);
+    };
+
+    const octokit = new Octokit({
+      auth: token?.trim() || undefined,
+      baseUrl: GITHUB_API_ORIGIN,
+      userAgent: "AutoDev-Control-API",
+      log: OCTOKIT_SILENT_LOGGER,
+      request: {
+        fetch: fetchBounded,
+        redirect: "error",
+        signal: controller.signal
+      }
+    });
+
+    try {
+      const result = await operation(octokit);
+      assertRequestWithinTimeout(controller, startedAt, this.timeoutMs);
+      return result;
     } catch (error: unknown) {
       return rethrowRequestError(
         error,
@@ -602,44 +802,58 @@ export class GithubActionsAdapter {
     }
   }
 
-  async listWorkflows(
+  listWorkflows(
     owner: string,
     repo: string,
     token?: string
   ): Promise<readonly GithubApiWorkflow[]> {
-    this.validateRepository(owner, repo);
-    const endpoint = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows?per_page=100`;
-    const data = await this.request(endpoint, token);
-    if (!Array.isArray(data.workflows)) {
-      throw new GithubActionsApiError(
-        "GitHub Actions API returned an invalid workflows array",
-        502,
-        "invalid_payload"
-      );
-    }
-    validateWorkflowCount(data.total_count, data.workflows.length);
-    return data.workflows.map(parseApiWorkflow);
+    return Promise.resolve().then(() => {
+      const repository = this.validateRepository(owner, repo);
+      return this.withOctokit(token, async (octokit) => {
+        const result = await collectPaginatedItems(
+          octokit.paginate.iterator(octokit.rest.actions.listRepoWorkflows, {
+            ...repository,
+            per_page: MAX_WORKFLOWS,
+            headers: GITHUB_API_HEADERS
+          }),
+          "workflows",
+          MAX_WORKFLOWS,
+          true
+        );
+        validateWorkflowCount(result.totalCount, result.items.length);
+        return result.items.map(parseApiWorkflow);
+      });
+    });
   }
 
-  async listRecentRuns(
+  listRecentRuns(
     owner: string,
     repo: string,
     token?: string,
     options: { limit?: number } = {}
   ): Promise<readonly GithubWorkflowRun[]> {
-    this.validateRepository(owner, repo);
-    const limit = boundedRunsLimit(options.limit);
-    const endpoint = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/runs?per_page=${limit}`;
-    const data = await this.request(endpoint, token);
-    if (!Array.isArray(data.workflow_runs)) {
-      throw new GithubActionsApiError(
-        "GitHub Actions API returned an invalid workflow_runs array",
-        502,
-        "invalid_payload"
-      );
-    }
-    const runs = data.workflow_runs.map(parseWorkflowRun);
-    return runs.slice(0, limit);
+    return Promise.resolve().then(() => {
+      const repository = this.validateRepository(owner, repo);
+      const limit = boundedRunsLimit(options.limit);
+      return this.withOctokit(token, async (octokit) => {
+        const result = await collectPaginatedItems(
+          octokit.paginate.iterator(
+            octokit.rest.actions.listWorkflowRunsForRepo,
+            {
+              ...repository,
+              per_page: limit,
+              headers: GITHUB_API_HEADERS
+            }
+          ),
+          "workflow_runs",
+          limit,
+          false
+        );
+        return result.items
+          .map((item, index) => parseWorkflowRun(item, index))
+          .slice(0, limit);
+      });
+    });
   }
 
   async fetchRuntimeSnapshot(

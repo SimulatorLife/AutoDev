@@ -1,4 +1,5 @@
 import type { PlaytestBranchLineage, PlaytestEpisode } from "./artifacts.ts";
+import { isPlainObject } from "./object-guards.ts";
 import type {
   GameRngCheckpoint,
   PlaytestCheckpointDigest
@@ -9,10 +10,6 @@ import {
 } from "./types.ts";
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function assertText(value: unknown, field: string): asserts value is string {
   if (
@@ -45,7 +42,7 @@ function assertArtifactReference(
   readonly mediaType: string;
   readonly revision?: number;
 } {
-  if (!isRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError(field + " must be an artifact reference.");
   const allowed = ["artifactId", "sha256", "bytes", "mediaType", "revision"];
   if (
@@ -85,7 +82,7 @@ export function assertPlaytestRngCheckpoint(
   value: unknown,
   field = "rngCheckpoint"
 ): asserts value is GameRngCheckpoint {
-  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
+  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
   const expected = ["algorithm", "version", "stateHash", "reproducible"];
   if (
     Object.keys(value).length !== expected.length ||
@@ -105,7 +102,7 @@ export function assertPlaytestCheckpointDigest(
   value: unknown,
   field = "checkpoint"
 ): asserts value is PlaytestCheckpointDigest {
-  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
+  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
   const expected = ["stateHash", "rngCheckpoint"];
   if (
     Object.keys(value).length !== expected.length ||
@@ -145,7 +142,8 @@ export function samePlaytestCheckpoint(
 export function assertPlaytestAssignmentBranch(
   value: unknown
 ): asserts value is PlaytestAssignmentBranch {
-  if (!isRecord(value)) throw new TypeError("Branch source must be an object.");
+  if (!isPlainObject(value))
+    throw new TypeError("Branch source must be an object.");
   const expected = [
     "parentEpisodeId",
     "parentEpisodeRevision",
@@ -205,7 +203,7 @@ export function assertPlaytestBranchLineage(
   value: unknown,
   episode?: Pick<PlaytestEpisode, "completeness" | "missingReasons">
 ): asserts value is PlaytestBranchLineage {
-  if (!isRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError("Branch lineage must be an object.");
   const expected = [
     "parentEpisodeId",

@@ -100,10 +100,15 @@ test("opening and closing the Subagent model never scrolls the app shell", async
   const control = controls.last();
   const id = await control.getAttribute("data-hierarchical-select");
   const menu = page.locator(`#${id}-menu`);
+  const menuOptions = page.locator('ul[id$="-menu"] button[type="submit"]');
+  await expect(menu).toBeHidden();
+  await expect(menuOptions).toHaveCount(0);
   await control.click();
   await expect(menu).toBeVisible();
+  await expect(menuOptions).not.toHaveCount(0);
   await control.click();
   await expect(menu).toBeHidden();
+  await expect(menuOptions).toHaveCount(0);
 
   const shift = await page.evaluate(() =>
     [...document.querySelectorAll("body *")]

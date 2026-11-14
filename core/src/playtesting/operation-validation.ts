@@ -1,3 +1,4 @@
+import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestCapabilityAdvertisement } from "./protocol.ts";
 import type {
   GameCaptureEvent,
@@ -39,10 +40,6 @@ const CAPTURE_RANGE_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   GAME_METHOD.captureFrame
 ]);
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function exactKeys(
   value: Readonly<Record<string, unknown>>,
   expected: readonly string[],
@@ -59,7 +56,7 @@ function objectWithKeys(
   keys: readonly string[],
   field: string
 ): Readonly<Record<string, unknown>> {
-  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
+  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
   exactKeys(value, keys, field);
   return value;
 }
@@ -146,7 +143,7 @@ function assertGameEvent(
   nonNegativeInteger(event.step, field + ".step");
   nonNegativeInteger(event.revision, field + ".revision");
   if (event.actor !== null) nonEmptyString(event.actor, field + ".actor");
-  if (!isRecord(event.fields))
+  if (!isPlainObject(event.fields))
     throw new TypeError(field + ".fields must be an object.");
 }
 
@@ -374,7 +371,7 @@ function assertLegalActionsResult(
         "game.legalActions action description must be a string."
       );
     }
-    if (item.features !== undefined && !isRecord(item.features)) {
+    if (item.features !== undefined && !isPlainObject(item.features)) {
       throw new TypeError(
         "game.legalActions action features must be an object."
       );
@@ -506,7 +503,7 @@ function assertOutcomeResult(
     throw new TypeError("game.outcome outcome must be JSON data or null.");
   }
   if (
-    !isRecord(value.metrics) ||
+    !isPlainObject(value.metrics) ||
     Object.values(value.metrics).some(
       (metric) =>
         metric !== null &&
@@ -858,6 +855,6 @@ function isJsonValue(value: unknown, depth = 0): value is PlaytestJsonValue {
   if (typeof value === "number") return Number.isFinite(value);
   if (Array.isArray(value))
     return value.every((entry) => isJsonValue(entry, depth + 1));
-  if (!isRecord(value)) return false;
+  if (!isPlainObject(value)) return false;
   return Object.values(value).every((entry) => isJsonValue(entry, depth + 1));
 }

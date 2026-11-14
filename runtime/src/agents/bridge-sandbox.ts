@@ -7,32 +7,19 @@
 import {
   CODEX_SESSION_HEADER,
   SANDBOX_MODE_HEADER,
-  SKILL_CONTEXT_HEADER
+  SKILL_CONTEXT_HEADER,
+  contextHeaderValue
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
 export type BridgeSandboxMode = "read-only" | "workspace-write" | null;
-
-function pickHeader(
-  headers: Record<string, unknown> | null | undefined,
-  name: string,
-  lowercase: boolean
-): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  if (key === undefined) return null;
-  const value = headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  if (typeof single !== "string" || !single.trim()) return null;
-  return lowercase ? single.trim().toLowerCase() : single.trim();
-}
 
 /** Read the bridge sandbox mode from a request's headers. */
 export function bridgeSandboxMode(
   headers: Record<string, unknown> | null | undefined
 ): BridgeSandboxMode {
-  const raw = pickHeader(headers, SANDBOX_MODE_HEADER, true);
+  const raw = contextHeaderValue(headers, SANDBOX_MODE_HEADER, {
+    lowercase: true
+  });
   if (raw === "read-only" || raw === "workspace-write") return raw;
   return null;
 }
@@ -41,7 +28,7 @@ export function bridgeSandboxMode(
 export function bridgeSkillContext(
   headers: Record<string, unknown> | null | undefined
 ): string | null {
-  return pickHeader(headers, SKILL_CONTEXT_HEADER, false);
+  return contextHeaderValue(headers, SKILL_CONTEXT_HEADER);
 }
 
 /**
@@ -73,5 +60,5 @@ export function readOnlySystemPromptInjection(
 export function codexSessionIdHeader(
   headers: Record<string, unknown> | null | undefined
 ): string | null {
-  return pickHeader(headers, CODEX_SESSION_HEADER, false);
+  return contextHeaderValue(headers, CODEX_SESSION_HEADER);
 }

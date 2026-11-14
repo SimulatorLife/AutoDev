@@ -121,6 +121,37 @@ test("matchSkillReadTarget and matchSkillReadPath validate canonical SKILL.md", 
     "SKILL.md"
   );
   assert.equal(matchSkillReadPath(nested), null);
+
+  // Curated skills live one level deeper under .rulesync/skills/.curated/<skill>/SKILL.md
+  const curatedSkill = path.join(
+    REPO_ROOT,
+    ".rulesync",
+    "skills",
+    ".curated",
+    "react-best-practices",
+    "SKILL.md"
+  );
+  assert.equal(matchSkillReadPath(curatedSkill), "react-best-practices");
+  assert.equal(
+    matchSkillReadPath(
+      path.join(REPO_ROOT, ".rulesync", "skills", ".curated", "SKILL.md")
+    ),
+    null
+  );
+  assert.equal(
+    matchSkillReadPath(
+      path.join(
+        REPO_ROOT,
+        ".rulesync",
+        "skills",
+        ".curated",
+        "react-best-practices",
+        "rules",
+        "SKILL.md"
+      )
+    ),
+    null
+  );
 });
 
 test("extractSkillReadPath extracts paths across read and exec tool variants", () => {

@@ -99,14 +99,10 @@ export function runInstallCommand(
         env
       );
     if (!flags.materializeOnly) {
-      if (installCocoIndex(resolveDependencyOptions(process.env)) !== 0)
-        return 1;
-      if (installCodeGraphContext(resolveDependencyOptions(process.env)) !== 0)
-        return 1;
-      if (
-        installPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0
-      )
-        return 1;
+      const dependencyOptions = resolveDependencyOptions(process.env);
+      if (installCocoIndex(dependencyOptions) !== 0) return 1;
+      if (installCodeGraphContext(dependencyOptions) !== 0) return 1;
+      if (installPythonLanguageServer(dependencyOptions) !== 0) return 1;
       if (installOpencliBrowser({ repositoryRoot, codexHome }) !== 0) return 1;
     }
     materializeInstallation({

@@ -72,12 +72,16 @@ test("resource navigation warms the destination it is about to route to, in full
     /kind:\s*["']auto["']/u,
     "the warm-up must never ask for a partial answer"
   );
-  assert.match(navigationLinkSource, /navigationIntentHandlers\s*\(/u);
+  assert.match(
+    navigationLinkSource,
+    /navigationIntentHandlers\(prefetch,\s*onFocus\)/u,
+    "Ariakit's composite focus handler must survive the navigation prefetch intent"
+  );
   // The warm-up is authorized by a pointer, touch or keyboard intent only, so
   // that opening a page does not start a request for every visible resource.
   assert.match(
     navigationLinkSource,
-    /onMouseEnter:\s*onIntent,\s*onTouchStart:\s*onIntent,\s*onFocus:\s*onIntent/u
+    /onMouseEnter:\s*onIntent,\s*onTouchStart:\s*onIntent,/u
   );
 });
 

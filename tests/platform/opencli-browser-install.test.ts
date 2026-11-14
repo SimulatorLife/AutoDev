@@ -90,3 +90,69 @@ test("propagates a failed browser download to the normal installer", () => {
 
   assert.equal(status, 17);
 });
+
+test("skips Playwright download when the pinned Chromium and ffmpeg markers already exist", () => {
+  let ran = false;
+  let createdDirectory = false;
+  const manifestPath = `${repositoryRoot}/runtime/node_modules/playwright-core/browsers.json`;
+  const status = installOpencliBrowser(
+    { repositoryRoot, codexHome },
+    {
+      fileExists: (filePath) =>
+        filePath === playwrightCli ||
+        filePath === `${browserCache}/chromium-1243/INSTALLATION_COMPLETE` ||
+        filePath === `${browserCache}/ffmpeg-1011/INSTALLATION_COMPLETE`,
+      createDirectory: () => {
+        createdDirectory = true;
+      },
+      readFile: (filePath) => {
+        if (filePath !== manifestPath) throw new Error(`unexpected read ${filePath}`);
+        return JSON.stringify({
+          browsers: [
+            { name: "chromium", revision: "1243" },
+            { name: "ffmpeg", revision: "1011" }
+          ]
+        });
+      },
+      run: () => {
+        ran = true;
+        return 0;
+      }
+    }
+  );
+
+  assert.equal(status, 0);
+  assert.equal(ran, false);
+  assert.equal(createdDirectory, false);
+});
+
+test("reinstalls when the Playwright manifest bumps the pinned Chromium revision", () => {
+  let ran = false;
+  const manifestPath = `${repositoryRoot}/runtime/node_modules/playwright-core/browsers.json`;
+  const status = installOpencliBrowser(
+    { repositoryRoot, codexHome },
+    {
+      fileExists: (filePath) =>
+        filePath === playwrightCli ||
+        filePath === `${browserCache}/chromium-1243/INSTALLATION_COMPLETE` ||
+        filePath === `${browserCache}/ffmpeg-1011/INSTALLATION_COMPLETE`,
+      createDirectory: () => undefined,
+      readFile: (filePath) => {
+        if (filePath !== manifestPath) throw new Error(`unexpected read ${filePath}`);
+        return JSON.stringify({
+          browsers: [
+            { name: "chromium", revision: "1250" },
+            { name: "ffmpeg", revision: "1011" }
+          ]
+        });
+      },
+      run: () => {
+        ran = true;
+        return 0;
+      }
+    }
+  );
+
+  assert.equal(status, 0);
+  assert.equal(ran, true);
+});

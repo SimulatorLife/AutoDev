@@ -54,9 +54,20 @@ export function atomicWrite(
   content: string,
   mode = 0o644
 ): void {
+  if (existsSync(filePath)) {
+    const stat = lstatSync(filePath);
+    if (stat.isDirectory()) {
+      throw new ConfigError(`refusing to overwrite directory ${filePath}`);
+    }
+    if (
+      stat.isFile() &&
+      (stat.mode & 0o777) === (mode & 0o777) &&
+      readFileSync(filePath, "utf8") === content
+    ) {
+      return;
+    }
+  }
   mkdirSync(path.dirname(filePath), { recursive: true });
-  if (existsSync(filePath) && lstatSync(filePath).isDirectory())
-    throw new ConfigError(`refusing to overwrite directory ${filePath}`);
   const directory = path.dirname(filePath);
   const temporary = mkdtempSync(
     path.join(directory, `.${filePath.split("/").pop() ?? "config"}.`)

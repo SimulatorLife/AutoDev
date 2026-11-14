@@ -15,6 +15,7 @@ import {
   type PlaytestOmittedEvidenceWindow
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
+import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestEvidenceLocator } from "./types.ts";
 
 export const EVIDENCE_SHA256_PATTERN = /^[a-f\d]{64}$/iu;
@@ -50,10 +51,6 @@ export function isPlaytestEvidencePacketId(value: unknown): value is string {
   return (
     typeof value === "string" && PLAYTEST_EVIDENCE_PACKET_ID_PATTERN.test(value)
   );
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function isText(value: unknown, max = 256): value is string {
@@ -92,7 +89,7 @@ export function isJson(value: unknown, depth = 0): boolean {
   if (Array.isArray(value))
     return value.every((entry) => isJson(entry, depth + 1));
   return (
-    isRecord(value) &&
+    isPlainObject(value) &&
     Object.values(value).every((entry) => isJson(entry, depth + 1))
   );
 }
@@ -102,7 +99,7 @@ export function assertTraceStep(
   expectedStep: number
 ): asserts value is PlaytestEvidenceTraceStep {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     Object.keys(value).length !== TRACE_STEP_KEYS.size ||
     Object.keys(value).some((key) => !TRACE_STEP_KEYS.has(key)) ||
     value.step !== expectedStep ||
@@ -133,7 +130,7 @@ export function assertTraceStep(
   const eventIds = new Set<string>();
   for (const event of value.events) {
     if (
-      !isRecord(event) ||
+      !isPlainObject(event) ||
       Object.keys(event).length !== 4 ||
       Object.keys(event).some(
         (key) => !["eventId", "type", "phaseId", "revision"].includes(key)
@@ -152,7 +149,7 @@ export function assertTraceStep(
   }
   for (const reference of value.frameRefs) {
     if (
-      !isRecord(reference) ||
+      !isPlainObject(reference) ||
       reference.kind !== "frame" ||
       !isText(reference.id) ||
       (reference.step !== undefined && reference.step !== expectedStep)
@@ -235,11 +232,11 @@ export function hasMandatoryEventEvidence(
 
 export function hasMandatoryEventEvidenceValue(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isPlainObject(value) &&
     Array.isArray(value.events) &&
     value.events.some(
       (event) =>
-        isRecord(event) &&
+        isPlainObject(event) &&
         !SAMPLEABLE_ACTION_EVENT_TYPES.has(String(event.type))
     )
   );
@@ -747,7 +744,7 @@ export function assertPacketArtifactProvenance(
   let traceCount = 0;
   for (const artifact of packet.suppliedArtifacts) {
     if (
-      !isRecord(artifact) ||
+      !isPlainObject(artifact) ||
       Object.keys(artifact).length !== 3 ||
       Object.keys(artifact).some(
         (key) => !["kind", "artifactId", "sha256"].includes(key)

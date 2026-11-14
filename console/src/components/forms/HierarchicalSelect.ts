@@ -1,3 +1,5 @@
+"use client";
+
 import React from "react";
 
 import { Icon } from "../icons/Icon.ts";
@@ -57,9 +59,11 @@ const MENU_ITEM_CLASS =
  * control as every other select in a row. Opening it is an unnamed checkbox
  * (never submitted) inside the control's label, which drives the sibling menu
  * through `peer-has-checked`, and each level is a native `<details>`; each
- * option is a submit button for its level's own native form, so choosing one
- * applies immediately with no client script, exactly as the auto-submitting
- * selects beside it do.
+ * option is a submit button for its level's own native form. The menu options
+ * mount only while the control is open: the providers table has one menu per
+ * provider, and keeping every closed menu's hundreds of options in the DOM
+ * made a routine navigation spend a long task inserting controls the operator
+ * never opened.
  *
  * The checkbox sits inside the label's own `relative` wrapper on purpose. A
  * visually hidden checkbox is absolutely positioned, so anywhere else it is
@@ -72,10 +76,11 @@ const MENU_ITEM_CLASS =
  * control out on a grid can give the menu a row of its own (`menuClassName`)
  * instead of a popover that a scrolling parent would clip.
  *
- * The level forms are rendered apart, by `HierarchicalSelectForms`, and the
- * buttons reach them through the `form` attribute: the control usually sits
- * inside another form, and a form nested in a form is dropped by the parser,
- * which would send every choice to the outer form instead.
+ * The level forms are rendered apart by the provider controls that own their
+ * placement, and the buttons reach them through the `form` attribute: the
+ * control usually sits inside another form, and a form nested in a form is
+ * dropped by the parser, which would send every choice to the outer form
+ * instead.
  */
 export function HierarchicalSelect({
   id,
@@ -86,6 +91,7 @@ export function HierarchicalSelect({
   menuClassName,
   disabledReason
 }: HierarchicalSelectProps): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
   const wrapperClass = `${SELECT_CONTROL_WRAPPER_CLASS} ${className ?? ""}`;
   if (disabledReason !== undefined) {
     return React.createElement(
@@ -122,7 +128,10 @@ export function HierarchicalSelect({
         type: "checkbox",
         className: "sr-only",
         "aria-controls": `${id}-menu`,
-        "aria-label": `Open ${label}`
+        "aria-expanded": open,
+        "aria-label": `Open ${label}`,
+        onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+          setOpen(event.currentTarget.checked)
       }),
       React.createElement(
         "span",
@@ -142,7 +151,7 @@ export function HierarchicalSelect({
         "aria-label": label,
         className: `m-0 hidden list-none flex-col gap-0.5 rounded border border-border-strong bg-surface-raised p-1 shadow-lg peer-has-checked:flex ${menuClassName ?? ""}`
       },
-      ...levels.map((level) =>
+      ...(open ? levels : []).map((level) =>
         React.createElement(
           "li",
           { key: level.key, className: "min-w-0" },
@@ -203,44 +212,4 @@ export function HierarchicalSelect({
 
 function levelFormId(id: string, level: HierarchicalSelectLevel): string {
   return `${id}-${level.key}-form`;
-}
-
-/**
- * The level forms a `HierarchicalSelect` submits: one empty native form per
- * level, carrying only its hidden fields. Render them outside any other form.
- */
-export function HierarchicalSelectForms({
-  id,
-  levels,
-  disabledReason
-}: Pick<
-  HierarchicalSelectProps,
-  "id" | "levels" | "disabledReason"
->): React.JSX.Element | null {
-  if (disabledReason !== undefined) return null;
-  return React.createElement(
-    React.Fragment,
-    null,
-    ...levels.map((level) =>
-      React.createElement(
-        "form",
-        {
-          key: level.key,
-          id: levelFormId(id, level),
-          method: "POST",
-          action: level.action,
-          hidden: true,
-          "data-hierarchical-form": level.key
-        },
-        ...Object.entries(level.hiddenFields).map(([name, value]) =>
-          React.createElement("input", {
-            key: name,
-            type: "hidden",
-            name,
-            value
-          })
-        )
-      )
-    )
-  );
 }

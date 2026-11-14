@@ -1,3 +1,4 @@
+import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestJsonValue } from "./protocol-types.ts";
 import { PLAYTESTS_SEVERITIES, type PlaytestSeverity } from "./types.ts";
 
@@ -56,12 +57,6 @@ export interface PlaytestEventTaxonomy {
   readonly events: readonly PlaytestEventDefinition[];
 }
 
-function isPlainRecord(
-  value: unknown
-): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -89,7 +84,7 @@ function assertOnlyKeys(
 }
 
 function assertEventSource(source: unknown): void {
-  if (!isPlainRecord(source)) {
+  if (!isPlainObject(source)) {
     throw new TypeError(
       "Event source must be game-owned or a versioned detector."
     );
@@ -119,7 +114,7 @@ function assertEventSource(source: unknown): void {
 
 function assertExpectedOccurrenceRange(value: unknown): void {
   if (value === null) return;
-  if (!isPlainRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError("Expected occurrence range must be an object or null.");
   }
   assertOnlyKeys(value, ["minimum", "maximum"], "Expected occurrence range");
@@ -136,7 +131,7 @@ function assertExpectedOccurrenceRange(value: unknown): void {
 }
 
 function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
-  if (!isPlainRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError("Event definition must be an object.");
   assertOnlyKeys(value, EVENT_DEFINITION_KEYS, "Event definition");
   for (const key of [
@@ -168,7 +163,7 @@ function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
     );
   }
   assertEventSource(value.source);
-  if (!isPlainRecord(value.thresholds))
+  if (!isPlainObject(value.thresholds))
     throw new TypeError("Event thresholds must be a JSON object.");
   if (!isSeverity(value.severity))
     throw new TypeError("Event severity is invalid.");
@@ -179,7 +174,7 @@ function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
 export function assertPlaytestEventTaxonomy(
   value: unknown
 ): asserts value is PlaytestEventTaxonomy {
-  if (!isPlainRecord(value))
+  if (!isPlainObject(value))
     throw new TypeError("Event taxonomy must be an object.");
   assertOnlyKeys(value, EVENT_TAXONOMY_KEYS, "Event taxonomy");
   if (value.schemaVersion !== 1)

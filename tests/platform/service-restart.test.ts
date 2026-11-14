@@ -754,6 +754,37 @@ test("an unmanaged listener from this CODEX_HOME is stopped and gone before its 
   );
 });
 
+test("each managed backend service recognizes its configured executable path", async () => {
+  const executables: readonly [ManagedServiceLabel, string][] = [
+    [LABEL_MODEL_ROUTER, "/home/.codex/src/router/server.ts"],
+    [LABEL_CLAUDE_BRIDGE, "/home/.codex/src/providers/claude.ts"],
+    [LABEL_MINIMAX_PROXY, "/home/.codex/src/providers/minimax.ts"],
+    [LABEL_ANTIGRAVITY_PROXY, "/home/.codex/src/providers/antigravity.ts"],
+    [LABEL_COPILOT_PROXY, "/home/.codex/src/providers/copilot.ts"],
+    [LABEL_OPENCLI_PROXY, "/home/.codex/src/providers/opencli.ts"]
+  ];
+
+  for (const [label, executable] of executables) {
+    const port = PORTS[label];
+    const pid = 68_804;
+    const fake = deps({}, { strays: new Map([[port, pid]]) });
+    const [status] = await captureStderr(() =>
+      restartServices(options(), {
+        ...fake,
+        commandLine: (candidate) =>
+          candidate === pid ? `node ${executable}` : null,
+        kill: (candidate, signal) => {
+          fake.kills.push({ pid: candidate, signal });
+          if (candidate === pid) fake.state.strays.delete(port);
+        }
+      })
+    );
+
+    assert.equal(status, 0, label);
+    assert.deepEqual(fake.kills, [{ pid, signal: "SIGTERM" }], label);
+  }
+});
+
 test("an unmanaged listener that ignores SIGTERM is killed before its label is bootstrapped", async () => {
   const fake = deps({}, { strays: new Map([[4100, 68_804]]) });
   const [status] = await captureStderr(() =>

@@ -2,6 +2,7 @@
 
 import type { PlaytestBenchmark } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
+import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestEvidenceLocator } from "./protocol.ts";
 import { PLAYTESTS_GAME_MODES } from "./types.ts";
 
@@ -51,7 +52,7 @@ export function assertPlaytestCohortWeights(
   value: unknown,
   label: string
 ): asserts value is Readonly<Record<string, number>> {
-  if (!isRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
   const cohortKeys = Object.keys(value);
@@ -87,10 +88,6 @@ export function assertPlaytestCohortWeights(
       )}; observed ${String(weightSum)}.`
     );
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function nonEmpty(value: unknown): value is string {
@@ -169,7 +166,7 @@ function assertScenarioInventory(value: unknown): void {
   let scenarioWeight = 0;
   for (const [index, scenario] of value.entries()) {
     if (
-      !isRecord(scenario) ||
+      !isPlainObject(scenario) ||
       !nonEmpty(scenario.scenarioId) ||
       !nonEmpty(scenario.family) ||
       !Number.isFinite(scenario.weight) ||
@@ -200,7 +197,7 @@ function assertSeedInventory(value: unknown): void {
   const seeds = new Set<string>();
   for (const [index, seed] of value.entries()) {
     if (
-      !isRecord(seed) ||
+      !isPlainObject(seed) ||
       !nonEmpty(seed.seed) ||
       seeds.has(seed.seed) ||
       !["discovery", "confirmation", "regression"].includes(
@@ -221,7 +218,7 @@ function assertSeedInventory(value: unknown): void {
 }
 
 function assertPolicyVersions(value: unknown): void {
-  if (!isRecord(value) || Object.keys(value).length === 0) {
+  if (!isPlainObject(value) || Object.keys(value).length === 0) {
     throw new TypeError(
       "Benchmark policyVersions must name at least one frozen policy."
     );
@@ -253,7 +250,7 @@ function assertBenchmarkMetrics(value: Record<string, unknown>): void {
     ...value.primaryMetricIds,
     ...value.guardrailMetricIds
   ]);
-  if (!isRecord(value.practicalMargins)) {
+  if (!isPlainObject(value.practicalMargins)) {
     throw new TypeError("Benchmark practicalMargins must be an object.");
   }
   const margins = Object.keys(value.practicalMargins);
@@ -310,7 +307,8 @@ function assertBenchmarkMetadata(value: Record<string, unknown>): void {
 export function assertPlaytestBenchmark(
   value: unknown
 ): asserts value is PlaytestBenchmark {
-  if (!isRecord(value)) throw new TypeError("Benchmark must be an object.");
+  if (!isPlainObject(value))
+    throw new TypeError("Benchmark must be an object.");
   assertOnlyKeys(value, BENCHMARK_KEYS, "Benchmark");
   if (!nonEmpty(value.benchmarkId) || !nonEmpty(value.workspaceId)) {
     throw new TypeError("Benchmark requires a stable ID and workspace.");

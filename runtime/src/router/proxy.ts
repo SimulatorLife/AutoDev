@@ -65,6 +65,14 @@ import {
   AUTODEV_WORKSPACE_KEY_HEADER,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+import {
+  ConstantBackoff,
+  handleWhen,
+  IterableBackoff,
+  retry,
+  timeout,
+  TimeoutStrategy
+} from "cockatiel";
 
 import { loadCodexAuth } from "../providers/codex-auth.ts";
 import { recordMcpExposure } from "./correlation.ts";
@@ -437,17 +445,21 @@ export function logTransportError({
   });
 }
 
-export async function jitteredBackoff(): Promise<number> {
+function calculateJitteredBackoffMs(): number {
   const floor = Math.min(UPSTREAM_RETRY_BASE_MS, UPSTREAM_RETRY_MAX_MS);
   const ceiling = Math.max(
     floor,
     Math.min(UPSTREAM_RETRY_MAX_MS, UPSTREAM_RETRY_BASE_MS * 2)
   );
-  const delayMs = floor + Math.floor(Math.random() * (ceiling - floor + 1));
-  await new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-  });
-  return delayMs;
+  return floor + Math.floor(Math.random() * (ceiling - floor + 1));
+}
+
+function createJitteredBackoff(maxAttempts: number): IterableBackoff {
+  const delays: number[] = [];
+  for (let i = 0; i < maxAttempts; i++) {
+    delays.push(calculateJitteredBackoffMs());
+  }
+  return new IterableBackoff(delays);
 }
 
 /** A request's identity, as `requestSession` resolves it. */
@@ -801,6 +813,16 @@ export interface ProviderProbeResult {
 
 export const PROBE_RETRY_TIMEOUT_MS = Math.max(1500, PROBE_TIMEOUT_MS * 2);
 
+function isProbeTimeout(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" ||
+      error.name === "AbortError" ||
+      error.name === "TaskCancelledError" ||
+      TIMEOUT_MESSAGE_PATTERN.test(error.message))
+  );
+}
+
 export async function probeProvider(
   route: ProviderRoute
 ): Promise<ProviderProbeResult> {
@@ -825,45 +847,45 @@ export async function probeProvider(
   }
   if (!route.healthUrl) return { ok: true, failureClass: null };
 
-  const attemptProbe = async (
-    timeoutMs: number
-  ): Promise<{
+  const probeRetryPolicy = retry(handleWhen(isProbeTimeout), {
+    maxAttempts: 1,
+    backoff: new ConstantBackoff(0)
+  });
+
+  let probeResult: {
     ok: boolean;
     status?: number;
     body?: string;
     error?: unknown;
-  }> => {
-    try {
-      const response = await fetch(route.healthUrl!, {
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-      if (response.ok) return { ok: true, status: response.status };
-      const body = await response.text().catch(() => "");
-      return { ok: false, status: response.status, body };
-    } catch (error) {
-      return { ok: false, error };
-    }
   };
 
-  let first = await attemptProbe(PROBE_TIMEOUT_MS);
-  if (first.ok) return { ok: true, failureClass: null };
-
-  const isTimeout =
-    first.error instanceof Error &&
-    (first.error.name === "TimeoutError" ||
-      first.error.name === "AbortError" ||
-      TIMEOUT_MESSAGE_PATTERN.test(first.error.message));
-
-  if (isTimeout) {
-    const second = await attemptProbe(PROBE_RETRY_TIMEOUT_MS);
-    if (second.ok) return { ok: true, failureClass: null };
-    first = second;
+  try {
+    probeResult = await probeRetryPolicy.execute(({ attempt }) => {
+      const timeoutMs =
+        attempt === 0 ? PROBE_TIMEOUT_MS : PROBE_RETRY_TIMEOUT_MS;
+      const probeTimeout = timeout(timeoutMs, TimeoutStrategy.Cooperative);
+      return probeTimeout.execute(async ({ signal }) => {
+        try {
+          const response = await fetch(route.healthUrl!, { signal });
+          if (response.ok) return { ok: true, status: response.status };
+          const body = await response.text().catch(() => "");
+          return { ok: false, status: response.status, body };
+        } catch (error) {
+          if (isProbeTimeout(error)) throw error;
+          return { ok: false, error };
+        }
+      });
+    });
+  } catch (error) {
+    probeResult = { ok: false, error };
   }
+
+  if (probeResult.ok) return { ok: true, failureClass: null };
 
   // A bridge whose provider account must be signed in again answers its
   // health check with that: the provider is waiting for the operator, which
   // is a different thing from a bridge that did not answer.
-  const signIn = providerSignInRequiredMessage(first.body);
+  const signIn = providerSignInRequiredMessage(probeResult.body);
   if (signIn !== null) {
     return {
       ok: false,
@@ -872,9 +894,9 @@ export async function probeProvider(
     };
   }
 
-  const detail = first.error
-    ? `Probe failed: ${errorMessage(first.error)}`
-    : `Probe returned HTTP ${first.status}`;
+  const detail = probeResult.error
+    ? `Probe failed: ${errorMessage(probeResult.error)}`
+    : `Probe returned HTTP ${probeResult.status}`;
 
   return {
     ok: false,
@@ -1755,6 +1777,39 @@ function upstreamSignals(clientSignal: AbortSignal | null): AbortSignal {
   return signals[0] ?? new AbortController().signal;
 }
 
+/** Keep the upstream deadline alive until its response body has been consumed. */
+function withUpstreamTimeout<T>(
+  clientSignal: AbortSignal | null,
+  operation: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (UPSTREAM_TIMEOUT_MS <= 0)
+    return operation(clientSignal ?? new AbortController().signal);
+
+  return timeout(UPSTREAM_TIMEOUT_MS, TimeoutStrategy.Cooperative).execute(
+    async ({ signal }) => {
+      const controller = new AbortController();
+      const propagateAbort = (): void => {
+        controller.abort(
+          clientSignal?.aborted
+            ? clientSignal.reason
+            : new DOMException(
+                "Upstream provider exceeded response timeout.",
+                "TimeoutError"
+              )
+        );
+      };
+      signal.addEventListener("abort", propagateAbort, { once: true });
+      if (signal.aborted) propagateAbort();
+      try {
+        return await operation(controller.signal);
+      } finally {
+        signal.removeEventListener("abort", propagateAbort);
+      }
+    },
+    clientSignal ?? undefined
+  );
+}
+
 async function failedUpstreamResponse(
   upstream: Response,
   span: Span | null
@@ -1852,7 +1907,8 @@ export async function fetchUpstream(
   agentRole: string | null = null,
   requestId: string | null = null,
   session: RouterSession | null = null,
-  attemptTelemetry: AttemptTelemetryOptions | null = null
+  attemptTelemetry: AttemptTelemetryOptions | null = null,
+  attemptSignal?: AbortSignal
 ): Promise<FetchUpstreamResult> {
   const auth = await authForRoute(route);
   const requestPayload = upstreamPayload(
@@ -1863,7 +1919,7 @@ export async function fetchUpstream(
     undefined,
     { normalizeItemIds: providerCapabilities(route.provider).normalizeItemIds }
   );
-  const signal = upstreamSignals(clientSignal);
+  const signal = attemptSignal ?? upstreamSignals(clientSignal);
   const attemptSpan = attemptTelemetry
     ? startAttemptSpan({
         provider: route.provider,
@@ -2657,6 +2713,13 @@ function recordConcreteAbort(ctx: ConcreteRequestContext): void {
   });
 }
 
+type ConcreteAttemptResult =
+  | { kind: "completed" }
+  | {
+      kind: "response";
+      result: Extract<FetchUpstreamResult, { ok: false }>;
+    };
+
 function endConcreteRequest(
   activitySubject: string,
   requestId: string,
@@ -2860,7 +2923,7 @@ export async function proxyConcreteResponse(
   }
   try {
     await withLogicalSpan(logicalSpan, async () => {
-      await runConcreteAttempts(ctx, 0);
+      await runConcreteAttempts(ctx);
     });
   } catch (error) {
     handleConcreteOuterFailure(ctx, error);
@@ -2935,16 +2998,7 @@ function rejectConcreteRequest(
   );
 }
 
-async function runConcreteAttempts(
-  ctx: ConcreteRequestContext,
-  attempts: number
-): Promise<void> {
-  const maxAttempts = Math.max(
-    CONCRETE_STATUS_MAX_ATTEMPTS,
-    UPSTREAM_TRANSPORT_MAX_ATTEMPTS
-  );
-  if (attempts >= maxAttempts) return;
-
+async function runConcreteAttempts(ctx: ConcreteRequestContext): Promise<void> {
   const {
     route,
     payload,
@@ -2952,72 +3006,132 @@ async function runConcreteAttempts(
     requestId,
     turnMetadataHeader,
     clientSignal,
-    session
+    session,
+    response
   } = ctx;
 
-  try {
-    const result = await fetchUpstream(
-      route,
-      payload,
-      wantsStream,
-      turnMetadataHeader,
-      clientSignal,
-      null,
-      requestId,
-      session,
-      {
-        selection: "concrete",
-        attemptNumber: attempts + 1,
-        model: typeof payload.model === "string" ? payload.model : null,
-        requestedModel: ctx.modelName,
-        role: ctx.attribution.role,
-        workspace: ctx.workspace,
-        sessionId: session?.sessionId ?? null
-      }
-    );
-    if (!result.ok) {
-      await handleConcreteStatusFailure(ctx, result, attempts);
-      return;
+  const maxTotalAttempts = Math.max(
+    CONCRETE_STATUS_MAX_ATTEMPTS,
+    UPSTREAM_TRANSPORT_MAX_ATTEMPTS
+  );
+
+  let retryCount = 0;
+
+  const policy = handleWhen((error) => {
+    if (clientSignal?.aborted || response.headersSent) return false;
+    if (
+      error &&
+      typeof error === "object" &&
+      (error as { code?: string }).code === "router_auth_unavailable"
+    ) {
+      return false;
     }
-    await handleConcreteSuccess(ctx, result);
+    if (retryCount < UPSTREAM_TRANSPORT_MAX_ATTEMPTS - 1) {
+      retryCount++;
+      return true;
+    }
+    return false;
+  }).orWhenResult((result) => {
+    if (clientSignal?.aborted || response.headersSent) return false;
+    const attemptResult = result as ConcreteAttemptResult;
+    if (
+      attemptResult.kind === "response" &&
+      attemptResult.result.retryable &&
+      retryCount < CONCRETE_STATUS_MAX_ATTEMPTS - 1
+    ) {
+      retryCount++;
+      return true;
+    }
+    return false;
+  });
+
+  const retryPolicy = retry(policy, {
+    maxAttempts: Math.max(0, maxTotalAttempts - 1),
+    backoff: createJitteredBackoff(maxTotalAttempts - 1)
+  });
+
+  retryPolicy.onRetry((event) => {
+    if ("error" in event) {
+      const failureClass = classifyProviderFailure(
+        502,
+        errorMessage(event.error)
+      );
+      recordConcreteRetry(ctx, 502, failureClass);
+    } else if (
+      "value" in event &&
+      (event.value as ConcreteAttemptResult).kind === "response"
+    ) {
+      const result = (
+        event.value as Extract<ConcreteAttemptResult, { kind: "response" }>
+      ).result;
+      const failureClass = classifyProviderFailure(
+        result.status ?? 500,
+        result.body
+      );
+      recordConcreteRetry(ctx, result.status ?? 500, failureClass);
+    }
+  });
+
+  try {
+    const outcome = await retryPolicy.execute(
+      ({ attempt }) =>
+        withUpstreamTimeout(clientSignal, async (attemptSignal) => {
+          if (clientSignal?.aborted)
+            throw new Error("client aborted before concrete upstream fetch");
+          try {
+            const result = await fetchUpstream(
+              route,
+              payload,
+              wantsStream,
+              turnMetadataHeader,
+              clientSignal,
+              null,
+              requestId,
+              session,
+              {
+                selection: "concrete",
+                attemptNumber: attempt + 1,
+                model: typeof payload.model === "string" ? payload.model : null,
+                requestedModel: ctx.modelName,
+                role: ctx.attribution.role,
+                workspace: ctx.workspace,
+                sessionId: session?.sessionId ?? null
+              },
+              attemptSignal
+            );
+            if (!result.ok) return { kind: "response" as const, result };
+            await handleConcreteSuccess(ctx, result);
+            return { kind: "completed" as const };
+          } catch (error) {
+            logTransportError({
+              requestId,
+              provider: route.provider,
+              model: ctx.modelName,
+              error,
+              workspace: ctx.workspace
+            });
+            throw error;
+          }
+        }),
+      clientSignal ?? undefined
+    );
+
+    if (outcome.kind === "response")
+      await handleConcreteStatusFailure(ctx, outcome.result);
   } catch (error) {
-    await handleConcreteTransportError(ctx, error, attempts);
+    await handleConcreteTransportError(ctx, error);
   }
 }
 
-async function handleConcreteStatusFailure(
+function handleConcreteStatusFailure(
   ctx: ConcreteRequestContext,
-  result: Extract<FetchUpstreamResult, { ok: false }>,
-  attempts: number
-): Promise<void> {
-  const {
-    response,
-    route,
-    activitySubject,
-    clientSignal,
-    requestId,
-    modelName
-  } = ctx;
+  result: Extract<FetchUpstreamResult, { ok: false }>
+): void {
+  const { response, route, activitySubject, requestId, modelName } = ctx;
   const failureClass = classifyProviderFailure(
     result.status ?? 500,
     result.body
   );
-  const canRetry =
-    result.retryable &&
-    attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 &&
-    !clientSignal?.aborted &&
-    !response.headersSent;
-  if (canRetry) {
-    recordConcreteRetry(ctx, result.status ?? 500, failureClass);
-    await jitteredBackoff();
-    if (clientSignal?.aborted) {
-      recordConcreteAbort(ctx);
-      endConcreteRequest(activitySubject, requestId, "failure");
-      return;
-    }
-    await runConcreteAttempts(ctx, attempts + 1);
-    return;
-  }
   recordConcreteResult(ctx, "failure", result.status ?? 500, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
   if (result.retryable)
@@ -3075,11 +3189,10 @@ async function handleConcreteSuccess(
   ctx.setLogicalOutcome(responseResult.failed ? "error" : "ok");
 }
 
-async function handleConcreteTransportError(
+function handleConcreteTransportError(
   ctx: ConcreteRequestContext,
-  error: unknown,
-  attempts: number
-): Promise<void> {
+  error: unknown
+): void {
   const {
     route,
     activitySubject,
@@ -3088,13 +3201,6 @@ async function handleConcreteTransportError(
     clientSignal,
     response
   } = ctx;
-  logTransportError({
-    requestId,
-    provider: route.provider,
-    model: modelName,
-    error,
-    workspace: ctx.workspace
-  });
   if (
     error &&
     typeof error === "object" &&
@@ -3115,18 +3221,6 @@ async function handleConcreteTransportError(
   if (clientSignal?.aborted) {
     recordConcreteAbort(ctx);
     endConcreteRequest(activitySubject, requestId, "failure");
-    return;
-  }
-  if (attempts < UPSTREAM_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
-    const failureClass = classifyProviderFailure(502, errorMessage(error));
-    recordConcreteRetry(ctx, 502, failureClass);
-    await jitteredBackoff();
-    if (clientSignal?.aborted) {
-      recordConcreteAbort(ctx);
-      endConcreteRequest(activitySubject, requestId, "failure");
-      return;
-    }
-    await runConcreteAttempts(ctx, attempts + 1);
     return;
   }
   const failureClass = classifyProviderFailure(502, errorMessage(error));
@@ -4496,21 +4590,21 @@ async function attemptCandidate(
   emitFallbackBridgeContext(ctx, route);
 
   try {
-    const result = await fetchCandidate(ctx, route, selection);
-    if (result.ok) {
-      return await handleCandidateSuccess(
+    const result = await fetchCandidate(ctx, route, selection, (response) =>
+      handleCandidateSuccess(
         ctx,
         route,
-        result,
+        response,
         selection,
         failures,
         attemptStartedAt
-      );
-    }
+      )
+    );
+    if (result.kind === "handled") return result.outcome;
     return handleCandidateUpstreamFailure(
       ctx,
       route,
-      result,
+      result.result,
       selection,
       failures,
       attemptStartedAt
@@ -4538,40 +4632,36 @@ async function attemptCandidate(
  * last error propagates to the caller, which records it and cools the
  * provider.
  */
-async function fetchCandidate(
+function fetchCandidate(
   ctx: FallbackContext,
   route: Candidate,
   selection: string,
-  attempt = 1
-): Promise<FetchUpstreamResult> {
-  try {
-    return await fetchUpstream(
-      route,
-      payloadForCandidate(ctx.payload, route),
-      ctx.wantsStream,
-      ctx.turnMetadataHeader,
-      ctx.clientSignal,
-      ctx.agentRole,
-      ctx.requestId,
-      ctx.session,
-      {
-        selection,
-        attemptNumber: attempt,
-        model: route.model,
-        requestedModel: ctx.modelName,
-        role: ctx.effectiveRole,
-        workspace: ctx.workspace,
-        sessionId: ctx.session?.sessionId ?? null
-      }
-    );
-  } catch (error) {
-    if (
-      attempt >= UPSTREAM_TRANSPORT_MAX_ATTEMPTS ||
-      ctx.clientSignal?.aborted ||
-      (error as { code?: string } | undefined)?.code ===
+  handleResponse: (
+    result: Extract<FetchUpstreamResult, { ok: true }>
+  ) => Promise<"served" | "terminal" | "fallback">
+): Promise<CandidateAttemptResult> {
+  const maxRetries = Math.max(0, UPSTREAM_TRANSPORT_MAX_ATTEMPTS - 1);
+  let receivedResponse = false;
+  const retryPolicy = retry(
+    handleWhen((error) => {
+      if (ctx.clientSignal?.aborted || receivedResponse) return false;
+      if (
+        (error as { code?: string } | undefined)?.code ===
         "router_auth_unavailable"
-    )
-      throw error;
+      ) {
+        return false;
+      }
+      return true;
+    }),
+    {
+      maxAttempts: maxRetries,
+      backoff: createJitteredBackoff(maxRetries)
+    }
+  );
+
+  retryPolicy.onRetry((event) => {
+    if (!("error" in event)) return;
+    const { error } = event;
     logTransportError({
       requestId: ctx.requestId,
       role: ctx.role,
@@ -4594,11 +4684,54 @@ async function fetchCandidate(
       failureClass: classifyProviderFailure(502, errorMessage(error)),
       elapsedMs: Date.now() - ctx.startedAt
     });
-    await jitteredBackoff();
-    if (ctx.clientSignal?.aborted) throw error;
-    return fetchCandidate(ctx, route, selection, attempt + 1);
-  }
+  });
+
+  return retryPolicy.execute(
+    ({ attempt }) =>
+      withUpstreamTimeout(ctx.clientSignal, async (attemptSignal) => {
+        receivedResponse = false;
+        if (ctx.clientSignal?.aborted)
+          throw new Error("client aborted before candidate upstream fetch");
+        const result = await fetchUpstream(
+          route,
+          payloadForCandidate(ctx.payload, route),
+          ctx.wantsStream,
+          ctx.turnMetadataHeader,
+          ctx.clientSignal,
+          ctx.agentRole,
+          ctx.requestId,
+          ctx.session,
+          {
+            selection,
+            attemptNumber: attempt + 1,
+            model: route.model,
+            requestedModel: ctx.modelName,
+            role: ctx.effectiveRole,
+            workspace: ctx.workspace,
+            sessionId: ctx.session?.sessionId ?? null
+          },
+          attemptSignal
+        );
+        if (!result.ok) return { kind: "response", result };
+        receivedResponse = true;
+        return {
+          kind: "handled",
+          outcome: await handleResponse(result)
+        };
+      }),
+    ctx.clientSignal ?? undefined
+  );
 }
+
+type CandidateAttemptResult =
+  | {
+      kind: "handled";
+      outcome: "served" | "terminal" | "fallback";
+    }
+  | {
+      kind: "response";
+      result: Extract<FetchUpstreamResult, { ok: false }>;
+    };
 
 /**
  * The client left mid-request (Codex Desktop archiving a thread with a turn in

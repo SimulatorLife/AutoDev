@@ -10,9 +10,12 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { computeRepoPathsFingerprint } from "./runtime-files.ts";
+
 export interface ConsoleBuildOptions {
   readonly repositoryRoot: string;
   readonly nodeBin?: string;
+  readonly forceRebuild?: boolean;
 }
 
 export interface ConsoleBuildDeps {
@@ -59,6 +62,29 @@ function defaultDeps(): ConsoleBuildDeps {
 
 const PRODUCTION_DIST_DIR = ".next";
 const PREVIOUS_DIST_DIR = ".next-previous";
+const CONSOLE_BUILD_STAMP_FILE = ".autodev-build-stamp";
+const CONSOLE_BUILD_FINGERPRINT_PATHS = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "console/package.json",
+  "console/next.config.ts",
+  "console/tsconfig.json",
+  "console/.env.local",
+  "console/app",
+  "console/src",
+  "console/public",
+  "core/package.json",
+  "core/src",
+  "data/package.json",
+  "data/src"
+] as const;
+
+export function computeConsoleBuildFingerprint(repositoryRoot: string): string {
+  return computeRepoPathsFingerprint(
+    repositoryRoot,
+    CONSOLE_BUILD_FINGERPRINT_PATHS
+  );
+}
 const NEXT_ENV_FILE = "next-env.d.ts";
 const TSCONFIG_FILE = "tsconfig.json";
 const CACHE_DIR = "cache";
@@ -330,9 +356,21 @@ export function buildConsole(
   const buildPath = path.join(consoleRoot, PRODUCTION_DIST_DIR);
   const previousPath = path.join(consoleRoot, PREVIOUS_DIST_DIR);
   const buildIdPath = path.join(stagingPath, "BUILD_ID");
+  const stampPath = path.join(buildPath, CONSOLE_BUILD_STAMP_FILE);
   const nextEnvPath = path.join(consoleRoot, NEXT_ENV_FILE);
   const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
   recoverPreviousBuild(consoleRoot, deps);
+  if (
+    !options.forceRebuild &&
+    process.env.AUTODEV_FORCE_CONSOLE_BUILD !== "1" &&
+    deps.fileExists(path.join(buildPath, "BUILD_ID")) &&
+    deps.fileExists(stampPath) &&
+    deps.readFile(stampPath).trim() ===
+      computeConsoleBuildFingerprint(options.repositoryRoot)
+  ) {
+    cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
+    return;
+  }
   cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
   deps.remove(stagingPath);
   const previousNextEnv = deps.fileExists(nextEnvPath)
@@ -363,6 +401,10 @@ export function buildConsole(
     }
     normalizeGeneratedTypeReference(consoleRoot, stagingDistDir, deps);
     normalizeGeneratedTsconfig(consoleRoot, deps);
+    deps.writeFile(
+      path.join(stagingPath, CONSOLE_BUILD_STAMP_FILE),
+      `${computeConsoleBuildFingerprint(options.repositoryRoot)}\n`
+    );
     publishStagedBuild(stagingPath, buildPath, previousPath, deps);
   } catch (error) {
     restoreBuildCacheOnFailure(buildPath, stagingPath, movedCacheSubdirs, deps);

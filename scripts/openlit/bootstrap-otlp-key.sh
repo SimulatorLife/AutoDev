@@ -44,7 +44,11 @@ TEMP_FILE="${KEY_FILE}.tmp.$$"
 umask 077
 printf '%s\n' "$API_KEY" > "$TEMP_FILE"
 chmod 0600 "$TEMP_FILE"
-mv -f "$TEMP_FILE" "$KEY_FILE"
+if [[ -f "$KEY_FILE" && ! -L "$KEY_FILE" ]] && cmp -s "$TEMP_FILE" "$KEY_FILE"; then
+	rm -f "$TEMP_FILE"
+else
+	mv -f "$TEMP_FILE" "$KEY_FILE"
+fi
 chmod 0600 "$KEY_FILE"
 printf '==> OTLP receiver token materialized to %s (mode 0600; value redacted)\n' "$KEY_FILE"
 printf '    Producer header: Authorization=Bearer%%20<value from key file>\n'

@@ -58,6 +58,11 @@ import {
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  SANDBOX_MODE_HEADER,
+  contextHeaderValue,
+  readContextHeader
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,
@@ -3127,20 +3132,6 @@ function runAgy(
   });
 }
 
-/** Node lowercases inbound header names; intermediaries may not. */
-function headerValue(
-  headers: NodeJS.Dict<string | string[]> | undefined,
-  name: string
-): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  const value = key === undefined ? undefined : headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single.trim() : null;
-}
-
 async function readJsonBody(
   request: IncomingMessage
 ): Promise<JsonRecord | null> {
@@ -3370,12 +3361,7 @@ async function handle(
 function headerSandboxMode(
   headers: Record<string, unknown>
 ): "read-only" | "workspace-write" | null {
-  const key = Object.keys(headers).find(
-    (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
-  );
-  if (!key) return null;
-  const value = headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
+  const single = readContextHeader(headers, SANDBOX_MODE_HEADER);
   return single === "read-only" || single === "workspace-write" ? single : null;
 }
 
@@ -3516,7 +3502,7 @@ function prepareResponsesTurn(
   // every router-issued call (AgentEventReporter is authorized from the same
   // header) so a failure this bridge reports back can be matched to the
   // router request that produced it without carrying any prompt content.
-  const requestId = headerValue(request.headers, REQUEST_ID_HEADER);
+  const requestId = contextHeaderValue(request.headers, REQUEST_ID_HEADER);
   const spawnTracker = createSpawnTracker(agentEvents);
   // The other half of what agy does inside its own runtime: the tools it
   // reaches for. Like delegation, none of it reaches the router as a request.

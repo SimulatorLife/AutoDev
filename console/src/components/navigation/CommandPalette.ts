@@ -1,12 +1,12 @@
 "use client";
 
+import * as Ariakit from "@ariakit/react";
 import {
   CANONICAL_NAV_GROUPS,
   type CanonicalNavSection,
   canonicalSectionPurpose
 } from "@simulatorlife/autodev-core";
 import React from "react";
-import { createPortal } from "react-dom";
 
 import { canonicalNavPath } from "../../lib/routes.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
@@ -47,6 +47,12 @@ import { NavigationLink } from "./NavigationLink.ts";
  *     the selected match, so the operator never has to reach for the mouse
  *     to get from a question to a page.
  *
+ * The last two, and the dialog's own focus handling, are Ariakit's
+ * (`@ariakit/react`): its `Dialog` owns modality, Escape, outside dismissal
+ * and focus return; `FocusTrapRegion` contains Tab; and its `Combobox` owns
+ * virtual focus, the arrow keys and Enter. See
+ * https://ariakit.com/examples/dialog-combobox-command-menu.
+ *
  * It is a `.ts` module and not a `.tsx` one, and that is not a style
  * preference: the Console's unit tests load the module graph directly, and
  * Node's type stripping does not carry JSX. A `.ts` module that imports a
@@ -84,7 +90,7 @@ const PALETTE_RESULT_CLASS =
  * move every line below it when the operator pressed an arrow key.
  */
 const PALETTE_ACTIVE_RESULT_CLASS =
-  "bg-surface-raised shadow-[inset_2px_0_0_0_var(--color-accent)]";
+  "data-[active-item]:bg-surface-raised data-[active-item]:shadow-[inset_2px_0_0_0_var(--color-accent)]";
 
 /**
  * The key the operator presses.
@@ -150,48 +156,67 @@ function shortcutForThisMachine(): Shortcut {
   return { badge: agent.includes("Mac") ? "⌘K" : "Ctrl K" };
 }
 
-/** The controls the keyboard can reach inside the dialog. */
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-/**
- * The controls the operator can reach inside the dialog, in the order the
- * dialog puts them in.
- */
-function focusableWithin(container: HTMLElement): readonly HTMLElement[] {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-  ).filter((element) => element.getClientRects().length > 0);
-}
-
 export interface CommandPaletteProps {
   /**
-   * The resource the operator is on.
+   * The resource the operator is on, when they are on one.
    *
    * The palette says which of its results is the page they are already on, so
    * a search that returns the page they are looking at is not a dead end. It
    * is a prop rather than a pathname because the shell already knows which
    * resource it is showing, and a palette that has to ask the router where it
-   * is cannot be rendered outside one.
-   */
-  /**
-   * The resource the operator is on, when they are on one.
-   *
-   * A page that belongs to no section marks no result as the current one.
+   * is cannot be rendered outside one. A page that belongs to no section marks
+   * no result as the current one.
    */
   readonly activeSection: CanonicalNavSection | undefined;
 }
 
+/** A result's element id, so the announced selection can name the active row. */
+function resultId(section: CanonicalNavSection): string {
+  return (
+    "command-palette-result-" +
+    section.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")
+  );
+}
+
+/**
+ * The palette is Ariakit's dialog around Ariakit's combobox.
+ *
+ * Ariakit owns everything the keyboard and the focus do: the dialog is modal,
+ * so the page behind it is inert, Escape and an outside click dismiss it, and
+ * the focus goes to the field on open; the combobox keeps the focus in the
+ * field while the arrow keys move a virtual selection that wraps, selects the
+ * first match as the query changes, and opens the selected link on Enter. This
+ * module keeps only what is the Console's: the registry it searches, the
+ * word-by-word match, the global shortcut and its typing guard, the
+ * announcements, and the hand-off to the navigation owner.
+ *
+ * One state, "open", drives both stores, so a result that hides the combobox
+ * on click closes the dialog with it.
+ */
 export function CommandPalette({
   activeSection
 }: CommandPaletteProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
-  const [activeIndex, setActiveIndex] = React.useState(0);
   const [shortcut, setShortcut] = React.useState<Shortcut | null>(null);
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
-  const listRef = React.useRef<HTMLUListElement | null>(null);
+  /** Whether the palette closed because the operator chose a destination. */
+  const navigatedRef = React.useRef(false);
+
+  const combobox = Ariakit.useComboboxStore({
+    open,
+    setOpen,
+    inputValue: query,
+    setInputValue: setQuery,
+    // Opening starts a new search: a palette that reopens on the previous
+    // query reads as a page that remembered something.
+    resetValueOnHide: true,
+    focusLoop: true,
+    // The selection is always on a result, so the field is not a stop of its
+    // own in the arrow-key cycle.
+    includesBaseElement: false
+  });
+  const activeId = Ariakit.useStoreState(combobox, "activeId");
 
   const results = React.useMemo<readonly PaletteResult[]>(
     () =>
@@ -210,22 +235,16 @@ export function CommandPalette({
     [query, results]
   );
 
-  /**
-   * The result the palette has selected.
-   *
-   * Every command palette the operator already knows selects a result and
-   * opens the selection with `Enter`: VS Code, Linear, Raycast and GitHub all
-   * have the first match selected before a key is pressed, and all of them let
-   * the arrow keys move the selection. A palette that only filters is a
-   * palette that makes the operator reach for the mouse to pick the third
-   * match of five.
-   */
-  const activeResult = shown[activeIndex] ?? null;
+  const activeResult =
+    shown.find((result) => resultId(result.section) === activeId) ?? null;
 
   const count =
     shown.length === 0
       ? "No resources match that search."
-      : `${shown.length} ${shown.length === 1 ? "resource matches" : "resources match"}.`;
+      : String(shown.length) +
+        " " +
+        (shown.length === 1 ? "resource matches" : "resources match") +
+        ".";
 
   /**
    * What the trigger is called.
@@ -236,42 +255,17 @@ export function CommandPalette({
    * says, which is the rule the Console's own links follow.
    */
   const triggerName =
-    shortcut === null ? PALETTE_NAME : `${PALETTE_NAME} (${shortcut.badge})`;
+    shortcut === null
+      ? PALETTE_NAME
+      : PALETTE_NAME + " (" + shortcut.badge + ")";
 
   React.useEffect(() => {
     setShortcut(shortcutForThisMachine());
   }, []);
 
-  /**
-   * Opening starts a new search.
-   *
-   * The field is emptied rather than left holding the last query: a palette
-   * that reopens on the previous search reads as a page that remembered
-   * something, and the operator has to clear it before they can ask the next
-   * question.
-   */
   const openPalette = React.useCallback((): void => {
-    setQuery("");
-    setActiveIndex(0);
+    navigatedRef.current = false;
     setOpen(true);
-  }, []);
-
-  /**
-   * Closing hands the focus back, unless the palette closed because the
-   * operator chose a destination.
-   *
-   * A dialog that takes the focus and gives it back to nothing drops the
-   * operator at the top of the document, which is further from where they
-   * were than the trigger they came from. A palette that closed *by
-   * navigating* is a different thing: the page is changing, and the console's
-   * own rule for that is to move the focus to the new page's heading, so the
-   * focus is left alone here and the navigation owner has it.
-   */
-  const closePalette = React.useCallback((restoreFocus: boolean): void => {
-    setOpen(false);
-    if (restoreFocus) {
-      triggerRef.current?.focus({ preventScroll: true });
-    }
   }, []);
 
   React.useEffect(() => {
@@ -289,149 +283,6 @@ export function CommandPalette({
       globalThis.removeEventListener("keydown", onKeyDown);
     };
   }, [openPalette]);
-
-  React.useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!open) return;
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closePalette(true);
-    };
-    globalThis.addEventListener("keydown", onKeyDown);
-    return () => {
-      globalThis.removeEventListener("keydown", onKeyDown);
-    };
-  }, [closePalette, open]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const input = inputRef.current;
-    input?.focus();
-    input?.select();
-  }, [open]);
-
-  /**
-   * The focus stays inside the dialog.
-   *
-   * The dialog says it is modal, which tells assistive technology that the
-   * page behind it is not there any more. Without this, the keyboard walked
-   * straight off the dialog and into the page behind it -- invisible under
-   * the overlay, and still announced -- so the modal claim was a lie the
-   * keyboard told.
-   */
-  const containFocus = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== "Tab") return;
-    const dialog = event.currentTarget;
-    const focusable = focusableWithin(dialog);
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (first === undefined || last === undefined) {
-      event.preventDefault();
-      return;
-    }
-    const active = document.activeElement;
-    if (event.shiftKey) {
-      if (active === first || !dialog.contains(active)) {
-        event.preventDefault();
-        last.focus();
-      }
-      return;
-    }
-    if (active === last || !dialog.contains(active)) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
-  /**
-   * The arrow keys move the selection.
-   *
-   * The focus stays in the field, because the field is where the answer is
-   * typed: a palette that moved the focus onto a row would stop filtering on
-   * the next keystroke. The selection is a separate thing from the focus, and
-   * it wraps, because a list of fourteen resources is longer than a screen.
-   */
-  const moveSelection = (
-    event: React.KeyboardEvent<HTMLInputElement>
-  ): void => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    if (shown.length === 0) return;
-    event.preventDefault();
-    const step = event.key === "ArrowDown" ? 1 : -1;
-    setActiveIndex((index) => (index + step + shown.length) % shown.length);
-  };
-
-  /**
-   * The selected row is kept in view.
-   *
-   * The list scrolls, not the page: the dialog is fixed to the window, and
-   * moving the window under the operator would move the whole Console.
-   */
-  React.useEffect(() => {
-    const list = listRef.current;
-    if (list === null) return;
-    const selected = list.querySelector<HTMLElement>(
-      '[data-palette-active="true"]'
-    );
-    if (selected === null) return;
-    const listBox = list.getBoundingClientRect();
-    const row = selected.getBoundingClientRect();
-    if (row.top < listBox.top) {
-      list.scrollTop -= listBox.top - row.top;
-    } else if (row.bottom > listBox.bottom) {
-      list.scrollTop += row.bottom - listBox.bottom;
-    }
-  }, [activeIndex, open, shown]);
-
-  /**
-   * `Enter` opens the selected match.
-   *
-   * The palette exists so the operator can get from a question to a page
-   * without the mouse, and a search that needs a click to finish is a search
-   * that needs the mouse. The keystroke opens what the list has selected, so
-   * the keystroke and the eye agree on what it will open.
-   */
-  const openSelectedMatch = (
-    event: React.KeyboardEvent<HTMLInputElement>
-  ): void => {
-    if (event.key !== "Enter") return;
-    const selected = listRef.current?.querySelector<HTMLAnchorElement>(
-      '[data-palette-active="true"]'
-    );
-    const target =
-      selected ?? listRef.current?.querySelector<HTMLAnchorElement>("a[href]");
-    if (target === undefined || target === null) return;
-    event.preventDefault();
-    target.click();
-  };
-
-  /**
-   * The field's own keys.
-   *
-   * The arrow keys move the selection and `Enter` opens it. Both are handled
-   * on the field rather than on the list, because the field is where the
-   * operator's attention is and where their next keystroke belongs.
-   */
-  const handleFieldKeyDown = (
-    event: React.KeyboardEvent<HTMLInputElement>
-  ): void => {
-    moveSelection(event);
-    openSelectedMatch(event);
-  };
-
-  /**
-   * A click on the overlay closes the palette.
-   *
-   * The click has to land on the overlay itself: a click inside the dialog is
-   * a click on a result, and closing the palette under the operator's own
-   * click would throw away the choice they were making.
-   */
-  const handleOverlayClick = (
-    event: React.MouseEvent<HTMLDivElement>
-  ): void => {
-    if (event.target !== event.currentTarget) return;
-    closePalette(true);
-  };
 
   const trigger = React.createElement(
     "button",
@@ -456,24 +307,22 @@ export function CommandPalette({
     )
   );
 
-  const field = React.createElement(
+  const label = React.createElement(
     "label",
     { htmlFor: PALETTE_INPUT_ID, className: "sr-only" },
     "Search the Console's resources by name or by what they are for"
   );
 
-  const input = React.createElement("input", {
+  const input = React.createElement(Ariakit.Combobox, {
+    store: combobox,
     id: PALETTE_INPUT_ID,
-    ref: inputRef,
-    value: query,
-    onChange: (event: React.ChangeEvent<HTMLInputElement>): void => {
-      setQuery(event.target.value);
-      // A new search starts at its first match.
-      setActiveIndex(0);
-    },
-    onKeyDown: handleFieldKeyDown,
+    // The first match is selected before a key is pressed, and again as the
+    // query changes. Keep DOM focus on the input; Ariakit exposes the active
+    // option through aria-activedescendant for this virtual-focus combobox.
+    autoSelect: "always",
+    focusOnMove: false,
+    autoFocus: true,
     placeholder: "Search the Console's resources",
-    autoComplete: "off",
     className:
       "w-full bg-transparent text-sm text-fg outline-none placeholder:text-fg-muted"
   });
@@ -481,7 +330,7 @@ export function CommandPalette({
   const countLine = React.createElement(
     "p",
     {
-      className: `${MUTED_META_CLASS} border-b border-border px-3 py-1.5`,
+      className: MUTED_META_CLASS + " border-b border-border px-3 py-1.5",
       role: "status",
       "data-palette-count": "true"
     },
@@ -493,7 +342,7 @@ export function CommandPalette({
    *
    * The selection is a visual accent bar, and a screen reader user cannot see
    * an accent bar. The count says how many resources match; this says which
-   * one `Enter` would open, and it changes only when the selection does.
+   * one Enter would open, and it changes only when the selection does.
    */
   const selection = React.createElement(
     "p",
@@ -502,117 +351,118 @@ export function CommandPalette({
       role: "status",
       "data-palette-selection": "true"
     },
-    activeResult === null ? "" : `${activeResult.section} is selected.`
+    activeResult === null ? "" : activeResult.section + " is selected."
   );
 
-  const empty = React.createElement(
-    "li",
-    { className: `px-3 py-6 text-center text-sm ${MUTED_TEXT_CLASS}` },
-    "No resource matches that. Try a resource's name, or what it is for."
-  );
-
-  const entries = shown.map((result, index) => {
-    const isActive = index === activeIndex;
-    return React.createElement(
-      "li",
-      { key: result.section },
-      React.createElement(
-        NavigationLink,
-        {
-          href: result.path,
-          onClick: (): void => {
-            closePalette(false);
-          },
-          dataAttributes: isActive ? { "data-palette-active": "true" } : {},
-          className: isActive
-            ? `${PALETTE_RESULT_CLASS} ${PALETTE_ACTIVE_RESULT_CLASS}`
-            : PALETTE_RESULT_CLASS
+  const entries = shown.map((result) =>
+    React.createElement(
+      Ariakit.ComboboxItem,
+      {
+        key: result.section,
+        id: resultId(result.section),
+        focusOnHover: true,
+        // Choosing a result closes the palette and hands the focus to the
+        // navigation owner rather than back to the trigger.
+        hideOnClick: true,
+        setValueOnClick: false,
+        onClick: (): void => {
+          navigatedRef.current = true;
         },
-        React.createElement(
-          "span",
-          { className: "text-sm text-fg" },
-          result.section,
-          result.section === activeSection
-            ? React.createElement(
-                "span",
-                { className: MUTED_META_CLASS },
-                " · on this page"
-              )
-            : null
-        ),
-        React.createElement(
-          "span",
-          { className: `line-clamp-2 text-xs ${MUTED_META_CLASS}` },
-          result.purpose
-        )
+        render: React.createElement(NavigationLink, {
+          href: result.path,
+          className: PALETTE_RESULT_CLASS + " " + PALETTE_ACTIVE_RESULT_CLASS
+        })
+      },
+      React.createElement(
+        "span",
+        { className: "text-sm text-fg" },
+        result.section,
+        result.section === activeSection
+          ? React.createElement(
+              "span",
+              { className: MUTED_META_CLASS },
+              " · on this page"
+            )
+          : null
+      ),
+      React.createElement(
+        "span",
+        { className: "line-clamp-2 text-xs " + MUTED_META_CLASS },
+        result.purpose
       )
-    );
-  });
+    )
+  );
 
-  const dialog = React.createElement(
-    "div",
-    {
-      role: "dialog",
-      "aria-modal": true,
-      "aria-label": PALETTE_NAME,
-      onKeyDown: containFocus,
-      className:
-        // The dialog is bounded by the window it opens in. A palette that is
-        // taller than a short viewport -- a phone in landscape, a half-height
-        // window -- puts its lower half below the fold, and a fixed overlay
-        // cannot be scrolled: the results the operator cannot see are the
-        // results they cannot reach.
-        "flex w-full max-w-xl max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
-    },
+  const list =
+    shown.length === 0
+      ? React.createElement(
+          "p",
+          {
+            className:
+              "min-h-0 max-h-80 flex-1 overflow-y-auto p-2 px-3 py-6 text-center text-sm " +
+              MUTED_TEXT_CLASS
+          },
+          "No resource matches that. Try a resource's name, or what it is for."
+        )
+      : React.createElement(
+          Ariakit.ComboboxList,
+          {
+            store: combobox,
+            alwaysVisible: true,
+            className: "min-h-0 max-h-80 flex-1 overflow-y-auto p-2"
+          },
+          entries
+        );
+
+  const dialogContent = React.createElement(
+    Ariakit.FocusTrapRegion,
+    { enabled: true, className: "flex min-h-0 flex-1 flex-col" },
     React.createElement(
       "div",
       { className: "border-b border-border p-3" },
-      field,
+      label,
       input
     ),
     countLine,
     selection,
-    React.createElement(
-      "ul",
-      {
-        ref: listRef,
-        className: "min-h-0 max-h-80 flex-1 overflow-y-auto p-2"
-      },
-      shown.length === 0 ? empty : entries
-    )
-  );
-
-  const overlay = React.createElement(
-    "div",
-    {
-      className:
-        // The overlay scrolls as a last resort, so a dialog that is taller
-        // than the window can still be reached.
-        "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-24",
-      "data-command-palette": true,
-      onClick: handleOverlayClick
-    },
-    dialog
+    list
   );
 
   return React.createElement(
     React.Fragment,
     null,
     trigger,
-    // The overlay is a child of the document, not of the header.
-    //
-    // The shell's header carries a `backdrop-blur`, and an element with a
-    // backdrop filter is the containing block for its fixed descendants: the
-    // palette's overlay was "fixed to the window" only in the sense that it
-    // was fixed to the header. Measured in Chromium against the production
-    // build, the overlay was 1384x112 -- the header's box -- in a 1440x900
-    // window, so the dialog overflowed it, the backdrop dimmed the header
-    // and nothing else, and at a phone-in-landscape height the dialog's
-    // lower half was below the fold with no way to reach it.
-    //
-    // Rendering it into the document puts it back in the window, where
-    // "fixed" means what it says. The palette is only ever open in the
-    // browser, so the portal is never taken on the server.
-    open ? createPortal(overlay, globalThis.document.body) : null
+    React.createElement(
+      Ariakit.Dialog,
+      {
+        open,
+        onClose: (): void => {
+          setOpen(false);
+        },
+        modal: true,
+        unmountOnHide: true,
+        "aria-label": PALETTE_NAME,
+        "data-command-palette": true,
+        // Dismissal hands the focus back to the trigger however the palette
+        // was opened. A palette that closed by navigating leaves the focus to
+        // the navigation owner, which moves it to the new page's heading.
+        finalFocus: triggerRef,
+        autoFocusOnHide: (): boolean => !navigatedRef.current,
+        // The dialog and its backdrop are rendered into the document by
+        // Ariakit's portal. The shell's header carries a backdrop-blur, which
+        // makes it the containing block for fixed descendants, so a palette
+        // rendered inside the header would be fixed to the header and not to
+        // the window.
+        backdrop: React.createElement("div", {
+          className: "fixed inset-0 z-50 bg-black/60",
+          "data-command-palette-backdrop": true
+        }),
+        className:
+          // Bounded by the window it opens in: a palette taller than a short
+          // viewport would put its lower half out of reach.
+          "fixed left-1/2 top-24 z-50 flex w-[calc(100%-2rem)] max-w-xl max-h-[calc(100vh-7rem)] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
+      },
+      dialogContent
+    )
   );
 }

@@ -161,6 +161,21 @@ function isSkillMarkdownPath(candidate: string): boolean {
   );
 }
 
+function skillFromSegments(segments: readonly string[]): string | null {
+  const skill =
+    segments[0] === ".curated"
+      ? segments.length === 3
+        ? segments[1]
+        : undefined
+      : segments.length <= 2
+        ? segments[0]
+        : undefined;
+  if (!skill || skill === "." || skill === ".curated" || skill.includes("..")) {
+    return null;
+  }
+  return skill;
+}
+
 export function matchSkillReadTarget(
   filePath: string | null,
   customRoots?: readonly string[]
@@ -177,10 +192,8 @@ export function matchSkillReadTarget(
       .slice(root.length)
       .replace(LEADING_SEPARATORS, "");
     if (!isSkillMarkdownPath(relative)) continue;
-    const segments = relative.split(path.sep).filter(Boolean);
-    const skill = segments[0];
-    if (!skill || skill.includes("..") || segments.length > 2) continue;
-    return { skill, root };
+    const skill = skillFromSegments(relative.split(path.sep).filter(Boolean));
+    if (skill) return { skill, root };
   }
   return null;
 }

@@ -15,6 +15,7 @@
     "./playtesting": "./src/playtesting/index.ts"
   },
   "dependencies": {
+    "@octokit/rest": "22.0.1",
     "@simulatorlife/autodev-core": "workspace:*",
     "jsonc-parser": "3.3.1",
     "pg": "8.23.1",

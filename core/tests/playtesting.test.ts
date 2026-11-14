@@ -56,6 +56,8 @@ test("isPlainObject preserves structural object guard behavior", () => {
   assert.equal(isPlainObject({}), true);
   assert.equal(isPlainObject(Object.create(null)), true);
   assert.equal(isPlainObject(new Date()), true);
+  assert.equal(isPlainObject(Object.create({ inherited: true })), true);
+  assert.equal(isPlainObject(new (class Fixture {})()), true);
   assert.equal(isPlainObject(null), false);
   assert.equal(isPlainObject([]), false);
   assert.equal(isPlainObject("object"), false);

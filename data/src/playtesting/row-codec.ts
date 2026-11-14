@@ -89,6 +89,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSourceUnavailableError } from "./errors.ts";
+import { isRecord } from "./object-guards.ts";
 import type {
   PlaytestHumanAggregateRecord,
   PlaytestReviewClaimSummary,
@@ -239,10 +240,6 @@ export interface PlaytestIndexedHumanSummaryRow {
   readonly is_tombstone: number;
   readonly created_at: string;
   readonly payload_json: string;
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function payloadJson(artifact: object): string {

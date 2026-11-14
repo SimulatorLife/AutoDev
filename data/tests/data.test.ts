@@ -1240,6 +1240,54 @@ test("RuleSync skill catalog rejects oversized sources before reading their cont
   }
 });
 
+test("RuleSync skill catalog ignores real .curated cache directories while still rejecting symlinked .curated", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-curated-")
+  );
+  const externalRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-curated-external-")
+  );
+  try {
+    const skillsDir = path.join(repositoryRoot, ".rulesync", "skills");
+    const curatedSkillDir = path.join(
+      skillsDir,
+      ".curated",
+      "react-best-practices"
+    );
+    const canonicalSkillDir = path.join(skillsDir, "audit");
+    await mkdir(curatedSkillDir, { recursive: true });
+    await mkdir(canonicalSkillDir, { recursive: true });
+    await writeFile(
+      path.join(curatedSkillDir, "SKILL.md"),
+      "---\nname: vercel-react-best-practices\ndescription: External curated skill.\n---\nBody.\n"
+    );
+    await writeFile(
+      path.join(canonicalSkillDir, "SKILL.md"),
+      "---\nname: audit\ndescription: Local canonical skill.\n---\nBody.\n"
+    );
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const loaded = repo.loadSkills();
+    assert.equal(loaded.valid, true);
+    assert.deepEqual(
+      loaded.skills.map((skill) => skill.name),
+      ["audit"]
+    );
+
+    await rm(path.join(skillsDir, ".curated"), {
+      recursive: true,
+      force: true
+    });
+    await symlink(externalRoot, path.join(skillsDir, ".curated"));
+    const symlinked = repo.loadSkills();
+    assert.equal(symlinked.valid, false);
+    assert.match(symlinked.issues[0]?.message ?? "", /symbolic link/u);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSync MCP state parses canonical JSONC and target overrides without exposing config", async () => {
   const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-mcp-"));
   const sourcePath = path.join(repositoryRoot, ".rulesync", "mcp.jsonc");

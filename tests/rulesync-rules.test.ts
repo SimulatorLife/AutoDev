@@ -125,13 +125,15 @@ test("full project generation materializes the shared root instructions", () => 
   const files = filesUnder(projectOutputRoot);
   assert.ok(files.includes("AGENTS.md"));
   assert.deepEqual(
-    files.filter((file) =>
-      [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "GEMINI.md",
-        "copilot-instructions.md"
-      ].includes(file.split("/").at(-1) ?? "")
+    files.filter(
+      (file) =>
+        !file.includes("/skills/") &&
+        [
+          "AGENTS.md",
+          "CLAUDE.md",
+          "GEMINI.md",
+          "copilot-instructions.md"
+        ].includes(file.split("/").at(-1) ?? "")
     ),
     ["AGENTS.md"]
   );

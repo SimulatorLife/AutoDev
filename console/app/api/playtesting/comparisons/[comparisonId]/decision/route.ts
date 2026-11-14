@@ -2,6 +2,7 @@
 import type { ControlApiPlaytestingComparisonDecisionRequest } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -27,17 +28,6 @@ function hasControlCharacters(value: string): boolean {
   });
 }
 
-function sendError(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
-
 function failureStatus(
   result: Exclude<
     Awaited<ReturnType<typeof recordPlaytestingComparisonDecision>>,
@@ -55,7 +45,7 @@ export async function POST(
   context: { readonly params: Promise<{ readonly comparisonId: string }> }
 ): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
-    return sendError(
+    return jsonErrorResponse(
       403,
       "autodev_console_playtesting_origin_refused",
       "Comparison decisions must come from the Console's same origin."
@@ -75,7 +65,7 @@ export async function POST(
     [...form.keys()].some((key) => !requiredFields.includes(key)) ||
     requiredFields.some((key) => form.getAll(key).length !== 1)
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_decision_request",
       "A comparison ID and one value for each typed decision field are required."
@@ -95,7 +85,7 @@ export async function POST(
     reason.length > 4000 ||
     hasControlCharacters(reason)
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_decision_request",
       "The comparison decision fields are malformed or outside their limits."
@@ -103,7 +93,7 @@ export async function POST(
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -118,7 +108,7 @@ export async function POST(
   };
   const result = await recordPlaytestingComparisonDecision(decision, config);
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       failureStatus(result),
       controlApiFailureCode(result),
       result.message

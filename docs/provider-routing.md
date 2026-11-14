@@ -648,6 +648,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   model-catalog helpers, but no in-process quota-reading function; its
   documented CLI is the supported public collection interface.
 
+  For Claude, Runtime forwards the existing `CLAUDE_CODE_OAUTH_TOKEN` (from
+  the Runtime environment or AutoDev bridge Keychain item) only to the
+  quota-axi child process. This lets quota-axi's supported Claude collector
+  authenticate without enabling credential refresh or granting quota-axi a
+  native Keychain prompt; the token is not included in the Control API report.
+
   Quota output is not router health evidence. It does not set, clear or overlay
   cooldowns and does not change routing, provider concurrency or session
   stickiness. Those continue to follow provider probes, request outcomes and
@@ -1674,6 +1680,26 @@ response includes
 `router_provider_unavailable`, the provider/model/request and router-instance
 correlation fields, and a `retry-after` header after the provider is cooled
 down. Concrete model requests are never silently rerouted.
+
+The Router uses Cockatiel 4.0.0 for provider-attempt retry/backoff and timeout
+policies. The per-attempt deadline encloses the upstream call and response
+consumption, including streamed forwarding, so a returned response header does
+not prematurely cancel its body. A direct concrete request's transport and
+retryable-status failures share the same attempt budget; retry callbacks only
+emit Router-owned telemetry and do not add another retry layer. Health probes
+use the same library for their timeout-only retry. Caller cancellation remains
+distinct from an upstream timeout.
+
+Some nearby mechanisms intentionally remain Router-owned rather than being
+replaced by generic Cockatiel policies. Provider/model cooldown classification
+and persisted reset state are the authoritative scoped circuit state; adding a
+second in-memory breaker would diverge from them. Provider capacity keeps its
+cancellable FIFO admission queue because Cockatiel 4.0.0's bulkhead leaves
+aborted queued entries in place until dequeue. Ordered provider fallback is a
+routing decision with selection, cooldown, admission and telemetry semantics,
+not a static error-to-value fallback. The Console has no provider-selection
+fallback or provider-capacity admission to delegate.
+
 Router-generated provider errors include stable `code`, `retryable`,
 `failureClass`, `provider`, `model`, `requestId`, and `routerInstanceId`
 fields in the JSON error object. Transport failures are logged as structured

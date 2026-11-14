@@ -122,6 +122,15 @@ import {
   type WorkspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
+import {
+  DelegateBackoff,
+  handleWhen,
+  retry,
+  TaskCancelledError,
+  timeout,
+  TimeoutStrategy,
+  wrap
+} from "cockatiel";
 
 import { readSecretFromFile } from "./secret-file.ts";
 
@@ -271,12 +280,10 @@ function describeTransportFailure(error: unknown): string {
 }
 
 /**
- * The one place a read or a write that never completed is turned into a result.
+ * The one place a request that never completed is turned into a result.
  *
- * Two functions catch here and they used to answer differently -- the GET grew a
- * deadline branch and the POST kept forwarding `error.message` -- which is the
- * drift this removes. One classifier, so a timeout reads the same whichever
- * request it was.
+ * Reads and writes share this classifier, so a timeout or transport error is
+ * reported the same way whichever request failed.
  */
 function transportFailure(
   error: unknown,
@@ -303,24 +310,6 @@ const RETRYABLE_NETWORK_CODES = new Set([
   "ETIMEDOUT"
 ]);
 
-/**
- * The Console's own deadline and a caller's abort, combined.
- *
- * A caller-supplied signal used to *replace* the deadline, which quietly
- * removed the Console's promise that a service it cannot read becomes an
- * explicit state: the read then waited for the caller instead, and a caller
- * that waits for the read waits forever -- a page that never renders. The
- * deadline belongs to the Console, so it has to hold whatever the caller
- * asked for; the caller's abort only ever ends the read sooner.
- */
-function deadlineSignal(
-  controller: AbortController,
-  callerSignal: AbortSignal | undefined
-): AbortSignal {
-  if (!callerSignal) return controller.signal;
-  return AbortSignal.any([controller.signal, callerSignal]);
-}
-
 function isRetryableNetworkError(error: unknown): boolean {
   const cause = (error as { readonly cause?: unknown } | null | undefined)
     ?.cause;
@@ -328,123 +317,100 @@ function isRetryableNetworkError(error: unknown): boolean {
   return typeof code === "string" && RETRYABLE_NETWORK_CODES.has(code);
 }
 
-/** Resolve after `milliseconds`, without handing back the timer handle. */
-function waitBeforeRetry(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
-}
-
 /**
- * The one retry policy for the Control API reads.
+ * The one deadline-and-retry policy for Control API requests.
  *
- * The JSON read and the binary read each used to carry their own copy of this
- * loop, and the copies had already drifted apart. The policy lives here so
- * both reads stop for the same reasons -- the Console's own deadline, a
- * caller-supplied abort, or a failure that is not worth retrying -- and so a
- * retry never outlives the request that asked for it.
+ * The Console's own deadline wraps the whole request, retries included, and
+ * its signal -- which also follows a caller-supplied abort -- is the one every
+ * attempt hands to `fetch`. A caller's signal therefore only ever ends a
+ * request sooner: it can never replace the deadline, so a page waiting on the
+ * read always gets an explicit result.
+ *
+ * `maxRetries` counts retries after the first attempt. Only transport codes in
+ * `RETRYABLE_NETWORK_CODES` are retried (never an abort, never a service
+ * answer), waiting `retryDelayMs` times the retry number between attempts.
+ * Mutations pass no retries and so run under the deadline alone.
  */
-interface ControlApiRetryOptions {
-  readonly maxRetries: number;
-  readonly baseRetryDelayMs: number;
-  readonly controller: AbortController;
-  readonly callerSignal: AbortSignal | undefined;
-  readonly timeoutMs: number;
-}
-
-async function withControlApiRetry<T>(
-  attempt: (attemptIndex: number) => Promise<ControlApiResult<T>>,
-  options: ControlApiRetryOptions
+async function executeControlApiRequest<T>(
+  attempt: (signal: AbortSignal) => Promise<ControlApiResult<T>>,
+  options: FetchControlApiOptions,
+  maxRetries: number
 ): Promise<ControlApiResult<T>> {
-  const { maxRetries, baseRetryDelayMs, controller, callerSignal, timeoutMs } =
-    options;
-  /* eslint-disable no-await-in-loop -- each attempt must settle before the next request starts */
-  for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex++) {
-    try {
-      return await attempt(attemptIndex);
-    } catch (error) {
-      const isLastAttempt = attemptIndex >= maxRetries;
-      const canRetry =
-        !isLastAttempt &&
-        !controller.signal.aborted &&
-        !callerSignal?.aborted &&
-        isRetryableNetworkError(error);
-
-      if (canRetry) {
-        await waitBeforeRetry(baseRetryDelayMs * (attemptIndex + 1));
-        continue;
-      }
-
-      // Our own deadline, read off the controller rather than off the error: the
-      // abort surfaces as a `DOMException` whose message is a browser
-      // implementation detail ("This operation was aborted"), and forwarding that
-      // to an operator says nothing about their system. `controller.signal` rather
-      // than the caller's signal because a caller may supply its own, in which
-      // case this controller aborting means nothing -- the caller gave up, which
-      // is not the Console's deadline.
-      return transportFailure(error, controller.signal.aborted, timeoutMs);
-    }
+  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
+  const deadline = timeout(timeoutMs, TimeoutStrategy.Aggressive);
+  const policy =
+    maxRetries > 0
+      ? wrap(
+          deadline,
+          retry(handleWhen(isRetryableNetworkError), {
+            maxAttempts: maxRetries,
+            backoff: new DelegateBackoff(
+              ({ attempt: retryNumber }) =>
+                (options.retryDelayMs ?? 100) * retryNumber
+            )
+          })
+        )
+      : deadline;
+  try {
+    return await policy.execute(
+      ({ signal }) => attempt(signal),
+      options.signal
+    );
+  } catch (error) {
+    // The deadline is read off the policy's own error rather than off the
+    // transport error: an abort surfaces as a `DOMException` whose message is a
+    // browser implementation detail ("This operation was aborted"), and
+    // forwarding that says nothing about the operator's system. A caller that
+    // gave up is not the Console's deadline.
+    const abortedByDeadline =
+      error instanceof TaskCancelledError && !options.signal?.aborted;
+    return transportFailure(error, abortedByDeadline, timeoutMs);
   }
-  /* eslint-enable no-await-in-loop */
-  return {
-    kind: "unreachable",
-    message: describeTransportFailure(new Error("Connection retries exhausted"))
-  };
 }
 
-export async function fetchControlApi<T>(
+/** A Control API response as a result: the parsed body, or the service's refusal. */
+async function readControlApiJsonResponse<T>(
+  response: Response
+): Promise<ControlApiResult<T>> {
+  if (!response.ok) return readControlApiFailure(response);
+  try {
+    const data = (await response.json()) as T;
+    return { kind: "ok", data };
+  } catch {
+    return {
+      kind: "unreachable",
+      message: "AutoDev Control API returned a non-JSON body."
+    };
+  }
+}
+
+export function fetchControlApi<T>(
   path: string,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const controller = new AbortController();
-  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = deadlineSignal(controller, options.signal);
+  return executeControlApiRequest<T>(
+    async (signal) => {
+      const response = await fetchImpl(`${config.baseUrl}${path}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${config.serviceToken}`,
+          "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
+          Accept: "application/json"
+        },
+        // The Control API reads live runtime state, so a read is never a
+        // cached one: a page that re-reads after a write has to see what
+        // the write produced.
+        cache: "no-store",
+        signal
+      });
 
-  try {
-    return await withControlApiRetry(
-      async () => {
-        const response = await fetchImpl(`${config.baseUrl}${path}`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${config.serviceToken}`,
-            "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
-            Accept: "application/json"
-          },
-          // The Control API reads live runtime state, so a read is never a
-          // cached one: a page that re-reads after a write has to see what
-          // the write produced.
-          cache: "no-store",
-          signal
-        });
-
-        if (response.ok) {
-          try {
-            const data = (await response.json()) as T;
-            return { kind: "ok", data };
-          } catch {
-            return {
-              kind: "unreachable",
-              message: "AutoDev Control API returned a non-JSON body."
-            };
-          }
-        }
-
-        return readControlApiFailure(response);
-      },
-      {
-        maxRetries: options.maxRetries ?? 2,
-        baseRetryDelayMs: options.retryDelayMs ?? 100,
-        controller,
-        callerSignal: options.signal,
-        timeoutMs
-      }
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+      return readControlApiJsonResponse<T>(response);
+    },
+    options,
+    options.maxRetries ?? 2
+  );
 }
 
 export interface ControlApiBinaryData {
@@ -519,43 +485,24 @@ async function readBoundedBinary(
  * Only the fixed local Control API route and inert raster image types are
  * accepted; the service credential never reaches the browser.
  */
-export async function fetchControlApiBinary(
+export function fetchControlApiBinary(
   path: string,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiBinaryData>> {
   if (!validPlaytestFramePath(path)) {
-    return {
+    return Promise.resolve({
       kind: INVALID_RESPONSE_KIND,
       code: "autodev_control_api_invalid_playtesting_frame_path",
       message: "The Console refused an invalid Playtesting frame path."
-    };
+    });
   }
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const controller = new AbortController();
-  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await withControlApiRetry(
-      () =>
-        readControlApiBinaryFrame(
-          fetchImpl,
-          path,
-          config,
-          deadlineSignal(controller, options.signal)
-        ),
-      {
-        maxRetries: options.maxRetries ?? 2,
-        baseRetryDelayMs: options.retryDelayMs ?? 100,
-        controller,
-        callerSignal: options.signal,
-        timeoutMs
-      }
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+  return executeControlApiRequest(
+    (signal) => readControlApiBinaryFrame(fetchImpl, path, config, signal),
+    options,
+    options.maxRetries ?? 2
+  );
 }
 
 /**
@@ -691,7 +638,7 @@ async function readControlApiFailure<T>(
  * Sends a typed server-side Control API mutation using the shared credential,
  * actor, timeout, and error-envelope handling.
  */
-async function mutateControlApi<T>(
+function mutateControlApi<T>(
   method: "POST" | "PATCH",
   path: string,
   payload: unknown,
@@ -699,47 +646,25 @@ async function mutateControlApi<T>(
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const controller = new AbortController();
-  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = deadlineSignal(controller, options.signal);
-
-  let response: Response;
-  try {
-    response = await fetchImpl(config.baseUrl + path, {
-      method,
-      headers: {
-        Authorization: "Bearer " + config.serviceToken,
-        "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
-        Accept: "application/json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),
-      signal
-    });
-  } catch (error) {
-    // The same classifier as the read, because this used to answer differently:
-    // it forwarded `error.message`, so a write abandoned at the deadline reported
-    // "This operation was aborted" where a read reported a timeout. Two answers to
-    // one question, decided by which verb the request used.
-    return transportFailure(error, controller.signal.aborted, timeoutMs);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  if (response.ok) {
-    try {
-      const data = (await response.json()) as T;
-      return { kind: "ok", data };
-    } catch {
-      return {
-        kind: "unreachable",
-        message: "AutoDev Control API returned a non-JSON body."
-      };
-    }
-  }
-
-  return readControlApiFailure(response);
+  // A write is never retried: it runs under the Console's deadline alone.
+  return executeControlApiRequest<T>(
+    async (signal) => {
+      const response = await fetchImpl(config.baseUrl + path, {
+        method,
+        headers: {
+          Authorization: "Bearer " + config.serviceToken,
+          "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        signal
+      });
+      return readControlApiJsonResponse<T>(response);
+    },
+    options,
+    0
+  );
 }
 
 /**

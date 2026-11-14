@@ -101,6 +101,7 @@ const COMMAND_GIT_TIMEOUT_MS = 3000;
 const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const SKILLS_SOURCE = ".rulesync/skills" as const;
+const CURATED_SKILLS_DIRECTORY = ".curated" as const;
 const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 const SKILL_DESCRIPTION_MAX = 512;
@@ -257,7 +258,9 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
       ]
     };
   }
-  if (!entry.isDirectory()) return { kind: "ignored" };
+  if (!entry.isDirectory() || entry.name === CURATED_SKILLS_DIRECTORY) {
+    return { kind: "ignored" };
+  }
   if (!SKILL_NAME_PATTERN.test(entry.name)) {
     return {
       kind: "invalid",

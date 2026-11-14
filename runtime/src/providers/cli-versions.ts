@@ -15,8 +15,6 @@
  * it holds.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
-
 import {
   ANTIGRAVITY_PROVIDERS,
   type ControlApiProviderCliVersion,
@@ -30,6 +28,7 @@ import {
   findMiniMaxBinary,
   findOpencliCommand
 } from "@simulatorlife/autodev-runtime/shared/executables";
+import { execa } from "execa";
 
 import { ROUTING_POLICY } from "../router/routing.ts";
 
@@ -42,7 +41,7 @@ import { ROUTING_POLICY } from "../router/routing.ts";
  * because a version is not worth a stalled page load.
  */
 export const CLI_VERSION_TIMEOUT_MS = 5000;
-/** The bound on what a CLI may print before its output is refused. */
+/** The bound on combined stdout and stderr before a CLI's output is refused. */
 const MAX_VERSION_OUTPUT_BYTES = 8 * 1024;
 /**
  * How often the versions are read again.
@@ -232,97 +231,78 @@ export type CliVersionCapture =
   | { readonly ok: true; readonly version: string }
   | { readonly ok: false; readonly reason: string };
 
-export interface CliVersionDeps {
-  readonly spawnProcess: typeof spawn;
-}
-
 /**
  * Read one CLI's version.
  *
  * The read is bounded twice over: the CLI has a deadline, and its output has
  * a size bound. A CLI that hangs on `--version` would otherwise leave the
  * refresh waiting forever, and one that prints without end would fill the
- * Runtime's memory with a version string.
+ * Runtime's memory with a version string. Execa owns the subprocess lifecycle;
+ * this function only translates its result into the provider-version contract.
  */
-export function captureCliVersion(
+export async function captureCliVersion(
   command: ProviderCliCommand,
-  deps: CliVersionDeps,
   timeoutMs: number = CLI_VERSION_TIMEOUT_MS
 ): Promise<CliVersionCapture> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = deps.spawnProcess(
-        command.program,
-        [...command.args, "--version"],
-        {
-          stdio: ["ignore", "pipe", "pipe"]
-        }
-      );
-    } catch {
-      resolve({
-        ok: false,
-        reason: `The ${command.command} CLI could not be started.`
-      });
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let byteLength = 0;
-    let settled = false;
-    const finish = (capture: CliVersionCapture): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(capture);
-    };
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      const forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
-      forceKill.unref();
-      finish({
-        ok: false,
-        reason: `Reading the ${command.command} CLI's version timed out.`
-      });
-    }, timeoutMs);
-    timer.unref();
-    const collect = (chunk: Buffer): void => {
-      byteLength += chunk.length;
-      if (byteLength > MAX_VERSION_OUTPUT_BYTES) {
-        child.kill("SIGTERM");
-        finish({
-          ok: false,
-          reason: `The ${command.command} CLI's version output exceeded the size bound.`
-        });
-        return;
-      }
-      chunks.push(chunk);
-    };
-    child.stdout?.on("data", collect);
-    // Some CLIs print their version on stderr. Reading it costs nothing and
-    // saves the CLI whose version would otherwise be reported as unreadable.
-    child.stderr?.on("data", collect);
-    child.once("error", () => {
-      finish({
-        ok: false,
-        reason: `The ${command.command} CLI could not be started.`
-      });
+  let outputBytes = 0;
+  let exceededOutputBound = false;
+  let result;
+  try {
+    const subprocess = execa(command.program, [...command.args, "--version"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      all: true,
+      encoding: "buffer",
+      maxBuffer: { all: MAX_VERSION_OUTPUT_BYTES },
+      timeout: timeoutMs,
+      forceKillAfterDelay: 250,
+      reject: false
     });
-    child.once("close", (code) => {
-      const output = Buffer.concat(chunks).toString("utf8");
-      const version = parseCliVersion(output);
-      if (version) {
-        finish({ ok: true, version });
-        return;
+    // Execa applies maxBuffer to stdout and stderr separately. Preserve the
+    // existing combined bound when a CLI splits its output across both.
+    subprocess.all?.on("data", (chunk: Uint8Array) => {
+      outputBytes += chunk.length;
+      if (!exceededOutputBound && outputBytes > MAX_VERSION_OUTPUT_BYTES) {
+        exceededOutputBound = true;
+        subprocess.kill();
       }
-      finish({
-        ok: false,
-        reason:
-          code === 0
-            ? `The ${command.command} CLI did not report a version.`
-            : `The ${command.command} CLI exited with status ${String(code)} without reporting a version.`
-      });
     });
-  });
+    result = await subprocess;
+  } catch {
+    return {
+      ok: false,
+      reason: `The ${command.command} CLI could not be started.`
+    };
+  }
+
+  if (result.timedOut) {
+    return {
+      ok: false,
+      reason: `Reading the ${command.command} CLI's version timed out.`
+    };
+  }
+  if (result.isMaxBuffer || exceededOutputBound) {
+    return {
+      ok: false,
+      reason: `The ${command.command} CLI's version output exceeded the size bound.`
+    };
+  }
+  if (result.failed && result.exitCode === undefined && !result.isTerminated) {
+    return {
+      ok: false,
+      reason: `The ${command.command} CLI could not be started.`
+    };
+  }
+
+  const output = Buffer.from(result.all ?? []).toString("utf8");
+  const version = parseCliVersion(output);
+  if (version) return { ok: true, version };
+  return {
+    ok: false,
+    reason:
+      result.exitCode === 0
+        ? `The ${command.command} CLI did not report a version.`
+        : `The ${command.command} CLI exited with status ${String(result.exitCode ?? null)} without reporting a version.`
+  };
 }
 
 export interface ProviderCliVersionOptions {
@@ -344,7 +324,6 @@ export interface ProviderCliVersionOptions {
   readonly locate?:
     | ((provider: string, env: NodeJS.ProcessEnv) => ProviderCliCommand | null)
     | undefined;
-  readonly spawnProcess?: typeof spawn | undefined;
 }
 
 /**
@@ -380,10 +359,7 @@ export class ProviderCliVersionService {
     this.now = options.now ?? (() => new Date());
     this.refreshIntervalMs =
       options.refreshIntervalMs ?? CLI_VERSION_REFRESH_INTERVAL_MS;
-    const spawnProcess = options.spawnProcess ?? spawn;
-    this.capture =
-      options.capture ??
-      ((command) => captureCliVersion(command, { spawnProcess }));
+    this.capture = options.capture ?? captureCliVersion;
     this.locate =
       options.locate ?? ((provider, env) => providerCliCommand(provider, env));
     for (const provider of this.providerIds()) {

@@ -42,6 +42,8 @@ import {
   samePlaytestBuild
 } from "@simulatorlife/autodev-core";
 
+import { isRecord } from "./object-guards.ts";
+
 const FORMAT = "autodev-restricted-human-study-v2";
 const LEGACY_FORMAT = "autodev-restricted-human-study-v1";
 const MAX_STATE_BYTES = 20_000_000;
@@ -328,9 +330,6 @@ function validateStudy(study: HumanPlaytestStudy): void {
     throw new TypeError(
       "Only valid, approved human studies can be registered."
     );
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readPrivateJsonState(filePath: string): unknown {

@@ -1,6 +1,7 @@
 /** Same-origin, server-bound view of the Data-owned Playtesting schema readiness. */
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -14,17 +15,6 @@ export const runtime = "nodejs";
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const ALLOWED_QUERY_KEYS = new Set(["workspaceId"]);
 
-function errorResponse(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
-
 async function handle(
   request: NextRequest,
   retry: boolean
@@ -37,7 +27,7 @@ async function handle(
     ) ||
     !WORKSPACE_ID_PATTERN.test(workspaceId)
   ) {
-    return errorResponse(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A canonical workspaceId is required to check Playtesting readiness."
@@ -45,7 +35,7 @@ async function handle(
   }
   const config = readControlApiConfig();
   if (!config) {
-    return errorResponse(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -55,7 +45,7 @@ async function handle(
     retry
   });
   if (result.kind !== "ok") {
-    return errorResponse(
+    return jsonErrorResponse(
       result.kind === "http-error" || result.kind === "unauthorized"
         ? result.status
         : result.kind === "unreachable"
@@ -78,7 +68,7 @@ export function GET(request: NextRequest): Promise<NextResponse> {
 export function POST(request: NextRequest): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
     return Promise.resolve(
-      errorResponse(
+      jsonErrorResponse(
         403,
         "autodev_console_cross_origin_mutation",
         "Retrying Playtesting initialization requires a same-origin request."

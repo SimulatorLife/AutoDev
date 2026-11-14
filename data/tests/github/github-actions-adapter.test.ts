@@ -1,35 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { GithubWorkflowRun } from "@simulatorlife/autodev-core";
-
 import {
-  computeRunStats,
   GithubActionsAdapter,
   GithubActionsApiError
 } from "../../src/github/github-actions-adapter.ts";
-
-function runForStats(
-  id: number,
-  status: string,
-  conclusion: string | null
-): GithubWorkflowRun {
-  return {
-    id,
-    name: null,
-    workflowId: 10,
-    workflowPath: ".github/workflows/ci.yml",
-    headBranch: null,
-    headSha: "",
-    event: "push",
-    status,
-    conclusion,
-    htmlUrl: "",
-    createdAt: "",
-    updatedAt: "",
-    runAttempt: 1
-  };
-}
 
 test("GithubActionsAdapter uses fixed https://api.github.com origin and sends standard GitHub headers", async () => {
   let capturedUrl = "";
@@ -63,12 +38,179 @@ test("GithubActionsAdapter uses fixed https://api.github.com origin and sends st
     )
   );
 
-  const headers = capturedHeaders as Record<string, string>;
-  assert.equal(headers.Authorization, "Bearer ghp_test_secret_token_123");
-  assert.equal(headers.Accept, "application/vnd.github+json");
-  assert.equal(headers["X-GitHub-Api-Version"], "2026-03-10");
-  assert.equal(headers["User-Agent"], "AutoDev-Control-API");
+  const headers = new Headers(capturedHeaders);
+  assert.equal(headers.get("Authorization"), "token ghp_test_secret_token_123");
+  assert.equal(headers.get("Accept"), "application/vnd.github+json");
+  assert.equal(headers.get("X-GitHub-Api-Version"), "2026-03-10");
+  assert.ok(headers.get("User-Agent")?.startsWith("AutoDev-Control-API"));
   assert.equal(capturedRedirect, "error");
+});
+
+test("GithubActionsAdapter follows Octokit workflow pagination without leaving GitHub", async () => {
+  const requestedUrls: string[] = [];
+  const workflow = (id: number) => ({
+    id,
+    name: `Workflow ${id}`,
+    path: `.github/workflows/workflow-${id}.yml`,
+    state: "active"
+  });
+  const adapter = new GithubActionsAdapter({
+    fetchFn: async (input) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.includes("page=2")) {
+        return Response.json({ total_count: 2, workflows: [workflow(2)] });
+      }
+      return Response.json(
+        { total_count: 2, workflows: [workflow(1)] },
+        {
+          headers: {
+            Link: '<https://api.github.com/repos/SimulatorLife/AutoDev/actions/workflows?per_page=100&page=2>; rel="next"'
+          }
+        }
+      );
+    }
+  });
+
+  const workflows = await adapter.listWorkflows(
+    "SimulatorLife",
+    "AutoDev",
+    "safe-token"
+  );
+
+  assert.deepEqual(
+    workflows.map(({ id }) => id),
+    [1, 2]
+  );
+  assert.equal(requestedUrls.length, 2);
+  assert.ok(
+    requestedUrls.every((url) => url.startsWith("https://api.github.com/"))
+  );
+});
+
+test("GithubActionsAdapter paginates runs only until the bounded sample is full", async () => {
+  const requestedUrls: string[] = [];
+  const run = (id: number) => ({
+    id,
+    workflow_id: 10,
+    event: "push",
+    status: "completed",
+    conclusion: "success"
+  });
+  const adapter = new GithubActionsAdapter({
+    fetchFn: async (input) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.includes("page=2")) {
+        return Response.json({
+          total_count: 4,
+          workflow_runs: [run(3), run(4)]
+        });
+      }
+      return Response.json(
+        { total_count: 4, workflow_runs: [run(1), run(2)] },
+        {
+          headers: {
+            Link: '<https://api.github.com/repos/SimulatorLife/AutoDev/actions/runs?per_page=3&page=2>; rel="next"'
+          }
+        }
+      );
+    }
+  });
+
+  const runs = await adapter.listRecentRuns(
+    "SimulatorLife",
+    "AutoDev",
+    "safe-token",
+    { limit: 3 }
+  );
+
+  assert.deepEqual(
+    runs.map(({ id }) => id),
+    [1, 2, 3]
+  );
+  assert.equal(requestedUrls.length, 2);
+  assert.ok(requestedUrls[0]?.includes("per_page=3"));
+});
+
+test("GithubActionsAdapter does not treat Octokit's paginated 409 as an empty collection", async () => {
+  const adapter = new GithubActionsAdapter({
+    fetchFn: async () => Response.json({ message: "Conflict" }, { status: 409 })
+  });
+
+  await assert.rejects(
+    () => adapter.listWorkflows("SimulatorLife", "AutoDev"),
+    { status: 409, code: "api_error" }
+  );
+});
+
+test("GithubActionsAdapter rejects incomplete and invalid JSON API results", async () => {
+  const incompleteAdapter = new GithubActionsAdapter({
+    fetchFn: async (input) => {
+      const url = String(input);
+      return url.includes("/actions/workflows")
+        ? Response.json({
+            total_count: 0,
+            incomplete_results: true,
+            workflows: []
+          })
+        : Response.json({
+            total_count: 0,
+            incomplete_results: true,
+            workflow_runs: []
+          });
+    }
+  });
+  await assert.rejects(
+    () => incompleteAdapter.listWorkflows("SimulatorLife", "AutoDev"),
+    { code: "partial_result" }
+  );
+  await assert.rejects(
+    () => incompleteAdapter.listRecentRuns("SimulatorLife", "AutoDev"),
+    { code: "partial_result" }
+  );
+
+  const invalidJsonAdapter = new GithubActionsAdapter({
+    fetchFn: async () =>
+      new Response("{", { headers: { "Content-Type": "application/json" } })
+  });
+  await assert.rejects(
+    () => invalidJsonAdapter.listWorkflows("SimulatorLife", "AutoDev"),
+    { code: "invalid_json" }
+  );
+});
+
+test("GithubActionsAdapter rejects pagination links outside the fixed GitHub origin", async () => {
+  let fetchCalls = 0;
+  const adapter = new GithubActionsAdapter({
+    fetchFn: async () => {
+      fetchCalls++;
+      return Response.json(
+        {
+          total_count: 2,
+          workflows: [
+            {
+              id: 1,
+              name: "Workflow 1",
+              path: ".github/workflows/workflow-1.yml",
+              state: "active"
+            }
+          ]
+        },
+        {
+          headers: {
+            Link: '<https://attacker.example/collect>; rel="next"'
+          }
+        }
+      );
+    }
+  });
+
+  await assert.rejects(
+    () => adapter.listWorkflows("SimulatorLife", "AutoDev", "safe-token"),
+    { code: "invalid_pagination" }
+  );
+  assert.equal(fetchCalls, 1);
 });
 
 test("GithubActionsAdapter omits authorization when reading a public repository without a token", async () => {
@@ -352,6 +494,28 @@ test("GithubActionsAdapter preserves auth and rate status codes when error bodie
   }
 });
 
+test("GithubActionsAdapter preserves HTTP status when an error body is malformed JSON", async () => {
+  for (const [status, code] of [
+    [401, "unauthorized"],
+    [403, "forbidden"],
+    [429, "rate_limited"],
+    [404, "not_found"]
+  ] as const) {
+    const adapter = new GithubActionsAdapter({
+      fetchFn: async () =>
+        new Response("{", {
+          status,
+          headers: { "Content-Type": "application/json" }
+        })
+    });
+
+    await assert.rejects(
+      () => adapter.listWorkflows("SimulatorLife", "AutoDev", "safe-token"),
+      { status, code }
+    );
+  }
+});
+
 test("GithubActionsAdapter keeps its timeout active while consuming a response body", async () => {
   let cancelled = false;
   let delayedChunk: ReturnType<typeof setTimeout> | undefined;
@@ -469,129 +633,6 @@ test("GithubActionsAdapter treats genuinely empty workflow and run arrays as aut
   assert.deepEqual(
     await adapter.listRecentRuns("SimulatorLife", "AutoDev", "safe-token"),
     []
-  );
-});
-
-test("computeRunStats calculates precise statistics and never invents synthetic health", () => {
-  // Empty runs list: total 0, success rate null (no concluded runs).
-  const emptyStats = computeRunStats([]);
-  assert.deepEqual(emptyStats, {
-    totalRuns: 0,
-    successfulRuns: 0,
-    failedRuns: 0,
-    inProgressRuns: 0,
-    cancelledRuns: 0,
-    successRate: null
-  });
-
-  const sampleRuns = [
-    {
-      id: 1,
-      name: "run 1",
-      workflowId: 10,
-      workflowPath: ".github/workflows/a.yml",
-      headBranch: "main",
-      headSha: "abc",
-      event: "push",
-      status: "completed",
-      conclusion: "success",
-      htmlUrl: "https://github.com/test/1",
-      createdAt: "2026-10-04T00:00:00Z",
-      updatedAt: "2026-10-04T00:01:00Z",
-      runAttempt: 1
-    },
-    {
-      id: 2,
-      name: "run 2",
-      workflowId: 10,
-      workflowPath: ".github/workflows/a.yml",
-      headBranch: "main",
-      headSha: "def",
-      event: "push",
-      status: "completed",
-      conclusion: "failure",
-      htmlUrl: "https://github.com/test/2",
-      createdAt: "2026-10-04T00:02:00Z",
-      updatedAt: "2026-10-04T00:03:00Z",
-      runAttempt: 1
-    },
-    {
-      id: 3,
-      name: "run 3",
-      workflowId: 11,
-      workflowPath: ".github/workflows/b.yml",
-      headBranch: "main",
-      headSha: "ghi",
-      event: "schedule",
-      status: "in_progress",
-      conclusion: null,
-      htmlUrl: "https://github.com/test/3",
-      createdAt: "2026-10-04T00:04:00Z",
-      updatedAt: "2026-10-04T00:05:00Z",
-      runAttempt: 1
-    },
-    {
-      id: 4,
-      name: "run 4",
-      workflowId: 11,
-      workflowPath: ".github/workflows/b.yml",
-      headBranch: "main",
-      headSha: "jkl",
-      event: "workflow_dispatch",
-      status: "completed",
-      conclusion: "cancelled",
-      htmlUrl: "https://github.com/test/4",
-      createdAt: "2026-10-04T00:06:00Z",
-      updatedAt: "2026-10-04T00:07:00Z",
-      runAttempt: 1
-    },
-    {
-      id: 5,
-      name: "run 5",
-      workflowId: 12,
-      workflowPath: ".github/workflows/c.yml",
-      headBranch: "main",
-      headSha: "mno",
-      event: "schedule",
-      status: "completed",
-      conclusion: "timed_out",
-      htmlUrl: "https://github.com/test/5",
-      createdAt: "2026-10-04T00:08:00Z",
-      updatedAt: "2026-10-04T00:09:00Z",
-      runAttempt: 1
-    }
-  ];
-
-  const stats = computeRunStats(sampleRuns);
-  assert.equal(stats.totalRuns, 5);
-  assert.equal(stats.successfulRuns, 1);
-  assert.equal(stats.failedRuns, 2); // 1 failure + 1 timed_out
-  assert.equal(stats.inProgressRuns, 1);
-  assert.equal(stats.cancelledRuns, 1);
-  // Concluded runs: 1 success + 2 failed + 1 cancelled = 4 concluded runs.
-  // Success rate: 1 / 4 = 0.25 (25%)
-  assert.equal(stats.successRate, 0.25);
-});
-
-test("computeRunStats divides successes by every sampled completed run", () => {
-  const stats = computeRunStats([
-    runForStats(1, "completed", "success"),
-    runForStats(2, "completed", "startup_failure"),
-    runForStats(3, "completed", "neutral"),
-    runForStats(4, "completed", "cancelled"),
-    runForStats(5, "completed", null),
-    runForStats(6, "in_progress", "success")
-  ]);
-
-  assert.equal(stats.totalRuns, 6);
-  assert.equal(stats.successfulRuns, 1);
-  assert.equal(stats.failedRuns, 1);
-  assert.equal(stats.cancelledRuns, 1);
-  assert.equal(stats.inProgressRuns, 1);
-  assert.equal(stats.successRate, 0.2);
-  assert.equal(
-    computeRunStats([runForStats(7, "in_progress", null)]).successRate,
-    null
   );
 });
 

@@ -14,10 +14,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveRuntimeSourcePath } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import * as commandUtils from "../../runtime/src/hooks/command-utils.ts";
+import * as hookRoots from "../../runtime/src/hooks/hook-roots.ts";
 
-test("command utilities expose only paths consumed by root delegation", () => {
-  assert.deepEqual(Object.keys(commandUtils).sort(), [
+test("hook root helpers expose the Codex home and repository root", () => {
+  assert.deepEqual(Object.keys(hookRoots).sort(), [
     "codexHome",
     "repositoryRoot"
   ]);
@@ -28,12 +28,12 @@ test("repositoryRoot resolves the Runtime source tree without a configured overr
   delete process.env.AUTODEV_REPO_ROOT;
   try {
     assert.equal(
-      commandUtils.repositoryRoot(),
+      hookRoots.repositoryRoot(),
       path.resolve(fileURLToPath(new URL("../../", import.meta.url)))
     );
     assert.equal(
       resolveRuntimeSourcePath(
-        commandUtils.repositoryRoot(),
+        hookRoots.repositoryRoot(),
         "mcp/tool-filter.ts"
       ),
       path.resolve(
@@ -54,7 +54,7 @@ test("repositoryRoot falls back to CODEX_HOME for an installed hook copy", async
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "autodev-hook-home-"));
   const codexHome = path.join(temporaryRoot, ".codex");
   const installedHooks = path.join(codexHome, "src", "hooks");
-  const installedModule = path.join(installedHooks, "command-utils.ts");
+  const installedModule = path.join(installedHooks, "hook-roots.ts");
   mkdirSync(installedHooks, { recursive: true });
   symlinkSync(
     fileURLToPath(new URL("../../node_modules", import.meta.url)),
@@ -63,7 +63,7 @@ test("repositoryRoot falls back to CODEX_HOME for an installed hook copy", async
   );
   copyFileSync(
     fileURLToPath(
-      new URL("../../runtime/src/hooks/command-utils.ts", import.meta.url)
+      new URL("../../runtime/src/hooks/hook-roots.ts", import.meta.url)
     ),
     installedModule
   );

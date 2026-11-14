@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   chmodSync,
@@ -6,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   renameSync,
@@ -42,11 +45,61 @@ export interface RulesyncGenerateOptions {
 }
 
 const RULESYNC_WORKER_SCRIPT = `
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { parentPort } from "node:worker_threads";
 const origCwd = process.cwd.bind(process);
 let activeCwd = origCwd();
 process.cwd = () => activeCwd;
+const origReadFile = fsPromises.readFile.bind(fsPromises);
+let activeReadRoot = null;
+let activeReadCache = null;
+function resolveReadCacheKey(filePath, options) {
+  if (typeof filePath !== "string" || !activeReadRoot || !activeReadCache) return null;
+  let encKey;
+  if (options == null) {
+    encKey = "buffer";
+  } else if (options === "utf8" || options === "utf-8") {
+    encKey = "utf8";
+  } else if (
+    typeof options === "object" &&
+    !options.signal &&
+    !options.flag &&
+    (options.encoding === "utf8" || options.encoding === "utf-8")
+  ) {
+    encKey = "utf8";
+  } else {
+    return null;
+  }
+  const resolved = path.isAbsolute(filePath)
+    ? path.normalize(filePath)
+    : path.resolve(activeReadRoot, filePath);
+  const rulesyncPrefix = activeReadRoot + path.sep + ".rulesync" + path.sep;
+  if (!resolved.startsWith(rulesyncPrefix)) return null;
+  return resolved + "\\0" + encKey;
+}
+fsPromises.readFile = function cachedRulesyncReadFile(filePath, options) {
+  const key = resolveReadCacheKey(filePath, options);
+  if (!key) return origReadFile(filePath, options);
+  let pending = activeReadCache.get(key);
+  if (!pending) {
+    pending = origReadFile(filePath, options);
+    activeReadCache.set(key, pending);
+  }
+  return pending.then((value) => (Buffer.isBuffer(value) ? Buffer.from(value) : value));
+};
+syncBuiltinESMExports();
+async function runWithRulesyncReadCache(resolvedCwd, fn) {
+  activeReadRoot = resolvedCwd;
+  activeReadCache = new Map();
+  try {
+    return await fn();
+  } finally {
+    activeReadCache = null;
+    activeReadRoot = null;
+  }
+}
 let cachedUrl = null;
 let cachedMod = null;
 parentPort.on("message", async ({ rulesyncUrl, cwd, home, options, port, signal }) => {
@@ -58,13 +111,16 @@ parentPort.on("message", async ({ rulesyncUrl, cwd, home, options, port, signal 
       cachedMod = await import(rulesyncUrl);
       cachedUrl = rulesyncUrl;
     }
-    activeCwd = path.resolve(cwd);
+    const resolvedCwd = path.resolve(cwd);
+    activeCwd = resolvedCwd;
     if (home !== undefined) {
       const resolvedHome = path.resolve(home);
       process.env.HOME = resolvedHome;
       process.env.HOME_DIR = resolvedHome;
     }
-    const result = await cachedMod.generate(options);
+    const result = await runWithRulesyncReadCache(resolvedCwd, () =>
+      cachedMod.generate(options)
+    );
     if (result.sourceLoadFailed) {
       throw new Error(
         "Failed to load rulesync sources: " +
@@ -107,6 +163,216 @@ function getRulesyncWorker(): Worker {
     sharedRulesyncWorker = worker;
   }
   return sharedRulesyncWorker;
+}
+
+const REPO_INSTALL_CACHE_SCHEMA = "autodev-install-cache-v1";
+
+export interface RepoInstallCache {
+  schema: string;
+  rulesyncInstallFingerprint?: string;
+  rulesyncGenerate?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+const memoryRepoInstallCache = new Map<string, RepoInstallCache>();
+
+function repoInstallCachePath(repositoryRoot: string): string | null {
+  const gitDir = path.join(path.resolve(repositoryRoot), ".git");
+  try {
+    if (!lstatSync(gitDir).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return path.join(gitDir, "autodev-install-cache.json");
+}
+
+function readDiskInstallCache(cachePath: string | null): RepoInstallCache | null {
+  if (!cachePath || !existsSync(cachePath)) return null;
+  try {
+    const parsed = JSON.parse(
+      readFileSync(cachePath, "utf8")
+    ) as Partial<RepoInstallCache>;
+    if (parsed.schema === REPO_INSTALL_CACHE_SCHEMA) {
+      return {
+        ...parsed,
+        schema: REPO_INSTALL_CACHE_SCHEMA,
+        ...(typeof parsed.rulesyncInstallFingerprint === "string"
+          ? { rulesyncInstallFingerprint: parsed.rulesyncInstallFingerprint }
+          : {}),
+        ...(parsed.rulesyncGenerate &&
+        typeof parsed.rulesyncGenerate === "object"
+          ? { rulesyncGenerate: { ...parsed.rulesyncGenerate } }
+          : {})
+      };
+    }
+  } catch {
+    /* Ignore corrupt cache file and recompute cleanly. */
+  }
+  return null;
+}
+
+/** Reads the cached install-fingerprint record for `repositoryRoot` (memory + `.git` cache). */
+export function readRepoInstallCache(repositoryRoot: string): RepoInstallCache {
+  const resolved = path.resolve(repositoryRoot);
+  const disk = readDiskInstallCache(repoInstallCachePath(resolved));
+  if (disk) {
+    memoryRepoInstallCache.set(resolved, disk);
+    return disk;
+  }
+  return (
+    memoryRepoInstallCache.get(resolved) ?? {
+      schema: REPO_INSTALL_CACHE_SCHEMA
+    }
+  );
+}
+
+/** Persists `cache` in memory and (when `.git` is a directory) to `.git/autodev-install-cache.json`. */
+export function writeRepoInstallCache(
+  repositoryRoot: string,
+  cache: RepoInstallCache
+): void {
+  const resolved = path.resolve(repositoryRoot);
+  const cachePath = repoInstallCachePath(resolved);
+  const onDisk = readDiskInstallCache(cachePath);
+  const next: RepoInstallCache = {
+    ...(onDisk ?? {}),
+    ...cache,
+    schema: REPO_INSTALL_CACHE_SCHEMA,
+    ...(cache.rulesyncInstallFingerprint !== undefined
+      ? { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }
+      : {}),
+    ...(cache.rulesyncGenerate !== undefined
+      ? { rulesyncGenerate: { ...cache.rulesyncGenerate } }
+      : {})
+  };
+  memoryRepoInstallCache.set(resolved, next);
+  if (!cachePath) return;
+  try {
+    const tmpPath = `${cachePath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    renameSync(tmpPath, cachePath);
+  } catch {
+    /* Cache persistence failure is non-fatal. */
+  }
+}
+
+function hashTreePath(
+  hash: ReturnType<typeof createHash>,
+  absolutePath: string,
+  logicalName: string
+): void {
+  let stat;
+  try {
+    stat = lstatSync(absolutePath);
+  } catch {
+    hash.update(`missing:${logicalName}\0`);
+    return;
+  }
+  if (stat.isSymbolicLink()) {
+    hash.update(`symlink:${logicalName}:${readlinkSync(absolutePath)}\0`);
+    return;
+  }
+  if (stat.isDirectory()) {
+    hash.update(`dir:${logicalName}\0`);
+    const entries = readdirSync(absolutePath, { withFileTypes: true }).sort(
+      (a, b) => a.name.localeCompare(b.name)
+    );
+    for (const entry of entries) {
+      hashTreePath(
+        hash,
+        path.join(absolutePath, entry.name),
+        `${logicalName}/${entry.name}`
+      );
+    }
+    return;
+  }
+  if (stat.isFile()) {
+    hash.update(`file:${logicalName}:${stat.mode & 0o777}:${stat.size}\0`);
+    hash.update(readFileSync(absolutePath));
+    hash.update("\0");
+  }
+}
+
+/** Computes a deterministic SHA-256 fingerprint across relative repo paths and extra strings. */
+export function computeRepoPathsFingerprint(
+  repositoryRoot: string,
+  relativePaths: readonly string[],
+  extras: readonly string[] = []
+): string {
+  const resolvedRoot = path.resolve(repositoryRoot);
+  const hash = createHash("sha256");
+  hash.update(`${REPO_INSTALL_CACHE_SCHEMA}\0`);
+  for (const extra of extras) {
+    hash.update(`extra:${extra}\0`);
+  }
+  const uniquePaths = [...new Set(relativePaths)].sort();
+  for (const relativePath of uniquePaths) {
+    hashTreePath(hash, path.join(resolvedRoot, relativePath), relativePath);
+  }
+  return hash.digest("hex");
+}
+
+/** Reads the installed `rulesync` package version for fingerprint invalidation. */
+export function readRulesyncPackageVersion(repositoryRoot: string): string {
+  const packageJsonPath = path.join(
+    repositoryRoot,
+    "node_modules",
+    "rulesync",
+    "package.json"
+  );
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function computeRulesyncInstallFingerprint(repositoryRoot: string): string {
+  const curatedRelative = path.join(".rulesync", "skills", ".curated");
+  return computeRepoPathsFingerprint(
+    repositoryRoot,
+    ["rulesync.lock", "rulesync.jsonc", curatedRelative],
+    [`rulesync:${readRulesyncPackageVersion(repositoryRoot)}`]
+  );
+}
+
+export function runRulesyncInstallFrozen(repositoryRoot: string): void {
+  const normalizedRoot = path.resolve(repositoryRoot);
+  if (!existsSync(path.join(normalizedRoot, "rulesync.lock"))) {
+    return;
+  }
+  const cache =
+    process.env.AUTODEV_FORCE_RULESYNC === "1"
+      ? null
+      : readRepoInstallCache(normalizedRoot);
+  const preFingerprint = computeRulesyncInstallFingerprint(normalizedRoot);
+  if (cache?.rulesyncInstallFingerprint === preFingerprint) {
+    return;
+  }
+  const rulesyncBin = path.join(
+    normalizedRoot,
+    "node_modules",
+    ".bin",
+    "rulesync"
+  );
+  if (!existsSync(rulesyncBin)) {
+    throw new Error(
+      `missing-rulesync ${rulesyncBin}; run pnpm install --frozen-lockfile`
+    );
+  }
+  execFileSync(rulesyncBin, ["install", "--frozen", "--silent"], {
+    cwd: normalizedRoot,
+    stdio: "pipe"
+  });
+  const latestCache = readRepoInstallCache(normalizedRoot);
+  writeRepoInstallCache(normalizedRoot, {
+    ...latestCache,
+    rulesyncInstallFingerprint:
+      computeRulesyncInstallFingerprint(normalizedRoot)
+  });
 }
 
 export function runRulesyncGenerate(

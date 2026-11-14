@@ -52,6 +52,7 @@
  */
 
 import { canonicalPlaytestJson } from "./canonical-json.ts";
+import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestCoverageModality,
   PLAYTESTS_COVERAGE_MODALITIES
@@ -174,10 +175,6 @@ export interface PlaytestFindingIdentityInput {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function assertOnlyKeys(
   value: Record<string, unknown>,
   keys: readonly string[],
@@ -277,11 +274,11 @@ const SCOPE_KEYS = ["scenarioFamily", "phase", "modality"] as const;
 export function buildPlaytestFindingIdentity(
   input: PlaytestFindingIdentityInput
 ): PlaytestFindingIdentity {
-  if (!isRecord(input)) {
+  if (!isPlainObject(input)) {
     throw new TypeError("Finding identity input must be an object.");
   }
   assertOnlyKeys(input, TOP_LEVEL_KEYS, "Finding identity");
-  if (!isRecord(input.failureSignature)) {
+  if (!isPlainObject(input.failureSignature)) {
     throw new TypeError("Finding identity failureSignature must be an object.");
   }
   assertOnlyKeys(
@@ -289,7 +286,7 @@ export function buildPlaytestFindingIdentity(
     FAILURE_SIGNATURE_KEYS,
     "Finding identity failureSignature"
   );
-  if (!isRecord(input.scope)) {
+  if (!isPlainObject(input.scope)) {
     throw new TypeError("Finding identity scope must be an object.");
   }
   assertOnlyKeys(input.scope, SCOPE_KEYS, "Finding identity scope");

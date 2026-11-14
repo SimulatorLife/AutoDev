@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -25,17 +26,6 @@ const ALLOWED_FIELDS = new Set([
   "requireFindings"
 ]);
 
-function sendError(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
-
 /**
  * Request analysis over an explicit selection of sessions. Runtime owns
  * eligibility, the critique cap and which sessions produced no packet; this
@@ -43,7 +33,7 @@ function sendError(
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
-    return sendError(
+    return jsonErrorResponse(
       403,
       "autodev_console_playtesting_same_origin_required",
       "Playtesting analysis requires a same-origin request."
@@ -54,7 +44,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     form === null ||
     [...form.keys()].some((key) => !ALLOWED_FIELDS.has(key))
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "The playtesting analysis form is invalid."
@@ -64,7 +54,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const workspaceId = params.get("workspaceId")?.trim() ?? "";
   const rawSelection = params.get("episodeIds");
   if (!WORKSPACE_ID_PATTERN.test(workspaceId) || rawSelection === null) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A canonical workspaceId and an explicit session selection are required."
@@ -80,7 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         (id) => typeof id === "string" && EPISODE_ID_PATTERN.test(id)
       )
     ) {
-      return sendError(
+      return jsonErrorResponse(
         400,
         "autodev_console_playtesting_invalid_request",
         "The session selection is malformed."
@@ -88,7 +78,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     episodeIds = parsed;
   } catch {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "The session selection is malformed."
@@ -104,7 +94,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     rawRequireFindings !== "true" &&
     rawRequireFindings !== "false"
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "The findings request flag is malformed."
@@ -113,7 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const requireFindings = rawRequireFindings === "true";
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -126,7 +116,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     { requireFindings }
   );
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       result.kind === "http-error" || result.kind === "unauthorized"
         ? result.status
         : result.kind === "unreachable"
@@ -156,7 +146,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ) ||
     !WORKSPACE_ID_PATTERN.test(workspaceId)
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A canonical workspaceId is required to read analyst review status."
@@ -164,7 +154,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -172,7 +162,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const result = await listPlaytestingAnalyses(workspaceId, config);
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       result.kind === "http-error" || result.kind === "unauthorized"
         ? result.status
         : result.kind === "unreachable"

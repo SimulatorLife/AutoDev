@@ -9,6 +9,7 @@ on:
       - ".rulesync/**"
       - "AGENTS.md"
       - "rulesync.jsonc"
+      - "rulesync.lock"
       - "tests/rulesync-*.test.ts"
       - ".nvmrc"
       - "package.json"
@@ -19,6 +20,7 @@ on:
       - ".rulesync/**"
       - "AGENTS.md"
       - "rulesync.jsonc"
+      - "rulesync.lock"
       - "tests/rulesync-*.test.ts"
       - ".nvmrc"
       - "package.json"
@@ -48,6 +50,9 @@ jobs:
 
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install locked Rulesync curated skills
+        run: pnpm exec rulesync install --frozen --silent
 
       # Provider projections are tested from temporary roots. Root AGENTS.md is
       # the one tracked projection because all repository agents read that path.

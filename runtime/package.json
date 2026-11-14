@@ -136,6 +136,8 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
+    "cockatiel": "4.0.0",
+    "execa": "10.2.1",
     "playwright-core": "1.63.0-alpha-2026-08-31",
     "quota-axi": "0.1.69",
     "smol-toml": "^1.8.0",

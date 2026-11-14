@@ -3,6 +3,7 @@ import {
   SESSION_SCOPE_HEADER
 } from "@simulatorlife/autodev-runtime/router/subagents";
 
+import { contextHeaderValue } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import type { SpawnChild } from "./spawn-tools.ts";
 
 function parseChildCandidate(child: unknown): {
@@ -524,22 +525,6 @@ export class SpawnSessionRegistry {
 }
 
 /**
- * One header's value, or null when it was not sent.
- *
- * Node lowercases inbound header names; intermediaries may not.
- */
-function headerValue(headers: unknown, name: string): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  const record = headers as Record<string, unknown>;
-  const key = Object.keys(record).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  const value = key === undefined ? undefined : record[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single.trim() : null;
-}
-
-/**
  * The delegation session this request holds, or null when it holds none.
  *
  * The session key is the Codex conversation: the spawn script recovers
@@ -561,8 +546,8 @@ export function openSpawnSession(
     payload?: unknown;
   }
 ): string | null {
-  const session = headerValue(headers, SESSION_ID_HEADER);
-  const scope = headerValue(headers, SESSION_SCOPE_HEADER);
+  const session = contextHeaderValue(headers, SESSION_ID_HEADER);
+  const scope = contextHeaderValue(headers, SESSION_SCOPE_HEADER);
   if (session === null) return null;
   if (!SpawnSessionRegistry.canHold(session, scope)) return null;
   registry.open(session, options);

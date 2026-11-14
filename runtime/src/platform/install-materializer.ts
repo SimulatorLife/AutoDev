@@ -51,10 +51,15 @@ import {
   materializeRuntimeContent,
   materializeRuntimeFile,
   resolveCommandOnPath,
+  computeRepoPathsFingerprint,
+  readRepoInstallCache,
+  readRulesyncPackageVersion,
   type RulesyncGenerateOptions,
   runRulesyncGenerate,
+  runRulesyncInstallFrozen,
   runtimeTarget,
-  skillLinkMatches
+  skillLinkMatches,
+  writeRepoInstallCache
 } from "./runtime-files.ts";
 import {
   readRuntimePackageManifest,
@@ -228,7 +233,7 @@ export const RUNTIME_MODULES = [
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
   "agents/prompts/orchestrator.md",
-  "runtime/src/hooks/command-utils.ts",
+  "runtime/src/hooks/hook-roots.ts",
   "runtime/src/hooks/skill-read-telemetry.ts",
   "runtime/src/hooks/session-start.ts",
   "runtime/src/hooks/subagent-start.ts",
@@ -522,18 +527,7 @@ function providerCliInstalled(command: string): boolean {
 export function materializeRuleSyncSkillProjections(
   repositoryRoot: string
 ): void {
-  const configPath = path.join(repositoryRoot, "rulesync.jsonc");
-  runRulesyncGenerate(repositoryRoot, {
-    configPath,
-    features: ["skills"],
-    silent: true
-  });
-  runRulesyncGenerate(repositoryRoot, {
-    configPath,
-    features: ["skills"],
-    check: true,
-    silent: true
-  });
+  generateRepositoryRulesync(repositoryRoot, { features: ["skills"] });
 }
 
 const LINE_SPLIT_PATTERN = /\r?\n/u;
@@ -554,11 +548,20 @@ function extractIgnoreDirs(line: string): string[] {
 }
 
 function ensureExclude(options: MaterializeOptions): void {
-  const exclude = execFileSync(
-    "git",
-    ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-    { cwd: options.repositoryRoot, encoding: "utf8" }
-  ).trim();
+  const dotGitPath = path.join(options.repositoryRoot, ".git");
+  let isGitDir = false;
+  try {
+    isGitDir = lstatSync(dotGitPath).isDirectory();
+  } catch {
+    isGitDir = false;
+  }
+  const exclude = isGitDir
+    ? path.join(dotGitPath, "info", "exclude")
+    : execFileSync(
+        "git",
+        ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+        { cwd: options.repositoryRoot, encoding: "utf8" }
+      ).trim();
   mkdirSync(path.dirname(exclude), { recursive: true });
   const entries = [
     "/.agents/skills/",
@@ -566,7 +569,7 @@ function ensureExclude(options: MaterializeOptions): void {
     "/.github/hooks/",
     "/.agents/hooks.json"
   ];
-  const existing = readFileSync(exclude, "utf8");
+  const existing = exists(exclude) ? readFileSync(exclude, "utf8") : "";
   const missing = entries.filter(
     (entry) => !existing.split(LINE_SPLIT_PATTERN).includes(entry)
   );
@@ -575,6 +578,51 @@ function ensureExclude(options: MaterializeOptions): void {
       exclude,
       `${existing}${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${missing.join("\n")}\n`
     );
+}
+
+const REPOMIX_CONFIG_CANDIDATES = [
+  "repomix.config.json",
+  "repomix.config.jsonc",
+  "repomix.config.json5",
+  "repomix.config.ts",
+  "repomix.config.js",
+  "repomix.config.mjs",
+  "repomix.config.cjs"
+] as const;
+
+function repoNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
+  if (process.env.CGC_MODE === "per_repo") {
+    return true;
+  }
+  for (const relative of [
+    ".codegraphcontext",
+    ".cgcignore",
+    ".repomixignore",
+    ...REPOMIX_CONFIG_CANDIDATES
+  ]) {
+    if (exists(path.join(options.repositoryRoot, relative))) {
+      return true;
+    }
+  }
+  const cgcConfigPath = path.join(
+    options.home,
+    ".codegraphcontext",
+    "config.yaml"
+  );
+  if (exists(cgcConfigPath)) {
+    try {
+      const content = readFileSync(cgcConfigPath, "utf8");
+      if (
+        /mode:\s*per_repo/u.test(content) ||
+        content.includes(options.repositoryRoot)
+      ) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 function ensureBootstrapScript(options: MaterializeOptions): void {
@@ -588,6 +636,9 @@ function ensureBootstrapScript(options: MaterializeOptions): void {
   );
   chmodSync(scriptPath, 0o755);
   linkRuntimeSource(scriptPath, target);
+  if (!repoNeedsBootstrapExclusionsRun(options)) {
+    return;
+  }
   try {
     execFileSync(target, [options.repositoryRoot], { stdio: "ignore" });
   } catch {
@@ -1346,6 +1397,40 @@ const USER_LEVEL_HOOK_TARGETS: ReadonlySet<string> = new Set(["codexcli"]);
  * Run the repository's `rulesync.jsonc` generation (or its `--check`), with
  * hooks projected for every configured target except the user-level ones.
  */
+const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
+  "rulesync.jsonc",
+  "rulesync.lock",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "GEMINI.md",
+  ".rulesync",
+  ".agents",
+  ".agent",
+  ".claude",
+  ".codex",
+  ".cursor",
+  ".gemini",
+  ".opencode",
+  ".roo",
+  path.join(".github", "copilot-instructions.md"),
+  path.join(".github", "instructions"),
+  path.join(".github", "prompts"),
+  path.join(".github", "skills"),
+  path.join(".github", "hooks"),
+  path.join(".github", "agents"),
+  path.join(".github", "chatmodes")
+] as const;
+
+function computeRepositoryRulesyncFingerprint(
+  repositoryRoot: string
+): string {
+  return computeRepoPathsFingerprint(
+    repositoryRoot,
+    REPOSITORY_RULESYNC_FINGERPRINT_PATHS,
+    [`rulesync:${readRulesyncPackageVersion(repositoryRoot)}`]
+  );
+}
+
 export function generateRepositoryRulesync(
   repositoryRoot: string,
   options: {
@@ -1359,6 +1444,33 @@ export function generateRepositoryRulesync(
     features: string[];
   };
   const features = options.features ?? config.features;
+  const requestedSet = new Set(features);
+  const featuresKey = [...requestedSet].sort().join(",");
+  const configFeaturesSet = new Set(config.features);
+  const allConfigFeaturesKey = [...configFeaturesSet].sort().join(",");
+  const isAllConfigFeatures =
+    featuresKey === allConfigFeaturesKey && requestedSet.size > 0;
+  const coveredByConfigAll = [...requestedSet].every((feature) =>
+    configFeaturesSet.has(feature)
+  );
+  const forceRulesync = process.env.AUTODEV_FORCE_RULESYNC === "1";
+  if (!forceRulesync) {
+    const cache = readRepoInstallCache(repositoryRoot);
+    const generateCache = cache.rulesyncGenerate;
+    if (generateCache) {
+      const preFingerprint =
+        computeRepositoryRulesyncFingerprint(repositoryRoot);
+      if (
+        generateCache[featuresKey] === preFingerprint ||
+        (coveredByConfigAll && generateCache["*"] === preFingerprint)
+      ) {
+        return;
+      }
+    }
+  }
+  if (options.check !== true && features.includes("skills")) {
+    runRulesyncInstallFrozen(repositoryRoot);
+  }
   const base: RulesyncGenerateOptions = {
     configPath,
     check: options.check === true,
@@ -1375,6 +1487,20 @@ export function generateRepositoryRulesync(
         (target) => !USER_LEVEL_HOOK_TARGETS.has(target)
       )
     });
+  const postFingerprint =
+    computeRepositoryRulesyncFingerprint(repositoryRoot);
+  const latestCache = readRepoInstallCache(repositoryRoot);
+  const nextGenerateCache: Record<string, string> = {
+    ...(latestCache.rulesyncGenerate ?? {}),
+    [featuresKey]: postFingerprint
+  };
+  if (isAllConfigFeatures) {
+    nextGenerateCache["*"] = postFingerprint;
+  }
+  writeRepoInstallCache(repositoryRoot, {
+    ...latestCache,
+    rulesyncGenerate: nextGenerateCache
+  });
 }
 
 /** Render the Codex hooks file Rulesync projects for a user-level install. */

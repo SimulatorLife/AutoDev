@@ -14,7 +14,7 @@ import {
 
 type NavigationLinkProps = Omit<
   React.ComponentProps<typeof Link>,
-  "onFocus" | "onMouseEnter" | "onTouchStart" | "prefetch"
+  "onMouseEnter" | "onTouchStart" | "prefetch"
 > & {
   readonly dataAttributes?: Readonly<Record<`data-${string}`, string>>;
 };
@@ -42,13 +42,21 @@ function isPlainNavigationClick(
 export interface NavigationIntentHandlers {
   readonly onMouseEnter: () => void;
   readonly onTouchStart: () => void;
-  readonly onFocus: () => void;
+  readonly onFocus: React.FocusEventHandler<HTMLAnchorElement>;
 }
 
 export function navigationIntentHandlers(
-  onIntent: () => void
+  onIntent: () => void,
+  onFocus?: React.FocusEventHandler<HTMLAnchorElement>
 ): NavigationIntentHandlers {
-  return { onMouseEnter: onIntent, onTouchStart: onIntent, onFocus: onIntent };
+  return {
+    onMouseEnter: onIntent,
+    onTouchStart: onIntent,
+    onFocus: (event) => {
+      onFocus?.(event);
+      onIntent();
+    }
+  };
 }
 
 function toHrefString(href: React.ComponentProps<typeof Link>["href"]): string {
@@ -225,7 +233,7 @@ export function NavigationLink({
     scheduleWholePageWarmUp(router, destination);
   }, [href, router]);
 
-  const { onClick } = props;
+  const { onClick, onFocus } = props;
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>): void => {
       onClick?.(event);
@@ -251,6 +259,6 @@ export function NavigationLink({
     ...dataAttributes,
     prefetch: false,
     onClick: handleClick,
-    ...navigationIntentHandlers(prefetch)
+    ...navigationIntentHandlers(prefetch, onFocus)
   });
 }

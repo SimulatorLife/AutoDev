@@ -32,6 +32,7 @@
  * `count` anonymous children by the router.
  */
 
+import { contextHeaderValue } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
@@ -92,21 +93,6 @@ function parseActivityInput(
   }
   const cleanState = typeof state === "string" ? state.trim() : "";
   return { cleanState, childIds };
-}
-
-function headerValue(
-  headers: Record<string, unknown> | undefined,
-  name: string
-): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  // Node lowercases inbound header names, but LiteLLM and other intermediaries
-  // can preserve the case the router sent, so match without regard to it.
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  const value = key === undefined ? undefined : headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return trimmedStringOrNull(single);
 }
 
 export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15_000;
@@ -707,11 +693,11 @@ export class AgentEventReporter {
 export function resolveAgentEventReporter(
   headers: Record<string, unknown> | undefined
 ): AgentEventReporter | null {
-  const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
-  const requestId = headerValue(headers, REQUEST_ID_HEADER);
+  const url = contextHeaderValue(headers, AGENT_EVENTS_URL_HEADER);
+  const requestId = contextHeaderValue(headers, REQUEST_ID_HEADER);
   if (!url || !requestId) return null;
-  const sessionId = headerValue(headers, SESSION_ID_HEADER);
-  const tools = headerValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
+  const sessionId = contextHeaderValue(headers, SESSION_ID_HEADER);
+  const tools = contextHeaderValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
   const spawnTools = new Set(
     tools
       ? tools
@@ -743,8 +729,8 @@ export function resolveAgentEventReporter(
 export function resolveSkillReadReporter(
   headers: Record<string, unknown> | undefined
 ): AgentEventReporter | null {
-  const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
-  const sessionId = headerValue(headers, SESSION_ID_HEADER);
+  const url = contextHeaderValue(headers, AGENT_EVENTS_URL_HEADER);
+  const sessionId = contextHeaderValue(headers, SESSION_ID_HEADER);
   if (!url || !sessionId) return null;
   // The session id is used in place of the request id. The router records
   // the post with the same request/bridge correlation machinery a bridge

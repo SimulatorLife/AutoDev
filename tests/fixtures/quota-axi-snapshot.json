@@ -25,6 +25,33 @@
         "sourcesTried": ["api"],
         "refreshedAt": "2026-11-13T17:00:00.000Z"
       }
+    },
+    {
+      "provider": "claude",
+      "label": "Claude",
+      "source": "oauth",
+      "windows": [
+        {
+          "id": "five_hour",
+          "label": "session",
+          "kind": "session",
+          "percentRemaining": 72,
+          "resetsAt": "2040-11-13T18:00:00.000Z"
+        },
+        {
+          "id": "seven_day",
+          "label": "week",
+          "kind": "weekly",
+          "percentRemaining": 41,
+          "resetsAt": "2040-11-13T18:00:00.000Z"
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "sourcesTried": ["oauth"],
+        "refreshedAt": "2026-11-13T17:00:00.000Z"
+      }
     }
   ]
 }

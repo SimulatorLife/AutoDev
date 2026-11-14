@@ -1,5 +1,4 @@
 /** Runtime-owned, off-hot-path discovery of provider model capabilities. */
-import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -15,6 +14,7 @@ import {
   OPENCLI_PROVIDERS,
   type OpencliProvider
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { execa } from "execa";
 
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
 import { readClaudeOAuthToken } from "./claude-credential.ts";
@@ -269,7 +269,7 @@ function agyExecutable(env: NodeJS.ProcessEnv): string {
  */
 export function createAntigravityModelDiscoveryAdapters(
   env: NodeJS.ProcessEnv = process.env,
-  spawnProcess: typeof spawn = spawn
+  timeoutMs: number = ANTIGRAVITY_CLI_TIMEOUT_MS
 ): Readonly<Record<AntigravityProvider, ProviderModelDiscoveryAdapter>> {
   let listing: Promise<readonly ProviderModelDiscoveryItem[]> | null = null;
   const sharedListing = (
@@ -277,7 +277,7 @@ export function createAntigravityModelDiscoveryAdapters(
   ): Promise<readonly ProviderModelDiscoveryItem[]> => {
     if (listing === null) {
       const started: Promise<readonly ProviderModelDiscoveryItem[]> =
-        listAgyModels(env, spawnProcess, signal).finally(() => {
+        listAgyModels(env, timeoutMs, signal).finally(() => {
           if (listing === started) listing = null;
         });
       listing = started;
@@ -302,79 +302,45 @@ export function createAntigravityModelDiscoveryAdapters(
   };
 }
 
-function listAgyModels(
+/**
+ * Run the `agy models` listing once. Execa owns the subprocess lifecycle
+ * (deadline, output bound, cancellation, termination); this function only
+ * translates its result into the discovery contract.
+ */
+async function listAgyModels(
   env: NodeJS.ProcessEnv,
-  spawnProcess: typeof spawn,
+  timeoutMs: number,
   signal: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("provider model discovery was cancelled"));
-      return;
-    }
-    const child = spawnProcess(agyExecutable(env), ["models"], {
-      cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
-      env,
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const chunks: Buffer[] = [];
-    let byteLength = 0;
-    let settled = false;
-    const finish = (
-      error?: Error,
-      result?: readonly ProviderModelDiscoveryItem[]
-    ) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve(result ?? []);
-    };
-    const abort = (): void => {
-      child.kill("SIGTERM");
-      finish(new Error("provider model discovery was cancelled"));
-    };
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      const forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
-      forceKill.unref();
-      finish(new Error("agy model discovery timed out"));
-    }, ANTIGRAVITY_CLI_TIMEOUT_MS);
-    timer.unref();
-    signal.addEventListener("abort", abort, { once: true });
-    child.stdout.on("data", (chunk: Buffer) => {
-      byteLength += chunk.length;
-      if (byteLength > MAX_AGY_OUTPUT_BYTES) {
-        child.kill("SIGTERM");
-        finish(new Error("agy model list exceeded the response bound"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.once("error", () => {
-      finish(new Error("agy models could not be started"));
-    });
-    child.once("close", (code) => {
-      if (settled) return;
-      if (code !== 0) {
-        finish(new Error(`agy models exited with status ${String(code)}`));
-        return;
-      }
-      try {
-        finish(
-          undefined,
-          parseAntigravityModelList(Buffer.concat(chunks).toString("utf8"))
-        );
-      } catch (error) {
-        finish(
-          error instanceof Error
-            ? error
-            : new Error("agy model list was invalid")
-        );
-      }
-    });
+  const cancelled = (): Error =>
+    new Error("provider model discovery was cancelled");
+  if (signal.aborted) throw cancelled();
+  const result = await execa(agyExecutable(env), ["models"], {
+    cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
+    env,
+    extendEnv: false,
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "buffer",
+    maxBuffer: { stdout: MAX_AGY_OUTPUT_BYTES },
+    timeout: timeoutMs,
+    cancelSignal: signal,
+    forceKillAfterDelay: 250,
+    reject: false
   });
+  if (result.isCanceled) throw cancelled();
+  if (result.timedOut) throw new Error("agy model discovery timed out");
+  if (result.isMaxBuffer) {
+    throw new Error("agy model list exceeded the response bound");
+  }
+  if (result.exitCode === undefined && !result.isTerminated) {
+    throw new Error("agy models could not be started");
+  }
+  if (result.exitCode !== 0) {
+    throw new Error(
+      "agy models exited with status " + String(result.exitCode ?? null)
+    );
+  }
+  return parseAntigravityModelList(Buffer.from(result.stdout).toString("utf8"));
 }
 
 async function boundedResponseText(

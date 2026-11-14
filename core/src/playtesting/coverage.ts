@@ -5,6 +5,7 @@ import type {
   PlaytestCoverageManifestCell
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
+import { isPlainObject } from "./object-guards.ts";
 import type {
   PlaytestCoverageRequirement,
   PlaytestMetricRegistry
@@ -116,10 +117,6 @@ export interface PlaytestCoverageEpisode {
   readonly scenarioFamily: string;
   readonly policyCohort: string;
   readonly metrics: readonly PlaytestNumericResult[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isCount(value: unknown): value is number {
@@ -475,7 +472,7 @@ function assertCoverageCellShape(
   value: unknown
 ): asserts value is Record<string, unknown> {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     Object.keys(value).length !== CELL_KEYS.size ||
     Object.keys(value).some((key) => !CELL_KEYS.has(key))
   ) {
@@ -593,7 +590,7 @@ function assertCoverageCell(
 export function assertPlaytestCoverageManifest(
   value: unknown
 ): asserts value is PlaytestCoverageManifest {
-  if (!isRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError("Playtest coverage manifest must be an object.");
   }
   assertCoverageManifestIdentity(value);

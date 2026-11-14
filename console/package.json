@@ -14,8 +14,10 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@ariakit/react": "0.4.43",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
+    "cockatiel": "4.0.0",
     "next": "15.5.27",
     "react": "19.3.0",
     "react-dom": "19.3.0",

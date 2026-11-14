@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -88,6 +89,16 @@ export function renderLaunchAgent(
     readFileSync(templatePath, "utf8"),
     values
   );
+  if (existsSync(targetPath)) {
+    const stat = lstatSync(targetPath);
+    if (
+      stat.isFile() &&
+      (stat.mode & 0o777) === 0o644 &&
+      readFileSync(targetPath, "utf8") === content
+    ) {
+      return;
+    }
+  }
   const directory = path.dirname(targetPath);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const temporary = path.join(

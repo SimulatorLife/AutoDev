@@ -5,7 +5,8 @@ import {
   constants,
   openSync,
   readdirSync,
-  readSync
+  readSync,
+  statSync
 } from "node:fs";
 import path from "node:path";
 
@@ -146,15 +147,29 @@ export function resolveServiceNode(
   );
 }
 
-/** The version a Codex CLI reports, or null when it does not report one. */
-export function codexCliVersion(
+const defaultCodexVersionCache = new Map<
+  string,
+  {
+    readonly mtimeMs: number;
+    readonly size: number;
+    readonly version: string | null;
+  }
+>();
+
+function defaultCodexVersionRunner(
+  file: string,
+  args: readonly string[]
+): string {
+  return execFileSync(file, [...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5000
+  });
+}
+
+function probeCodexCliVersion(
   binary: string,
-  run: (file: string, args: readonly string[]) => string = (file, args) =>
-    execFileSync(file, [...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000
-    })
+  run: (file: string, args: readonly string[]) => string
 ): string | null {
   let output: string;
   try {
@@ -163,6 +178,40 @@ export function codexCliVersion(
     return null;
   }
   return CODEX_VERSION_PATTERN.exec(output)?.[0] ?? null;
+}
+
+/** The version a Codex CLI reports, or null when it does not report one. */
+export function codexCliVersion(
+  binary: string,
+  run?: (file: string, args: readonly string[]) => string
+): string | null {
+  if (!run) {
+    let stat: { mtimeMs: number; size: number } | null = null;
+    try {
+      stat = statSync(binary);
+    } catch {
+      stat = null;
+    }
+    const cached = stat ? defaultCodexVersionCache.get(binary) : undefined;
+    if (
+      stat &&
+      cached &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.size === stat.size
+    ) {
+      return cached.version;
+    }
+    const version = probeCodexCliVersion(binary, defaultCodexVersionRunner);
+    if (stat) {
+      defaultCodexVersionCache.set(binary, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        version
+      });
+    }
+    return version;
+  }
+  return probeCodexCliVersion(binary, run);
 }
 
 function compareVersions(left: string | null, right: string | null): number {
@@ -197,13 +246,17 @@ export function resolveServiceCodex(
     throw new Error(`Codex CLI is not executable: ${configured}`);
   }
   const candidates = [
-    path.join(home, ".local/bin/codex"),
-    findExecutable("codex", env.PATH),
-    ...nvmCodexBinaries(home)
-  ].filter(
-    (candidate): candidate is string =>
-      candidate !== null && isExecutable(candidate)
-  );
+    ...new Set(
+      [
+        path.join(home, ".local/bin/codex"),
+        findExecutable("codex", env.PATH),
+        ...nvmCodexBinaries(home)
+      ].filter(
+        (candidate): candidate is string =>
+          candidate !== null && isExecutable(candidate)
+      )
+    )
+  ];
   if (candidates.length === 0) return null;
   const ranked = candidates
     .map((candidate) => ({ candidate, version: versionOf(candidate) }))

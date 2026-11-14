@@ -1,4 +1,6 @@
 /** Core-owned, versioned player-authored report contracts. */
+import { isPlainObject } from "./object-guards.ts";
+
 export const PLAYTEST_PLAYER_DEBRIEF_SCHEMA =
   "autodev-playtest-player-debrief-v1" as const;
 export const PLAYTEST_PLAYER_FOCUS_INTERPRETATION_SCHEMA =
@@ -141,10 +143,6 @@ export type PlaytestPlayerDebriefV1 =
       readonly summary: string;
     };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function hasExactKeys(
   value: Record<string, unknown>,
   keys: readonly string[]
@@ -184,7 +182,7 @@ function assertEvidenceReference(
   value: unknown
 ): asserts value is PlaytestPlayerEvidenceReference {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     !hasExactKeys(value, ["kind", "id", "step", "frameIndex"]) ||
     value.kind !== "frame" ||
     !isBoundedText(value.id, 256) ||
@@ -203,7 +201,7 @@ function assertSource(
   value: unknown
 ): asserts value is PlaytestPlayerDebriefSource {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     !hasExactKeys(value, [
       "authorRole",
       "policyId",
@@ -227,7 +225,7 @@ export function assertPlaytestPlayerFocusInterpretation(
   value: unknown
 ): asserts value is PlaytestPlayerFocusInterpretationV1 {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     !hasExactKeys(value, [
       "schema",
       "requestedFocus",
@@ -282,7 +280,7 @@ function assertCheckpoint(
   value: unknown
 ): asserts value is PlaytestPlayerCheckpointV1 {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     !hasExactKeys(value, [
       "schema",
       "intention",
@@ -366,7 +364,7 @@ export function assertPlaytestPlayerDebrief(
   value: unknown
 ): asserts value is PlaytestPlayerDebriefV1 {
   if (
-    !isRecord(value) ||
+    !isPlainObject(value) ||
     value.schema !== PLAYTEST_PLAYER_DEBRIEF_SCHEMA ||
     typeof value.status !== "string"
   ) {

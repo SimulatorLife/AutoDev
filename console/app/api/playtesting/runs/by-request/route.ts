@@ -1,6 +1,7 @@
 /** Server-only recovery of a launch whose POST acknowledgement was uncertain. */
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -12,17 +13,6 @@ export const runtime = "nodejs";
 
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-
-function sendError(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const params = request.nextUrl.searchParams;
@@ -37,7 +27,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     !WORKSPACE_ID_PATTERN.test(workspaceId) ||
     !REQUEST_ID_PATTERN.test(requestId)
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A canonical workspaceId and the original requestId are required."
@@ -45,7 +35,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -57,7 +47,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     config
   );
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       result.kind === "http-error" || result.kind === "unauthorized"
         ? result.status
         : result.kind === "unreachable"

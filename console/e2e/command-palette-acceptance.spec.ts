@@ -166,15 +166,22 @@ test("the palette keeps the focus inside itself", async ({ page }) => {
   await expect(dialog).toBeVisible();
 
   // The dialog says it is modal, so the keyboard must not walk off it into
-  // the page behind the overlay.
-  const results = page.locator("[data-command-palette] a");
-  const last = results.last();
-  await last.focus();
-  await page.keyboard.press("Tab");
-  await expect(page.locator("#command-palette-input")).toBeFocused();
-
-  await page.keyboard.press("Shift+Tab");
-  await expect(last).toBeFocused();
+  // the page behind it. The modal makes the page inert and Ariakit's
+  // FocusTrapRegion cycles Tab and Shift+Tab within the dialog. Results are
+  // reached with the arrow keys (virtual focus), so the search field is the
+  // only ordinary tab stop.
+  const insideDialog = (): Promise<boolean> =>
+    page.evaluate(
+      () => document.activeElement?.closest("[data-command-palette]") != null
+    );
+  const field = page.locator("#command-palette-input");
+  await expect(field).toBeFocused();
+  for (const key of ["Tab", "Tab", "Shift+Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    expect(await insideDialog(), key + " left the dialog").toBe(true);
+    await expect(field).toBeFocused();
+  }
+  await expect(dialog).toBeVisible();
 });
 
 test("the palette opens the first match with Enter", async ({ page }) => {
@@ -208,12 +215,11 @@ test("the palette fits a short window", async ({ page }) => {
   await expect(dialog).toBeVisible();
 
   const geometry = await page.evaluate(() => {
-    const overlay = document.querySelector("[data-command-palette]");
-    const list = overlay?.querySelector("ul");
+    const overlay = document.querySelector("[data-command-palette-backdrop]");
+    const dialogElement = document.querySelector("[data-command-palette]");
+    const list = dialogElement?.querySelector("[role='listbox']");
     const overlayBox = overlay?.getBoundingClientRect();
-    const dialogBox = overlay
-      ?.querySelector("[role='dialog']")
-      ?.getBoundingClientRect();
+    const dialogBox = dialogElement?.getBoundingClientRect();
     const listBox = list?.getBoundingClientRect();
     // What the operator can actually see where the first result is.
     const hit =
@@ -256,7 +262,7 @@ test("the palette selects a result the keyboard can move", async ({ page }) => {
 
   // The first match is selected before a key is pressed, the way every
   // command palette the operator already knows behaves.
-  const selected = page.locator('[data-palette-active="true"]');
+  const selected = page.locator("[data-active-item]");
   await expect(selected).toHaveCount(1);
   await expect(selected).toContainText("Agents");
 

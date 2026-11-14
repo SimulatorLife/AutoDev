@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import type { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -22,36 +20,6 @@ import {
 } from "../src/providers/model-discovery.ts";
 import { RouterPersistence } from "../src/router/persistence/index.ts";
 import { ROUTING_POLICY } from "../src/router/routing.ts";
-
-interface FakeAgyChild {
-  readonly stdout: PassThrough;
-  kill(signal: NodeJS.Signals): boolean;
-  once(eventName: string, listener: (...args: unknown[]) => void): FakeAgyChild;
-  emit(eventName: string, ...args: unknown[]): boolean;
-}
-
-function fakeAgyChild(killedSignals: NodeJS.Signals[]): FakeAgyChild {
-  const listeners = new Map<string, (...args: unknown[]) => void>();
-  const child: FakeAgyChild = {
-    stdout: new PassThrough(),
-    kill: (signal) => {
-      killedSignals.push(signal);
-      return true;
-    },
-    once: (eventName, listener) => {
-      listeners.set(eventName, listener);
-      return child;
-    },
-    emit: (eventName, ...args) => {
-      const listener = listeners.get(eventName);
-      if (!listener) return false;
-      listeners.delete(eventName);
-      listener(...args);
-      return true;
-    }
-  };
-  return child;
-}
 
 const AGY_MODELS = [
   "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)",
@@ -72,79 +40,125 @@ test("agy model parsing preserves provider IDs and labels", () => {
   assert.deepEqual(parseAntigravityModelList(""), []);
 });
 
-test("Antigravity discovery accepts a slow bounded CLI listing and shares it across providers", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const killedSignals: NodeJS.Signals[] = [];
-  const child = fakeAgyChild(killedSignals);
-  let spawns = 0;
-  const spawnProcess = (() => {
-    spawns += 1;
-    return child;
-  }) as unknown as typeof spawn;
-  const adapters = createAntigravityModelDiscoveryAdapters(
-    { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
-    spawnProcess
-  );
-  try {
-    const signal = new AbortController().signal;
-    const outcome = Promise.all([
-      adapters["antigravity-gemini"].discover(signal),
-      adapters["antigravity-argon"].discover(signal),
-      adapters["antigravity-claude-gpt"].discover(signal)
-    ]).then(
-      ([gemini, argon, claudeGpt]) => ({ gemini, argon, claudeGpt }),
-      (error: unknown) => ({ error })
-    );
-    t.mock.timers.tick(8500);
-    child.stdout.end(`${AGY_MODELS}\n`);
-    child.emit("close", 0);
+function fakeAgy(body: string): {
+  readonly env: NodeJS.ProcessEnv;
+  readonly dir: string;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-agy-"));
+  const executable = join(dir, "agy");
+  writeFileSync(executable, "#!/bin/sh\n" + body + "\n", { mode: 0o755 });
+  return {
+    dir,
+    env: { AGY_CLI_PATH: executable, PATH: process.env.PATH ?? "" }
+  };
+}
 
-    const result = await outcome;
-    // One `agy models` listing answers every Antigravity provider, and each
-    // offers only the models its own quota serves.
-    assert.equal(spawns, 1);
-    assert.deepEqual(result, {
-      gemini: [
-        {
-          id: "gemini-3.8-flash-low",
-          displayName: "Gemini 3.8 Flash (Low)"
-        }
-      ],
-      argon: [],
-      claudeGpt: [
-        { id: "gpt-oss-120b-medium", displayName: "GPT OSS 120B (Medium)" }
-      ]
-    });
-    assert.deepEqual(killedSignals, []);
-  } finally {
-    t.mock.timers.reset();
-  }
+async function geminiListing(
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal = new AbortController().signal,
+  timeoutMs?: number
+): Promise<unknown> {
+  const adapter = createAntigravityModelDiscoveryAdapters(env, timeoutMs)[
+    "antigravity-gemini"
+  ];
+  return adapter.discover(signal).then(
+    (models) => models,
+    (error: unknown) => error
+  );
+}
+
+test("Antigravity discovery runs agy once, shares the listing across providers, and filters per provider", async (t) => {
+  const { env, dir } = fakeAgy(
+    'echo run >> "$0.runs"\nsleep 0.2\nprintf "%s\\n" "gemini-3.8-flash-low	Gemini 3.8 Flash (Low)" "gpt-oss-120b-medium	GPT OSS 120B (Medium)"'
+  );
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const adapters = createAntigravityModelDiscoveryAdapters(env);
+  const signal = new AbortController().signal;
+  const [gemini, argon, claudeGpt] = await Promise.all([
+    adapters["antigravity-gemini"].discover(signal),
+    adapters["antigravity-argon"].discover(signal),
+    adapters["antigravity-claude-gpt"].discover(signal)
+  ]);
+  assert.equal(readFileSync(env.AGY_CLI_PATH + ".runs", "utf8"), "run\n");
+  assert.deepEqual(gemini, [
+    { id: "gemini-3.8-flash-low", displayName: "Gemini 3.8 Flash (Low)" }
+  ]);
+  assert.deepEqual(argon, []);
+  assert.deepEqual(claudeGpt, [
+    { id: "gpt-oss-120b-medium", displayName: "GPT OSS 120B (Medium)" }
+  ]);
+});
+
+test("Antigravity discovery runs agy with the given env only, not the Runtime's", async (t) => {
+  const { env, dir } = fakeAgy(
+    String.raw`printf "%s\n" "gemini-3.8-flash-low	@@{AUTODEV_AGY_PROBE:-absent}"`.replace(
+      "@@",
+      "$"
+    )
+  );
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const previousProbe = process.env.AUTODEV_AGY_PROBE;
+  process.env.AUTODEV_AGY_PROBE = "leaked";
+  t.after(() => {
+    if (previousProbe === undefined) delete process.env.AUTODEV_AGY_PROBE;
+    else process.env.AUTODEV_AGY_PROBE = previousProbe;
+  });
+  assert.deepEqual(await geminiListing(env), [
+    { id: "gemini-3.8-flash-low", displayName: "absent" }
+  ]);
 });
 
 test("Antigravity discovery remains bounded when the CLI stalls", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const killedSignals: NodeJS.Signals[] = [];
-  const child = fakeAgyChild(killedSignals);
-  const spawnProcess = (() => child) as unknown as typeof spawn;
-  const adapter = createAntigravityModelDiscoveryAdapters(
-    { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
-    spawnProcess
-  )["antigravity-gemini"];
-  try {
-    const outcome = adapter.discover(new AbortController().signal).then(
-      () => null,
-      (error: unknown) => error
-    );
-    t.mock.timers.tick(30_000);
-    const error = await outcome;
-    assert.ok(error instanceof Error);
-    assert.match(error.message, /agy model discovery timed out/u);
-    assert.deepEqual(killedSignals, ["SIGTERM"]);
-    t.mock.timers.tick(250);
-    assert.deepEqual(killedSignals, ["SIGTERM", "SIGKILL"]);
-  } finally {
-    t.mock.timers.reset();
-  }
+  const { env, dir } = fakeAgy("exec sleep 30");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const error = await geminiListing(env, new AbortController().signal, 200);
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /agy model discovery timed out/u);
+});
+
+test("Antigravity discovery cancels and terminates a running listing", async (t) => {
+  const { env, dir } = fakeAgy("exec sleep 30");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const controller = new AbortController();
+  const outcome = geminiListing(env, controller.signal);
+  setTimeout(() => controller.abort(), 100).unref();
+  const error = await outcome;
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /provider model discovery was cancelled/u);
+});
+
+test("Antigravity discovery does not start agy for an already-cancelled listing", async (t) => {
+  const { env, dir } = fakeAgy('echo run >> "$0.runs"');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const error = await geminiListing(env, AbortSignal.abort());
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /provider model discovery was cancelled/u);
+  assert.throws(() => readFileSync(env.AGY_CLI_PATH + ".runs"), /ENOENT/u);
+});
+
+test("Antigravity discovery rejects output over the 64 KiB bound", async (t) => {
+  const { env, dir } = fakeAgy(String.raw`head -c 70000 /dev/zero | tr '\0' a`);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const error = await geminiListing(env);
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /agy model list exceeded the response bound/u);
+});
+
+test("Antigravity discovery reports a failing exit status", async (t) => {
+  const { env, dir } = fakeAgy("exit 3");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const error = await geminiListing(env);
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /agy models exited with status 3/u);
+});
+
+test("Antigravity discovery reports an agy that cannot be started", async () => {
+  const error = await geminiListing({
+    AGY_CLI_PATH: "/nonexistent/autodev/agy",
+    PATH: process.env.PATH ?? ""
+  });
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /agy models could not be started/u);
 });
 
 test("agy model parsing rejects malformed IDs and duplicates", () => {

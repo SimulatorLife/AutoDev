@@ -12,6 +12,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { jsonErrorResponse } from "../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -93,17 +94,6 @@ function parseVisualLaunchRequest(
 }
 const ALLOWED_FIELDS = new Set(["launchRequest"]);
 
-function sendError(
-  status: number,
-  code: string,
-  message: string
-): NextResponse {
-  return NextResponse.json(
-    { kind: "error", code, message },
-    { status, headers: { "cache-control": "no-store" } }
-  );
-}
-
 /**
  * Workspace-scoped live batch reads for the active-runs view. This is a read
  * of the same typed run owner that starts and cancels runs; the Console never
@@ -118,7 +108,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ) ||
     !WORKSPACE_ID_PATTERN.test(workspaceId)
   ) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A canonical workspaceId is required to read active runs."
@@ -126,7 +116,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -134,7 +124,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const result = await fetchPlaytestingActiveRuns(workspaceId, config);
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       result.kind === "http-error" || result.kind === "unauthorized"
         ? result.status
         : result.kind === "unreachable"
@@ -306,7 +296,7 @@ function failureStatus(
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
-    return sendError(
+    return jsonErrorResponse(
       403,
       "autodev_console_playtesting_origin_refused",
       "Batch requests must come from the Console's same origin."
@@ -314,7 +304,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const form = await readStrictUrlEncodedFormBody(request, MAX_BODY_BYTES);
   if (!form || [...form.keys()].some((key) => !ALLOWED_FIELDS.has(key))) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "The typed playtest batch form is invalid."
@@ -324,7 +314,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const launchRequest =
     launchValues.length === 1 ? parseLaunchRequest(launchValues[0]!) : null;
   if (!launchRequest) {
-    return sendError(
+    return jsonErrorResponse(
       400,
       "autodev_console_playtesting_invalid_request",
       "A versioned PlaytestLaunchRequest with a canonical workspaceId and 1-" +
@@ -334,7 +324,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const config = readControlApiConfig();
   if (!config) {
-    return sendError(
+    return jsonErrorResponse(
       503,
       "autodev_console_control_api_unavailable",
       "The server-side Control API credential is not configured."
@@ -342,7 +332,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const result = await startPlaytestingRun(launchRequest, config);
   if (result.kind !== "ok") {
-    return sendError(
+    return jsonErrorResponse(
       failureStatus(result),
       controlApiFailureCode(result),
       result.message

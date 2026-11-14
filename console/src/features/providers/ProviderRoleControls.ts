@@ -11,7 +11,6 @@ import React from "react";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import {
   HierarchicalSelect,
-  HierarchicalSelectForms,
   type HierarchicalSelectProps
 } from "../../components/forms/HierarchicalSelect.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
@@ -635,6 +634,48 @@ function AgentModelRow({
             value: entry.model ?? ""
           })
         ])
+  );
+}
+
+/**
+ * The hierarchical model's submit forms sit beside, not inside, the role form
+ * that contains its closed control. Keeping only these small native forms in
+ * the initial document lets the client-owned menu mount its many option
+ * buttons only when the operator opens it.
+ */
+function HierarchicalSelectForms({
+  id,
+  levels,
+  disabledReason
+}: Pick<
+  HierarchicalSelectProps,
+  "id" | "levels" | "disabledReason"
+>): React.JSX.Element | null {
+  if (disabledReason !== undefined) return null;
+  return React.createElement(
+    React.Fragment,
+    null,
+    ...levels.map((level) =>
+      React.createElement(
+        "form",
+        {
+          key: level.key,
+          id: `${id}-${level.key}-form`,
+          method: "POST",
+          action: level.action,
+          hidden: true,
+          "data-hierarchical-form": level.key
+        },
+        ...Object.entries(level.hiddenFields).map(([name, value]) =>
+          React.createElement("input", {
+            key: name,
+            type: "hidden",
+            name,
+            value
+          })
+        )
+      )
+    )
   );
 }
 

@@ -162,12 +162,32 @@ test("the router publishes quota-axi CLI output unchanged on the providers API",
     assert.equal(agy.quotaSemantics?.effectiveAvailability[0]?.status, "known");
     assert.deepEqual(agy.quotaSemantics?.unresolvedWindowIds, ["unmeasured"]);
 
-    const absent = report.quotaAxi!.providers.find(
+    const claude = report.quotaAxi!.providers.find(
       ({ provider }) => provider === "claude"
     );
-    assert.equal(absent?.state.status, "unavailable");
-    assert.equal(absent?.state.error, "not_in_snapshot");
-    assert.equal(absent?.quotaSemantics?.status, "unknown");
+    assert.ok(claude, "Claude quota windows reach the providers API");
+    assert.deepEqual(
+      claude.windows.map(({ id, kind, percentRemaining, resetsAt }) => ({
+        id,
+        kind,
+        percentRemaining,
+        resetsAt
+      })),
+      [
+        {
+          id: "five_hour",
+          kind: "session",
+          percentRemaining: 72,
+          resetsAt: "2040-11-13T18:00:00.000Z"
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          percentRemaining: 41,
+          resetsAt: "2040-11-13T18:00:00.000Z"
+        }
+      ]
+    );
     assert.ok(
       report.providers.every(
         (provider) =>

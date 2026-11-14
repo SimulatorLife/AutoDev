@@ -186,21 +186,28 @@ fi
 # installer keeps waiting instead of declaring a crash loop on a service that
 # was about to serve. A backend that answered with a stale contract is a
 # permanent failure, and it exits 1.
-verify_backend_contract() {
-	local verifier="$1"
-	local status=0
-	"$NODE_BIN" "$verifier" || status=$?
-	if [[ "$status" -eq 75 ]]; then
+verify_backend_contracts() {
+	local control_status=0
+	local usage_status=0
+	"$NODE_BIN" "$repo_root/runtime/src/cli/verify-control-api.ts" &
+	local control_pid=$!
+	"$NODE_BIN" "$repo_root/runtime/src/platform/usage-contract.ts" &
+	local usage_pid=$!
+	wait "$control_pid" || control_status=$?
+	wait "$usage_pid" || usage_status=$?
+	if [[ "$control_status" -eq 75 || "$usage_status" -eq 75 ]]; then
 		echo "run-codex-console: a backend did not answer; the Console will retry when it is up." >&2
 		exit 75
 	fi
-	if [[ "$status" -ne 0 ]]; then
-		exit "$status"
+	if [[ "$control_status" -ne 0 ]]; then
+		exit "$control_status"
+	fi
+	if [[ "$usage_status" -ne 0 ]]; then
+		exit "$usage_status"
 	fi
 }
 
-verify_backend_contract "$repo_root/runtime/src/cli/verify-control-api.ts"
-verify_backend_contract "$repo_root/runtime/src/platform/usage-contract.ts"
+verify_backend_contracts
 
 export AUTODEV_CONSOLE_PORT="$console_port"
 

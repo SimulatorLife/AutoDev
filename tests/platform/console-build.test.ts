@@ -357,3 +357,50 @@ test("a failed Next build restores seeded caches and tsconfig.json to the servin
       "tsbuildinfo-cache\n"
     );
   }));
+
+test("Console build skips Next compilation when tracked inputs and stamp are unchanged, and rebuilds on change or force", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const consoleSrc = path.join(consoleRoot, "src");
+    mkdirSync(consoleSrc, { recursive: true });
+    const entryFile = path.join(consoleSrc, "index.ts");
+    writeFileSync(entryFile, "export const consoleVersion = 1;\n");
+
+    let buildCount = 0;
+    const deps = dependencies({
+      run: (_executable, _args, cwd, env) => {
+        buildCount += 1;
+        const stagingRoot = path.join(
+          cwd,
+          env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
+        );
+        mkdirSync(stagingRoot, { recursive: true });
+        writeFileSync(path.join(stagingRoot, "BUILD_ID"), `build-${buildCount}\n`);
+      }
+    });
+
+    buildConsole({ repositoryRoot }, deps);
+    assert.equal(buildCount, 1);
+    const stampPath = path.join(consoleRoot, ".next", ".autodev-build-stamp");
+    assert.equal(existsSync(stampPath), true);
+    const firstStamp = readFileSync(stampPath, "utf8");
+
+    buildConsole({ repositoryRoot }, deps);
+    assert.equal(
+      buildCount,
+      1,
+      "unchanged inputs must skip rebuilding the Console"
+    );
+
+    writeFileSync(entryFile, "export const consoleVersion = 2;\n");
+    buildConsole({ repositoryRoot }, deps);
+    assert.equal(
+      buildCount,
+      2,
+      "modifying a Console source file must invalidate the build stamp"
+    );
+    assert.notEqual(readFileSync(stampPath, "utf8"), firstStamp);
+
+    buildConsole({ repositoryRoot, forceRebuild: true }, deps);
+    assert.equal(buildCount, 3, "forceRebuild must bypass the build stamp");
+  }));

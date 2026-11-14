@@ -6,6 +6,7 @@ import {
   clearPendingWarmUpForTests,
   clearPrefetchCacheForTests,
   PREFETCH_INTENT_DELAY_MS,
+  navigationIntentHandlers,
   scheduleWholePageWarmUp
 } from "../src/components/navigation/NavigationLink.ts";
 import type { WholePageRouter } from "../src/components/navigation/whole-page-navigation.ts";
@@ -101,5 +102,21 @@ test("the playtesting poll loop is not re-created when the watch state flips", (
     source,
     /shouldContinue: \(\) =>\s*!pausedRef\.current && isWatching\(runsRef\.current\)/u,
     "the loop reads the watch state from the runs it just merged, which are current the moment they exist"
+  );
+});
+
+test("focus handling runs alongside the route warm-up intent", () => {
+  const events: string[] = [];
+  const handlers = navigationIntentHandlers(
+    () => events.push("warm-up"),
+    () => events.push("composite focus")
+  );
+
+  handlers.onFocus({} as Parameters<typeof handlers.onFocus>[0]);
+
+  assert.deepEqual(
+    events,
+    ["composite focus", "warm-up"],
+    "a consumer's focus behavior must not be replaced by NavigationLink's prefetch"
   );
 });

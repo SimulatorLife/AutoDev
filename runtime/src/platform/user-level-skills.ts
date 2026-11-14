@@ -13,9 +13,13 @@ import path from "node:path";
  * (`[]`, or only `copilot`, whose cloud agent has no user level) reaches
  * local tools from the user level.
  */
+const CURATED_SKILLS_DIR = ".curated";
+const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
+const TARGETS_KEY_PATTERN = /^targets\s*:/mu;
+
 export function userLevelSkills(skillsRoot: string): string[] {
   return readdirSync(skillsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name !== CURATED_SKILLS_DIR)
     .map((entry) => entry.name)
     .filter((name) =>
       declaresTargets(
@@ -27,7 +31,7 @@ export function userLevelSkills(skillsRoot: string): string[] {
 
 /** Whether a `SKILL.md`'s frontmatter declares a top-level `targets` key. */
 function declaresTargets(document: string): boolean {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(document);
+  const match = FRONTMATTER_PATTERN.exec(document);
   if (!match) throw new Error("invalid-skill-document missing frontmatter");
-  return /^targets\s*:/mu.test(match[1]!);
+  return TARGETS_KEY_PATTERN.test(match[1]!);
 }

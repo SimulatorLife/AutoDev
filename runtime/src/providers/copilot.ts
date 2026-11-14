@@ -37,6 +37,11 @@ import {
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  SANDBOX_MODE_HEADER,
+  contextHeaderValue,
+  readContextHeader
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,
@@ -148,12 +153,7 @@ interface CopilotRoleMcpContext {
 function readOnlyHeaderValue(
   headers: Record<string, unknown>
 ): "read-only" | "workspace-write" | null {
-  const key = Object.keys(headers).find(
-    (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
-  );
-  if (!key) return null;
-  const value = headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
+  const single = readContextHeader(headers, SANDBOX_MODE_HEADER);
   return single === "read-only" || single === "workspace-write" ? single : null;
 }
 
@@ -1131,18 +1131,6 @@ function sseLine(eventName: string, body: object): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
 }
 
-function headerValue(
-  headers: NodeJS.Dict<string | string[]> | undefined,
-  name: string
-): string | null {
-  if (!headers || typeof headers !== "object") return null;
-  const key = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name
-  );
-  const value = key === undefined ? undefined : headers[key];
-  const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single.trim() : null;
-}
 
 interface CopilotRequestContext {
   payload: JsonRecord;
@@ -1654,7 +1642,7 @@ function prepareCopilotRequest(
   if (!cwd) return null;
   const headers: Record<string, unknown> = { ...request.headers };
   const agentRole = resolveAgentRole(request.headers);
-  const requestId = headerValue(request.headers, "x-autodev-request-id");
+  const requestId = contextHeaderValue(request.headers, "x-autodev-request-id");
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const agentEvents = resolveAgentEventReporter(headers);
   const sandboxModeHeader = readOnlyHeaderValue(headers);

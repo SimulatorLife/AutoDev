@@ -24,8 +24,10 @@ type RunResult = ReturnType<typeof spawnSync>;
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = join(repositoryRoot, ".rulesync", "skills");
+const curatedRoot = join(sourceRoot, ".curated");
 const installerPath = join(repositoryRoot, "scripts", "install.sh");
 const rulesyncConfigPath = join(repositoryRoot, "rulesync.jsonc");
+const rulesyncLockPath = join(repositoryRoot, "rulesync.lock");
 const driftWorkflowPath = join(
   repositoryRoot,
   ".github",
@@ -62,26 +64,38 @@ const canonicalSkills = [
   "source-driven-development",
   "writing-agent-skills"
 ] as const;
+const curatedSkills = ["karpathy-guidelines", "react-best-practices"] as const;
 const repositorySkills: Record<string, readonly string[]> = {
   ".github/skills": [
     "autodev-codex-request-capture",
     "autodev-session-diagnostics",
     "ccc",
+    "karpathy-guidelines",
     "lsp-mcp-server",
     "opentelemetry",
-    "orchestration"
+    "orchestration",
+    "react-best-practices"
   ],
   ".claude/skills": [
     "autodev-codex-request-capture",
     "autodev-session-diagnostics",
-    "opentelemetry"
+    "karpathy-guidelines",
+    "opentelemetry",
+    "react-best-practices"
   ],
   ".agents/skills": [
     "autodev-codex-request-capture",
     "autodev-session-diagnostics",
-    "opentelemetry"
+    "karpathy-guidelines",
+    "opentelemetry",
+    "react-best-practices"
   ]
 };
+
+function skillSourceDir(skill: string): string {
+  const canonical = join(sourceRoot, skill);
+  return existsSync(canonical) ? canonical : join(curatedRoot, skill);
+}
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -160,6 +174,16 @@ function files(directory: string): string[] {
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "autodev-rulesync-skills-"));
 const generated = join(temporaryRoot, "generated");
+const installResult = spawnSync(
+  "pnpm",
+  ["exec", "rulesync", "install", "--frozen", "--silent"],
+  { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+);
+assert.equal(
+  installResult.status,
+  0,
+  `Rulesync frozen install failed: ${installResult.stdout}\n${installResult.stderr}`
+);
 const result = runRulesync(generated);
 assert.equal(
   result.status,
@@ -174,7 +198,7 @@ function generatedSkillPath(folder: string, skill: string): string {
 
 test("canonical source holds every skill", () => {
   const names = readdirSync(sourceRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name !== ".curated")
     .map((entry) => entry.name)
     .sort();
   assert.deepEqual(names, [...canonicalSkills].sort());
@@ -185,6 +209,24 @@ test("canonical source holds every skill", () => {
     assert.match(front, new RegExp(`^name: ${skill}$`, "mu"));
     assert.doesNotMatch(front, /^description:\s*>/mu);
   }
+  const curatedNames = readdirSync(curatedRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(curatedNames, [...curatedSkills].sort());
+  for (const skill of curatedSkills) {
+    const document = join(curatedRoot, skill, "SKILL.md");
+    assert.equal(lstatSync(document).isSymbolicLink(), false, skill);
+    const [front] = splitFrontmatter(readFileSync(document, "utf8"));
+    assert.match(front, /^name:\s*\S+/mu, skill);
+    description(front);
+  }
+  const lockfile = _asObject(readJson(rulesyncLockPath));
+  const lockedSources = _asObject(lockfile.sources);
+  const lockedSkills = Object.values(lockedSources)
+    .flatMap((entry) => Object.keys(_asObject(_asObject(entry).skills)))
+    .sort();
+  assert.deepEqual(lockedSkills, [...curatedSkills].sort());
   assert.equal(
     existsSync(join(sourceRoot, "orchestration", "agents", "openai.yaml")),
     true
@@ -194,7 +236,14 @@ test("canonical source holds every skill", () => {
 test("only the canonical skill source is tracked", () => {
   const tracked = spawnSync(
     "git",
-    ["ls-files", "--", ".github/skills", ".claude/skills", ".agents/skills"],
+    [
+      "ls-files",
+      "--",
+      ".github/skills",
+      ".claude/skills",
+      ".agents/skills",
+      ".rulesync/skills/.curated"
+    ],
     { cwd: repositoryRoot, encoding: "utf8" }
   )
     .stdout.split("\n")
@@ -203,11 +252,19 @@ test("only the canonical skill source is tracked", () => {
     tracked.filter((path) => path.includes("/skills/")),
     []
   );
+  const lockTracked = spawnSync(
+    "git",
+    ["ls-files", "--error-unmatch", "rulesync.lock"],
+    { cwd: repositoryRoot, encoding: "utf8" }
+  );
+  assert.equal(lockTracked.status, 0);
   const ignored = readFileSync(join(repositoryRoot, ".gitignore"), "utf8")
     .split("\n")
     .map((line) => line.trim());
   assert.ok(ignored.includes("/.github/skills/"));
   assert.ok(ignored.includes("/.claude/skills/"));
+  assert.ok(ignored.includes("/.rulesync/skills/.curated/"));
+  assert.ok(ignored.includes("!/rulesync.lock"));
   assert.deepEqual(
     ignored.filter(
       (line) => line.includes(".agents/skills") && !line.startsWith("#")
@@ -228,16 +285,17 @@ test("each tool folder receives exactly its repository skills with bundled files
       folder
     );
     for (const skill of skills) {
+      const origin = skillSourceDir(skill);
       assert.deepEqual(
         files(join(root, skill)),
-        files(join(sourceRoot, skill)),
+        files(origin),
         `${folder}/${skill}`
       );
-      for (const relativePath of files(join(sourceRoot, skill))) {
+      for (const relativePath of files(origin)) {
         if (relativePath !== "SKILL.md")
           assert.deepEqual(
             readFileSync(join(root, skill, relativePath)),
-            readFileSync(join(sourceRoot, skill, relativePath)),
+            readFileSync(join(origin, relativePath)),
             `${folder}/${skill}/${relativePath}`
           );
       }
@@ -271,15 +329,22 @@ test("repository folders never duplicate user-level skills", () => {
 });
 
 test("generated documents preserve name, description, and body without targets", () => {
+  const canonicalSet = new Set<string>(canonicalSkills);
   for (const [folder, skills] of Object.entries(repositorySkills))
     for (const skill of skills) {
       const [sourceFront, sourceBody] = splitFrontmatter(
-        readFileSync(join(sourceRoot, skill, "SKILL.md"), "utf8")
+        readFileSync(join(skillSourceDir(skill), "SKILL.md"), "utf8")
       );
       const [front, body] = splitFrontmatter(
         readFileSync(generatedSkillPath(folder, skill), "utf8")
       );
-      assert.match(front, new RegExp(`^name: ${skill}$`, "mu"));
+      const declaredName = /^name:[ \t]*(?<value>\S.*)$/mu.exec(sourceFront)
+        ?.groups?.value;
+      assert.ok(declaredName, `${folder}/${skill} source missing name`);
+      if (canonicalSet.has(skill)) {
+        assert.equal(declaredName, skill, `${folder}/${skill}`);
+      }
+      assert.match(front, new RegExp(`^name:[ \t]*${declaredName}$`, "mu"));
       assert.equal(description(front), description(sourceFront));
       assert.doesNotMatch(front, /^targets:/mu);
       assert.equal(body, sourceBody);
@@ -352,7 +417,13 @@ test("RuleSync project config and CI cover the repository projections", () => {
   assert.deepEqual(config.outputRoots, ["."]);
   assert.equal(config.delete, true);
   assert.equal(config.global, false);
+  const configuredSources = (config.sources as Array<Record<string, unknown>>)
+    .flatMap((entry) => entry.skills as string[])
+    .sort();
+  assert.deepEqual(configuredSources, [...curatedSkills].sort());
   const workflow = readFileSync(driftWorkflowPath, "utf8");
+  assert.match(workflow, /- "rulesync\.lock"/);
+  assert.match(workflow, /pnpm exec rulesync install --frozen --silent/);
   assert.match(
     workflow,
     /run: node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts tests\/rulesync-rules\.test\.ts/
@@ -397,6 +468,7 @@ test("every file a skill names exists where an agent resolves it", () => {
     /^(?:docs|runtime|core|console|data|config|agents|tests|scripts|\.rulesync)\//u;
   const missing: string[] = [];
   for (const skill of readdirSync(sourceRoot)) {
+    if (skill === ".curated") continue;
     const directory = join(sourceRoot, skill);
     const documents = readdirSync(directory, { recursive: true })
       .map(String)
@@ -410,12 +482,11 @@ test("every file a skill names exists where an agent resolves it", () => {
         if (reference.includes("*") || reference.includes("<")) continue;
         const inSkill = existsSync(join(directory, reference));
         const inRepository = existsSync(join(repositoryRoot, reference));
-        if (bundled.test(reference) && !inSkill && !inRepository)
-          missing.push(`${skill}/${document}: ${reference}`);
-        else if (
-          !bundled.test(reference) &&
-          repository.test(reference) &&
-          !inRepository
+        if (
+          (bundled.test(reference) && !inSkill && !inRepository) ||
+          (!bundled.test(reference) &&
+            repository.test(reference) &&
+            !inRepository)
         )
           missing.push(`${skill}/${document}: ${reference}`);
       }
@@ -454,10 +525,15 @@ test("the local setup guide lists exactly the user-level skills", () => {
     join(repositoryRoot, "docs", "local-setup.md"),
     "utf8"
   );
-  const section = /today that is:\n\n((?:- `[^`]+`\n)+)/u.exec(guide);
-  assert.ok(section?.[1] !== undefined, "user-level skill list");
+  const marker = "today that is:\n\n";
+  const markerStart = guide.indexOf(marker);
+  assert.notEqual(markerStart, -1, "user-level skill list");
+  const afterMarker = guide.slice(markerStart + marker.length);
+  const sectionEnd = afterMarker.indexOf("\n\n");
+  const section =
+    sectionEnd === -1 ? afterMarker : afterMarker.slice(0, sectionEnd);
   assert.deepEqual(
-    [...section[1].matchAll(/`([^`]+)`/gu)].map((match) => match[1]),
+    Array.from(section.matchAll(/`([^`]+)`/gu), (match) => match[1]),
     userLevelSkills(sourceRoot)
   );
 });

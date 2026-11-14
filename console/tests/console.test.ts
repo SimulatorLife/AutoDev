@@ -22849,6 +22849,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
 
   const approvedClientModules = new Map<string, string>([
     [
+      join("src", "components", "forms", "HierarchicalSelect.ts"),
+      "Mounts the closed hierarchical model menu's option DOM only when the operator opens it; native server-rendered forms still own submissions."
+    ],
+    [
       join("src", "components", "forms", "AutoSubmitSelectField.ts"),
       "Submits a single-choice form on change while keeping filtering and mutations server-authoritative."
     ],
@@ -22890,7 +22894,7 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     ],
     [
       join("src", "components", "navigation", "CommandPalette.ts"),
-      "Holds the command palette's own search and keyboard state so an operator can find a resource by name or by what it is for; the results navigate through the shared owner and no page data is fetched client-side."
+      "Mounts the Ariakit dialog and combobox that own the command palette's focus, dismissal and keyboard selection, and holds its search state so an operator can find a resource by name or by what it is for; the results navigate through the shared owner and no page data is fetched client-side."
     ],
     [
       join("src", "features", "providers", "ProviderResetDialog.ts"),
