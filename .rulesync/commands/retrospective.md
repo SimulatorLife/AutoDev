@@ -21,9 +21,10 @@ description: Evaluate completed agent outcomes and execution for evidence-backed
 1. **Goal and outcome:** Reconstruct the user's intent, requirements, constraints, and acceptance criteria. Compare requested versus delivered results for correctness, completeness, usefulness, verification, omissions, and regressions.
 2. **Decisions:** Examine observable choices, approach, sequencing, assumptions, course corrections, and avoidable complexity. Separate effective decisions from lucky outcomes.
 3. **Skills and instructions:** Identify relevant guidance that was available, discovered, read, followed, misapplied, or missed. Assess whether it was useful, outdated, or redundant; distinguish unobserved use from confirmed nonuse.
-4. **Tools:** Examine calls, purposes, results, ordering, retries, redundant searches/reads, unnecessary operations, and feasible alternatives (including batching or parallelism). Distinguish agent errors from transient environment failures.
-5. **Efficiency:** Inspect elapsed time, bottlenecks, call counts/latency, tokens/context, cost, retries, delegation, and repeated work where measured. Compare like-for-like evidence; fewer calls or tokens alone do not prove improvement.
-6. **Diagnosis:** For mistakes, inefficiencies, and recoveries, identify the earliest preventable cause or intervention point. Mark causal hypotheses separately from confirmed causes; note successful practices worth repeating.
+4. **Skill resources:** Trace which skill references/docs/assets were read and bundled scripts/tools run, what they supplied, and what was missing. Identify gaps that required extra research, manual steps, or one-off scripts; distinguish reusable omissions from task-specific exploration.
+5. **Tools:** Examine calls, purposes, results, ordering, retries, redundant searches/reads, unnecessary operations, and feasible alternatives (including batching or parallelism). Distinguish agent errors from transient environment failures.
+6. **Efficiency:** Inspect elapsed time, bottlenecks, call counts/latency, tokens/context, cost, retries, delegation, and repeated work where measured. Compare like-for-like evidence; fewer calls or tokens alone do not prove improvement.
+7. **Diagnosis:** For mistakes, inefficiencies, and recoveries, identify the earliest preventable cause or intervention point. Mark causal hypotheses separately from confirmed causes; note successful practices worth repeating.
 
 **Assess outcome quality and execution quality independently.** An acceptable deliverable can conceal substantial wasted effort; an efficient execution can still miss the user's goal. Use available evidence rather than speculative scores.
 
@@ -64,7 +65,8 @@ A verified exceptional procedure requires explicit scoped approval before promot
 | Environment fact or demonstrated capability | Appropriately scoped semantic memory |
 | Reusable verified method | Eligible memory/skill/rule/test/doc/prompt/skill-resource |
 
-- **Skills:** Prefer improving an existing skill. Create or split skills only when justified and authorized. Document steps, commands, decisions, checks, and step-local pitfalls, not incident diaries.
+- **Skills:** Prefer improving existing skills and their reference docs or scripts. When extra discovery or a one-off script fills a reusable gap, propose adding verified details to the relevant resource or extending its existing script/tool before retaining a separate helper. Create or split skills only when justified and authorized.
+- **Resource fixes:** Name the skill/resource, missing information or capability, observed workaround, and tests for the proposed update. Preserve working commands, decisions, checks, and step-local pitfalls, not incident diaries, secrets, or task-specific scaffolding.
 - **Authorization:** Propose by default. Persist only when the target and action are explicitly authorized, including shared/global, cross-project, always-loaded, or security-sensitive changes. Never alter the reviewed task's artifacts.
 
 ## Validate and report
