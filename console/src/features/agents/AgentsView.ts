@@ -3,6 +3,7 @@ import type {
   ControlApiProvidersResponse,
   ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -27,7 +28,6 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -89,31 +89,7 @@ export function AgentsView({
     {
       id: "role",
       header: "Role / Agent",
-      // The widest cell on the page: `orchestrator (orchestrator)` measures
-      // 179px, which is 211 with the cell's own 32px of padding, and this is
-      // the only column here that names a row rather than a property of one.
-      //
-      // Every weight on this table is sized to the larger of that content
-      // budget and the column's own header, and the seven of them now add up
-      // to 1076 -- the width the console actually gives this table at a 1440
-      // viewport -- so the table fits its content column and every column is
-      // visible without a sideways scroll.
-      //
-      // They used to add up to 1174 against that same 1076, which is what put
-      // the MCPs column past the right edge of the content column: the budget
-      // was 98px larger than the room it was declared against, so the table
-      // scrolled sideways to a column nobody could see, and the width each
-      // weight described was 9% wider than the column it was drawn in.
-      //
-      // The cell holds three things -- the role, the live count, and the
-      // enablement control with its reason -- so it is a `tokens` column and
-      // not a truncating one. `truncate` cannot ellipsize a cell whose content
-      // is a column of blocks, so the row for an agent with no runtime
-      // enablement projection was cut mid-sentence with nothing to say that
-      // anything was cut.
-      align: "tokens",
-      weight: 215,
-      cell: (agent) =>
+      cell: ({ row: { original: agent } }) =>
         React.createElement(
           "div",
           {
@@ -148,20 +124,38 @@ export function AgentsView({
             convergence: agent.convergence,
             returnTo: AGENTS_PATH
           })
-        )
+        ),
+      meta: {
+        // The widest cell on the page: `orchestrator (orchestrator)` measures
+        // 179px, which is 211 with the cell's own 32px of padding, and this is
+        // the only column here that names a row rather than a property of one.
+        //
+        // Every weight on this table is sized to the larger of that content
+        // budget and the column's own header, and the seven of them now add up
+        // to 1076 -- the width the console actually gives this table at a 1440
+        // viewport -- so the table fits its content column and every column is
+        // visible without a sideways scroll.
+        //
+        // They used to add up to 1174 against that same 1076, which is what put
+        // the MCPs column past the right edge of the content column: the budget
+        // was 98px larger than the room it was declared against, so the table
+        // scrolled sideways to a column nobody could see, and the width each
+        // weight described was 9% wider than the column it was drawn in.
+        //
+        // The cell holds three things -- the role, the live count, and the
+        // enablement control with its reason -- so it is a `tokens` column and
+        // not a truncating one. `truncate` cannot ellipsize a cell whose content
+        // is a column of blocks, so the row for an agent with no runtime
+        // enablement projection was cut mid-sentence with nothing to say that
+        // anything was cut.
+        align: "tokens",
+        weight: 215
+      }
     },
     {
       id: "primaryModel",
       header: "Primary Model",
-      // `autodev/orchestrator` measures 145px, 177 with the cell own 32px of
-      // padding. The model id titles itself, so narrowing it costs a truncation
-      // the reader can recover rather than a status word with nothing behind it.
-      //
-      // 185 is the weight that holds those 177: at the table's new 1076px
-      // budget the column is drawn 185px wide, and at the old 1174px budget the
-      // same share came out at 170 and cut the model id's last glyph.
-      weight: 185,
-      cell: (agent) =>
+      cell: ({ row: { original: agent } }) =>
         React.createElement(
           "span",
           // The model id is the widest thing this column will ever hold, and a
@@ -170,60 +164,74 @@ export function AgentsView({
           // itself the way `Chip` does.
           { className: MONO_VALUE_CLASS, title: agent.primaryModel },
           agent.primaryModel
-        )
+        ),
+      meta: {
+        // `autodev/orchestrator` measures 145px, 177 with the cell own 32px of
+        // padding. The model id titles itself, so narrowing it costs a truncation
+        // the reader can recover rather than a status word with nothing behind it.
+        //
+        // 185 is the weight that holds those 177: at the table's new 1076px
+        // budget the column is drawn 185px wide, and at the old 1174px budget the
+        // same share came out at 170 and cut the model id's last glyph.
+        weight: 185
+      }
     },
     {
       id: "providers",
       header: "Providers",
-      align: "tokens",
-      // The provider chips wrap -- that is the target state's rule for discrete
-      // cell content -- and wrapping costs height, not legibility, so this is the
-      // cheapest column on the page to narrow.
-      //
-      // 178 is all the slack the table's 1118px budget leaves this column.
-      // It holds every provider chip but the longest, `antigravity-claude-gpt`
-      // (178px, 210 with the cell's own 32px of inset), whose chip ellipsizes
-      // its last glyphs and carries the full name on its title. Taking the
-      // remaining 32px from Skills or MCPs would cut their common chips
-      // (`playwright` needs all of MCPs' 122) on every row instead of one
-      // provider's.
-      weight: 178,
-      cell: (agent) =>
-        React.createElement(AgentProviderSummary, { agent, providers })
+      cell: ({ row: { original: agent } }) =>
+        React.createElement(AgentProviderSummary, { agent, providers }),
+      meta: {
+        align: "tokens",
+        // The provider chips wrap -- that is the target state's rule for discrete
+        // cell content -- and wrapping costs height, not legibility, so this is the
+        // cheapest column on the page to narrow.
+        //
+        // 178 is all the slack the table's 1118px budget leaves this column.
+        // It holds every provider chip but the longest, `antigravity-claude-gpt`
+        // (178px, 210 with the cell's own 32px of inset), whose chip ellipsizes
+        // its last glyphs and carries the full name on its title. Taking the
+        // remaining 32px from Skills or MCPs would cut their common chips
+        // (`playwright` needs all of MCPs' 122) on every row instead of one
+        // provider's.
+        weight: 178
+      }
     },
     {
       id: "status",
       header: "Status",
-      // "Configured" measures 115px as a badge -- status dot, gap and padding --
-      // against 52px of header text. Measuring only the badge label span reads
-      // 83px here and calls the column fine while the badge is cut at its last
-      // glyph on every row.
-      //
-      // 147 is the badge with the cell's own 32px of padding: the widest badge
-      // this column holds.
-      weight: 147,
-      cell: (agent) =>
-        React.createElement(StatusBadge, { status: agent.status })
+      cell: ({ row: { original: agent } }) =>
+        React.createElement(StatusBadge, { status: agent.status }),
+      meta: {
+        // "Configured" measures 115px as a badge -- status dot, gap and padding --
+        // against 52px of header text. Measuring only the badge label span reads
+        // 83px here and calls the column fine while the badge is cut at its last
+        // glyph on every row.
+        //
+        // 147 is the badge with the cell's own 32px of padding: the widest badge
+        // this column holds.
+        weight: 147
+      }
     },
     {
       id: "convergence",
       header: "Convergence",
-      // "Not observed" measures 128px as a badge, and its 101px header is the
-      // longest on the page, so this column is bounded by its header at the floor
-      // even though it reads less often than Status.
-      //
-      // 149 is that badge with the cell's own 32px of padding, with room
-      // over the badge for a longer verdict.
-      weight: 149,
-      cell: (agent) =>
-        React.createElement(StatusBadge, { status: agent.convergence })
+      cell: ({ row: { original: agent } }) =>
+        React.createElement(StatusBadge, { status: agent.convergence }),
+      meta: {
+        // "Not observed" measures 128px as a badge, and its 101px header is the
+        // longest on the page, so this column is bounded by its header at the floor
+        // even though it reads less often than Status.
+        //
+        // 149 is that badge with the cell's own 32px of padding, with room
+        // over the badge for a longer verdict.
+        weight: 149
+      }
     },
     {
       id: "skills",
       header: "Skills",
-      align: "tokens",
-      weight: 122,
-      cell: (agent) => {
+      cell: ({ row: { original: agent } }) => {
         const skills = agent.tools.filter((tool) => tool.type === "skill");
         if (skills.length === 0) {
           return React.createElement(
@@ -256,14 +264,16 @@ export function AgentsView({
             )
           )
         );
+      },
+      meta: {
+        align: "tokens",
+        weight: 122
       }
     },
     {
       id: "mcps",
       header: "MCPs",
-      align: "tokens",
-      weight: 122,
-      cell: (agent) => {
+      cell: ({ row: { original: agent } }) => {
         const mcps = Array.from(
           new Set(
             agent.tools
@@ -303,6 +313,10 @@ export function AgentsView({
             )
           )
         );
+      },
+      meta: {
+        align: "tokens",
+        weight: 122
       }
     }
   ];

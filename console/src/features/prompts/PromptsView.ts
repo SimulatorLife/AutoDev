@@ -2,6 +2,7 @@ import type {
   PromptAsset,
   RuleSyncValidationIssue
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -24,7 +25,6 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -184,14 +184,7 @@ export function PromptsView({
     {
       id: "name",
       header: "Command / Prompt",
-      // The row's primary key, and the one thing on this page that cannot wrap:
-      // `/composition-over-inheritance` is a single token with no separator the
-      // browser may break at, and the target state forbids breaking discrete
-      // content mid-token. It measures 245px, so 277 with the cell's own 32px of
-      // padding is the floor. At 208 the cell granted 186px and cut five command
-      // names -- including two by more than 50px.
-      weight: 264,
-      cell: (prompt) =>
+      cell: ({ row: { original: prompt } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -202,50 +195,57 @@ export function PromptsView({
           prompt.kind === "role" || prompt.path.includes("roles")
             ? prompt.name
             : `/${prompt.name}`
-        )
+        ),
+      meta: {
+        // The row's primary key, and the one thing on this page that cannot wrap:
+        // `/composition-over-inheritance` is a single token with no separator the
+        // browser may break at, and the target state forbids breaking discrete
+        // content mid-token. It measures 245px, so 277 with the cell's own 32px of
+        // padding is the floor. At 208 the cell granted 186px and cut five command
+        // names -- including two by more than 50px.
+        weight: 264
+      }
     },
     {
       id: "kind",
       header: "Type",
-      // Sized against the pill, not the word. A `StatusBadge` is the widest thing
-      // in this column by a wide margin -- status dot, rounded padding and all
-      // -- and at 96 the cell cut it to "Comman" on every one of the 63 command
-      // rows. A header-width check cannot see this: "Type" is short. "Role
-      // prompt" measures 121px as a pill, so 153px of column is the floor, and
-      // that is 4px above the header this column would otherwise be sized for.
-      weight: 150,
-      cell: (prompt) => {
+      cell: ({ row: { original: prompt } }) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {
           status: "configured",
           label: isRole ? "Role prompt" : "Command"
         });
+      },
+      meta: {
+        // Sized against the pill, not the word. A `StatusBadge` is the widest thing
+        // in this column by a wide margin -- status dot, rounded padding and all
+        // -- and at 96 the cell cut it to "Comman" on every one of the 63 command
+        // rows. A header-width check cannot see this: "Type" is short. "Role
+        // prompt" measures 121px as a pill, so 153px of column is the floor, and
+        // that is 4px above the header this column would otherwise be sized for.
+        weight: 150
       }
     },
     {
       id: "path",
       header: "Canonical Source",
-      align: "path",
-      // Sized for its own header rather than its content. `PathText` declares
-      // break opportunities with `<wbr>`, so the path wraps between segments and
-      // no segment has to fit the column -- which is what makes this the one
-      // column on the page that can be sized from a header alone. `.rulesync/`
-      // is the constant leading segment and `SKILL.md`-style tails are constant
-      // per kind; the varying middle is exactly the part a wrap keeps whole.
-      weight: 170,
-      cell: (prompt) => React.createElement(PathText, { path: prompt.path })
+      cell: ({ row: { original: prompt } }) =>
+        React.createElement(PathText, { path: prompt.path }),
+      meta: {
+        align: "path",
+        // Sized for its own header rather than its content. `PathText` declares
+        // break opportunities with `<wbr>`, so the path wraps between segments and
+        // no segment has to fit the column -- which is what makes this the one
+        // column on the page that can be sized from a header alone. `.rulesync/`
+        // is the constant leading segment and `SKILL.md`-style tails are constant
+        // per kind; the varying middle is exactly the part a wrap keeps whole.
+        weight: 170
+      }
     },
     {
       id: "description",
       header: "Description",
-      align: "prose",
-      clampLines: 2,
-      // Takes the remainder, because it is the one column on this page whose
-      // content is already bounded: a clamped description discards its tail by
-      // design, so widening it costs height the operator chose and narrowing it
-      // costs rows. Every other column here has to clear a measured width.
-      weight: 290,
-      cell: (prompt) => {
+      cell: ({ row: { original: prompt } }) => {
         const description = prompt.description;
         return React.createElement(
           "span",
@@ -255,18 +255,21 @@ export function PromptsView({
           },
           description ?? "Description not provided"
         );
+      },
+      meta: {
+        align: "prose",
+        clampLines: 2,
+        // Takes the remainder, because it is the one column on this page whose
+        // content is already bounded: a clamped description discards its tail by
+        // design, so widening it costs height the operator chose and narrowing it
+        // costs rows. Every other column here has to clear a measured width.
+        weight: 290
       }
     },
     {
       id: "related",
       header: "Related",
-      align: "tokens",
-      // Sized for its widest single chip. "Evaluations" is 91px and the chips
-      // wrap between items, which is the target state's rule for discrete cell
-      // content -- so this is the second column here that can be sized from its
-      // content without a wrap being needed.
-      weight: 152,
-      cell: (prompt) => {
+      cell: ({ row: { original: prompt } }) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(
           "div",
@@ -297,6 +300,14 @@ export function PromptsView({
             "Evaluations"
           )
         );
+      },
+      meta: {
+        align: "tokens",
+        // Sized for its widest single chip. "Evaluations" is 91px and the chips
+        // wrap between items, which is the target state's rule for discrete cell
+        // content -- so this is the second column here that can be sized from its
+        // content without a wrap being needed.
+        weight: 152
       }
     }
   ];

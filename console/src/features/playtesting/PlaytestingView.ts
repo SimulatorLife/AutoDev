@@ -8,6 +8,7 @@ import type {
   PlaytestFinding,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -34,7 +35,6 @@ import {
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -1115,14 +1115,12 @@ function analystHypotheses(
     {
       id: "hypothesis",
       header: "Analyst hypothesis",
-      weight: 320,
-      align: "prose",
       // The clamp belongs to the conclusion alone. The table's own clamp
       // wraps the whole cell, so a conclusion that filled its three lines
       // took the count line under it with it -- and the count line is how a
       // reader tells one hypothesis from six. The conclusion is clamped
       // here instead, where it can be clamped without taking anything else.
-      cell: (review) =>
+      cell: ({ row: { original: review } }) =>
         React.createElement(
           "div",
           {
@@ -1168,13 +1166,16 @@ function analystHypotheses(
               "Open review"
             )
           )
-        )
+        ),
+      meta: {
+        weight: 320,
+        align: "prose"
+      }
     },
     {
       id: "session",
       header: "Session",
-      weight: 200,
-      cell: (review) =>
+      cell: ({ row: { original: review } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -1183,18 +1184,23 @@ function analystHypotheses(
             dataAttributes: { "data-review-session": review.reviewId }
           },
           "Open session"
-        )
+        ),
+      meta: {
+        weight: 200
+      }
     },
     {
       id: "recorded",
       header: "Recorded",
-      weight: 140,
-      cell: (review) =>
+      cell: ({ row: { original: review } }) =>
         React.createElement(
           "span",
           { title: review.createdAt },
           reviewRecordedDay(review.createdAt)
-        )
+        ),
+      meta: {
+        weight: 140
+      }
     }
   ];
   return React.createElement(
@@ -1259,10 +1265,7 @@ function findingsTable(
     {
       id: "finding",
       header: "Finding",
-      weight: 260,
-      align: "prose",
-      clampLines: 2,
-      cell: (finding) =>
+      cell: ({ row: { original: finding } }) =>
         React.createElement(
           "div",
           {
@@ -1284,41 +1287,56 @@ function findingsTable(
             { className: MUTED_META_CLASS },
             finding.findingId
           )
-        )
+        ),
+      meta: {
+        weight: 260,
+        align: "prose",
+        clampLines: 2
+      }
     },
     {
       id: "severity",
       header: "Severity",
-      weight: 100,
-      cell: (finding) => findingSeverityLabel(finding.severity)
+      cell: ({ row: { original: finding } }) =>
+        findingSeverityLabel(finding.severity),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "status",
       header: "Status",
-      weight: 100,
-      cell: (finding) => findingStatusLabel(finding.status)
+      cell: ({ row: { original: finding } }) =>
+        findingStatusLabel(finding.status),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "evidence",
       header: "Evidence",
-      weight: 160,
-      cell: (finding) => evidenceStatusLabel(finding.evidenceStatus)
+      cell: ({ row: { original: finding } }) =>
+        evidenceStatusLabel(finding.evidenceStatus),
+      meta: {
+        weight: 160
+      }
     },
     {
       id: "exposure",
       header: "Episodes affected",
-      weight: 150,
-      cell: (finding) =>
+      cell: ({ row: { original: finding } }) =>
         finding.affectedEpisodes === null ||
         finding.totalEligibleEpisodes === null
           ? "Not observed"
-          : `${finding.affectedEpisodes} / ${finding.totalEligibleEpisodes}`
+          : `${finding.affectedEpisodes} / ${finding.totalEligibleEpisodes}`,
+      meta: {
+        weight: 150
+      }
     },
     {
       id: "witness",
       header: "Witness",
-      weight: 120,
-      cell: (finding) => {
+      cell: ({ row: { original: finding } }) => {
         const episode = finding.evidenceRefs.find(
           (ref) => ref.kind === "episode"
         );
@@ -1341,6 +1359,9 @@ function findingsTable(
           },
           "Open witness"
         );
+      },
+      meta: {
+        weight: 120
       }
     }
   ];
@@ -1704,30 +1725,34 @@ function comparisonsTable(
     {
       id: "comparison",
       header: "Comparison",
-      weight: 180,
-      align: "tokens",
-      cell: (row) => row.comparisonId
+      cell: ({ row: { original: row } }) => row.comparisonId,
+      meta: {
+        weight: 180,
+        align: "tokens"
+      }
     },
     {
       id: "benchmark",
       header: "Benchmark",
-      weight: 160,
-      align: "tokens",
-      cell: (row) => row.benchmarkId
+      cell: ({ row: { original: row } }) => row.benchmarkId,
+      meta: {
+        weight: 160,
+        align: "tokens"
+      }
     },
     {
       id: "decision",
       header: "Decision",
-      weight: 220,
-      align: "prose",
-      cell: (row) => row.decision
+      cell: ({ row: { original: row } }) => row.decision,
+      meta: {
+        weight: 220,
+        align: "prose"
+      }
     },
     {
       id: "owner-disposition",
       header: "Owner decision",
-      weight: 240,
-      align: "prose",
-      cell: (row) =>
+      cell: ({ row: { original: row } }) =>
         scope.workspaceId === null
           ? React.createElement(StatusBadge, {
               status: NOT_OBSERVED_STATUS,
@@ -1737,14 +1762,16 @@ function comparisonsTable(
               workspaceId: scope.workspaceId,
               comparison: row,
               enabled: ownerActionsAvailable
-            })
+            }),
+      meta: {
+        weight: 240,
+        align: "prose"
+      }
     },
     {
       id: "metrics",
       header: "Per-metric conclusions",
-      weight: 300,
-      align: "prose",
-      cell: (row) =>
+      cell: ({ row: { original: row } }) =>
         row.metrics.length === 0
           ? React.createElement(StatusBadge, {
               status: NOT_OBSERVED_STATUS,
@@ -1762,19 +1789,25 @@ function comparisonsTable(
                     `${metric.metricId}: ${metric.classification}`
                   )
                 )
-            )
+            ),
+      meta: {
+        weight: 300,
+        align: "prose"
+      }
     },
     {
       id: "human",
       header: "Human preference",
-      weight: 150,
-      cell: (row) =>
+      cell: ({ row: { original: row } }) =>
         row.humanPreference.answer === "not-collected"
           ? React.createElement(StatusBadge, {
               status: NOT_OBSERVED_STATUS,
               label: "Not collected"
             })
-          : row.humanPreference.answer
+          : row.humanPreference.answer,
+      meta: {
+        weight: 150
+      }
     }
   ];
   return React.createElement(

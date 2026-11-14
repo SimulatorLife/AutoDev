@@ -9,6 +9,7 @@ import {
   type MemoryScope,
   type MemoryValidity
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { CodeBlock } from "../../components/code/CodeBlock.ts";
@@ -32,7 +33,6 @@ import {
 import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -277,8 +277,7 @@ export function MemoryRecordsView({
     {
       id: "id",
       header: "Record ID",
-      weight: 180,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -287,24 +286,28 @@ export function MemoryRecordsView({
             dataAttributes: { "data-memory-record-id": record.id }
           },
           record.id
-        )
+        ),
+      meta: {
+        weight: 180
+      }
     },
     {
       id: "kind",
       header: "Kind",
-      weight: 120,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(Tag, {
           className: `font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
           dataAttributes: { "data-memory-kind": record.kind },
           children: record.kind
-        })
+        }),
+      meta: {
+        weight: 120
+      }
     },
     {
       id: "status",
       header: "Lifecycle Status",
-      weight: 140,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(StatusBadge, {
           status: MEMORY_STATUS_VARIANT[record.status] ?? NOT_OBSERVED_STATUS,
           // The tone and the word are two different things. The badge's own
@@ -314,22 +317,15 @@ export function MemoryRecordsView({
           // about the lifecycle state the column is named for. The word comes
           // from the shared table, like the tone does.
           label: MEMORY_STATUS_LABEL[record.status]
-        })
+        }),
+      meta: {
+        weight: 140
+      }
     },
     {
       id: "claim",
       header: "Claim Summary",
-      // Wide enough for "Summary", the longest word in the header. At 160 it
-      // had 68px of content against a 69px word and split mid-word.
-      weight: 172,
-      // The claim *is* this page. It was a single truncating line, so all six
-      // rows of the captured workspace read "The AutoDev Console is f…" and
-      // "Memory records are keye…" — the one column whose content no other
-      // column duplicates, hidden behind an ellipsis. Prose wraps on word
-      // boundaries and clamps, which is what the contract asks of it.
-      align: "prose",
-      clampLines: 2,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(
           "div",
           {
@@ -337,29 +333,45 @@ export function MemoryRecordsView({
             title: record.claim
           },
           record.claim
-        )
+        ),
+      meta: {
+        // Wide enough for "Summary", the longest word in the header. At 160 it
+        // had 68px of content against a 69px word and split mid-word.
+        weight: 172,
+        // The claim *is* this page. It was a single truncating line, so all six
+        // rows of the captured workspace read "The AutoDev Console is f…" and
+        // "Memory records are keye…" — the one column whose content no other
+        // column duplicates, hidden behind an ellipsis. Prose wraps on word
+        // boundaries and clamps, which is what the contract asks of it.
+        align: "prose",
+        clampLines: 2
+      }
     },
     {
       id: "scope",
       header: "Scope",
-      align: "path",
-      weight: 160,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(PathText, {
           path: formatScopeString(record.scope),
           className: MONO_META_CLASS
-        })
+        }),
+      meta: {
+        align: "path",
+        weight: 160
+      }
     },
     {
       id: "updatedAt",
       header: "Updated",
-      weight: 140,
-      cell: (record) =>
+      cell: ({ row: { original: record } }) =>
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
           record.updatedAt ? instantDate(record.updatedAt) : "unknown"
-        )
+        ),
+      meta: {
+        weight: 140
+      }
     }
   ];
 

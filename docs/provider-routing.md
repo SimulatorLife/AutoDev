@@ -646,7 +646,10 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   does not translate, merge or infer quota values. Missing values stay missing
   and unknown stays unknown. Version 0.1.69 exports report types and
   model-catalog helpers, but no in-process quota-reading function; its
-  documented CLI is the supported public collection interface.
+  documented CLI is the supported public collection interface. Runtime adds the
+  resolved `agy` executable's directory to the CLI child's `PATH`: quota-axi
+  discovers `agy` through `PATH`, while AutoDev also supports resolving it from
+  `AGY_CLI_PATH` or `~/.local/bin/agy` in restricted service environments.
 
   For Claude, Runtime forwards the existing `CLAUDE_CODE_OAUTH_TOKEN` (from
   the Runtime environment or AutoDev bridge Keychain item) only to the

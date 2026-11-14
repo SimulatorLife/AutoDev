@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  type ColumnDef,
-  DataTable
-} from "../src/components/tables/DataTable.ts";
+import { DataTable } from "../src/components/tables/DataTable.ts";
 
 /**
  * A table header is a label, and a label has to fit its column.
@@ -32,7 +30,7 @@ const COLUMNS: readonly ColumnDef<Row>[] = [
   {
     id: "availability",
     header: "Availability",
-    cell: (row) => row.id
+    cell: ({ row: { original: row } }) => row.id
   }
 ];
 
@@ -77,14 +75,14 @@ test("a one-word header declares the weight its own header needs", () => {
     ],
     [
       "the providers list's model table",
-      "../src/features/providers/ProvidersView.ts"
+      "../src/features/providers/ProviderTableColumns.ts"
     ]
   ] as const;
   for (const [name, path] of tables) {
     const source = sourceOf(path);
     const header = source.indexOf('header: "Availability"');
     assert.notEqual(header, -1, `${name} has an availability column`);
-    const column = source.slice(header, header + 400);
+    const column = source.slice(header, source.indexOf("\n    }", header));
     assert.match(
       column,
       /weight:\s*\d+/u,

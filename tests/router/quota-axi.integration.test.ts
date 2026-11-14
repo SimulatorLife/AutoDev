@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
@@ -194,6 +201,173 @@ test("the router publishes quota-axi CLI output unchanged on the providers API",
           !("quota" in provider) && !("quota" in (provider.health ?? {}))
       ),
       "quota reports remain separate from routing health"
+    );
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGTERM");
+      await Promise.race([exited, delay(5000)]);
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+        await once(child, "exit");
+      }
+    }
+    rmSync(temporaryHome, { recursive: true, force: true });
+  }
+});
+
+test("the router includes the resolved agy CLI directory on quota-axi PATH", async () => {
+  const temporaryHome = realpathSync(
+    mkdtempSync(join(tmpdir(), "autodev-quota-axi-agy-test-"))
+  );
+  const fakeBinDir = join(temporaryHome, ".local", "bin");
+  const temporaryDirectory = join(temporaryHome, "tmp");
+  mkdirSync(fakeBinDir, { recursive: true });
+  mkdirSync(temporaryDirectory, { recursive: true });
+  const fakeAgyPath = join(fakeBinDir, "agy");
+  const fakeAgyPayload = {
+    command: {
+      name: "/quota",
+      data: {
+        groups: [
+          {
+            displayName: "Gemini",
+            buckets: [
+              {
+                bucketId: "gemini_5h",
+                window: "5h",
+                remainingFraction: 0.65,
+                resetTime: "2040-01-01T00:00:00.000Z"
+              },
+              {
+                bucketId: "gemini_weekly",
+                window: "weekly",
+                remainingFraction: 0.85,
+                resetTime: "2040-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  };
+  writeFileSync(
+    fakeAgyPath,
+    "#!/bin/sh\necho '" + JSON.stringify(fakeAgyPayload) + "'\n"
+  );
+  chmodSync(fakeAgyPath, 0o755);
+
+  const portReservation = createServer();
+  portReservation.listen(0, "127.0.0.1");
+  await once(portReservation, "listening");
+  const address = portReservation.address();
+  assert.ok(address && typeof address === "object");
+  await new Promise<void>((resolve, reject) => {
+    portReservation.close((error) => (error ? reject(error) : resolve()));
+  });
+
+  const restrictedPath = [
+    path.dirname(process.execPath),
+    "/bin",
+    "/usr/bin"
+  ].join(path.delimiter);
+
+  const isolatedEnv: NodeJS.ProcessEnv = {
+    PATH: restrictedPath,
+    HOME: temporaryHome,
+    TMPDIR: temporaryDirectory,
+    CODEX_HOME: temporaryHome,
+    XDG_CACHE_HOME: join(temporaryHome, ".cache"),
+    XDG_CONFIG_HOME: join(temporaryHome, ".config"),
+    XDG_DATA_HOME: join(temporaryHome, ".local", "share"),
+    CLAUDE_CONFIG_DIR: join(temporaryHome, ".claude"),
+    CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
+    CODEX_MODEL_ROUTER_PORT: "0",
+    CODEX_ROUTER_STATE_FILE: join(temporaryHome, "router-state.json"),
+    OPENCLI_BROWSER_SETTING_FILE: join(temporaryHome, "opencli-browser.json"),
+    AUTODEV_CONTROL_API_LISTEN_HOST: "127.0.0.1",
+    AUTODEV_CONTROL_API_LISTEN_PORT: String(address.port),
+    AUTODEV_CONTROL_API_TOKEN: CONTROL_API_TOKEN,
+    AUTODEV_CONTROL_VIEWERS: CONTROL_API_ACTOR,
+    AUTODEV_CONTROL_OPERATORS: ""
+  };
+
+  const child = spawn(process.execPath, [ROUTER_ENTRY], {
+    cwd: process.cwd(),
+    env: isolatedEnv,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let processOutput = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    processOutput += chunk.toString();
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    processOutput += chunk.toString();
+  });
+
+  try {
+    const endpoint = `http://127.0.0.1:${address.port}/control/providers`;
+    let report: ControlApiProvidersResponse | null = null;
+    let lastResponse = "no response";
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      if (child.exitCode !== null) {
+        throw new Error(
+          `Router exited with ${child.exitCode}: ${processOutput}`
+        );
+      }
+      try {
+        const response = await fetch(endpoint, {
+          headers: {
+            authorization: `Bearer ${CONTROL_API_TOKEN}`,
+            "x-autodev-actor": CONTROL_API_ACTOR
+          }
+        });
+        if (response.ok) {
+          const body = (await response.json()) as ControlApiProvidersResponse;
+          if (body.quotaAxi !== null) {
+            report = body;
+            break;
+          }
+          lastResponse = "200 with null quotaAxi";
+        } else {
+          lastResponse = `${response.status}: ${await response.text()}`;
+        }
+      } catch {
+        // The router's HTTP listeners are started separately during boot.
+      }
+      await delay(100);
+    }
+
+    assert.ok(
+      report,
+      `quota-axi report was not published (${lastResponse}): ${processOutput}`
+    );
+    const agy = report.quotaAxi?.providers.find(
+      ({ provider }) => provider === "agy"
+    );
+    assert.ok(agy, "Antigravity provider quota report is present");
+    assert.equal(agy.state.status, "fresh");
+    assert.deepEqual(
+      agy.windows.map(({ id, kind, percentRemaining, resetsAt }) => ({
+        id,
+        kind,
+        percentRemaining,
+        resetsAt
+      })),
+      [
+        {
+          id: "gemini_5h",
+          kind: "session",
+          percentRemaining: 65,
+          resetsAt: "2040-01-01T00:00:00.000Z"
+        },
+        {
+          id: "gemini_weekly",
+          kind: "weekly",
+          percentRemaining: 85,
+          resetsAt: "2040-01-01T00:00:00.000Z"
+        }
+      ]
     );
   } finally {
     if (child.exitCode === null && child.signalCode === null) {

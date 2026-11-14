@@ -9,6 +9,7 @@ import {
   type UsageSessionQuerySelection,
   type UsageSessionSpanSummary
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React, { useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
@@ -17,10 +18,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PAGE_SECTION_STACK_CLASS } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
-import {
-  type ColumnDef,
-  DataTable
-} from "../../components/tables/DataTable.ts";
+import { DataTable } from "../../components/tables/DataTable.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import { formatSpanDuration } from "../../components/ui/duration.ts";
 import {
@@ -112,79 +110,102 @@ const SESSION_COLUMNS: readonly ColumnDef<UsageSessionSpanSummary>[] = [
   {
     id: "operation",
     header: "Operation",
-    weight: 120,
-    align: "tokens",
-    cell: (span) => span.operationName
+    cell: ({ row: { original: span } }) => span.operationName,
+    meta: {
+      weight: 120,
+      align: "tokens"
+    }
   },
   {
     id: "time",
     header: "Time (UTC)",
-    weight: 180,
-    align: "tokens",
-    cell: (span) => instantLabel(span.timestamp)
+    cell: ({ row: { original: span } }) => instantLabel(span.timestamp),
+    meta: {
+      weight: 180,
+      align: "tokens"
+    }
   },
   {
     id: "provider",
     header: "Provider",
-    weight: 100,
-    align: "tokens",
-    cell: (span) => span.provider ?? NOT_OBSERVED_LABEL
+    cell: ({ row: { original: span } }) => span.provider ?? NOT_OBSERVED_LABEL,
+    meta: {
+      weight: 100,
+      align: "tokens"
+    }
   },
   {
     id: "requested-model",
     header: "Requested model",
-    weight: 140,
-    align: "tokens",
-    cell: (span) => span.requestedModel ?? NOT_OBSERVED_LABEL
+    cell: ({ row: { original: span } }) =>
+      span.requestedModel ?? NOT_OBSERVED_LABEL,
+    meta: {
+      weight: 140,
+      align: "tokens"
+    }
   },
   {
     id: "agent-role",
     header: "Agent role",
-    weight: 100,
-    align: "tokens",
-    cell: (span) => span.role ?? NOT_OBSERVED_LABEL
+    cell: ({ row: { original: span } }) => span.role ?? NOT_OBSERVED_LABEL,
+    meta: {
+      weight: 100,
+      align: "tokens"
+    }
   },
   {
     id: "workspace",
     header: "Workspace",
-    weight: 150,
-    align: "tokens",
-    cell: (span) => span.workspace ?? "Not attributed"
+    cell: ({ row: { original: span } }) => span.workspace ?? "Not attributed",
+    meta: {
+      weight: 150,
+      align: "tokens"
+    }
   },
   {
     id: "status",
     header: "Status",
-    weight: 70,
-    cell: (span) =>
-      React.createElement(TraceStatus, { statusCode: span.statusCode })
+    cell: ({ row: { original: span } }) =>
+      React.createElement(TraceStatus, { statusCode: span.statusCode }),
+    meta: {
+      weight: 70
+    }
   },
   {
     id: "duration",
     header: "Duration",
-    weight: 90,
-    cell: (span) => formatSpanDuration(span.durationNs)
+    cell: ({ row: { original: span } }) => formatSpanDuration(span.durationNs),
+    meta: {
+      weight: 90
+    }
   },
   {
     id: "tokens",
     header: "Input / output",
-    weight: 120,
-    align: "tokens",
-    cell: (span) =>
-      safeCount(span.inputTokens) + " / " + safeCount(span.outputTokens)
+    cell: ({ row: { original: span } }) =>
+      safeCount(span.inputTokens) + " / " + safeCount(span.outputTokens),
+    meta: {
+      weight: 120,
+      align: "tokens"
+    }
   },
   {
     id: "cost",
     header: "Estimated cost",
-    weight: 110,
-    align: "tokens",
-    cell: (span) => safeCost(span.costUsd)
+    cell: ({ row: { original: span } }) => safeCost(span.costUsd),
+    meta: {
+      weight: 110,
+      align: "tokens"
+    }
   },
   {
     id: "context",
     header: "Compaction / hop",
-    weight: 220,
-    align: "prose",
-    cell: eventSummary
+    cell: ({ row }) => eventSummary(row.original),
+    meta: {
+      weight: 220,
+      align: "prose"
+    }
   }
 ];
 

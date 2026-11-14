@@ -11,6 +11,7 @@ import {
   type UsageTraceList,
   type UsageTraceSpan
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -29,7 +30,6 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -198,23 +198,31 @@ const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
   {
     id: "session",
     header: "Session",
-    weight: 120,
-    align: "tokens",
-    cell: (session) => redactedSessionLabel(session.sessionId)
+    cell: ({ row: { original: session } }) =>
+      redactedSessionLabel(session.sessionId),
+    meta: {
+      weight: 120,
+      align: "tokens"
+    }
   },
   {
     id: "activity",
     header: "Activity",
-    weight: 120,
-    cell: (session) => session.state.replaceAll("_", " ")
+    cell: ({ row: { original: session } }) =>
+      session.state.replaceAll("_", " "),
+    meta: {
+      weight: 120
+    }
   },
   {
     id: "last-activity",
     header: "Last activity (UTC)",
-    weight: 180,
-    align: "tokens",
-    cell: (session) =>
-      instantLabel(new Date(session.lastActivityAt).toISOString())
+    cell: ({ row: { original: session } }) =>
+      instantLabel(new Date(session.lastActivityAt).toISOString()),
+    meta: {
+      weight: 180,
+      align: "tokens"
+    }
   }
 ];
 
@@ -591,50 +599,64 @@ function traceAttemptColumns(
     {
       id: "time",
       header: "Time (UTC)",
-      weight: 190,
-      align: "tokens",
-      cell: (attempt) => instantLabel(attempt.timestamp)
+      cell: ({ row: { original: attempt } }) => instantLabel(attempt.timestamp),
+      meta: {
+        weight: 190,
+        align: "tokens"
+      }
     },
     {
       id: "provider",
       header: "Provider",
-      weight: 120,
-      align: "tokens",
-      cell: (attempt) => attempt.provider ?? NOT_OBSERVED_LABEL
+      cell: ({ row: { original: attempt } }) =>
+        attempt.provider ?? NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 120,
+        align: "tokens"
+      }
     },
     {
       id: "model",
       header: "Model",
-      weight: 210,
-      align: "tokens",
-      cell: (attempt) => attempt.model ?? NOT_OBSERVED_LABEL
+      cell: ({ row: { original: attempt } }) =>
+        attempt.model ?? NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 210,
+        align: "tokens"
+      }
     },
     {
       id: "role",
       header: "Role",
-      weight: 120,
-      align: "tokens",
-      cell: (attempt) => attempt.role ?? NOT_OBSERVED_LABEL
+      cell: ({ row: { original: attempt } }) =>
+        attempt.role ?? NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 120,
+        align: "tokens"
+      }
     },
     {
       id: "duration",
       header: "Duration",
-      weight: 100,
-      cell: (attempt) => formatTraceDuration(attempt.durationNs)
+      cell: ({ row: { original: attempt } }) =>
+        formatTraceDuration(attempt.durationNs),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "status",
       header: "Status",
-      weight: 90,
-      cell: (attempt) =>
-        React.createElement(TraceStatus, { statusCode: attempt.statusCode })
+      cell: ({ row: { original: attempt } }) =>
+        React.createElement(TraceStatus, { statusCode: attempt.statusCode }),
+      meta: {
+        weight: 90
+      }
     },
     {
       id: "span",
       header: "Span",
-      weight: 150,
-      align: "tokens",
-      cell: (attempt) =>
+      cell: ({ row: { original: attempt } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -644,7 +666,11 @@ function traceAttemptColumns(
             dataAttributes: { "data-usage-trace-span-id": attempt.spanId }
           },
           attempt.spanId
-        )
+        ),
+      meta: {
+        weight: 150,
+        align: "tokens"
+      }
     }
   ];
 }
@@ -657,9 +683,7 @@ function traceSpanColumns(
     {
       id: "span",
       header: "Span",
-      weight: 150,
-      align: "tokens",
-      cell: (span) =>
+      cell: ({ row: { original: span } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -671,14 +695,16 @@ function traceSpanColumns(
               : {})
           },
           span.spanId
-        )
+        ),
+      meta: {
+        weight: 150,
+        align: "tokens"
+      }
     },
     {
       id: "parent",
       header: "Parent span",
-      weight: 150,
-      align: "tokens",
-      cell: (span) =>
+      cell: ({ row: { original: span } }) =>
         span.parentSpanId
           ? React.createElement(
               NavigationLink,
@@ -689,41 +715,58 @@ function traceSpanColumns(
               },
               span.parentSpanId
             )
-          : "Root span"
+          : "Root span",
+      meta: {
+        weight: 150,
+        align: "tokens"
+      }
     },
     {
       id: "operation",
       header: "Operation",
-      weight: 190,
-      align: "tokens",
-      cell: (span) => span.spanName || NOT_OBSERVED_LABEL
+      cell: ({ row: { original: span } }) =>
+        span.spanName || NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 190,
+        align: "tokens"
+      }
     },
     {
       id: "service",
       header: "Service",
-      weight: 130,
-      align: "tokens",
-      cell: (span) => span.serviceName || NOT_OBSERVED_LABEL
+      cell: ({ row: { original: span } }) =>
+        span.serviceName || NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 130,
+        align: "tokens"
+      }
     },
     {
       id: "time",
       header: "Time (UTC)",
-      weight: 190,
-      align: "tokens",
-      cell: (span) => instantLabel(span.timestamp)
+      cell: ({ row: { original: span } }) => instantLabel(span.timestamp),
+      meta: {
+        weight: 190,
+        align: "tokens"
+      }
     },
     {
       id: "duration",
       header: "Duration",
-      weight: 100,
-      cell: (span) => formatTraceDuration(span.durationNs)
+      cell: ({ row: { original: span } }) =>
+        formatTraceDuration(span.durationNs),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "status",
       header: "Status",
-      weight: 90,
-      cell: (span) =>
-        React.createElement(TraceStatus, { statusCode: span.statusCode })
+      cell: ({ row: { original: span } }) =>
+        React.createElement(TraceStatus, { statusCode: span.statusCode }),
+      meta: {
+        weight: 90
+      }
     }
   ];
 }

@@ -3192,12 +3192,14 @@ test("DataTable renders table with columns and data", () => {
     React.createElement<DataTableProps<TestRow>>(DataTable, {
       data,
       columns: [
-        { id: "id", header: "ID", cell: (r: TestRow) => r.id },
+        { id: "id", header: "ID", cell: ({ row: { original: r } }) => r.id },
         {
           id: "name",
           header: "Name",
-          cell: (r: TestRow) => r.name,
-          align: "tokens"
+          cell: ({ row: { original: r } }) => r.name,
+          meta: {
+            align: "tokens"
+          }
         }
       ],
       keyExtractor: (r: TestRow) => r.id,
@@ -3238,14 +3240,18 @@ test("DataTable distributes column width by weight, not by absolute length", () 
         {
           id: "wide",
           header: "Wide",
-          cell: (r: TestRow) => r.id,
-          weight: 300
+          cell: ({ row: { original: r } }) => r.id,
+          meta: {
+            weight: 300
+          }
         },
         {
           id: "narrow",
           header: "Narrow",
-          cell: (r: TestRow) => r.id,
-          weight: 100
+          cell: ({ row: { original: r } }) => r.id,
+          meta: {
+            weight: 100
+          }
         }
       ],
       keyExtractor: (r: TestRow) => r.id,
@@ -3284,7 +3290,7 @@ test("DataTable wraps column headers instead of truncating them", () => {
         {
           id: "convergence",
           header: "Convergence",
-          cell: (r: TestRow) => r.id
+          cell: ({ row: { original: r } }) => r.id
         }
       ],
       keyExtractor: (r: TestRow) => r.id,
@@ -3845,13 +3851,15 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
     React.createElement<DataTableProps<TestRow>>(DataTable, {
       data: [{ id: "1", description: "A long description." }],
       columns: [
-        { id: "id", header: "ID", cell: (r: TestRow) => r.id },
+        { id: "id", header: "ID", cell: ({ row: { original: r } }) => r.id },
         {
           id: "description",
           header: "Description",
-          cell: (r: TestRow) => r.description,
-          align: "prose",
-          clampLines: 2
+          cell: ({ row: { original: r } }) => r.description,
+          meta: {
+            align: "prose",
+            clampLines: 2
+          }
         }
       ],
       keyExtractor: (r: TestRow) => r.id,
@@ -3888,8 +3896,8 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
         {
           id: "c",
           header: "Scope",
-          cell: (r: { v: string }) => r.v,
-          ...(align === undefined ? {} : { align })
+          cell: ({ row: { original: r } }) => r.v,
+          meta: align === undefined ? {} : { align }
         }
       ],
       keyExtractor: (r: { v: string }) => r.v,
@@ -3937,7 +3945,7 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
         {
           id: "c",
           header: "Scope",
-          cell: (r: { v: string }) =>
+          cell: ({ row: { original: r } }) =>
             React.createElement(
               "span",
               { className: "truncate", title: r.v },
@@ -3989,7 +3997,7 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
           {
             id: "c",
             header: "Scope",
-            cell: (r: { v: string }) => build(r)
+            cell: ({ row: { original: r } }) => build(r)
           }
         ],
         keyExtractor: (r: { v: string }) => r.v,
@@ -19912,9 +19920,24 @@ test("DataTable preserves each table's full declared minimum width", () => {
     DataTable<TestRow>({
       data: [{ id: "1" }],
       columns: [
-        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 500 },
-        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 500 },
-        { id: "c", header: "C", cell: (r: TestRow) => r.id, weight: 300 }
+        {
+          id: "a",
+          header: "A",
+          cell: ({ row: { original: r } }) => r.id,
+          meta: { weight: 500 }
+        },
+        {
+          id: "b",
+          header: "B",
+          cell: ({ row: { original: r } }) => r.id,
+          meta: { weight: 500 }
+        },
+        {
+          id: "c",
+          header: "C",
+          cell: ({ row: { original: r } }) => r.id,
+          meta: { weight: 300 }
+        }
       ],
       keyExtractor: (r: TestRow) => r.id,
       emptyMessage: "No rows."
@@ -19936,8 +19959,18 @@ test("DataTable preserves each table's full declared minimum width", () => {
     DataTable<TestRow>({
       data: [{ id: "1" }],
       columns: [
-        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 120 },
-        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 120 }
+        {
+          id: "a",
+          header: "A",
+          cell: ({ row: { original: r } }) => r.id,
+          meta: { weight: 120 }
+        },
+        {
+          id: "b",
+          header: "B",
+          cell: ({ row: { original: r } }) => r.id,
+          meta: { weight: 120 }
+        }
       ],
       keyExtractor: (r: TestRow) => r.id,
       emptyMessage: "No rows."
@@ -23111,8 +23144,10 @@ test("DataTable renders no row-level handler, and has no way to ask for one", ()
         {
           id: "id",
           header: "ID",
-          weight: 100,
-          cell: (r) => r.id
+          cell: ({ row: { original: r } }) => r.id,
+          meta: {
+            weight: 100
+          }
         }
       ],
       keyExtractor: (r) => r.id,

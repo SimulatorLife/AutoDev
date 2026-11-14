@@ -5,6 +5,7 @@ import {
   type UsageTraceDetail,
   type UsageTraceSpan
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -29,7 +30,6 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -586,63 +586,80 @@ function traceColumns(
     {
       id: "span",
       header: "Span",
-      weight: 110,
-      cell: (span) => spanLink(span.spanId, nav, span.spanId === selectedSpanId)
+      cell: ({ row: { original: span } }) =>
+        spanLink(span.spanId, nav, span.spanId === selectedSpanId),
+      meta: {
+        weight: 110
+      }
     },
     {
       id: "parent",
       header: "Parent span",
-      weight: 110,
       // Deliberately never the selected span. This is a link to *another* span,
       // so marking it would put `aria-current` on a second element in the same
       // document and claim two things are current.
-      cell: (span) =>
+      cell: ({ row: { original: span } }) =>
         span.parentSpanId
           ? spanLink(span.parentSpanId, nav, false)
-          : "Root span"
+          : "Root span",
+      meta: {
+        weight: 110
+      }
     },
     {
       id: "name",
       header: "Operation",
-      weight: 200,
-      align: "tokens",
-      cell: (span) => span.spanName || NOT_OBSERVED_LABEL
+      cell: ({ row: { original: span } }) =>
+        span.spanName || NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 200,
+        align: "tokens"
+      }
     },
     {
       id: "service",
       header: "Service",
-      weight: 130,
-      align: "tokens",
-      cell: (span) => span.serviceName || NOT_OBSERVED_LABEL
+      cell: ({ row: { original: span } }) =>
+        span.serviceName || NOT_OBSERVED_LABEL,
+      meta: {
+        weight: 130,
+        align: "tokens"
+      }
     },
     {
       id: "timestamp",
       header: "Start time",
-      // Sized for the longest honest clock reading, which is a `+HH:MM` offset
-      // and not the nine characters of a bare `Z`. At 130 this column broke
-      // `11:48:00+02:00` across two lines as `+02:0` and `0`, which is a
-      // mid-token break of the very value the column exists to show.
-      weight: 150,
-      align: "tokens",
-      cell: (span) => timestampCell(span.timestamp)
+      cell: ({ row: { original: span } }) => timestampCell(span.timestamp),
+      meta: {
+        // Sized for the longest honest clock reading, which is a `+HH:MM` offset
+        // and not the nine characters of a bare `Z`. At 130 this column broke
+        // `11:48:00+02:00` across two lines as `+02:0` and `0`, which is a
+        // mid-token break of the very value the column exists to show.
+        weight: 150,
+        align: "tokens"
+      }
     },
     {
       id: "duration",
       header: "Duration",
-      weight: 120,
-      cell: (span) =>
+      cell: ({ row: { original: span } }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           formatSpanDuration(span.durationNs)
-        )
+        ),
+      meta: {
+        weight: 120
+      }
     },
     {
       id: "status",
       header: "Span status",
-      weight: 120,
-      cell: (span) =>
-        React.createElement(TraceStatus, { statusCode: span.statusCode })
+      cell: ({ row: { original: span } }) =>
+        React.createElement(TraceStatus, { statusCode: span.statusCode }),
+      meta: {
+        weight: 120
+      }
     }
   ];
 }
@@ -1053,25 +1070,31 @@ function renderResultDetail(
               {
                 id: "metric",
                 header: "Metric",
-                weight: 260,
-                align: "tokens",
-                cell: (metric: EvaluationMetric) => metric.name
+                cell: ({ row: { original: metric } }) => metric.name,
+                meta: {
+                  weight: 260,
+                  align: "tokens"
+                }
               },
               {
                 id: "value",
                 header: "Value",
-                weight: 140,
-                align: "tokens",
-                cell: (metric: EvaluationMetric) => String(metric.value)
+                cell: ({ row: { original: metric } }) => String(metric.value),
+                meta: {
+                  weight: 140,
+                  align: "tokens"
+                }
               },
               {
                 id: "verdict",
                 header: "Verdict",
-                weight: 150,
-                cell: (metric: EvaluationMetric) =>
+                cell: ({ row: { original: metric } }) =>
                   React.createElement(StatusBadge, {
                     ...verdictOf(metric.pass)
-                  })
+                  }),
+                meta: {
+                  weight: 150
+                }
               }
             ]
           })
@@ -1171,71 +1194,106 @@ function comparisonColumns(
     {
       id: "target",
       header: label,
-      weight: 260,
-      align: "tokens",
-      cell: ([name]) =>
-        React.createElement("span", { className: MONO_ID_CLASS }, name)
+      cell: ({
+        row: {
+          original: [name]
+        }
+      }) => React.createElement("span", { className: MONO_ID_CLASS }, name),
+      meta: {
+        weight: 260,
+        align: "tokens"
+      }
     },
     {
       id: "runs",
       header: "Runs",
-      weight: 90,
-      cell: ([, counts]) =>
+      cell: ({
+        row: {
+          original: [, counts]
+        }
+      }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           counts.runs
-        )
+        ),
+      meta: {
+        weight: 90
+      }
     },
     {
       id: "passed",
       header: "Passed",
-      weight: 100,
-      cell: ([, counts]) =>
+      cell: ({
+        row: {
+          original: [, counts]
+        }
+      }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           counts.passed
-        )
+        ),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "failed",
       header: "Failed",
-      weight: 100,
-      cell: ([, counts]) =>
+      cell: ({
+        row: {
+          original: [, counts]
+        }
+      }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           counts.failed
-        )
+        ),
+      meta: {
+        weight: 100
+      }
     },
     {
       id: "not-observed",
       header: "Not observed",
-      weight: 150,
       // A zero here is not an achievement, so it is a plain count rather than a
       // success badge. Colouring `0` green read as "this target is healthy" on a
       // row whose only other reading was a pass rate -- a claim about quality
       // that the source never made. Only a non-zero count gets the badge, and
       // then it is the marker the column exists for.
-      cell: ([, counts]) =>
+      cell: ({
+        row: {
+          original: [, counts]
+        }
+      }) =>
         counts.notObserved === 0
           ? React.createElement("span", { className: MONO_VALUE_CLASS }, "0")
           : React.createElement(StatusBadge, {
               status: NOT_OBSERVED_STATUS,
               label: String(counts.notObserved)
-            })
+            }),
+      meta: {
+        weight: 150
+      }
     },
     {
       id: "pass-rate",
       header: "Pass rate",
-      weight: 120,
-      cell: ([, counts]) =>
+      cell: ({
+        row: {
+          original: [, counts]
+        }
+      }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           passRate(counts)
-        )
+        ),
+      meta: {
+        weight: 120
+      }
     }
   ];
 }
@@ -1673,19 +1731,7 @@ export function EvaluationsView({
     {
       id: "target",
       header: "Target",
-      // The role and the prompt are one identity -- what the run evaluated -- so
-      // they share a column rather than each taking ~120px of a 864px budget
-      // that seven columns cannot divide without crushing a badge. Merging them
-      // is what lets Metrics hold a whole metric chip on one line instead of
-      // breaking every name mid-token.
-      //
-      // `tokens`, not `truncate`: a role is an identifier, and cutting
-      // `browser-tester` to `browser-…` leaves a prefix that names no role at
-      // all. Wrapping breaks it at its own hyphens instead, so every line is a
-      // true substring and the whole name is always on screen.
-      weight: 132,
-      align: "tokens",
-      cell: (evaluation) =>
+      cell: ({ row: { original: evaluation } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
@@ -1725,49 +1771,75 @@ export function EvaluationsView({
                 },
                 reportedPrompt(evaluation)
               )
-        )
+        ),
+      meta: {
+        // The role and the prompt are one identity -- what the run evaluated -- so
+        // they share a column rather than each taking ~120px of a 864px budget
+        // that seven columns cannot divide without crushing a badge. Merging them
+        // is what lets Metrics hold a whole metric chip on one line instead of
+        // breaking every name mid-token.
+        //
+        // `tokens`, not `truncate`: a role is an identifier, and cutting
+        // `browser-tester` to `browser-…` leaves a prefix that names no role at
+        // all. Wrapping breaks it at its own hyphens instead, so every line is a
+        // true substring and the whole name is always on screen.
+        weight: 132,
+        align: "tokens"
+      }
     },
     {
       id: "model",
       header: "Model",
-      weight: 130,
-      align: "tokens",
-      cell: (evaluation) =>
+      cell: ({ row: { original: evaluation } }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           evaluation.model
-        )
+        ),
+      meta: {
+        weight: 130,
+        align: "tokens"
+      }
     },
     {
       id: "metrics",
       header: "Metrics",
-      // The widest column, and deliberately so. The metric list is the reason
-      // the row exists, and every chip carries its own verdict; a budget that
-      // fits half a chip reports two halves of one reading rather than one
-      // reading. It wraps between chips rather than between characters.
-      weight: 200,
-      align: "tokens",
-      cell: metricCell
+      cell: ({ row }) => metricCell(row.original),
+      meta: {
+        // The widest column, and deliberately so. The metric list is the reason
+        // the row exists, and every chip carries its own verdict; a budget that
+        // fits half a chip reports two halves of one reading rather than one
+        // reading. It wraps between chips rather than between characters.
+        weight: 200,
+        align: "tokens"
+      }
     },
     {
       id: "outcome",
       header: "Outcome",
-      weight: 144,
-      cell: outcomeBadge
+      cell: ({ row }) => outcomeBadge(row.original),
+      meta: {
+        weight: 144
+      }
     },
     {
       id: "trace",
       header: "Trace",
-      weight: 144,
-      cell: (evaluation) => traceReference(evaluation, nav)
+      cell: ({ row: { original: evaluation } }) =>
+        traceReference(evaluation, nav),
+      meta: {
+        weight: 144
+      }
     },
     {
       id: "timestamp",
       header: "Run Time",
-      weight: 104,
-      align: "tokens",
-      cell: (evaluation) => timestampCell(evaluation.timestamp)
+      cell: ({ row: { original: evaluation } }) =>
+        timestampCell(evaluation.timestamp),
+      meta: {
+        weight: 104,
+        align: "tokens"
+      }
     }
   ];
 

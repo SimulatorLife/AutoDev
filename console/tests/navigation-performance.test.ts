@@ -167,7 +167,7 @@ const internalNavigationSources = [
   ["Pagination", "../src/components/navigation/Pagination.ts"],
   ["ClosePanelLink", "../src/components/navigation/ClosePanelLink.ts"],
   ["AgentsView", "../src/features/agents/AgentsView.ts"],
-  ["ProvidersView", "../src/features/providers/ProvidersView.ts"],
+  ["ProviderTableColumns", "../src/features/providers/ProviderTableColumns.ts"],
   ["ProviderDetailView", "../src/features/providers/ProviderDetailView.ts"],
   ["ModelDetailView", "../src/features/providers/ModelDetailView.ts"],
   ["McpsView", "../src/features/mcps/McpsView.ts"],

@@ -9,6 +9,7 @@ import type {
   PlaytestReviewSectionStatus,
   PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { Icon } from "../../components/icons/Icon.ts";
@@ -23,6 +24,10 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import {
+  DataTable,
+  type DataTableProps
+} from "../../components/tables/DataTable.ts";
 import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
@@ -354,85 +359,53 @@ function metricTable(
       message: "No deterministic metric results were recorded for this episode."
     });
   }
-  return React.createElement(
-    "div",
-    { className: "overflow-x-auto" },
-    React.createElement(
-      "table",
-      {
-        className: "w-full text-left text-sm",
-        "aria-label": "Deterministic episode metrics"
-      },
-      React.createElement(
-        "thead",
-        null,
-        React.createElement(
-          "tr",
-          { className: "border-b border-border text-xs text-fg-muted" },
-          React.createElement(
-            "th",
-            { scope: "col", className: "py-2 pr-4" },
-            "Metric"
-          ),
-          React.createElement(
-            "th",
-            { scope: "col", className: "py-2 pr-4" },
-            "Estimate"
-          ),
-          React.createElement(
-            "th",
-            { scope: "col", className: "py-2 pr-4" },
-            "Numerator / denominator"
-          ),
-          React.createElement(
-            "th",
-            { scope: "col", className: "py-2 pr-4" },
-            "Coverage"
-          )
-        )
-      ),
-      React.createElement(
-        "tbody",
-        null,
-        ...episode.metrics.map((metric) =>
-          React.createElement(
-            "tr",
-            {
-              key: `${metric.metricId}:${metric.metricVersion}:${metric.phaseId ?? "episode"}`,
-              className: "border-b border-border align-top"
-            },
-            React.createElement(
-              "th",
-              { scope: "row", className: "py-2 pr-4 font-medium" },
-              metric.phaseId === null
-                ? metric.metricId
-                : `${metric.metricId} · ${metric.phaseId}`
-            ),
-            React.createElement(
-              "td",
-              { className: "py-2 pr-4 font-mono" },
-              metric.estimate === null
-                ? React.createElement(StatusBadge, {
-                    status: NOT_OBSERVED_STATUS,
-                    label: NOT_OBSERVED_LABEL
-                  })
-                : `${metric.estimate} ${metric.unit}`
-            ),
-            React.createElement(
-              "td",
-              { className: "py-2 pr-4 font-mono" },
-              `${metric.numerator} / ${metric.denominator}`
-            ),
-            React.createElement(
-              "td",
-              { className: "py-2 pr-4" },
-              `${metric.coverage} · ${metric.independentUnits} independent units`
-            )
-          )
-        )
-      )
-    )
-  );
+  type Metric = (typeof episode.metrics)[number];
+  const columns: ColumnDef<Metric, unknown>[] = [
+    {
+      id: "metric",
+      header: "Metric",
+      cell: ({ row: { original: metric } }) =>
+        metric.phaseId === null
+          ? metric.metricId
+          : `${metric.metricId} · ${metric.phaseId}`,
+      meta: { rowHeader: true, weight: 220, align: "tokens" }
+    },
+    {
+      id: "estimate",
+      header: "Estimate",
+      cell: ({ row: { original: metric } }) =>
+        metric.estimate === null
+          ? React.createElement(StatusBadge, {
+              status: NOT_OBSERVED_STATUS,
+              label: NOT_OBSERVED_LABEL
+            })
+          : `${metric.estimate} ${metric.unit}`,
+      meta: { weight: 160, align: "tokens" }
+    },
+    {
+      id: "numerator-denominator",
+      header: "Numerator / denominator",
+      cell: ({ row: { original: metric } }) =>
+        `${metric.numerator} / ${metric.denominator}`,
+      meta: { weight: 220, align: "tokens" }
+    },
+    {
+      id: "coverage",
+      header: "Coverage",
+      cell: ({ row: { original: metric } }) =>
+        `${metric.coverage} · ${metric.independentUnits} independent units`,
+      meta: { weight: 220, align: "prose" }
+    }
+  ];
+  return React.createElement<DataTableProps<Metric>>(DataTable, {
+    data: episode.metrics,
+    columns,
+    keyExtractor: (metric) =>
+      `${metric.metricId}:${metric.metricVersion}:${metric.phaseId ?? "episode"}`,
+    emptyMessage:
+      "No deterministic metric results were recorded for this episode.",
+    label: "Deterministic episode metrics"
+  });
 }
 
 /** The distinct step indexes the fetched window actually indexes. */
@@ -2886,7 +2859,7 @@ export function PlaytestingSessionView({
     discoveryAnalystReview(detail.latestDiscoveryReview, scope),
     React.createElement(
       "section",
-      { className: LIST_PANEL_CLASS },
+      null,
       heading("episode-metrics-heading", "Deterministic metrics"),
       metricTable(episode)
     ),

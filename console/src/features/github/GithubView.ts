@@ -4,6 +4,7 @@ import type {
   GithubWorkflowDefinition,
   GithubWorkflowRun
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -21,7 +22,6 @@ import {
 import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -378,8 +378,7 @@ export function GithubView({
     {
       id: "name",
       header: "Workflow",
-      align: "tokens",
-      cell: (workflow) =>
+      cell: ({ row: { original: workflow } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col" },
@@ -397,19 +396,15 @@ export function GithubView({
             // prevent.
             className: `${MONO_META_CLASS} break-normal`
           })
-        )
+        ),
+      meta: {
+        align: "tokens"
+      }
     },
     {
       id: "events",
       header: "Trigger Events",
-      // A list of chips, so it wraps between them rather than being held on one
-      // line. At the default share it kept `nowrap` and showed only the first
-      // chip: 17 of 30 rows lost every trigger after the first at a 390px
-      // viewport, and a GitHub workflow's trigger set is the thing an operator
-      // reads the row to find out.
-      align: "tokens",
-      weight: 150,
-      cell: (workflow) =>
+      cell: ({ row: { original: workflow } }) =>
         workflow.events.length === 0
           ? React.createElement(
               "span",
@@ -426,22 +421,21 @@ export function GithubView({
                   children: event
                 })
               )
-            )
+            ),
+      meta: {
+        // A list of chips, so it wraps between them rather than being held on one
+        // line. At the default share it kept `nowrap` and showed only the first
+        // chip: 17 of 30 rows lost every trigger after the first at a 390px
+        // viewport, and a GitHub workflow's trigger set is the thing an operator
+        // reads the row to find out.
+        align: "tokens",
+        weight: 150
+      }
     },
     {
       id: "schedules",
       header: "Cron Schedule",
-      // Holds either a cron expression or the sentence "No schedule trigger",
-      // and `truncate` held both to one line: 13 of 30 rows cut the sentence to
-      // "No schedule trig…" at 390px. A cron expression is one unbreakable
-      // identifier and the sentence is ordinary words, so this wraps on either
-      // count.
-      //
-      // Wide enough for "Schedule" at the share the header had before: it had
-      // 68px of content and the word needed 71, so it split mid-word at 390px.
-      align: "tokens",
-      weight: 140,
-      cell: (workflow) =>
+      cell: ({ row: { original: workflow } }) =>
         workflow.schedules.length === 0
           ? React.createElement(
               "span",
@@ -461,16 +455,24 @@ export function GithubView({
                   cron
                 )
               )
-            )
+            ),
+      meta: {
+        // Holds either a cron expression or the sentence "No schedule trigger",
+        // and `truncate` held both to one line: 13 of 30 rows cut the sentence to
+        // "No schedule trig…" at 390px. A cron expression is one unbreakable
+        // identifier and the sentence is ordinary words, so this wraps on either
+        // count.
+        //
+        // Wide enough for "Schedule" at the share the header had before: it had
+        // 68px of content and the word needed 71, so it split mid-word at 390px.
+        align: "tokens",
+        weight: 140
+      }
     },
     {
       id: "actionsState",
       header: "GitHub Actions State",
-      // Wide enough for "Actions", the longest word in the header. At the
-      // default share this column was 68px of content and the word needed 70,
-      // so the header broke inside it on a 390px viewport.
-      weight: 140,
-      cell: (workflow) => {
+      cell: ({ row: { original: workflow } }) => {
         if (
           !runtimeFactsAvailable ||
           !workflow.actionsState ||
@@ -508,6 +510,12 @@ export function GithubView({
         return React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS
         });
+      },
+      meta: {
+        // Wide enough for "Actions", the longest word in the header. At the
+        // default share this column was 68px of content and the word needed 70,
+        // so the header broke inside it on a 390px viewport.
+        weight: 140
       }
     }
   ];
@@ -516,11 +524,7 @@ export function GithubView({
     columns.push({
       id: "lastRun",
       header: "Last Run",
-      // A badge and a link, so the cell holds two things rather than one line
-      // of text: `truncate` cannot ellipsize a row of blocks, so the link was
-      // cut off the edge of the cell with nothing to show that it was there.
-      align: "tokens",
-      cell: (workflow) => {
+      cell: ({ row: { original: workflow } }) => {
         if (!workflow.lastRunStatus && !workflow.lastRunConclusion) {
           return React.createElement(
             "span",
@@ -556,6 +560,12 @@ export function GithubView({
               )
             : null
         );
+      },
+      meta: {
+        // A badge and a link, so the cell holds two things rather than one line
+        // of text: `truncate` cannot ellipsize a row of blocks, so the link was
+        // cut off the edge of the cell with nothing to show that it was there.
+        align: "tokens"
       }
     });
   }
@@ -564,12 +574,7 @@ export function GithubView({
     {
       id: "id",
       header: "Run",
-      // The run's own name over the workflow path it belongs to, which is two
-      // things: `truncate` cuts a cell whose content is a column of blocks
-      // rather than ellipsizing it, so the path was cut mid-segment with no
-      // sign that there was more of it.
-      align: "tokens",
-      cell: (run) =>
+      cell: ({ row: { original: run } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col" },
@@ -593,12 +598,19 @@ export function GithubView({
             path: run.workflowPath,
             className: `${MONO_META_CLASS} break-normal`
           })
-        )
+        ),
+      meta: {
+        // The run's own name over the workflow path it belongs to, which is two
+        // things: `truncate` cuts a cell whose content is a column of blocks
+        // rather than ellipsizing it, so the path was cut mid-segment with no
+        // sign that there was more of it.
+        align: "tokens"
+      }
     },
     {
       id: "event",
       header: "Event",
-      cell: (run) =>
+      cell: ({ row: { original: run } }) =>
         React.createElement(Tag, {
           className: `${CHIP_TONE_CLASS} font-mono`,
           children: run.event
@@ -607,11 +619,7 @@ export function GithubView({
     {
       id: "commit",
       header: "Branch / Commit",
-      // The branch over the short commit, which is two things: `truncate` cuts
-      // a cell whose content is a column of blocks rather than ellipsizing it,
-      // so the branch was cut mid-segment with no sign that there was more.
-      align: "tokens",
-      cell: (run) =>
+      cell: ({ row: { original: run } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col text-xs font-mono" },
@@ -624,12 +632,18 @@ export function GithubView({
             { className: MUTED_TEXT_CLASS },
             run.headSha ? run.headSha.slice(0, 7) : ""
           )
-        )
+        ),
+      meta: {
+        // The branch over the short commit, which is two things: `truncate` cuts
+        // a cell whose content is a column of blocks rather than ellipsizing it,
+        // so the branch was cut mid-segment with no sign that there was more.
+        align: "tokens"
+      }
     },
     {
       id: "outcome",
       header: "Status / Outcome",
-      cell: (run) => {
+      cell: ({ row: { original: run } }) => {
         const runBadge = githubRunOutcome(run.conclusion, run.status);
         return React.createElement(StatusBadge, {
           status: runBadge.variant,
@@ -640,7 +654,7 @@ export function GithubView({
     {
       id: "createdAt",
       header: "Created",
-      cell: (run) =>
+      cell: ({ row: { original: run } }) =>
         React.createElement(
           "span",
           { className: MONO_META_CLASS },

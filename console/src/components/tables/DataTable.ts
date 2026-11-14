@@ -1,3 +1,14 @@
+import {
+  type Cell,
+  type Column,
+  type ColumnDef,
+  type ColumnMeta,
+  createTable,
+  flexRender,
+  getCoreRowModel,
+  type RowData,
+  type Table
+} from "@tanstack/react-table";
 import React from "react";
 
 import { EmptyState } from "../status/EmptyState.ts";
@@ -25,47 +36,55 @@ import { EmptyState } from "../status/EmptyState.ts";
  */
 export type ColumnAlign = "truncate" | "tokens" | "prose" | "path";
 
-export interface ColumnDef<T> {
-  readonly id: string;
-  readonly header: string;
+declare module "@tanstack/react-table" {
   /**
-   * Optional explanation of what this column is for, rendered as a `?`
-   * affordance beside the header label and carried on the `title` and
-   * `aria-describedby`.
-   *
-   * Opt-in rather than universal because a help affordance on every column
-   * would be decoration; it belongs where a label alone is ambiguous, which is
-   * a property of the column rather than of the table. The text lives here and
-   * in the markup rather than in a hover-only CSS trick so it is reachable by
-   * keyboard and by a screen reader, not only by a pointer.
+   * Console presentation metadata for a TanStack column. TanStack owns the
+   * column and row model (id, header, cell); the Console owns how a column is
+   * laid out, so those concerns ride on the public `meta` slot rather than on a
+   * parallel column type.
    */
-  readonly headerHelp?: string | undefined;
-  readonly cell: (row: T) => React.ReactNode;
-  /**
-   * Relative share of the table's width. Weights are resolved to
-   * percentages of the table's own width. Their sum is also the table's
-   * minimum width: below the content budget the table region scrolls rather
-   * than compressing every column and clipping its contents.
-   *
-   * Absolute lengths cannot work here: with `table-layout: fixed` the browser
-   * treats a declared `width` as a hard minimum and grows the table past its
-   * container rather than scaling it down.
-   */
-  readonly weight?: number | undefined;
-  readonly align?: ColumnAlign | undefined;
-  /** Clamp `prose` cells to this many lines. Requires `align: "prose"`. */
-  readonly clampLines?: number | undefined;
-  /**
-   * The cell's hover text, when what the cell shows is a summary of something
-   * the hover should spell out -- a count whose parts are the useful answer.
-   * `undefined` falls back to the cell's own text, as for every other cell.
-   */
-  readonly cellTitle?: ((row: T) => string | undefined) | undefined;
+  // eslint-disable-next-line unused-imports/no-unused-vars -- TanStack fixes the type-parameter list of ColumnMeta
+  interface ColumnMeta<TData extends RowData, TValue> {
+    /**
+     * Optional explanation of what this column is for, rendered as a `?`
+     * affordance beside the header label and carried on the `title` and
+     * `aria-describedby`.
+     *
+     * Opt-in rather than universal because a help affordance on every column
+     * would be decoration; it belongs where a label alone is ambiguous, which is
+     * a property of the column rather than of the table. The text lives here and
+     * in the markup rather than in a hover-only CSS trick so it is reachable by
+     * keyboard and by a screen reader, not only by a pointer.
+     */
+    readonly headerHelp?: string | undefined;
+    /** Render this column's cells as semantic row headers. */
+    readonly rowHeader?: boolean | undefined;
+    /**
+     * Relative share of the table's width. Weights are resolved to
+     * percentages of the table's own width. Their sum is also the table's
+     * minimum width: below the content budget the table region scrolls rather
+     * than compressing every column and clipping its contents.
+     *
+     * Absolute lengths cannot work here: with `table-layout: fixed` the browser
+     * treats a declared `width` as a hard minimum and grows the table past its
+     * container rather than scaling it down.
+     */
+    readonly weight?: number | undefined;
+    readonly align?: ColumnAlign | undefined;
+    /** Clamp `prose` cells to this many lines. Requires `align: "prose"`. */
+    readonly clampLines?: number | undefined;
+    /**
+     * The cell's hover text, when what the cell shows is a summary of something
+     * the hover should spell out -- a count whose parts are the useful answer.
+     * `undefined` falls back to the cell's own text, as for every other cell.
+     */
+    readonly cellTitle?: ((row: TData) => string | undefined) | undefined;
+  }
 }
 
 export interface DataTableProps<T> {
   readonly data: readonly T[];
-  readonly columns: readonly ColumnDef<T>[];
+  readonly columns: readonly ColumnDef<T, unknown>[];
   readonly keyExtractor: (row: T) => string;
   /**
    * Required, and required for the same reason `EmptyState` never supplies a
@@ -90,6 +109,9 @@ export interface DataTableProps<T> {
   readonly label?: string | undefined;
 }
 
+/** The presentation metadata of a column, as the layout helpers read it. */
+type LayoutMeta = ColumnMeta<never, unknown> | undefined;
+
 /**
  * Width share granted to a `tokens` column when the view does not declare one.
  * Below roughly this share a list of chips degrades into one chip per line,
@@ -109,7 +131,6 @@ const TOKENS_COLUMN_WEIGHT = 170;
 const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
-/**
  * Minimum width for the table, derived from the weights this table declares.
  *
  * The shared Console contract treats declared widths as a content budget, not
@@ -117,12 +138,15 @@ const DEFAULT_COLUMN_WEIGHT = 100;
  * keeps its column proportions and its wrapper scrolls. Capping the sum made
  * controls and values spill across their own cells before scrolling began.
  */
-function tableMinWidthPx(columns: readonly ColumnDef<never>[]): number {
-  return columns.reduce((sum, column) => sum + columnWeight(column), 0);
+function tableMinWidthPx<T>(columns: readonly Column<T, unknown>[]): number {
+  return columns.reduce(
+    (sum, column) => sum + columnWeight(column.columnDef.meta),
+    0
+  );
 }
 
-function cellClassName(column: ColumnDef<never>): string {
-  const align = column.align ?? "truncate";
+function cellClassName(meta: LayoutMeta): string {
+  const align = meta?.align ?? "truncate";
   // `tokens` and `prose` both wrap; they differ in what they are for, not in
   // how they wrap.
   //
@@ -178,16 +202,16 @@ const LINE_CLAMP_CLASSES: Readonly<Record<number, string>> = {
  * cell's own layout where it was, because the padding would otherwise push
  * the clamped text in and the row taller.
  */
-function proseClampClass(column: ColumnDef<never>): string | null {
-  if ((column.align ?? "truncate") !== "prose") return null;
-  if (column.clampLines === undefined) return null;
-  return LINE_CLAMP_CLASSES[Math.trunc(column.clampLines)] ?? null;
+function proseClampClass(meta: LayoutMeta): string | null {
+  if ((meta?.align ?? "truncate") !== "prose") return null;
+  if (meta?.clampLines === undefined) return null;
+  return LINE_CLAMP_CLASSES[Math.trunc(meta.clampLines)] ?? null;
 }
 
 /** Effective width share for a column. */
-function columnWeight(column: ColumnDef<never>): number {
-  if (column.weight !== undefined && column.weight > 0) return column.weight;
-  return (column.align ?? "truncate") === "tokens"
+function columnWeight(meta: LayoutMeta): number {
+  if (meta?.weight !== undefined && meta.weight > 0) return meta.weight;
+  return (meta?.align ?? "truncate") === "tokens"
     ? TOKENS_COLUMN_WEIGHT
     : DEFAULT_COLUMN_WEIGHT;
 }
@@ -215,14 +239,14 @@ function columnWeight(column: ColumnDef<never>): number {
  * rather than for the cells that happened to be simple.
  */
 function truncatingCellTitle(
-  column: ColumnDef<never>,
+  meta: LayoutMeta,
   content: React.ReactNode
 ): string | undefined {
   // A wrapping cell is not truncated, so a title would be claiming something
   // false about a value that is fully visible. An empty cell needs no title
   // either: `title=""` is a tooltip with nothing in it. Both collapse to the
   // same "no title" answer.
-  const truncates = (column.align ?? "truncate") === "truncate";
+  const truncates = (meta?.align ?? "truncate") === "truncate";
   const text = truncates
     ? nodeText(content).replaceAll(/\s+/g, " ").trim()
     : "";
@@ -268,8 +292,8 @@ function nodeText(node: React.ReactNode): string {
  * those weights, the wrapper scrolls instead of shrinking columns under their
  * authored content budget.
  */
-function columnWidths(columns: readonly ColumnDef<never>[]): string[] {
-  const weights = columns.map((column) => columnWeight(column));
+function columnWidths<T>(columns: readonly Column<T, unknown>[]): string[] {
+  const weights = columns.map((column) => columnWeight(column.columnDef.meta));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   // Rounded so the emitted markup stays readable and stable; the last column
   // absorbs the rounding remainder so the shares still total 100%.
@@ -283,6 +307,67 @@ function columnWidths(columns: readonly ColumnDef<never>[]): string[] {
         100
     ) / 100;
   return rounded.map((value) => `${value}%`);
+}
+
+/**
+ * Build the TanStack table that owns this table's column and row model.
+ *
+ * `createTable` rather than `useReactTable`: the table is derived data for a
+ * single render, there is no state to hold between renders, and `DataTable`
+ * must stay hook-free so it renders on the server like every other Console
+ * table. Sorting, filtering and pagination are not enabled here -- they belong
+ * to the server and the URL -- so only the core row model is registered.
+ *
+ * The options `createTable` requires of a caller that is not `useReactTable`
+ * (state, onStateChange, renderFallbackValue) are supplied inert, and the state
+ * is then seeded from the table's own initial state exactly as
+ * `useReactTable` does.
+ */
+function buildTable<T>(
+  data: readonly T[],
+  columns: readonly ColumnDef<T, unknown>[],
+  keyExtractor: (row: T) => string
+): Table<T> {
+  const table = createTable<T>({
+    data: data as T[],
+    columns: [...columns],
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: keyExtractor,
+    state: {},
+    onStateChange: () => undefined,
+    renderFallbackValue: null
+  });
+  table.setOptions((previous) => ({ ...previous, state: table.initialState }));
+  return table;
+}
+
+/**
+ * The node a cell renders, resolved from its TanStack column template.
+ *
+ * `flexRender` mounts a function template as a component element, which keeps
+ * the cell's node out of reach until React renders it. A truncating cell has
+ * to derive its hover title from that node (see `truncatingCellTitle`), so a
+ * function template is evaluated here, with the cell's own context, exactly as
+ * the shared table always evaluated a cell. Cells are plain functions of their
+ * row, never components with state, so nothing is lost by resolving them
+ * eagerly. Every other template (a string) goes through `flexRender`.
+ */
+function cellContent<T>(cell: Cell<T, unknown>): React.ReactNode {
+  const template = cell.column.columnDef.cell;
+  return typeof template === "function"
+    ? (template(cell.getContext()) as React.ReactNode)
+    : flexRender(template, cell.getContext());
+}
+
+/** A header is read as text, so its template has to be a string. */
+function headerLabel<T>(column: Column<T, unknown>): string {
+  const { header } = column.columnDef;
+  if (typeof header !== "string") {
+    throw new TypeError(
+      `DataTable column "${column.id}" needs a string header: it names the column's region, help affordance and data attribute.`
+    );
+  }
+  return header;
 }
 
 export function DataTable<T>({
@@ -299,8 +384,14 @@ export function DataTable<T>({
     });
   }
 
-  const widths = columnWidths(columns as readonly ColumnDef<never>[]);
-  const clamps = columns.map((col) => proseClampClass(col as ColumnDef<never>));
+  const table = buildTable(data, columns, keyExtractor);
+  const leafColumns = table.getVisibleLeafColumns();
+  const widths = new Map(
+    columnWidths(leafColumns).map((width, index) => [
+      leafColumns[index]!.id,
+      width
+    ])
+  );
 
   return React.createElement(
     "div",
@@ -316,11 +407,7 @@ export function DataTable<T>({
       // and named, so the arrow keys scroll it and a screen reader says which
       // table it is.
       role: "region",
-      "aria-label":
-        label ??
-        (columns as readonly ColumnDef<never>[])
-          .map((col) => col.header)
-          .join(", "),
+      "aria-label": label ?? leafColumns.map(headerLabel).join(", "),
       tabIndex: 0
     },
     React.createElement(
@@ -332,143 +419,149 @@ export function DataTable<T>({
         className:
           "w-full table-fixed divide-y divide-border text-left text-sm",
         style: {
-          minWidth: `${tableMinWidthPx(columns as readonly ColumnDef<never>[])}px`
+          minWidth: `${tableMinWidthPx(leafColumns)}px`
         }
       },
       React.createElement(
         "thead",
         { className: "bg-background/60 text-fg-muted font-medium" },
-        React.createElement(
-          "tr",
-          null,
-          columns.map((col, index) =>
-            React.createElement(
-              "th",
-              {
-                key: col.id,
-                scope: "col",
-                // A header is a label, not a value: it wraps rather than
-                // truncating. Column widths are relative, so at a narrower
-                // viewport a single header can lose the few pixels it needs to
-                // fit on one line, and "CONVERGEN…" tells an operator less than
-                // two short lines do.
-                //
-                // `break-words` is `overflow-wrap: break-word`, which is exactly
-                // the two rules the target state asks for (see
-                // `docs/autodev-console-target-state.md`, "Tables"): a header
-                // wraps at word boundaries, and a single word that cannot fit
-                // its column anyway breaks rather than hiding which column it
-                // labels. It is deliberately not `break-all`, which would also
-                // split a multi-word header mid-word.
-                //
-                // This replaced `break-normal`, on the reasoning that a split
-                // label ("CONVERGENC E") reads as a rendering fault. That
-                // reasoning contradicts the spec, which names the split as the
-                // preferred outcome to the alternative -- an ellipsis or a spill
-                // that leaves the operator unable to tell which column is which.
-                // The width is still the real fix, and the spec says so first:
-                // "A column's weight must be large enough for its own header."
-                // This class is the floor under that rule, not a substitute.
-                //
-                // Measured across every table route at 1440/1024/768/390, no
-                // header currently needs to break, so this changes no rendered
-                // output today; it decides what happens when a column is
-                // rebalanced into a header too wide for its share.
-                className:
-                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
-                style: { width: widths[index] }
-              },
-              // The label and its help marker are one group.
-              //
-              // They were two inline spans, so the only break between them was
-              // the line break: when the column was a few pixels too narrow the
-              // marker dropped onto a line of its own, under the label it
-              // explains. A reader met a bare "?" with nothing to attach it to,
-              // and the header row grew a line to carry it -- so the same table
-              // header measured 35.5px on twelve pages and 50.5px on the two
-              // that carry a marker.
-              //
-              // A flex row keeps them together: the label is a flex item that
-              // still wraps at word boundaries inside itself, and the marker is
-              // pinned beside it. The width is still the real fix -- "A column's
-              // weight must be large enough for its own header" -- and the two
-              // views whose headers did not fit now declare one.
-              React.createElement(
-                "span",
+        ...table.getHeaderGroups().map((headerGroup) =>
+          React.createElement(
+            "tr",
+            { key: headerGroup.id },
+            headerGroup.headers.map((header) => {
+              const col = header.column;
+              const meta = col.columnDef.meta;
+              const text = headerLabel(col);
+              return React.createElement(
+                "th",
                 {
-                  className: "flex items-start gap-1.5",
-                  "data-column-header": col.id
+                  key: header.id,
+                  scope: "col",
+                  // A header is a label, not a value: it wraps rather than
+                  // truncating. Column widths are relative, so at a narrower
+                  // viewport a single header can lose the few pixels it needs to
+                  // fit on one line, and "CONVERGEN…" tells an operator less than
+                  // two short lines do.
+                  //
+                  // `break-words` is `overflow-wrap: break-word`, which is exactly
+                  // the two rules the target state asks for (see
+                  // `docs/autodev-console-target-state.md`, "Tables"): a header
+                  // wraps at word boundaries, and a single word that cannot fit
+                  // its column anyway breaks rather than hiding which column it
+                  // labels. It is deliberately not `break-all`, which would also
+                  // split a multi-word header mid-word.
+                  //
+                  // This replaced `break-normal`, on the reasoning that a split
+                  // label ("CONVERGENC E") reads as a rendering fault. That
+                  // reasoning contradicts the spec, which names the split as the
+                  // preferred outcome to the alternative -- an ellipsis or a spill
+                  // that leaves the operator unable to tell which column is which.
+                  // The width is still the real fix, and the spec says so first:
+                  // "A column's weight must be large enough for its own header."
+                  // This class is the floor under that rule, not a substitute.
+                  //
+                  // Measured across every table route at 1440/1024/768/390, no
+                  // header currently needs to break, so this changes no rendered
+                  // output today; it decides what happens when a column is
+                  // rebalanced into a header too wide for its share.
+                  className:
+                    "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
+                  style: { width: widths.get(col.id) }
                 },
+                // The label and its help marker are one group.
+                //
+                // They were two inline spans, so the only break between them was
+                // the line break: when the column was a few pixels too narrow the
+                // marker dropped onto a line of its own, under the label it
+                // explains. A reader met a bare "?" with nothing to attach it to,
+                // and the header row grew a line to carry it -- so the same table
+                // header measured 35.5px on twelve pages and 50.5px on the two
+                // that carry a marker.
+                //
+                // A flex row keeps them together: the label is a flex item that
+                // still wraps at word boundaries inside itself, and the marker is
+                // pinned beside it. The width is still the real fix -- "A column's
+                // weight must be large enough for its own header" -- and the two
+                // views whose headers did not fit now declare one.
                 React.createElement(
                   "span",
                   {
-                    // The label has to be allowed to shrink below its own
-                    // min-content width, or the flex row cannot narrow with
-                    // its column.
-                    //
-                    // A flex item's automatic minimum size is its min-content
-                    // size, and `overflow-wrap: break-word` -- which is what
-                    // the header's `break-words` sets -- does not reduce that
-                    // size: only `overflow-wrap: anywhere` does. So a header
-                    // that is one long word ("AVAILABILITY") cannot shrink at
-                    // all, and a column too narrow for it clips the word
-                    // instead of breaking it. That is the one case the
-                    // acceptance measures: the provider detail's model table
-                    // clipped its availability header by 23px at 390px.
-                    //
-                    // `min-w-0` makes the label shrinkable, so the inherited
-                    // `break-words` can break the word and the header wraps --
-                    // the same thing it did when the label was the header's
-                    // own text. The marker beside it already carries
-                    // `shrink-0`, so it keeps its size while the label takes
-                    // what is left.
-                    className: "min-w-0",
-                    "data-column-label": col.id
+                    className: "flex items-start gap-1.5",
+                    "data-column-header": col.id
                   },
-                  col.header
-                ),
-                col.headerHelp === undefined
-                  ? null
-                  : React.createElement(
-                      "span",
-                      {
-                        className:
-                          "inline-flex shrink-0 cursor-help items-center justify-center rounded-full border border-border-strong px-1 text-micro normal-case leading-none text-fg-muted",
-                        title: col.headerHelp,
-                        "aria-label": `${col.header}: ${col.headerHelp}`,
-                        "data-column-help": col.id
-                      },
-                      "?"
-                    )
-              )
-            )
+                  React.createElement(
+                    "span",
+                    {
+                      // The label has to be allowed to shrink below its own
+                      // min-content width, or the flex row cannot narrow with
+                      // its column.
+                      //
+                      // A flex item's automatic minimum size is its min-content
+                      // size, and `overflow-wrap: break-word` -- which is what
+                      // the header's `break-words` sets -- does not reduce that
+                      // size: only `overflow-wrap: anywhere` does. So a header
+                      // that is one long word ("AVAILABILITY") cannot shrink at
+                      // all, and a column too narrow for it clips the word
+                      // instead of breaking it. That is the one case the
+                      // acceptance measures: the provider detail's model table
+                      // clipped its availability header by 23px at 390px.
+                      //
+                      // `min-w-0` makes the label shrinkable, so the inherited
+                      // `break-words` can break the word and the header wraps --
+                      // the same thing it did when the label was the header's
+                      // own text. The marker beside it already carries
+                      // `shrink-0`, so it keeps its size while the label takes
+                      // what is left.
+                      className: "min-w-0",
+                      "data-column-label": col.id
+                    },
+                    flexRender(col.columnDef.header, header.getContext())
+                  ),
+                  meta?.headerHelp === undefined
+                    ? null
+                    : React.createElement(
+                        "span",
+                        {
+                          className:
+                            "inline-flex shrink-0 cursor-help items-center justify-center rounded-full border border-border-strong px-1 text-micro normal-case leading-none text-fg-muted",
+                          title: meta.headerHelp,
+                          "aria-label": `${text}: ${meta.headerHelp}`,
+                          "data-column-help": col.id
+                        },
+                        "?"
+                      )
+                )
+              );
+            })
           )
         )
       ),
       React.createElement(
         "tbody",
         { className: "divide-y divide-border text-fg" },
-        data.map((row) => {
-          const key = keyExtractor(row);
-          return React.createElement(
+        table.getRowModel().rows.map((row) =>
+          React.createElement(
             "tr",
             {
-              key,
+              key: row.id,
               className: "transition-colors"
             },
-            columns.map((col, index) => {
-              const content = col.cell(row);
-              const clamp = clamps[index];
+            row.getVisibleCells().map((cell) => {
+              const meta = cell.column.columnDef.meta;
+              const content = cellContent(cell);
+              const rowHeader = meta?.rowHeader === true;
+              const clamp = proseClampClass(meta);
               const hover =
-                col.cellTitle?.(row) ?? truncatingCellTitle(col, content);
+                meta?.cellTitle?.(row.original) ??
+                truncatingCellTitle(meta, content);
               return React.createElement(
-                "td",
+                rowHeader ? "th" : "td",
                 {
-                  key: col.id,
-                  className: `px-4 py-3 align-top ${cellClassName(
-                    col as ColumnDef<never>
-                  )}`,
-                  style: { width: widths[index] },
+                  key: cell.id,
+                  ...(rowHeader ? { scope: "row" as const } : {}),
+                  className: `px-4 py-3 align-top ${cellClassName(meta)}${rowHeader ? " font-medium" : ""}`,
+                  style: { width: widths.get(cell.column.id) },
                   // Truncation removes information, so a truncating cell keeps
                   // the whole value on its hover title. Without this the
                   // operator's only copy of a 60-character scope is the first
@@ -486,8 +579,8 @@ export function DataTable<T>({
                     )
               );
             })
-          );
-        })
+          )
+        )
       )
     )
   );

@@ -38,6 +38,7 @@ import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-se
 import { claudeQuotaAxiEnvironment } from "../providers/claude-credential.ts";
 import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
+import { findAgyBinary } from "../shared/executables.ts";
 import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
 import {
   agentActivity,
@@ -223,6 +224,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const quotaAxiExecutable = path.join(runtimeBinDirectory, "quota-axi");
   const refreshQuotaAxi = (): Promise<void> => {
     if (quotaAxiRefresh) return quotaAxiRefresh;
+    const agyExecutable = findAgyBinary(process.env);
+    const agyDirectory = agyExecutable
+      ? path.dirname(agyExecutable)
+      : undefined;
     quotaAxiRefresh = new Promise<void>((resolve, reject) => {
       execFile(
         quotaAxiExecutable,
@@ -235,6 +240,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             PATH: [
               runtimeBinDirectory,
               path.dirname(process.execPath),
+              agyDirectory,
               process.env.PATH
             ]
               .filter(Boolean)

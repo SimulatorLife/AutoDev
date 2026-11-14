@@ -2,6 +2,7 @@ import type {
   PermissionPolicy,
   RoleCapabilityMatrix
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -11,7 +12,6 @@ import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -115,15 +115,16 @@ export function PermissionsView({
     {
       id: "role",
       header: "Agent Role",
-      weight: 176,
-      cell: (r) =>
-        React.createElement("span", { className: MONO_ID_CLASS }, r.role)
+      cell: ({ row: { original: r } }) =>
+        React.createElement("span", { className: MONO_ID_CLASS }, r.role),
+      meta: {
+        weight: 176
+      }
     },
     {
       id: "sandboxMode",
       header: "Sandbox Mode",
-      weight: 160,
-      cell: (r) =>
+      cell: ({ row: { original: r } }) =>
         React.createElement(Tag, {
           className: CHIP_TONE_CLASS,
           dataAttributes: {
@@ -134,30 +135,37 @@ export function PermissionsView({
             "data-permission-mode": r.sandboxMode ?? "not-observed"
           },
           children: sandboxLabel(r.sandboxMode)
-        })
+        }),
+      meta: {
+        weight: 160
+      }
     },
     {
       id: "mcps",
       header: "Allowed MCP Servers",
-      align: "tokens",
-      cell: (r) =>
+      cell: ({ row: { original: r } }) =>
         chipList({
           items: r.allowedMcpServers,
           emptyLabel: "No MCP servers",
           testId: "role-mcps",
           className: "font-mono text-accent"
-        })
+        }),
+      meta: {
+        align: "tokens"
+      }
     },
     {
       id: "skills",
       header: "Allowed Skills",
-      align: "tokens",
-      cell: (r) =>
+      cell: ({ row: { original: r } }) =>
         chipList({
           items: r.allowedSkills,
           emptyLabel: "No skills",
           testId: "role-skills"
-        })
+        }),
+      meta: {
+        align: "tokens"
+      }
     }
   ];
 

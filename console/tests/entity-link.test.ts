@@ -36,7 +36,7 @@ const ENTITY_LINK_VIEWS = [
   "prompts/PromptsView.ts",
   "providers/ModelDetailView.ts",
   "providers/ProviderDetailView.ts",
-  "providers/ProvidersView.ts",
+  "providers/ProviderTableColumns.ts",
   "mcps/McpsView.ts",
   "tools/ToolsView.ts",
   "hooks/HooksView.ts"

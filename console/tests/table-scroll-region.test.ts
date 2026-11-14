@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  type ColumnDef,
-  DataTable
-} from "../src/components/tables/DataTable.ts";
+import { DataTable } from "../src/components/tables/DataTable.ts";
 
 /**
  * A table that is wider than the viewport scrolls inside its own region, and a
@@ -29,12 +27,12 @@ const COLUMNS: readonly ColumnDef<Row>[] = [
   {
     id: "role",
     header: "Role",
-    cell: (row) => row.id
+    cell: ({ row: { original: row } }) => row.id
   },
   {
     id: "capability",
     header: "Capability",
-    cell: (row) => row.id
+    cell: ({ row: { original: row } }) => row.id
   }
 ];
 

@@ -327,6 +327,66 @@ test("the decision policy is named the way an operator names it", () => {
   assert.doesNotMatch(html, />smart-direct</u);
 });
 
+test("deterministic episode metrics use the shared table and keep metric row headers", () => {
+  const record = episode();
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail({
+        ...record,
+        metrics: [
+          {
+            metricId: "legal-action-rejection",
+            metricVersion: 1,
+            phaseId: "race-1",
+            numerator: 2,
+            denominator: 4,
+            opportunityCount: 4,
+            coverage: 1,
+            unit: "rejections",
+            estimate: 0.5,
+            missing: 0,
+            missingReasons: [],
+            independentUnits: 4,
+            provenance: {
+              workspaceId: WORKSPACE,
+              measurementVersion: "v1",
+              generatedAt: "2026-10-10T00:00:00.000Z"
+            },
+            notes: "Fixture metric."
+          }
+        ]
+      }),
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+
+  assert.match(html, /aria-label="Deterministic episode metrics"/u);
+  assert.match(
+    html,
+    /<th scope="row"[^>]*>legal-action-rejection · race-1<\/th>/u
+  );
+  assert.match(html, /Numerator \/ denominator/u);
+  assert.match(html, />0\.5 rejections</u);
+  assert.match(html, />1 · 4 independent units</u);
+  assert.doesNotMatch(html, /No deterministic metric results were recorded/u);
+});
+
+test("empty deterministic episode metrics retain their inline empty state", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+
+  assert.match(
+    html,
+    /<p class="py-2 text-xs italic text-fg-muted">No deterministic metric results were recorded for this episode\.<\/p>/u
+  );
+});
+
 test("Playtesting list view uses accessible links and explicit empty/unavailable distinctions", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingView, {

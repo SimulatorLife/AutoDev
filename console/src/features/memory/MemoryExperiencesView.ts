@@ -6,6 +6,7 @@ import {
   type ExperienceValidationState,
   MEMORY_EXPERIENCE_PURGE_REASONS
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import {
@@ -28,7 +29,6 @@ import { observedTotal } from "../../components/status/observed-count.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -127,8 +127,7 @@ export function MemoryExperiencesView({
     {
       id: "id",
       header: "Experience ID",
-      weight: 180,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -137,15 +136,15 @@ export function MemoryExperiencesView({
             dataAttributes: { "data-memory-experience-id": exp.id }
           },
           exp.id
-        )
+        ),
+      meta: {
+        weight: 180
+      }
     },
     {
       id: "task",
       header: "Task / Run",
-      // The task and the run are two short ids on two lines, and the column
-      // gives what the instant beside it needs.
-      weight: 155,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col font-mono text-xs text-fg-secondary" },
@@ -162,23 +161,29 @@ export function MemoryExperiencesView({
             },
             exp.runId
           )
-        )
+        ),
+      meta: {
+        // The task and the run are two short ids on two lines, and the column
+        // gives what the instant beside it needs.
+        weight: 155
+      }
     },
     {
       id: "role",
       header: "Agent Role",
-      weight: 130,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(Tag, {
           className: "border-chart-1/40 bg-chart-1/15 font-mono text-chart-1",
           children: exp.agentRole ?? "unknown"
-        })
+        }),
+      meta: {
+        weight: 130
+      }
     },
     {
       id: "outcome",
       header: "Outcome",
-      weight: 120,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(
           "span",
           {
@@ -191,13 +196,15 @@ export function MemoryExperiencesView({
             }`
           },
           MEMORY_OUTCOME_LABEL[exp.outcome]
-        )
+        ),
+      meta: {
+        weight: 120
+      }
     },
     {
       id: "mode",
       header: "Memory Mode",
-      weight: 130,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
@@ -207,34 +214,41 @@ export function MemoryExperiencesView({
           exp.memoryMode === undefined
             ? MEMORY_EXECUTION_MODE_LABEL.unknown
             : MEMORY_EXECUTION_MODE_LABEL[exp.memoryMode]
-        )
+        ),
+      meta: {
+        weight: 130
+      }
     },
     {
       id: "validation",
       header: "Validation",
-      weight: 120,
-      cell: (exp) => {
+      cell: ({ row: { original: exp } }) => {
         const state = validationState(exp);
         return React.createElement(StatusBadge, {
           status: MEMORY_VALIDATION_VARIANT[state] ?? "not-observed",
           label: MEMORY_VALIDATION_LABEL[state]
         });
+      },
+      meta: {
+        weight: 120
       }
     },
     {
       id: "startedAt",
       header: "Started At",
-      // A whole instant -- the date, the clock and the zone -- is 173px, and
-      // the cell's own 32px of shared inset makes the column 205px. A column
-      // narrower than that cuts the seconds off the end of a timestamp, and a
-      // timestamp that reads "08:59:0..." says less than the page knows.
-      weight: 195,
-      cell: (exp) =>
+      cell: ({ row: { original: exp } }) =>
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
           exp.startedAt ? instantLabel(exp.startedAt) : "unknown"
-        )
+        ),
+      meta: {
+        // A whole instant -- the date, the clock and the zone -- is 173px, and
+        // the cell's own 32px of shared inset makes the column 205px. A column
+        // narrower than that cuts the seconds off the end of a timestamp, and a
+        // timestamp that reads "08:59:0..." says less than the page knows.
+        weight: 195
+      }
     }
   ];
 

@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  type ColumnDef,
-  DataTable
-} from "../src/components/tables/DataTable.ts";
+import { DataTable } from "../src/components/tables/DataTable.ts";
 
 /**
  * A list table has to fit the column it is given.
@@ -58,9 +56,24 @@ test("a table's declared width is the sum of its column weights", () => {
   // browser how wide it wants to be, and the browser gives it that width or
   // the container's, whichever is larger.
   const columns: readonly ColumnDef<Row>[] = [
-    { id: "role", header: "Role", weight: 215, cell: (row) => row.id },
-    { id: "model", header: "Model", weight: 185, cell: (row) => row.id },
-    { id: "state", header: "State", weight: 147, cell: (row) => row.id }
+    {
+      id: "role",
+      header: "Role",
+      cell: ({ row: { original: row } }) => row.id,
+      meta: { weight: 215 }
+    },
+    {
+      id: "model",
+      header: "Model",
+      cell: ({ row: { original: row } }) => row.id,
+      meta: { weight: 185 }
+    },
+    {
+      id: "state",
+      header: "State",
+      cell: ({ row: { original: row } }) => row.id,
+      meta: { weight: 147 }
+    }
   ];
   const markup = renderToStaticMarkup(
     React.createElement(DataTable<Row>, {
@@ -132,9 +145,9 @@ const VIEWS = [
   },
   {
     name: "the providers table",
-    path: "../src/features/providers/ProvidersView.ts",
-    from: "function providerColumns(",
-    to: "function modelColumns("
+    path: "../src/features/providers/ProviderTableColumns.ts",
+    from: "export function providerColumns(",
+    to: "export function modelColumns("
   },
   {
     name: "the MCPs table",

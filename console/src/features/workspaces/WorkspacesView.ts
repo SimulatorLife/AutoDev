@@ -3,6 +3,7 @@ import type {
   ReconciliationView,
   WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -17,7 +18,6 @@ import {
 } from "../../components/status/observed-count.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -172,17 +172,10 @@ export function WorkspacesView({
     {
       id: "id",
       header: "Repository / Workspace",
-      align: "path",
-      // The header needs 117px and the path wraps between `owner` and `name`,
-      // so this column had 123px more than it needs. That paid for the
-      // Availability column's badge, which was cut to "Not obse…": a badge is
-      // an atomic status word, and a column that cannot fit one is a
-      // column-width problem.
-      weight: 226,
       // Wraps between `owner` and `name` instead of cutting. Measured against
       // real data, "SimulatorLife/Colourful-Life" was cut with nothing to
       // recover it; the two halves are exactly the break points it wants.
-      cell: (ws) =>
+      cell: ({ row: { original: ws } }) =>
         React.createElement(
           NavigationLink,
           {
@@ -194,7 +187,16 @@ export function WorkspacesView({
             path: ws.id,
             className: MONO_ID_CLASS
           })
-        )
+        ),
+      meta: {
+        align: "path",
+        // The header needs 117px and the path wraps between `owner` and `name`,
+        // so this column had 123px more than it needs. That paid for the
+        // Availability column's badge, which was cut to "Not obse…": a badge is
+        // an atomic status word, and a column that cannot fit one is a
+        // column-width problem.
+        weight: 226
+      }
     },
     {
       // The canonical configuration is edited on the row, not summarised on
@@ -202,21 +204,22 @@ export function WorkspacesView({
       // same control the workspace's own page carries.
       id: "configuration",
       header: "Configuration",
-      weight: 392,
-      cell: (ws) =>
+      cell: ({ row: { original: ws } }) =>
         React.createElement(WorkspaceConfigurationForm, {
           workspace: ws,
           revision,
           catalogStatus,
           returnTo: WORKSPACES_PATH,
           compact: true
-        })
+        }),
+      meta: {
+        weight: 392
+      }
     },
     {
       id: "playtestingApproval",
       header: "Playtesting Approval",
-      weight: 206,
-      cell: (ws) => {
+      cell: ({ row: { original: ws } }) => {
         const status = workspaceApprovalOf(approvals, ws.id);
         return React.createElement(
           NavigationLink,
@@ -238,42 +241,49 @@ export function WorkspacesView({
             label: workspaceApprovalBadgeLabel(status)
           })
         );
+      },
+      meta: {
+        weight: 206
       }
     },
     {
       id: "availability",
       header: "Availability",
-      // The badge needs 78px for "Not observed" and 34px more for the badge's
-      // own chrome -- the padding, the border and the state dot -- and the cell
-      // adds 32px of shared inset, so 144px is the floor. At 132 the badge
-      // was cut to "Not obse…", which is the one thing a status badge must not
-      // be: a state the operator cannot read is a state the page has not told
-      // them. The 14px came from the Repository / Workspace column, which had
-      // 123px more than its header and its wrapped path need.
-      weight: 146,
-      cell: (ws) =>
+      cell: ({ row: { original: ws } }) =>
         React.createElement(StatusBadge, {
           status: workspaceAvailabilityBadgeVariant(ws.runtime),
           label: workspaceAvailabilityBadgeLabel(ws.runtime)
-        })
+        }),
+      meta: {
+        // The badge needs 78px for "Not observed" and 34px more for the badge's
+        // own chrome -- the padding, the border and the state dot -- and the cell
+        // adds 32px of shared inset, so 144px is the floor. At 132 the badge
+        // was cut to "Not obse…", which is the one thing a status badge must not
+        // be: a state the operator cannot read is a state the page has not told
+        // them. The 14px came from the Repository / Workspace column, which had
+        // 123px more than its header and its wrapped path need.
+        weight: 146
+      }
     },
     {
       id: "requests",
       header: "Requests",
-      headerHelp:
-        "Logical routed requests attributed to this workspace in the last 24 hours. A request that carried no workspace attribution is not counted in any workspace, so these counts do not have to add up to the total.",
-      // The label needs 71px and its help marker 16px more, and the cell adds
-      // 32px of shared inset, so 125px is the floor. At 118 the marker fell to
-      // a line of its own under the label it explains, and the header row grew
-      // 15px -- the same header measuring 35.5px on every other page and
-      // 50.5px here.
-      weight: 136,
       // The count is read in the browser, once for the whole table, and the
       // row asks the shared reading for its own number. The cell starts in
       // the pending state rather than in a zero: a number that has not
       // arrived is not a measurement of no requests.
-      cell: (ws) =>
-        React.createElement(WorkspaceRequestCell, { workspaceId: ws.id })
+      cell: ({ row: { original: ws } }) =>
+        React.createElement(WorkspaceRequestCell, { workspaceId: ws.id }),
+      meta: {
+        headerHelp:
+          "Logical routed requests attributed to this workspace in the last 24 hours. A request that carried no workspace attribution is not counted in any workspace, so these counts do not have to add up to the total.",
+        // The label needs 71px and its help marker 16px more, and the cell adds
+        // 32px of shared inset, so 125px is the floor. At 118 the marker fell to
+        // a line of its own under the label it explains, and the header row grew
+        // 15px -- the same header measuring 35.5px on every other page and
+        // 50.5px here.
+        weight: 136
+      }
     }
   ];
 

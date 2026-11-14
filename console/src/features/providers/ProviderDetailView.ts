@@ -5,6 +5,7 @@ import type {
   ControlApiProvidersResponse,
   ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import {
@@ -26,7 +27,6 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -243,7 +243,7 @@ function ModelsPanel({
     {
       id: "model",
       header: "Model",
-      cell: (model) => {
+      cell: ({ row: { original: model } }) => {
         return React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
@@ -272,7 +272,7 @@ function ModelsPanel({
     {
       id: "tiers",
       header: "Tiers",
-      cell: (model) =>
+      cell: ({ row: { original: model } }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
@@ -282,14 +282,7 @@ function ModelsPanel({
     {
       id: "activeAgents",
       header: "Active Agents",
-      weight: 112,
-      cellTitle: (model) =>
-        liveAgentRoleBreakdown(
-          runtime?.liveAgents,
-          "byModelRole",
-          `${model.provider}/${model.id}`
-        ),
-      cell: (model) =>
+      cell: ({ row: { original: model } }) =>
         React.createElement(
           "span",
           {
@@ -301,25 +294,36 @@ function ModelsPanel({
             "byModel",
             `${model.provider}/${model.id}`
           )
-        )
+        ),
+      meta: {
+        weight: 112,
+        cellTitle: (model) =>
+          liveAgentRoleBreakdown(
+            runtime?.liveAgents,
+            "byModelRole",
+            `${model.provider}/${model.id}`
+          )
+      }
     },
     {
       id: "availability",
       header: "Availability",
-      // "Availability" is one long word, and a column's weight has to be
-      // large enough for its own header. The workspaces table declares the
-      // same header at the same weight, and the acceptance measures it
-      // fitting at 390px there.
-      weight: 160,
-      cell: (model) =>
+      cell: ({ row: { original: model } }) =>
         React.createElement(ProviderModelAvailabilityBadge, {
           availability: model.availability
-        })
+        }),
+      meta: {
+        // "Availability" is one long word, and a column's weight has to be
+        // large enough for its own header. The workspaces table declares the
+        // same header at the same weight, and the acceptance measures it
+        // fitting at 390px there.
+        weight: 160
+      }
     },
     {
       id: "enabled",
       header: "Enabled",
-      cell: (model) =>
+      cell: ({ row: { original: model } }) =>
         React.createElement(ModelToggle, {
           model: model.id,
           enablement: model.enablement ?? undefined,

@@ -5,6 +5,7 @@ import type {
   ToolCatalogValidity,
   ToolSource
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -34,7 +35,6 @@ import {
 import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -465,12 +465,7 @@ export function ToolsView({
     {
       id: "name",
       header: "Tool",
-      align: "tokens",
-      // The cell stopped printing `mcp__<server>__` once Source took over
-      // naming the server, so this column's widest content fell from 414px to
-      // 238px and it had 282px of slack to give.
-      weight: 270,
-      cell: (tool) =>
+      cell: ({ row: { original: tool } }) =>
         React.createElement(
           "div",
           { className: "min-w-0" },
@@ -505,18 +500,19 @@ export function ToolsView({
                 tool.description
               )
             : null
-        )
+        ),
+      meta: {
+        align: "tokens",
+        // The cell stopped printing `mcp__<server>__` once Source took over
+        // naming the server, so this column's widest content fell from 414px to
+        // 238px and it had 282px of slack to give.
+        weight: 270
+      }
     },
     {
       id: "source",
       header: "Source",
-      // Sized for the pill, not the header: `mcp (codegraphcontext)` measures
-      // 195px with its own padding and border, and an MCP server name has no
-      // length limit, so the column truncates. At 170 it granted 166px and cut
-      // every one of those pills by 29px. The 30 it needs came off Tool, which
-      // had it spare once the cell stopped repeating the server name.
-      weight: 200,
-      cell: (tool) =>
+      cell: ({ row: { original: tool } }) =>
         React.createElement(
           "div",
           { className: "flex flex-col gap-1" },
@@ -542,14 +538,20 @@ export function ToolsView({
             { className: MUTED_META_CLASS },
             sourceAuthorityLabel(tool.sourceAuthority)
           )
-        )
+        ),
+      meta: {
+        // Sized for the pill, not the header: `mcp (codegraphcontext)` measures
+        // 195px with its own padding and border, and an MCP server name has no
+        // length limit, so the column truncates. At 170 it granted 166px and cut
+        // every one of those pills by 29px. The 30 it needs came off Tool, which
+        // had it spare once the cell stopped repeating the server name.
+        weight: 200
+      }
     },
     {
       id: "roles",
       header: "Exposed Roles",
-      align: "tokens",
-      weight: 170,
-      cell: (tool) =>
+      cell: ({ row: { original: tool } }) =>
         React.createElement(
           "div",
           {
@@ -585,19 +587,16 @@ export function ToolsView({
                 }
               })
             : React.createElement(StatusBadge, { status: NOT_OBSERVED_STATUS })
-        )
+        ),
+      meta: {
+        align: "tokens",
+        weight: 170
+      }
     },
     {
       id: "edit",
       header: "Edit",
-      // A short label with a space in it -- "Provider role exposure", "MCP
-      // codegraphcontext" -- held to one line at 110 units it needed 191px for,
-      // so all 25 rows were cut at every width including 1280, and a four-letter
-      // header is invisible to a header-width check. Wrapping costs one extra
-      // line on the widest value and shows the rest whole.
-      align: "prose",
-      weight: 130,
-      cell: (tool) =>
+      cell: ({ row: { original: tool } }) =>
         tool.canonicalEditSurface
           ? React.createElement(EditSurfaceLink, {
               surface: tool.canonicalEditSurface,
@@ -607,13 +606,25 @@ export function ToolsView({
               "span",
               { className: MUTED_META_CLASS },
               "Not cataloged"
-            )
+            ),
+      meta: {
+        // A short label with a space in it -- "Provider role exposure", "MCP
+        // codegraphcontext" -- held to one line at 110 units it needed 191px for,
+        // so all 25 rows were cut at every width including 1280, and a four-letter
+        // header is invisible to a header-width check. Wrapping costs one extra
+        // line on the widest value and shows the rest whole.
+        align: "prose",
+        weight: 130
+      }
     },
     {
       id: "availability",
       header: "Availability",
-      weight: 190,
-      cell: (tool) => availabilityBadge(tool.availability)
+      cell: ({ row: { original: tool } }) =>
+        availabilityBadge(tool.availability),
+      meta: {
+        weight: 190
+      }
     }
   ];
 

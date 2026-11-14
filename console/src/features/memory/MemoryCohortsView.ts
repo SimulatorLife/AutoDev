@@ -9,6 +9,7 @@ import {
   type MemorySessionOutcomeCohortCell,
   type MemorySessionOutcomeCohortPage
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -26,7 +27,6 @@ import { observedTotal } from "../../components/status/observed-count.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -251,19 +251,20 @@ export function MemoryCohortsView({
     {
       id: "mode",
       header: "Assigned Mode",
-      weight: 160,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           { className: "font-mono text-xs font-semibold text-fg" },
           cell.memoryMode
-        )
+        ),
+      meta: {
+        weight: 160
+      }
     },
     {
       id: "status",
       header: "Reporting Status",
-      weight: 160,
-      cell: (cell) => {
+      cell: ({ row: { original: cell } }) => {
         const isReported = cell.outcomeKind !== null;
         return React.createElement(Tag, {
           className: `font-medium ${
@@ -277,13 +278,15 @@ export function MemoryCohortsView({
           title: null,
           children: isReported ? "Reported" : "Unreported"
         });
+      },
+      meta: {
+        weight: 160
       }
     },
     {
       id: "outcome",
       header: "Outcome",
-      weight: 140,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           {
@@ -312,18 +315,23 @@ export function MemoryCohortsView({
           cell.outcomeKind === null
             ? NOT_OBSERVED_LABEL
             : (MEMORY_OUTCOME_LABEL[cell.outcomeKind] ?? NOT_OBSERVED_LABEL)
-        )
+        ),
+      meta: {
+        weight: 140
+      }
     },
     {
       id: "count",
       header: "Session Count",
-      weight: 140,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           { className: "font-mono text-sm font-bold text-fg" },
           cell.sessionCount.toLocaleString()
-        )
+        ),
+      meta: {
+        weight: 140
+      }
     }
   ];
 
@@ -331,30 +339,33 @@ export function MemoryCohortsView({
     {
       id: "mode",
       header: "Assigned Mode",
-      weight: 160,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           { className: "font-mono text-xs font-semibold text-fg" },
           cell.memoryMode
-        )
+        ),
+      meta: {
+        weight: 160
+      }
     },
     {
       id: "sessionCardinality",
       header: "Session Cardinality",
-      weight: 180,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
           cell.sessionCardinality
-        )
+        ),
+      meta: {
+        weight: 180
+      }
     },
     {
       id: "useKind",
       header: "Curator Assessment",
-      weight: 190,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           {
@@ -372,18 +383,23 @@ export function MemoryCohortsView({
           cell.useKind === null
             ? "Unassessed"
             : (MEMORY_USE_KIND_LABEL[cell.useKind] ?? NOT_OBSERVED_LABEL)
-        )
+        ),
+      meta: {
+        weight: 190
+      }
     },
     {
       id: "exposureCount",
       header: "Eligible Exposures",
-      weight: 180,
-      cell: (cell) =>
+      cell: ({ row: { original: cell } }) =>
         React.createElement(
           "span",
           { className: "font-mono text-sm font-bold text-fg" },
           cell.exposureCount.toLocaleString()
-        )
+        ),
+      meta: {
+        weight: 180
+      }
     }
   ];
 

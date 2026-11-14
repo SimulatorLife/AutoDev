@@ -3,6 +3,7 @@ import type {
   ScopedSkillDefinition,
   SkillEligibility
 } from "@simulatorlife/autodev-core";
+import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -24,7 +25,6 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
-  type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
@@ -392,9 +392,7 @@ export function SkillsView({
     {
       id: "name",
       header: "Skill Name",
-      weight: 290,
-      align: "prose",
-      cell: (skill) =>
+      cell: ({ row: { original: skill } }) =>
         React.createElement(
           "div",
           { className: "min-w-0" },
@@ -415,26 +413,26 @@ export function SkillsView({
             },
             skill.description
           )
-        )
+        ),
+      meta: {
+        weight: 290,
+        align: "prose"
+      }
     },
     {
       id: "path",
       header: "Path",
-      align: "path",
-      weight: 240,
-      cell: (skill) => React.createElement(PathText, { path: skill.path })
+      cell: ({ row: { original: skill } }) =>
+        React.createElement(PathText, { path: skill.path }),
+      meta: {
+        align: "path",
+        weight: 240
+      }
     },
     {
       id: "scope",
       header: "Scope",
-      // The help says what the column is, because the column has no control in
-      // it and an operator looking for a way to change it has to be told there
-      // is none: the scope is read from the install on this machine.
-      headerHelp:
-        "Where the skill is installed, read from this machine. It is a fact about the install, not a setting, so the Console cannot change it.",
-      align: "tokens",
-      weight: 150,
-      cell: (skill) => {
+      cell: ({ row: { original: skill } }) => {
         const place = skillScopePlace(skill);
         return React.createElement(
           "div",
@@ -459,14 +457,21 @@ export function SkillsView({
                 className: "font-mono text-xs text-fg-secondary break-normal"
               })
         );
+      },
+      meta: {
+        // The help says what the column is, because the column has no control in
+        // it and an operator looking for a way to change it has to be told there
+        // is none: the scope is read from the install on this machine.
+        headerHelp:
+          "Where the skill is installed, read from this machine. It is a fact about the install, not a setting, so the Console cannot change it.",
+        align: "tokens",
+        weight: 150
       }
     },
     {
       id: "eligibleRoles",
       header: "Eligible Roles",
-      align: "tokens",
-      weight: 250,
-      cell: (skill) => {
+      cell: ({ row: { original: skill } }) => {
         const item = eligibility.find((e) => e.skill === skill.name);
         if (executionContractRevision === null) {
           return chipList({
@@ -494,13 +499,16 @@ export function SkillsView({
           // rather than on all sixteen rows.
           listRole: listFilters.role
         });
+      },
+      meta: {
+        align: "tokens",
+        weight: 250
       }
     },
     {
       id: "status",
       header: "State",
-      weight: 188,
-      cell: (skill) => {
+      cell: ({ row: { original: skill } }) => {
         const item = eligibility.find((e) => e.skill === skill.name);
         const badge = skillStateBadge(skill, item, executionContractRevision);
         const observed = skillObservationLine(
@@ -512,6 +520,9 @@ export function SkillsView({
           badge,
           React.createElement("span", { className: MUTED_META_CLASS }, observed)
         );
+      },
+      meta: {
+        weight: 188
       }
     }
   ];
