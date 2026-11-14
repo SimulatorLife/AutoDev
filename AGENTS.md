@@ -13,3 +13,9 @@ Never make 'band-aid' fixes; always address the issues/bugs at the source instea
 When fixing performance test failures, do NOT relax the criteria; always optimize the codebase's implementation as/where possible to allow performance test to pass against their existing constraints. Don't lower the performance requirements/thresholds just so that the tests are green; actually make the proper optimizations.
 
 Other agents/processes may be making simultaneous edits/changes to this codebase. Do not be alarmed or stop; just focus on your own task and do not discard those external changes.
+
+When falling back to `grep -rn` without `rg`, always pass `--exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.next --exclude-dir=.git` (or scope to specific subdirectories) so searches do not hang.
+
+For multi-line or quote-containing inline shell scripts (`python3`, `node`), use single-quoted heredocs (`python3 - <<'EOF'`) rather than `-c '...'` with escaped quotes.
+
+Read relevant fixture and mock helpers contiguously before editing large E2E tests, and wait on long background tasks via reactive completion notifications (or a single bounded timer) rather than polling status in a loop.

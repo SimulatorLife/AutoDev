@@ -483,7 +483,10 @@ async function verifyWithDeadline(
 ): Promise<void> {
   const probeTimeoutMs =
     timeoutMs > 0
-      ? Math.min(CONTROL_API_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
+      ? Math.min(
+          CONTROL_API_PROBE_TIMEOUT_MS,
+          Math.max(1, deadline - Date.now())
+        )
       : CONTROL_API_PROBE_TIMEOUT_MS;
   try {
     await verifyControlApiCompatibilityOnce(config, fetchImpl, probeTimeoutMs);

@@ -548,7 +548,7 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   assert.match(source, /from "@simulatorlife\/autodev-runtime\/telemetry"/);
   assert.match(
     source,
-    /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/
+    /const requestId = contextHeaderValue\(request\.headers, REQUEST_ID_HEADER\);/
   );
   // Both places agyErrorDetails is called for an upstream failure (the
   // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass

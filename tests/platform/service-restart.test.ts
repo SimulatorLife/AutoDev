@@ -1052,12 +1052,11 @@ test("failure log tailing is scoped to output written after reload instead of re
           ? `<plist><dict><key>StandardErrorPath</key><string>${errPath}</string></dict></plist>`
           : "",
       fileSize: (filePath) =>
-        filePath === errPath
-          ? Buffer.byteLength(consoleErrContent, "utf8")
-          : 0,
+        filePath === errPath ? Buffer.byteLength(consoleErrContent, "utf8") : 0,
       logTail: (filePath, lines, afterByte) => {
         observedOffsets.push(afterByte);
-        const raw = filePath === errPath ? consoleErrContent.slice(afterByte ?? 0) : "";
+        const raw =
+          filePath === errPath ? consoleErrContent.slice(afterByte ?? 0) : "";
         return raw
           .split(/\r?\n/u)
           .filter((line) => line.trim().length > 0)

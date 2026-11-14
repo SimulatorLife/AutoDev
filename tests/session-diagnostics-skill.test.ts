@@ -16,6 +16,7 @@ import { compareInvestigations } from "../.rulesync/skills/autodev-session-diagn
 import { probe } from "../.rulesync/skills/autodev-session-diagnostics/scripts/mcp-probe.ts";
 import {
   buildReport,
+  deploymentDrift,
   findSessionRollouts,
   hasOpenTurn,
   recentSessions,
@@ -849,5 +850,162 @@ test("handles malformed and partial JSON records gracefully at source boundaries
     assert.equal(report.router.length, 1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("deploymentDrift resolves AutoDev monorepo runtime/src and falls back to legacy src", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-drift-test-"));
+  try {
+    const codexHome = join(root, "codex-home");
+    const installed = join(codexHome, "src", "providers");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(installed, "antigravity.ts"), "// old\n");
+
+    const monorepo = join(root, "monorepo");
+    mkdirSync(join(monorepo, "runtime", "src", "providers"), {
+      recursive: true
+    });
+    writeFileSync(
+      join(monorepo, "runtime", "package.json"),
+      JSON.stringify({ name: "@simulatorlife/autodev-runtime" })
+    );
+    writeFileSync(
+      join(monorepo, "runtime", "src", "providers", "antigravity.ts"),
+      "// new\n"
+    );
+    const monorepoDrift = deploymentDrift(codexHome, monorepo);
+    assert.deepEqual(monorepoDrift, {
+      checked: 1,
+      differing: ["providers/antigravity.ts"],
+      missing: []
+    });
+
+    const legacy = join(root, "legacy");
+    mkdirSync(join(legacy, "src", "providers"), { recursive: true });
+    writeFileSync(
+      join(legacy, "src", "providers", "antigravity.ts"),
+      "// old\n"
+    );
+    const legacyDrift = deploymentDrift(codexHome, legacy);
+    assert.deepEqual(legacyDrift, {
+      checked: 1,
+      differing: [],
+      missing: []
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session-trace captures delegation unavailability failures, spawn_failed router events, and bridge log alerts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-delegation-diag-"));
+  try {
+    const sessionsDir = join(dir, "sessions", "2026", "11", "14");
+    const runDir = join(dir, "run");
+    const hooksDir = join(dir, "hooks");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(hooksDir, { recursive: true });
+
+    const threadId = "01a1daea-0000-7000-8000-000000000099";
+    const rolloutFile = join(
+      sessionsDir,
+      `rollout-2026-11-14T20-00-00-${threadId}.jsonl`
+    );
+    writeFileSync(
+      rolloutFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-11-14T20:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            session_id: threadId,
+            agent_role: "orchestrator"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-14T20:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "autodev_spawn",
+            call_id: "call_spawn_1",
+            arguments: "{}"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-14T20:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_spawn_1",
+            output:
+              "Encountered error in tool execution: Delegation is unavailable in this session; no child was created."
+          }
+        })
+      ].join("\n") + "\n"
+    );
+
+    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
+    writeFileSync(
+      routerLog,
+      `${JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: "2026-11-14T20:00:01.500Z",
+        requestId: "req-spawn-1",
+        thread: threadId,
+        phase: "spawn_failed",
+        provider: "antigravity",
+        failureClass: "spawn_failure",
+        spawnFailureReason: "spawn_tool_unavailable",
+        elapsedMs: 15
+      })}\n`
+    );
+
+    writeFileSync(
+      join(hooksDir, "antigravity-proxy.launchd.log"),
+      [
+        "normal request line",
+        "agy spawn rejected session=01a1daea reason=expired",
+        "agy turn failed: invalid model selection (gemini-4-hydrogen-high)"
+      ].join("\n") + "\n"
+    );
+
+    const report = await buildReport({
+      id: threadId,
+      codexHome: dir,
+      routerLog,
+      items: false,
+      offline: true
+    });
+    assert.equal(report.threads[0]?.toolFailures.length, 1);
+    assert.match(
+      report.threads[0]?.toolFailures[0]?.detail ?? "",
+      /Delegation is unavailable in this session/
+    );
+    assert.equal(report.router[0]?.failures.length, 1);
+    assert.equal(
+      report.router[0]?.failures[0]?.spawnFailureReason,
+      "spawn_tool_unavailable"
+    );
+    assert.equal(report.bridgeAlerts?.[0]?.count, 2);
+
+    const rendered = renderReport(report);
+    assert.match(
+      rendered,
+      /TOOL FAILED .* autodev_spawn .* Delegation is unavailable/
+    );
+    assert.match(
+      rendered,
+      /ROUTER FAILURE .* spawn_failure \(spawn_tool_unavailable\)/
+    );
+    assert.match(rendered, /bridge log alerts/);
+    assert.match(
+      rendered,
+      /antigravity-proxy\.launchd\.log: 2 matching line\(s\)/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -23,7 +23,7 @@ export type UsageContractOutcome =
   | { readonly kind: "unreachable" }
   | { readonly kind: "not-configured" };
 
-const DEFAULT_CONTRACT_PROBE_TIMEOUT_MS = 15_000;
+const DEFAULT_CONTRACT_PROBE_TIMEOUT_MS = 45_000;
 
 export interface UsageContractOptions {
   readonly baseUrl?: string;

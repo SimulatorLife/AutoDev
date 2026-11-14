@@ -41,7 +41,8 @@ const workspaceTypeScriptProjects = [
   "./console/tsconfig.json"
 ];
 const tsImportResolver = createTypeScriptImportResolver({
-  project: workspaceTypeScriptProjects
+  project: workspaceTypeScriptProjects,
+  noWarnOnMultipleProjects: true
 });
 
 const typeScriptPlugin = { "@typescript-eslint": tseslint.plugin };

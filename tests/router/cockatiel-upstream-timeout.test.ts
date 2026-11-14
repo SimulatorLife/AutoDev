@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { ServerResponse } from "node:http";
 import test from "node:test";
 
 process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS = "35";
@@ -10,9 +11,17 @@ const { COOLDOWNS } =
 const { proxyConcreteResponse } =
   await import("@simulatorlife/autodev-runtime/router/proxy");
 
-function responseRecorder() {
+type RecordedResponse = ServerResponse & {
+  statusCode: number;
+  headers: Record<string, string | number>;
+  body: string;
+  headersSent: boolean;
+  writableEnded: boolean;
+};
+
+function responseRecorder(): RecordedResponse {
   const chunks: Buffer[] = [];
-  return {
+  const res: RecordedResponse = {
     statusCode: 0,
     headers: {} as Record<string, string | number>,
     body: "",
@@ -21,9 +30,9 @@ function responseRecorder() {
     destroyed: false,
     closed: false,
     writeHead(status: number, headers: Record<string, string | number>) {
-      this.statusCode = status;
-      this.headers = headers;
-      this.headersSent = true;
+      res.statusCode = status;
+      res.headers = headers;
+      res.headersSent = true;
     },
     write(chunk: string | Buffer) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -32,16 +41,17 @@ function responseRecorder() {
     end(chunk?: string | Buffer) {
       if (chunk)
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      this.body = Buffer.concat(chunks).toString("utf8");
-      this.writableEnded = true;
+      res.body = Buffer.concat(chunks).toString("utf8");
+      res.writableEnded = true;
     },
     on() {
-      return this;
+      return res;
     },
     removeListener() {
-      return this;
+      return res;
     }
-  };
+  } as unknown as RecordedResponse;
+  return res;
 }
 
 test(

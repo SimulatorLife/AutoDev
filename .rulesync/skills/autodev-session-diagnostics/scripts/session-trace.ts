@@ -155,6 +155,8 @@ interface RouterEventFields {
   outcome?: string;
   status?: number;
   failureClass?: string;
+  spawnFailureReason?: string;
+  denialReason?: string;
   elapsedMs?: number;
   toolCalls?: number;
   selection?: string;
@@ -404,6 +406,10 @@ function parseRouterEvent(raw: unknown): RouterEventFields | null {
   if (typeof raw.status === "number") result.status = raw.status;
   if (typeof raw.failureClass === "string")
     result.failureClass = raw.failureClass;
+  if (typeof raw.spawnFailureReason === "string")
+    result.spawnFailureReason = raw.spawnFailureReason;
+  if (typeof raw.denialReason === "string")
+    result.denialReason = raw.denialReason;
   if (typeof raw.elapsedMs === "number") result.elapsedMs = raw.elapsedMs;
   if (typeof raw.toolCalls === "number") result.toolCalls = raw.toolCalls;
   if (typeof raw.selection === "string") result.selection = raw.selection;
@@ -537,6 +543,8 @@ export interface RouterEventRow {
   outcome: string | null;
   status: number | null;
   failureClass: string | null;
+  spawnFailureReason: string | null;
+  denialReason: string | null;
   elapsedMs: number | null;
   toolCalls: number | null;
   selection: string | null;
@@ -558,6 +566,7 @@ export interface RouterSummary {
     provider: string | null;
     status: number | null;
     failureClass: string | null;
+    spawnFailureReason?: string | null;
     elapsedMs: number | null;
   }>;
   /** Providers in request order, collapsed: a turn that hops providers shows more than one. */
@@ -580,10 +589,17 @@ export interface LiveReport {
   drift: { checked: number; differing: string[]; missing: string[] } | null;
 }
 
+export interface BridgeLogAlert {
+  file: string;
+  count: number;
+  samples: string[];
+}
+
 export interface TraceReport {
   threads: ThreadTrace[];
   router: RouterSummary[];
   logs: Array<{ file: string; modified: string; bytes: number }>;
+  bridgeAlerts?: BridgeLogAlert[];
   live: LiveReport | null;
 }
 
@@ -606,7 +622,10 @@ const WRITING_WINDOW_MS = 10 * 60 * 1000;
 // Outputs that mean the call did not do its job. `Transport closed` is an MCP
 // server process that died; `aborted` is Codex cutting the call short.
 const TOOL_FAILURE =
-  /tool call failed|Transport closed|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/im;
+  /Encountered error in tool execution|Delegation is unavailable|tool call failed|Transport closed|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/im;
+const BRIDGE_LOG_ALERT_REGEX =
+  /spawn rejected|missing session header|invalid model selection|Delegation is unavailable/;
+const BRIDGE_LOG_TAIL_BYTES = 64 * 1024;
 
 function excerpt(value: unknown): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
@@ -1275,6 +1294,12 @@ function routerEventFromLine(
     status: typeof event.status === "number" ? event.status : null,
     failureClass:
       typeof event.failureClass === "string" ? event.failureClass : null,
+    spawnFailureReason:
+      typeof event.spawnFailureReason === "string"
+        ? event.spawnFailureReason
+        : null,
+    denialReason:
+      typeof event.denialReason === "string" ? event.denialReason : null,
     elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : null,
     toolCalls: typeof event.toolCalls === "number" ? event.toolCalls : null,
     selection: typeof event.selection === "string" ? event.selection : null
@@ -1327,6 +1352,57 @@ export async function routerEvents(
   return rows;
 }
 
+function recordRouterEvent(
+  row: RouterEventRow,
+  requests: Set<string>,
+  providerSequence: string[],
+  byProvider: RouterSummary["byProvider"],
+  failures: RouterSummary["failures"]
+): void {
+  if (row.phase === "selected") {
+    requests.add(row.requestId);
+    const provider = row.provider ?? "?";
+    if (providerSequence.at(-1) !== provider) providerSequence.push(provider);
+    return;
+  }
+  if (row.phase === "spawn_failed") {
+    failures.push({
+      at: row.at,
+      requestId: row.requestId,
+      provider: row.provider,
+      status: row.status,
+      failureClass:
+        row.failureClass ?? row.spawnFailureReason ?? "spawn_failed",
+      elapsedMs: row.elapsedMs,
+      ...(row.spawnFailureReason
+        ? { spawnFailureReason: row.spawnFailureReason }
+        : {})
+    });
+    return;
+  }
+  if (row.phase !== "result") return;
+  const entry = (byProvider[row.provider ?? "?"] ??= {
+    requests: 0,
+    failures: 0,
+    elapsedMs: 0,
+    toolCalls: 0
+  });
+  entry.requests += 1;
+  entry.elapsedMs += row.elapsedMs ?? 0;
+  entry.toolCalls += row.toolCalls ?? 0;
+  if (row.outcome === "failure") {
+    entry.failures += 1;
+    failures.push({
+      at: row.at,
+      requestId: row.requestId,
+      provider: row.provider,
+      status: row.status,
+      failureClass: row.failureClass ?? row.denialReason ?? null,
+      elapsedMs: row.elapsedMs
+    });
+  }
+}
+
 /** One thread's requests, summarised. Events that name threads match exactly; older ones fall back to model and window. */
 export function summarizeRouter(
   thread: ThreadTrace,
@@ -1351,32 +1427,7 @@ export function summarizeRouter(
   const providerSequence: string[] = [];
   const requests = new Set<string>();
   for (const row of mine) {
-    if (row.phase === "selected") {
-      requests.add(row.requestId);
-      const provider = row.provider ?? "?";
-      if (providerSequence.at(-1) !== provider) providerSequence.push(provider);
-    }
-    if (row.phase !== "result") continue;
-    const entry = (byProvider[row.provider ?? "?"] ??= {
-      requests: 0,
-      failures: 0,
-      elapsedMs: 0,
-      toolCalls: 0
-    });
-    entry.requests += 1;
-    entry.elapsedMs += row.elapsedMs ?? 0;
-    entry.toolCalls += row.toolCalls ?? 0;
-    if (row.outcome === "failure") {
-      entry.failures += 1;
-      failures.push({
-        at: row.at,
-        requestId: row.requestId,
-        provider: row.provider,
-        status: row.status,
-        failureClass: row.failureClass,
-        elapsedMs: row.elapsedMs
-      });
-    }
+    recordRouterEvent(row, requests, providerSequence, byProvider, failures);
   }
   return {
     thread: thread.id,
@@ -1430,48 +1481,66 @@ function services(): LiveReport["services"] {
     });
 }
 
-/** Whether the rollout's latest turn has started and not yet completed or aborted, read from its tail. */
-export function hasOpenTurn(file: string): boolean {
+function readTailText(
+  file: string,
+  maxBytes: number
+): { text: string; full: boolean } {
   const size = statSync(file).size;
-  const length = Math.min(size, 256 * 1024);
+  const length = Math.min(size, maxBytes);
+  if (length === 0) return { text: "", full: true };
   const fd = openSync(file, "r");
   try {
     const buffer = Buffer.alloc(length);
     readSync(fd, buffer, 0, length, size - length);
-    // A long turn's start can lie far before the tail; read the whole file then.
-    const text = buffer.toString("utf8");
-    const markers = (source: string) => ({
-      started: source.lastIndexOf('"type":"task_started"'),
-      ended: Math.max(
-        source.lastIndexOf('"type":"task_complete"'),
-        source.lastIndexOf('"type":"turn_aborted"')
-      )
-    });
-    let { started, ended } = markers(text);
-    if (started < 0 && ended < 0 && length < size)
-      ({ started, ended } = markers(readFileSync(file, "utf8")));
-    return started > ended;
+    return { text: buffer.toString("utf8"), full: length === size };
   } finally {
     closeSync(fd);
   }
+}
+
+function turnMarkers(source: string): { started: number; ended: number } {
+  return {
+    started: source.lastIndexOf('"type":"task_started"'),
+    ended: Math.max(
+      source.lastIndexOf('"type":"task_complete"'),
+      source.lastIndexOf('"type":"turn_aborted"')
+    )
+  };
+}
+
+/** Whether the rollout's latest turn has started and not yet completed or aborted, read from its tail. */
+export function hasOpenTurn(file: string): boolean {
+  const { text, full } = readTailText(file, 256 * 1024);
+  // A long turn's start can lie far before the tail; read the whole file then.
+  let { started, ended } = turnMarkers(text);
+  if (started < 0 && ended < 0 && !full)
+    ({ started, ended } = turnMarkers(readFileSync(file, "utf8")));
+  return started > ended;
 }
 
 function sha(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
+function checkoutRuntimeSourceRoot(repoRoot: string): string | null {
+  const monorepoRuntimeSrc = path.join(repoRoot, "runtime", "src");
+  if (
+    existsSync(path.join(repoRoot, "runtime", "package.json")) &&
+    existsSync(monorepoRuntimeSrc)
+  )
+    return monorepoRuntimeSrc;
+  const legacySrc = path.join(repoRoot, "src");
+  return existsSync(legacySrc) ? legacySrc : null;
+}
+
 /** Installed runtime modules that differ from the checkout: the running services execute the installed copies. */
-function deploymentDrift(
+export function deploymentDrift(
   codexHome: string,
   repoRoot: string | null | undefined
 ): LiveReport["drift"] {
   const installedRoot = path.join(codexHome, "src");
-  if (
-    !repoRoot ||
-    !existsSync(path.join(repoRoot, "src")) ||
-    !existsSync(installedRoot)
-  )
-    return null;
+  const checkoutSrcRoot = repoRoot ? checkoutRuntimeSourceRoot(repoRoot) : null;
+  if (!checkoutSrcRoot || !existsSync(installedRoot)) return null;
   const differing: string[] = [];
   const missing: string[] = [];
   let checked = 0;
@@ -1484,7 +1553,7 @@ function deploymentDrift(
       }
       if (!entry.name.endsWith(".ts")) continue;
       const rel = path.relative(installedRoot, filePath);
-      const source = path.join(repoRoot, "src", rel);
+      const source = path.join(checkoutSrcRoot, rel);
       checked += 1;
       if (!existsSync(source)) missing.push(rel);
       else if (sha(source) !== sha(filePath)) differing.push(rel);
@@ -1565,6 +1634,30 @@ function logFreshness(codexHome: string): TraceReport["logs"] {
     .sort((a, b) => COLLATOR.compare(b.modified, a.modified));
 }
 
+function bridgeLogAlerts(codexHome: string): BridgeLogAlert[] {
+  const hooksDir = path.join(codexHome, "hooks");
+  if (!existsSync(hooksDir)) return [];
+  const alerts: BridgeLogAlert[] = [];
+  for (const name of readdirSync(hooksDir).sort()) {
+    if (!name.endsWith(".launchd.log")) continue;
+    const { text } = readTailText(
+      path.join(hooksDir, name),
+      BRIDGE_LOG_TAIL_BYTES
+    );
+    const matched = text
+      .split("\n")
+      .filter((line) => BRIDGE_LOG_ALERT_REGEX.test(line));
+    if (matched.length > 0) {
+      alerts.push({
+        file: name,
+        count: matched.length,
+        samples: matched.slice(-3).map((line) => excerpt(line))
+      });
+    }
+  }
+  return alerts;
+}
+
 export async function buildReport(options: TraceOptions): Promise<TraceReport> {
   const threads = findSessionRollouts(
     rolloutRoots(options.codexHome),
@@ -1582,12 +1675,14 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
           shift(stamps.at(-1)!, 60)
         )
       : [];
+  const bridgeAlerts = bridgeLogAlerts(options.codexHome);
   return {
     threads,
     router: threads.map((thread) =>
       summarizeRouter(thread, rows, options.events ?? false)
     ),
     logs: logFreshness(options.codexHome),
+    ...(bridgeAlerts.length > 0 ? { bridgeAlerts } : {}),
     live: options.offline ? null : await liveReport(options)
   };
 }
@@ -1603,10 +1698,16 @@ function renderRouterDetails(router: RouterSummary): string[] {
   );
   if (router.providerSequence.length > 1)
     lines.push(`   PROVIDER HOPS ${router.providerSequence.join(" → ")}`);
-  for (const failure of router.failures)
+  for (const failure of router.failures) {
+    const reasonSuffix =
+      failure.spawnFailureReason &&
+      failure.spawnFailureReason !== failure.failureClass
+        ? ` (${failure.spawnFailureReason})`
+        : "";
     lines.push(
-      `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"} ${failure.elapsedMs ?? "-"}ms`
+      `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"}${reasonSuffix} ${failure.elapsedMs ?? "-"}ms`
     );
+  }
   for (const event of router.events ?? []) {
     lines.push(
       `   ${event.at.slice(11, 23)} ${event.requestId.slice(0, 8)} ${event.phase} ${event.provider ?? "-"}/${event.model ?? "-"}` +
@@ -1726,6 +1827,13 @@ export function renderReport(report: TraceReport): string {
     out.push(
       `   ${log.modified} ${String(log.bytes).padStart(10)} ${log.file}`
     );
+  if (report.bridgeAlerts && report.bridgeAlerts.length > 0) {
+    out.push("== bridge log alerts (tail 64 KB)");
+    for (const alert of report.bridgeAlerts) {
+      out.push(`   ${alert.file}: ${alert.count} matching line(s)`);
+      for (const sample of alert.samples) out.push(`     ${sample}`);
+    }
+  }
   return out.join("\n");
 }
 

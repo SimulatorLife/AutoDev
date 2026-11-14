@@ -217,8 +217,9 @@ clickhouse_accepts_query() {
 }
 
 # Does OpenLIT answer HTTP?
+# Do not follow the 307 redirect into SSR dashboard queries during liveness polling.
 openlit_http_ready() {
-	curl --fail --silent --show-error --location --max-time 10 \
+	curl --fail --silent --show-error --max-time 10 \
 		"http://127.0.0.1:${PORT:-3000}/" >/dev/null 2>&1
 }
 
@@ -382,6 +383,24 @@ if [[ "$compose_status" -eq 2 ]]; then
 	report_compose_output
 	exit 6
 fi
+
+container_health_status() {
+	local container_name="$1"
+	docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container_name" 2>/dev/null || true
+}
+
+restart_if_unhealthy() {
+	local service="$1"
+	local container_name="$2"
+	if [[ "$(container_health_status "$container_name")" == "unhealthy" ]]; then
+		echo "==> Restarting unhealthy ${container_name} container"
+		"${DOCKER_COMPOSE[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart "$service" || true
+	fi
+}
+
+# `docker compose up -d` leaves an already-running unhealthy container in place
+# when no image or label changed; restart it before polling readiness.
+restart_if_unhealthy openlit openlit
 
 # Readiness, not Compose's exit code, decides whether the stack is up. A
 # Compose attempt can fail while the stack it started is in fact serving —

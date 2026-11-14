@@ -78,3 +78,6 @@ playwright-report/
 
 # Track pinned external skill revisions
 !/rulesync.lock
+
+# TypeScript incremental build caches
+*.tsbuildinfo

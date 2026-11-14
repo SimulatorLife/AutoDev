@@ -422,7 +422,7 @@ test("EvaluationRepository aborts hung ClickHouse queries after timeoutMs", asyn
     repo.listEvaluations(),
     EvaluationSourceUnavailableError
   );
-  assert.ok(observedSignal instanceof AbortSignal);
-  assert.ok(observedSignals.length >= 1);
+  assert.ok(observedSignals.length > 0);
+  assert.ok(observedSignals.every((signal) => signal instanceof AbortSignal));
   assert.ok(observedSignals.some((signal) => signal.aborted));
 });

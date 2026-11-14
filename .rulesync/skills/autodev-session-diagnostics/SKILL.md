@@ -70,8 +70,7 @@ every event and looked like "the router logged nothing".
 
 ## 3. Diagnose
 
-1. **Name the threads**: role, parent, model (`autodev/<role>`). The provider is
-   chosen per request; read it from the router summary.
+1. **Name the threads**: role, parent, model (`autodev/<role>`). Run `node "$SKILL_DIR/scripts/session-trace.ts" <id>` summary first before `--items` or `--events` so large rollouts do not truncate output into manual JSONL grep/script passes. The provider is chosen per request; read it from the router summary.
 2. **Read each failing thread**: gaps, reasoning-only responses, aborted turns,
    `TOOL FAILED`, `ROUTER FAILURE`, `PROVIDER HOPS`.
 3. **Check the provider side**: bridge log, live CLIs outliving their request,
@@ -126,6 +125,12 @@ every event and looked like "the router logged nothing".
   (it was `typescript-language-server` missing from Codex's `PATH`).
 - **`toolCalls=0` on a long successful bridge request** means the provider
   worked invisibly, or not at all.
+- **Mid-turn `Delegation is unavailable in this session` on an orchestrator turn**
+  means `SpawnSessionRegistry` dropped or rejected `/v1/bridge-spawn/call`
+  (expiry, leaf-burst eviction, stale-token `close()`, or missing session
+  header), not that initial delegation gating hid the tool. Check `TOOL FAILED`,
+  router `spawn_failed`, `$CODEX_HOME/hooks/<bridge>.launchd.log` for
+  `spawn rejected ... reason=`, and `DRIFT` against `$CODEX_HOME/src`.
 - **Item id prefixes identify the minter**: `rs_`/`ctc_`/`fc_`/`msg_` Codex-shaped;
   `<32 hex>_rs`, `<32 hex>_fc_<n>` MiniMax.
 - **Live CLIs surface bugs fakes hide** (the Claude CLI truncates long MCP tool

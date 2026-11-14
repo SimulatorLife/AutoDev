@@ -51,6 +51,11 @@ import {
   mcpResultFromCodexOutput,
   mcpToolDefinition
 } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
+import {
+  contextHeaderValue,
+  readContextHeader,
+  SANDBOX_MODE_HEADER
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -58,11 +63,6 @@ import {
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import {
-  SANDBOX_MODE_HEADER,
-  contextHeaderValue,
-  readContextHeader
-} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,

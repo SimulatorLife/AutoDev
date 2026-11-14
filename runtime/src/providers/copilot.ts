@@ -29,6 +29,11 @@ import {
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import {
+  contextHeaderValue,
+  readContextHeader,
+  SANDBOX_MODE_HEADER
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import {
   findCodexAppMcpServer,
   resolveCopilotBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
@@ -37,11 +42,6 @@ import {
   roleContract,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import {
-  SANDBOX_MODE_HEADER,
-  contextHeaderValue,
-  readContextHeader
-} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   sendJson,

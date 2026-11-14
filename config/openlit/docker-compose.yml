@@ -133,11 +133,11 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:3000').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))
-      interval: 10s
+        - fetch('http://127.0.0.1:3000',{redirect:'manual'}).then(r=>{process.exit(r.status<500?0:1)}).catch(()=>process.exit(1))
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 120s
     restart: unless-stopped
 
 volumes:

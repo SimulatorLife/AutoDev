@@ -509,7 +509,7 @@ test("console launcher terminates slow sibling preflight instead of blocking whe
         "#!/usr/bin/env bash",
         'case "$*" in',
         "  *verify-control-api.ts*) exit 75 ;;",
-        '  *usage-contract.ts*) trap '\''kill "$child" 2>/dev/null; exit 0'\'' TERM INT; sleep 20 & child=$!; wait "$child" ;;',
+        "  *usage-contract.ts*) exec sleep 20 ;;",
         "esac",
         "exit 0"
       ].join("\n")

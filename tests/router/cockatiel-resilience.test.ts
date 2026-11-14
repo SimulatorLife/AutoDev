@@ -56,7 +56,7 @@ const testRoute = (
   pattern: /.*/,
   baseUrl: `http://${provider}.test/v1`,
   envKey,
-  healthUrl
+  ...(healthUrl === undefined ? {} : { healthUrl })
 });
 
 function jsonResponse(value: unknown, status = 200): Response {

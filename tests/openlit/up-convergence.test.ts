@@ -139,19 +139,35 @@ case "\${1:-}" in
     printf '%s\\n' "$STUB_IMAGE_ID"
     exit 0
     ;;
+  inspect)
+    if [[ -f "$STUB_STATE_DIR/unhealthy-openlit" && "\${*: -1}" == "openlit" ]]; then
+      printf 'unhealthy\\n'
+    else
+      printf 'healthy\\n'
+    fi
+    exit 0
+    ;;
   compose)
-    # Compose is invoked as \`compose --env-file … -f … up -d\` and as
-    # \`compose -f … exec -T …\`, so the subcommand is found by scanning the
-    # arguments rather than by position.
+    # Compose is invoked as \`compose --env-file … -f … up -d\`,
+    # \`compose ... restart ...\`, and \`compose -f … exec -T …\`, so the
+    # subcommand is found by scanning the arguments rather than by position.
     mode=""
     for argument in "$@"; do
       case "$argument" in
         version) mode="version" ;;
         up) mode="up" ;;
         exec) mode="exec" ;;
+        restart) mode="restart" ;;
       esac
     done
     if [[ "$mode" == "version" ]]; then
+      exit 0
+    fi
+    if [[ "$mode" == "restart" ]]; then
+      printf '%s\\n' "\${*: -1}" >> "$STUB_STATE_DIR/restarts"
+      if [[ "\${*: -1}" == "openlit" ]]; then
+        rm -f "$STUB_STATE_DIR/unhealthy-openlit"
+      fi
       exit 0
     fi
     if [[ "$mode" == "exec" ]]; then
@@ -195,6 +211,9 @@ exit 0
     `#!/usr/bin/env bash
 set -uo pipefail
 url="\${*: -1}"
+if [[ -f "$STUB_STATE_DIR/unhealthy-openlit" ]]; then
+  exit 22
+fi
 if [[ -f "$STUB_STATE_DIR/readiness-down" ]]; then
   exit 22
 fi
@@ -222,6 +241,8 @@ interface RunOptions {
   readonly readiness?: boolean;
   /** Whether the published ClickHouse port is unreachable. */
   readonly publishedPortUnreachable?: boolean;
+  /** Whether the stubbed openlit container starts out unhealthy. */
+  readonly unhealthyOpenlit?: boolean;
   /**
    * The ClickHouse configuration the runner reads. It defaults to a
    * configuration that states one retention window; a configuration that
@@ -299,6 +320,8 @@ function withFixture(
       writeFileSync(join(fixture.state, "readiness-down"), "");
     if (options.publishedPortUnreachable === true)
       writeFileSync(join(fixture.state, "port-down"), "");
+    if (options.unhealthyOpenlit === true)
+      writeFileSync(join(fixture.state, "unhealthy-openlit"), "");
     if (options.clickhouseConfiguration !== undefined)
       writeFileSync(
         join(
@@ -501,6 +524,17 @@ test("the OpenLIT runner refuses a configuration that states no retention window
       );
     }
   );
+});
+
+test("the OpenLIT runner restarts an already-running unhealthy openlit container", () => {
+  withFixture({ unhealthyOpenlit: true }, (fixture, result) => {
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /Restarting unhealthy openlit container/u);
+    assert.equal(
+      readFileSync(join(fixture.state, "restarts"), "utf8").trim(),
+      "openlit"
+    );
+  });
 });
 
 test("the OpenLIT runner refuses a configuration that states two retention windows", () => {

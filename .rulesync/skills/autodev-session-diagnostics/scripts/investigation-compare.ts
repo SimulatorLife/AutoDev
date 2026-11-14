@@ -109,7 +109,7 @@ function metricValue(
 ): number | undefined {
   if (metric === "ccc" || metric === "cgc" || metric === "lsp")
     return record.context?.[metric];
-  return record[metric];
+  return record[metric] ?? undefined;
 }
 function aggregate(threads: Trace[]) {
   const available = threads.filter((thread) => thread.investigation.observed);
@@ -159,11 +159,17 @@ export function compareInvestigations(before: Trace[], after: Trace[]) {
           metric,
           {
             total:
-              oldValue.total === null || newValue.total === null
+              !oldValue ||
+              !newValue ||
+              oldValue.total === null ||
+              newValue.total === null
                 ? null
                 : newValue.total - oldValue.total,
             mean:
-              oldValue.mean === null || newValue.mean === null
+              !oldValue ||
+              !newValue ||
+              oldValue.mean === null ||
+              newValue.mean === null
                 ? null
                 : newValue.mean - oldValue.mean
           }
