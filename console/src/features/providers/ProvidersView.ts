@@ -1,9 +1,10 @@
-import type {
-  ControlApiLiveAgentCounts,
-  ControlApiModelsResponse,
-  ControlApiProviderRecord,
-  ControlApiProvidersResponse,
-  ControlApiRuntimeResponse
+import {
+  ANTIGRAVITY_PROVIDERS,
+  type ControlApiLiveAgentCounts,
+  type ControlApiModelsResponse,
+  type ControlApiProviderRecord,
+  type ControlApiProvidersResponse,
+  type ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -187,7 +188,8 @@ function providerColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
   modelDiscovery: ProviderModelDiscoveryState,
-  cliVersions: ProviderCliVersionState
+  cliVersions: ProviderCliVersionState,
+  quota: ReadonlyMap<string, readonly QuotaAxiProvider[]>
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -220,6 +222,10 @@ function providerColumns(
           React.createElement(ProviderExternalLinks, {
             provider: provider.id,
             links: provider.links
+          }),
+          // Quota is the provider's own fact, shown display-only beneath it.
+          React.createElement(ProviderQuotaCell, {
+            reports: quota.get(provider.id)
           })
         )
     },
@@ -513,28 +519,54 @@ type QuotaAxiSnapshot = NonNullable<ControlApiProvidersResponse["quotaAxi"]>;
 type QuotaAxiProvider = QuotaAxiSnapshot["providers"][number];
 type QuotaAxiWindow = QuotaAxiProvider["windows"][number];
 
+/** Clamps a reported percentage into 0-100 for bar geometry and ARIA only. */
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
 function quotaAxiWindowView(window: QuotaAxiWindow): React.JSX.Element {
+  const used = window.percentUsed;
   return React.createElement(
     "li",
     {
       key: window.id,
-      className: "rounded border border-border p-3",
+      className: "flex flex-col gap-0.5",
       "data-quota-window": window.id
     },
     React.createElement(
       "div",
-      { className: "font-medium text-fg" },
-      window.label
+      {
+        className: `${MUTED_META_CLASS} flex justify-between gap-2 tabular-nums`
+      },
+      React.createElement("span", { className: "text-fg" }, window.label),
+      React.createElement(
+        "span",
+        null,
+        `Used: ${used === undefined ? QUOTA_NOT_REPORTED : `${used}%`}`
+      )
     ),
+    used === undefined
+      ? null
+      : React.createElement(
+          "div",
+          {
+            role: "progressbar",
+            "aria-label": `${window.label} used`,
+            "aria-valuemin": 0,
+            "aria-valuemax": 100,
+            "aria-valuenow": clampPercent(used),
+            "aria-valuetext": `${used}% used`,
+            className: "h-1.5 w-full overflow-hidden rounded bg-border"
+          },
+          React.createElement("div", {
+            className: "h-full bg-fg",
+            style: { width: `${clampPercent(used)}%` }
+          })
+        ),
     React.createElement(
       "div",
-      { className: `${MUTED_META_CLASS} font-mono` },
-      `${window.id} · ${window.kind}`
-    ),
-    React.createElement(
-      "div",
-      { className: `${MUTED_META_CLASS} mt-1 tabular-nums` },
-      `Pace: ${window.pace?.status ?? QUOTA_NOT_REPORTED} · Used: ${window.percentUsed === undefined ? QUOTA_NOT_REPORTED : `${window.percentUsed}%`} · Remaining: ${window.percentRemaining === undefined ? QUOTA_NOT_REPORTED : `${window.percentRemaining}%`}`
+      { className: `${MUTED_META_CLASS} tabular-nums` },
+      `Pace: ${window.pace?.status ?? QUOTA_NOT_REPORTED} · Remaining: ${window.percentRemaining === undefined ? QUOTA_NOT_REPORTED : `${window.percentRemaining}%`}`
     ),
     React.createElement(
       "div",
@@ -548,49 +580,37 @@ function quotaAxiProviderView(report: QuotaAxiProvider): React.JSX.Element {
   const accountLabel =
     report.accountKey === undefined ? "" : ` · ${report.accountKey}`;
   return React.createElement(
-    "details",
+    "div",
     {
       key: `${report.provider}:${report.accountKey ?? "default"}`,
-      className: "border-t border-border py-3",
+      className: "mt-1 flex flex-col gap-1",
       "data-quota-provider": report.provider
     },
     React.createElement(
-      "summary",
-      { className: "cursor-pointer list-none" },
-      React.createElement(
-        "span",
-        { className: "font-mono text-sm font-semibold text-fg" },
-        `${report.provider}${accountLabel}`
-      ),
-      React.createElement(
-        "span",
-        { className: `ml-2 ${MUTED_META_CLASS}` },
-        `Status: ${report.state.status} · Stale: ${String(report.state.stale)} · Refreshed: ${report.state.refreshedAt ?? QUOTA_NOT_REPORTED}`
-      )
+      "div",
+      { className: MUTED_META_CLASS },
+      `Quota: ${report.provider}${accountLabel} · Status: ${report.state.status} · Stale: ${String(report.state.stale)} · Refreshed: ${report.state.refreshedAt ?? QUOTA_NOT_REPORTED}`
     ),
     report.windows.length === 0
       ? React.createElement(
           "p",
-          { className: `${MUTED_META_CLASS} mt-2` },
+          { className: MUTED_META_CLASS },
           "No windows reported"
         )
       : React.createElement(
           "ul",
-          { className: "mt-2 flex flex-col gap-2" },
+          { className: "flex flex-col gap-1.5" },
           ...report.windows.map(quotaAxiWindowView)
         ),
     report.quotaSemantics === undefined
       ? React.createElement(
           "p",
-          { className: `${MUTED_META_CLASS} mt-2` },
+          { className: MUTED_META_CLASS },
           `Quota semantics: ${QUOTA_NOT_REPORTED}`
         )
       : React.createElement(
           "div",
-          {
-            className: "mt-3",
-            "data-quota-semantics": report.quotaSemantics.status
-          },
+          { "data-quota-semantics": report.quotaSemantics.status },
           React.createElement(
             "p",
             { className: MUTED_META_CLASS },
@@ -611,46 +631,37 @@ function quotaAxiProviderView(report: QuotaAxiProvider): React.JSX.Element {
   );
 }
 
-function QuotaAxiOverview({
-  report
+/** Groups unchanged quota records under the configured rows their service serves. */
+function quotaByProvider(
+  report: QuotaAxiSnapshot | null
+): ReadonlyMap<string, readonly QuotaAxiProvider[]> {
+  const grouped = new Map<string, QuotaAxiProvider[]>();
+  for (const entry of report?.providers ?? []) {
+    // quota-axi reports the one shared Antigravity service as `agy`, while
+    // AutoDev exposes its model families as separate provider rows.
+    const providerRows =
+      entry.provider === "agy" ? ANTIGRAVITY_PROVIDERS : [entry.provider];
+    for (const providerId of providerRows) {
+      const entries = grouped.get(providerId);
+      if (entries === undefined) grouped.set(providerId, [entry]);
+      else entries.push(entry);
+    }
+  }
+  return grouped;
+}
+
+function ProviderQuotaCell({
+  reports
 }: {
-  readonly report: QuotaAxiSnapshot | null;
+  readonly reports: readonly QuotaAxiProvider[] | undefined;
 }): React.JSX.Element {
-  return React.createElement(
-    "section",
-    { className: LIST_PANEL_CLASS, "data-section": "quota-axi-overview" },
-    React.createElement(
-      "h2",
-      { className: SECTION_HEADING_CLASS },
-      "Quota report"
-    ),
-    report === null
-      ? React.createElement(
-          "p",
-          { className: `mt-1 ${MUTED_META_CLASS}` },
-          "No quota-axi report has been observed."
-        )
-      : React.createElement(
-          React.Fragment,
-          null,
-          React.createElement(
-            "p",
-            { className: `mt-1 ${MUTED_META_CLASS}` },
-            `Snapshot ${report.generatedAt} · schema ${report.schemaVersion}`
-          ),
-          report.providers.length === 0
-            ? React.createElement(
-                "p",
-                { className: `mt-3 ${MUTED_META_CLASS}` },
-                "No provider records reported"
-              )
-            : React.createElement(
-                "div",
-                { className: "mt-2" },
-                ...report.providers.map(quotaAxiProviderView)
-              )
-        )
-  );
+  return reports === undefined
+    ? React.createElement(
+        "span",
+        { className: MUTED_META_CLASS },
+        QUOTA_NOT_REPORTED
+      )
+    : React.createElement("div", null, ...reports.map(quotaAxiProviderView));
 }
 
 function ProvidersTab({
@@ -687,7 +698,6 @@ function ProvidersTab({
       className: PAGE_SECTION_STACK_CLASS,
       "data-tab-panel": "providers"
     },
-    React.createElement(QuotaAxiOverview, { report: providers.quotaAxi }),
     React.createElement(
       StatGrid,
       { columns: 4 },
@@ -742,7 +752,8 @@ function ProvidersTab({
           providersPath("providers"),
           runtime?.liveAgents,
           modelDiscovery,
-          versions
+          versions,
+          quotaByProvider(providers.quotaAxi)
         ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."

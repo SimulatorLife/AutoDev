@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ControlApiProvidersResponse } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiProviderRecord,
+  ControlApiProvidersResponse
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -14,14 +17,55 @@ const emptyDiscovery: ProviderModelDiscoveryState = {
   message: "No provider model discovery was observed."
 };
 
-function renderReport(
-  quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> | null
+const ANTIGRAVITY_ROW_IDS = [
+  "antigravity-gemini",
+  "antigravity-argon",
+  "antigravity-claude-gpt"
+] as const;
+
+const NO_CONVERGENCE = {
+  convergence: "not-observed" as const,
+  desiredGeneration: null,
+  observedGeneration: null,
+  lastApplyAt: null,
+  lastObservationAt: null,
+  lastError: null,
+  explanation: "Not observed."
+};
+
+function providerRecord(id: string): ControlApiProviderRecord {
+  const role = {
+    priority: "disabled" as const,
+    model: null,
+    mutable: false,
+    convergence: NO_CONVERGENCE
+  };
+  return {
+    id,
+    links: { usage: null, documentation: null },
+    route: null,
+    credential: { envKey: null, configured: false },
+    disabled: false,
+    roles: { orchestrator: role, subagent: role },
+    agentLimits: null,
+    agentModels: [],
+    models: [],
+    priorities: [],
+    orchestratorReasoningEffort: null,
+    health: null,
+    reconciliation: { status: NO_CONVERGENCE, history: [] }
+  } as unknown as ControlApiProviderRecord;
+}
+
+function renderProvidersView(
+  quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> | null,
+  providerIds: readonly string[] = [...ANTIGRAVITY_ROW_IDS, "codex"]
 ): string {
   const response = {
     schema: "autodev-control-providers-v5",
     orchestratorTier: "orchestrator",
     tiers: [],
-    providers: [],
+    providers: providerIds.map(providerRecord),
     quotaAxi
   } as unknown as ControlApiProvidersResponse;
   return renderToStaticMarkup(
@@ -33,10 +77,18 @@ function renderReport(
   );
 }
 
-test("quota overview preserves package provider identity, state, windows, resets and unknown semantics", () => {
-  const markup = renderReport({
+/** The table row whose provider-id link is `id`. */
+function rowFor(markup: string, id: string): string {
+  const rows = markup.match(/<tr[\s\S]*?<\/tr>/gu) ?? [];
+  const row = rows.find((candidate) => candidate.includes(`>${id}<`));
+  assert.ok(row, `no row for provider ${id}`);
+  return row;
+}
+
+test("provider rows show shared quota bars, reset times and package semantics", () => {
+  const markup = renderProvidersView({
     generatedAt: "2026-11-13T12:00:00.000Z",
-    schemaVersion: 6,
+    schemaVersion: 5,
     providers: [
       {
         provider: "agy",
@@ -60,25 +112,48 @@ test("quota overview preserves package provider identity, state, windows, resets
           stale: true,
           refreshedAt: "2026-11-13T11:00:00.000Z"
         }
+      },
+      {
+        provider: "cursor",
+        windows: [],
+        state: { status: "unavailable", stale: false }
       }
     ]
   });
-  assert.match(markup, /data-quota-provider="agy"/u);
+  assert.doesNotMatch(markup, /Quota report|quota-axi-overview/u);
+  assert.doesNotMatch(markup, /data-quota-provider="cursor"/u);
+  const antigravityRows = ANTIGRAVITY_ROW_IDS.map((id) => rowFor(markup, id));
+  for (const row of antigravityRows) {
+    assert.match(row, /data-quota-provider="agy"/u);
+    assert.match(row, /Quota: agy/u);
+    assert.match(row, /progressbar/u);
+    assert.match(row, /Resets: (<!-- -->)?2026-11-13T18:00:00\.000Z/u);
+  }
+  const agyRow = antigravityRows[0]!;
+  assert.doesNotMatch(rowFor(markup, "codex"), /data-quota-provider/u);
+  assert.match(rowFor(markup, "codex"), /Not reported/u);
   assert.match(
-    markup,
+    agyRow,
     /Status: stale · Stale: true · Refreshed: 2026-11-13T11:00:00\.000Z/u
   );
-  assert.match(markup, /141\.25%/u);
-  assert.match(markup, /2026-11-13T18:00:00\.000Z/u);
-  assert.match(markup, /Quota semantics: unknown/u);
-  assert.match(markup, /account: unknown/u);
+  // Bar sits in the matching row; text keeps the true >100 value while the
+  // bar geometry and ARIA range are clamped.
+  assert.match(agyRow, /<div role="progressbar"[^>]*aria-valuenow="100"/u);
+  assert.match(agyRow, /aria-valuemax="100"/u);
+  assert.match(agyRow, /aria-valuetext="141\.25% used"/u);
+  assert.match(agyRow, /width:100%/u);
+  assert.match(agyRow, /Used: (<!-- -->)?141\.25%/u);
+  assert.doesNotMatch(rowFor(markup, "codex"), /progressbar/u);
+  assert.doesNotMatch(agyRow, /<details/u);
+  assert.match(agyRow, /Quota semantics: unknown/u);
+  assert.match(agyRow, /account: unknown/u);
   assert.doesNotMatch(markup, /JSON.stringify/u);
 });
 
-test("quota overview distinguishes omitted values from unknown statuses", () => {
-  const markup = renderReport({
+test("provider rows distinguish omitted values from unknown statuses", () => {
+  const markup = renderProvidersView({
     generatedAt: "2026-11-13T12:00:00.000Z",
-    schemaVersion: 6,
+    schemaVersion: 5,
     providers: [
       {
         provider: "codex",
@@ -93,22 +168,23 @@ test("quota overview distinguishes omitted values from unknown statuses", () => 
       }
     ]
   });
+  const codexRow = rowFor(markup, "codex");
+  assert.match(codexRow, /Used: (<!-- -->)?Not reported/u);
+  assert.match(codexRow, /Pace: (<!-- -->)?Not reported/u);
+  assert.match(codexRow, /Remaining: (<!-- -->)?Not reported/u);
+  assert.doesNotMatch(codexRow, /progressbar/u);
+  assert.match(codexRow, /Resets: Not reported/u);
   assert.match(
-    markup,
-    /Pace: Not reported · Used: Not reported · Remaining: Not reported/u
-  );
-  assert.match(markup, /Resets: Not reported/u);
-  assert.match(
-    markup,
+    codexRow,
     /Status: unavailable · Stale: false · Refreshed: Not reported/u
   );
-  assert.match(markup, /model: unknown/u);
+  assert.match(codexRow, /model: unknown/u);
 });
 
 test("fetchProviders passes the quota-axi report through without reshaping it", async () => {
   const quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> = {
     generatedAt: "2026-11-13T12:00:00.000Z",
-    schemaVersion: 6,
+    schemaVersion: 5,
     providers: [
       {
         provider: "agy",

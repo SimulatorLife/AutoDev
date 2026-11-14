@@ -54,11 +54,7 @@
 - [ ] **JUICE**: The intensity/opacity/size of the power-bank's electricity effect/shader should be increased to make it more visible and noticeable; it is currently way too faint and can barely be seen.
 - [ ] **FEAT**: The Console's 5,049-line control-api.ts contains dozens of handwritten is* validation functions checking nested API responses. Replace those guards with shared Zod schemas in Core, reused by the runtime and Console. This could eliminate substantial repetitive validation logic while making types and runtime contracts agree. Update the target-state doc as/where needed to clarify/specify that Zod schemas are the source of truth for API contracts, and that the runtime and Console should use them to validate and enforce the expected structure and types of API responses.
 - [ ] **FEAT**: AutoDev maintains a 681-line GitHub Actions adapter implementing HTTP requests, authentication headers, JSON decoding, error handling, and workflow/run retrieval. Octokit supplies typed GitHub REST operations and pagination, eliminating much of the HTTP plumbing. Retain AutoDev-specific statistics, response-size limits, timeouts, and fail-closed handling for partial results. Update the target-state doc as/where needed to clarify/specify that Octokit should be used for GitHub API interactions instead of handwritten HTTP requests.
-
-## Dependency replacement backlog
-
-Migrate through maintained public dependencies, preserve the [target-state contracts](autodev-console-target-state.md), verify parity, and delete superseded implementations. Existing TODOs already cover Zod and Octokit; `quota-axi` collection has been implemented.
-
+- [x] **FEAT**: Remove the section "Quota report" in the UI/console; just show the quotas underneath/in the row for each specific provider we have configured/use.
 - [ ] **MAINT**: Adopt `cockatiel` for generic retry, backoff, timeout, circuit-breaker, bulkhead and fallback mechanics in Router and Console; retain scoped request-outcome cooldown classification, persistence, cancellation and single-layer retries.
 - [ ] **MAINT**: Replace custom FIFO provider admission and shared query-scheduling queues with `p-queue` where it preserves cancellation, FIFO fairness, concurrency, and accounting; delete duplicate queues.
 - [ ] **MAINT**: Migrate ACP-capable leaf-agent sessions/process transport to `acpx/runtime` only after the target-state parity gate; use the ACP TypeScript SDK only if needed. Preserve direct CLI/Responses and Codex-owned root tools.

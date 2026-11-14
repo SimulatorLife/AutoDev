@@ -5,7 +5,8 @@
  * AutoDev routes agy's Gemini, Argon, and effort-suffixed Claude/GPT-OSS model
  * families separately so each route owns its model set and reactive cooldowns.
  * This route partition is not a quota identity: quota-axi reports the service
- * as `agy`, and its report is displayed without mapping it onto these routes.
+ * as `agy`. The Console preserves that identity and shows the shared usage
+ * beneath each route served by this service without rewriting the report.
  * The Runtime owns which model ids each route serves
  * (`runtime/src/shared/provider-model-ids.ts`); the Console needs only the ids,
  * for the behaviour all three share: agy fixes a model's reasoning effort in

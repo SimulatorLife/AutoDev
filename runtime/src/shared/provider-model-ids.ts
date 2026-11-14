@@ -22,7 +22,8 @@
  * The one Antigravity service (the `agy` CLI behind its bridge on :4002) has
  * separate AutoDev routes for its Gemini, Argon, and effort-suffixed
  * Claude/GPT-OSS model families. These route ids are not quota identities:
- * quota-axi reports the service as `agy` and its output is not remapped.
+ * quota-axi reports the service as `agy`; the Console shows that shared usage
+ * beneath each matching route while leaving the report identity unchanged.
  */
 
 import {

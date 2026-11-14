@@ -613,9 +613,9 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   assignments and reactive cooldowns, so a provider-declared limit from a
   Claude/GPT-OSS request cools only `antigravity-claude-gpt` and Gemini keeps
   serving. This route split does not redefine quota identities: quota-axi
-  reports Antigravity as `agy`, and the Console preserves that identity. The
-  patterns are mutually
-  exclusive with each other and with the Claude bridge (Anthropic ids carry no
+  reports Antigravity as `agy`, and the Console preserves that identity while
+  showing the shared quota beneath each Antigravity route row. The patterns
+  are mutually exclusive with each other and with the Claude bridge (Anthropic ids carry no
   effort suffix) and Codex (whose pattern excludes `gpt-oss-`), so a model id
   alone names its provider. The provider ids live in
   `@simulatorlife/autodev-core` (`ANTIGRAVITY_PROVIDERS`) and the patterns in
@@ -638,11 +638,15 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   Control API contract v34). Quota collection does not block provider requests;
   one in-flight CLI read is shared while a refresh is running. The Console reads
   the report's own provider identities, states, windows, percentages, reset
-  fields, freshness and availability as supplied; AutoDev does not translate,
-  merge or infer quota values. Missing values stay missing and unknown stays
-  unknown. Version 0.1.69 exports report types and model-catalog helpers, but
-  no in-process quota-reading function; its documented CLI is the supported
-  public collection interface.
+  fields, freshness and availability as supplied; the Console places compact
+  usage bars and reset date-times beneath each matching configured provider
+  row rather than in a standalone report section. Because the `agy` service
+  backs three AutoDev route rows, its unchanged quota report is shown beneath
+  each of those rows with `agy` still identified as the quota source. AutoDev
+  does not translate, merge or infer quota values. Missing values stay missing
+  and unknown stays unknown. Version 0.1.69 exports report types and
+  model-catalog helpers, but no in-process quota-reading function; its
+  documented CLI is the supported public collection interface.
 
   Quota output is not router health evidence. It does not set, clear or overlay
   cooldowns and does not change routing, provider concurrency or session
