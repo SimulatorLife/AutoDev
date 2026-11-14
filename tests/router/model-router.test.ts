@@ -3893,15 +3893,15 @@ test("parseConcurrencyConfig accepts multiline [agents] and inline agents={...} 
       maxConcurrentThreadsPerSession: 2
     });
 
-    // Non-integer values are not surfaced; admission reads `null` and runs
-    // uncapped. A string or bareword value never coerces silently.
+    // Values that are not a usable limit are unread, not a confirmed absent
+    // cap: a string or bareword never coerces silently and never reads as null.
     await writeFile(
       configFile,
       '[agents]\nmax_concurrent_threads_per_session = "two"\n'
     );
     assert.deepEqual(parseConcurrencyConfig(configFile), {
       file: configFile,
-      maxConcurrentThreadsPerSession: null
+      maxConcurrentThreadsPerSession: undefined
     });
     await writeFile(
       configFile,
@@ -3909,7 +3909,7 @@ test("parseConcurrencyConfig accepts multiline [agents] and inline agents={...} 
     );
     assert.deepEqual(parseConcurrencyConfig(configFile), {
       file: configFile,
-      maxConcurrentThreadsPerSession: null
+      maxConcurrentThreadsPerSession: undefined
     });
 
     // Missing config file is reported as `null`; never throws.

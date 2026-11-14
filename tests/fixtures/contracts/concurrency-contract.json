@@ -77,17 +77,15 @@
         "maxConcurrentThreadsPerSession": 2
       }
     },
-    "parse_invalid_string_value_returns_null": {
+    "parse_invalid_string_value_is_unread": {
       "source": "[agents]\nmax_concurrent_threads_per_session = \"two\"\n",
-      "expected": {
-        "maxConcurrentThreadsPerSession": null
-      }
+      "expected": {},
+      "unread": true
     },
-    "parse_invalid_bareword_value_returns_null": {
+    "parse_invalid_bareword_value_is_unread": {
       "source": "[agents]\nmax_concurrent_threads_per_session = not_a_number\n",
-      "expected": {
-        "maxConcurrentThreadsPerSession": null
-      }
+      "expected": {},
+      "unread": true
     },
     "parse_missing_config_file_returns_null": {
       "source": null,
@@ -270,6 +268,26 @@
           "key": "maxThreads"
         }
       ]
+    },
+    "parse_malformed_toml_is_unread": {
+      "source": "[agents\nmax_concurrent_threads_per_session = 2\n",
+      "unread": true,
+      "expected": {}
+    },
+    "parse_negative_value_is_unread": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = -1\n",
+      "unread": true,
+      "expected": {}
+    },
+    "parse_unsafe_integer_is_unread": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = 9007199254740992\n",
+      "unread": true,
+      "expected": {}
+    },
+    "parse_agents_not_a_table_is_unread": {
+      "source": "agents = \"many\"\n",
+      "unread": true,
+      "expected": {}
     }
   }
 }

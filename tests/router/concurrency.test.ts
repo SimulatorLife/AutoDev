@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
 
 import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
 import {
   ConcurrencyManager,
-  matchAgentsContext,
   parseConcurrencyConfig,
   PROCESS_FALLBACK_SESSION_KEY
 } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -78,18 +77,155 @@ test("parseConcurrencyConfig reads every valid TOML integer spelling", async () 
         `${token} should parse as ${expected}`
       );
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
-    // A value that is not a complete TOML integer stays unread rather than
-    // being truncated into a smaller, wrong limit.
+test("parseConcurrencyConfig reads full TOML documents around the agents table", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-toml-test-"));
+  const file = join(dir, "config.toml");
+  try {
+    const cases: [string, string, number | null][] = [
+      [
+        "indented multiline table with comments and nested role tables",
+        "  [agents]\n  # cap\n  max_concurrent_threads_per_session = 4 # four\n\n  [agents.explorer]\n  max_concurrent_threads_per_session = 99\n",
+        4
+      ],
+      [
+        "inline table with nested roles declared before the key",
+        'agents = { explorer = { description = "}{" }, max_concurrent_threads_per_session = 6 }\n',
+        6
+      ],
+      ["dotted keys", "agents.max_concurrent_threads_per_session = 7\n", 7],
+      [
+        "key inside another table is ignored",
+        "[other]\nmax_concurrent_threads_per_session = 9\n",
+        null
+      ],
+      ["empty file", "", null],
+      ["agents table without the key", "[agents]\nmax_threads = 3\n", null],
+      [
+        "largest safe integer",
+        "[agents]\nmax_concurrent_threads_per_session = 9007199254740991\n",
+        Number.MAX_SAFE_INTEGER
+      ],
+      [
+        "key text inside a string value is not the key",
+        '[agents]\nnote = "max_concurrent_threads_per_session = 5"\n',
+        null
+      ]
+    ];
+    for (const [name, source, expected] of cases) {
+      await writeFile(file, source);
+      assert.deepEqual(
+        parseConcurrencyConfig(file),
+        { file, maxConcurrentThreadsPerSession: expected },
+        name
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseConcurrencyConfig reports malformed or unusable declarations as unread", async () => {
+  // A TOML syntax error means nothing in the file can be trusted, and a
+  // well-formed value that is not a usable limit is not a confirmed absent
+  // cap either: both are "nobody knows", so both are `undefined`.
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-unread-test-"));
+  const file = join(dir, "config.toml");
+  try {
+    const sources: [string, string][] = [
+      ["malformed TOML", "[agents\nmax_concurrent_threads_per_session = 2\n"],
+      [
+        "bareword value",
+        "[agents]\nmax_concurrent_threads_per_session = not_a_number\n"
+      ],
+      [
+        "truncated integer token",
+        "[agents]\nmax_concurrent_threads_per_session = 12abc\n"
+      ],
+      [
+        "string value",
+        '[agents]\nmax_concurrent_threads_per_session = "two"\n'
+      ],
+      ["float value", "[agents]\nmax_concurrent_threads_per_session = 2.5\n"],
+      [
+        "boolean value",
+        "[agents]\nmax_concurrent_threads_per_session = true\n"
+      ],
+      ["negative value", "[agents]\nmax_concurrent_threads_per_session = -1\n"],
+      [
+        "integer beyond the safe range",
+        "[agents]\nmax_concurrent_threads_per_session = 9007199254740992\n"
+      ],
+      ["agents that is not a table", 'agents = "many"\n'],
+      ["agents that is an array of tables", "[[agents]]\nname = 1\n"]
+    ];
+    for (const [name, source] of sources) {
+      await writeFile(file, source);
+      const parsed = parseConcurrencyConfig(file);
+      assert.equal(parsed.maxConcurrentThreadsPerSession, undefined, name);
+      assert.equal(
+        Object.hasOwn(parsed, "maxConcurrentThreadsPerSession"),
+        true,
+        name
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseConcurrencyConfig warnings never echo config content from TOML parse errors", async () => {
+  const sentinel = "SECRET_SENTINEL_9f3a1c";
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-redact-test-"));
+  const file = join(dir, "config.toml");
+  const lines: string[] = [];
+  const write = mock.method(process.stderr, "write", (chunk: unknown) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  try {
     await writeFile(
       file,
-      "[agents]\nmax_concurrent_threads_per_session = 12abc\n"
+      `[provider]
+api_key = ${sentinel} oops
+[agents]
+max_concurrent_threads_per_session = 2
+`
     );
-    assert.deepEqual(parseConcurrencyConfig(file), {
-      file,
-      maxConcurrentThreadsPerSession: null
-    });
+    const parsed = parseConcurrencyConfig(file);
+    assert.equal(parsed.maxConcurrentThreadsPerSession, undefined);
+    const output = lines.join("");
+    assert.match(output, /could not read Codex concurrency config from/);
+    assert.equal(output.includes(sentinel), false);
   } finally {
+    write.mock.restore();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseConcurrencyConfig reports filesystem failures by error code only", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-fscode-test-"));
+  const file = join(dir, "config.toml");
+  const lines: string[] = [];
+  const write = mock.method(process.stderr, "write", (chunk: unknown) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  try {
+    await mkdir(file);
+    assert.equal(
+      parseConcurrencyConfig(file).maxConcurrentThreadsPerSession,
+      undefined
+    );
+    const output = lines.join("");
+    assert.match(output, /filesystem error EISDIR/);
+    assert.equal(output.includes("illegal operation"), false);
+  } finally {
+    write.mock.restore();
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -192,18 +328,6 @@ test("the status names where the limit in force came from", () => {
   overridden.clearStoredLimit();
   assert.equal(overridden.concurrencyStatus().configSource, "config_file");
   assert.equal(overridden.concurrencyStatus().effectivePerSessionLimit, 8);
-});
-
-test("matchAgentsContext extracts context cleanly", () => {
-  assert.equal(
-    matchAgentsContext("[agents]\nfoo=1\n[other]\nbar=2"),
-    "foo=1\n"
-  );
-  assert.equal(
-    matchAgentsContext("agents = { a = 1, b = { c = 2 } }\nother = 3"),
-    " a = 1, b = { c = 2 } "
-  );
-  assert.equal(matchAgentsContext("no_agents_here = true"), "");
 });
 
 test("ConcurrencyManager admits and releases subagent slots up to configured limit", () => {

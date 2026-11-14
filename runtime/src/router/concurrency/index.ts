@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { parse as parseToml, TomlError } from "smol-toml";
 
 import { createAgentActivityTracker } from "../../agents/agent-activity.ts";
 
@@ -122,126 +123,51 @@ export function defaultCodexConfigFile(): string {
   );
 }
 
-const AGENTS_TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[agents\]/gm;
-const WHITESPACE_CHAR = /\s/;
-const INLINE_AGENTS_TABLE = /(?:^|\n)\s*agents\s*=\s*\{/;
-// Capture the whole value token rather than a run of digits. TOML integers are
-// not just run-of-digits -- `_` is a legal digit separator and `0x`/`0o`/`0b`
-// are legal bases -- so matching `\d+` read
-// `max_concurrent_threads_per_session = 1_000` as `1` and capped the operator
-// at a single thread without saying so. `tomlInteger` decides what the token
-// means; keeping the shape check out of the regex also keeps this pattern
-// linear, which a nested `(?:_?[0-9])*` is not.
-const MAX_CONCURRENT_THREADS_KEY =
-  /(?:^|[\s,])max_concurrent_threads_per_session\s*=\s*([^\s,;#]+)/;
+const CONCURRENCY_KEY = "max_concurrent_threads_per_session";
 
-const RADIX_DIGITS: Readonly<Record<number, string>> = {
-  2: "01",
-  8: "01234567",
-  10: "0123456789",
-  16: "0123456789abcdefABCDEF"
-};
+class InvalidConcurrencySettingError extends Error {}
 
 /**
- * Read a TOML integer token, or null when it is not one. The whole token has
- * to be valid, so `12abc` is unread rather than truncated to `12`.
+ * The limit a parsed TOML document declares, or null when it declares none.
+ *
+ * A document that parsed but declares something that is not a usable limit --
+ * `agents` that is not a table, or a value that is not a non-negative safe
+ * integer -- is not a confirmed absent cap, so it throws and is reported as unread.
+ * Integers smol-toml cannot represent losslessly already fail the parse.
+ * `max_threads` is a legacy alias and is not consulted.
  */
-function tomlInteger(token: string): number | null {
-  const cleaned = token.replaceAll("_", "");
-  const radix = cleaned.startsWith("0x")
-    ? 16
-    : cleaned.startsWith("0o")
-      ? 8
-      : cleaned.startsWith("0b")
-        ? 2
-        : 10;
-  const body = radix === 10 ? cleaned : cleaned.slice(2);
-  if (!body) return null;
-  const digits = RADIX_DIGITS[radix] ?? "";
-  for (const character of body) {
-    if (!digits.includes(character)) return null;
+function declaredLimit(document: Record<string, unknown>): number | null {
+  const agents = document.agents;
+  if (agents === undefined) return null;
+  if (typeof agents !== "object" || agents === null || Array.isArray(agents)) {
+    throw new InvalidConcurrencySettingError("agents must be a table");
   }
-  const parsed = Number.parseInt(body, radix);
-  return Number.isSafeInteger(parsed) ? parsed : null;
+  const value = (agents as Record<string, unknown>)[CONCURRENCY_KEY];
+  if (value === undefined) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new InvalidConcurrencySettingError(
+      `${CONCURRENCY_KEY} must be a non-negative safe integer`
+    );
+  }
+  return value;
 }
 
-function skipWhitespace(source: string, from: number): number {
-  let index = from;
-  while (index < source.length && WHITESPACE_CHAR.test(source[index] ?? ""))
-    index += 1;
-  return index;
-}
+const FS_ERROR_CODE = /^[A-Z0-9_]+$/;
 
 /**
- * Where an `[agents]` header's body begins: after optional whitespace the
- * header must be followed by `;` or a line break. When the whitespace run
- * spans several lines the body starts after its last line break.
+ * A warning-safe reason for an unread config, safe by construction: only our
+ * own setting errors, a generic TOML category, or a filesystem error code are
+ * logged. Parser errors quote the offending document line and the config can
+ * hold credentials, so no other thrown message is ever echoed.
  */
-function tableBodyStart(source: string, headerEnd: number): number | null {
-  const firstContent = skipWhitespace(source, headerEnd);
-  if (source[firstContent] === ";") return firstContent + 1;
-  const lastBreak = source.lastIndexOf("\n", firstContent - 1);
-  return lastBreak >= headerEnd ? lastBreak + 1 : null;
-}
-
-/** The first line at or after `from` whose first non-blank character opens a `[section]`. */
-// Line terminators recognised by a multiline-mode `^`.
-const LINE_TERMINATORS = new Set(["\n", "\r", "\u2028", "\u2029"]);
-
-function isLineStart(source: string, index: number): boolean {
-  return index === 0 || LINE_TERMINATORS.has(source[index - 1] ?? "");
-}
-
-function nextLineStart(source: string, from: number): number | null {
-  for (let index = from; index < source.length; index += 1)
-    if (LINE_TERMINATORS.has(source[index] ?? "")) return index + 1;
-  return null;
-}
-
-/** The first line at or after `from` whose first non-blank character opens a `[section]`. */
-function tableBodyEnd(source: string, from: number): number {
-  let lineStart: number | null = isLineStart(source, from)
-    ? from
-    : nextLineStart(source, from);
-  while (lineStart !== null && lineStart < source.length) {
-    const firstContent = skipWhitespace(source, lineStart);
-    if (firstContent >= source.length) return source.length;
-    if (source[firstContent] === "[") return lineStart;
-    lineStart = nextLineStart(source, firstContent);
+function unreadReason(error: unknown): string {
+  if (error instanceof InvalidConcurrencySettingError) return error.message;
+  if (error instanceof TomlError) return "invalid TOML syntax";
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && FS_ERROR_CODE.test(code)) {
+    return "filesystem error " + code;
   }
-  return source.length;
-}
-
-export function matchAgentsContext(source: string): string {
-  // Multiline `[agents]` table: capture every line up to the next `[section]`
-  // header or end of input. Anchored on `[agents]` rather than a key prefix so
-  // a misindented file cannot accidentally capture siblings like
-  // `[agents.explorer]`. Scanned linearly rather than with a lazy regex so a
-  // large config cannot trigger polynomial backtracking.
-  for (const header of source.matchAll(AGENTS_TABLE_HEADER)) {
-    const bodyStart = tableBodyStart(source, header.index + header[0].length);
-    if (bodyStart !== null)
-      return source.slice(bodyStart, tableBodyEnd(source, bodyStart));
-  }
-  // Composer-emitted inline table. We hand-roll brace tracking rather than
-  // `[^{}]` because the composer inlines every registered role as
-  // `agents = { ..., explorer = { ... }, worker = { ... }, ... }` and the
-  // naive character class would stop at the first nested role's `{` and
-  // miss `max_concurrent_threads_per_session` declared above it.
-  const start = source.search(INLINE_AGENTS_TABLE);
-  if (start === -1) return "";
-  const open = source.indexOf("{", start);
-  if (open === -1) return "";
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    const ch = source[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, i);
-    }
-  }
-  return "";
+  return "unexpected error";
 }
 
 export function parseConcurrencyConfig(
@@ -253,20 +179,18 @@ export function parseConcurrencyConfig(
   };
   if (!existsSync(file)) return result;
   try {
-    const source = readFileSync(file, "utf8");
-    const agentsContext = matchAgentsContext(source);
-    const keyMatch = agentsContext.match(MAX_CONCURRENT_THREADS_KEY);
-    if (keyMatch?.[1] !== undefined) {
-      result.maxConcurrentThreadsPerSession = tomlInteger(keyMatch[1]);
-    }
+    result.maxConcurrentThreadsPerSession = declaredLimit(
+      parseToml(readFileSync(file, "utf8"))
+    );
   } catch (error) {
-    // The file is there and could not be read, so nobody knows what it
-    // declares. `undefined` is that state; `null` is a file that declares no
-    // limit, and a cap the operator set is not the same thing as a cap that
-    // was never read.
+    // The file is there and could not be read as a valid declaration -- an I/O
+    // failure, a TOML syntax error, or a setting that is not a usable limit --
+    // so nobody knows what it declares. `undefined` is that state; `null` is a
+    // file that declares no limit, and a cap the operator set is not the same
+    // thing as a cap that was never read.
     result.maxConcurrentThreadsPerSession = undefined;
     writeErrorLine(
-      `Warning: could not read Codex concurrency config from ${file}: ${error instanceof Error ? error.message : String(error)}`
+      `Warning: could not read Codex concurrency config from ${file}: ${unreadReason(error)}`
     );
   }
   return result;

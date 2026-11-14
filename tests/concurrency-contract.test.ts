@@ -64,12 +64,15 @@ function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
         false,
         `${name}: result must not expose maxThreads`
       );
-      for (const [key, value] of Object.entries(scenario.expected)) {
+      const expected = scenario.unread
+        ? { maxConcurrentThreadsPerSession: undefined }
+        : scenario.expected;
+      for (const [key, value] of Object.entries(expected)) {
         assert.equal(result[key], value, `${name}: ${key}`);
       }
       assert.equal(
         Object.keys(result).sort().join(","),
-        ["file", ...Object.keys(scenario.expected)].sort().join(","),
+        ["file", ...Object.keys(expected)].sort().join(","),
         `${name}: result key set`
       );
     } finally {
