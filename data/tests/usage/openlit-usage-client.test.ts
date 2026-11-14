@@ -8,6 +8,7 @@ import {
   OpenLITUsageClient,
   REQUEST_TIMEOUT_MS
 } from "../../src/usage/openlit-usage-client.ts";
+import { verifyUsageContract } from "../../src/usage/verify-usage-contract.ts";
 
 const selection: UsageFilterSelection = {
   range: "7D",
@@ -1344,4 +1345,37 @@ test("OpenLITUsageClient distinguishes an observed empty session from an unavail
     await unavailableClient.querySession(sessionId, { range: "24H" }),
     { kind: "unavailable" }
   );
+});
+
+test("OpenLITUsageClient and verifyUsageContract honor bounded per-request timeoutMs", async () => {
+  let observedSignal: AbortSignal | undefined;
+  const hangingFetch: typeof fetch = (_input, init) => {
+    observedSignal = init?.signal ?? undefined;
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(new Error("aborted")),
+        { once: true }
+      );
+    });
+  };
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "usage-secret",
+    fetchImpl: hangingFetch
+  });
+  const startedAt = Date.now();
+  const queryResult = await client.query(selection, { timeoutMs: 25 });
+  assert.deepEqual(queryResult, { kind: "unreachable" });
+  assert.equal(observedSignal?.aborted, true);
+  assert.ok(Date.now() - startedAt < 2000);
+
+  const verifyResult = await verifyUsageContract({
+    baseUrl: "http://openlit.local",
+    serviceToken: "usage-secret",
+    timeoutMs: 25,
+    fetchImpl: hangingFetch
+  });
+  assert.deepEqual(verifyResult, { kind: "unreachable" });
 });

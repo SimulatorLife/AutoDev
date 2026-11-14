@@ -565,6 +565,8 @@ export interface ClaudeTurnOptions {
    * failed turn must not dispatch children.
    */
   delegation?: () => TurnDelegation | null;
+  /** Called on turn progress, tool calls, and keep-alives to keep session leases fresh. */
+  onActivity?: () => void;
 }
 
 export class ClaudeTurn {
@@ -609,6 +611,7 @@ export class ClaudeTurn {
 
   /** The MCP tool list the shim offers the CLI. */
   toolDefinitions(): JsonRecord[] {
+    this.options.onActivity?.();
     return this.options.tools.map(mcpToolDefinition);
   }
 
@@ -627,12 +630,14 @@ export class ClaudeTurn {
     awaited: AwaitedToolResults = DEFAULT_AWAITED
   ): void {
     this.clearParkTimer();
+    this.options.onActivity?.();
     this.stream = stream;
     this.reporter = reporter;
     stream.onClientClose(() => {
       if (this.stream === stream) this.cancel();
     });
     this.keepAliveTimer ??= setInterval(() => {
+      this.options.onActivity?.();
       this.stream?.keepAlive();
       this.reporter?.heartbeat();
     }, 2000);
@@ -693,6 +698,7 @@ export class ClaudeTurn {
 
   /** A tool call the CLI made through the shim; resolves with Codex's output. */
   requestTool(name: string, args: unknown): Promise<JsonRecord> {
+    this.options.onActivity?.();
     const tool = this.options.tools.find(
       (candidate) => candidate.name === name
     );
@@ -745,6 +751,7 @@ export class ClaudeTurn {
   }
 
   private handle(event: ClaudeCliEvent): void {
+    this.options.onActivity?.();
     this.reporter?.heartbeat();
     const stream = this.stream;
     switch (event.kind) {

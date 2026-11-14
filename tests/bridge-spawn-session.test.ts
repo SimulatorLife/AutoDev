@@ -427,3 +427,94 @@ test("notification with agent_role sets role and completed child with default ro
   assert.equal(res.roles, "reuse:child-generic-role (worker)");
   assert.equal(child2?.role, "worker");
 });
+
+test("leaf turns never occupy or evict active orchestrator delegation sessions", () => {
+  const [r, clock] = registry({ maxSessions: 2 });
+  r.open("orch-1", { orchestrator: true });
+  clock.advance(10);
+  r.open("orch-2", { orchestrator: true });
+  clock.advance(10);
+
+  for (let i = 0; i < 20; i += 1) {
+    clock.advance(1);
+    const leafToken = r.open(`leaf-${i}`, { orchestrator: false });
+    assert.equal(leafToken, "");
+  }
+
+  assert.equal(r.status().held, 2);
+  assert.equal(r.mayDelegate("orch-1"), true);
+  assert.equal(r.mayDelegate("orch-2"), true);
+  assert.equal(r.mayDelegate("leaf-0"), false);
+
+  const leafRefusal = r.record("leaf-0", [{ message: "try delegating" }]);
+  assert.equal(leafRefusal.accepted, false);
+  assert.match(leafRefusal.message ?? "", /may not delegate/);
+
+  const orchOk = r.record("orch-1", [
+    { agent_type: "explorer", message: "still delegable" }
+  ]);
+  assert.equal(orchOk.accepted, true);
+
+  // Re-opening a session as leaf revokes any prior orchestrator state on that key.
+  r.open("orch-2", { orchestrator: false });
+  assert.equal(r.mayDelegate("orch-2"), false);
+  assert.equal(r.status().held, 1);
+});
+
+test("touch keeps long-running orchestrator sessions alive and default idle exceeds 30 minutes", () => {
+  const [r, clock] = registry({ idleMs: 5000 });
+  const token = r.open("orch-long", { orchestrator: true });
+  assert.ok(token.length > 0);
+
+  clock.advance(3000);
+  assert.equal(r.touch("orch-long", token), true);
+  clock.advance(3000);
+  assert.deepEqual(r.sweep(), []);
+  assert.equal(r.mayDelegate("orch-long"), true);
+
+  // A stale token cannot keep a newer turn's session artificially alive or close it.
+  const nextToken = r.open("orch-long", { orchestrator: true });
+  assert.notEqual(nextToken, token);
+  assert.equal(r.touch("orch-long", token), false);
+
+  // Default registry idle window must tolerate >15m/30m parked bridge turns.
+  let defaultClock = 1000;
+  const defaults = new SpawnSessionRegistry({ now: () => defaultClock });
+  defaults.open("orch-default", { orchestrator: true });
+  defaultClock += 45 * 60 * 1000;
+  defaults.open("orch-other", { orchestrator: true });
+  assert.equal(defaults.mayDelegate("orch-default"), true);
+  assert.equal(
+    defaults.record("orch-default", [
+      { agent_type: "worker", message: "after 45 minutes" }
+    ]).accepted,
+    true
+  );
+});
+
+test("closing with a stale turn token does not revoke a newer turn on the same session key", () => {
+  const [r] = registry();
+  const orphanedToken = r.open("shared-session", { orchestrator: true });
+  const activeToken = r.open("shared-session", { orchestrator: true });
+
+  assert.equal(
+    r.record("shared-session", [
+      { agent_type: "explorer", message: "active turn child" }
+    ]).accepted,
+    true
+  );
+
+  // Late cleanup from an aborted older turn finishes after the new turn started.
+  assert.deepEqual(r.close("shared-session", orphanedToken), []);
+  assert.equal(r.mayDelegate("shared-session"), true);
+  assert.equal(
+    r.record("shared-session", [
+      { agent_type: "worker", message: "still open" }
+    ]).accepted,
+    true
+  );
+
+  const drained = r.close("shared-session", activeToken);
+  assert.equal(drained.length, 2);
+  assert.equal(r.mayDelegate("shared-session"), false);
+});

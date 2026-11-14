@@ -3,6 +3,10 @@ import {
   type EvaluationResult
 } from "@simulatorlife/autodev-core";
 
+import {
+  DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS,
+  requestSignal
+} from "../clickhouse/clickhouse-client.ts";
 import { withClickHouseConnectionRetry } from "../clickhouse/retry.ts";
 import {
   type OpenLitClickHouseOptions,
@@ -23,6 +27,7 @@ export class EvaluationSourceUnavailableError extends Error {
 
 export interface EvaluationQueryOptions extends OpenLitClickHouseOptions {
   readonly limit?: number;
+  readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -180,10 +185,12 @@ const MAX_EVALUATION_WINDOW = 1000;
 export class EvaluationRepository {
   private readonly options: OpenLitClickHouseOptions;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: EvaluationQueryOptions = {}) {
     this.options = options;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS;
   }
 
   /** Reads evaluation results from ClickHouse `openlit.openlit_evaluation`. */
@@ -221,11 +228,13 @@ export class EvaluationRepository {
   private async query(endpoint: string, query: string): Promise<string> {
     try {
       return await withClickHouseConnectionRetry(async () => {
+        const signal = requestSignal(this.timeoutMs);
         const response = await this.fetchImpl(
           `${endpoint}&query=${encodeURIComponent(query)}`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" }
+            headers: { "Content-Type": "application/json" },
+            ...(signal ? { signal } : {})
           }
         );
         if (!response.ok) throw new EvaluationSourceUnavailableError();

@@ -1108,12 +1108,12 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
   // The collected batch becomes one exec call appended to the turn's output.
   assert.match(
     source,
-    /buildSpawnToolCallOutput\(\s*spawnSessions\.close\(spawnSession\),\s*spawnSession,\s*outputIndex\s*\)/
+    /buildSpawnToolCallOutput\(\s*spawnSessions\.close\(spawnSession, spawnToken\),\s*spawnSession,\s*outputIndex\s*\)/
   );
-  // And the registry never outlives the turn, on any path.
+  // And the registry never outlives the turn, on any path (scoped by turn token).
   assert.match(
     source,
-    /if \(spawnSession\) spawnSessions\.close\(spawnSession\);/
+    /if \(turn\.spawnSession\) \{\s*spawnSessions\.close\(turn\.spawnSession, turn\.spawnToken\);\s*\}/
   );
 });
 

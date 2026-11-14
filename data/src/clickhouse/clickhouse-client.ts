@@ -50,7 +50,7 @@ export const DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS = 30_000;
  * an explicit `undefined` as incompatible with `signal?: AbortSignal | null`,
  * and `null` is what `fetch` reads as "no signal".
  */
-function requestSignal(timeoutMs: number): AbortSignal | null {
+export function requestSignal(timeoutMs: number): AbortSignal | null {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
   return AbortSignal.timeout(timeoutMs);
 }

@@ -3244,6 +3244,7 @@ async function handleBridgeToolsRoute(
   const turn = codexToolTurns.byId(
     typeof body?.turn === "string" ? body.turn : ""
   );
+  if (turn) turn.touchSpawnSession();
   if (pathname.endsWith("/list")) {
     sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
     return;
@@ -3276,6 +3277,7 @@ async function handleBridgeSpawnRoute(
   if (pathname.endsWith("/attach")) {
     // A leaf turn, or a CLI that outlived its request, is simply not offered
     // the tool rather than being offered one that fails.
+    spawnSessions.touch(session);
     sendJson(response, 200, {
       spawnAllowed: spawnSessions.mayDelegate(session)
     });
@@ -3283,6 +3285,9 @@ async function handleBridgeSpawnRoute(
   }
   const result = spawnSessions.record(session, body?.children);
   if (!result.accepted) {
+    writeErrorLine(
+      `agy spawn rejected session=${session || "none"} reason=${result.reason ?? "rejected"}`
+    );
     sendJson(response, 409, { error: result.message });
     return;
   }
@@ -3446,6 +3451,7 @@ interface ResponsesTurn {
   skillContext: string | null;
   agentEvents: AgentReporter | null;
   spawnSession: string | null;
+  spawnToken: string | null;
   requestId: string | null;
   cwd: string;
   prompt: string;
@@ -3524,6 +3530,12 @@ function prepareResponsesTurn(
     workspace: cwd,
     payload
   });
+  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
+  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+    writeErrorLine(
+      `agy orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
+    );
+  }
   const codexTools = codexToolSurface(payload).tools;
   // Only a streamed turn can park a call and be continued by the request
   // carrying its output; a non-streamed one answers in a single body and has
@@ -3574,6 +3586,7 @@ function prepareResponsesTurn(
     skillContext,
     agentEvents,
     spawnSession,
+    spawnToken,
     requestId,
     cwd,
     prompt,
@@ -3629,11 +3642,12 @@ function runTurnAgy(
  */
 function closeSpawnDelegation(
   spawnSession: string | null,
+  spawnToken: string | null,
   outputIndex: number
 ): SpawnToolCallOutput | null {
   if (!spawnSession) return null;
   return buildSpawnToolCallOutput(
-    spawnSessions.close(spawnSession),
+    spawnSessions.close(spawnSession, spawnToken),
     spawnSession,
     outputIndex
   );
@@ -3643,12 +3657,20 @@ async function runNonStreamingTurn(
   turn: ResponsesTurn,
   response: ServerResponse
 ): Promise<void> {
-  const { agentEvents, spawnSession, agentRole, cwd, requestId } = turn;
+  const { agentEvents, spawnSession, spawnToken, agentRole, cwd, requestId } =
+    turn;
+  const touchSession = () => {
+    if (spawnSession) spawnSessions.touch(spawnSession, spawnToken);
+  };
   try {
-    const heartbeat = setInterval(() => reportTurnHeartbeat(agentEvents), 5000);
+    const heartbeat = setInterval(() => {
+      touchSession();
+      reportTurnHeartbeat(agentEvents);
+    }, 5000);
     let result: RunAgyResult;
     try {
       result = await runTurnAgy(turn, (event) => {
+        touchSession();
         reportTurnHeartbeat(agentEvents);
         if (!isStepUpdateEvent(event)) return;
         const update: JsonValue = isStepUpdate(event.step_update)
@@ -3665,7 +3687,11 @@ async function runNonStreamingTurn(
     const output: object[] = [
       responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`)
     ];
-    const delegation = closeSpawnDelegation(spawnSession, output.length);
+    const delegation = closeSpawnDelegation(
+      spawnSession,
+      spawnToken,
+      output.length
+    );
     if (delegation) {
       output.push(delegation.events[3][1].item);
       writeErrorLine(
@@ -3690,7 +3716,7 @@ async function runNonStreamingTurn(
   } catch (error) {
     turn.spawnTracker.flushSpawns("failure");
     turn.toolObserver.reportPermissionDenial(error);
-    if (spawnSession) spawnSessions.close(spawnSession);
+    if (spawnSession) spawnSessions.close(spawnSession, spawnToken);
     turn.logTurnEnd("failed", errorMessage(error));
     sendJson(response, 502, {
       error: agyErrorDetails(
@@ -4269,12 +4295,20 @@ class StreamingTurn implements ParkableTurn {
   }
 
   attach(): void {
+    this.touchSpawnSession();
     this.response.on("error", this.onResponseError);
     this.response.on("close", this.onResponseClose);
     this.keepAlive = setInterval(() => {
+      this.touchSpawnSession();
       reportTurnHeartbeat(this.turn.agentEvents);
       this.stream.writeKeepAlive();
     }, 2000);
+  }
+
+  touchSpawnSession(): void {
+    if (this.turn.spawnSession) {
+      spawnSessions.touch(this.turn.spawnSession, this.turn.spawnToken);
+    }
   }
 
   /**
@@ -4287,6 +4321,7 @@ class StreamingTurn implements ParkableTurn {
    * so the listener is removed before the response is closed.
    */
   park(): void {
+    this.touchSpawnSession();
     this.parked = true;
     this.detach();
     // Detached first, so closing the response here is not read as the client
@@ -4303,6 +4338,7 @@ class StreamingTurn implements ParkableTurn {
    * call was emitted.
    */
   rebind(stream: ResponseEventStream, response: ServerResponse): void {
+    this.touchSpawnSession();
     this.detach();
     this.parked = false;
     this.stream = stream;
@@ -4318,6 +4354,7 @@ class StreamingTurn implements ParkableTurn {
    * call rather than the one that asked for it.
    */
   resume(awaited: AwaitedToolResults): void {
+    this.touchSpawnSession();
     this.releaseOutputs(awaited.outputs);
     // Anything agy asked for while this turn was parked is owed Codex now, on
     // the response that just reopened -- not on the one that has already ended.
@@ -4351,6 +4388,7 @@ class StreamingTurn implements ParkableTurn {
    * answer on the next request.
    */
   requestTool(name: string, args: unknown): Promise<ShimJson> {
+    this.touchSpawnSession();
     const tool = this.turn.codexTools.find(
       (candidate) => candidate.name === name
     );
@@ -4479,6 +4517,7 @@ class StreamingTurn implements ParkableTurn {
   }
 
   readonly onEvent = (event: AgyEvent): void => {
+    this.touchSpawnSession();
     reportTurnHeartbeat(this.turn.agentEvents);
     if (isProcessEvent(event)) {
       this.child = event.child;
@@ -4525,6 +4564,7 @@ class StreamingTurn implements ParkableTurn {
     );
     const delegation = closeSpawnDelegation(
       this.turn.spawnSession,
+      this.turn.spawnToken,
       completed.output.length
     );
     if (delegation) {
@@ -4795,7 +4835,9 @@ async function runStreamingTurn(
     // accept a delegation from a CLI that outlived its request and attach it
     // to nothing, or -- on a reused session key -- to the next turn. Closing
     // twice is harmless; the success path has already drained it.
-    if (turn.spawnSession) spawnSessions.close(turn.spawnSession);
+    if (turn.spawnSession) {
+      spawnSessions.close(turn.spawnSession, turn.spawnToken);
+    }
     codexToolTurns.remove(streaming);
   }
 }

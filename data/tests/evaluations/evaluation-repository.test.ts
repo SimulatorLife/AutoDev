@@ -400,3 +400,29 @@ test("EvaluationRepository refuses a score that is not a finite number", () => {
     }
   );
 });
+
+test("EvaluationRepository aborts hung ClickHouse queries after timeoutMs", async () => {
+  const observedSignals: AbortSignal[] = [];
+  const stallingFetch: typeof fetch = (_input, init) => {
+    if (init?.signal) observedSignals.push(init.signal);
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(init.signal?.reason ?? new Error("aborted")),
+        { once: true }
+      );
+    });
+  };
+
+  const repo = new EvaluationRepository({
+    timeoutMs: 25,
+    fetchImpl: stallingFetch
+  });
+  await assert.rejects(
+    repo.listEvaluations(),
+    EvaluationSourceUnavailableError
+  );
+  assert.ok(observedSignal instanceof AbortSignal);
+  assert.ok(observedSignals.length >= 1);
+  assert.ok(observedSignals.some((signal) => signal.aborted));
+});

@@ -152,6 +152,11 @@ export interface OpenLITUsageClientConfig {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly timeoutMs?: number | undefined;
+}
+
+export interface OpenLITUsageRequestOptions {
+  readonly timeoutMs?: number | undefined;
 }
 
 export type OpenLITUsageResult =
@@ -181,29 +186,69 @@ export class OpenLITUsageClient {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly fetchImpl: typeof fetch;
+  readonly timeoutMs: number;
 
   constructor(config: OpenLITUsageClientConfig) {
     this.baseUrl = config.baseUrl.replace(TRAILING_SLASHES, "");
     this.serviceToken = config.serviceToken;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+    this.timeoutMs =
+      typeof config.timeoutMs === "number" &&
+      Number.isFinite(config.timeoutMs) &&
+      config.timeoutMs > 0
+        ? config.timeoutMs
+        : REQUEST_TIMEOUT_MS;
   }
 
-  async queryTrace(spanId: string): Promise<OpenLITTraceResult> {
+  private resolveTimeoutMs(options?: OpenLITUsageRequestOptions): number {
+    const candidate = options?.timeoutMs;
+    if (
+      typeof candidate === "number" &&
+      Number.isFinite(candidate) &&
+      candidate > 0
+    ) {
+      return candidate;
+    }
+    return this.timeoutMs;
+  }
+
+  private async fetchWithTimeout(
+    url: string,
+    init: Omit<RequestInit, "signal">,
+    options?: OpenLITUsageRequestOptions
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      this.resolveTimeoutMs(options)
+    );
+    try {
+      return await this.fetchImpl(url, {
+        ...init,
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async queryTrace(
+    spanId: string,
+    options?: OpenLITUsageRequestOptions
+  ): Promise<OpenLITTraceResult> {
     if (!isOpenTelemetrySpanId(spanId)) return { kind: "invalid-span-id" };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.fetchImpl(
+      const response = await this.fetchWithTimeout(
         `${this.baseUrl}${TRACE_DETAIL_API_PATH}/${encodeURIComponent(spanId)}`,
         {
           method: "GET",
           headers: {
             Authorization: `Bearer ${this.serviceToken}`,
             Accept: "application/json"
-          },
-          signal: controller.signal
-        }
+          }
+        },
+        options
       );
       if (response.status === 401 || response.status === 403) {
         return { kind: "unauthorized", status: response.status };
@@ -233,22 +278,19 @@ export class OpenLITUsageClient {
         : { kind: OPENLIT_UNREACHABLE_KIND };
     } catch {
       return { kind: OPENLIT_UNREACHABLE_KIND };
-    } finally {
-      clearTimeout(timer);
     }
   }
 
   async querySession(
     sessionId: unknown,
-    selection: UsageSessionQuerySelection
+    selection: UsageSessionQuerySelection,
+    options?: OpenLITUsageRequestOptions
   ): Promise<OpenLITSessionResult> {
     const validatedSessionId = safeAutoDevSessionId(sessionId);
     if (!validatedSessionId) return { kind: "invalid-session-id" };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.fetchImpl(
+      const response = await this.fetchWithTimeout(
         `${this.baseUrl}${SESSION_USAGE_API_PATH}`,
         {
           method: "POST",
@@ -264,9 +306,9 @@ export class OpenLITUsageClient {
               ? { customRange: selection.customRange }
               : {})
           }),
-          cache: "no-store",
-          signal: controller.signal
-        }
+          cache: "no-store"
+        },
+        options
       );
       if (response.status === 401 || response.status === 403) {
         return { kind: "unauthorized", status: response.status };
@@ -287,16 +329,15 @@ export class OpenLITUsageClient {
       return { kind: "ok", data: parsed.data };
     } catch {
       return { kind: "unavailable" };
-    } finally {
-      clearTimeout(timer);
     }
   }
 
-  async query(selection: UsageFilterSelection): Promise<OpenLITUsageResult> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  async query(
+    selection: UsageFilterSelection,
+    options?: OpenLITUsageRequestOptions
+  ): Promise<OpenLITUsageResult> {
     try {
-      const response = await this.fetchImpl(
+      const response = await this.fetchWithTimeout(
         `${this.baseUrl}${USAGE_API_PATH}`,
         {
           method: "POST",
@@ -305,9 +346,9 @@ export class OpenLITUsageClient {
             Accept: "application/json",
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ selection }),
-          signal: controller.signal
-        }
+          body: JSON.stringify({ selection })
+        },
+        options
       );
       if (response.status === 401 || response.status === 403)
         return { kind: "unauthorized", status: response.status };
@@ -325,8 +366,6 @@ export class OpenLITUsageClient {
       return { kind: "ok", data: toUsageSnapshot(parsed, selection) };
     } catch {
       return { kind: OPENLIT_UNREACHABLE_KIND };
-    } finally {
-      clearTimeout(timer);
     }
   }
 }

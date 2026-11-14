@@ -189,12 +189,42 @@ fi
 verify_backend_contracts() {
 	local control_status=0
 	local usage_status=0
+	local control_done=0
+	local usage_done=0
 	"$NODE_BIN" "$repo_root/runtime/src/cli/verify-control-api.ts" &
 	local control_pid=$!
 	"$NODE_BIN" "$repo_root/runtime/src/platform/usage-contract.ts" &
 	local usage_pid=$!
-	wait "$control_pid" || control_status=$?
-	wait "$usage_pid" || usage_status=$?
+
+	# Reap whichever preflight finishes first so a failing Control API or Usage
+	# check does not sit waiting behind a slow sibling check. Compatible with
+	# macOS Bash 3.2 (no `wait -n`).
+	while [[ "$control_done" -eq 0 || "$usage_done" -eq 0 ]]; do
+		if [[ "$control_done" -eq 0 ]] && ! kill -0 "$control_pid" 2>/dev/null; then
+			wait "$control_pid" || control_status=$?
+			control_done=1
+			if [[ "$control_status" -ne 0 ]]; then
+				kill "$usage_pid" 2>/dev/null || true
+				wait "$usage_pid" 2>/dev/null || true
+				usage_done=1
+				break
+			fi
+		fi
+		if [[ "$usage_done" -eq 0 ]] && ! kill -0 "$usage_pid" 2>/dev/null; then
+			wait "$usage_pid" || usage_status=$?
+			usage_done=1
+			if [[ "$usage_status" -ne 0 ]]; then
+				kill "$control_pid" 2>/dev/null || true
+				wait "$control_pid" 2>/dev/null || true
+				control_done=1
+				break
+			fi
+		fi
+		if [[ "$control_done" -eq 0 || "$usage_done" -eq 0 ]]; then
+			sleep 0.1
+		fi
+	done
+
 	if [[ "$control_status" -eq 75 || "$usage_status" -eq 75 ]]; then
 		echo "run-codex-console: a backend did not answer; the Console will retry when it is up." >&2
 		exit 75

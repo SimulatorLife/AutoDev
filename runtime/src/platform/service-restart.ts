@@ -113,7 +113,12 @@ export interface ServiceRestartDeps {
   >;
   readonly fileExists: (filePath: string) => boolean;
   readonly readFile: (filePath: string) => string;
-  readonly logTail: (filePath: string, lines: number) => readonly string[];
+  readonly fileSize?: ((filePath: string) => number | null) | undefined;
+  readonly logTail: (
+    filePath: string,
+    lines: number,
+    afterByte?: number
+  ) => readonly string[];
   readonly commandAvailable: (command: string) => boolean;
   readonly buildConsole: () => void;
   /** GET the URL, or POST `jsonBody` as JSON when one is given. */
@@ -275,14 +280,36 @@ export function resolveServiceRestartOptions(
   };
 }
 
-function readLogTail(filePath: string, lines: number): string[] {
+const PLIST_STDERR_PATTERN =
+  /<key>StandardErrorPath<\/key>\s*<string>([^<]+)<\/string>/u;
+
+function readPlistStderrPath(
+  deps: ServiceRestartDeps,
+  plistFilePath: string
+): string | null {
+  const content = deps.readFile(plistFilePath);
+  const match = PLIST_STDERR_PATTERN.exec(content);
+  return match?.[1]?.trim() || null;
+}
+
+function readLogTail(
+  filePath: string,
+  lines: number,
+  afterByte?: number
+): string[] {
   let fd: number | null = null;
   try {
     const size = statSync(filePath).size;
-    const length = Math.min(size, LOG_TAIL_BYTES);
+    const minOffset =
+      afterByte !== undefined && afterByte >= 0 && afterByte <= size
+        ? afterByte
+        : 0;
+    const startOffset = Math.max(minOffset, size - LOG_TAIL_BYTES);
+    const length = size - startOffset;
+    if (length <= 0) return [];
     const buffer = Buffer.alloc(length);
     fd = openSync(filePath, "r");
-    readSync(fd, buffer, 0, length, size - length);
+    readSync(fd, buffer, 0, length, startOffset);
     return buffer
       .toString("utf8")
       .split(LINE_SPLIT_PATTERN)
@@ -304,6 +331,13 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
         return readFileSync(filePath, "utf8");
       } catch {
         return "";
+      }
+    },
+    fileSize: (filePath) => {
+      try {
+        return statSync(filePath).size;
+      } catch {
+        return null;
       }
     },
     logTail: readLogTail,
@@ -726,7 +760,8 @@ async function checkService(
 /** Confirm every supervised service is up and owned by its launchd job. */
 async function verifySupervisedServices(
   deps: ServiceRestartDeps,
-  options: ServiceRestartOptions
+  options: ServiceRestartOptions,
+  logOffsets: ReadonlyMap<ManagedServiceLabel, number> = new Map()
 ): Promise<number> {
   const specs = serviceSpecs(options);
   const checks = await Promise.all(
@@ -741,8 +776,17 @@ async function verifySupervisedServices(
     );
     if (check.stderrPath) {
       writeErrorLine(`  log: ${check.stderrPath}`);
-      for (const line of deps.logTail(check.stderrPath, FAILURE_LOG_LINES))
-        writeErrorLine(`  | ${line}`);
+      const afterByte = logOffsets.get(spec.label);
+      const lines = deps.logTail(
+        check.stderrPath,
+        FAILURE_LOG_LINES,
+        afterByte
+      );
+      if (lines.length === 0 && afterByte !== undefined) {
+        writeErrorLine("  | (no new log output since reload)");
+      } else {
+        for (const line of lines) writeErrorLine(`  | ${line}`);
+      }
     }
     if (spec.required) status = 1;
   }
@@ -847,7 +891,8 @@ function consolePortIsSafeToPublish(
 async function reloadOneLabel(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
-  label: ManagedServiceLabel
+  label: ManagedServiceLabel,
+  logOffsets?: Map<ManagedServiceLabel, number>
 ): Promise<ReloadResult> {
   const plist = plistPath(options, label);
   if (!deps.fileExists(plist)) return "no-plist";
@@ -858,6 +903,13 @@ async function reloadOneLabel(
     return "failed";
   }
   if (!(await reapUnmanaged(options, label, deps))) return "failed";
+  if (logOffsets && deps.fileSize) {
+    const stderrPath = readPlistStderrPath(deps, plist);
+    if (stderrPath) {
+      const size = deps.fileSize(stderrPath);
+      logOffsets.set(label, size ?? 0);
+    }
+  }
   try {
     deps.launchd.enable(label);
     deps.launchd.bootstrap(plist);
@@ -940,7 +992,8 @@ async function reloadLabels(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
   index = 0,
-  results: ReloadResult[] = []
+  results: ReloadResult[] = [],
+  logOffsets?: Map<ManagedServiceLabel, number>
 ): Promise<ReloadResult[]> {
   const label = MANAGED_SERVICE_LABELS[index];
   if (label === undefined) return results;
@@ -957,8 +1010,8 @@ async function reloadLabels(
     results.push("build-failed");
     return results;
   }
-  results.push(await reloadOneLabel(deps, options, label));
-  return reloadLabels(deps, options, index + 1, results);
+  results.push(await reloadOneLabel(deps, options, label, logOffsets));
+  return reloadLabels(deps, options, index + 1, results, logOffsets);
 }
 
 export async function restartServices(
@@ -1008,7 +1061,8 @@ export async function restartServices(
     );
     return 1;
   }
-  const results = await reloadLabels(deps, options);
+  const logOffsets = new Map<ManagedServiceLabel, number>();
+  const results = await reloadLabels(deps, options, 0, [], logOffsets);
   if (results.includes("build-failed")) return 1;
   const blockedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "blocked"
@@ -1034,7 +1088,7 @@ export async function restartServices(
   writeErrorLine(
     "Runtime services supervised by launchd (KeepAlive; survive restart/crash/sleep)."
   );
-  return verifySupervisedServices(deps, options);
+  return verifySupervisedServices(deps, options, logOffsets);
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

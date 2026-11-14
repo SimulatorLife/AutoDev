@@ -1036,3 +1036,51 @@ test("refuses to bootstrap the Console when BUILD_ID remains missing after rebui
     "must not bootstrap LaunchAgent into a missing-BUILD_ID crash loop"
   );
 });
+
+test("failure log tailing is scoped to output written after reload instead of reprinting stale history", async () => {
+  const errPath = `/home/.codex/run/${LABEL_AUTODEV_CONSOLE}.err.log`;
+  let consoleErrContent =
+    "run-codex-console: console/.next/BUILD_ID is missing\n" +
+    "stale earlier error line\n";
+  const observedOffsets: Array<number | undefined> = [];
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 2 }), {
+      ...base,
+      readFile: (filePath) =>
+        filePath.endsWith(`${LABEL_AUTODEV_CONSOLE}.plist`)
+          ? `<plist><dict><key>StandardErrorPath</key><string>${errPath}</string></dict></plist>`
+          : "",
+      fileSize: (filePath) =>
+        filePath === errPath
+          ? Buffer.byteLength(consoleErrContent, "utf8")
+          : 0,
+      logTail: (filePath, lines, afterByte) => {
+        observedOffsets.push(afterByte);
+        const raw = filePath === errPath ? consoleErrContent.slice(afterByte ?? 0) : "";
+        return raw
+          .split(/\r?\n/u)
+          .filter((line) => line.trim().length > 0)
+          .slice(-lines);
+      },
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          base.launchd.bootstrap(plist);
+          if (plist.endsWith(`${LABEL_AUTODEV_CONSOLE}.plist`)) {
+            consoleErrContent += "[console] fresh failure during this reload\n";
+          }
+        },
+        print: (label) =>
+          label === LABEL_AUTODEV_CONSOLE
+            ? `\tlast exit code = 1\n\tstderr path = ${errPath}`
+            : base.launchd.print(label)
+      }
+    })
+  );
+  assert.equal(status, 1);
+  assert.ok(observedOffsets.some((offset) => (offset ?? 0) > 0));
+  assert.match(stderr, /\[console\] fresh failure during this reload/u);
+  assert.doesNotMatch(stderr, /BUILD_ID is missing/u);
+  assert.doesNotMatch(stderr, /stale earlier error line/u);
+});

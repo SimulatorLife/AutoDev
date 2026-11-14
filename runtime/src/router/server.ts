@@ -191,6 +191,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   });
   let livePollStarted = false;
   let quotaPollInterval: ReturnType<typeof setInterval> | null = null;
+  let backgroundWarmupTimer: ReturnType<typeof setTimeout> | null = null;
   let quotaAxiSnapshot: QuotaAxiResponse | null = null;
   let quotaAxiRefresh: Promise<void> | null = null;
   let controlServer: Server | null = null;
@@ -322,6 +323,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    if (backgroundWarmupTimer !== null) {
+      clearTimeout(backgroundWarmupTimer);
+      backgroundWarmupTimer = null;
+    }
     if (livePollStarted) {
       codexState.collector.stopLivePoll();
       codexState.livePollStarted = false;
@@ -357,29 +362,6 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     server.listen(port, host, () => {
       if (cleanedUp) return;
       try {
-        if (getControlApiAvailability().enabled) {
-          try {
-            void warmupDefaultPlaytestingRepository().catch(() => {
-              writeErrorLine("Playtesting schema startup warmup failed.");
-            });
-          } catch {
-            writeErrorLine("Playtesting schema startup warmup failed.");
-          }
-        }
-        if (!codexState.livePollStarted) {
-          livePollStarted = true;
-          codexState.livePollStarted = true;
-          codexState.collector.startLivePoll();
-        }
-        void refreshCodexState();
-        modelDiscovery?.start();
-        if (IS_MAIN) {
-          void refreshQuotaAxi().catch(() => undefined);
-          quotaPollInterval = setInterval(() => {
-            void refreshQuotaAxi().catch(() => undefined);
-          }, 60_000);
-          quotaPollInterval.unref();
-        }
         const controlListener = configuredControlApiListener(port);
         if (controlListener) {
           controlServer = createControlApiServer();
@@ -398,6 +380,36 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             }
           );
         }
+        if (getControlApiAvailability().enabled) {
+          try {
+            void warmupDefaultPlaytestingRepository().catch(() => {
+              writeErrorLine("Playtesting schema startup warmup failed.");
+            });
+          } catch {
+            writeErrorLine("Playtesting schema startup warmup failed.");
+          }
+        }
+        if (!codexState.livePollStarted) {
+          livePollStarted = true;
+          codexState.livePollStarted = true;
+          codexState.collector.startLivePoll();
+        }
+        // Defer heavy synchronous SQLite polling and external provider probes until
+        // after both HTTP listeners have bound and can service readiness probes.
+        backgroundWarmupTimer = setTimeout(() => {
+          backgroundWarmupTimer = null;
+          if (cleanedUp) return;
+          void refreshCodexState();
+          modelDiscovery?.start();
+          if (IS_MAIN) {
+            void refreshQuotaAxi().catch(() => undefined);
+            quotaPollInterval = setInterval(() => {
+              void refreshQuotaAxi().catch(() => undefined);
+            }, 60_000);
+            quotaPollInterval.unref();
+          }
+        }, 50);
+        backgroundWarmupTimer.unref();
         writeErrorLine(
           `Codex model router listening at http://${host}:${port}`
         );

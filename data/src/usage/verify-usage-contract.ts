@@ -23,9 +23,13 @@ export type UsageContractOutcome =
   | { readonly kind: "unreachable" }
   | { readonly kind: "not-configured" };
 
+const DEFAULT_CONTRACT_PROBE_TIMEOUT_MS = 15_000;
+
 export interface UsageContractOptions {
   readonly baseUrl?: string;
   readonly serviceToken?: string;
+  readonly timeoutMs?: number;
+  readonly fetchImpl?: typeof fetch;
 }
 
 /** Verify the deployed Usage response against the v5 contract. */
@@ -41,16 +45,21 @@ export async function verifyUsageContract(
       options.baseUrl ??
       process.env.AUTODEV_OPENLIT_USAGE_URL?.trim() ??
       DEFAULT_BASE_URL,
-    serviceToken
+    serviceToken,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {})
   });
-  const result = await client.query({
-    range: "CUSTOM",
-    customRange: {
-      startDate: CONTRACT_PROBE_DATE,
-      endDate: CONTRACT_PROBE_DATE
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CONTRACT_PROBE_TIMEOUT_MS;
+  const result = await client.query(
+    {
+      range: "CUSTOM",
+      customRange: {
+        startDate: CONTRACT_PROBE_DATE,
+        endDate: CONTRACT_PROBE_DATE
+      },
+      values: {}
     },
-    values: {}
-  });
+    { timeoutMs }
+  );
 
   switch (result.kind) {
     case "ok": {

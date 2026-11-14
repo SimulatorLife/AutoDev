@@ -1131,7 +1131,6 @@ function sseLine(eventName: string, body: object): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
 }
 
-
 interface CopilotRequestContext {
   payload: JsonRecord;
   requestId: string | null;
@@ -1141,6 +1140,7 @@ interface CopilotRequestContext {
   cwd: string;
   prompt: string;
   spawnSession: string | null;
+  spawnToken: string | null;
   sandboxModeHeader: "read-only" | "workspace-write" | null;
 }
 
@@ -1174,11 +1174,19 @@ class CopilotResponseStream {
     };
     response.on("error", this.onResponseError);
     response.on("close", this.onResponseClose);
-    this.keepAlive = setInterval(() => this.writeKeepAlive(), 2000);
+    this.keepAlive = setInterval(() => {
+      if (this.context.spawnSession) {
+        spawnSessions.touch(this.context.spawnSession, this.context.spawnToken);
+      }
+      this.writeKeepAlive();
+    }, 2000);
     this.emitInitialEvents();
   }
 
   acceptEvent(event: CopilotRunEvent): void {
+    if (this.context.spawnSession) {
+      spawnSessions.touch(this.context.spawnSession, this.context.spawnToken);
+    }
     if (typeof this.context.agentEvents?.reportHeartbeat === "function") {
       void this.context.agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
     }
@@ -1257,7 +1265,7 @@ class CopilotResponseStream {
 
   fail(error: unknown): void {
     if (this.context.spawnSession)
-      spawnSessions.close(this.context.spawnSession);
+      spawnSessions.close(this.context.spawnSession, this.context.spawnToken);
     if (!this.isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
     const limit = classifyCliLimit(message, copilotErrorExitCode(error));
@@ -1293,7 +1301,7 @@ class CopilotResponseStream {
   dispose(): void {
     clearInterval(this.keepAlive);
     if (this.context.spawnSession)
-      spawnSessions.close(this.context.spawnSession);
+      spawnSessions.close(this.context.spawnSession, this.context.spawnToken);
     this.response.removeListener("error", this.onResponseError);
   }
 
@@ -1526,7 +1534,7 @@ function buildCopilotSpawnOutput(
   const session = context.spawnSession;
   if (!session) return null;
   return buildSpawnToolCallOutput(
-    spawnSessions.close(session),
+    spawnSessions.close(session, context.spawnToken),
     session,
     outputIndex
   );
@@ -1574,6 +1582,7 @@ async function handleSpawnRoute(
   if (!body) return;
   const session = typeof body.session === "string" ? body.session : "";
   if (pathname.endsWith("/attach")) {
+    spawnSessions.touch(session);
     sendJson(response, 200, {
       spawnAllowed: spawnSessions.mayDelegate(session)
     });
@@ -1581,6 +1590,9 @@ async function handleSpawnRoute(
   }
   const result = spawnSessions.record(session, body.children);
   if (!result.accepted) {
+    writeErrorLine(
+      `copilot spawn rejected session=${session || "none"} reason=${result.reason ?? "rejected"}`
+    );
     sendJson(response, 409, { error: result.message });
     return;
   }
@@ -1654,6 +1666,12 @@ function prepareCopilotRequest(
     workspace: cwd,
     payload
   });
+  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
+  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+    writeErrorLine(
+      `copilot orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
+    );
+  }
   const composedPrompt =
     composeProviderPrompt(agentRole, cwd) +
     sandboxInjection +
@@ -1706,11 +1724,15 @@ function prepareCopilotRequest(
     cwd,
     prompt,
     spawnSession,
+    spawnToken,
     sandboxModeHeader
   };
 }
 
 function reportCopilotHeartbeat(context: CopilotRequestContext): void {
+  if (context.spawnSession) {
+    spawnSessions.touch(context.spawnSession, context.spawnToken);
+  }
   if (typeof context.agentEvents?.reportHeartbeat === "function") {
     void context.agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
   }
@@ -1745,7 +1767,8 @@ async function sendCopilotNonStreamingResponse(
       clearInterval(nonStreamHeartbeat);
     }
   } catch (error) {
-    if (context.spawnSession) spawnSessions.close(context.spawnSession);
+    if (context.spawnSession)
+      spawnSessions.close(context.spawnSession, context.spawnToken);
     const message = error instanceof Error ? error.message : String(error);
     sendJson(response, 503, {
       error: { type: "copilot_proxy_error", message }

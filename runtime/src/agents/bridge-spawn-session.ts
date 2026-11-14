@@ -116,6 +116,7 @@ export interface ChildSessionRecord {
 }
 
 export interface SpawnSession {
+  token: string;
   orchestrator: boolean;
   role: string | null;
   workspace: string | null;
@@ -130,8 +131,11 @@ export interface SpawnRegistryOptions {
 
 // Defence in depth only: every turn closes its own session in a finally block,
 // so reaching either of these means a turn died in a way that skipped it.
-const DEFAULT_MAX_SESSIONS = 8;
-const DEFAULT_IDLE_MS = 900_000;
+// Keep defaults well above bridge park timeouts (30m) and multi-hour turns
+// while `touch()` refreshes active turns continuously.
+const DEFAULT_MAX_SESSIONS = 256;
+const DEFAULT_IDLE_MS = 14_400_000;
+const MAX_TRACKED_LEAF_AND_ABSENCE_KEYS = 512;
 
 const NOTIFICATION_REGEX =
   /<subagent_notification>([\s\S]*?)<\/subagent_notification>/g;
@@ -305,8 +309,31 @@ export class SpawnSessionRegistry {
   private readonly maxSessions: number;
   private readonly idleMs: number;
   private readonly now: () => number;
+  private nextToken = 0;
   private readonly sessions = new Map<string, SpawnSession>();
+  // Track non-orchestrator leaf keys separately so worker/explorer traffic
+  // never occupies or evicts active orchestrator delegation slots.
+  private readonly leafSessions = new Map<string, number>();
+  private readonly absenceReasons = new Map<
+    string,
+    "closed" | "expired" | "evicted"
+  >();
   private readonly verifiedChildren = new Map<string, ChildSessionRecord>();
+
+  private setBounded<V>(
+    map: Map<string, V>,
+    key: string,
+    value: V,
+    cap: number
+  ): void {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > cap) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+  }
 
   registerChildSession(record: ChildSessionRecord): void {
     if (!record?.childId || !record?.parentId) return;
@@ -373,9 +400,12 @@ export class SpawnSessionRegistry {
   }
 
   /**
-   * Begin a turn. Re-opening a key replaces whatever was there: the previous
-   * turn on that conversation is over, and carrying its children forward would
-   * spawn them twice.
+   * Begin a turn and return an opaque turn-ownership token. Re-opening a key
+   * replaces whatever was there: the previous turn on that conversation is
+   * over, and carrying its children forward would spawn them twice.
+   *
+   * Leaf turns (`orchestrator: false`) are tracked separately so concurrent
+   * worker/explorer turns never consume or evict active orchestrator slots.
    */
   open(
     sessionKey: string,
@@ -388,8 +418,20 @@ export class SpawnSessionRegistry {
       role?: string | null;
       workspace?: string | null;
     } = {}
-  ): void {
+  ): string {
     this.sweep();
+    this.absenceReasons.delete(sessionKey);
+    if (!orchestrator) {
+      this.sessions.delete(sessionKey);
+      this.setBounded(
+        this.leafSessions,
+        sessionKey,
+        this.now(),
+        MAX_TRACKED_LEAF_AND_ABSENCE_KEYS
+      );
+      return "";
+    }
+    this.leafSessions.delete(sessionKey);
     while (
       this.sessions.size >= this.maxSessions &&
       !this.sessions.has(sessionKey)
@@ -399,9 +441,17 @@ export class SpawnSessionRegistry {
       )[0];
       if (!oldest) break;
       this.sessions.delete(oldest[0]);
+      this.setBounded(
+        this.absenceReasons,
+        oldest[0],
+        "evicted",
+        MAX_TRACKED_LEAF_AND_ABSENCE_KEYS
+      );
     }
+    const token = String(++this.nextToken);
     this.sessions.set(sessionKey, {
-      orchestrator,
+      token,
+      orchestrator: true,
       role: typeof role === "string" && role.trim() ? role.trim() : null,
       workspace:
         typeof workspace === "string" && workspace.trim()
@@ -410,6 +460,56 @@ export class SpawnSessionRegistry {
       children: [],
       updatedAt: this.now()
     });
+    return token;
+  }
+
+  /** Current turn-ownership token for an open orchestrator session. */
+  tokenOf(sessionKey: string): string | null {
+    return this.sessions.get(sessionKey)?.token ?? null;
+  }
+
+  /**
+   * Refresh activity timestamp for an open turn so long-running or multi-hop
+   * parked turns are not reclaimed by the idle sweep.
+   */
+  touch(sessionKey: string, token?: string | null): boolean {
+    const session = this.sessions.get(sessionKey);
+    if (session) {
+      if (token !== undefined && token !== null && session.token !== token) {
+        return false;
+      }
+      session.updatedAt = this.now();
+      return true;
+    }
+    if (
+      (token === undefined || token === null) &&
+      this.leafSessions.has(sessionKey)
+    ) {
+      this.leafSessions.set(sessionKey, this.now());
+      return true;
+    }
+    return false;
+  }
+
+  private refuseMissingSession(sessionKey: string): {
+    accepted: false;
+    reason: string;
+    message: string;
+  } {
+    if (this.leafSessions.has(sessionKey)) {
+      return {
+        accepted: false,
+        reason: "leaf",
+        message:
+          "This is a bounded leaf turn and may not delegate. Do the work directly."
+      };
+    }
+    return {
+      accepted: false,
+      reason: this.absenceReasons.get(sessionKey) ?? "missing",
+      message:
+        "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path."
+    };
   }
 
   /**
@@ -425,21 +525,18 @@ export class SpawnSessionRegistry {
     children: unknown
   ): {
     accepted: boolean;
+    reason?: string;
     message?: string;
     children?: SpawnChild[];
     roles?: string;
     count?: number;
   } {
     const session = this.sessions.get(sessionKey);
-    if (!session)
-      return {
-        accepted: false,
-        message:
-          "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path."
-      };
+    if (!session) return this.refuseMissingSession(sessionKey);
     if (!session.orchestrator)
       return {
         accepted: false,
+        reason: "leaf",
         message:
           "This is a bounded leaf turn and may not delegate. Do the work directly."
       };
@@ -501,10 +598,36 @@ export class SpawnSessionRegistry {
     return this.sessions.get(sessionKey)?.orchestrator === true;
   }
 
-  /** End the turn and hand back what it asked to spawn. */
-  close(sessionKey: string): SpawnChild[] {
+  /**
+   * End the turn and hand back what it asked to spawn.
+   *
+   * When a turn-ownership `token` is provided, closing with a stale token is
+   * a no-op so an aborted or overlapping older turn finishing later cannot
+   * tear down a newer turn's active spawn session on the same conversation key.
+   */
+  close(sessionKey: string, token?: string | null): SpawnChild[] {
     const session = this.sessions.get(sessionKey);
+    if (token !== undefined && token !== null) {
+      if (!session || session.token !== token) return [];
+      this.sessions.delete(sessionKey);
+      this.setBounded(
+        this.absenceReasons,
+        sessionKey,
+        "closed",
+        MAX_TRACKED_LEAF_AND_ABSENCE_KEYS
+      );
+      return session.children;
+    }
+    this.leafSessions.delete(sessionKey);
     this.sessions.delete(sessionKey);
+    if (session) {
+      this.setBounded(
+        this.absenceReasons,
+        sessionKey,
+        "closed",
+        MAX_TRACKED_LEAF_AND_ABSENCE_KEYS
+      );
+    }
     return session ? session.children : [];
   }
 
@@ -514,7 +637,18 @@ export class SpawnSessionRegistry {
     const expired = [...this.sessions.entries()]
       .filter(([, s]) => s.updatedAt < deadline)
       .map(([key]) => key);
-    for (const key of expired) this.sessions.delete(key);
+    for (const key of expired) {
+      this.sessions.delete(key);
+      this.setBounded(
+        this.absenceReasons,
+        key,
+        "expired",
+        MAX_TRACKED_LEAF_AND_ABSENCE_KEYS
+      );
+    }
+    for (const [key, updatedAt] of this.leafSessions.entries()) {
+      if (updatedAt < deadline) this.leafSessions.delete(key);
+    }
     return expired;
   }
 

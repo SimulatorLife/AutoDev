@@ -1195,6 +1195,7 @@ async function handleBridgeSpawn(
   const body = await readJsonBody(request);
   const session = typeof body?.session === "string" ? body.session : "";
   if (pathname.endsWith("/attach")) {
+    spawnSessions.touch(session);
     sendJson(response, 200, {
       spawnAllowed: spawnSessions.mayDelegate(session)
     });
@@ -1202,6 +1203,9 @@ async function handleBridgeSpawn(
   }
   const result = spawnSessions.record(session, body?.children);
   if (!result.accepted) {
+    writeErrorLine(
+      `claude spawn rejected session=${session || "none"} reason=${result.reason ?? "rejected"}`
+    );
     sendJson(response, 409, { error: result.message });
     return;
   }
@@ -1306,6 +1310,12 @@ function startResponsesTurn(
     workspace: cwd,
     payload
   });
+  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
+  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+    writeErrorLine(
+      `claude orchestrator request missing trackable spawn session header role=${agentRole ?? "default"}`
+    );
+  }
   const mayDelegate =
     spawnSession !== null && spawnSessions.mayDelegate(spawnSession);
   const delegation = bridgeDelegationInstruction({
@@ -1319,7 +1329,10 @@ function startResponsesTurn(
     registry: turns,
     parkMs: CLAUDE_PARK_SECONDS * 1000,
     describeFailure,
-    delegation: () => collectSpawnDelegation(spawnSession)
+    delegation: () => collectSpawnDelegation(spawnSession, spawnToken),
+    onActivity: () => {
+      if (spawnSession) spawnSessions.touch(spawnSession, spawnToken);
+    }
   });
   writeErrorLine(
     `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${spawnSession !== null}`
@@ -1374,10 +1387,11 @@ ${orchestratorSkillContext}
  * them once, and a turn that failed or was cancelled discards them.
  */
 function collectSpawnDelegation(
-  spawnSession: string | null
+  spawnSession: string | null,
+  spawnToken: string | null = null
 ): { children: SpawnChild[]; parentId: string } | null {
   if (!spawnSession) return null;
-  const children = spawnSessions.close(spawnSession);
+  const children = spawnSessions.close(spawnSession, spawnToken);
   if (children.length === 0) return null;
   writeErrorLine(
     `claude delegating ${children.length} subagent(s) through Codex`

@@ -4,7 +4,7 @@ import {
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
 
-const CONTROL_API_PROBE_TIMEOUT_MS = 5000;
+const CONTROL_API_PROBE_TIMEOUT_MS = 10_000;
 const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
 const CONTROL_API_PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const CONTROL_API_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
@@ -371,7 +371,8 @@ async function verifyPlaytestingRoutes(
 
 async function verifyControlApiCompatibilityOnce(
   config: ControlApiCompatibilityConfig,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  probeTimeoutMs = CONTROL_API_PROBE_TIMEOUT_MS
 ): Promise<void> {
   const headers = {
     Authorization: `Bearer ${config.serviceToken}`,
@@ -382,7 +383,7 @@ async function verifyControlApiCompatibilityOnce(
     const response = await fetchImpl(`${config.baseUrl}${pathAndQuery}`, {
       method: "GET",
       headers,
-      signal: AbortSignal.timeout(CONTROL_API_PROBE_TIMEOUT_MS)
+      signal: AbortSignal.timeout(Math.max(1, probeTimeoutMs))
     });
     return {
       response,
@@ -475,12 +476,17 @@ async function verifyEvaluationsRoute(request: ControlApiProbe): Promise<void> {
 async function verifyWithDeadline(
   config: ControlApiCompatibilityConfig,
   fetchImpl: typeof fetch,
+  timeoutMs: number,
   deadline: number,
   retryDelayMs: number,
   sleepImpl: (ms: number) => Promise<void>
 ): Promise<void> {
+  const probeTimeoutMs =
+    timeoutMs > 0
+      ? Math.min(CONTROL_API_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
+      : CONTROL_API_PROBE_TIMEOUT_MS;
   try {
-    await verifyControlApiCompatibilityOnce(config, fetchImpl);
+    await verifyControlApiCompatibilityOnce(config, fetchImpl, probeTimeoutMs);
   } catch (error) {
     if (
       !(error instanceof ControlApiUnavailableError) ||
@@ -492,6 +498,7 @@ async function verifyWithDeadline(
     await verifyWithDeadline(
       config,
       fetchImpl,
+      timeoutMs,
       deadline,
       retryDelayMs,
       sleepImpl
@@ -520,6 +527,7 @@ export async function verifyControlApiCompatibility(
   await verifyWithDeadline(
     config,
     fetchImpl,
+    timeoutMs,
     Date.now() + timeoutMs,
     retryDelayMs,
     sleepImpl

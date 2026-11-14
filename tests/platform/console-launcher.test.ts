@@ -478,6 +478,67 @@ test("console launcher reports a backend that did not answer as a temporary fail
     assert.match(result.stderr, /a backend did not answer/u);
   }));
 
+test("console launcher terminates slow sibling preflight instead of blocking when one backend fails", () =>
+  withTempDir((directory) => {
+    const fakeRepo = join(directory, "repo");
+    const codexHome = join(directory, "codex-home");
+    const consoleDir = join(fakeRepo, "console");
+    const buildIdDir = join(consoleDir, ".next");
+    const nextBinDir = join(consoleDir, "node_modules/next/dist/bin");
+    const fakeNode = join(directory, "fake-node");
+    const fakeNext = join(nextBinDir, "next");
+
+    mkdirSync(buildIdDir, { recursive: true });
+    mkdirSync(nextBinDir, { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(buildIdDir, "BUILD_ID"), "test-build-id-123\n");
+    writeFileSync(fakeNext, "#!/usr/bin/env bash\necho next\n");
+    chmodSync(fakeNext, 0o755);
+    writeFileSync(
+      join(codexHome, "openlit-secrets.env"),
+      [
+        `AUTODEV_CONTROL_API_TOKEN=${"c".repeat(64)}`,
+        `AUTODEV_OPENLIT_USAGE_TOKEN=${"u".repeat(64)}`
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+
+    writeFileSync(
+      fakeNode,
+      [
+        "#!/usr/bin/env bash",
+        'case "$*" in',
+        "  *verify-control-api.ts*) exit 75 ;;",
+        '  *usage-contract.ts*) trap '\''kill "$child" 2>/dev/null; exit 0'\'' TERM INT; sleep 20 & child=$!; wait "$child" ;;',
+        "esac",
+        "exit 0"
+      ].join("\n")
+    );
+    chmodSync(fakeNode, 0o755);
+
+    const startedAt = Date.now();
+    const result = spawnSync("bash", [runScriptPath], {
+      encoding: "utf8",
+      timeout: 5000,
+      env: {
+        ...process.env,
+        HOME: directory,
+        CODEX_HOME: codexHome,
+        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_NODE_BIN: fakeNode,
+        AUTODEV_CONSOLE_PORT: "3300"
+      }
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result.status, 75);
+    assert.ok(
+      elapsedMs < 3000,
+      `expected failing sibling to abort wait cleanly, took ${elapsedMs}ms`
+    );
+    assert.match(result.stderr, /a backend did not answer/u);
+  }));
+
 test("console ensure script resolves node and dispatches to console-ensure module", () =>
   withTempDir((directory) => {
     const fakeNode = join(directory, "fake-node");
