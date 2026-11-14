@@ -660,8 +660,12 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   Quota output is not router health evidence. It does not set, clear or overlay
   cooldowns and does not change routing, provider concurrency or session
   stickiness. Those continue to follow provider probes, request outcomes and
-  the router's existing cooldown policy. A quota-axi report is presented
-  separately from those routing decisions.
+  the router's existing cooldown policy. The Console may present a fresh,
+  known quota scope with `runway.status: exhausted_now` as a yellow
+  `Quota exhausted` provider status, naming the scope and limiting window; it
+  ignores stale/unknown scopes, bound conflicts and raw percentages for this
+  verdict. This is a scoped UI projection only: it does not become Runtime
+  provider health evidence or a router availability decision.
 
 - **Each agent stays with its own provider across turns.** The SubagentRegistry
   tracks the orchestrator by its session (`noteOrchestratorSession`) and each

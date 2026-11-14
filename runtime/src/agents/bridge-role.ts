@@ -3,10 +3,10 @@ import path from "node:path";
 
 import {
   AGENT_ROLE_HEADER,
-  SANDBOX_MODE_HEADER,
-  SKILL_CONTEXT_HEADER,
   contextHeaderValue,
-  readContextHeader
+  readContextHeader,
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";

@@ -19,6 +19,12 @@ export interface ProviderQuotaWindowBar {
   readonly resetTitle: string | null;
 }
 
+/** A fresh, authoritative quota scope that quota-axi says is exhausted now. */
+export interface ProviderQuotaExhaustion {
+  readonly scope: string;
+  readonly limitingWindowId: string;
+}
+
 /** Clamps a reported percentage into 0-100 for bar geometry and ARIA only. */
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
@@ -238,6 +244,101 @@ export function quotaByProvider(
     }
   }
   return grouped;
+}
+
+function authoritativeExhaustion(
+  entry: QuotaAxiProvider,
+  availability: NonNullable<
+    QuotaAxiProvider["quotaSemantics"]
+  >["effectiveAvailability"][number]
+): ProviderQuotaExhaustion | null {
+  const limitingWindowId = availability.runway?.limitingWindowId;
+  if (
+    availability.status !== "known" ||
+    availability.boundConflict !== undefined ||
+    availability.runway?.status !== "exhausted_now" ||
+    typeof limitingWindowId !== "string" ||
+    !availability.boundedBy.includes(limitingWindowId) ||
+    !entry.windows.some(
+      (window) => window.id === limitingWindowId && window.shareOf === undefined
+    )
+  ) {
+    return null;
+  }
+  return { scope: availability.scope, limitingWindowId };
+}
+
+function antigravityRouteForExhaustion(
+  scope: string,
+  limitingWindowId: string
+): string | null {
+  if (
+    scope === "gemini" &&
+    (limitingWindowId === "gemini_5h" || limitingWindowId === "gemini_weekly")
+  ) {
+    return "antigravity-gemini";
+  }
+  if (
+    scope === "claude_gpt" &&
+    (limitingWindowId === "claude_gpt_5h" ||
+      limitingWindowId === "claude_gpt_weekly")
+  ) {
+    return "antigravity-claude-gpt";
+  }
+  return null;
+}
+
+function prefersProviderWideExhaustion(
+  current: ProviderQuotaExhaustion | undefined,
+  candidate: ProviderQuotaExhaustion
+): boolean {
+  if (current === undefined) return true;
+  const candidateIsProviderWide =
+    candidate.scope === "all_models" || candidate.scope === "all_products";
+  const currentIsProviderWide =
+    current.scope === "all_models" || current.scope === "all_products";
+  return candidateIsProviderWide && !currentIsProviderWide;
+}
+
+/**
+ * Projects only quota-axi's explicit, fresh exhaustion verdicts onto Console
+ * provider rows. Percentages remain presentation-only bars: they do not prove
+ * exhaustion, provider health, or a routing/cooldown decision.
+ */
+export function exhaustedQuotaByProvider(
+  report: QuotaAxiSnapshot | null
+): ReadonlyMap<string, ProviderQuotaExhaustion> {
+  const exhausted = new Map<string, ProviderQuotaExhaustion>();
+  if (report === null || !Number.isFinite(Date.parse(report.generatedAt))) {
+    return exhausted;
+  }
+
+  for (const entry of report.providers) {
+    if (entry.state.status !== "fresh" || entry.state.stale) continue;
+    for (const availability of entry.quotaSemantics?.effectiveAvailability ??
+      []) {
+      const candidate = authoritativeExhaustion(entry, availability);
+      if (candidate === null) continue;
+      // The shared service has separate AutoDev routes. Do not fan an
+      // unfamiliar limiter out to every route row: both its quota scope and
+      // authoritative limiting window must identify the same family.
+      const providerId =
+        entry.provider === "agy"
+          ? antigravityRouteForExhaustion(
+              candidate.scope,
+              candidate.limitingWindowId
+            )
+          : entry.provider;
+      if (providerId === null) continue;
+      const current = exhausted.get(providerId);
+      // Prefer a provider-wide verdict when the report also names narrower
+      // exhausted scopes, while retaining one explicit scope for the badge.
+      if (prefersProviderWideExhaustion(current, candidate)) {
+        exhausted.set(providerId, candidate);
+      }
+    }
+  }
+  return exhausted;
 }
 
 export function ProviderQuotaCell({

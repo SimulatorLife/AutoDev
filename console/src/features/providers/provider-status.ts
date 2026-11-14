@@ -15,6 +15,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
+import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 
 /**
  * One provider's overall usability, as a single verdict.
@@ -25,9 +26,9 @@ import {
  * provider whose parts are individually fine but which cannot serve a request
  * must not read Ready.
  *
- * `resolveProviderStatus` is a pure function of the record so the ordering is
- * testable without rendering, and so the column cannot drift into showing a
- * summary by accident.
+ * `resolveProviderStatus` is a pure function of the provider record and an
+ * optional authoritative quota verdict, so the ordering is testable without
+ * rendering and the column cannot drift into showing a summary by accident.
  */
 export type ProviderStatus = {
   readonly tone: StatusBadgeVariant;
@@ -45,15 +46,18 @@ export type ProviderStatus = {
  * credentials before live health. The most fundamental blocker is reported, not
  * the most recently discovered one.
  *
- * Health is checked last and reports `Not observed` until Runtime has observed
- * a successful provider request. A configured route with no successful
- * observation is not `Ready`. A provider whose account must be signed in
- * again -- a web-chat site signed out in the browser it is driven through --
- * reads `Sign-in required`: it is an action for the operator, not an outage
- * that passes by itself.
+ * Runtime health remains distinct from quota: an unavailable health verdict is
+ * retained, while an explicit fresh exhausted quota scope replaces `Ready` or
+ * missing health evidence with a yellow, scoped UI verdict. A configured route
+ * with no successful observation and no such quota verdict is `Not observed`,
+ * not `Ready`. A provider whose account must be signed in again -- a web-chat
+ * site signed out in the browser it is driven through -- reads `Sign-in
+ * required`: it is an action for the operator, not an outage that passes by
+ * itself.
  */
 export function resolveProviderStatus(
-  provider: ControlApiProviderRecord
+  provider: ControlApiProviderRecord,
+  quotaExhaustion?: ProviderQuotaExhaustion
 ): ProviderStatus {
   if (provider.disabled) {
     return {
@@ -95,13 +99,6 @@ export function resolveProviderStatus(
     };
   }
   const readiness = providerHealthReadiness(provider.health);
-  if (readiness === "not-observed") {
-    return {
-      tone: "not-observed",
-      label: NOT_OBSERVED_LABEL,
-      title: "No successful provider health observation is available yet."
-    };
-  }
   if (readiness === "unavailable") {
     if (provider.health?.cooldown) {
       const failureClass = provider.health.cooldown.failureClass;
@@ -120,6 +117,20 @@ export function resolveProviderStatus(
       tone: "unavailable",
       label: failureClass ? `Unavailable (${failureClass})` : "Unavailable",
       title: "The latest provider health evidence is a failure."
+    };
+  }
+  if (quotaExhaustion !== undefined) {
+    return {
+      tone: "unavailable",
+      label: "Quota exhausted",
+      title: `Quota scope ${quotaExhaustion.scope} is exhausted (limiting window: ${quotaExhaustion.limitingWindowId}). This scoped report does not change Runtime health or routing.`
+    };
+  }
+  if (readiness === "not-observed") {
+    return {
+      tone: "not-observed",
+      label: NOT_OBSERVED_LABEL,
+      title: "No successful provider health observation is available yet."
     };
   }
   return {
@@ -192,12 +203,14 @@ function ProviderCheckButton({
  */
 export function ProviderStatusBadge({
   provider,
-  returnTo
+  returnTo,
+  quotaExhaustion
 }: {
   readonly provider: ControlApiProviderRecord;
   readonly returnTo: string;
+  readonly quotaExhaustion?: ProviderQuotaExhaustion;
 }): React.JSX.Element {
-  const status = resolveProviderStatus(provider);
+  const status = resolveProviderStatus(provider, quotaExhaustion);
   const badge = React.createElement(StatusBadge, {
     status: status.tone,
     label: status.label,

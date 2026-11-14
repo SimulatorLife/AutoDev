@@ -353,12 +353,6 @@ function stepFor(entry: PlaytestJsonValue): number | null {
 function metricTable(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"]
 ): React.JSX.Element {
-  if (episode.metrics.length === 0) {
-    return React.createElement(EmptyState, {
-      variant: "inline",
-      message: "No deterministic metric results were recorded for this episode."
-    });
-  }
   type Metric = (typeof episode.metrics)[number];
   const columns: ColumnDef<Metric, unknown>[] = [
     {
@@ -374,19 +368,27 @@ function metricTable(
       id: "estimate",
       header: "Estimate",
       cell: ({ row: { original: metric } }) =>
-        metric.estimate === null
-          ? React.createElement(StatusBadge, {
-              status: NOT_OBSERVED_STATUS,
-              label: NOT_OBSERVED_LABEL
-            })
-          : `${metric.estimate} ${metric.unit}`,
+        React.createElement(
+          "span",
+          { className: "font-mono" },
+          metric.estimate === null
+            ? React.createElement(StatusBadge, {
+                status: NOT_OBSERVED_STATUS,
+                label: NOT_OBSERVED_LABEL
+              })
+            : `${metric.estimate} ${metric.unit}`
+        ),
       meta: { weight: 160, align: "tokens" }
     },
     {
       id: "numerator-denominator",
       header: "Numerator / denominator",
       cell: ({ row: { original: metric } }) =>
-        `${metric.numerator} / ${metric.denominator}`,
+        React.createElement(
+          "span",
+          { className: "font-mono" },
+          `${metric.numerator} / ${metric.denominator}`
+        ),
       meta: { weight: 220, align: "tokens" }
     },
     {

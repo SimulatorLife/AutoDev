@@ -178,7 +178,10 @@ import {
   handlePlaytestingHumanStudyControlApiRequest,
   type PlaytestingHumanStudyRepository
 } from "./playtesting-human-studies.ts";
-import { handlePlaytestingRunControlRequest } from "./playtesting-run-control.ts";
+import {
+  handlePlaytestingRunControlRequest,
+  isPlaytestingRunControlPath
+} from "./playtesting-run-control.ts";
 import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesting.ts";
 import { handleWorkspaceVisualPlaytestTargetRequest } from "./workspace-visual-playtesting.ts";
 
@@ -8425,6 +8428,7 @@ function playtestingRunControlRoute(
   actor: ControlApiActor,
   options: ControlApiRequestOptions
 ): Promise<boolean> {
+  if (!isPlaytestingRunControlPath(pathname)) return Promise.resolve(false);
   return handlePlaytestingRunControlRequest(
     request,
     response,

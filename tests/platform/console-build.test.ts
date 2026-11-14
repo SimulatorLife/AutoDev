@@ -14,7 +14,9 @@ import test from "node:test";
 
 import {
   buildConsole,
-  type ConsoleBuildDeps
+  computeConsoleBuildFingerprint,
+  type ConsoleBuildDeps,
+  runConsoleBuildCli
 } from "../../runtime/src/platform/console-build.ts";
 
 function withTempRepo<T>(run: (repositoryRoot: string) => T): T {
@@ -375,7 +377,10 @@ test("Console build skips Next compilation when tracked inputs and stamp are unc
           env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
         );
         mkdirSync(stagingRoot, { recursive: true });
-        writeFileSync(path.join(stagingRoot, "BUILD_ID"), `build-${buildCount}\n`);
+        writeFileSync(
+          path.join(stagingRoot, "BUILD_ID"),
+          `build-${buildCount}\n`
+        );
       }
     });
 
@@ -404,3 +409,91 @@ test("Console build skips Next compilation when tracked inputs and stamp are unc
     buildConsole({ repositoryRoot, forceRebuild: true }, deps);
     assert.equal(buildCount, 3, "forceRebuild must bypass the build stamp");
   }));
+
+test("Console build clears a stale build lock from a dead process and releases the lock", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const lockDir = path.join(consoleRoot, ".next-build.lock");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(path.join(lockDir, "pid"), "99999999\n");
+
+    let buildCount = 0;
+    buildConsole(
+      { repositoryRoot },
+      dependencies({
+        isProcessAlive: () => false,
+        run: (_executable, _args, cwd, env) => {
+          buildCount += 1;
+          const stagingRoot = path.join(
+            cwd,
+            env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
+          );
+          mkdirSync(stagingRoot, { recursive: true });
+          writeFileSync(
+            path.join(stagingRoot, "BUILD_ID"),
+            "recovered-build\n"
+          );
+        }
+      })
+    );
+
+    assert.equal(buildCount, 1);
+    assert.equal(existsSync(lockDir), false, "lock directory must be released");
+    assert.equal(
+      readFileSync(path.join(consoleRoot, ".next", "BUILD_ID"), "utf8"),
+      "recovered-build\n"
+    );
+  }));
+
+test("Console build waits for an active lock and reuses the published stamp", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const lockDir = path.join(consoleRoot, ".next-build.lock");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(path.join(lockDir, "pid"), "424242\n");
+
+    let polls = 0;
+    let buildCount = 0;
+    buildConsole(
+      { repositoryRoot },
+      dependencies({
+        isProcessAlive: (pid) => pid === 424_242 && polls < 2,
+        sleepSync: () => {
+          polls += 1;
+          if (polls === 2) {
+            const current = path.join(consoleRoot, ".next");
+            mkdirSync(current, { recursive: true });
+            writeFileSync(path.join(current, "BUILD_ID"), "concurrent-build\n");
+            writeFileSync(
+              path.join(current, ".autodev-build-stamp"),
+              `${computeConsoleBuildFingerprint(repositoryRoot)}\n`
+            );
+            rmSync(lockDir, { recursive: true, force: true });
+          }
+        },
+        run: () => {
+          buildCount += 1;
+        }
+      })
+    );
+
+    assert.equal(polls, 2);
+    assert.equal(
+      buildCount,
+      0,
+      "must skip rebuilding once the active builder publishes a matching stamp"
+    );
+    assert.equal(existsSync(lockDir), false);
+  }));
+
+test("console package build routes through the staged runtime builder unless a custom distDir is set", () => {
+  const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+  const consolePackage = JSON.parse(
+    readFileSync(path.join(repoRoot, "console", "package.json"), "utf8")
+  ) as { scripts: { build: string } };
+  assert.equal(
+    consolePackage.scripts.build,
+    "node ../runtime/src/platform/console-build.ts"
+  );
+  assert.equal(typeof runConsoleBuildCli, "function");
+});

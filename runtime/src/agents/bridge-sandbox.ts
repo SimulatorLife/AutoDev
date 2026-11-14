@@ -6,9 +6,9 @@
 
 import {
   CODEX_SESSION_HEADER,
+  contextHeaderValue,
   SANDBOX_MODE_HEADER,
-  SKILL_CONTEXT_HEADER,
-  contextHeaderValue
+  SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
 export type BridgeSandboxMode = "read-only" | "workspace-write" | null;

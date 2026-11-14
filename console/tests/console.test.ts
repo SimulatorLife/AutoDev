@@ -4092,6 +4092,70 @@ test("provider readiness never turns configuration without a success into Ready"
   );
 });
 
+test("quota exhaustion changes Ready without overriding provider configuration or live-health blockers", () => {
+  const healthyProvider = {
+    id: "claude",
+    disabled: false,
+    route: {
+      pattern: "^claude$",
+      baseUrl: "https://example.test",
+      healthUrl: null
+    },
+    credential: { envKey: null, configured: true },
+    health: {
+      cooldown: null,
+      failureStreak: 0,
+      probeFailureStreak: 0,
+      lastCheck: null,
+      inFlightRequests: 0,
+      activeAgents: 0,
+      attempts: 1,
+      successes: 1,
+      failures: 0,
+      lastSuccessAt: "2026-11-14T12:00:00.000Z",
+      lastFailure: null
+    }
+  } as unknown as Parameters<typeof resolveProviderStatus>[0];
+  const quotaExhaustion = {
+    scope: "all_models",
+    limitingWindowId: "five_hour"
+  };
+
+  const exhausted = resolveProviderStatus(healthyProvider, quotaExhaustion);
+  assert.equal(exhausted.label, "Quota exhausted");
+  assert.equal(exhausted.tone, "unavailable");
+
+  assert.equal(
+    resolveProviderStatus(
+      { ...healthyProvider, disabled: true },
+      quotaExhaustion
+    ).label,
+    "Disabled"
+  );
+  assert.equal(
+    resolveProviderStatus({ ...healthyProvider, route: null }, quotaExhaustion)
+      .label,
+    "Missing CODEX_ROUTE"
+  );
+  const coolingProvider = {
+    ...healthyProvider,
+    health: {
+      ...healthyProvider.health,
+      cooldown: {
+        kind: "hard",
+        failureClass: "quota_exhausted",
+        until: "2026-11-14T13:00:00.000Z",
+        resetsAt: "2026-11-14T13:00:00.000Z",
+        lastResortEligible: false
+      }
+    }
+  } as unknown as Parameters<typeof resolveProviderStatus>[0];
+  assert.equal(
+    resolveProviderStatus(coolingProvider, quotaExhaustion).label,
+    "Cooling down (quota_exhausted)"
+  );
+});
+
 test("a signed-out web-chat provider asks for a sign-in instead of reading Ready", () => {
   // The opencli sites serve through the operator's own signed-in browser. A
   // site signed out there -- or a Google account without the Gemini app --

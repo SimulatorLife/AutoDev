@@ -10,6 +10,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+
 import { computeRepoPathsFingerprint } from "./runtime-files.ts";
 
 export interface ConsoleBuildOptions {
@@ -21,6 +24,9 @@ export interface ConsoleBuildOptions {
 export interface ConsoleBuildDeps {
   readonly fileExists: (filePath: string) => boolean;
   readonly mkdir?: (dirPath: string) => void;
+  readonly tryCreateDir?: (dirPath: string) => boolean;
+  readonly sleepSync?: (ms: number) => void;
+  readonly now?: () => number;
   readonly readDir?: (dirPath: string) => readonly string[];
   readonly isProcessAlive?: (pid: number) => boolean;
   readonly remove: (filePath: string) => void;
@@ -44,10 +50,27 @@ function checkProcessAlive(pid: number): boolean {
   }
 }
 
+function tryCreateDirSync(dirPath: string): boolean {
+  try {
+    mkdirSync(dirPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+function sleepSyncDefault(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function defaultDeps(): ConsoleBuildDeps {
   return {
     fileExists: existsSync,
     mkdir: (dirPath) => mkdirSync(dirPath, { recursive: true }),
+    tryCreateDir: tryCreateDirSync,
+    sleepSync: sleepSyncDefault,
+    now: Date.now,
     readDir: (dirPath) => readdirSync(dirPath),
     isProcessAlive: checkProcessAlive,
     remove: (filePath) => rmSync(filePath, { recursive: true, force: true }),
@@ -327,6 +350,99 @@ function recoverPreviousBuild(
   }
 }
 
+const BUILD_LOCK_DIR = ".next-build.lock";
+const BUILD_LOCK_PID_FILE = "pid";
+const BUILD_LOCK_POLL_MS = 100;
+const BUILD_LOCK_TIMEOUT_MS = 300_000;
+const BUILD_LOCK_EMPTY_GRACE_MS = 2000;
+
+function readLockPid(pidFile: string, deps: ConsoleBuildDeps): number | null {
+  if (!deps.fileExists(pidFile)) return null;
+  const raw = deps.readFile(pidFile).trim();
+  if (!DIGITS_ONLY_PATTERN.test(raw)) return null;
+  const pid = Number(raw);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function isStaleLock(
+  lockDir: string,
+  pidFile: string,
+  deps: ConsoleBuildDeps,
+  missingPidSince: number | null,
+  nowMs: number
+): { readonly stale: boolean; readonly missingPidSince: number | null } {
+  const pid = readLockPid(pidFile, deps);
+  if (pid !== null) {
+    const isAlive = deps.isProcessAlive ?? checkProcessAlive;
+    return {
+      stale: pid !== process.pid && !isAlive(pid),
+      missingPidSince: null
+    };
+  }
+  if (!deps.fileExists(lockDir)) {
+    return { stale: false, missingPidSince: null };
+  }
+  const since = missingPidSince ?? nowMs;
+  return {
+    stale: nowMs - since >= BUILD_LOCK_EMPTY_GRACE_MS,
+    missingPidSince: since
+  };
+}
+
+function acquireBuildLock(
+  consoleRoot: string,
+  deps: ConsoleBuildDeps
+): () => void {
+  const tryCreate =
+    deps.tryCreateDir ??
+    (existsSync(consoleRoot) ? tryCreateDirSync : undefined);
+  if (!tryCreate) return () => {};
+
+  const lockDir = path.join(consoleRoot, BUILD_LOCK_DIR);
+  const pidFile = path.join(lockDir, BUILD_LOCK_PID_FILE);
+  const sleep = deps.sleepSync ?? sleepSyncDefault;
+  const now = deps.now ?? Date.now;
+  const start = now();
+  let missingPidSince: number | null = null;
+
+  for (;;) {
+    if (tryCreate(lockDir)) {
+      try {
+        deps.writeFile(pidFile, `${process.pid}\n`);
+      } catch (error) {
+        deps.remove(lockDir);
+        throw error;
+      }
+      return () => {
+        deps.remove(lockDir);
+      };
+    }
+
+    const nowMs = now();
+    const staleCheck = isStaleLock(
+      lockDir,
+      pidFile,
+      deps,
+      missingPidSince,
+      nowMs
+    );
+    missingPidSince = staleCheck.missingPidSince;
+    if (staleCheck.stale) {
+      deps.remove(lockDir);
+      missingPidSince = null;
+      continue;
+    }
+
+    if (nowMs - start >= BUILD_LOCK_TIMEOUT_MS) {
+      const holder = readLockPid(pidFile, deps);
+      throw new Error(
+        `Timed out waiting for Console build lock at ${lockDir}${holder === null ? "" : ` (held by pid ${holder})`}.`
+      );
+    }
+    sleep(BUILD_LOCK_POLL_MS);
+  }
+}
+
 /**
  * Build in an isolated Next output directory, preserve the serving build until
  * compilation succeeds, then publish the new build for the managed Console
@@ -351,67 +467,123 @@ export function buildConsole(
     );
   }
 
-  const stagingDistDir = `.next-staging-${process.pid}`;
-  const stagingPath = path.join(consoleRoot, stagingDistDir);
-  const buildPath = path.join(consoleRoot, PRODUCTION_DIST_DIR);
-  const previousPath = path.join(consoleRoot, PREVIOUS_DIST_DIR);
-  const buildIdPath = path.join(stagingPath, "BUILD_ID");
-  const stampPath = path.join(buildPath, CONSOLE_BUILD_STAMP_FILE);
-  const nextEnvPath = path.join(consoleRoot, NEXT_ENV_FILE);
-  const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
-  recoverPreviousBuild(consoleRoot, deps);
-  if (
-    !options.forceRebuild &&
-    process.env.AUTODEV_FORCE_CONSOLE_BUILD !== "1" &&
-    deps.fileExists(path.join(buildPath, "BUILD_ID")) &&
-    deps.fileExists(stampPath) &&
-    deps.readFile(stampPath).trim() ===
-      computeConsoleBuildFingerprint(options.repositoryRoot)
-  ) {
+  const releaseLock = acquireBuildLock(consoleRoot, deps);
+  try {
+    const stagingDistDir = `.next-staging-${process.pid}`;
+    const stagingPath = path.join(consoleRoot, stagingDistDir);
+    const buildPath = path.join(consoleRoot, PRODUCTION_DIST_DIR);
+    const previousPath = path.join(consoleRoot, PREVIOUS_DIST_DIR);
+    const buildIdPath = path.join(stagingPath, "BUILD_ID");
+    const stampPath = path.join(buildPath, CONSOLE_BUILD_STAMP_FILE);
+    const nextEnvPath = path.join(consoleRoot, NEXT_ENV_FILE);
+    const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
+    recoverPreviousBuild(consoleRoot, deps);
+    if (
+      !options.forceRebuild &&
+      process.env.AUTODEV_FORCE_CONSOLE_BUILD !== "1" &&
+      deps.fileExists(path.join(buildPath, "BUILD_ID")) &&
+      deps.fileExists(stampPath) &&
+      deps.readFile(stampPath).trim() ===
+        computeConsoleBuildFingerprint(options.repositoryRoot)
+    ) {
+      cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
+      return;
+    }
     cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
+    deps.remove(stagingPath);
+    const previousNextEnv = deps.fileExists(nextEnvPath)
+      ? deps.readFile(nextEnvPath)
+      : null;
+    const previousTsconfig = normalizeGeneratedTsconfig(consoleRoot, deps);
+    normalizeGeneratedTsconfig(
+      consoleRoot,
+      deps,
+      `${stagingDistDir}/types/**/*.ts`
+    );
+    const movedCacheSubdirs = seedStagingBuildCache(
+      buildPath,
+      stagingPath,
+      deps
+    );
+
+    try {
+      deps.run(
+        options.nodeBin ?? process.execPath,
+        [nextCli, "build"],
+        consoleRoot,
+        {
+          ...process.env,
+          AUTODEV_CONSOLE_BUILD_DIST_DIR: stagingDistDir
+        }
+      );
+      if (!deps.fileExists(buildIdPath)) {
+        throw new Error(
+          "Next.js completed without producing the staged Console BUILD_ID."
+        );
+      }
+      normalizeGeneratedTypeReference(consoleRoot, stagingDistDir, deps);
+      normalizeGeneratedTsconfig(consoleRoot, deps);
+      deps.writeFile(
+        path.join(stagingPath, CONSOLE_BUILD_STAMP_FILE),
+        `${computeConsoleBuildFingerprint(options.repositoryRoot)}\n`
+      );
+      publishStagedBuild(stagingPath, buildPath, previousPath, deps);
+    } catch (error) {
+      restoreBuildCacheOnFailure(
+        buildPath,
+        stagingPath,
+        movedCacheSubdirs,
+        deps
+      );
+      restoreOptionalFile(nextEnvPath, previousNextEnv, deps);
+      restoreOptionalFile(tsconfigPath, previousTsconfig, deps);
+      throw error;
+    } finally {
+      deps.remove(stagingPath);
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
+export function runConsoleBuildCli(
+  args: readonly string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  const repositoryRoot = path.resolve(
+    env.AUTODEV_REPO_ROOT?.trim() ||
+      resolveRuntimeSourceRoot(import.meta.dirname)
+  );
+  if (env.AUTODEV_CONSOLE_BUILD_DIST_DIR) {
+    const consoleRoot = path.join(repositoryRoot, "console");
+    const nextCli = path.join(
+      consoleRoot,
+      "node_modules",
+      "next",
+      "dist",
+      "bin",
+      "next"
+    );
+    execFileSync(process.execPath, [nextCli, "build", ...args], {
+      cwd: consoleRoot,
+      env,
+      stdio: "inherit"
+    });
     return;
   }
-  cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
-  deps.remove(stagingPath);
-  const previousNextEnv = deps.fileExists(nextEnvPath)
-    ? deps.readFile(nextEnvPath)
-    : null;
-  const previousTsconfig = normalizeGeneratedTsconfig(consoleRoot, deps);
-  normalizeGeneratedTsconfig(
-    consoleRoot,
-    deps,
-    `${stagingDistDir}/types/**/*.ts`
-  );
-  const movedCacheSubdirs = seedStagingBuildCache(buildPath, stagingPath, deps);
+  buildConsole({
+    repositoryRoot,
+    forceRebuild: !args.includes("--if-needed")
+  });
+}
 
+if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
-    deps.run(
-      options.nodeBin ?? process.execPath,
-      [nextCli, "build"],
-      consoleRoot,
-      {
-        ...process.env,
-        AUTODEV_CONSOLE_BUILD_DIST_DIR: stagingDistDir
-      }
-    );
-    if (!deps.fileExists(buildIdPath)) {
-      throw new Error(
-        "Next.js completed without producing the staged Console BUILD_ID."
-      );
-    }
-    normalizeGeneratedTypeReference(consoleRoot, stagingDistDir, deps);
-    normalizeGeneratedTsconfig(consoleRoot, deps);
-    deps.writeFile(
-      path.join(stagingPath, CONSOLE_BUILD_STAMP_FILE),
-      `${computeConsoleBuildFingerprint(options.repositoryRoot)}\n`
-    );
-    publishStagedBuild(stagingPath, buildPath, previousPath, deps);
+    runConsoleBuildCli();
   } catch (error) {
-    restoreBuildCacheOnFailure(buildPath, stagingPath, movedCacheSubdirs, deps);
-    restoreOptionalFile(nextEnvPath, previousNextEnv, deps);
-    restoreOptionalFile(tsconfigPath, previousTsconfig, deps);
-    throw error;
-  } finally {
-    deps.remove(stagingPath);
+    writeErrorLine(
+      `console-build: ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exitCode = 1;
   }
 }

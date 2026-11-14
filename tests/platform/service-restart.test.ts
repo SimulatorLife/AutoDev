@@ -969,3 +969,70 @@ test("a missing launchctl refuses to report a Console restart as successful", as
     false
   );
 });
+
+test("rebuilds missing Console BUILD_ID before bootstrapping the Console LaunchAgent", async () => {
+  let hasBuildId = true;
+  let buildCount = 0;
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          if (plist.endsWith(`${LABEL_MODEL_ROUTER}.plist`)) {
+            hasBuildId = false;
+          }
+          base.launchd.bootstrap(plist);
+        }
+      },
+      fileExists: (filePath) =>
+        filePath === "/repo/console/.next/BUILD_ID" ? hasBuildId : true,
+      buildConsole: () => {
+        buildCount += 1;
+        base.calls.push(`build-console:${buildCount}`);
+        hasBuildId = true;
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.equal(buildCount, 2);
+  assert.match(stderr, /Console build artifact missing/u);
+  assert.ok(
+    base.calls.indexOf("build-console:2") <
+      base.calls.indexOf(
+        `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`
+      ),
+    "Console is bootstrapped only after BUILD_ID is restored"
+  );
+});
+
+test("refuses to bootstrap the Console when BUILD_ID remains missing after rebuild", async () => {
+  let hasBuildId = true;
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          if (plist.endsWith(`${LABEL_MODEL_ROUTER}.plist`)) {
+            hasBuildId = false;
+          }
+          base.launchd.bootstrap(plist);
+        }
+      },
+      fileExists: (filePath) =>
+        filePath === "/repo/console/.next/BUILD_ID" ? hasBuildId : true
+    })
+  );
+  assert.equal(status, 1);
+  assert.match(stderr, /without producing \/repo\/console\/\.next\/BUILD_ID/u);
+  assert.equal(
+    base.calls.includes(
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`
+    ),
+    false,
+    "must not bootstrap LaunchAgent into a missing-BUILD_ID crash loop"
+  );
+});

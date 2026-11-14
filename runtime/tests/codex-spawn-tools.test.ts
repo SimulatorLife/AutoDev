@@ -8,6 +8,9 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import {
+  createAgentActivityTracker
+} from "../src/agents/agent-activity.ts";
+import {
   buildSpawnScript,
   carriesPendingSpawnResult,
   execToolCallSseEvents,
@@ -16,6 +19,11 @@ import {
   parseSpawnResults,
   pendingToolCallOutputs
 } from "../src/agents/spawn-tools.ts";
+import {
+  ConcurrencyManager,
+  getDefaultConcurrencyManager,
+  setDefaultConcurrencyManager
+} from "../src/router/concurrency/index.ts";
 
 type ScriptTask = {
   agent_type?: string;
@@ -810,13 +818,26 @@ test("partial-result preservation extracts object text from status.completed obj
 });
 
 test("buildSpawnToolCallItem derives authoritative capacity and enables parked preservation", () => {
-  const item = agents.buildSpawnToolCallItem(
-    [{ agentType: "explorer", message: "explore" }],
-    "parent-call-item",
-    "call-item-1"
-  );
-  assert.ok(item);
-  assert.match(item.input, /const recoveryPreserveParked = true;/);
-  // Authoritative capacity is 2 in this workspace config
-  assert.match(item.input, /const recoveryMaxCapacity = 2;/);
+  const previousManager = getDefaultConcurrencyManager();
+  const manager = new ConcurrencyManager({
+    agentActivity: createAgentActivityTracker(),
+    initialConfig: {
+      file: "/test/codex-concurrency.json",
+      maxConcurrentThreadsPerSession: 2
+    }
+  });
+  setDefaultConcurrencyManager(manager);
+
+  try {
+    const item = agents.buildSpawnToolCallItem(
+      [{ agentType: "explorer", message: "explore" }],
+      "parent-call-item",
+      "call-item-1"
+    );
+    assert.ok(item);
+    assert.match(item.input, /const recoveryPreserveParked = true;/);
+    assert.match(item.input, /const recoveryMaxCapacity = 2;/);
+  } finally {
+    setDefaultConcurrencyManager(previousManager);
+  }
 });

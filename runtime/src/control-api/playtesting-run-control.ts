@@ -1976,6 +1976,15 @@ async function dispatchRunControlRoute(input: {
   }
 }
 
+/**
+ * Whether the path belongs to the run-control surface. Callers resolve the
+ * Runtime run owner only for these paths, so a request for any other resource
+ * never constructs the owner and its on-disk repositories.
+ */
+export function isPlaytestingRunControlPath(pathname: string): boolean {
+  return runControlRoute(pathname) !== null;
+}
+
 /** Typed Control API entry points delegate to the exact MCP run-control owner. */
 export async function handlePlaytestingRunControlRequest(
   request: IncomingMessage,

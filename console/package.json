@@ -7,7 +7,7 @@
   "types": "src/index.ts",
   "scripts": {
     "dev:next": "next dev -p ${AUTODEV_CONSOLE_PORT:-3300}",
-    "build": "next build",
+    "build": "node ../runtime/src/platform/console-build.ts",
     "start": "next start -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "test": "node --test",
     "test:playtesting:browser": "playwright test --config=playwright.config.ts",

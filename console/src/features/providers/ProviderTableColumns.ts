@@ -31,6 +31,7 @@ import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge.ts";
 import {
   ProviderQuotaCell,
+  type ProviderQuotaExhaustion,
   type ProviderQuotaWindowBar
 } from "./ProviderQuota.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
@@ -93,7 +94,8 @@ export function providerColumns(
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
   modelDiscovery: ProviderModelDiscoveryState,
   cliVersions: ProviderCliVersionState,
-  quota: ReadonlyMap<string, readonly ProviderQuotaWindowBar[]>
+  quota: ReadonlyMap<string, readonly ProviderQuotaWindowBar[]>,
+  quotaExhaustion: ReadonlyMap<string, ProviderQuotaExhaustion>
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -139,11 +141,14 @@ export function providerColumns(
     {
       id: "status",
       header: "Status",
-      cell: ({ row: { original: provider } }) =>
-        React.createElement(ProviderStatusBadge, {
+      cell: ({ row: { original: provider } }) => {
+        const exhaustion = quotaExhaustion.get(provider.id);
+        return React.createElement(ProviderStatusBadge, {
           provider,
-          returnTo: providersPath()
-        }),
+          returnTo: providersPath(),
+          ...(exhaustion === undefined ? {} : { quotaExhaustion: exhaustion })
+        });
+      },
       meta: {
         // Sized against the verdict the column has to show in full, and against
         // the re-check control that rides inside the badge.

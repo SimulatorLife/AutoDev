@@ -9,6 +9,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
+import { exhaustedQuotaByProvider } from "../src/features/providers/ProviderQuota.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { fetchProviders } from "../src/lib/server/control-api.ts";
 
@@ -22,6 +23,10 @@ const ANTIGRAVITY_ROW_IDS = [
   "antigravity-argon",
   "antigravity-claude-gpt"
 ] as const;
+
+type QuotaAxiProvider = NonNullable<
+  ControlApiProvidersResponse["quotaAxi"]
+>["providers"][number];
 
 const NO_CONVERGENCE = {
   convergence: "not-observed" as const,
@@ -57,15 +62,80 @@ function providerRecord(id: string): ControlApiProviderRecord {
   } as unknown as ControlApiProviderRecord;
 }
 
+function healthyProviderRecord(id: string): ControlApiProviderRecord {
+  return {
+    ...providerRecord(id),
+    route: { pattern: ".*", baseUrl: "https://example.test", healthUrl: null },
+    credential: { envKey: null, configured: true },
+    health: {
+      cooldown: null,
+      failureStreak: 0,
+      probeFailureStreak: 0,
+      lastCheck: null,
+      inFlightRequests: 0,
+      activeAgents: 0,
+      attempts: 1,
+      successes: 1,
+      failures: 0,
+      lastSuccessAt: new Date().toISOString(),
+      lastFailure: null
+    }
+  } as unknown as ControlApiProviderRecord;
+}
+
+function exhaustedQuotaProvider(
+  overrides: Partial<QuotaAxiProvider> = {}
+): QuotaAxiProvider {
+  return {
+    provider: "claude",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        kind: "session",
+        percentRemaining: 0
+      }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["five_hour"],
+          limitingWindowIds: ["five_hour"],
+          runway: {
+            status: "exhausted_now",
+            usableRunwaySeconds: 0,
+            limitingWindowId: "five_hour"
+          }
+        }
+      ]
+    },
+    ...overrides
+  };
+}
+
+function quotaReport(
+  providers: readonly QuotaAxiProvider[],
+  generatedAt = new Date().toISOString()
+): NonNullable<ControlApiProvidersResponse["quotaAxi"]> {
+  return { generatedAt, schemaVersion: 5, providers: [...providers] };
+}
+
 function renderProvidersView(
   quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> | null,
-  providerIds: readonly string[] = [...ANTIGRAVITY_ROW_IDS, "codex"]
+  providerIds: readonly string[] = [...ANTIGRAVITY_ROW_IDS, "codex"],
+  providerRecords: readonly ControlApiProviderRecord[] = providerIds.map(
+    providerRecord
+  )
 ): string {
   const response = {
     schema: "autodev-control-providers-v5",
     orchestratorTier: "orchestrator",
     tiers: [],
-    providers: providerIds.map(providerRecord),
+    providers: providerRecords,
     quotaAxi
   } as unknown as ControlApiProvidersResponse;
   return renderToStaticMarkup(
@@ -76,6 +146,192 @@ function renderProvidersView(
     })
   );
 }
+
+test("a fresh, known exhausted quota scope gives a healthy provider a yellow non-ready status", () => {
+  const markup = renderProvidersView(
+    quotaReport([exhaustedQuotaProvider()]),
+    ["claude"],
+    [healthyProviderRecord("claude")]
+  );
+  const row = rowFor(markup, "claude");
+
+  assert.match(row, /data-status="unavailable"/u);
+  assert.match(row, />Quota exhausted</u);
+  assert.match(row, /bg-warning/u);
+  assert.match(
+    row,
+    /title="Quota exhausted — Quota scope all_models is exhausted \(limiting window: five_hour\)\. This scoped report does not change Runtime health or routing\."/u
+  );
+  assert.doesNotMatch(row, />Ready</u);
+  assert.match(
+    markup,
+    /data-stat-grid="4">[\s\S]*?<dt[^>]*>Ready<\/dt>[\s\S]*?<span[^>]*>0<\/span>/u
+  );
+});
+
+test("quota status ignores raw percentages, stale or unknown scopes, and unrecognized limiters", () => {
+  const unknownScope = exhaustedQuotaProvider({
+    quotaSemantics: {
+      status: "unknown",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "unknown",
+          boundedBy: ["five_hour"],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "five_hour"
+          }
+        }
+      ]
+    }
+  });
+  const conflict = exhaustedQuotaProvider({
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["five_hour"],
+          boundConflict: {
+            exhaustedWindowIds: ["five_hour"],
+            liveWindowIds: ["other"]
+          },
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "five_hour"
+          }
+        }
+      ]
+    }
+  });
+  const mismatchedLimiter = exhaustedQuotaProvider({
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: [],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "five_hour"
+          }
+        }
+      ]
+    }
+  });
+  const stale = exhaustedQuotaProvider({
+    state: { status: "stale", stale: true }
+  });
+  const unknownLimiter = exhaustedQuotaProvider({
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["not_reported"],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "not_reported"
+          }
+        }
+      ]
+    }
+  });
+
+  for (const entry of [
+    stale,
+    unknownScope,
+    conflict,
+    mismatchedLimiter,
+    unknownLimiter
+  ]) {
+    assert.equal(
+      exhaustedQuotaByProvider(quotaReport([entry])).has("claude"),
+      false
+    );
+  }
+  assert.equal(
+    exhaustedQuotaByProvider(quotaReport([exhaustedQuotaProvider()], "bad"))
+      .size,
+    0
+  );
+  // A raw zero percentage is not an exhaustion verdict without known runway.
+  assert.equal(
+    exhaustedQuotaByProvider(
+      quotaReport([
+        exhaustedQuotaProvider({
+          quotaSemantics: { status: "unknown", effectiveAvailability: [] }
+        })
+      ])
+    ).size,
+    0
+  );
+});
+
+test("an exhausted agy quota scope changes only the route named by its known limiting window", () => {
+  const markup = renderProvidersView(
+    quotaReport([
+      {
+        provider: "agy",
+        windows: [
+          { id: "gemini_weekly", label: "Gemini weekly", kind: "weekly" },
+          { id: "claude_gpt_5h", label: "Claude/GPT 5-hour", kind: "session" },
+          { id: "unclassified", label: "Unclassified", kind: "unknown" }
+        ],
+        state: { status: "fresh", stale: false },
+        quotaSemantics: {
+          status: "partial",
+          effectiveAvailability: [
+            {
+              scope: "gemini",
+              status: "known",
+              boundedBy: ["gemini_weekly"],
+              runway: {
+                status: "exhausted_now",
+                limitingWindowId: "gemini_weekly"
+              }
+            },
+            {
+              scope: "claude_gpt",
+              status: "known",
+              boundedBy: ["claude_gpt_5h"],
+              runway: {
+                status: "exhausted_now",
+                limitingWindowId: "claude_gpt_5h"
+              }
+            },
+            {
+              scope: "unknown_scope",
+              status: "known",
+              boundedBy: ["unclassified"],
+              runway: {
+                status: "exhausted_now",
+                limitingWindowId: "unclassified"
+              }
+            }
+          ]
+        }
+      }
+    ]),
+    [...ANTIGRAVITY_ROW_IDS],
+    ANTIGRAVITY_ROW_IDS.map(healthyProviderRecord)
+  );
+
+  assert.match(
+    rowFor(markup, "antigravity-gemini"),
+    /data-status="unavailable"/u
+  );
+  assert.match(
+    rowFor(markup, "antigravity-claude-gpt"),
+    /data-status="unavailable"/u
+  );
+  assert.match(rowFor(markup, "antigravity-argon"), /data-status="ready"/u);
+  assert.doesNotMatch(rowFor(markup, "antigravity-argon"), /Quota exhausted/u);
+});
 
 /** The table row whose provider-id link is `id`. */
 function rowFor(markup: string, id: string): string {

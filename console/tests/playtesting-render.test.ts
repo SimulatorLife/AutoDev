@@ -353,6 +353,26 @@ test("deterministic episode metrics use the shared table and keep metric row hea
               generatedAt: "2026-10-10T00:00:00.000Z"
             },
             notes: "Fixture metric."
+          },
+          {
+            metricId: "unobserved-metric",
+            metricVersion: 1,
+            phaseId: null,
+            numerator: 0,
+            denominator: 0,
+            opportunityCount: 0,
+            coverage: 0,
+            unit: "rejections",
+            estimate: null,
+            missing: 0,
+            missingReasons: [],
+            independentUnits: 0,
+            provenance: {
+              workspaceId: WORKSPACE,
+              measurementVersion: "v1",
+              generatedAt: "2026-10-10T00:00:00.000Z"
+            },
+            notes: "No estimate was recorded."
           }
         ]
       }),
@@ -366,13 +386,19 @@ test("deterministic episode metrics use the shared table and keep metric row hea
     html,
     /<th scope="row"[^>]*>legal-action-rejection · race-1<\/th>/u
   );
+  assert.match(html, /<th scope="row"[^>]*>unobserved-metric<\/th>/u);
+  assert.match(
+    html,
+    /<th scope="row"[^>]*>unobserved-metric<\/th><td[^>]*><span class="font-mono"><span[^>]*data-status="not-observed"/u
+  );
   assert.match(html, /Numerator \/ denominator/u);
-  assert.match(html, />0\.5 rejections</u);
+  assert.match(html, /<span class="font-mono">0\.5 rejections<\/span>/u);
+  assert.match(html, /<span class="font-mono">2 \/ 4<\/span>/u);
   assert.match(html, />1 · 4 independent units</u);
   assert.doesNotMatch(html, /No deterministic metric results were recorded/u);
 });
 
-test("empty deterministic episode metrics retain their inline empty state", () => {
+test("empty deterministic episode metrics use the shared table empty state", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {
       detail: detail(),
@@ -381,9 +407,11 @@ test("empty deterministic episode metrics retain their inline empty state", () =
     })
   );
 
+  assert.match(html, /data-empty-state="table"/u);
+  assert.match(html, /rounded-lg border border-border p-8/u);
   assert.match(
     html,
-    /<p class="py-2 text-xs italic text-fg-muted">No deterministic metric results were recorded for this episode\.<\/p>/u
+    /No deterministic metric results were recorded for this episode\./u
   );
 });
 

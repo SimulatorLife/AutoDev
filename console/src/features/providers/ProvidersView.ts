@@ -59,7 +59,7 @@ import {
 } from "./provider-model-discovery.ts";
 import { resolveProviderStatus } from "./provider-status.ts";
 import { ProviderModelDiscoveryBadge } from "./ProviderModelAvailabilityBadge.ts";
-import { quotaByProvider } from "./ProviderQuota.ts";
+import { exhaustedQuotaByProvider, quotaByProvider } from "./ProviderQuota.ts";
 import { ProviderResetDialog } from "./ProviderResetDialog.ts";
 import {
   modelColumns,
@@ -207,20 +207,25 @@ function ProvidersTab({
   const records = providers.providers;
   const nowMs = Date.now();
   const versions = cliVersions ?? CLI_VERSIONS_NOT_OBSERVED;
+  const quotaWindows = quotaByProvider(providers.quotaAxi, nowMs);
+  const quotaExhaustion = exhaustedQuotaByProvider(providers.quotaAxi);
   const healthObserved = records.every((provider) => provider.health !== null);
   // Ready is the one count worth leading with, and it is computed from the same
   // `resolveProviderStatus` the column uses, so the summary can never disagree
   // with the rows beneath it.
   //
-  // A provider whose health was never observed reads "Not observed" in its own
-  // row, so it is not a provider that was judged and found unready: nobody
-  // looked. Counting it as unready would print a readiness the Runtime never
-  // measured, so the count is a number only when every provider's verdict was
-  // observed.
+  // A provider with neither Runtime health nor an authoritative quota verdict
+  // reads "Not observed" in its row. Quota exhaustion is itself observed
+  // evidence for the scoped UI verdict, so the count remains based on the same
+  // projection as the Status column.
   const readiness = scopedCount(
     records,
-    (provider) => resolveProviderStatus(provider).tone !== NOT_OBSERVED_STATUS,
-    (provider) => resolveProviderStatus(provider).label === "Ready"
+    (provider) =>
+      resolveProviderStatus(provider, quotaExhaustion.get(provider.id)).tone !==
+      NOT_OBSERVED_STATUS,
+    (provider) =>
+      resolveProviderStatus(provider, quotaExhaustion.get(provider.id))
+        .label === "Ready"
   );
   return React.createElement(
     "div",
@@ -283,7 +288,8 @@ function ProvidersTab({
           runtime?.liveAgents,
           modelDiscovery,
           versions,
-          quotaByProvider(providers.quotaAxi, nowMs)
+          quotaWindows,
+          quotaExhaustion
         ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."

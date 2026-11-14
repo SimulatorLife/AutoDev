@@ -342,12 +342,10 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
     );
     const nextStartIndex = result.stdout.indexOf("next start --hostname");
     assert.ok(controlPreflightIndex !== -1, "Control API preflight must run");
+    assert.ok(usagePreflightIndex !== -1, "Usage preflight must run");
     assert.ok(
-      usagePreflightIndex > controlPreflightIndex,
-      "Usage preflight follows Control API validation"
-    );
-    assert.ok(
-      nextStartIndex > usagePreflightIndex,
+      nextStartIndex > controlPreflightIndex &&
+        nextStartIndex > usagePreflightIndex,
       "Next starts only after both backends validate"
     );
 

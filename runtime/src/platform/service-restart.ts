@@ -776,7 +776,7 @@ function readLaunchdJobDump(
   return "";
 }
 
-type ReloadResult = "ok" | "no-plist" | "failed" | "blocked";
+type ReloadResult = "ok" | "no-plist" | "failed" | "blocked" | "build-failed";
 
 function foreignLabels(
   deps: ServiceRestartDeps,
@@ -905,6 +905,37 @@ async function awaitDependency(
   return check;
 }
 
+function ensureConsoleBuildBeforeLaunch(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions
+): boolean {
+  const buildIdPath = path.join(
+    options.repositoryRoot,
+    "console",
+    ".next",
+    "BUILD_ID"
+  );
+  if (deps.fileExists(buildIdPath)) return true;
+  writeErrorLine(
+    `Console build artifact missing at ${buildIdPath}; building staged Console artifact before launch.`
+  );
+  try {
+    deps.buildConsole();
+  } catch (error) {
+    writeErrorLine(
+      `Console production build failed before launch: ${errorText(error)}`
+    );
+    return false;
+  }
+  if (!deps.fileExists(buildIdPath)) {
+    writeErrorLine(
+      `Console build completed without producing ${buildIdPath}; ${CONSOLE_SERVICE_LABEL} was not reloaded.`
+    );
+    return false;
+  }
+  return true;
+}
+
 async function reloadLabels(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
@@ -917,6 +948,13 @@ async function reloadLabels(
   if (!dependency.ready) {
     writeErrorLine(`${label} was not reloaded: ${dependency.reason}.`);
     results.push("blocked");
+    return results;
+  }
+  if (
+    label === CONSOLE_SERVICE_LABEL &&
+    !ensureConsoleBuildBeforeLaunch(deps, options)
+  ) {
+    results.push("build-failed");
     return results;
   }
   results.push(await reloadOneLabel(deps, options, label));
@@ -971,6 +1009,7 @@ export async function restartServices(
     return 1;
   }
   const results = await reloadLabels(deps, options);
+  if (results.includes("build-failed")) return 1;
   const blockedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "blocked"
   );
