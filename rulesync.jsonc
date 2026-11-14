@@ -17,5 +17,19 @@
     "."
   ],
   "delete": true,
-  "global": false
+  "global": false,
+  "sources": [
+    {
+      "source": "vercel-labs/agent-skills",
+      "skills": [
+        "react-best-practices"
+      ]
+    },
+    {
+      "source": "multica-ai/andrej-karpathy-skills",
+      "skills": [
+        "karpathy-guidelines"
+      ]
+    }
+  ]
 }

@@ -72,3 +72,9 @@ commit-msg*.txt
 # content, and a whole-tree stage will otherwise sweep them in.
 console/test-results/
 playwright-report/
+
+# RuleSync-managed external skills
+/.rulesync/skills/.curated/
+
+# Track pinned external skill revisions
+!/rulesync.lock

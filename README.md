@@ -89,3 +89,12 @@ a change pass: fix the code, or add a narrowly scoped disable with a
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 
 See [`docs/README.md`](docs/README.md) for the documentation map and [`docs/autodev-console-target-state.md`](docs/autodev-console-target-state.md) for the canonical product/configuration/observability target. Operational references include [`docs/organization-routing.md`](docs/organization-routing.md), [`docs/private-target-validation.md`](docs/private-target-validation.md), [`docs/provider-routing.md`](docs/provider-routing.md), [`docs/local-setup.md`](docs/local-setup.md), and the canonical `resolve-merge-conflicts` skill under `.rulesync/skills/` for merge-conflict procedure. The GitHub issue metrics report remains at [issue #2](https://github.com/SimulatorLife/AutoDev/issues/2).
+
+## Adding Versioned Skills to Rulesync
+
+```shell
+GITHUB_TOKEN="$(gh auth token)" \
+  pnpm exec rulesync add vercel-labs/agent-skills --skills react-best-practices
+
+pnpm exec rulesync generate
+```
