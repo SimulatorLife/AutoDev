@@ -5,6 +5,7 @@ import type { QuotaAxiResponse } from "quota-axi";
 
 import {
   QUOTA_READ_INTERVAL_MS,
+  quotaAxiArgs,
   QuotaPoll,
   type QuotaPollPlan
 } from "../src/router/quota-poll.ts";
@@ -120,10 +121,10 @@ test("a refusal that names no retry moment waits only for the read interval", ()
   assert.deepEqual(poll.plan(NOW + CLAUDE_INTERVAL), FULL_READ);
 });
 
-test("Claude's quota endpoint is read at most once per its read interval", () => {
-  // Anthropic's usage endpoint refuses after a handful of reads and holds the
-  // refusal for close to an hour, so a sixty-second poll kept Claude's quota
-  // unreadable indefinitely. Every other provider is still read every tick.
+test("Claude's quota is read at most once per its read interval", () => {
+  // Each Claude read spends a small inference call, and the vendor rations
+  // its quota reads, so a sixty-second poll is never right for Claude. Every
+  // other provider is still read every tick.
   assert.ok(CLAUDE_INTERVAL >= 5 * MINUTE);
   const poll = pollAfterRead([
     provider("claude", { windows: [SESSION_WINDOW] }),
@@ -229,4 +230,34 @@ test("a persisted record with unusable read times keeps only the usable ones", (
   );
   assert.deepEqual(poll.persistenceSnapshot().readAt, { codex: NOW });
   assert.deepEqual(poll.plan(NOW + MINUTE), FULL_READ);
+});
+
+test("a read that includes Claude reads it through Claude Code inference", () => {
+  // The bridge's token lacks the profile scope the OAuth usage endpoint
+  // needs, so quota-axi can read Claude only from an inference call.
+  assert.deepEqual(quotaAxiArgs(FULL_READ), [
+    "--json",
+    "--no-credential-refresh",
+    "--allow-claude-inference"
+  ]);
+  assert.deepEqual(
+    quotaAxiArgs({
+      providers: ["claude", "codex"],
+      deferred: new Set(["agy"])
+    }),
+    [
+      "--json",
+      "--no-credential-refresh",
+      "--provider=claude,codex",
+      "--allow-claude-inference"
+    ]
+  );
+});
+
+test("a read without Claude never asks for inference", () => {
+  // quota-axi rejects the inference flag on a read that leaves Claude out.
+  assert.deepEqual(
+    quotaAxiArgs({ providers: ["codex"], deferred: new Set(["claude"]) }),
+    ["--json", "--no-credential-refresh", "--provider=codex"]
+  );
 });

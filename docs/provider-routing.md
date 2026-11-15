@@ -661,12 +661,20 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   the Console keeps drawing what was last read and saying why it is not newer.
   A refusal that names no retry moment gives no instruction about when.
 
-  **Claude's quota is read at most once every five minutes**
-  (`QUOTA_READ_INTERVAL_MS` in `runtime/src/router/quota-poll.ts`). Anthropic's
-  OAuth usage endpoint refuses after a handful of reads and holds the refusal
-  for close to an hour; asked on every sixty-second tick it never answered, so
-  quota-axi never cached a Claude reading and the Console had no Claude bars
-  to draw, not even stale ones. Every other provider is read on every tick.
+  **Claude's quota is read from one Claude Code inference call, at most once
+  every five minutes** (`quotaAxiArgs` and `QUOTA_READ_INTERVAL_MS` in
+  `runtime/src/router/quota-poll.ts`). The bridge's `CLAUDE_CODE_OAUTH_TOKEN`
+  is an inference token without the `user:profile` scope Anthropic's OAuth
+  usage endpoint requires, so that endpoint can never answer for it
+  (quota-axi: `claude_env_usage_scope_unavailable`), and it also refuses
+  after a handful of reads and holds that refusal for close to an hour. A
+  read that includes Claude therefore passes quota-axi's
+  `--allow-claude-inference`: a bounded "Reply OK" Claude Code call whose
+  rate-limit headers carry the session and weekly windows. Each read spends a
+  small amount of Claude quota, hence the interval. Runtime adds the directory
+  of the `claude` executable its bridge runs (`CLAUDE_BIN`, else
+  `~/.local/bin/claude`) to the quota-axi child's `PATH`, as it does for
+  `agy`. Every other provider is read on every tick.
 
   **The poll's record survives a restart.** The last report and each
   provider's last read time are persisted as `quotaPoll` in the router state

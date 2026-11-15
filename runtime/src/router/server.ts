@@ -38,7 +38,7 @@ import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-se
 import { claudeQuotaAxiEnvironment } from "../providers/claude-credential.ts";
 import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
-import { findAgyBinary } from "../shared/executables.ts";
+import { findAgyBinary, findClaudeBinary } from "../shared/executables.ts";
 import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
 import {
   agentActivity,
@@ -56,7 +56,7 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
-import { QUOTA_POLL } from "./quota-poll.ts";
+import { QUOTA_POLL, quotaAxiArgs } from "./quota-poll.ts";
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -228,10 +228,15 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const quotaAxiExecutable = path.join(runtimeBinDirectory, "quota-axi");
   const refreshQuotaAxi = (): Promise<void> => {
     if (quotaAxiRefresh) return quotaAxiRefresh;
-    const agyExecutable = findAgyBinary(process.env);
-    const agyDirectory = agyExecutable
-      ? path.dirname(agyExecutable)
-      : undefined;
+    // quota-axi finds `agy` and `claude` on PATH; a launchd PATH names neither
+    // install, so the Runtime adds the directories of the very files its
+    // bridges run.
+    const cliDirectories = [
+      findAgyBinary(process.env),
+      findClaudeBinary(process.env)
+    ]
+      .filter((executable) => executable !== null)
+      .map((executable) => path.dirname(executable));
     quotaAxiRefresh = new Promise<void>((resolve, reject) => {
       // A provider whose vendor named a retry moment, or whose last read is
       // younger than its read interval, is not asked on this tick; it keeps
@@ -243,12 +248,9 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         resolve();
         return;
       }
-      const args = ["--json", "--no-credential-refresh"];
-      if (plan.providers !== null)
-        args.push(`--provider=${plan.providers.join(",")}`);
       execFile(
         quotaAxiExecutable,
-        args,
+        quotaAxiArgs(plan),
         {
           cwd: runtimePackageRoot,
           encoding: "utf8",
@@ -258,7 +260,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             PATH: [
               runtimeBinDirectory,
               path.dirname(process.execPath),
-              agyDirectory,
+              ...cliDirectories,
               process.env.PATH
             ]
               .filter(Boolean)

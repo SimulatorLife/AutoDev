@@ -12,12 +12,9 @@
  * vendor refuses), and either way the next request before that moment is the
  * request the vendor just asked us not to make.
  *
- * Anthropic's OAuth usage endpoint -- the source of Claude's quota -- refuses
- * after only a few reads and then holds the refusal for close to an hour.
- * Asking it on every sixty-second tick meant it never answered at all, so
- * quota-axi never cached a reading and the Console never had a Claude bar to
- * draw, not even a stale one. Claude is therefore asked at most once per
- * `QUOTA_READ_INTERVAL_MS.claude`.
+ * Claude's quota is read through one small Claude Code inference call (see
+ * `quotaAxiArgs`), so every read spends a little of the quota it reports.
+ * Claude is therefore asked at most once per `QUOTA_READ_INTERVAL_MS.claude`.
  *
  * Both waits outlive the process: the record is persisted with the router's
  * state, so a restart neither forgets a retry moment nor spends another read.
@@ -43,6 +40,28 @@ export interface QuotaPollPlan {
   readonly providers: readonly string[] | null;
   /** The providers whose entries are carried forward unread. */
   readonly deferred: ReadonlySet<string>;
+}
+
+/**
+ * The quota-axi command line for one plan's read.
+ *
+ * The bridge's Claude token is a Claude Code inference token: it lacks the
+ * `user:profile` scope Anthropic's OAuth usage endpoint requires, so that
+ * endpoint can never answer for it (quota-axi reports
+ * `claude_env_usage_scope_unavailable`). quota-axi's supported reading for
+ * exactly that credential is `--allow-claude-inference`: one bounded
+ * "Reply OK" Claude Code call whose rate-limit headers carry the session and
+ * weekly windows. That spends a tiny amount of Claude quota per read, which
+ * is why Claude has its own read interval. quota-axi rejects the flag on a
+ * read that does not include Claude, so it rides only on reads that do.
+ */
+export function quotaAxiArgs(plan: QuotaPollPlan): string[] {
+  const args = ["--json", "--no-credential-refresh"];
+  if (plan.providers !== null)
+    args.push(`--provider=${plan.providers.join(",")}`);
+  if (plan.providers === null || plan.providers.includes("claude"))
+    args.push("--allow-claude-inference");
+  return args;
 }
 
 /** The persisted form of the poll's record. */
