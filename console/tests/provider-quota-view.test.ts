@@ -358,7 +358,7 @@ function futureIso(offsetMs: number): string {
   return new Date(Date.now() + offsetMs).toISOString();
 }
 
-test("provider rows show compact remaining usage bars and refresh times across windows", () => {
+test("provider rows show compact used-usage bars and refresh times across windows", () => {
   const markup = renderProvidersView(
     {
       generatedAt: new Date().toISOString(),
@@ -409,8 +409,8 @@ test("provider rows show compact remaining usage bars and refresh times across w
 
   const claudeQuota = quotaBlockFor(rowFor(markup, "claude"), "claude");
   assert.equal(progressBarsIn(claudeQuota).length, 2);
-  assert.match(claudeQuota, />5h 72%</u);
-  assert.match(claudeQuota, />7d 41%</u);
+  assert.match(claudeQuota, />5h 28% used</u);
+  assert.match(claudeQuota, />7d 59% used</u);
   assert.match(claudeQuota, />in 2h</u);
   assert.match(claudeQuota, />in 2d</u);
   assert.match(claudeQuota, /bg-accent/u);
@@ -419,7 +419,7 @@ test("provider rows show compact remaining usage bars and refresh times across w
 
   const codexQuota = quotaBlockFor(rowFor(markup, "codex"), "codex");
   assert.equal(progressBarsIn(codexQuota).length, 1);
-  assert.match(codexQuota, />7d 75%</u);
+  assert.match(codexQuota, />7d 25% used</u);
   assert.match(codexQuota, />Resets tomorrow</u);
   assert.match(codexQuota, /bg-accent/u);
 
@@ -575,29 +575,29 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
 
   // 95% used (5% remaining) is still available -> blue
   const claudeQuota = quotaBlockFor(rowFor(markup, "claude"), "claude");
-  assert.match(claudeQuota, />5h 5%</u);
+  assert.match(claudeQuota, />5h 95% used</u);
   assert.match(claudeQuota, />in 45m</u);
   assert.match(claudeQuota, /bg-accent/u);
   assert.match(claudeQuota, /text-fg-secondary/u);
-  assert.match(claudeQuota, /aria-valuenow="5"/u);
-  assert.match(claudeQuota, /style="width:5%"/u);
+  assert.match(claudeQuota, /aria-valuenow="95"/u);
+  assert.match(claudeQuota, /style="width:95%"/u);
   assert.doesNotMatch(claudeQuota, /bg-warning|bg-error/u);
 
   // 96% used (4% remaining) is over 95% used -> yellow
   const codexQuota = quotaBlockFor(rowFor(markup, "codex"), "codex");
-  assert.match(codexQuota, />7d 4%</u);
+  assert.match(codexQuota, />7d 96% used</u);
   assert.match(codexQuota, />in 1h 30m</u);
   assert.match(codexQuota, /bg-warning/u);
   assert.match(codexQuota, /text-warning/u);
-  assert.match(codexQuota, /aria-valuenow="4"/u);
-  assert.match(codexQuota, /style="width:4%"/u);
+  assert.match(codexQuota, /aria-valuenow="96"/u);
+  assert.match(codexQuota, /style="width:96%"/u);
   assert.doesNotMatch(codexQuota, /bg-accent|bg-error/u);
 
   // Mixed warning (>95% via percentUsed fallback) + exhausted (100%+ clamped)
   const minimaxQuota = quotaBlockFor(rowFor(markup, "minimax"), "minimax");
-  assert.match(minimaxQuota, />5h 3%</u);
+  assert.match(minimaxQuota, />5h 98% used</u);
   assert.match(minimaxQuota, />in 2h 30m</u);
-  assert.match(minimaxQuota, />7d 0%</u);
+  assert.match(minimaxQuota, />7d 100% used</u);
   assert.match(minimaxQuota, />resetting</u);
   assert.match(minimaxQuota, /bg-warning/u);
   assert.match(minimaxQuota, /text-warning/u);
@@ -607,12 +607,45 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
 
   // 100% used (0% remaining) -> red bar at full width so exhaustion is visible
   const copilotQuota = quotaBlockFor(rowFor(markup, "copilot"), "copilot");
-  assert.match(copilotQuota, />premium interactions 0%</u);
+  assert.match(copilotQuota, />premium interactions 100% used</u);
   assert.match(copilotQuota, />in 5m</u);
   assert.match(copilotQuota, /bg-error/u);
   assert.match(copilotQuota, /text-error/u);
-  assert.match(copilotQuota, /aria-valuenow="0"/u);
+  assert.match(copilotQuota, /aria-valuenow="100"/u);
   assert.match(copilotQuota, /style="width:100%"/u);
+});
+
+test("Copilot premium interactions bar reflects used rather than remaining quota", () => {
+  const markup = renderProvidersView(
+    {
+      generatedAt: new Date().toISOString(),
+      schemaVersion: 5,
+      providers: [
+        {
+          provider: "copilot",
+          windows: [
+            {
+              id: "premium_interactions",
+              label: "premium interactions",
+              kind: "monthly",
+              percentRemaining: 1
+            }
+          ],
+          state: { status: "fresh", stale: false }
+        }
+      ]
+    },
+    ["copilot"]
+  );
+  const quota = quotaBlockFor(rowFor(markup, "copilot"), "copilot");
+  assert.match(quota, />premium interactions 99% used</u);
+  assert.match(quota, /aria-label="copilot premium interactions used quota"/u);
+  assert.match(quota, /aria-valuenow="99"/u);
+  assert.match(quota, /aria-valuetext="99% used, 1% remaining"/u);
+  assert.match(quota, /style="width:99%"/u);
+  assert.match(quota, /bg-warning/u);
+  assert.match(quota, /text-warning/u);
+  assert.doesNotMatch(quota, /bg-error/u);
 });
 
 test("agy quota windows map only to their matching Antigravity route rows", () => {
@@ -697,8 +730,8 @@ test("agy quota windows map only to their matching Antigravity route rows", () =
     "antigravity-gemini"
   );
   assert.equal(progressBarsIn(geminiQuota).length, 2);
-  assert.match(geminiQuota, />5h 96%</u);
-  assert.match(geminiQuota, />7d 98%</u);
+  assert.match(geminiQuota, />5h 4% used</u);
+  assert.match(geminiQuota, />7d 2% used</u);
   assert.doesNotMatch(geminiQuota, /50%|66%|\b3%|\b0%|90%|60%|unmeasured/u);
 
   const argonQuota = quotaBlockFor(
@@ -706,8 +739,8 @@ test("agy quota windows map only to their matching Antigravity route rows", () =
     "antigravity-argon"
   );
   assert.equal(progressBarsIn(argonQuota).length, 2);
-  assert.match(argonQuota, />5h 50%</u);
-  assert.match(argonQuota, />7d 66%</u);
+  assert.match(argonQuota, />5h 50% used</u);
+  assert.match(argonQuota, />7d 34% used</u);
   assert.doesNotMatch(argonQuota, /96%|98%|\b3%|\b0%/u);
 
   const claudeGptQuota = quotaBlockFor(
@@ -715,8 +748,8 @@ test("agy quota windows map only to their matching Antigravity route rows", () =
     "antigravity-claude-gpt"
   );
   assert.equal(progressBarsIn(claudeGptQuota).length, 2);
-  assert.match(claudeGptQuota, />5h 3%</u);
-  assert.match(claudeGptQuota, />7d 0%</u);
+  assert.match(claudeGptQuota, />5h 97% used</u);
+  assert.match(claudeGptQuota, />7d 100% used</u);
   assert.match(claudeGptQuota, /bg-warning/u);
   assert.match(claudeGptQuota, /bg-error/u);
   assert.doesNotMatch(claudeGptQuota, /96%|98%|50%|66%|60%/u);
@@ -765,7 +798,7 @@ test("provider rows omit verbose quota debug metadata and raw ISO timestamps", (
   for (const id of ANTIGRAVITY_ROW_IDS) {
     const quota = quotaBlockFor(rowFor(markup, id), id);
     assert.equal(progressBarsIn(quota).length, 1);
-    assert.match(quota, />5h 80%</u);
+    assert.match(quota, />5h 20% used</u);
     assert.match(quota, />in 3h</u);
   }
 

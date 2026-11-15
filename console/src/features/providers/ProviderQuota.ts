@@ -224,7 +224,7 @@ function quotaBarsForProviderEntry(
   return bars;
 }
 
-/** Extracts compact per-provider remaining-usage bars from the quota-axi snapshot. */
+/** Extracts compact per-provider usage bars from the quota-axi snapshot. */
 export function quotaByProvider(
   report: QuotaAxiSnapshot | null,
   nowMs: number
@@ -538,8 +538,8 @@ export function ProviderQuotaCell({
         !isExhausted &&
         (window.usedPercent > 95 || window.remainingPercent < 5);
       const remainingRounded = Math.round(window.remainingPercent);
-      const remainingLabel = `${remainingRounded}%`;
-      const summaryText = `${window.label} ${remainingLabel}`;
+      const usedRounded = Math.round(window.usedPercent);
+      const summaryText = `${window.label} ${usedRounded}% used`;
       const barColorClass = isExhausted
         ? "bg-error"
         : isWarning
@@ -550,9 +550,7 @@ export function ProviderQuotaCell({
         : isWarning
           ? "text-warning"
           : "text-fg-secondary";
-      const barWidth = isExhausted
-        ? 100
-        : Math.max(0, Math.min(100, remainingRounded));
+      const barWidth = Math.max(0, Math.min(100, usedRounded));
       return React.createElement(
         "div",
         { key: window.key, className: "flex flex-col gap-0.5" },
@@ -587,10 +585,11 @@ export function ProviderQuotaCell({
             className:
               "h-1 w-full overflow-hidden rounded-full bg-surface-raised",
             role: "progressbar",
-            "aria-label": `${providerId} ${window.label} remaining usage`,
+            "aria-label": `${providerId} ${window.label} used quota`,
             "aria-valuemin": 0,
             "aria-valuemax": 100,
-            "aria-valuenow": remainingRounded
+            "aria-valuenow": usedRounded,
+            "aria-valuetext": `${usedRounded}% used, ${remainingRounded}% remaining`
           },
           React.createElement("div", {
             className: `h-full rounded-full ${barColorClass}`,
