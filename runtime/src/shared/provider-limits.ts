@@ -1,3 +1,11 @@
+import {
+  headerValue,
+  LIMIT_HEADER_RESETS_AT,
+  normalizeResetsAt,
+  readResetAtFromHeaders,
+  resetsAtFromDuration
+} from "./provider-reset-headers.ts";
+
 export { type ProviderTransientFailureClass } from "@simulatorlife/autodev-core";
 
 // Shared vocabulary for provider usage limits and for closing a turn that a
@@ -20,7 +28,6 @@ export { type ProviderTransientFailureClass } from "@simulatorlife/autodev-core"
 
 export const LIMIT_HEADER_CLASS = "x-autodev-limit-class";
 export const LIMIT_HEADER_TYPE = "x-autodev-limit-type";
-export const LIMIT_HEADER_RESETS_AT = "x-autodev-limit-resets-at";
 export const LIMIT_HEADER_SOURCE = "x-autodev-limit-source";
 
 // How the limit was established. `reported` means the provider itself said so
@@ -74,45 +81,6 @@ export interface ProviderLimit {
   source?: LimitSource;
   exitCode?: number | null;
 }
-export interface LimitHeaders {
-  [name: string]: string | string[] | undefined;
-}
-
-// isHardLimitClass is canonically imported from @simulatorlife/autodev-core above
-
-/**
- * Normalize a provider-supplied reset time to an ISO-8601 UTC string. Providers
- * state it as epoch seconds, epoch milliseconds, or an ISO string depending on
- * which CLI produced it. Anything unparseable is dropped rather than guessed:
- * a wrong reset time is worse than none, because the router trusts it.
- */
-export function normalizeResetsAt(value: unknown): string | null {
-  const ms = resetTimeMs(value);
-  if (ms === null || !Number.isFinite(ms)) return null;
-  const date = new Date(ms);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-const DIGITS_ONLY_PATTERN = /^\d+$/;
-
-/**
- * Epoch seconds and epoch milliseconds are told apart by magnitude: a seconds
- * value large enough to be ambiguous would be in the year 33658.
- */
-function epochToMs(epoch: number): number {
-  return epoch > 1e11 ? epoch : epoch * 1000;
-}
-
-function resetTimeMs(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value))
-    return epochToMs(value);
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (DIGITS_ONLY_PATTERN.test(trimmed)) return epochToMs(Number(trimmed));
-  const parsed = Date.parse(trimmed);
-  return Number.isNaN(parsed) ? null : parsed;
-}
 
 const CLI_LIMIT_PATTERNS = Object.freeze([
   {
@@ -141,62 +109,6 @@ const CLI_LIMIT_PATTERNS = Object.freeze([
 
 const RESETS_AT_PATTERN =
   /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})/i;
-
-/**
- * The other way a provider states a reset: a remaining duration rather than a
- * clock time. agy reports "Resets in 24m43s." and "Resets in 14h23m32s.".
- *
- * `RESETS_AT_PATTERN` cannot match either -- its character class admits no
- * `h`, `m`, or `s`, and it requires at least four characters -- so every one of
- * these messages arrived with `resetsAt: null`, and the router sized its wait
- * from the failure streak instead of the window the provider had just named. A
- * quota that states it resets in 25 minutes was cooled down for 8.
- */
-const RESETS_IN_DURATION_PATTERN = /reset(?:s|ting)?\s+in\s+([0-9hms]+)/i;
-
-/** One `24m43s`-style component: an amount and the unit it is counted in. */
-const DURATION_COMPONENT_PATTERN = /(\d+)\s*([hms])/g;
-
-const MS_PER_SECOND = 1000;
-const MS_PER_MINUTE = 60 * MS_PER_SECOND;
-const MS_PER_HOUR = 60 * MS_PER_MINUTE;
-
-/**
- * Milliseconds in a stated window such as `24m43s` or `14h23m32s`, or null when
- * it names no window. The window is matched as a flat run of digits and unit
- * letters and split here rather than by nested optional groups in the pattern:
- * stacked optionals over overlapping separators are the shape that backtracks,
- * and this runs against a provider's stderr tail.
- */
-function durationMsFromWindow(window: string): number | null {
-  let total = 0;
-  let components = 0;
-  for (const [, digits, unit] of window.matchAll(DURATION_COMPONENT_PATTERN)) {
-    const amount = Number(digits);
-    if (!Number.isFinite(amount)) return null;
-    total +=
-      amount *
-      (unit === "h"
-        ? MS_PER_HOUR
-        : unit === "m"
-          ? MS_PER_MINUTE
-          : MS_PER_SECOND);
-    components += 1;
-  }
-  return components > 0 && total > 0 ? total : null;
-}
-
-/** The absolute reset time a stated duration lands on, or null when none is stated. */
-function resetsAtFromDuration(text: string, now: number): string | null {
-  const window = text.match(RESETS_IN_DURATION_PATTERN)?.[1];
-  // "Resets in" with no window after it states nothing, so it must not resolve
-  // to the current instant: that would cool a provider down for zero time and
-  // invite the immediate retry this exists to prevent.
-  if (!window) return null;
-  const durationMs = durationMsFromWindow(window);
-  if (durationMs === null) return null;
-  return new Date(now + durationMs).toISOString();
-}
 
 /**
  * Best-effort classification of a CLI failure message. Always reports
@@ -244,131 +156,6 @@ export function limitResponseHeaders(
       ? LIMIT_SOURCE_REPORTED
       : LIMIT_SOURCE_INFERRED;
   return headers;
-}
-
-/**
- * A reader for one header name, or null when nothing header-shaped was given.
- *
- * This is a capability probe rather than `instanceof Headers`. The same web API
- * class has several implementations -- undici, workerd, Bun, node-fetch v2 --
- * lives in more than one realm, and any duck-typed fetch double is a perfectly
- * good substitute for a header bag. `instanceof` misclassifies every one of
- * those as a plain record, and `Object.keys()` on a real `Headers` instance
- * returns nothing, so a header the provider actually sent would read as absent.
- *
- * At this boundary that failure is silent and expensive: a missed
- * `quota_exhausted` or `session_limit` degrades a declared hard limit into a
- * generic transient failure, which cools down briefly instead of until the
- * declared reset.
- */
-function headerReader(headers: unknown): ((name: string) => unknown) | null {
-  if (!headers || typeof headers !== "object") return null;
-  const get = (headers as { get?: unknown }).get;
-  if (typeof get === "function")
-    return (name) => (get as (key: string) => unknown).call(headers, name);
-  const record = headers as LimitHeaders;
-  return (name) => {
-    const key = Object.keys(record).find(
-      (candidate: string) => candidate.toLowerCase() === name
-    );
-    return key === undefined ? undefined : record[key];
-  };
-}
-
-function headerValue(headers: unknown, name: string): string | null {
-  const read = headerReader(headers);
-  if (!read) return null;
-  const raw = read(name);
-  const single = Array.isArray(raw) ? raw[0] : raw;
-  return typeof single === "string" && single.trim() ? single.trim() : null;
-}
-
-function parseRelativeSecondsReset(
-  raw: string | null,
-  now: number
-): string | null {
-  if (!raw) return null;
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  return new Date(now + Math.ceil(seconds * MS_PER_SECOND)).toISOString();
-}
-
-function parseRetryAfter(raw: string | null, now: number): string | null {
-  if (!raw) return null;
-  const relative = parseRelativeSecondsReset(raw, now);
-  if (relative) return relative;
-  const parsed = Date.parse(raw);
-  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
-}
-
-function resetFromRateLimitHeader(
-  raw: string | null,
-  now: number
-): string | null {
-  if (!raw) return null;
-  const msMatch = /^(\d+(?:\.\d+)?)ms$/i.exec(raw);
-  if (msMatch?.[1]) {
-    const ms = Number(msMatch[1]);
-    return Number.isFinite(ms) && ms > 0
-      ? new Date(now + Math.ceil(ms)).toISOString()
-      : null;
-  }
-  const durationMs = durationMsFromWindow(raw.toLowerCase());
-  if (durationMs !== null) return new Date(now + durationMs).toISOString();
-  return normalizeResetsAt(raw);
-}
-
-function codexWindowReset(
-  headers: unknown,
-  window: "primary" | "secondary",
-  now: number
-): string | null {
-  return (
-    normalizeResetsAt(headerValue(headers, `x-codex-${window}-reset-at`)) ??
-    parseRelativeSecondsReset(
-      headerValue(headers, `x-codex-${window}-reset-after-seconds`),
-      now
-    )
-  );
-}
-
-/**
- * Extract the earliest actionable reset timestamp from AutoDev, Codex/ChatGPT,
- * OpenAI, or standard HTTP `Retry-After` response headers.
- */
-export function readResetAtFromHeaders(
-  headers: unknown,
-  now = Date.now()
-): string | null {
-  const explicit = normalizeResetsAt(
-    headerValue(headers, LIMIT_HEADER_RESETS_AT)
-  );
-  if (explicit) return explicit;
-  const secondaryPct = Number(
-    headerValue(headers, "x-codex-secondary-used-percent") ?? 0
-  );
-  const primaryPct = Number(
-    headerValue(headers, "x-codex-primary-used-percent") ?? 0
-  );
-  const windows: readonly ("primary" | "secondary")[] =
-    secondaryPct >= 100 && primaryPct < 100
-      ? ["secondary", "primary"]
-      : ["primary", "secondary"];
-  for (const window of windows) {
-    const reset = codexWindowReset(headers, window, now);
-    if (reset) return reset;
-  }
-  return (
-    parseRetryAfter(headerValue(headers, "retry-after"), now) ??
-    resetFromRateLimitHeader(
-      headerValue(headers, "x-ratelimit-reset-requests"),
-      now
-    ) ??
-    resetFromRateLimitHeader(
-      headerValue(headers, "x-ratelimit-reset-tokens"),
-      now
-    )
-  );
 }
 
 /**
@@ -619,6 +406,12 @@ function messageDoneEvents(
   ];
 }
 
+export {
+  LIMIT_HEADER_RESETS_AT,
+  type LimitHeaders,
+  normalizeResetsAt,
+  readResetAtFromHeaders
+} from "./provider-reset-headers.ts";
 export {
   PROVIDER_HARD_LIMIT_CLASSES as HARD_LIMIT_CLASSES,
   isHardLimitClass,

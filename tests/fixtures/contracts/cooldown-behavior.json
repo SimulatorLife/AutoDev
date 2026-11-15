@@ -51,11 +51,26 @@
     },
     "probe_ladder_first_through_fifth": {
       "setup": [
-        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } },
-        { "provider": "antigravity-gemini", "args": { "failureClass": "probe_unavailable" } }
+        {
+          "provider": "antigravity-gemini",
+          "args": { "failureClass": "probe_unavailable" }
+        },
+        {
+          "provider": "antigravity-gemini",
+          "args": { "failureClass": "probe_unavailable" }
+        },
+        {
+          "provider": "antigravity-gemini",
+          "args": { "failureClass": "probe_unavailable" }
+        },
+        {
+          "provider": "antigravity-gemini",
+          "args": { "failureClass": "probe_unavailable" }
+        },
+        {
+          "provider": "antigravity-gemini",
+          "args": { "failureClass": "probe_unavailable" }
+        }
       ],
       "expectedStreaks": [
         { "kind": "probe", "streak": 1, "durationMs": 5000 },
@@ -87,7 +102,14 @@
     },
     "hard_with_future_reset_held_until_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        }
       ],
       "expected": {
         "kind": "hard",
@@ -99,7 +121,14 @@
     },
     "hard_with_session_limit_class_also_holds_until_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "session_limit", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "session_limit",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        }
       ],
       "expected": {
         "kind": "hard",
@@ -111,7 +140,14 @@
     },
     "hard_with_past_reset_falls_back_to_short_transient": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T22:12:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T22:12:20.000Z"
+          }
+        }
       ],
       "expected": {
         "kind": "hard",
@@ -123,7 +159,10 @@
     },
     "hard_without_reset_uses_floor": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        }
       ],
       "expected": {
         "kind": "hard",
@@ -135,13 +174,34 @@
     },
     "hard_without_reset_ladder_escalates_and_caps": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        }
       ],
       "expectedStreaks": [
         { "kind": "hard", "streak": 1, "durationMs": 900000 },
@@ -155,7 +215,14 @@
     },
     "hard_with_far_reset_clamped_to_ceiling": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-12-14T22:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-12-14T22:13:20.000Z"
+          }
+        }
       ],
       "expected": {
         "kind": "hard",
@@ -167,7 +234,10 @@
     },
     "hard_unstructured_stays_on_transient_ladder": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": false } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": false }
+        }
       ],
       "expected": {
         "kind": "transient",
@@ -179,8 +249,18 @@
     },
     "non_shortening_probe_does_not_pull_back_hard": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
-        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "probe_unavailable" }
+        }
       ],
       "expected": {
         "provider": "claude",
@@ -194,7 +274,14 @@
     },
     "non_shortening_transient_does_not_pull_back_hard": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        },
         { "provider": "claude", "args": { "failureClass": "upstream_error" } }
       ],
       "expected": {
@@ -209,7 +296,14 @@
     },
     "non_shortening_config_does_not_pull_back_hard": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        },
         { "provider": "claude", "args": { "failureClass": "authentication" } }
       ],
       "expected": {
@@ -224,7 +318,14 @@
     },
     "non_shortening_hard_keeps_its_own_reset_after_subsequent_step": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        },
         { "provider": "claude", "args": {} }
       ],
       "expected": {
@@ -253,23 +354,31 @@
     },
     "last_resort_eligible_for_probe": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "probe_unavailable" }
+        }
       ],
       "entry": { "kind": "probe", "resetsAt": null },
       "atDeltaMs": 1,
       "expected": true
     },
     "last_resort_eligible_for_transient": {
-      "setup": [
-        { "provider": "claude", "args": {} }
-      ],
+      "setup": [{ "provider": "claude", "args": {} }],
       "entry": { "kind": "transient", "resetsAt": null },
       "atDeltaMs": 1,
       "expected": true
     },
     "last_resort_blocked_for_hard_with_future_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        }
       ],
       "entry": { "kind": "hard", "resetsAt": "2023-11-14T23:13:20.000Z" },
       "atDeltaMs": 1,
@@ -277,7 +386,14 @@
     },
     "last_resort_eligible_for_hard_with_past_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T22:12:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T22:12:20.000Z"
+          }
+        }
       ],
       "entry": { "kind": "hard", "resetsAt": "2023-11-14T22:12:20.000Z" },
       "atDeltaMs": 1,
@@ -285,7 +401,10 @@
     },
     "last_resort_eligible_for_hard_without_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "quota_exhausted", "structured": true }
+        }
       ],
       "entry": { "kind": "hard", "resetsAt": null },
       "atDeltaMs": 1,
@@ -293,16 +412,29 @@
     },
     "retry_returns_earliest_remaining_ms": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "probe_unavailable" }
+        },
         { "provider": "antigravity-gemini", "args": {} }
       ],
       "atDeltaMs": 0,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "retryCandidates": [
+        { "provider": "claude", "model": "sonnet" },
+        {
+          "provider": "antigravity-gemini",
+          "model": "gemini-3.8-flash-medium"
+        },
+        { "provider": "minimax", "model": "MiniMax-M3" }
+      ],
       "expected": 5000
     },
     "retry_returns_ms_for_single_cooling_provider": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+        {
+          "provider": "claude",
+          "args": { "failureClass": "probe_unavailable" }
+        }
       ],
       "atDeltaMs": 0,
       "retryCandidates": [{ "provider": "claude", "model": "sonnet" }],
@@ -311,21 +443,36 @@
     "retry_returns_zero_when_none_cooling": {
       "setup": [],
       "atDeltaMs": 0,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "retryCandidates": [
+        { "provider": "claude", "model": "sonnet" },
+        {
+          "provider": "antigravity-gemini",
+          "model": "gemini-3.8-flash-medium"
+        },
+        { "provider": "minimax", "model": "MiniMax-M3" }
+      ],
       "expected": 0
     },
     "retry_skips_expired_entries_at_future_time": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
+        {
+          "provider": "claude",
+          "args": { "failureClass": "probe_unavailable" }
+        },
         { "provider": "antigravity-gemini", "args": {} }
       ],
       "atDeltaMs": 6000,
-      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }],
+      "retryCandidates": [
+        { "provider": "claude", "model": "sonnet" },
+        { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }
+      ],
       "expected": 24000
     },
     "summary_disabled_provider_reports_disabled_state": {
       "setup": [{ "disable": "antigravity-gemini" }],
-      "candidates": [{ "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }],
+      "candidates": [
+        { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }
+      ],
       "expected": [
         {
           "provider": "antigravity-gemini",
@@ -340,7 +487,14 @@
     },
     "summary_cooling_provider_reports_kind_failure_and_reset": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        }
       ],
       "candidates": [{ "provider": "claude", "model": "sonnet" }],
       "atDeltaMs": 1,
@@ -374,7 +528,11 @@
     },
     "summary_dedupes_repeated_providers": {
       "setup": [],
-      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "claude", "model": "sonnet" }, { "provider": "claude", "model": "sonnet" }],
+      "candidates": [
+        { "provider": "claude", "model": "sonnet" },
+        { "provider": "claude", "model": "sonnet" },
+        { "provider": "claude", "model": "sonnet" }
+      ],
       "atDeltaMs": 1,
       "expected": [
         {
@@ -390,9 +548,23 @@
     },
     "summary_mixed_list_reports_each_provider_state": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "quota_exhausted",
+            "structured": true,
+            "resetsAt": "2023-11-14T23:13:20.000Z"
+          }
+        }
       ],
-      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity-gemini", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
+      "candidates": [
+        { "provider": "claude", "model": "sonnet" },
+        {
+          "provider": "antigravity-gemini",
+          "model": "gemini-3.8-flash-medium"
+        },
+        { "provider": "minimax", "model": "MiniMax-M3" }
+      ],
       "atDeltaMs": 1,
       "expected": [
         {
@@ -426,7 +598,14 @@
     },
     "summary_invalid_model_is_a_config_cooldown_on_that_model": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "invalid_model", "model": "claude-opus-5-5", "detail": "Claude Code 2.1.240 does not support this model" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "invalid_model",
+            "model": "claude-opus-5-5",
+            "detail": "Claude Code 2.1.240 does not support this model"
+          }
+        }
       ],
       "candidates": [{ "provider": "claude", "model": "claude-opus-5-5" }],
       "atDeltaMs": 1,
@@ -444,7 +623,13 @@
     },
     "summary_invalid_model_leaves_the_providers_other_models_available": {
       "setup": [
-        { "provider": "claude", "args": { "failureClass": "invalid_model", "model": "claude-opus-5-5" } }
+        {
+          "provider": "claude",
+          "args": {
+            "failureClass": "invalid_model",
+            "model": "claude-opus-5-5"
+          }
+        }
       ],
       "candidates": [{ "provider": "claude", "model": "sonnet" }],
       "atDeltaMs": 1,

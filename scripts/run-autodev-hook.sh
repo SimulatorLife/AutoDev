@@ -15,11 +15,11 @@ shift
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 case "$script_path" in
-  "~/.codex/"*)
-    script_path="$codex_home/${script_path#"~/.codex/"}"
+  \~/.codex/*)
+    script_path="$codex_home/${script_path#\~/.codex/}"
     ;;
-  "~/"*)
-    script_path="$HOME/${script_path#"~/"}"
+  \~/*)
+    script_path="$HOME/${script_path#\~/}"
     ;;
 esac
 

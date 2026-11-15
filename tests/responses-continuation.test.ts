@@ -131,7 +131,7 @@ test("a tail of only injected messages awaits nothing", () => {
 
 test("compaction prompt following pending tool outputs never triggers continuation", () => {
   for (const compactionText of [
-    "<context_compaction>Summarize our progress so far.</context_compaction>",
+    "# Context Compaction\n\nCondense the conversation above into a structured checkpoint.",
     "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize everything."
   ]) {
     const { outputs, messages } = awaitedToolResults([

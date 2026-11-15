@@ -2022,7 +2022,7 @@ test("compaction requests fail closed on empty or tool-call-only responses and f
             content: [
               {
                 type: "input_text",
-                text: "<context_compaction>Summarize conversation.</context_compaction>"
+                text: "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize conversation."
               }
             ]
           }
@@ -2053,7 +2053,10 @@ test("proxyOrchestratorResponse restores compact root bootstrap after compaction
   process.env.LITELLM_API_KEY = "sk-bootstrap-test";
   const originalFetch = globalThis.fetch;
   const forwardedPayloads: Array<Record<string, unknown>> = [];
-  globalThis.fetch = (async (_url, init) => {
+  globalThis.fetch = (async (url, init) => {
+    if (!String(url).includes("/v1/responses")) {
+      return jsonResponse({ status: "ok" });
+    }
     forwardedPayloads.push(
       JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
     );
@@ -2080,7 +2083,7 @@ test("proxyOrchestratorResponse restores compact root bootstrap after compaction
         content: [
           {
             type: "input_text",
-            text: "<context_summary>\nPreviously investigated files.\n</context_summary>"
+            text: "<compacted-summary>\nPreviously investigated files.\n</compacted-summary>"
           }
         ]
       },
@@ -2107,9 +2110,10 @@ test("proxyOrchestratorResponse restores compact root bootstrap after compaction
       role?: string;
       content?: Array<{ text?: string }>;
     }>;
-    assert.equal(firstItems[0]?.role, "developer");
+    assert.equal(firstItems.length, 3);
+    assert.equal(firstItems[1]?.role, "developer");
     assert.match(
-      firstItems[0]?.content?.[0]?.text ?? "",
+      firstItems[1]?.content?.[0]?.text ?? "",
       /# Root orchestrator bootstrap/
     );
 

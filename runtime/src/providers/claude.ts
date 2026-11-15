@@ -1242,6 +1242,67 @@ function resolveTurnCwd(
   }
 }
 
+function resolveClaudeTurnRuntime(args: {
+  readonly compaction: boolean;
+  readonly request: IncomingMessage;
+  readonly payload: JsonRecord;
+  readonly agentRole: string | null;
+  readonly cwd: string;
+}): {
+  readonly surface: CodexToolSurface;
+  readonly sandboxInjection: string;
+  readonly orchestratorSkillContext: string | null;
+  readonly spawnSession: ReturnType<typeof openSpawnSession>;
+  readonly spawnToken: string | null;
+  readonly mayDelegate: boolean;
+  readonly delegation: string;
+} {
+  if (args.compaction) {
+    return {
+      surface: { tools: [], webSearch: false },
+      sandboxInjection: "",
+      orchestratorSkillContext: null,
+      spawnSession: null,
+      spawnToken: null,
+      mayDelegate: false,
+      delegation: ""
+    };
+  }
+  const surface = codexToolSurface(args.payload);
+  const sandboxInjection = readOnlySystemPromptInjection(
+    args.request.headers as Record<string, unknown>
+  );
+  const orchestratorSkillContext = bridgeSkillContext(
+    args.request.headers as Record<string, unknown>
+  );
+  const spawnSession = openSpawnSession(args.request.headers, spawnSessions, {
+    orchestrator: isOrchestratorRole(args.agentRole),
+    role: args.agentRole,
+    workspace: args.cwd,
+    payload: args.payload
+  });
+  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
+  if (isOrchestratorRole(args.agentRole) && spawnSession === null) {
+    writeErrorLine(
+      `claude orchestrator request missing trackable spawn session header role=${args.agentRole ?? "default"}`
+    );
+  }
+  const mayDelegate =
+    spawnSession !== null && spawnSessions.mayDelegate(spawnSession);
+  return {
+    surface,
+    sandboxInjection,
+    orchestratorSkillContext,
+    spawnSession,
+    spawnToken,
+    mayDelegate,
+    delegation: bridgeDelegationInstruction({
+      mayDelegate,
+      reach: { kind: "direct", prefix: "mcp__" }
+    })
+  };
+}
+
 /** Starts a Claude CLI turn for a `/v1/responses` request, or resumes a parked one. */
 function startResponsesTurn(
   request: IncomingMessage,
@@ -1250,8 +1311,6 @@ function startResponsesTurn(
 ): void {
   const model = resolvedModel(payload.model);
   const effort = resolveClaudeEffort(requestedEffort(payload));
-  // The router classifies the turn; only it can tell this bridge which role
-  // it is serving.
   const agentRole = resolveAgentRole(
     request.headers as Record<string, unknown>
   );
@@ -1298,47 +1357,21 @@ function startResponsesTurn(
     handleNonStreamingError(response, describeFailure(error));
     return;
   }
-  const surface: CodexToolSurface = compaction
-    ? { tools: [], webSearch: false }
-    : codexToolSurface(payload);
-  // Codex owns sandbox; the CLI receives no native --sandbox-mode flag, so
-  // the role's read-only contract is enforced via a system-prompt preamble.
-  const sandboxInjection = compaction
-    ? ""
-    : readOnlySystemPromptInjection(request.headers as Record<string, unknown>);
-  const orchestratorSkillContext = compaction
-    ? null
-    : bridgeSkillContext(request.headers as Record<string, unknown>);
-  // The delegation surface is the bridge's, not Codex's: a turn may delegate
-  // whether or not Codex offered this request any tools at all. The session
-  // is opened here, after the parked turn has been reattached, so a
-  // continuation never replaces the children its own turn collected.
-  const spawnSession = compaction
-    ? null
-    : openSpawnSession(request.headers, spawnSessions, {
-        orchestrator: isOrchestratorRole(agentRole),
-        role: agentRole,
-        workspace: cwd,
-        payload
-      });
-  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
-    writeErrorLine(
-      `claude orchestrator request missing trackable spawn session header role=${agentRole ?? "default"}`
-    );
-  }
-  const mayDelegate =
-    !compaction &&
-    spawnSession !== null &&
-    spawnSessions.mayDelegate(spawnSession);
-  const delegation = compaction
-    ? ""
-    : bridgeDelegationInstruction({
-        mayDelegate,
-        // The Claude CLI advertises each MCP tool directly, so the model calls one
-        // name rather than naming a server and a tool.
-        reach: { kind: "direct", prefix: "mcp__" }
-      });
+  const {
+    surface,
+    sandboxInjection,
+    orchestratorSkillContext,
+    spawnSession,
+    spawnToken,
+    mayDelegate,
+    delegation
+  } = resolveClaudeTurnRuntime({
+    compaction,
+    request,
+    payload,
+    agentRole,
+    cwd
+  });
   const turn = new ClaudeTurn({
     tools: surface.tools,
     registry: turns,

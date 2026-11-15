@@ -426,6 +426,7 @@ export function transportErrorInfo(error: unknown): {
 export function logTransportError({
   requestId,
   role = null,
+  origin = null,
   provider,
   model,
   requestedModel = model,
@@ -434,6 +435,7 @@ export function logTransportError({
 }: {
   requestId: string | null;
   role?: string | null;
+  origin?: string | null;
   provider: string | null;
   model: string | null;
   requestedModel?: string | null;
@@ -445,6 +447,7 @@ export function logTransportError({
     phase: "transport_error",
     requestId,
     role,
+    origin,
     requestedModel,
     provider,
     model,
@@ -1304,6 +1307,87 @@ function limitFromDeclared(declared: unknown): ProviderLimit | null {
   };
 }
 
+const INVALID_COMPACTION_ERROR =
+  "Compaction turn returned empty summary or tool calls.";
+const INVALID_COMPACTION_REPORTED_ERROR: ProviderReportedError = {
+  type: "invalid_compaction_response",
+  code: "invalid_compaction_response",
+  message: INVALID_COMPACTION_ERROR
+};
+
+function respondInvalidCompactionJson(
+  response: ServerResponse,
+  responseHeaders: Record<string, string>,
+  toolCalls: number,
+  toolCallIds: Set<string>,
+  holdFailureBeforeOutput = false
+): StreamWriteResult {
+  const withhold = holdFailureBeforeOutput && !response.headersSent;
+  if (!withhold) {
+    sendJson(
+      response,
+      502,
+      {
+        error: {
+          type: INVALID_COMPACTION_REPORTED_ERROR.type,
+          message: INVALID_COMPACTION_REPORTED_ERROR.message
+        }
+      },
+      responseHeaders
+    );
+  }
+  return {
+    toolCalls,
+    toolCallIds,
+    failed: true,
+    clientDisconnected: false,
+    incompleteReason: "invalid_compaction_response",
+    limit: null,
+    error: INVALID_COMPACTION_REPORTED_ERROR,
+    inputRequired: false,
+    beforeOutput: withhold
+  };
+}
+
+function applyCompletedSseEvent(args: {
+  readonly response: Record<string, unknown> | undefined;
+  readonly streamState: SseStreamState;
+  readonly toolCallIds: Set<string>;
+  readonly setTerminal: (value: "completed" | "failed") => void;
+  readonly setIncompleteReason: (value: string) => void;
+  readonly setReportedLimit: (value: ProviderLimit) => void;
+  readonly setReportedError: (value: ProviderReportedError) => void;
+  readonly withholdFailure: () => void;
+  readonly onResponseCompleted?:
+    ((response: Record<string, unknown>) => void) | undefined;
+}): void {
+  collectToolCallIds(args.response, args.toolCallIds);
+  if (args.response) args.onResponseCompleted?.(args.response);
+  const invalidCompaction =
+    Boolean(args.streamState.rejectInvalidCompaction) &&
+    isInvalidCompactionResponse(
+      args.streamState.text || responseOutputText(args.response),
+      args.toolCallIds.size
+    );
+  if (invalidCompaction) {
+    args.setTerminal("failed");
+    args.setIncompleteReason("invalid_compaction_response");
+    args.setReportedError(INVALID_COMPACTION_REPORTED_ERROR);
+    args.withholdFailure();
+    if (!args.streamState.withheld)
+      args.streamState.suppressCompletedFrame = true;
+    return;
+  }
+  const notCompleted = responseWasNotCompleted(args.response);
+  args.setTerminal(notCompleted ? "failed" : "completed");
+  const details = args.response?.incomplete_details as
+    Record<string, unknown> | undefined;
+  if (details?.reason) args.setIncompleteReason(String(details.reason));
+  const declared = limitFromDeclared(details?.provider_limit);
+  if (declared) args.setReportedLimit(declared);
+  if (notCompleted) args.withholdFailure();
+}
+
 function applyParsedSseEvent(
   parsed: { type?: string; [key: string]: unknown },
   streamState: SseStreamState,
@@ -1315,8 +1399,6 @@ function applyParsedSseEvent(
   onResponseCompleted?: (response: Record<string, unknown>) => void
 ): void {
   if (isOutputEvent(parsed.type)) streamState.outputStarted = true;
-  // A response that ends in failure before any output has told the client
-  // nothing: it is kept back, so the chain can ask the next provider.
   const withholdFailure = (): void => {
     if (streamState.holdFailureBeforeOutput && !streamState.outputStarted)
       streamState.withheld = true;
@@ -1356,9 +1438,6 @@ function applyParsedSseEvent(
     }
     case "response.failed": {
       captureFailedEvent(parsed, setReportedError);
-      // A bridge that could not start the turn for a limit says so in the
-      // failure, with the limit it would otherwise put in an incomplete
-      // response: the provider is cooled down for as long as it declared.
       const failed = parsed.response as Record<string, unknown> | undefined;
       const declared = limitFromDeclared(
         (failed?.error as Record<string, unknown> | undefined)?.limit
@@ -1369,34 +1448,17 @@ function applyParsedSseEvent(
       break;
     }
     case "response.completed": {
-      const response = parsed.response as Record<string, unknown> | undefined;
-      collectToolCallIds(response, toolCallIds);
-      if (response) onResponseCompleted?.(response);
-      const invalidCompaction =
-        Boolean(streamState.rejectInvalidCompaction) &&
-        isInvalidCompactionResponse(
-          streamState.text || responseOutputText(response),
-          toolCallIds.size
-        );
-      if (invalidCompaction) {
-        setTerminal("failed");
-        setIncompleteReason("invalid_compaction_response");
-        setReportedError({
-          type: "invalid_compaction_response",
-          message: "Compaction turn returned empty summary or tool calls."
-        });
-        withholdFailure();
-        if (!streamState.withheld) streamState.suppressCompletedFrame = true;
-        break;
-      }
-      const notCompleted = responseWasNotCompleted(response);
-      setTerminal(notCompleted ? "failed" : "completed");
-      const details = response?.incomplete_details as
-        Record<string, unknown> | undefined;
-      if (details?.reason) setIncompleteReason(String(details.reason));
-      const declared = limitFromDeclared(details?.provider_limit);
-      if (declared) setReportedLimit(declared);
-      if (notCompleted) withholdFailure();
+      applyCompletedSseEvent({
+        response: parsed.response as Record<string, unknown> | undefined,
+        streamState,
+        toolCallIds,
+        setTerminal,
+        setIncompleteReason,
+        setReportedLimit,
+        setReportedError,
+        withholdFailure,
+        onResponseCompleted
+      });
       break;
     }
     default: {
@@ -1405,7 +1467,7 @@ function applyParsedSseEvent(
   }
 }
 
-function flushSseBuffer(args: {
+type FlushSseArgs = {
   buffer: string;
   flush: boolean;
   isWritable: () => boolean;
@@ -1422,81 +1484,49 @@ function flushSseBuffer(args: {
   onResponseCompleted?: (response: Record<string, unknown>) => void;
   onConsumed: (toolCallDelta: number) => void;
   onBufferUpdated: (next: string) => void;
-}): void {
+};
+
+function emitProcessedSseFrame(event: string, args: FlushSseArgs): void {
+  const processed = processSseEvent(event, {
+    publicModel: args.publicModel,
+    ...(args.minimumInputTokens === undefined
+      ? {}
+      : { minimumInputTokens: args.minimumInputTokens }),
+    seenToolCalls: args.seenToolCalls,
+    onParsed: (parsed) =>
+      applyParsedSseEvent(
+        parsed,
+        args.streamState,
+        args.toolCallIds,
+        args.setTerminal,
+        args.setIncompleteReason,
+        args.setReportedLimit,
+        args.setReportedError,
+        args.onResponseCompleted
+      )
+  });
+  args.onConsumed(processed.toolCalls);
+  if (args.streamState.withheld) return;
+  if (args.streamState.suppressCompletedFrame) {
+    args.streamState.suppressCompletedFrame = false;
+    args.safeWrite(responseFailureEvent(INVALID_COMPACTION_ERROR));
+    return;
+  }
+  args.safeWrite(processed.output);
+}
+
+function flushSseBuffer(args: FlushSseArgs): void {
   let working = args.buffer;
   while (args.isWritable()) {
     const boundary = working.match(SSE_EVENT_BOUNDARY);
     if (!boundary) break;
     const end = boundary.index! + boundary[0]!.length;
     const event = working.slice(0, end);
-    // One pass: the frame is split and parsed once, and that single parse feeds
-    // stream inspection, tool-call counting, and the rewrite. It used to be
-    // three passes over the same bytes -- see processSseEvent.
-    const processed = processSseEvent(event, {
-      publicModel: args.publicModel,
-      ...(args.minimumInputTokens === undefined
-        ? {}
-        : { minimumInputTokens: args.minimumInputTokens }),
-      seenToolCalls: args.seenToolCalls,
-      onParsed: (parsed) =>
-        applyParsedSseEvent(
-          parsed,
-          args.streamState,
-          args.toolCallIds,
-          args.setTerminal,
-          args.setIncompleteReason,
-          args.setReportedLimit,
-          args.setReportedError,
-          args.onResponseCompleted
-        )
-    });
-    args.onConsumed(processed.toolCalls);
-    if (!args.streamState.withheld) {
-      if (args.streamState.suppressCompletedFrame) {
-        args.streamState.suppressCompletedFrame = false;
-        args.safeWrite(
-          responseFailureEvent(
-            "Compaction turn returned empty summary or tool calls."
-          )
-        );
-      } else {
-        args.safeWrite(processed.output);
-      }
-    }
     working = working.slice(end);
+    emitProcessedSseFrame(event, args);
   }
   if (args.flush && working && args.isWritable()) {
-    const processed = processSseEvent(working, {
-      publicModel: args.publicModel,
-      ...(args.minimumInputTokens === undefined
-        ? {}
-        : { minimumInputTokens: args.minimumInputTokens }),
-      seenToolCalls: args.seenToolCalls,
-      onParsed: (parsed) =>
-        applyParsedSseEvent(
-          parsed,
-          args.streamState,
-          args.toolCallIds,
-          args.setTerminal,
-          args.setIncompleteReason,
-          args.setReportedLimit,
-          args.setReportedError,
-          args.onResponseCompleted
-        )
-    });
-    args.onConsumed(processed.toolCalls);
-    if (!args.streamState.withheld) {
-      if (args.streamState.suppressCompletedFrame) {
-        args.streamState.suppressCompletedFrame = false;
-        args.safeWrite(
-          responseFailureEvent(
-            "Compaction turn returned empty summary or tool calls."
-          )
-        );
-      } else {
-        args.safeWrite(processed.output);
-      }
-    }
+    emitProcessedSseFrame(working, args);
     working = "";
   }
   args.onBufferUpdated(working);
@@ -2284,7 +2314,8 @@ async function writeStreamedProviderResponse(
 
 function writeCodexBufferedResponse(
   context: ProviderResponseContext,
-  body: string
+  body: string,
+  holdFailureBeforeOutput = false
 ): StreamWriteResult {
   const {
     response,
@@ -2321,22 +2352,13 @@ function writeCodexBufferedResponse(
       (completed ? responseWasNotCompleted(completed) : false)
   );
   if (invalidCompaction) {
-    const error = {
-      type: "invalid_compaction_response",
-      message: "Compaction turn returned empty summary or tool calls."
-    };
-    sendJson(response, 502, { error }, responseHeaders);
-    return {
+    return respondInvalidCompactionJson(
+      response,
+      responseHeaders,
       toolCalls,
       toolCallIds,
-      failed: true,
-      clientDisconnected: false,
-      incompleteReason: "invalid_compaction_response",
-      limit: null,
-      error,
-      inputRequired: false,
-      beforeOutput: false
-    };
+      holdFailureBeforeOutput
+    );
   }
   sendJson(response, result.upstream.status, parsed, responseHeaders);
   const incomplete = incompleteFromResponse(parsed);
@@ -2369,7 +2391,8 @@ function writeRawBufferedResponse(
 
 function writeJsonBufferedResponse(
   context: ProviderResponseContext,
-  body: string
+  body: string,
+  holdFailureBeforeOutput = false
 ): StreamWriteResult {
   const {
     response,
@@ -2407,22 +2430,13 @@ function writeJsonBufferedResponse(
       invalidCompaction || responseWasNotCompleted(responseObject)
     );
     if (invalidCompaction) {
-      const error = {
-        type: "invalid_compaction_response",
-        message: "Compaction turn returned empty summary or tool calls."
-      };
-      sendJson(response, 502, { error }, responseHeaders);
-      return {
+      return respondInvalidCompactionJson(
+        response,
+        responseHeaders,
         toolCalls,
         toolCallIds,
-        failed: true,
-        clientDisconnected: false,
-        incompleteReason: "invalid_compaction_response",
-        limit: null,
-        error,
-        inputRequired: false,
-        beforeOutput: false
-      };
+        holdFailureBeforeOutput
+      );
     }
     sendJson(response, result.upstream.status, rewritten, responseHeaders);
     const incomplete = incompleteFromResponse(rewritten);
@@ -2495,8 +2509,8 @@ async function writeProviderResponse(
     throw error;
   }
   return route.provider === "codex"
-    ? writeCodexBufferedResponse(context, body)
-    : writeJsonBufferedResponse(context, body);
+    ? writeCodexBufferedResponse(context, body, holdFailureBeforeOutput)
+    : writeJsonBufferedResponse(context, body, holdFailureBeforeOutput);
 }
 
 export function soonestReset(
@@ -3285,6 +3299,8 @@ async function runConcreteAttempts(ctx: ConcreteRequestContext): Promise<void> {
           } catch (error) {
             logTransportError({
               requestId,
+              role: ctx.attribution.role,
+              origin: ctx.attribution.origin,
               provider: route.provider,
               model: ctx.modelName,
               error,
@@ -4845,6 +4861,7 @@ function fetchCandidate(
     logTransportError({
       requestId: ctx.requestId,
       role: ctx.role,
+      origin: ctx.origin,
       requestedModel: ctx.modelName,
       provider: route.provider,
       model: route.model,
@@ -4971,9 +4988,10 @@ async function handleCandidateSuccess(
       },
       ctx.clientSignal,
       bridgeMinimumInputTokens(route.provider, ctx.payload),
-      // Only a streamed attempt can be left behind: a buffered one has
-      // answered the client by the time its failure is known.
-      ctx.wantsStream,
+      // Streamed failures before output, and buffered invalid compaction
+      // responses (which write nothing until valid), stay uncommitted so the
+      // fallback chain can fail over to the next provider.
+      ctx.wantsStream || isCompactionRequest(ctx.payload),
       isCompactionRequest(ctx.payload)
     );
     if (responseResult.clientDisconnected) {
@@ -4981,8 +4999,9 @@ async function handleCandidateSuccess(
       recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
       return "terminal";
     }
-    // The stream is held open exactly when this attempt said nothing on it.
-    if (responseResult.beforeOutput) holdClientStream(ctx);
+    // The stream is held open only for streaming requests whose candidate
+    // failed before writing output.
+    if (responseResult.beforeOutput && ctx.wantsStream) holdClientStream(ctx);
     else commitClientStream(ctx);
     if (responseResult.failed) {
       const failureClass =
@@ -5177,6 +5196,7 @@ function handleCandidateTransportError(
     logTransportError({
       requestId: ctx.requestId,
       role: ctx.role,
+      origin: ctx.origin,
       requestedModel: ctx.modelName,
       provider: route.provider,
       model: route.model,

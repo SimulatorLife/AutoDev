@@ -46,14 +46,14 @@ import {
 } from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import {
+  computeRepoPathsFingerprint,
   linkRuntimeSource,
   linkSkillSource,
   materializeRuntimeContent,
   materializeRuntimeFile,
-  resolveCommandOnPath,
-  computeRepoPathsFingerprint,
   readRepoInstallCache,
   readRulesyncPackageVersion,
+  resolveCommandOnPath,
   type RulesyncGenerateOptions,
   runRulesyncGenerate,
   runRulesyncInstallFrozen,
@@ -144,6 +144,9 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/execution-contract.ts",
   "runtime/src/shared/provider-http.ts",
   "runtime/src/shared/provider-limits.ts",
+  "runtime/src/shared/provider-reset-headers.ts",
+  "runtime/src/shared/compaction.ts",
+  "runtime/src/shared/root-bootstrap.ts",
   "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
   "runtime/src/shared/responses-continuation.ts",

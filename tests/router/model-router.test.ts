@@ -472,16 +472,24 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
       .slice(1)
       .map((candidate) => candidate.provider)
       .sort(),
-    ["antigravity-claude-gpt", "antigravity-gemini", "claude", "copilot"]
+    [
+      "antigravity-argon",
+      "antigravity-claude-gpt",
+      "antigravity-gemini",
+      "claude",
+      "copilot"
+    ]
   );
 
   const byProvider: Record<string, any> = Object.fromEntries(
     candidates.map((candidate: any) => [candidate.provider, candidate])
   );
   assert.equal(byProvider.claude.model, "claude-opus-5-5");
-  assert.equal(byProvider.claude.reasoningEffort, "medium");
+  assert.equal(byProvider.claude.reasoningEffort, "high");
   assert.equal(byProvider.copilot.model, "copilot");
   assert.equal(byProvider.copilot.reasoningEffort, null);
+  assert.equal(byProvider["antigravity-argon"].model, "gemini-4-argon-high");
+  assert.equal(byProvider["antigravity-argon"].reasoningEffort, "high");
   assert.equal(byProvider["antigravity-gemini"].model, "gemini-3.8-flash-high");
   assert.equal(byProvider["antigravity-gemini"].reasoningEffort, "high");
   assert.equal(
@@ -510,7 +518,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
     byProvider.claude
   );
   assert.equal(swapped.model, "claude-opus-5-5");
-  assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "medium" });
+  assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "high" });
 
   const primary = payloadForCandidate(
     { model: "autodev/orchestrator", reasoning: { effort: "xhigh" } },

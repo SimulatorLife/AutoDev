@@ -549,13 +549,15 @@ test("the installer ships every shared module the bridges import", () => {
 test("the root delegation hook injects the same orchestrator prompt the bridges use", () => {
   const hook = read("scripts/enforce-root-delegation.sh");
   const typedHook = read("runtime/src/hooks/root-delegation.ts");
+  const bootstrap = read("runtime/src/shared/root-bootstrap.ts");
+  assert.match(typedHook, /buildRootOrchestratorBootstrap/);
   assert.match(
-    typedHook,
-    /join\(root, ["']agents["'], ["']prompts["'], ["']orchestrator\.md["']\)/
+    bootstrap,
+    /path\.join\(\s*repoRoot,\s*["']agents["'],\s*["']prompts["'],\s*["']orchestrator\.md["']\s*\)/
   );
   assert.match(
-    typedHook,
-    /join\(root, ["']agents["'], ["']prompts["'], ["']code-search\.md["']\)/
+    bootstrap,
+    /path\.join\(\s*repoRoot,\s*["']agents["'],\s*["']prompts["'],\s*["']code-search\.md["']\s*\)/
   );
   // The policy text lives in one file; neither dispatch shim nor typed hook
   // carries an obsolete duplicate.

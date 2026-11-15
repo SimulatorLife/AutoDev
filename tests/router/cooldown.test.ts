@@ -196,6 +196,7 @@ test("retry deadlines ignore non-retryable model configuration cooldowns", () =>
 });
 
 test("structured hard cooldown without resetsAt escalates exponentially and resets on success", () => {
+  const cooldowns = new ProviderCooldowns();
   const first = cooldowns.cooldownProvider("claude", {
     now: NOW,
     failureClass: "quota_exhausted",

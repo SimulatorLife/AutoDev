@@ -1003,7 +1003,9 @@ function runCopilot(
       "--prompt",
       prompt
     ];
-    if (!compaction) {
+    if (compaction) {
+      args.splice(4, 0, "--no-ask-user");
+    } else {
       const contract = copilotRoleContract(agentRole);
       args.push(
         ...copilotMcpArgs(agentRole, spawnSession, {
@@ -1031,8 +1033,6 @@ function runCopilot(
           "--allow-all-urls",
           "--no-ask-user"
         );
-    } else {
-      args.splice(4, 0, "--no-ask-user");
     }
     if (model && model !== "copilot" && model !== "auto")
       args.push("--model", String(model));

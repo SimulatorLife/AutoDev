@@ -8,12 +8,8 @@
         "antigravity-argon",
         "minimax"
       ],
-      [
-        "copilot"
-      ],
-      [
-        "codex"
-      ]
+      ["copilot"],
+      ["codex"]
     ],
     "browser-tester": [
       [
@@ -23,12 +19,8 @@
         "antigravity-claude-gpt",
         "antigravity-argon"
       ],
-      [
-        "copilot"
-      ],
-      [
-        "codex"
-      ]
+      ["copilot"],
+      ["codex"]
     ],
     "smart": [
       [
@@ -38,23 +30,12 @@
         "antigravity-argon",
         "minimax"
       ],
-      [
-        "codex"
-      ]
+      ["codex"]
     ],
     "orchestrator": [
-      [
-        "codex"
-      ],
-      [
-        "claude",
-        "antigravity-claude-gpt"
-      ],
-      [
-        "copilot",
-        "antigravity-gemini",
-        "antigravity-argon"
-      ]
+      ["codex"],
+      ["claude", "antigravity-claude-gpt"],
+      ["copilot", "antigravity-gemini", "antigravity-argon"]
     ]
   },
   "routes": {

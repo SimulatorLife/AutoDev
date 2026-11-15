@@ -3536,6 +3536,83 @@ interface ResponsesTurn {
   logTurnEnd: (outcome: string, detail?: string) => void;
 }
 
+function prepareTurnPromptAndTools(args: {
+  readonly compaction: boolean;
+  readonly request: IncomingMessage;
+  readonly payload: JsonObject;
+  readonly cwd: string;
+  readonly agentRole: string | null;
+  readonly requestId: string | null;
+  readonly agentEvents: AgentEventReporter | null;
+}) {
+  const {
+    compaction,
+    request,
+    payload,
+    cwd,
+    agentRole,
+    requestId,
+    agentEvents
+  } = args;
+  if (compaction) {
+    return {
+      spawnSession: null,
+      spawnToken: null,
+      codexTools: [] as ReturnType<typeof codexToolSurface>["tools"],
+      toolTurnId: null,
+      prompt: promptFromInput(payload.input ?? "", COMPACTION_SYSTEM_PROMPT),
+      skillContext: null,
+      attachments: [] as ReturnType<typeof userMessageImages>,
+      bootstrapContract: null
+    };
+  }
+  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
+    orchestrator: isOrchestratorRole(agentRole),
+    role: agentRole,
+    workspace: cwd,
+    payload
+  });
+  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
+  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+    writeErrorLine(
+      `agy orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
+    );
+  }
+  const codexTools = codexToolSurface(payload).tools;
+  const toolTurnId = payload.stream ? turnId(12) : null;
+  const prompt = promptFromInput(
+    payload.input ?? "",
+    [
+      composeProviderPrompt(agentRole, cwd),
+      bridgeDelegationInstruction({
+        mayDelegate:
+          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
+        reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
+      }),
+      toolTurnId && codexTools.length > 0
+        ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
+        : ""
+    ]
+      .filter((section) => section.length > 0)
+      .join("\n\n")
+  );
+  const bootstrapContract = antigravityRoleContract(
+    agentRole,
+    workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])
+  );
+  reportRoleExposure(agentEvents, bootstrapContract);
+  return {
+    spawnSession,
+    spawnToken,
+    codexTools,
+    toolTurnId,
+    prompt,
+    skillContext: bridgeSkillContext(request.headers),
+    attachments: userMessageImages(payload.input),
+    bootstrapContract
+  };
+}
+
 /**
  * Validates and resolves one Responses request. Answers the request itself
  * (400) and returns null when the workspace cannot be resolved; delegation
@@ -3548,25 +3625,13 @@ function prepareResponsesTurn(
 ): ResponsesTurn | null {
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
-  // The router classifies the turn; only it can tell this bridge that it is
-  // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const sandboxMode = resolveSandboxMode(request.headers);
-  const skillContext = bridgeSkillContext(request.headers);
-  // agy delegates through its own `invoke_subagent` tool, so those children
-  // never reach the router as requests. Report them, or an orchestrator turn
-  // served here reads as "never delegated".
   const agentEvents = resolveAgentEventReporter(request.headers);
   logInboundRequest(payload, request.headers);
-  // The router's own correlation id for this request. It already travels on
-  // every router-issued call (AgentEventReporter is authorized from the same
-  // header) so a failure this bridge reports back can be matched to the
-  // router request that produced it without carrying any prompt content.
   const requestId = contextHeaderValue(request.headers, REQUEST_ID_HEADER);
   const spawnTracker = createSpawnTracker(agentEvents);
-  // The other half of what agy does inside its own runtime: the tools it
-  // reaches for. Like delegation, none of it reaches the router as a request.
   const toolObserver = createToolObserver(agentEvents);
   let cwd: string;
   try {
@@ -3577,65 +3642,31 @@ function prepareResponsesTurn(
     return null;
   }
   const compaction = isCompactionRequest(payload);
-  // Only hold delegation state once all pre-flight validation has succeeded.
-  // An invalid workspace must not leave an orphaned entry that a later shim
-  // process could attach to. Compaction turns never open delegation state.
-  const spawnSession = compaction
-    ? null
-    : openSpawnSession(request.headers, spawnSessions, {
-        orchestrator: isOrchestratorRole(agentRole),
-        role: agentRole,
-        workspace: cwd,
-        payload
-      });
-  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
-    writeErrorLine(
-      `agy orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
-    );
-  }
-  const codexTools = compaction ? [] : codexToolSurface(payload).tools;
-  // Only a streamed turn can park a call and be continued by the request
-  // carrying its output; a non-streamed one answers in a single body and has
-  // nowhere to put a continuation. Compaction turns never expose or park tools.
-  const toolTurnId = !compaction && payload.stream ? turnId(12) : null;
-  const prompt = promptFromInput(
-    payload.input ?? "",
-    compaction
-      ? COMPACTION_SYSTEM_PROMPT
-      : [
-          composeProviderPrompt(agentRole, cwd),
-          bridgeDelegationInstruction({
-            mayDelegate:
-              spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
-            // agy reaches every MCP server through one built-in, so a tool is
-            // named twice: the server it lives on, and the tool itself.
-            reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
-          }),
-          // The Codex tools are published for exactly the turns whose MCP server
-          // carries them: a turn told about a server it does not have would look
-          // for tools that are not there, and one told nothing about them guesses
-          // their names -- every guess refused by the bridge, which reads as a
-          // capability failure rather than as a misnamed call.
-          toolTurnId && codexTools.length > 0
-            ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
-            : ""
-        ]
-          .filter((section) => section.length > 0)
-          .join("\n\n")
-  );
-  const bootstrapContract = antigravityRoleContract(
+  const {
+    spawnSession,
+    spawnToken,
+    codexTools,
+    toolTurnId,
+    prompt,
+    skillContext,
+    attachments,
+    bootstrapContract
+  } = prepareTurnPromptAndTools({
+    compaction,
+    request,
+    payload,
+    cwd,
     agentRole,
-    workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])
-  );
+    requestId,
+    agentEvents
+  });
   const home = process.env.HOME ?? "";
   writeErrorLine(
-    `agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(compaction ? [] : (bootstrapContract.skills ?? []))} mcp=${JSON.stringify(compaction ? [] : (bootstrapContract.mcp ?? []))} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`
+    `agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract?.skills ?? [])} mcp=${JSON.stringify(bootstrapContract?.mcp ?? [])} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`
   );
   writeErrorLine(
     `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}${compaction ? " compaction=true" : ""}`
   );
-  if (!compaction) reportRoleExposure(agentEvents, bootstrapContract);
   return {
     responseModel: payload.model ?? model,
     model,
@@ -3643,14 +3674,14 @@ function prepareResponsesTurn(
     agentRole,
     workspaceKey,
     sandboxMode,
-    skillContext: compaction ? null : skillContext,
+    skillContext,
     agentEvents,
     spawnSession,
     spawnToken,
     requestId,
     cwd,
     prompt,
-    attachments: compaction ? [] : userMessageImages(payload.input),
+    attachments,
     usage: null,
     spawnTracker,
     toolObserver,
