@@ -33,6 +33,11 @@ test("the lifecycle module publishes one path into the capability", () => {
 const ROUTER_SERVER = fileURLToPath(
   new URL("../../runtime/src/router/server.ts", import.meta.url)
 );
+// A spawned router polls quota-axi; the fixture keeps that poll off the real
+// vendors, whose quota endpoints (Claude's above all) ration their reads.
+const QUOTA_AXI_SNAPSHOT = fileURLToPath(
+  new URL("../fixtures/quota-axi-snapshot.json", import.meta.url)
+);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -177,7 +182,8 @@ test("the router process exits on SIGTERM with a request still in flight, and pe
     ...process.env,
     CODEX_HOME: codexHome,
     CODEX_MODEL_ROUTER_PORT: String(port),
-    CODEX_ROUTER_SHUTDOWN_DRAIN_MS: "500"
+    CODEX_ROUTER_SHUTDOWN_DRAIN_MS: "500",
+    QUOTA_AXI_SNAPSHOT
   };
   delete env.CODEX_ROUTER_STATE_FILE;
   delete env.CODEX_ROUTER_AUTH_TOKEN;

@@ -128,6 +128,7 @@ import {
   UPSTREAM_TIMEOUT_MS,
   UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
+import { QUOTA_POLL } from "./quota-poll.ts";
 import {
   AGENT_EVENTS_PATH,
   closeBridgeSubagentsForRequest,
@@ -477,6 +478,50 @@ const ROUTING_POLICY_PERSISTENCE_SECTIONS = new Set([
   "agentModels"
 ]);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function warnDiscarded(restored: boolean, state: string): void {
+  if (!restored)
+    writeErrorLine(`Warning: invalid persisted ${state} state was discarded.`);
+}
+
+/** How each persisted section is restored; a section absent here is ignored. */
+const PERSISTED_SECTION_RESTORERS: Readonly<
+  Record<string, (value: unknown, parsed: Record<string, unknown>) => void>
+> = {
+  providerTelemetry: (value) =>
+    restoreProviderTelemetrySection(providerTelemetry, value),
+  providerModelDiscovery: (value) =>
+    warnDiscarded(
+      restoreProviderModelDiscoveryPersistence(value),
+      "provider model-discovery"
+    ),
+  usage: (value) =>
+    getDefaultUsageTracker().restoreUsagePersistenceSnapshot(value),
+  concurrency: (value) => {
+    if (isRecord(value)) concurrencyManager.restorePersistence(value);
+  },
+  spawnFailures: (value) => {
+    if (isRecord(value)) subagentRegistry.restoreSpawnFailureTelemetry(value);
+  },
+  correlation: (value) => restoreCorrelation(value),
+  subagents: (value) => {
+    if (isRecord(value)) subagentRegistry.restoreSubagentTelemetry(value);
+  },
+  quotaPoll: (value) => warnDiscarded(QUOTA_POLL.restore(value), "quota poll"),
+  providerCooldowns: (value) => {
+    if (Array.isArray(value)) COOLDOWNS.restoreHardEntries(value, Date.now());
+  },
+  liveFeed: (value) => {
+    if (Array.isArray(value)) liveFeedEvents.restore(value);
+  },
+  recentEvents: (value, parsed) => {
+    if (Array.isArray(value)) restoreRecentEvents(value, parsed);
+  }
+};
+
 function restorePersistedSection(args: {
   section: string;
   value: unknown;
@@ -490,49 +535,8 @@ function restorePersistedSection(args: {
     });
     return;
   }
-  if (section === "providerTelemetry") {
-    restoreProviderTelemetrySection(providerTelemetry, value);
-    return;
-  }
-  if (section === "providerModelDiscovery") {
-    if (!restoreProviderModelDiscoveryPersistence(value)) {
-      writeErrorLine(
-        "Warning: invalid persisted provider model-discovery state was discarded."
-      );
-    }
-    return;
-  }
-  if (section === "usage") {
-    getDefaultUsageTracker().restoreUsagePersistenceSnapshot(value);
-    return;
-  }
-  if (section === "concurrency" && value && typeof value === "object") {
-    concurrencyManager.restorePersistence(value as Record<string, unknown>);
-    return;
-  }
-  if (section === "spawnFailures" && value && typeof value === "object") {
-    subagentRegistry.restoreSpawnFailureTelemetry(value);
-    return;
-  }
-  if (section === "correlation") {
-    restoreCorrelation(value);
-    return;
-  }
-  if (section === "subagents" && value && typeof value === "object") {
-    subagentRegistry.restoreSubagentTelemetry(value);
-    return;
-  }
-  if (section === "providerCooldowns" && Array.isArray(value)) {
-    COOLDOWNS.restoreHardEntries(value, Date.now());
-    return;
-  }
-  if (section === "liveFeed" && Array.isArray(value)) {
-    liveFeedEvents.restore(value);
-    return;
-  }
-  if (section === "recentEvents" && Array.isArray(value)) {
-    restoreRecentEvents(value, parsed);
-  }
+  if (Object.hasOwn(PERSISTED_SECTION_RESTORERS, section))
+    PERSISTED_SECTION_RESTORERS[section]!(value, parsed);
 }
 
 function restoreRecentEvents(
@@ -612,11 +616,21 @@ export function providerState(provider: string) {
   return providerTelemetry.get(provider)!;
 }
 
+/**
+ * Whether this process is the router server, the one process that owns the
+ * persisted router state. The router's entry script is `server.ts`, not this
+ * module, so asking whether *this* module is the entry script said "no" in the
+ * running router: state was written only at shutdown, and a router that was
+ * killed lost everything it had learned since it started.
+ */
+const IS_ROUTER_PROCESS =
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) ===
+    fileURLToPath(new URL("server.ts", import.meta.url));
+
 const routerPersistence = new RouterPersistence({
   stateFile: () => effectiveStateFile(),
-  isMain: Boolean(
-    process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
-  ),
+  isMain: IS_ROUTER_PROCESS,
   debounceMs: 500,
   getSnapshot: () => ({
     ...ROUTING_POLICY.runtimeState(),
@@ -627,6 +641,7 @@ const routerPersistence = new RouterPersistence({
     subagents: subagentRegistry.subagentTelemetry,
     spawnFailures: subagentRegistry.spawnFailureTelemetry,
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
+    quotaPoll: QUOTA_POLL.persistenceSnapshot(),
     recentEvents: routerEvents.getRecentEvents(false),
     liveFeed: liveFeedEvents.getRecentEvents(false, true),
     correlation: correlationSnapshot()
@@ -1225,9 +1240,7 @@ function buildRouterStatus(now = Date.now()) {
     startedAt: ROUTER_STARTED_AT,
     pid: process.pid,
     telemetryPersistence: {
-      enabled: Boolean(
-        process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
-      ),
+      enabled: IS_ROUTER_PROCESS,
       source: process.env.CODEX_ROUTER_STATE_FILE
         ? "env_override"
         : "default_codex_home",

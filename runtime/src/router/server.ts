@@ -56,11 +56,7 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
-import {
-  deferredQuotaProviders,
-  dueQuotaProviders,
-  mergeQuotaReports
-} from "./quota-poll.ts";
+import { QUOTA_POLL } from "./quota-poll.ts";
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -197,8 +193,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   let livePollStarted = false;
   let quotaPollInterval: ReturnType<typeof setInterval> | null = null;
   let backgroundWarmupTimer: ReturnType<typeof setTimeout> | null = null;
-  let quotaAxiSnapshot: QuotaAxiResponse | null = null;
   let quotaAxiRefresh: Promise<void> | null = null;
+  // A quota-axi read still running when the router stops is killed with it,
+  // not orphaned to finish a read nobody will publish and write its cache.
+  const quotaAxiAbort = new AbortController();
   let controlServer: Server | null = null;
   let cleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
@@ -235,25 +233,26 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       ? path.dirname(agyExecutable)
       : undefined;
     quotaAxiRefresh = new Promise<void>((resolve, reject) => {
-      // A provider whose last reading was refused is not asked again until the
-      // moment its own report named, and it keeps its entry meanwhile.
-      const deferred = deferredQuotaProviders(quotaAxiSnapshot, Date.now());
-      const due = dueQuotaProviders(quotaAxiSnapshot, deferred);
-      if (deferred.size > 0 && due.length === 0) {
-        // Every provider the report knows about is waiting. There is nothing to
-        // read, and reading anyway is the request the vendors asked us not to
-        // make.
+      // A provider whose vendor named a retry moment, or whose last read is
+      // younger than its read interval, is not asked on this tick; it keeps
+      // its entry meanwhile.
+      const plan = QUOTA_POLL.plan(Date.now());
+      if (plan === null) {
+        // Every provider is waiting. Reading anyway is the request the vendors
+        // asked us not to make.
         resolve();
         return;
       }
       const args = ["--json", "--no-credential-refresh"];
-      if (deferred.size > 0) args.push(`--provider=${due.join(",")}`);
+      if (plan.providers !== null)
+        args.push(`--provider=${plan.providers.join(",")}`);
       execFile(
         quotaAxiExecutable,
         args,
         {
           cwd: runtimePackageRoot,
           encoding: "utf8",
+          signal: quotaAxiAbort.signal,
           env: claudeQuotaAxiEnvironment({
             ...process.env,
             PATH: [
@@ -275,12 +274,12 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             return;
           }
           try {
-            const next = JSON.parse(stdout) as QuotaAxiResponse;
-            quotaAxiSnapshot = mergeQuotaReports(
-              quotaAxiSnapshot,
-              next,
-              deferred
+            QUOTA_POLL.accept(
+              JSON.parse(stdout) as QuotaAxiResponse,
+              plan,
+              Date.now()
             );
+            scheduleRouterStatePersist();
             resolve();
           } catch (parseError) {
             reject(parseError);
@@ -293,7 +292,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     return quotaAxiRefresh;
   };
   if (IS_MAIN) {
-    setControlApiProviderQuotaAxiSource(() => quotaAxiSnapshot);
+    setControlApiProviderQuotaAxiSource(() => QUOTA_POLL.report);
   }
   setControlApiOpencliBrowserSource({
     read: opencliProviderBrowser,
@@ -358,6 +357,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       clearInterval(quotaPollInterval);
       quotaPollInterval = null;
     }
+    quotaAxiAbort.abort();
     if (controlServer?.listening) controlServer.close();
     modelDiscovery?.stop();
     if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);

@@ -652,19 +652,29 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   `AGY_CLI_PATH` or `~/.local/bin/agy` in restricted service environments.
 
   **A refused read is not read again until the moment the report named.** A
-  vendor that refuses a quota read says when to try again, in the report's own
-  `state.retryAfter`: Anthropic's OAuth usage endpoint -- the source of
-  Claude's quota -- answered a read with a 429 and a retry an hour away, and
-  the poll asked again every sixty seconds for the whole of that hour. So the
-  poll asks only the providers that are due, and a provider that is waiting
-  keeps the entry it had: its state, its error and its retry moment are the
-  report's own words, carried forward unchanged, so the published report still
-  says why that provider's usage is missing rather than the provider dropping
-  out of it. Asking a provider again before the moment its own report named is
-  the request the vendor just asked us not to make, and that provider's quota
-  stayed unreadable for as long as the poll kept making it. A refusal that
-  names no retry moment gives no instruction about when, so that provider is
-  asked again on the next tick.
+  vendor that refuses a quota read says when to try again, in the entry's own
+  `state.retryAfter`, whether quota-axi reports the refusal as `rate_limited`
+  (nothing to show) or as `stale` (its last good reading served while the
+  vendor refuses). The poll asks only the providers that are due, and a
+  provider that is waiting keeps the entry it had: its state, windows, error
+  and retry moment are the report's own words, carried forward unchanged, so
+  the Console keeps drawing what was last read and saying why it is not newer.
+  A refusal that names no retry moment gives no instruction about when.
+
+  **Claude's quota is read at most once every five minutes**
+  (`QUOTA_READ_INTERVAL_MS` in `runtime/src/router/quota-poll.ts`). Anthropic's
+  OAuth usage endpoint refuses after a handful of reads and holds the refusal
+  for close to an hour; asked on every sixty-second tick it never answered, so
+  quota-axi never cached a Claude reading and the Console had no Claude bars
+  to draw, not even stale ones. Every other provider is read on every tick.
+
+  **The poll's record survives a restart.** The last report and each
+  provider's last read time are persisted as `quotaPoll` in the router state
+  file, so a restarted router publishes the last report at once and neither
+  forgets a retry moment nor spends another read before a provider is due. A
+  malformed record is discarded and the poll starts with a full read. Tests
+  that start a router set `QUOTA_AXI_SNAPSHOT` so they never read a real
+  vendor.
 
   For Claude, Runtime forwards the existing `CLAUDE_CODE_OAUTH_TOKEN` (from
   the Runtime environment or AutoDev bridge Keychain item) only to the

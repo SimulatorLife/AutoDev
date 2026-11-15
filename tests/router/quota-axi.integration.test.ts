@@ -5,6 +5,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -26,6 +27,29 @@ const QUOTA_AXI_SNAPSHOT = fileURLToPath(
 const RUNTIME_ROOT = fileURLToPath(new URL("../../runtime", import.meta.url));
 const QUOTA_AXI_BIN = join(RUNTIME_ROOT, "node_modules", ".bin", "quota-axi");
 const ROUTER_ENTRY = join(RUNTIME_ROOT, "src", "router", "server.ts");
+
+interface PersistedQuotaPoll {
+  readonly report?: { readonly providers: unknown };
+  readonly readAt?: Readonly<Record<string, number>>;
+}
+
+/** The router's persisted quota poll, once its debounced state write lands. */
+async function persistedQuotaPoll(
+  stateFile: string
+): Promise<PersistedQuotaPoll | null> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      const state = JSON.parse(readFileSync(stateFile, "utf8")) as {
+        quotaPoll?: PersistedQuotaPoll;
+      };
+      if (state.quotaPoll?.report) return state.quotaPoll;
+    } catch {
+      // The first state write is debounced.
+    }
+    await delay(100);
+  }
+  return null;
+}
 
 test("the router publishes quota-axi CLI output unchanged on the providers API", async () => {
   const temporaryHome = realpathSync(
@@ -202,6 +226,16 @@ test("the router publishes quota-axi CLI output unchanged on the providers API",
       ),
       "quota reports remain separate from routing health"
     );
+
+    // The poll's record outlives the process, so a restarted router keeps
+    // each vendor's retry moment and read interval instead of asking them all
+    // again the moment it comes up.
+    const persisted = await persistedQuotaPoll(
+      join(temporaryHome, "router-state.json")
+    );
+    assert.ok(persisted, `quota poll was not persisted: ${processOutput}`);
+    assert.deepEqual(persisted.report?.providers, report.quotaAxi!.providers);
+    assert.ok(Number.isFinite(persisted.readAt?.claude));
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, "exit");
