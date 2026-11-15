@@ -79,6 +79,7 @@
       "multi_agent_v2": false,
       "js_repl": false,
       "memories": false,
+      "apps": false,
       "respect_system_proxy": true,
       "chronicle": false,
       "goals": true,
@@ -256,6 +257,9 @@
         "enabled": false
       },
       "work-pets@openai-curated-remote": {
+        "enabled": false
+      },
+      "github@openai-curated": {
         "enabled": false
       }
     }

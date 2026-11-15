@@ -21,6 +21,7 @@ import {
   normalizeResetsAt,
   type ProviderLimit,
   readLimitHeaders,
+  readResetAtFromHeaders,
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents,
   truncationNotice
@@ -397,4 +398,39 @@ test("an absolute reset time still wins over a duration in the same message", ()
     now
   );
   assert.equal(limit?.resetsAt, "2026-10-14T18:00:00.000Z");
+});
+
+test("readResetAtFromHeaders parses Codex, Retry-After, and OpenAI rate-limit headers", () => {
+  const now = Date.parse("2026-10-14T14:00:00.000Z");
+  assert.equal(
+    readResetAtFromHeaders(
+      new Headers({
+        "x-codex-primary-used-percent": "10",
+        "x-codex-primary-reset-at": "1791990000",
+        "x-codex-secondary-used-percent": "100",
+        "x-codex-secondary-reset-at": "1792072800"
+      }),
+      now
+    ),
+    new Date(1_792_072_800 * 1000).toISOString()
+  );
+  assert.equal(
+    readResetAtFromHeaders(
+      { "x-codex-primary-reset-after-seconds": "120" },
+      now
+    ),
+    "2026-10-14T14:02:00.000Z"
+  );
+  assert.equal(
+    readResetAtFromHeaders({ "retry-after": "90" }, now),
+    "2026-10-14T14:01:30.000Z"
+  );
+  assert.equal(
+    readResetAtFromHeaders({ "x-ratelimit-reset-requests": "6m30s" }, now),
+    "2026-10-14T14:06:30.000Z"
+  );
+  assert.equal(
+    readResetAtFromHeaders({ "x-ratelimit-reset-tokens": "500ms" }, now),
+    "2026-10-14T14:00:00.500Z"
+  );
 });

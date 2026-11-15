@@ -37,6 +37,13 @@ import {
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import {
+  injectRootBootstrapIntoPayload,
+  isCompactionRequest,
+  isInvalidCompactionResponse,
+  needsPostCompactionBootstrap,
+  responseOutputText
+} from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -54,9 +61,12 @@ import {
   normalizeResetsAt,
   type ProviderLimit,
   readLimitHeaders,
+  readResetAtFromHeaders,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import { buildRootOrchestratorBootstrap } from "@simulatorlife/autodev-runtime/shared/root-bootstrap";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   providerPhasesFromResponse,
   type ProviderPhaseTiming
@@ -686,30 +696,78 @@ export function codexSessionIdFromPayload(payload: unknown): string | null {
   return null;
 }
 
+const OPENAI_LIMIT_CODE_MAP: Record<
+  string,
+  { limitClass: ProviderLimit["limitClass"]; limitType: string }
+> = {
+  usage_limit_reached: { limitClass: "quota_exhausted", limitType: "quota" },
+  insufficient_quota: { limitClass: "quota_exhausted", limitType: "quota" },
+  billing_hard_limit_reached: {
+    limitClass: "quota_exhausted",
+    limitType: "quota"
+  },
+  quota_exceeded: { limitClass: "quota_exhausted", limitType: "quota" },
+  rate_limit_exceeded: { limitClass: "throttled", limitType: "rate" },
+  too_many_requests: { limitClass: "throttled", limitType: "rate" },
+  session_limit_reached: { limitClass: "session_limit", limitType: "session" }
+};
+
+function bodyLimitResetAt(
+  errorObj: Record<string, unknown>,
+  headers: unknown,
+  now: number
+): string | null {
+  const absolute = normalizeResetsAt(errorObj.resets_at);
+  if (absolute) return absolute;
+  const resetsInSeconds = Number(errorObj.resets_in_seconds);
+  if (Number.isFinite(resetsInSeconds) && resetsInSeconds > 0) {
+    return new Date(now + Math.ceil(resetsInSeconds * 1000)).toISOString();
+  }
+  return readResetAtFromHeaders(headers, now);
+}
+
 export function declaredLimit(
   headers: unknown,
-  body: unknown
+  body: unknown,
+  now = Date.now()
 ): ProviderLimit | null {
   const fromHeaders = readLimitHeaders(headers);
   if (fromHeaders) {
     return {
       limitClass: fromHeaders.limitClass,
       limitType: fromHeaders.limitType ?? null,
-      resetsAt: fromHeaders.resetsAt ?? null,
+      resetsAt: fromHeaders.resetsAt ?? readResetAtFromHeaders(headers, now),
       source: fromHeaders.source ?? LIMIT_SOURCE_REPORTED
     };
   }
   try {
-    const declared = JSON.parse(String(body ?? ""))?.error?.limit;
-    if (!declared?.class) return null;
+    const parsed = JSON.parse(String(body ?? "")) as Record<string, unknown>;
+    const err =
+      (parsed?.error as Record<string, unknown> | undefined) ??
+      (parsed?.detail as Record<string, unknown> | undefined) ??
+      parsed;
+    const declared = err?.limit as Record<string, unknown> | undefined;
+    if (declared?.class) {
+      return {
+        limitClass: String(declared.class).toLowerCase(),
+        limitType: declared.type ? String(declared.type).toLowerCase() : null,
+        resetsAt:
+          normalizeResetsAt(declared.resets_at) ??
+          readResetAtFromHeaders(headers, now),
+        source:
+          declared.source === LIMIT_SOURCE_REPORTED
+            ? LIMIT_SOURCE_REPORTED
+            : "inferred"
+      };
+    }
+    const code = String(err?.type ?? err?.code ?? "").toLowerCase();
+    const mapped = OPENAI_LIMIT_CODE_MAP[code];
+    if (!mapped) return null;
     return {
-      limitClass: String(declared.class).toLowerCase(),
-      limitType: declared.type ? String(declared.type).toLowerCase() : null,
-      resetsAt: normalizeResetsAt(declared.resets_at),
-      source:
-        declared.source === LIMIT_SOURCE_REPORTED
-          ? LIMIT_SOURCE_REPORTED
-          : "inferred"
+      limitClass: mapped.limitClass,
+      limitType: mapped.limitType,
+      resetsAt: bodyLimitResetAt(err, headers, now),
+      source: LIMIT_SOURCE_REPORTED
     };
   } catch {
     return null;
@@ -1202,6 +1260,9 @@ interface SseStreamState {
    * so another provider can still answer on the same stream.
    */
   withheld: boolean;
+  /** True when `response.completed` was rejected after output already started. */
+  suppressCompletedFrame?: boolean;
+  readonly rejectInvalidCompaction?: boolean;
 }
 
 /**
@@ -1311,6 +1372,23 @@ function applyParsedSseEvent(
       const response = parsed.response as Record<string, unknown> | undefined;
       collectToolCallIds(response, toolCallIds);
       if (response) onResponseCompleted?.(response);
+      const invalidCompaction =
+        Boolean(streamState.rejectInvalidCompaction) &&
+        isInvalidCompactionResponse(
+          streamState.text || responseOutputText(response),
+          toolCallIds.size
+        );
+      if (invalidCompaction) {
+        setTerminal("failed");
+        setIncompleteReason("invalid_compaction_response");
+        setReportedError({
+          type: "invalid_compaction_response",
+          message: "Compaction turn returned empty summary or tool calls."
+        });
+        withholdFailure();
+        if (!streamState.withheld) streamState.suppressCompletedFrame = true;
+        break;
+      }
       const notCompleted = responseWasNotCompleted(response);
       setTerminal(notCompleted ? "failed" : "completed");
       const details = response?.incomplete_details as
@@ -1373,7 +1451,18 @@ function flushSseBuffer(args: {
         )
     });
     args.onConsumed(processed.toolCalls);
-    if (!args.streamState.withheld) args.safeWrite(processed.output);
+    if (!args.streamState.withheld) {
+      if (args.streamState.suppressCompletedFrame) {
+        args.streamState.suppressCompletedFrame = false;
+        args.safeWrite(
+          responseFailureEvent(
+            "Compaction turn returned empty summary or tool calls."
+          )
+        );
+      } else {
+        args.safeWrite(processed.output);
+      }
+    }
     working = working.slice(end);
   }
   if (args.flush && working && args.isWritable()) {
@@ -1396,7 +1485,18 @@ function flushSseBuffer(args: {
         )
     });
     args.onConsumed(processed.toolCalls);
-    if (!args.streamState.withheld) args.safeWrite(processed.output);
+    if (!args.streamState.withheld) {
+      if (args.streamState.suppressCompletedFrame) {
+        args.streamState.suppressCompletedFrame = false;
+        args.safeWrite(
+          responseFailureEvent(
+            "Compaction turn returned empty summary or tool calls."
+          )
+        );
+      } else {
+        args.safeWrite(processed.output);
+      }
+    }
     working = "";
   }
   args.onBufferUpdated(working);
@@ -1495,7 +1595,11 @@ export async function writeResponseStream(
   onHeartbeat: (() => void) | null = null,
   clientSignal: AbortSignal | null = null,
   replayable = false,
-  attemptTelemetry?: { span?: Span; statusCode?: number },
+  attemptTelemetry?: {
+    span?: Span;
+    statusCode?: number;
+    rejectInvalidCompaction?: boolean;
+  },
   minimumInputTokens?: number,
   holdFailureBeforeOutput = false
 ): Promise<StreamWriteResult> {
@@ -1515,7 +1619,10 @@ export async function writeResponseStream(
     reasoning: "",
     outputStarted: false,
     holdFailureBeforeOutput,
-    withheld: false
+    withheld: false,
+    ...(attemptTelemetry?.rejectInvalidCompaction
+      ? { rejectInvalidCompaction: true }
+      : {})
   };
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
@@ -2054,7 +2161,8 @@ export async function writeSuccessfulResponse(
   onHeartbeat: (() => void) | null = null,
   clientSignal: AbortSignal | null = null,
   minimumInputTokens?: number,
-  holdFailureBeforeOutput = false
+  holdFailureBeforeOutput = false,
+  rejectInvalidCompaction = false
 ): Promise<StreamWriteResult> {
   const written = await writeProviderResponse(
     response,
@@ -2067,7 +2175,8 @@ export async function writeSuccessfulResponse(
     onHeartbeat,
     clientSignal,
     minimumInputTokens,
-    holdFailureBeforeOutput
+    holdFailureBeforeOutput,
+    rejectInvalidCompaction
   );
   // Whoever asked for these calls gets their results: see tool-call-ownership.ts.
   TOOL_CALL_OWNERSHIP.record(written.toolCallIds, route.provider);
@@ -2085,6 +2194,7 @@ interface ProviderResponseContext {
   resolvedModel: string;
   responseHeaders: Record<string, string>;
   minimumInputTokens?: number;
+  rejectInvalidCompaction?: boolean;
 }
 
 function emptyBufferedResult(failed = false): StreamWriteResult {
@@ -2152,7 +2262,10 @@ async function writeStreamedProviderResponse(
       ...(result.attemptSpan ? { span: result.attemptSpan } : {}),
       ...(result.attemptStatusCode === undefined
         ? {}
-        : { statusCode: result.attemptStatusCode })
+        : { statusCode: result.attemptStatusCode }),
+      ...(context.rejectInvalidCompaction
+        ? { rejectInvalidCompaction: true }
+        : {})
     },
     minimumInputTokens,
     holdFailureBeforeOutput
@@ -2173,27 +2286,60 @@ function writeCodexBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const { response, result, publicModel, responseHeaders, minimumInputTokens } =
-    context;
+  const {
+    response,
+    result,
+    publicModel,
+    responseHeaders,
+    minimumInputTokens,
+    rejectInvalidCompaction
+  } = context;
   // One pass over the body answers all three questions the buffered path used to
   // ask with three separate parses.
   const summary = summarizeBufferedSse(body);
   const completed = summary.firstCompleted;
-  finishBufferedAttempt(
-    result,
-    completed,
-    completed ? responseWasNotCompleted(completed) : false
-  );
   const toolCalls = summary.toolCalls;
   const parsed = rewriteResponseValue(
     bufferedEnvelope(summary),
     publicModel,
     minimumInputTokens
   ) as Record<string, unknown>;
-  sendJson(response, result.upstream.status, parsed, responseHeaders);
-  const incomplete = incompleteFromResponse(parsed);
   const toolCallIds = new Set<string>();
   collectToolCallIds(parsed, toolCallIds);
+  const invalidCompaction =
+    Boolean(rejectInvalidCompaction) &&
+    result.upstream.status < 400 &&
+    !responseWasNotCompleted(parsed) &&
+    isInvalidCompactionResponse(
+      responseOutputText(parsed),
+      Math.max(toolCalls, toolCallIds.size)
+    );
+  finishBufferedAttempt(
+    result,
+    completed,
+    invalidCompaction ||
+      (completed ? responseWasNotCompleted(completed) : false)
+  );
+  if (invalidCompaction) {
+    const error = {
+      type: "invalid_compaction_response",
+      message: "Compaction turn returned empty summary or tool calls."
+    };
+    sendJson(response, 502, { error }, responseHeaders);
+    return {
+      toolCalls,
+      toolCallIds,
+      failed: true,
+      clientDisconnected: false,
+      incompleteReason: "invalid_compaction_response",
+      limit: null,
+      error,
+      inputRequired: false,
+      beforeOutput: false
+    };
+  }
+  sendJson(response, result.upstream.status, parsed, responseHeaders);
+  const incomplete = incompleteFromResponse(parsed);
   return {
     toolCalls,
     toolCallIds,
@@ -2225,29 +2371,61 @@ function writeJsonBufferedResponse(
   context: ProviderResponseContext,
   body: string
 ): StreamWriteResult {
-  const { response, result, publicModel, responseHeaders, minimumInputTokens } =
-    context;
+  const {
+    response,
+    result,
+    publicModel,
+    responseHeaders,
+    minimumInputTokens,
+    rejectInvalidCompaction
+  } = context;
   try {
     const parsed: unknown = JSON.parse(body);
     const responseObject =
       parsed && typeof parsed === "object"
         ? (parsed as Record<string, unknown>)
         : null;
-    finishBufferedAttempt(
-      result,
-      responseObject,
-      responseWasNotCompleted(responseObject)
-    );
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = rewriteResponseValue(
       parsed,
       publicModel,
       minimumInputTokens
     ) as Record<string, unknown>;
-    sendJson(response, result.upstream.status, rewritten, responseHeaders);
-    const incomplete = incompleteFromResponse(rewritten);
     const toolCallIds = new Set<string>();
     collectToolCallIds(rewritten, toolCallIds);
+    const invalidCompaction =
+      Boolean(rejectInvalidCompaction) &&
+      result.upstream.status < 400 &&
+      !responseWasNotCompleted(rewritten) &&
+      isInvalidCompactionResponse(
+        responseOutputText(rewritten),
+        Math.max(toolCalls, toolCallIds.size)
+      );
+    finishBufferedAttempt(
+      result,
+      responseObject,
+      invalidCompaction || responseWasNotCompleted(responseObject)
+    );
+    if (invalidCompaction) {
+      const error = {
+        type: "invalid_compaction_response",
+        message: "Compaction turn returned empty summary or tool calls."
+      };
+      sendJson(response, 502, { error }, responseHeaders);
+      return {
+        toolCalls,
+        toolCallIds,
+        failed: true,
+        clientDisconnected: false,
+        incompleteReason: "invalid_compaction_response",
+        limit: null,
+        error,
+        inputRequired: false,
+        beforeOutput: false
+      };
+    }
+    sendJson(response, result.upstream.status, rewritten, responseHeaders);
+    const incomplete = incompleteFromResponse(rewritten);
     return {
       toolCalls,
       toolCallIds,
@@ -2274,7 +2452,8 @@ async function writeProviderResponse(
   onHeartbeat: (() => void) | null,
   clientSignal: AbortSignal | null = null,
   minimumInputTokens?: number,
-  holdFailureBeforeOutput = false
+  holdFailureBeforeOutput = false,
+  rejectInvalidCompaction = false
 ): Promise<StreamWriteResult> {
   const context: ProviderResponseContext = {
     response,
@@ -2284,6 +2463,7 @@ async function writeProviderResponse(
     requestId,
     resolvedModel,
     ...(minimumInputTokens === undefined ? {} : { minimumInputTokens }),
+    ...(rejectInvalidCompaction ? { rejectInvalidCompaction: true } : {}),
     responseHeaders: {
       "x-autodev-provider": route.provider,
       "x-autodev-model": resolvedModel,
@@ -4793,7 +4973,8 @@ async function handleCandidateSuccess(
       bridgeMinimumInputTokens(route.provider, ctx.payload),
       // Only a streamed attempt can be left behind: a buffered one has
       // answered the client by the time its failure is known.
-      ctx.wantsStream
+      ctx.wantsStream,
+      isCompactionRequest(ctx.payload)
     );
     if (responseResult.clientDisconnected) {
       commitClientStream(ctx);
@@ -5084,6 +5265,24 @@ export function proxyRoleResponse(
   );
 }
 
+function recoverOrchestratorBootstrap(
+  payload: Record<string, unknown>,
+  session: RouterSession | null
+): Record<string, unknown> {
+  if (!needsPostCompactionBootstrap(payload)) return payload;
+  const repoRoot = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    process.env.AUTODEV_REPO_ROOT
+  );
+  const bootstrap = buildRootOrchestratorBootstrap({
+    repoRoot,
+    parentSessionId: session?.thread ?? null
+  });
+  return bootstrap
+    ? injectRootBootstrapIntoPayload(payload, bootstrap.content)
+    : payload;
+}
+
 export function proxyOrchestratorResponse(
   response: ServerResponse,
   payload: Record<string, unknown>,
@@ -5111,15 +5310,21 @@ export function proxyOrchestratorResponse(
       sessionKey,
       session,
       preferredProvider: preferred,
-      preparePayload: (requestPayload) =>
-        injectOrchestratorMemory({
-          payload: requestPayload,
-          requestId,
-          sessionKey,
-          sessionScope: session?.scope ?? null,
-          threadId: session?.thread ?? null,
-          workspace
-        })
+      preparePayload: async (requestPayload) => {
+        const recovered = recoverOrchestratorBootstrap(requestPayload, session);
+        try {
+          return await injectOrchestratorMemory({
+            payload: recovered,
+            requestId,
+            sessionKey,
+            sessionScope: session?.scope ?? null,
+            threadId: session?.thread ?? null,
+            workspace
+          });
+        } catch {
+          return recovered;
+        }
+      }
     },
     payload,
     wantsStream,

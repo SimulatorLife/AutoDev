@@ -34,6 +34,11 @@ import {
   SANDBOX_MODE_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
+  COMPACTION_SYSTEM_PROMPT,
+  isCompactionRequest,
+  isInvalidCompactionResponse
+} from "@simulatorlife/autodev-runtime/shared/compaction";
+import {
   findCodexAppMcpServer,
   resolveCopilotBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
@@ -986,7 +991,8 @@ function runCopilot(
   spawnSession: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
   workspaceKey: unknown = null,
-  requestId: string | null = null
+  requestId: string | null = null,
+  compaction = false
 ): Promise<RunCopilotResult> {
   return new Promise<RunCopilotResult>((resolve, reject) => {
     const args = [
@@ -997,33 +1003,37 @@ function runCopilot(
       "--prompt",
       prompt
     ];
-    const contract = copilotRoleContract(agentRole);
-    args.push(
-      ...copilotMcpArgs(agentRole, spawnSession, {
-        requestId,
-        workspaceId: typeof workspaceKey === "string" ? workspaceKey : null,
-        workspaceRoot: cwd,
-        repositoryRoot: REPO_ROOT,
-        codeHome: process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex")
-      })
-    );
-    if (isResearchRole(agentRole))
-      args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
-    // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
-    // trust that header over roleContract(agentRole).readOnly because the
-    // header is the authoritative wire signal for this turn.
-    const readOnly =
-      sandboxMode === "read-only" ||
-      (sandboxMode !== "workspace-write" && contract.readOnly);
-    if (!readOnly)
-      args.splice(
-        4,
-        0,
-        "--allow-all-tools",
-        "--allow-all-paths",
-        "--allow-all-urls",
-        "--no-ask-user"
+    if (!compaction) {
+      const contract = copilotRoleContract(agentRole);
+      args.push(
+        ...copilotMcpArgs(agentRole, spawnSession, {
+          requestId,
+          workspaceId: typeof workspaceKey === "string" ? workspaceKey : null,
+          workspaceRoot: cwd,
+          repositoryRoot: REPO_ROOT,
+          codeHome: process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex")
+        })
       );
+      if (isResearchRole(agentRole))
+        args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
+      // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+      // trust that header over roleContract(agentRole).readOnly because the
+      // header is the authoritative wire signal for this turn.
+      const readOnly =
+        sandboxMode === "read-only" ||
+        (sandboxMode !== "workspace-write" && contract.readOnly);
+      if (!readOnly)
+        args.splice(
+          4,
+          0,
+          "--allow-all-tools",
+          "--allow-all-paths",
+          "--allow-all-urls",
+          "--no-ask-user"
+        );
+    } else {
+      args.splice(4, 0, "--no-ask-user");
+    }
     if (model && model !== "copilot" && model !== "auto")
       args.push("--model", String(model));
     const childEnvironment: NodeJS.ProcessEnv = {
@@ -1142,6 +1152,7 @@ interface CopilotRequestContext {
   spawnSession: string | null;
   spawnToken: string | null;
   sandboxModeHeader: "read-only" | "workspace-write" | null;
+  compaction: boolean;
 }
 
 class CopilotResponseStream {
@@ -1220,6 +1231,13 @@ class CopilotResponseStream {
   }
 
   complete(result: RunCopilotResult): void {
+    if (
+      this.context.compaction &&
+      isInvalidCompactionResponse(result.text, 0)
+    ) {
+      this.fail(new Error("Compaction turn returned empty summary."));
+      return;
+    }
     this.beginOutputItems();
     const reasoningText = this.activityParts.join("");
     const completedReasoning = {
@@ -1657,31 +1675,37 @@ function prepareCopilotRequest(
   const requestId = contextHeaderValue(request.headers, "x-autodev-request-id");
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const agentEvents = resolveAgentEventReporter(headers);
+  const compaction = isCompactionRequest(payload);
   const sandboxModeHeader = readOnlyHeaderValue(headers);
-  const skillContextHeader = bridgeSkillContext(headers);
-  const sandboxInjection = readOnlySystemPromptInjection(headers);
-  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole),
-    role: agentRole,
-    workspace: cwd,
-    payload
-  });
+  const skillContextHeader = compaction ? null : bridgeSkillContext(headers);
+  const sandboxInjection = compaction
+    ? ""
+    : readOnlySystemPromptInjection(headers);
+  const spawnSession = compaction
+    ? null
+    : openSpawnSession(request.headers, spawnSessions, {
+        orchestrator: isOrchestratorRole(agentRole),
+        role: agentRole,
+        workspace: cwd,
+        payload
+      });
   const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
     writeErrorLine(
       `copilot orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
     );
   }
-  const composedPrompt =
-    composeProviderPrompt(agentRole, cwd) +
-    sandboxInjection +
-    bridgeDelegationInstruction({
-      mayDelegate:
-        spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
-      // The Copilot CLI advertises each MCP tool directly, so the model calls
-      // one name rather than naming a server and a tool.
-      reach: { kind: "direct", prefix: "mcp__" }
-    });
+  const composedPrompt = compaction
+    ? COMPACTION_SYSTEM_PROMPT
+    : composeProviderPrompt(agentRole, cwd) +
+      sandboxInjection +
+      bridgeDelegationInstruction({
+        mayDelegate:
+          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
+        // The Copilot CLI advertises each MCP tool directly, so the model calls
+        // one name rather than naming a server and a tool.
+        reach: { kind: "direct", prefix: "mcp__" }
+      });
   const finalPrompt =
     composedPrompt +
     (skillContextHeader
@@ -1702,9 +1726,9 @@ function prepareCopilotRequest(
       " cwd=" +
       cwd +
       " skills=" +
-      JSON.stringify(bootstrapContract.skills ?? []) +
+      JSON.stringify(compaction ? [] : (bootstrapContract.skills ?? [])) +
       " mcp=" +
-      JSON.stringify(bootstrapContract.mcp ?? [])
+      JSON.stringify(compaction ? [] : (bootstrapContract.mcp ?? []))
   );
   writeErrorLine(
     "copilot request model=" +
@@ -1712,9 +1736,10 @@ function prepareCopilotRequest(
       " role=" +
       (isOrchestratorRole(agentRole) ? "orchestrator" : "leaf") +
       " cwd=" +
-      cwd
+      cwd +
+      (compaction ? " compaction=true" : "")
   );
-  reportCopilotExposure(agentEvents, bootstrapContract);
+  if (!compaction) reportCopilotExposure(agentEvents, bootstrapContract);
   return {
     payload,
     requestId,
@@ -1725,7 +1750,8 @@ function prepareCopilotRequest(
     prompt,
     spawnSession,
     spawnToken,
-    sandboxModeHeader
+    sandboxModeHeader,
+    compaction
   };
 }
 
@@ -1761,7 +1787,8 @@ async function sendCopilotNonStreamingResponse(
         context.spawnSession,
         context.sandboxModeHeader,
         context.workspaceKey,
-        context.requestId
+        context.requestId,
+        context.compaction
       );
     } finally {
       clearInterval(nonStreamHeartbeat);
@@ -1772,6 +1799,15 @@ async function sendCopilotNonStreamingResponse(
     const message = error instanceof Error ? error.message : String(error);
     sendJson(response, 503, {
       error: { type: "copilot_proxy_error", message }
+    });
+    return;
+  }
+  if (context.compaction && isInvalidCompactionResponse(result.text, 0)) {
+    sendJson(response, 502, {
+      error: {
+        type: "invalid_compaction_response",
+        message: "Compaction turn returned empty summary."
+      }
     });
     return;
   }
@@ -1808,7 +1844,8 @@ async function streamCopilotResponse(
       context.spawnSession,
       context.sandboxModeHeader,
       context.workspaceKey,
-      context.requestId
+      context.requestId,
+      context.compaction
     );
     stream.complete(result);
   } catch (error) {

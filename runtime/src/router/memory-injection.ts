@@ -23,6 +23,7 @@ import {
   MemoryValidationError,
   type PostgresMemoryHost
 } from "@simulatorlife/autodev-runtime/memory";
+import { isCompactionRequest } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 import { configuredMemoryEmbeddingProvider } from "./memory-embedding.ts";
@@ -255,6 +256,9 @@ export async function injectOrchestratorMemory(
   request: OrchestratorMemoryRequest,
   hostOverride?: PostgresMemoryHost | null
 ): Promise<Record<string, unknown>> {
+  if (isCompactionRequest(request.payload)) {
+    return request.payload;
+  }
   const mode = currentRouterMemoryMode({
     sessionKey: request.sessionKey,
     ...(request.sessionScope === undefined

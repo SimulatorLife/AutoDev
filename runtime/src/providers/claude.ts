@@ -40,6 +40,10 @@ import {
   spawnShimMcpServer
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
+import {
+  COMPACTION_SYSTEM_PROMPT,
+  isCompactionRequest
+} from "@simulatorlife/autodev-runtime/shared/compaction";
 import { resolveClaudeBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -1273,7 +1277,10 @@ function startResponsesTurn(
     sendError: handleNonStreamingError
   });
   const reporter = turnReporter(agentEvents);
-  const awaited = awaitedToolResults(payload.input);
+  const compaction = isCompactionRequest(payload);
+  const awaited = compaction
+    ? { outputs: new Map<string, unknown>(), messages: [] }
+    : awaitedToolResults(payload.input);
   const parked =
     awaited.outputs.size > 0 ? turns.forOutputs(awaited.outputs) : null;
   if (parked) {
@@ -1291,39 +1298,47 @@ function startResponsesTurn(
     handleNonStreamingError(response, describeFailure(error));
     return;
   }
-  const surface = codexToolSurface(payload);
+  const surface: CodexToolSurface = compaction
+    ? { tools: [], webSearch: false }
+    : codexToolSurface(payload);
   // Codex owns sandbox; the CLI receives no native --sandbox-mode flag, so
   // the role's read-only contract is enforced via a system-prompt preamble.
-  const sandboxInjection = readOnlySystemPromptInjection(
-    request.headers as Record<string, unknown>
-  );
-  const orchestratorSkillContext = bridgeSkillContext(
-    request.headers as Record<string, unknown>
-  );
+  const sandboxInjection = compaction
+    ? ""
+    : readOnlySystemPromptInjection(request.headers as Record<string, unknown>);
+  const orchestratorSkillContext = compaction
+    ? null
+    : bridgeSkillContext(request.headers as Record<string, unknown>);
   // The delegation surface is the bridge's, not Codex's: a turn may delegate
   // whether or not Codex offered this request any tools at all. The session
   // is opened here, after the parked turn has been reattached, so a
   // continuation never replaces the children its own turn collected.
-  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole),
-    role: agentRole,
-    workspace: cwd,
-    payload
-  });
+  const spawnSession = compaction
+    ? null
+    : openSpawnSession(request.headers, spawnSessions, {
+        orchestrator: isOrchestratorRole(agentRole),
+        role: agentRole,
+        workspace: cwd,
+        payload
+      });
   const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
     writeErrorLine(
       `claude orchestrator request missing trackable spawn session header role=${agentRole ?? "default"}`
     );
   }
   const mayDelegate =
-    spawnSession !== null && spawnSessions.mayDelegate(spawnSession);
-  const delegation = bridgeDelegationInstruction({
-    mayDelegate,
-    // The Claude CLI advertises each MCP tool directly, so the model calls one
-    // name rather than naming a server and a tool.
-    reach: { kind: "direct", prefix: "mcp__" }
-  });
+    !compaction &&
+    spawnSession !== null &&
+    spawnSessions.mayDelegate(spawnSession);
+  const delegation = compaction
+    ? ""
+    : bridgeDelegationInstruction({
+        mayDelegate,
+        // The Claude CLI advertises each MCP tool directly, so the model calls one
+        // name rather than naming a server and a tool.
+        reach: { kind: "direct", prefix: "mcp__" }
+      });
   const turn = new ClaudeTurn({
     tools: surface.tools,
     registry: turns,
@@ -1335,7 +1350,7 @@ function startResponsesTurn(
     }
   });
   writeErrorLine(
-    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${spawnSession !== null}`
+    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${spawnSession !== null}${compaction ? " compaction=true" : ""}`
   );
   turn.attach(stream, reporter);
   void turn.run(
@@ -1359,19 +1374,20 @@ function startResponsesTurn(
         },
         signal: turn.signal,
         waitingOnCodex: () => turn.waitingOnCodex,
-        systemPrompt:
-          systemPrompt(cwd, surface, delegation) +
-          sandboxInjection +
-          (orchestratorSkillContext
-            ? `
+        systemPrompt: compaction
+          ? COMPACTION_SYSTEM_PROMPT
+          : systemPrompt(cwd, surface, delegation) +
+            sandboxInjection +
+            (orchestratorSkillContext
+              ? `
 
 ## Selected skill context (propagated from orchestrator)
 
 ${orchestratorSkillContext}
 `
-            : ""),
+              : ""),
         selectedSkillContext: orchestratorSkillContext,
-        turnId: surface.tools.length > 0 ? turn.id : null,
+        turnId: !compaction && surface.tools.length > 0 ? turn.id : null,
         spawnSession: mayDelegate ? spawnSession : null,
         webSearch: surface.webSearch
       }

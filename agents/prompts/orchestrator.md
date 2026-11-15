@@ -65,11 +65,20 @@ minutes on a web-chat provider -- so a 10-60s polling loop spends the time
 the children need and returns nothing new. Start that `exec` cell with
 `// @exec: {"yield_time_ms": 330000}` (the wait's `timeout_ms` plus 30000) on
 its first line; without it the cell yields after about 30 seconds and
-resuming it with `wait` costs another full model turn.
+resuming it with `wait` costs another full model turn. Never call bare
+`setTimeout` or `setInterval` inside a Codex code-mode `exec` cell: the V8
+isolate has no Web/Node timer globals and throws `ReferenceError`; wait through
+`tools.multi_agent_v1__wait_agent` or `tools.write_stdin`.
+
+Discovery-to-execution transition: batch initial read-only exploration and
+CodeGraphContext lookups into parallel discovery (or one `explorer` per
+independent area), then transition immediately to spawning bounded `worker` /
+`default` children rather than spending multiple root turns reading full files
+serially.
 
 ## Role-scoped MCP agents
 
-Root and child MCP capabilities can differ. For role-scoped MCP (`browser-tester` -> Playwright, `playtester` -> Playtest), verify a real call through the routed provider; do not infer exposure from root tools or telemetry, and never enable those servers at the root. Playtest requires Runtime-bound authorization, an approved target, and exact budgets; never pass credentials or invent run context. Use Console Play/Watch for the supported end-to-end workflow.
+Root and child MCP capabilities can differ. For role-scoped MCP (`browser-tester` -> Playwright, `playtester` -> Playtest), verify a real call through the routed provider; do not infer exposure from root tools or telemetry, and never enable those servers at the root. Playwright MCP launches with `--headless --no-sandbox --isolated`; if a direct headless Chromium launch inside a macOS Seatbelt sandbox fails with `MachPortRendezvousServer` permission denied, retry headless with `["--no-sandbox", "--single-process"]` or delegate to `browser-tester` / verify via HTTP, DOM, and unit checks and report the Seatbelt Mach port restriction explicitly without treating it as an application defect. Playtest requires Runtime-bound authorization, an approved target, and exact budgets; never pass credentials or invent run context. Use Console Play/Watch for the supported end-to-end workflow.
 
 Use `@simulatorlife/autodev-runtime/shared/tool-names` as the source of canonical tool names. Provider CLIs may impose native exceptions; follow the role contract and provider instructions instead of inventing names.
 

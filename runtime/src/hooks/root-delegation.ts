@@ -3,7 +3,6 @@
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
-  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -14,8 +13,11 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { installedSkillDirectory } from "@simulatorlife/autodev-runtime/shared/installed-skills";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  buildRootOrchestratorBootstrap,
+  readRootBootstrapMarker
+} from "@simulatorlife/autodev-runtime/shared/root-bootstrap";
 
 import { codexHome, repositoryRoot } from "./hook-roots.ts";
 
@@ -246,19 +248,6 @@ function logInput(input: HookInput): void {
   }
 }
 
-/** Keep this exceptional-path reminder compact; the orchestration skill owns the full procedure. */
-function buildRecoveryContext(parentId: string | null): string {
-  if (!parentId) return "";
-  return (
-    "\n\n## Current-parent recovery preflight\n" +
-    `Current parent session: ${parentId}. Only after a capacity/admission failure, ` +
-    "follow the canonical orchestration recovery procedure against this parent's " +
-    "own spawn history. Preserve running children and useful partial results; " +
-    "close dead terminal handles or evict the oldest parked handles only when " +
-    "capacity requires it. Never inspect or clean up foreign sessions.\n"
-  );
-}
-
 export function runRootDelegation(raw = readFileSync(0, "utf8")): number {
   const input = parseInput(raw);
   logInput(input);
@@ -270,41 +259,33 @@ export function runRootDelegation(raw = readFileSync(0, "utf8")): number {
   if (!model) return 0;
   if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
   const root = repositoryRoot();
-  const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
-  const skillDirectory = installedSkillDirectory("orchestration");
-  const skillFile = path.join(skillDirectory, "SKILL.md");
-  const codeSearchFile = path.join(root, "agents", "prompts", "code-search.md");
-  if (!existsSync(promptFile)) {
+  const marker = readRootBootstrapMarker(root);
+  if (!marker) {
     writeErrorLine(
-      `root-delegation: orchestrator prompt not found at ${promptFile}`
+      `root-delegation: orchestrator prompt not found at ${path.join(root, "agents", "prompts", "orchestrator.md")}`
     );
     return 0;
   }
 
-  const parentId =
+  if (bootstrapInCurrentWindow(input.transcript_path, marker)) return 0;
+  if (!shouldInjectOnce(input, model)) return 0;
+
+  const parentSessionId =
     typeof input.session_id === "string" && input.session_id.trim()
       ? input.session_id.trim()
       : null;
-  const prompt = readFileSync(promptFile, "utf8").trim();
-  const firstLineEnd = prompt.indexOf("\n");
-  const marker = firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd);
-  if (marker && bootstrapInCurrentWindow(input.transcript_path, marker))
-    return 0;
-  if (!shouldInjectOnce(input, model)) return 0;
-  const skill = existsSync(skillFile)
-    ? `\n\n## Canonical orchestration skill\n\nRead and follow the installed \`orchestration\` skill before substantial work. It is the sole authority for delegation, child lifecycle, recovery, workspace boundaries, and validation. Source: ${skillFile}; resolve its relative \`references/\` paths against ${skillDirectory}. The hook points to the skill instead of copying its full body.`
-    : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;
-  const codeSearch = existsSync(codeSearchFile)
-    ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
-    : "\n\nShared codebase navigation prompt is unavailable; report that capability failure instead of silently substituting a workflow.";
-  const recoveryContext = buildRecoveryContext(parentId);
+  const bootstrap = buildRootOrchestratorBootstrap({
+    repoRoot: root,
+    parentSessionId
+  });
+  if (!bootstrap) return 0;
   process.stdout.write(
     JSON.stringify({
       systemMessage:
         "UserPromptSubmit hook fired: injecting root delegation policy",
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: prompt + skill + codeSearch + recoveryContext
+        additionalContext: bootstrap.content
       }
     })
   );

@@ -186,7 +186,9 @@ function repoInstallCachePath(repositoryRoot: string): string | null {
   return path.join(gitDir, "autodev-install-cache.json");
 }
 
-function readDiskInstallCache(cachePath: string | null): RepoInstallCache | null {
+function readDiskInstallCache(
+  cachePath: string | null
+): RepoInstallCache | null {
   if (!cachePath || !existsSync(cachePath)) return null;
   try {
     const parsed = JSON.parse(

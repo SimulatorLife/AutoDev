@@ -48,9 +48,12 @@
       ],
       [
         "claude",
+        "antigravity-claude-gpt"
+      ],
+      [
         "copilot",
         "antigravity-gemini",
-        "antigravity-claude-gpt"
+        "antigravity-argon"
       ]
     ]
   },
@@ -137,6 +140,7 @@
     "antigravity-argon": {
       "models": {
         "smart": "gemini-4-argon-high",
+        "orchestrator": "gemini-4-argon-high",
         "default": "gemini-4-argon-medium"
       },
       "links": {
@@ -242,9 +246,10 @@
     "alias": "autodev/orchestrator",
     "tier": "orchestrator",
     "reasoningEffort": {
-      "claude": "medium",
+      "claude": "high",
       "antigravity-gemini": "high",
-      "antigravity-claude-gpt": "high"
+      "antigravity-claude-gpt": "high",
+      "antigravity-argon": "high"
     }
   }
 }

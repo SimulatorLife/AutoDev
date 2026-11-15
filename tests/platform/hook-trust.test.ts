@@ -13,6 +13,7 @@ import test from "node:test";
 import {
   CANONICAL_HOOK_HASHES,
   checkHookTrust,
+  reconcileStaleOrchestratorState,
   syncHookTrust
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
@@ -113,4 +114,80 @@ test("checkHookTrust detects missing or drifted hashes", () =>
     writeFileSync(configPath, tampered);
 
     assert.equal(checkHookTrust(configPath, codexHome, repoRoot), false);
+  }));
+
+test("reconcileStaleOrchestratorState upgrades legacy degraded orchestrator defaults while keeping operator overrides", () =>
+  withTempDir((dir) => {
+    const codexHome = join(dir, ".codex");
+    const statePath = join(codexHome, "codex-router-state.json");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        schema: "autodev-router-persisted-state-v4",
+        roleAssignments: {
+          claude: {
+            orchestrator: {
+              priority: 2,
+              model: "claude-opus-5-5",
+              reasoningEffort: "medium"
+            }
+          },
+          "antigravity-claude-gpt": {
+            orchestrator: {
+              priority: 2,
+              model: "claude-opus-5-5-medium",
+              reasoningEffort: "high"
+            }
+          },
+          "antigravity-gemini": {
+            orchestrator: { priority: 2, model: null }
+          },
+          "antigravity-argon": {
+            orchestrator: { priority: 2, model: "gemini-4-argon-medium" }
+          },
+          copilot: {
+            orchestrator: { priority: "disabled", model: "copilot" }
+          }
+        }
+      })
+    );
+
+    assert.equal(reconcileStaleOrchestratorState(codexHome), true);
+    const updated = JSON.parse(readFileSync(statePath, "utf8")) as {
+      roleAssignments: Record<string, Record<string, unknown>>;
+    };
+    assert.deepEqual(updated.roleAssignments.claude?.orchestrator, {
+      priority: 2,
+      model: "claude-opus-5-5",
+      reasoningEffort: "high"
+    });
+    assert.deepEqual(
+      updated.roleAssignments["antigravity-claude-gpt"]?.orchestrator,
+      {
+        priority: 2,
+        model: "claude-opus-5-5-high",
+        reasoningEffort: "high"
+      }
+    );
+    assert.deepEqual(
+      updated.roleAssignments["antigravity-gemini"]?.orchestrator,
+      {
+        priority: 3,
+        model: null
+      }
+    );
+    assert.deepEqual(
+      updated.roleAssignments["antigravity-argon"]?.orchestrator,
+      {
+        priority: 3,
+        model: "gemini-4-argon-high",
+        reasoningEffort: "high"
+      }
+    );
+    assert.deepEqual(updated.roleAssignments.copilot?.orchestrator, {
+      priority: "disabled",
+      model: "copilot"
+    });
+    assert.equal(reconcileStaleOrchestratorState(codexHome), false);
   }));

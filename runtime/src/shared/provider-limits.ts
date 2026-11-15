@@ -283,6 +283,94 @@ function headerValue(headers: unknown, name: string): string | null {
   return typeof single === "string" && single.trim() ? single.trim() : null;
 }
 
+function parseRelativeSecondsReset(
+  raw: string | null,
+  now: number
+): string | null {
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(now + Math.ceil(seconds * MS_PER_SECOND)).toISOString();
+}
+
+function parseRetryAfter(raw: string | null, now: number): string | null {
+  if (!raw) return null;
+  const relative = parseRelativeSecondsReset(raw, now);
+  if (relative) return relative;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+}
+
+function resetFromRateLimitHeader(
+  raw: string | null,
+  now: number
+): string | null {
+  if (!raw) return null;
+  const msMatch = /^(\d+(?:\.\d+)?)ms$/i.exec(raw);
+  if (msMatch?.[1]) {
+    const ms = Number(msMatch[1]);
+    return Number.isFinite(ms) && ms > 0
+      ? new Date(now + Math.ceil(ms)).toISOString()
+      : null;
+  }
+  const durationMs = durationMsFromWindow(raw.toLowerCase());
+  if (durationMs !== null) return new Date(now + durationMs).toISOString();
+  return normalizeResetsAt(raw);
+}
+
+function codexWindowReset(
+  headers: unknown,
+  window: "primary" | "secondary",
+  now: number
+): string | null {
+  return (
+    normalizeResetsAt(headerValue(headers, `x-codex-${window}-reset-at`)) ??
+    parseRelativeSecondsReset(
+      headerValue(headers, `x-codex-${window}-reset-after-seconds`),
+      now
+    )
+  );
+}
+
+/**
+ * Extract the earliest actionable reset timestamp from AutoDev, Codex/ChatGPT,
+ * OpenAI, or standard HTTP `Retry-After` response headers.
+ */
+export function readResetAtFromHeaders(
+  headers: unknown,
+  now = Date.now()
+): string | null {
+  const explicit = normalizeResetsAt(
+    headerValue(headers, LIMIT_HEADER_RESETS_AT)
+  );
+  if (explicit) return explicit;
+  const secondaryPct = Number(
+    headerValue(headers, "x-codex-secondary-used-percent") ?? 0
+  );
+  const primaryPct = Number(
+    headerValue(headers, "x-codex-primary-used-percent") ?? 0
+  );
+  const windows: readonly ("primary" | "secondary")[] =
+    secondaryPct >= 100 && primaryPct < 100
+      ? ["secondary", "primary"]
+      : ["primary", "secondary"];
+  for (const window of windows) {
+    const reset = codexWindowReset(headers, window, now);
+    if (reset) return reset;
+  }
+  return (
+    parseRetryAfter(headerValue(headers, "retry-after"), now) ??
+    resetFromRateLimitHeader(
+      headerValue(headers, "x-ratelimit-reset-requests"),
+      now
+    ) ??
+    resetFromRateLimitHeader(
+      headerValue(headers, "x-ratelimit-reset-tokens"),
+      now
+    )
+  );
+}
+
 /**
  * The inverse of `limitResponseHeaders`, for the router reading a failed
  * upstream response. Returns null when the provider said nothing structural, so
@@ -299,7 +387,9 @@ export function readLimitHeaders(headers: unknown): ProviderLimit | null {
   return {
     limitClass: limitClass.toLowerCase(),
     limitType: headerValue(headers, LIMIT_HEADER_TYPE)?.toLowerCase() ?? null,
-    resetsAt: normalizeResetsAt(headerValue(headers, LIMIT_HEADER_RESETS_AT)),
+    resetsAt:
+      normalizeResetsAt(headerValue(headers, LIMIT_HEADER_RESETS_AT)) ??
+      readResetAtFromHeaders(headers),
     source:
       source === LIMIT_SOURCE_REPORTED
         ? LIMIT_SOURCE_REPORTED

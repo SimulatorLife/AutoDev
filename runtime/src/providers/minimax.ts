@@ -28,6 +28,10 @@ import {
   readOnlySystemPromptInjection,
   resolveAgentRole
 } from "@simulatorlife/autodev-runtime/agents";
+import {
+  COMPACTION_SYSTEM_PROMPT,
+  isCompactionRequest
+} from "@simulatorlife/autodev-runtime/shared/compaction";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { sendUnsupportedRequestFailure } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
@@ -315,11 +319,17 @@ export function compactMinimaxInputItems(
 // Responses API does not define, so it is removed before the payload leaves
 // the machine. Everything else is the caller's own payload and is forwarded.
 function rewriteOutboundPayload(
-  payload: JsonRecord | null | undefined
+  payload: JsonRecord | null | undefined,
+  compaction = false
 ): JsonRecord | null | undefined {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload))
     return payload;
   const { client_metadata: _clientMetadata, ...rewritten } = payload;
+  if (compaction) {
+    delete rewritten.tools;
+    delete rewritten.tool_choice;
+    rewritten.instructions = COMPACTION_SYSTEM_PROMPT;
+  }
   if (Array.isArray(rewritten.input)) {
     rewritten.input = compactMinimaxInputItems(rewritten.input);
   }
@@ -1241,21 +1251,29 @@ function reportWireMcpExposure(
 function processOutboundPayload(
   rawBody: string | undefined,
   agentEvents: AgentReporter | null
-): { body: string | undefined; freeformNames: Set<string> } {
+): {
+  body: string | undefined;
+  freeformNames: Set<string>;
+  compaction: boolean;
+} {
   let freeformNames = new Set<string>();
   let body = rawBody;
+  let compaction = false;
   if (rawBody) {
     try {
       const payload = JSON.parse(rawBody) as JsonRecord;
-      freeformNames = collectFreeformToolNames(payload);
+      compaction = isCompactionRequest(payload);
+      freeformNames = compaction
+        ? new Set()
+        : collectFreeformToolNames(payload);
       reportExecutedToolCalls(agentEvents, payload);
-      body = JSON.stringify(rewriteOutboundPayload(payload));
+      body = JSON.stringify(rewriteOutboundPayload(payload, compaction));
     } catch (error) {
       if (error instanceof MinimaxInputContextExceeded) throw error;
       // Preserve malformed JSON unchanged.
     }
   }
-  return { body, freeformNames };
+  return { body, freeformNames, compaction };
 }
 
 async function handleUpstreamResponse(
@@ -1326,13 +1344,17 @@ async function forward(
         ? undefined
         : await requestBody(request);
 
-    reportWireMcpExposure(agentEvents, rawBody, contract.mcp ?? []);
-
-    const { body: transformedBody, freeformNames } = processOutboundPayload(
-      rawBody,
-      agentEvents
-    );
-    const body = applySandboxInjection(transformedBody, sandboxInjection);
+    const {
+      body: transformedBody,
+      freeformNames,
+      compaction
+    } = processOutboundPayload(rawBody, agentEvents);
+    if (!compaction) {
+      reportWireMcpExposure(agentEvents, rawBody, contract.mcp ?? []);
+    }
+    const body = compaction
+      ? transformedBody
+      : applySandboxInjection(transformedBody, sandboxInjection);
 
     const coerce =
       freeformNames.size > 0 ? createFreeformCoercion(freeformNames) : null;

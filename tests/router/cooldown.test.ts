@@ -194,3 +194,32 @@ test("retry deadlines ignore non-retryable model configuration cooldowns", () =>
     0
   );
 });
+
+test("structured hard cooldown without resetsAt escalates exponentially and resets on success", () => {
+  const first = cooldowns.cooldownProvider("claude", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    structured: true
+  });
+  assert.equal(first.kind, "hard");
+  assert.equal(first.streak, 1);
+  assert.equal(first.durationMs, COOLDOWN_CONFIG.hardCooldownMs);
+
+  const second = cooldowns.cooldownProvider("claude", {
+    now: NOW + first.durationMs,
+    failureClass: "quota_exhausted",
+    structured: true
+  });
+  assert.equal(second.kind, "hard");
+  assert.equal(second.streak, 2);
+  assert.equal(second.durationMs, COOLDOWN_CONFIG.hardCooldownMs * 2);
+
+  cooldowns.clearAfterSuccess("claude", "claude-opus-5-5");
+  const afterSuccess = cooldowns.cooldownProvider("claude", {
+    now: NOW + first.durationMs + 1000,
+    failureClass: "quota_exhausted",
+    structured: true
+  });
+  assert.equal(afterSuccess.streak, 1);
+  assert.equal(afterSuccess.durationMs, COOLDOWN_CONFIG.hardCooldownMs);
+});

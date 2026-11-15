@@ -127,11 +127,31 @@
       ],
       "expected": {
         "kind": "hard",
-        "streak": 0,
+        "streak": 1,
         "durationMs": 900000,
         "cooldownUntilDeltaMs": 900000,
         "resetsAt": null
       }
+    },
+    "hard_without_reset_ladder_escalates_and_caps": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } },
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+      ],
+      "expectedStreaks": [
+        { "kind": "hard", "streak": 1, "durationMs": 900000 },
+        { "kind": "hard", "streak": 2, "durationMs": 1800000 },
+        { "kind": "hard", "streak": 3, "durationMs": 3600000 },
+        { "kind": "hard", "streak": 4, "durationMs": 7200000 },
+        { "kind": "hard", "streak": 5, "durationMs": 14400000 },
+        { "kind": "hard", "streak": 6, "durationMs": 21600000 },
+        { "kind": "hard", "streak": 7, "durationMs": 21600000 }
+      ]
     },
     "hard_with_far_reset_clamped_to_ceiling": {
       "setup": [

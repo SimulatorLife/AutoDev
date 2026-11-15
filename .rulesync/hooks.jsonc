@@ -4,27 +4,27 @@
       {
         "type": "command",
         "matcher": ".*",
-        "command": "node ~/.codex/src/hooks/session-start.ts"
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
       }
     ],
     "subagentStart": [
       {
         "type": "command",
         "matcher": ".*",
-        "command": "node ~/.codex/src/hooks/subagent-start.ts"
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"
       }
     ],
     "preToolUse": [
       {
         "type": "command",
         "matcher": "(?i)exec[_ -]?command|bash",
-        "command": "node ~/.codex/src/hooks/block-ccc-cli.ts",
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
         "statusMessage": "Enforcing command policy"
       },
       {
         "type": "command",
         "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        "command": "node ~/.codex/src/hooks/skill-read-telemetry.ts",
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
         "statusMessage": "Recording skill-read telemetry"
       }
     ]
@@ -34,14 +34,14 @@
       "beforeSubmitPrompt": [
         {
           "type": "command",
-          "command": "node ~/.codex/src/hooks/root-delegation.ts",
+          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts",
           "statusMessage": "Applying root delegation policy"
         }
       ],
       "sessionEnd": [
         {
           "type": "command",
-          "command": "node ~/.codex/src/hooks/memory-session-end.ts"
+          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts"
         }
       ]
     }
@@ -51,7 +51,7 @@
       "beforeSubmitPrompt": [
         {
           "type": "command",
-          "command": "node ~/.codex/src/hooks/root-delegation.ts"
+          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"
         }
       ]
     }
@@ -61,7 +61,7 @@
       "SessionEnd": [
         {
           "type": "command",
-          "command": "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code node ~/.codex/src/hooks/memory-session-end.ts",
+          "command": "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code ~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts",
           "timeout": 60
         }
       ]

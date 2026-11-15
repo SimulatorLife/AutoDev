@@ -300,9 +300,17 @@ export class ProviderCooldowns {
     }
     if (structured && isHardLimitClass(failureClass ?? "")) {
       const declared = resetsAt ? Date.parse(resetsAt) : Number.NaN;
-      const until = Number.isNaN(declared)
-        ? now + this.config.hardCooldownMs
-        : declared <= now
+      if (Number.isNaN(declared)) {
+        const streak = this.failureStreak(provider) + 1;
+        this.failureStreaks.set(provider, streak);
+        const durationMs = Math.min(
+          this.config.hardCooldownMaxMs,
+          this.config.hardCooldownMs * 2 ** (streak - 1)
+        );
+        return record("hard", durationMs, streak, now + durationMs);
+      }
+      const until =
+        declared <= now
           ? now + this.config.providerCooldownMs
           : Math.min(declared, now + this.config.hardCooldownMaxMs);
       return record("hard", until - now, 0, until);

@@ -128,3 +128,19 @@ test("a tail of only injected messages awaits nothing", () => {
   assert.equal(awaitedToolResults([]).outputs.size, 0);
   assert.equal(awaitedToolResults(undefined).outputs.size, 0);
 });
+
+test("compaction prompt following pending tool outputs never triggers continuation", () => {
+  for (const compactionText of [
+    "<context_compaction>Summarize our progress so far.</context_compaction>",
+    "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize everything."
+  ]) {
+    const { outputs, messages } = awaitedToolResults([
+      user("go"),
+      call("a"),
+      output("a", "ok"),
+      user(compactionText)
+    ]);
+    assert.equal(outputs.size, 0, compactionText);
+    assert.deepEqual(messages, [], compactionText);
+  }
+});

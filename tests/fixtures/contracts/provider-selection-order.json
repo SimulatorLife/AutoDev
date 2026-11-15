@@ -152,58 +152,66 @@
       [
         "codex",
         "antigravity-claude-gpt",
-        "antigravity-gemini",
+        "claude",
         "copilot",
-        "claude"
+        "antigravity-argon",
+        "antigravity-gemini"
+      ],
+      [
+        "codex",
+        "claude",
+        "antigravity-claude-gpt",
+        "antigravity-argon",
+        "antigravity-gemini",
+        "copilot"
       ],
       [
         "codex",
         "antigravity-claude-gpt",
-        "copilot",
         "claude",
+        "copilot",
+        "antigravity-argon",
         "antigravity-gemini"
       ],
       [
         "codex",
         "antigravity-claude-gpt",
-        "antigravity-gemini",
+        "claude",
+        "antigravity-argon",
         "copilot",
-        "claude"
+        "antigravity-gemini"
       ],
       [
         "codex",
-        "antigravity-gemini",
         "claude",
         "antigravity-claude-gpt",
-        "copilot"
+        "antigravity-argon",
+        "copilot",
+        "antigravity-gemini"
       ],
       [
         "codex",
-        "antigravity-gemini",
+        "antigravity-claude-gpt",
         "claude",
         "copilot",
-        "antigravity-claude-gpt"
+        "antigravity-argon",
+        "antigravity-gemini"
       ],
       [
         "codex",
-        "claude",
-        "antigravity-gemini",
         "antigravity-claude-gpt",
-        "copilot"
-      ],
-      [
-        "codex",
         "claude",
-        "antigravity-gemini",
-        "antigravity-claude-gpt",
-        "copilot"
-      ],
-      [
-        "codex",
-        "claude",
-        "antigravity-gemini",
         "copilot",
-        "antigravity-claude-gpt"
+        "antigravity-argon",
+        "antigravity-gemini"
+      ],
+      [
+        "codex",
+        "claude",
+        "antigravity-claude-gpt",
+        "copilot",
+        "antigravity-argon",
+        "antigravity-gemini"
       ]
     ],
     "smart_seed_coffee_first_eight": [
@@ -289,9 +297,10 @@
     "orchestrator": [
       "codex",
       "claude",
+      "antigravity-claude-gpt",
       "copilot",
       "antigravity-gemini",
-      "antigravity-claude-gpt"
+      "antigravity-argon"
     ],
     "smart": [
       "claude",

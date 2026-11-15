@@ -15,12 +15,7 @@
  * without restarting anything. The file lives with the bridge's other run
  * state in `$CODEX_HOME/run`.
  */
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync
-} from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 

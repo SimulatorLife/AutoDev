@@ -277,7 +277,13 @@ test("repo install cache persists across reads and fingerprints detect file modi
     mkdirSync(join(directory, ".rulesync", "skills", "demo"), {
       recursive: true
     });
-    const skillFile = join(directory, ".rulesync", "skills", "demo", "SKILL.md");
+    const skillFile = join(
+      directory,
+      ".rulesync",
+      "skills",
+      "demo",
+      "SKILL.md"
+    );
     writeFileSync(skillFile, "# demo v1\n");
 
     const initialFingerprint = computeRepoPathsFingerprint(

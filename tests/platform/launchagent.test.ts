@@ -217,5 +217,8 @@ test("renderLaunchAgent skips rewriting identical target plists", () =>
 
     writeFileSync(template, "<string>__HOME__</string>\n");
     renderLaunchAgent(template, target, RENDERED_VALUES);
-    assert.equal(readFileSync(target, "utf8"), `<string>${RENDERED_VALUES.home}</string>\n`);
+    assert.equal(
+      readFileSync(target, "utf8"),
+      `<string>${RENDERED_VALUES.home}</string>\n`
+    );
   }));

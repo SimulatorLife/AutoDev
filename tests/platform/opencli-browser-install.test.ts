@@ -106,7 +106,8 @@ test("skips Playwright download when the pinned Chromium and ffmpeg markers alre
         createdDirectory = true;
       },
       readFile: (filePath) => {
-        if (filePath !== manifestPath) throw new Error(`unexpected read ${filePath}`);
+        if (filePath !== manifestPath)
+          throw new Error(`unexpected read ${filePath}`);
         return JSON.stringify({
           browsers: [
             { name: "chromium", revision: "1243" },
@@ -138,7 +139,8 @@ test("reinstalls when the Playwright manifest bumps the pinned Chromium revision
         filePath === `${browserCache}/ffmpeg-1011/INSTALLATION_COMPLETE`,
       createDirectory: () => undefined,
       readFile: (filePath) => {
-        if (filePath !== manifestPath) throw new Error(`unexpected read ${filePath}`);
+        if (filePath !== manifestPath)
+          throw new Error(`unexpected read ${filePath}`);
         return JSON.stringify({
           browsers: [
             { name: "chromium", revision: "1250" },

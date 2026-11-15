@@ -48,7 +48,8 @@ function isPinnedChromiumInstalled(
   deps: OpencliBrowserInstallDeps
 ): boolean {
   const manifestPath = path.join(playwrightRoot, "browsers.json");
-  const readFile = deps.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
+  const readFile =
+    deps.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   let parsed: PlaywrightBrowsersManifest;
   try {
     parsed = JSON.parse(readFile(manifestPath)) as PlaywrightBrowsersManifest;

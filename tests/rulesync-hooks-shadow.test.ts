@@ -44,10 +44,10 @@ const hookPaths: Record<(typeof targets)[number], string> = {
   "antigravity-cli": ".agents/hooks.json"
 };
 const sourceCommands = [
-  "node ~/.codex/src/hooks/session-start.ts",
-  "node ~/.codex/src/hooks/subagent-start.ts",
-  "node ~/.codex/src/hooks/block-ccc-cli.ts",
-  "node ~/.codex/src/hooks/skill-read-telemetry.ts"
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts",
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
 ];
 /**
  * The root-delegation bootstrap names Codex's spawn tools and code-mode
@@ -55,7 +55,8 @@ const sourceCommands = [
  * run it. Shared, it put about 8 KB of Codex-only instructions into every
  * Claude Code prompt.
  */
-const rootDelegation = "node ~/.codex/src/hooks/root-delegation.ts";
+const rootDelegation =
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts";
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -220,8 +221,12 @@ test("target projections preserve their documented command losses", () => {
   const expected: Record<(typeof targets)[number], Set<string>> = {
     codexcli: new Set(),
     claudecode: new Set(),
-    copilot: new Set(["node ~/.codex/src/hooks/session-start.ts"]),
-    "antigravity-cli": new Set(["node ~/.codex/src/hooks/subagent-start.ts"])
+    copilot: new Set([
+      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
+    ]),
+    "antigravity-cli": new Set([
+      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"
+    ])
   };
   assert.equal(projected.codexcli.has(rootDelegation), true);
   assert.equal(projected.copilot.has(rootDelegation), true);
@@ -337,7 +342,10 @@ test("Codex and Claude get native memory capture without adding a Copilot hook",
     groupedCommands(codex).filter(
       (command) => !sourceCommands.includes(command)
     ),
-    [rootDelegation, "node ~/.codex/src/hooks/memory-session-end.ts"]
+    [
+      rootDelegation,
+      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts"
+    ]
   );
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
@@ -345,7 +353,7 @@ test("Codex and Claude get native memory capture without adding a Copilot hook",
     ["PreToolUse", "SessionEnd", "SessionStart", "SubagentStart"].sort()
   );
   const claudeMemoryCapture =
-    "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code node ~/.codex/src/hooks/memory-session-end.ts";
+    "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code ~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts";
   assert.deepEqual(groupedCommands(claude), [
     ...sourceCommands,
     claudeMemoryCapture
@@ -377,29 +385,29 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "userPromptSubmitted"
   ]);
   assert.deepEqual(commands(copilot), [
-    "node ~/.codex/src/hooks/subagent-start.ts",
-    "node ~/.codex/src/hooks/block-ccc-cli.ts",
-    "node ~/.codex/src/hooks/skill-read-telemetry.ts",
-    "node ~/.codex/src/hooks/root-delegation.ts"
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"
   ]);
   assert.deepEqual(
     copilotHooks.subagentStart?.map((hook) => hook.command),
-    ["node ~/.codex/src/hooks/subagent-start.ts"]
+    ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"]
   );
   assert.deepEqual(
     copilotHooks.userPromptSubmitted?.map((hook) => hook.command),
-    ["node ~/.codex/src/hooks/root-delegation.ts"]
+    ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"]
   );
   assert.deepEqual(
     copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
     [
       [
         "(?i)exec[_ -]?command|bash",
-        "node ~/.codex/src/hooks/block-ccc-cli.ts"
+        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts"
       ],
       [
         "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        "node ~/.codex/src/hooks/skill-read-telemetry.ts"
+        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
       ]
     ]
   );
@@ -409,11 +417,15 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "PreToolUse"
   ]);
   assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), [
-    "node ~/.codex/src/hooks/block-ccc-cli.ts",
-    "node ~/.codex/src/hooks/skill-read-telemetry.ts"
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
   ]);
   assert.deepEqual(asObject(antigravity.rulesync).SessionStart, [
-    { type: "command", command: "node ~/.codex/src/hooks/session-start.ts" }
+    {
+      type: "command",
+      command:
+        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
+    }
   ]);
   assert.deepEqual(
     (asObject(antigravity.rulesync).PreToolUse as unknown[]).map((entry) => {
@@ -426,12 +438,56 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     [
       [
         "(?i)exec[_ -]?command|bash",
-        ["node ~/.codex/src/hooks/block-ccc-cli.ts"]
+        [
+          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts"
+        ]
       ],
       [
         "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        ["node ~/.codex/src/hooks/skill-read-telemetry.ts"]
+        [
+          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+        ]
       ]
     ]
   );
+});
+
+test("run-autodev-hook.sh executes TypeScript hooks under a minimal PATH", () => {
+  const sandbox = mkdtempSync(join(temporaryRoot, "hook-wrapper-"));
+  const codexHome = join(sandbox, "codex-home");
+  mkdirSync(join(codexHome, "src", "hooks"), { recursive: true });
+  writeFileSync(
+    join(codexHome, "src", "hooks", "echo-ts-hook.ts"),
+    [
+      'import { readFileSync } from "node:fs";',
+      "const stdinText: string = readFileSync(0, 'utf8');",
+      "console.log(JSON.stringify({ argv: process.argv.slice(2), stdinText }));"
+    ].join("\n")
+  );
+  try {
+    const result = spawnSync(
+      "/bin/sh",
+      [
+        join(repositoryRoot, "scripts", "run-autodev-hook.sh"),
+        "~/.codex/src/hooks/echo-ts-hook.ts",
+        "--flag"
+      ],
+      {
+        input: "hello",
+        encoding: "utf8",
+        env: {
+          PATH: "/usr/bin:/bin",
+          HOME: process.env.HOME ?? sandbox,
+          CODEX_HOME: codexHome
+        }
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), {
+      argv: ["--flag"],
+      stdinText: "hello"
+    });
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 });

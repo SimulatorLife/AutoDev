@@ -45,6 +45,7 @@ multi_agent = true
 multi_agent_v2 = false
 js_repl = false
 memories = false
+apps = false
 respect_system_proxy = true
 chronicle = false
 goals = true
@@ -227,6 +228,9 @@ enabled = false
 enabled = false
 
 [plugins."work-pets@openai-curated-remote"]
+enabled = false
+
+[plugins."github@openai-curated"]
 enabled = false
 
 # Per-skill disables for the irrelevant Codex `.system/` skills. Each

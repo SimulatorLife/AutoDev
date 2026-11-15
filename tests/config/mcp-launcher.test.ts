@@ -55,11 +55,21 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
     args: [],
     pathPrepend: ["/repo/node_modules/.bin"]
   });
-  assert.deepEqual(resolveMcpCommand("playwright", "/repo"), {
+  assert.deepEqual(resolveMcpCommand("playwright", "/repo", {}), {
     binary: "/repo/node_modules/.bin/playwright-mcp",
-    args: [],
+    args: ["--headless", "--no-sandbox", "--isolated"],
     pathPrepend: []
   });
+  assert.deepEqual(
+    resolveMcpCommand("playwright", "/repo", {
+      AUTODEV_PLAYWRIGHT_HEADED: "1"
+    }),
+    {
+      binary: "/repo/node_modules/.bin/playwright-mcp",
+      args: ["--no-sandbox", "--isolated"],
+      pathPrepend: []
+    }
+  );
   assert.deepEqual(
     resolveMcpCommand("cocoindex-code", "/repo", {
       AUTODEV_COCOINDEX_BIN: "/custom/ccc"

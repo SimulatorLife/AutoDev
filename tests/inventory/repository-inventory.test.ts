@@ -30,6 +30,7 @@ const approvedLegacyFiles = new Set([
   "scripts/ensure-codex-minimax-proxy.sh",
   "scripts/ensure-codex-model-router.sh",
   "scripts/install.sh",
+  "scripts/run-autodev-hook.sh",
   "scripts/run-autodev-mcp.sh",
   "scripts/run-ci-provider.sh",
   "scripts/run-codex-antigravity-proxy.sh",

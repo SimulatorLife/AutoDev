@@ -56,6 +56,11 @@ import {
   readContextHeader,
   SANDBOX_MODE_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import {
+  COMPACTION_SYSTEM_PROMPT,
+  isCompactionRequest,
+  isInvalidCompactionResponse
+} from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -2124,6 +2129,11 @@ interface IsolatedHomeOptions {
    * them.
    */
   attachments?: readonly RequestImage[];
+  /**
+   * True for context-compaction summarization turns: disables all tools,
+   * MCP servers, slash commands, and default agent components.
+   */
+  compaction?: boolean;
 }
 
 const GEMINI_DIRECTORY = ".gemini";
@@ -2282,11 +2292,48 @@ function bridgeStdioMcpEntry(
 
 /** The name of the agent a Codex-tool turn is run as. */
 const CODEX_TOOLS_AGENT_NAME = "autodev-codex-tools";
+/** The name of the text-only agent used for context-compaction turns. */
+const COMPACTION_AGENT_NAME = "autodev-compaction";
 
 /** How this invocation runs agy: as a named agent, from a given workspace root. */
 interface AgyInvocation {
   agentName: string;
   customizationDir: string;
+  compaction?: boolean;
+}
+
+function writeIsolatedAgentMarkdown(
+  isolatedHome: string,
+  agentName: string,
+  lines: readonly string[]
+): string {
+  const root = pathApi.join(
+    isolatedHome,
+    INVOCATION_CUSTOMIZATION_DIRECTORY,
+    ".agents",
+    "agents",
+    agentName
+  );
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  writeFileSync(pathApi.join(root, "agent.md"), lines.join("\n"), {
+    mode: 0o600
+  });
+  return pathApi.join(isolatedHome, INVOCATION_CUSTOMIZATION_DIRECTORY);
+}
+
+function writeCompactionAgent(isolatedHome: string): string {
+  return writeIsolatedAgentMarkdown(isolatedHome, COMPACTION_AGENT_NAME, [
+    "---",
+    `name: ${COMPACTION_AGENT_NAME}`,
+    "description: >-",
+    "  Summarizes an ongoing engineering conversation in plain text without",
+    "  access to files, shells, or MCP tools.",
+    "excludeDefaultComponents: true",
+    "---",
+    "",
+    COMPACTION_SYSTEM_PROMPT,
+    ""
+  ]);
 }
 
 /**
@@ -2306,14 +2353,6 @@ function writeCodexToolsAgent(
   isolatedHome: string,
   attachments: readonly AgyAttachment[]
 ): string {
-  const root = pathApi.join(
-    isolatedHome,
-    INVOCATION_CUSTOMIZATION_DIRECTORY,
-    ".agents",
-    "agents",
-    CODEX_TOOLS_AGENT_NAME
-  );
-  mkdirSync(root, { recursive: true, mode: 0o700 });
   const attachmentNote =
     attachments.length > 0
       ? [
@@ -2324,31 +2363,26 @@ function writeCodexToolsAgent(
           ...attachments.map(({ path }) => `- ${path}`)
         ].join("\n")
       : "";
-  writeFileSync(
-    pathApi.join(root, "agent.md"),
-    [
-      "---",
-      `name: ${CODEX_TOOLS_AGENT_NAME}`,
-      "description: >-",
-      "  Acts through the Codex agent that owns this conversation. Every tool",
-      "  call is handed to Codex, which runs it and records it in the thread.",
-      "excludeDefaultComponents: true",
-      "---",
-      "",
-      "You are acting inside someone else's agent. Codex owns this conversation:",
-      "it holds the sandbox, the approvals, and the history, and it executes the",
-      "tools you call.",
-      "",
-      "Your file and command tools come from the `codex` MCP server -- reading",
-      "files, writing them, running commands. Delegation is a separate server,",
-      "and the instructions name it. Do not describe a tool you have not called",
-      "as done. If a call returns an error, say what failed.",
-      attachmentNote,
-      ""
-    ].join("\n"),
-    { mode: 0o600 }
-  );
-  return pathApi.join(isolatedHome, INVOCATION_CUSTOMIZATION_DIRECTORY);
+  return writeIsolatedAgentMarkdown(isolatedHome, CODEX_TOOLS_AGENT_NAME, [
+    "---",
+    `name: ${CODEX_TOOLS_AGENT_NAME}`,
+    "description: >-",
+    "  Acts through the Codex agent that owns this conversation. Every tool",
+    "  call is handed to Codex, which runs it and records it in the thread.",
+    "excludeDefaultComponents: true",
+    "---",
+    "",
+    "You are acting inside someone else's agent. Codex owns this conversation:",
+    "it holds the sandbox, the approvals, and the history, and it executes the",
+    "tools you call.",
+    "",
+    "Your file and command tools come from the `codex` MCP server -- reading",
+    "files, writing them, running commands. Delegation is a separate server,",
+    "and the instructions name it. Do not describe a tool you have not called",
+    "as done. If a call returns an error, say what failed.",
+    attachmentNote,
+    ""
+  ]);
 }
 
 /**
@@ -2395,6 +2429,7 @@ function buildInvocationMcpConfig(
   options?: IsolatedHomeOptions,
   toolTurnId: string | null = null
 ): AntigravityMcpConfig {
+  if (options?.compaction) return { mcpServers: {} };
   const contract = antigravityRoleContract(agentRole);
   const catalogue = bridgeMcpCatalogue(options?.codexHome);
   const mcpServers: Record<string, AntigravityMcpServerConfig> = {};
@@ -2637,6 +2672,17 @@ function buildInvocationSettings(
     ? [...userPermissions.deny]
     : [];
 
+  if (options?.compaction) {
+    return {
+      ...userSettings,
+      permissions: {
+        ...userPermissions,
+        allow: [],
+        deny: existingDeny
+      }
+    };
+  }
+
   const mcpGrants = invocationMcpPermissionGrants(contract, mcpConfig);
 
   if (isReadOnlyRole(agentRole, options?.sandboxMode))
@@ -2794,9 +2840,11 @@ function createIsolatedAntigravityHome(
       isolatedHome: tempHome,
       mcpConfig,
       settings,
-      customizationDir: toolTurnId
-        ? writeCodexToolsAgent(tempHome, attachments)
-        : null,
+      customizationDir: options?.compaction
+        ? writeCompactionAgent(tempHome)
+        : toolTurnId
+          ? writeCodexToolsAgent(tempHome, attachments)
+          : null,
       attachments,
       cleanup
     };
@@ -2890,6 +2938,7 @@ function agyArgs(
 function agyInvocationArgs(invocation: AgyInvocation | null): string[] {
   if (!invocation?.customizationDir) return [];
   return [
+    ...(invocation.compaction ? ["--disable-slash-commands"] : []),
     "--add-dir",
     invocation.customizationDir,
     "--agent",
@@ -2941,7 +2990,8 @@ function runAgy(
   workspaceKey: unknown = null,
   toolTurnId: string | null = null,
   requestId: string | null = null,
-  attachments: readonly RequestImage[] = []
+  attachments: readonly RequestImage[] = [],
+  compaction = false
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
@@ -2951,17 +3001,19 @@ function runAgy(
       workspaceKey,
       sandboxMode,
       toolTurnId,
-      attachments
+      attachments,
+      compaction
     });
   } catch (error) {
     return Promise.reject(error);
   }
-  // The agent exists exactly when the tools shim does, so a turn is never run
-  // with Codex's tools removed and nothing to replace them.
+  // The agent exists exactly when the tools shim or compaction agent does, so
+  // a turn never runs with default tools re-enabled when they were excluded.
   const invocation: AgyInvocation | null = isolatedState.customizationDir
     ? {
-        agentName: CODEX_TOOLS_AGENT_NAME,
-        customizationDir: isolatedState.customizationDir
+        agentName: compaction ? COMPACTION_AGENT_NAME : CODEX_TOOLS_AGENT_NAME,
+        customizationDir: isolatedState.customizationDir,
+        ...(compaction ? { compaction: true } : {})
       }
     : null;
   return new Promise<RunAgyResult>((resolve, reject) => {
@@ -2977,12 +3029,14 @@ function runAgy(
 
     let child: ChildProcess;
     try {
-      const finalPrompt = buildAgyPrompt(
-        `${prompt}${agyAttachmentPrompt(isolatedState.attachments)}`,
-        agentRole,
-        sandboxMode,
-        skillContext
-      );
+      const finalPrompt = compaction
+        ? prompt
+        : buildAgyPrompt(
+            `${prompt}${agyAttachmentPrompt(isolatedState.attachments)}`,
+            agentRole,
+            sandboxMode,
+            skillContext
+          );
       child = spawn(
         CLI,
         agyArgs(finalPrompt, model, effort, agentRole, sandboxMode, invocation),
@@ -3478,6 +3532,7 @@ interface ResponsesTurn {
    * launched before the streaming turn that parks calls exists.
    */
   toolTurnId: string | null;
+  compaction: boolean;
   logTurnEnd: (outcome: string, detail?: string) => void;
 }
 
@@ -3521,48 +3576,53 @@ function prepareResponsesTurn(
     sendWorkspaceResolutionFailure(response, "agy", error);
     return null;
   }
+  const compaction = isCompactionRequest(payload);
   // Only hold delegation state once all pre-flight validation has succeeded.
   // An invalid workspace must not leave an orphaned entry that a later shim
-  // process could attach to.
-  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole),
-    role: agentRole,
-    workspace: cwd,
-    payload
-  });
+  // process could attach to. Compaction turns never open delegation state.
+  const spawnSession = compaction
+    ? null
+    : openSpawnSession(request.headers, spawnSessions, {
+        orchestrator: isOrchestratorRole(agentRole),
+        role: agentRole,
+        workspace: cwd,
+        payload
+      });
   const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (isOrchestratorRole(agentRole) && spawnSession === null) {
+  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
     writeErrorLine(
       `agy orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
     );
   }
-  const codexTools = codexToolSurface(payload).tools;
+  const codexTools = compaction ? [] : codexToolSurface(payload).tools;
   // Only a streamed turn can park a call and be continued by the request
   // carrying its output; a non-streamed one answers in a single body and has
-  // nowhere to put a continuation.
-  const toolTurnId = payload.stream ? turnId(12) : null;
+  // nowhere to put a continuation. Compaction turns never expose or park tools.
+  const toolTurnId = !compaction && payload.stream ? turnId(12) : null;
   const prompt = promptFromInput(
     payload.input ?? "",
-    [
-      composeProviderPrompt(agentRole, cwd),
-      bridgeDelegationInstruction({
-        mayDelegate:
-          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
-        // agy reaches every MCP server through one built-in, so a tool is
-        // named twice: the server it lives on, and the tool itself.
-        reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
-      }),
-      // The Codex tools are published for exactly the turns whose MCP server
-      // carries them: a turn told about a server it does not have would look
-      // for tools that are not there, and one told nothing about them guesses
-      // their names -- every guess refused by the bridge, which reads as a
-      // capability failure rather than as a misnamed call.
-      toolTurnId && codexTools.length > 0
-        ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
-        : ""
-    ]
-      .filter((section) => section.length > 0)
-      .join("\n\n")
+    compaction
+      ? COMPACTION_SYSTEM_PROMPT
+      : [
+          composeProviderPrompt(agentRole, cwd),
+          bridgeDelegationInstruction({
+            mayDelegate:
+              spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
+            // agy reaches every MCP server through one built-in, so a tool is
+            // named twice: the server it lives on, and the tool itself.
+            reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
+          }),
+          // The Codex tools are published for exactly the turns whose MCP server
+          // carries them: a turn told about a server it does not have would look
+          // for tools that are not there, and one told nothing about them guesses
+          // their names -- every guess refused by the bridge, which reads as a
+          // capability failure rather than as a misnamed call.
+          toolTurnId && codexTools.length > 0
+            ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
+            : ""
+        ]
+          .filter((section) => section.length > 0)
+          .join("\n\n")
   );
   const bootstrapContract = antigravityRoleContract(
     agentRole,
@@ -3570,12 +3630,12 @@ function prepareResponsesTurn(
   );
   const home = process.env.HOME ?? "";
   writeErrorLine(
-    `agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`
+    `agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(compaction ? [] : (bootstrapContract.skills ?? []))} mcp=${JSON.stringify(compaction ? [] : (bootstrapContract.mcp ?? []))} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`
   );
   writeErrorLine(
-    `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`
+    `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}${compaction ? " compaction=true" : ""}`
   );
-  reportRoleExposure(agentEvents, bootstrapContract);
+  if (!compaction) reportRoleExposure(agentEvents, bootstrapContract);
   return {
     responseModel: payload.model ?? model,
     model,
@@ -3583,19 +3643,20 @@ function prepareResponsesTurn(
     agentRole,
     workspaceKey,
     sandboxMode,
-    skillContext,
+    skillContext: compaction ? null : skillContext,
     agentEvents,
     spawnSession,
     spawnToken,
     requestId,
     cwd,
     prompt,
-    attachments: userMessageImages(payload.input),
+    attachments: compaction ? [] : userMessageImages(payload.input),
     usage: null,
     spawnTracker,
     toolObserver,
     codexTools,
     toolTurnId,
+    compaction,
     logTurnEnd: createTurnLog(requestId)
   };
 }
@@ -3630,7 +3691,8 @@ function runTurnAgy(
     turn.workspaceKey,
     codexToolsTurnId(turn),
     turn.requestId,
-    turn.attachments
+    turn.attachments,
+    turn.compaction
   );
 }
 
@@ -3696,6 +3758,14 @@ async function runNonStreamingTurn(
       output.push(delegation.events[3][1].item);
       writeErrorLine(
         `agy delegating ${delegation.childCount} subagent(s) through Codex`
+      );
+    }
+    if (
+      turn.compaction &&
+      isInvalidCompactionResponse(result.text, delegation ? 1 : 0)
+    ) {
+      throw new Error(
+        "Compaction turn returned empty summary or attempted tool calls."
       );
     }
     turn.logTurnEnd("succeeded");
@@ -4529,6 +4599,9 @@ class StreamingTurn implements ParkableTurn {
       );
       this.startDelegationHeartbeat();
     } else if (isTextDeltaEvent(event)) {
+      if (this.turn.compaction && !this.stream.started && !event.text.trim()) {
+        return;
+      }
       this.stream.start();
       this.stream.emitTextDelta(event.text);
     } else if (isStepUpdateEvent(event) && isStepUpdate(event.step_update)) {
@@ -4554,6 +4627,14 @@ class StreamingTurn implements ParkableTurn {
         limit: null,
         model: this.turn.responseModel
       });
+      return;
+    }
+    if (this.turn.compaction && isInvalidCompactionResponse(result.text, 0)) {
+      this.fail(
+        new Error(
+          "Compaction turn returned empty summary or attempted tool calls."
+        )
+      );
       return;
     }
     this.stream.start();
@@ -4860,7 +4941,7 @@ function continueParkedTurn(
   response: ServerResponse,
   payload: JsonObject
 ): boolean {
-  if (!payload.stream) return false;
+  if (!payload.stream || isCompactionRequest(payload)) return false;
   const awaited = awaitedToolResults(payload.input);
   if (awaited.outputs.size === 0) return false;
   const parked = codexToolTurns.forOutputs(awaited.outputs);

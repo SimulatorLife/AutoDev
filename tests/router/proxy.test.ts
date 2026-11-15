@@ -1914,3 +1914,224 @@ test(
     }
   }
 );
+
+test("declaredLimit reads OpenAI/Codex usage limits and reset headers", () => {
+  const now = Date.parse("2026-10-14T14:00:00.000Z");
+  const codexQuota = declaredLimit(
+    new Headers({
+      "x-codex-primary-used-percent": "100",
+      "x-codex-primary-reset-at": "1792000000"
+    }),
+    JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        message: "The usage limit has been reached"
+      }
+    }),
+    now
+  );
+  assert.deepEqual(codexQuota, {
+    limitClass: "quota_exhausted",
+    limitType: "quota",
+    resetsAt: new Date(1_792_000_000 * 1000).toISOString(),
+    source: "reported"
+  });
+
+  const rateLimited = declaredLimit(
+    new Headers({ "retry-after": "45" }),
+    JSON.stringify({
+      error: {
+        code: "rate_limit_exceeded"
+      }
+    }),
+    now
+  );
+  assert.deepEqual(rateLimited, {
+    limitClass: "throttled",
+    limitType: "rate",
+    resetsAt: "2026-10-14T14:00:45.000Z",
+    source: "reported"
+  });
+});
+
+test("compaction requests fail closed on empty or tool-call-only responses and fail over cleanly", async () => {
+  const previousKey = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "sk-compaction-test";
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return jsonResponse({
+        id: "resp_bad_compaction",
+        object: "response",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            id: "fc_1",
+            call_id: "call_1",
+            name: "read_file",
+            arguments: "{}"
+          }
+        ]
+      });
+    }
+    return jsonResponse({
+      id: "resp_good_compaction",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          id: "msg_1",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "## Summary\nClean summary produced."
+            }
+          ]
+        }
+      ]
+    });
+  }) as typeof fetch;
+
+  try {
+    const response = responseRecorder();
+    await proxyFallbackChain(
+      response,
+      {
+        candidates: [
+          { ...route("claude", "LITELLM_API_KEY"), model: "claude-opus-5-5" },
+          {
+            ...route("antigravity-claude-gpt", "LITELLM_API_KEY"),
+            model: "claude-opus-5-5-high"
+          }
+        ],
+        role: "orchestrator",
+        subject: "the orchestrator"
+      },
+      {
+        model: "autodev/orchestrator",
+        instructions: "Compact history",
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "<context_compaction>Summarize conversation.</context_compaction>"
+              }
+            ]
+          }
+        ],
+        stream: false
+      },
+      false,
+      "req-compaction-failover",
+      null,
+      null
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body) as { id?: string };
+    assert.equal(body.id, "resp_good_compaction");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previousKey;
+    agentActivity.reset();
+    COOLDOWNS.clearAll();
+  }
+});
+
+test("proxyOrchestratorResponse restores compact root bootstrap after compaction drops developer context", async () => {
+  const previousKey = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "sk-bootstrap-test";
+  const originalFetch = globalThis.fetch;
+  const forwardedPayloads: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_url, init) => {
+    forwardedPayloads.push(
+      JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+    );
+    return jsonResponse({
+      id: "resp_ok",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          id: "msg_ok",
+          role: "assistant",
+          content: [{ type: "output_text", text: "continuing" }]
+        }
+      ]
+    });
+  }) as typeof fetch;
+
+  try {
+    const compactedInput = [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "<context_summary>\nPreviously investigated files.\n</context_summary>"
+          }
+        ]
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Continue the fix" }]
+      }
+    ];
+    const response = responseRecorder();
+    await proxyOrchestratorResponse(
+      response,
+      { model: "autodev/orchestrator", input: compactedInput, stream: false },
+      false,
+      "req-bootstrap-recover",
+      null,
+      null,
+      null,
+      { key: "root-recover", scope: "identified", thread: "root-recover" }
+    );
+    assert.equal(response.statusCode, 200);
+    assert.equal(forwardedPayloads.length, 1);
+    const firstItems = forwardedPayloads[0]?.input as Array<{
+      role?: string;
+      content?: Array<{ text?: string }>;
+    }>;
+    assert.equal(firstItems[0]?.role, "developer");
+    assert.match(
+      firstItems[0]?.content?.[0]?.text ?? "",
+      /# Root orchestrator bootstrap/
+    );
+
+    const responseAlreadyBootstrapped = responseRecorder();
+    await proxyOrchestratorResponse(
+      responseAlreadyBootstrapped,
+      { model: "autodev/orchestrator", input: firstItems, stream: false },
+      false,
+      "req-bootstrap-already",
+      null,
+      null,
+      null,
+      { key: "root-recover", scope: "identified", thread: "root-recover" }
+    );
+    assert.equal(responseAlreadyBootstrapped.statusCode, 200);
+    const secondItems = forwardedPayloads[1]?.input as unknown[];
+    assert.equal(secondItems.length, firstItems.length);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previousKey;
+    agentActivity.reset();
+    COOLDOWNS.clearAll();
+  }
+});

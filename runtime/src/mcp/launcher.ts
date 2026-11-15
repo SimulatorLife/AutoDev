@@ -62,7 +62,11 @@ export function resolveMcpCommand(
   if (tool === "playwright")
     return {
       binary: path.join(repoRoot, "node_modules/.bin/playwright-mcp"),
-      args: [],
+      args: [
+        ...(env.AUTODEV_PLAYWRIGHT_HEADED === "1" ? [] : ["--headless"]),
+        "--no-sandbox",
+        "--isolated"
+      ],
       pathPrepend: []
     };
   if (tool === "cocoindex-code") {

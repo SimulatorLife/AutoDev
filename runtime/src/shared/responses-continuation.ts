@@ -16,6 +16,8 @@
  * provider affinity and the Claude bridge to resume a parked turn.
  */
 
+import { isCompactionInput } from "./compaction.ts";
+
 type ResponsesItem = Record<string, unknown>;
 
 export interface AwaitedToolResults {
@@ -61,7 +63,9 @@ function tailStart(input: readonly unknown[]): number {
 
 export function awaitedToolResults(input: unknown): AwaitedToolResults {
   const outputs = new Map<string, unknown>();
-  if (!Array.isArray(input)) return { outputs, messages: [] };
+  if (!Array.isArray(input) || isCompactionInput(input)) {
+    return { outputs, messages: [] };
+  }
 
   // Walk the tail by index over `input` itself. Collecting it into an array of
   // `{ item, output }` wrappers meant unshifting every entry into the front --

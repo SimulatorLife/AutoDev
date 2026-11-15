@@ -116,4 +116,22 @@ describe("provider selection order", () => {
       for (const provider of providers) assert.equal(typeof provider, "string");
     }
   });
+
+  test("orchestrator places claude and antigravity-claude-gpt ahead of copilot, antigravity-gemini, and antigravity-argon", () => {
+    for (let s = 1; s <= 16; s += 1) {
+      const order = routing.providerPriority(
+        "orchestrator",
+        mulberry32(s),
+        "orchestrator"
+      );
+      assert.equal(order[0], "codex");
+      const tier2 = new Set(order.slice(1, 3));
+      const tier3 = new Set(order.slice(3, 6));
+      assert.deepEqual(tier2, new Set(["claude", "antigravity-claude-gpt"]));
+      assert.deepEqual(
+        tier3,
+        new Set(["copilot", "antigravity-gemini", "antigravity-argon"])
+      );
+    }
+  });
 });

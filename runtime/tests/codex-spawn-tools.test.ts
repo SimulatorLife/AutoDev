@@ -7,9 +7,7 @@ import {
   MULTI_AGENT_SPAWN_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import {
-  createAgentActivityTracker
-} from "../src/agents/agent-activity.ts";
+import { createAgentActivityTracker } from "../src/agents/agent-activity.ts";
 import {
   buildSpawnScript,
   carriesPendingSpawnResult,

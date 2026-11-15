@@ -313,7 +313,8 @@ export const HOOKS = [
   "run-codex-copilot-cli-responses-proxy.sh",
   "run-codex-opencli-proxy.sh",
   "run-codex-model-router.sh",
-  "run-codex-console.sh"
+  "run-codex-console.sh",
+  "run-autodev-hook.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
 export const PROFILES = [
@@ -1421,9 +1422,7 @@ const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
   path.join(".github", "chatmodes")
 ] as const;
 
-function computeRepositoryRulesyncFingerprint(
-  repositoryRoot: string
-): string {
+function computeRepositoryRulesyncFingerprint(repositoryRoot: string): string {
   return computeRepoPathsFingerprint(
     repositoryRoot,
     REPOSITORY_RULESYNC_FINGERPRINT_PATHS,
@@ -1487,8 +1486,7 @@ export function generateRepositoryRulesync(
         (target) => !USER_LEVEL_HOOK_TARGETS.has(target)
       )
     });
-  const postFingerprint =
-    computeRepositoryRulesyncFingerprint(repositoryRoot);
+  const postFingerprint = computeRepositoryRulesyncFingerprint(repositoryRoot);
   const latestCache = readRepoInstallCache(repositoryRoot);
   const nextGenerateCache: Record<string, string> = {
     ...(latestCache.rulesyncGenerate ?? {}),
@@ -1726,6 +1724,88 @@ export function materializeCurrentCommandProjections(options: {
   );
 }
 
+const STALE_ORCHESTRATOR_DEFAULTS: Record<
+  string,
+  {
+    readonly match: (entry: Record<string, unknown>) => boolean;
+    readonly patch: Record<string, unknown>;
+  }
+> = {
+  claude: {
+    match: (entry) =>
+      entry.priority === 2 &&
+      entry.model === "claude-opus-5-5" &&
+      entry.reasoningEffort === "medium",
+    patch: { reasoningEffort: "high" }
+  },
+  "antigravity-claude-gpt": {
+    match: (entry) =>
+      entry.priority === 2 && entry.model === "claude-opus-5-5-medium",
+    patch: { model: "claude-opus-5-5-high" }
+  },
+  "antigravity-gemini": {
+    match: (entry) =>
+      entry.priority === 2 &&
+      (entry.model === null || entry.model === "gemini-3.8-flash-high"),
+    patch: { priority: 3 }
+  },
+  "antigravity-argon": {
+    match: (entry) =>
+      entry.priority === 2 &&
+      (entry.model === "gemini-4-argon-medium" || entry.model === null),
+    patch: {
+      priority: 3,
+      model: "gemini-4-argon-high",
+      reasoningEffort: "high"
+    }
+  }
+};
+
+/**
+ * Upgrade known legacy degraded orchestrator entries in a persisted router
+ * state file so stale snapshots from older defaults cannot shadow updated
+ * `config/model-routing.json` priorities or reasoning efforts.
+ */
+export function reconcileStaleOrchestratorState(codexHome: string): boolean {
+  const statePath = path.join(codexHome, "codex-router-state.json");
+  if (!exists(statePath)) return false;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    return false;
+  }
+  const assignments = parsed.roleAssignments;
+  if (
+    !assignments ||
+    typeof assignments !== "object" ||
+    Array.isArray(assignments)
+  )
+    return false;
+  let changed = false;
+  const record = assignments as Record<string, Record<string, unknown>>;
+  for (const [provider, rule] of Object.entries(STALE_ORCHESTRATOR_DEFAULTS)) {
+    const providerEntry = record[provider];
+    const orchestrator = providerEntry?.orchestrator;
+    if (
+      !orchestrator ||
+      typeof orchestrator !== "object" ||
+      Array.isArray(orchestrator)
+    )
+      continue;
+    const current = orchestrator as Record<string, unknown>;
+    if (!rule.match(current)) continue;
+    providerEntry.orchestrator = { ...current, ...rule.patch };
+    changed = true;
+  }
+  if (!changed) return false;
+  atomicWrite(statePath, `${JSON.stringify(parsed, null, 2)}\n`);
+  return true;
+}
+
 function composeAndLinkConfigs(
   options: MaterializeOptions,
   source: FileTarget
@@ -1738,6 +1818,7 @@ function composeAndLinkConfigs(
     source("config/model-routing.json"),
     path.join(options.codexHome, "codex-model-routing.json")
   );
+  reconcileStaleOrchestratorState(options.codexHome);
   writeCodexUserHooks(options.repositoryRoot, options.codexHome);
   syncHookTrust(
     path.join(options.codexHome, CONFIG_TOML_FILE),
