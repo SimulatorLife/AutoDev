@@ -341,14 +341,190 @@ export function exhaustedQuotaByProvider(
   return exhausted;
 }
 
+/**
+ * What the quota report says about a provider whose reading is not fresh.
+ *
+ * The bars are the report's windows. A provider the report has no usable
+ * window for is a different fact from a provider the report could not read at
+ * all, and the row used to look the same for both: the quota cell rendered
+ * nothing, so Claude -- whose quota endpoint was refusing every read -- looked
+ * exactly like a provider quota-axi has no source for. The operator could not
+ * tell "this provider has no quota" from "this provider's quota could not be
+ * read", and only one of those is a fact about the provider.
+ *
+ * The state is the report's own: its status, its error and its retry hint,
+ * read as supplied. AutoDev does not decide what a failed read means, and it
+ * does not turn a failed read into a quota value.
+ */
+export interface ProviderQuotaReadState {
+  /** The short fact, as the cell shows it. */
+  readonly label: string;
+  /** When the report asks for the read to be retried, relative to now. */
+  readonly retryText: string | null;
+  /** The moment the read may be retried, whole, for the hover title. */
+  readonly retryTitle: string | null;
+  /** The report's own explanation, for the hover title. */
+  readonly title: string;
+}
+
+/**
+ * The Console's wording for each state quota-axi reports.
+ *
+ * `fresh` is absent on purpose: a fresh reading is the one that has bars, and a
+ * state line beside fresh bars would be saying nothing. A state this Console
+ * does not know is left unsaid rather than guessed at.
+ */
+const QUOTA_READ_STATE_LABEL: Readonly<Record<string, string>> = {
+  rate_limited: "Quota rate limited",
+  auth_required: "Quota sign-in required",
+  unavailable: "Quota unavailable",
+  error: "Quota read failed",
+  stale: "Quota stale"
+};
+
+/**
+ * Why each state means what it means, in the Console's voice.
+ *
+ * None of these is a verdict about the provider: a quota read that failed says
+ * nothing about whether the provider can serve a request, which is what the
+ * Status column answers. They say what is missing from this cell.
+ */
+const QUOTA_READ_STATE_EXPLANATION: Readonly<Record<string, string>> = {
+  rate_limited:
+    "The quota endpoint refused this read and asked to be retried later. The provider itself is unaffected; only its usage is not being shown.",
+  auth_required:
+    "Reading this provider's quota needs a sign-in this Runtime does not have, so its usage cannot be shown.",
+  unavailable:
+    "This provider's quota could not be read, so its usage cannot be shown.",
+  error: "Reading this provider's quota failed, so its usage cannot be shown.",
+  stale:
+    "This quota reading is stale: it was taken earlier and has not been refreshed."
+};
+
+/**
+ * The read state of every provider in the report whose reading is not fresh.
+ *
+ * The report is the Runtime's JSON, which is quota-axi's own apart from a
+ * provider that is waiting for its retry moment, whose entry the Runtime
+ * carries forward unchanged. Its inner shape is read defensively either way: a
+ * state this Console does not know is left unsaid rather than guessed at, and a
+ * malformed entry is skipped rather than thrown on.
+ *
+ * The shared Antigravity service fans out the same way its windows do: one
+ * quota source, three route rows, each showing that source's state.
+ */
+export function quotaReadStates(
+  report: QuotaAxiSnapshot | null,
+  nowMs: number
+): ReadonlyMap<string, ProviderQuotaReadState> {
+  const states = new Map<string, ProviderQuotaReadState>();
+  for (const entry of report?.providers ?? []) {
+    const status = (entry?.state?.status ?? "").trim().toLowerCase();
+    const label = QUOTA_READ_STATE_LABEL[status];
+    if (label === undefined) continue;
+    const error = (entry.state?.error ?? "").trim();
+    const explanation = QUOTA_READ_STATE_EXPLANATION[status] ?? "";
+    const retryAfter = entry.state?.retryAfter;
+    const state: ProviderQuotaReadState = {
+      label,
+      retryText: formatQuotaResetRemaining(retryAfter, nowMs),
+      retryTitle:
+        retryAfter === undefined ? null : instantLabel(retryAfter) || null,
+      title:
+        error === ""
+          ? explanation
+          : `${explanation} The quota report says: ${error}.`
+    };
+    const providerRows =
+      entry.provider === "agy" ? ANTIGRAVITY_PROVIDERS : [entry.provider];
+    for (const providerId of providerRows) states.set(providerId, state);
+  }
+  return states;
+}
+
+/**
+ * What the quota report says about each provider, in the three shapes the
+ * Console reads it in: the windows it can draw bars from, the state of a
+ * reading it could not draw, and the authoritative exhaustion verdicts.
+ *
+ * One value rather than three parallel maps, because they are three readings
+ * of the same report about the same providers.
+ */
+export interface ProviderQuotaView {
+  /** The windows each provider's usage can be drawn from. */
+  readonly windows: ReadonlyMap<string, readonly ProviderQuotaWindowBar[]>;
+  /** The state of each provider whose reading is not fresh. */
+  readonly readStates: ReadonlyMap<string, ProviderQuotaReadState>;
+  /** The fresh, known exhaustion verdicts. */
+  readonly exhaustion: ReadonlyMap<string, ProviderQuotaExhaustion>;
+}
+
+export function providerQuotaView(
+  report: QuotaAxiSnapshot | null,
+  nowMs: number
+): ProviderQuotaView {
+  return {
+    windows: quotaByProvider(report, nowMs),
+    readStates: quotaReadStates(report, nowMs),
+    exhaustion: exhaustedQuotaByProvider(report)
+  };
+}
+
+/**
+ * The read state as the cell shows it: the fact, and the moment the report
+ * asks for the read to be retried beside it.
+ */
+function ProviderQuotaReadStateLine({
+  providerId,
+  state
+}: {
+  readonly providerId: string;
+  readonly state: ProviderQuotaReadState;
+}): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      className: "flex flex-col gap-0.5",
+      "data-provider-quota-state": providerId
+    },
+    React.createElement(
+      "div",
+      {
+        className:
+          "flex flex-wrap items-baseline justify-between gap-x-1.5 gap-y-0 text-micro leading-tight"
+      },
+      React.createElement(
+        "span",
+        {
+          className: "max-w-full truncate text-fg-secondary",
+          title: state.title
+        },
+        state.label
+      ),
+      state.retryText === null
+        ? null
+        : React.createElement(
+            "span",
+            {
+              className: "max-w-full truncate text-fg-muted",
+              title: state.retryTitle ?? state.retryText
+            },
+            state.retryText
+          )
+    )
+  );
+}
+
 export function ProviderQuotaCell({
   providerId,
-  windows
+  windows,
+  readState
 }: {
   readonly providerId: string;
   readonly windows: readonly ProviderQuotaWindowBar[];
+  readonly readState?: ProviderQuotaReadState | undefined;
 }): React.JSX.Element | null {
-  if (windows.length === 0) return null;
+  if (windows.length === 0 && readState === undefined) return null;
   return React.createElement(
     "div",
     {
@@ -422,6 +598,19 @@ export function ProviderQuotaCell({
           })
         )
       );
-    })
+    }),
+    // The state of a reading that could not be drawn as bars. It rides in the
+    // same cell because it is the same fact -- this provider's quota -- and a
+    // cell that says nothing about the quota is what made a provider whose
+    // read was refused look like a provider quota-axi has no source for.
+    ...(readState === undefined
+      ? []
+      : [
+          React.createElement(ProviderQuotaReadStateLine, {
+            key: "read-state",
+            providerId,
+            state: readState
+          })
+        ])
   );
 }

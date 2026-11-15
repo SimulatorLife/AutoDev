@@ -59,7 +59,7 @@ import {
 } from "./provider-model-discovery.ts";
 import { resolveProviderStatus } from "./provider-status.ts";
 import { ProviderModelDiscoveryBadge } from "./ProviderModelAvailabilityBadge.ts";
-import { exhaustedQuotaByProvider, quotaByProvider } from "./ProviderQuota.ts";
+import { providerQuotaView } from "./ProviderQuota.ts";
 import { ProviderResetDialog } from "./ProviderResetDialog.ts";
 import {
   modelColumns,
@@ -207,8 +207,8 @@ function ProvidersTab({
   const records = providers.providers;
   const nowMs = Date.now();
   const versions = cliVersions ?? CLI_VERSIONS_NOT_OBSERVED;
-  const quotaWindows = quotaByProvider(providers.quotaAxi, nowMs);
-  const quotaExhaustion = exhaustedQuotaByProvider(providers.quotaAxi);
+  const quota = providerQuotaView(providers.quotaAxi, nowMs);
+  const quotaExhaustion = quota.exhaustion;
   const healthObserved = records.every((provider) => provider.health !== null);
   // Ready is the one count worth leading with, and it is computed from the same
   // `resolveProviderStatus` the column uses, so the summary can never disagree
@@ -288,8 +288,7 @@ function ProvidersTab({
           runtime?.liveAgents,
           modelDiscovery,
           versions,
-          quotaWindows,
-          quotaExhaustion
+          quota
         ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."

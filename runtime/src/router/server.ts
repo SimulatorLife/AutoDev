@@ -56,6 +56,11 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
+import {
+  deferredQuotaProviders,
+  dueQuotaProviders,
+  mergeQuotaReports
+} from "./quota-poll.ts";
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -230,9 +235,22 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       ? path.dirname(agyExecutable)
       : undefined;
     quotaAxiRefresh = new Promise<void>((resolve, reject) => {
+      // A provider whose last reading was refused is not asked again until the
+      // moment its own report named, and it keeps its entry meanwhile.
+      const deferred = deferredQuotaProviders(quotaAxiSnapshot, Date.now());
+      const due = dueQuotaProviders(quotaAxiSnapshot, deferred);
+      if (deferred.size > 0 && due.length === 0) {
+        // Every provider the report knows about is waiting. There is nothing to
+        // read, and reading anyway is the request the vendors asked us not to
+        // make.
+        resolve();
+        return;
+      }
+      const args = ["--json", "--no-credential-refresh"];
+      if (deferred.size > 0) args.push(`--provider=${due.join(",")}`);
       execFile(
         quotaAxiExecutable,
-        ["--json", "--no-credential-refresh"],
+        args,
         {
           cwd: runtimePackageRoot,
           encoding: "utf8",
@@ -257,7 +275,12 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             return;
           }
           try {
-            quotaAxiSnapshot = JSON.parse(stdout) as QuotaAxiResponse;
+            const next = JSON.parse(stdout) as QuotaAxiResponse;
+            quotaAxiSnapshot = mergeQuotaReports(
+              quotaAxiSnapshot,
+              next,
+              deferred
+            );
             resolve();
           } catch (parseError) {
             reject(parseError);

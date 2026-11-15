@@ -400,7 +400,7 @@ test("provider rows show compact remaining usage bars and refresh times across w
         {
           provider: "cursor",
           windows: [],
-          state: { status: "unavailable", stale: false }
+          state: { status: "fresh", stale: false }
         }
       ]
     },
@@ -426,6 +426,81 @@ test("provider rows show compact remaining usage bars and refresh times across w
   const cursorRow = rowFor(markup, "cursor");
   assert.doesNotMatch(cursorRow, /data-provider-quota/u);
   assert.equal(progressBarsIn(cursorRow).length, 0);
+});
+
+test("a provider whose quota read was refused says so instead of showing nothing", () => {
+  // Claude's quota endpoint was refusing every read, and the row it produced
+  // was empty -- the same empty row a provider quota-axi has no source for
+  // produces. The report carries the reason and the moment to retry it, so
+  // the row says both: the usage is not missing, it could not be read.
+  const markup = renderProvidersView(
+    quotaReport([
+      {
+        provider: "claude",
+        windows: [],
+        state: {
+          status: "rate_limited",
+          stale: false,
+          error: "Claude quota endpoint rate limited",
+          retryAfter: futureIso(58 * 60 * 1000)
+        }
+      }
+    ]),
+    ["claude"]
+  );
+
+  const row = rowFor(markup, "claude");
+  assert.match(row, /data-provider-quota-state="claude"/u);
+  assert.match(row, />Quota rate limited</u);
+  assert.match(row, /in 58m/u);
+  assert.match(row, /Claude quota endpoint rate limited/u);
+  assert.equal(progressBarsIn(row).length, 0);
+});
+
+test("a quota read state never becomes a quota verdict", () => {
+  // The read state says what is missing from the usage cell. It is not a
+  // statement about the provider: the row's Status verdict still comes from
+  // health, credentials and the exhaustion scopes alone.
+  const markup = renderProvidersView(
+    quotaReport([
+      {
+        provider: "claude",
+        windows: [],
+        state: {
+          status: "rate_limited",
+          stale: false,
+          error: "Claude quota endpoint rate limited"
+        }
+      }
+    ]),
+    ["claude"],
+    [healthyProviderRecord("claude")]
+  );
+
+  const row = rowFor(markup, "claude");
+  assert.match(row, />Quota rate limited</u);
+  assert.doesNotMatch(row, />Quota exhausted</u);
+  assert.doesNotMatch(row, /data-status="unavailable"/u);
+  assert.match(row, /data-status="ready"/u);
+});
+
+test("the shared Antigravity quota source reports its read state on each of its rows", () => {
+  const markup = renderProvidersView(
+    quotaReport([
+      {
+        provider: "agy",
+        windows: [],
+        state: { status: "rate_limited", stale: false }
+      }
+    ]),
+    [...ANTIGRAVITY_ROW_IDS]
+  );
+
+  for (const id of ANTIGRAVITY_ROW_IDS) {
+    const row = rowFor(markup, id);
+    assert.match(row, new RegExp(`data-provider-quota-state="${id}"`, "u"));
+    assert.match(row, />Quota rate limited</u);
+  }
 });
 
 test("usage bars use blue when available, yellow over 95% used, and red at 100% used", () => {

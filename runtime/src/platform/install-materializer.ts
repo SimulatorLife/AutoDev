@@ -71,6 +71,7 @@ import { userLevelSkills } from "./user-level-skills.ts";
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
 
 export const RUNTIME_MODULES = [
+  "runtime/src/router/quota-poll.ts",
   "runtime/src/router/telemetry.ts",
   "runtime/src/router/git-commit-observation.ts",
   "runtime/src/telemetry/git-change-metrics.ts",

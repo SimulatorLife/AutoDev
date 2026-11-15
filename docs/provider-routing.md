@@ -634,7 +634,7 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 - **Provider usage is a display-only quota-axi report.** Runtime invokes the
   pinned `quota-axi@0.1.69` public CLI (`quota-axi --json
   --no-credential-refresh`) in the background every 60 seconds and forwards its
-  JSON report unchanged as `quotaAxi` on `/control/providers` (providers API v5,
+  JSON report as `quotaAxi` on `/control/providers` (providers API v5,
   Control API contract v34). Quota collection does not block provider requests;
   one in-flight CLI read is shared while a refresh is running. The Console reads
   the report's own provider identities, states, windows, percentages, reset
@@ -650,6 +650,21 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   resolved `agy` executable's directory to the CLI child's `PATH`: quota-axi
   discovers `agy` through `PATH`, while AutoDev also supports resolving it from
   `AGY_CLI_PATH` or `~/.local/bin/agy` in restricted service environments.
+
+  **A refused read is not read again until the moment the report named.** A
+  vendor that refuses a quota read says when to try again, in the report's own
+  `state.retryAfter`: Anthropic's OAuth usage endpoint -- the source of
+  Claude's quota -- answered a read with a 429 and a retry an hour away, and
+  the poll asked again every sixty seconds for the whole of that hour. So the
+  poll asks only the providers that are due, and a provider that is waiting
+  keeps the entry it had: its state, its error and its retry moment are the
+  report's own words, carried forward unchanged, so the published report still
+  says why that provider's usage is missing rather than the provider dropping
+  out of it. Asking a provider again before the moment its own report named is
+  the request the vendor just asked us not to make, and that provider's quota
+  stayed unreadable for as long as the poll kept making it. A refusal that
+  names no retry moment gives no instruction about when, so that provider is
+  asked again on the next tick.
 
   For Claude, Runtime forwards the existing `CLAUDE_CODE_OAUTH_TOKEN` (from
   the Runtime environment or AutoDev bridge Keychain item) only to the

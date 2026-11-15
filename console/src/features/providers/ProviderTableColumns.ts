@@ -30,11 +30,7 @@ import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge.ts";
-import {
-  ProviderQuotaCell,
-  type ProviderQuotaExhaustion,
-  type ProviderQuotaWindowBar
-} from "./ProviderQuota.ts";
+import { ProviderQuotaCell, type ProviderQuotaView } from "./ProviderQuota.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 /**
@@ -95,8 +91,7 @@ export function providerColumns(
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
   modelDiscovery: ProviderModelDiscoveryState,
   cliVersions: ProviderCliVersionState,
-  quota: ReadonlyMap<string, readonly ProviderQuotaWindowBar[]>,
-  quotaExhaustion: ReadonlyMap<string, ProviderQuotaExhaustion>
+  quota: ProviderQuotaView
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -121,9 +116,13 @@ export function providerColumns(
             links: provider.links
           }),
           // Usage is the provider's own fact, shown display-only beneath it.
+          // The read state rides with the bars: a provider whose quota could
+          // not be read says so here, rather than leaving the cell empty and
+          // looking like a provider quota-axi has no source for.
           React.createElement(ProviderQuotaCell, {
             providerId: provider.id,
-            windows: quota.get(provider.id) ?? []
+            windows: quota.windows.get(provider.id) ?? [],
+            readState: quota.readStates.get(provider.id)
           })
         ),
       meta: {
@@ -143,7 +142,7 @@ export function providerColumns(
       id: "status",
       header: "Status",
       cell: ({ row: { original: provider } }) => {
-        const exhaustion = quotaExhaustion.get(provider.id);
+        const exhaustion = quota.exhaustion.get(provider.id);
         return React.createElement(ProviderStatusBadge, {
           provider,
           returnTo: providersPath(),
