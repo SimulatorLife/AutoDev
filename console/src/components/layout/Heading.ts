@@ -1,5 +1,7 @@
 import React from "react";
 
+import { SECTION_LABEL_CLASS } from "../ui/text-classes.ts";
+
 /**
  * Console heading system.
  *
@@ -21,9 +23,12 @@ import React from "react";
  * `h1`, so a body label is an eyebrow under it, not a competing title. Size and
  * weight match every other body label so that moving between pages never
  * changes how loud a section label looks.
+ *
+ * It is the shared section label with a weight and a margin of its own, not a
+ * second spelling of one: the label's own size, case and tracking live in
+ * `SECTION_LABEL_CLASS`, so a heading and a label cannot drift apart.
  */
-export const SECTION_HEADING_CLASS =
-  "mb-3 text-xs font-semibold uppercase tracking-wider text-fg-muted";
+export const SECTION_HEADING_CLASS = `mb-3 ${SECTION_LABEL_CLASS} font-semibold`;
 
 /**
  * The kicker immediately above an `EntityTitle` — "Model provider", "Agent
@@ -31,8 +36,7 @@ export const SECTION_HEADING_CLASS =
  * to. It sits directly on top of the title rather than above a field group,
  * so it takes a tighter bottom margin than `SECTION_HEADING_CLASS`.
  */
-export const ENTITY_EYEBROW_CLASS =
-  "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted";
+export const ENTITY_EYEBROW_CLASS = `mb-1 mt-3 ${SECTION_LABEL_CLASS}`;
 
 /**
  * The name of the single resource a detail page is about.

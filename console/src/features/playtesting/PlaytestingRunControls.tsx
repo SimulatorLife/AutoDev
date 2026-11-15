@@ -30,7 +30,8 @@ import {
 } from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
-  MUTED_META_CLASS
+  MUTED_META_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import {
@@ -283,7 +284,7 @@ function RunRequestForm({
       onSubmit={submit}
     >
       <button
-        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         data-playtesting-run-submit="true"
         disabled={pending || !valid}
         type="submit"
@@ -317,7 +318,7 @@ function RunRequestForm({
         need separate approval; uncommitted edits are excluded.
       </p>
       <div className="grid gap-2">
-        <label className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+        <label className={`${SECTION_LABEL_CLASS} font-semibold`}>
           1. Choose Playtest Objective
         </label>
         <div className="grid gap-2 sm:grid-cols-3">
@@ -382,7 +383,7 @@ function RunRequestForm({
       </div>
 
       <div className="grid gap-2">
-        <label className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+        <label className={`${SECTION_LABEL_CLASS} font-semibold`}>
           2. Player Strategy & Persona
         </label>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -444,7 +445,7 @@ function RunRequestForm({
       <div className="grid gap-1.5">
         <label
           htmlFor="playtest-focus-notes"
-          className="text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          className={`${SECTION_LABEL_CLASS} font-semibold`}
         >
           3. Areas of Focus & Operator Intent (Optional)
         </label>
@@ -452,7 +453,7 @@ function RunRequestForm({
           id="playtest-focus-notes"
           type="text"
           placeholder="e.g., Check if pit cars get stuck behind parked bodies on four-team field"
-          className="rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          className="rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:border-accent"
         />
       </div>
 
@@ -495,14 +496,14 @@ function RunRequestForm({
                   }
                 />
               </label>
-              <button
-                className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+              <Button
+                className="min-h-10 justify-self-start"
                 disabled={pending || !canGenerateAssignments}
                 onClick={generateAssignments}
-                type="button"
+                variant="quiet"
               >
                 Generate assignments
-              </button>
+              </Button>
               <p className={`${MUTED_META_CLASS} md:col-span-3`}>
                 Generated rows copy the first assignment&apos;s scenario, policy
                 and step cap, using distinct prefix-number seeds.
@@ -673,53 +674,53 @@ function RunRequestForm({
                         session in this batch.
                       </p>
                     ) : null}
-                    <button
-                      className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+                    <Button
+                      className="min-h-10 justify-self-start"
                       disabled={pending || assignments.length === 1}
                       onClick={() =>
                         setAssignments((current) =>
                           current.filter((entry) => entry.id !== assignment.id)
                         )
                       }
-                      type="button"
+                      variant="quiet"
                     >
                       Remove session {row}
-                    </button>
+                    </Button>
                   </fieldset>
                 </li>
               );
             })}
           </ol>
           {assignments.length > displayedAssignments.length ? (
-            <button
-              className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+            <Button
+              className="min-h-10 justify-self-start"
               onClick={() => setShowAllAssignments(true)}
-              type="button"
+              variant="quiet"
             >
               {`Show ${String(assignments.length - displayedAssignments.length)} more sessions`}
-            </button>
+            </Button>
           ) : null}
           {showAllAssignments && assignments.length > 10 ? (
-            <button
-              className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+            <Button
+              className="min-h-10 justify-self-start"
               onClick={() => setShowAllAssignments(false)}
-              type="button"
+              variant="quiet"
             >
               Show the first 10 sessions
-            </button>
+            </Button>
           ) : null}
-          <button
-            className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+          <Button
+            className="min-h-10 justify-self-start"
             disabled={
               pending ||
               assignments.length >= maxAssignments ||
               addableSeed === null
             }
             onClick={addAssignment}
-            type="button"
+            variant="quiet"
           >
             Add session
-          </button>
+          </Button>
           <details className="rounded-md border border-border p-3">
             <summary className="cursor-pointer text-sm font-medium">
               Batch, time, and analysis limits

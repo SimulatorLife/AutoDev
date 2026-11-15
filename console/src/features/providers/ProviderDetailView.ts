@@ -35,7 +35,8 @@ import {
   MONO_VALUE_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS
+  MUTED_TEXT_CLASS,
+  NUMERIC_VALUE_CLASS
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
@@ -286,7 +287,7 @@ function ModelsPanel({
         React.createElement(
           "span",
           {
-            className: "text-xs text-fg-secondary tabular-nums",
+            className: NUMERIC_VALUE_CLASS,
             "data-live-agent-model": model.id
           },
           liveAgentCount(

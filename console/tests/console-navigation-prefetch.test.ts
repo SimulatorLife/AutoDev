@@ -5,8 +5,8 @@ import { test } from "node:test";
 import {
   clearPendingWarmUpForTests,
   clearPrefetchCacheForTests,
-  PREFETCH_INTENT_DELAY_MS,
   navigationIntentHandlers,
+  PREFETCH_INTENT_DELAY_MS,
   scheduleWholePageWarmUp
 } from "../src/components/navigation/NavigationLink.ts";
 import type { WholePageRouter } from "../src/components/navigation/whole-page-navigation.ts";

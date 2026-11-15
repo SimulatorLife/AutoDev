@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,23 @@ const FEATURES = resolve(
 );
 
 /**
+ * Every feature source file, so a rule about feature views is checked against
+ * all of them rather than against the ones somebody remembered.
+ */
+function featureFiles(directory = FEATURES): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...featureFiles(full));
+      continue;
+    }
+    if (/\.tsx?$/u.test(entry.name)) files.push(full);
+  }
+  return files;
+}
+
+/**
  * The Console's link to a named entity — a provider, model, agent, prompt or
  * server you can open — is one interactive role with one hover treatment.
  *
@@ -24,11 +41,11 @@ const FEATURES = resolve(
  * seventy-nine the other for the same gesture, so what a link looked like
  * depended on which page the operator had come from.
  *
- * These pin the decision rather than the diff. `/evaluations` and `/usage`
- * still spell `text-accent ... hover:underline` inline, which is a *different*
- * role -- an action link, already accent-coloured at rest -- so this asserts
- * about the entity-link views specifically rather than banning the pair
- * outright.
+ * These pin the decision rather than the diff. The *action* link is a
+ * different role — already accent-coloured at rest, underlining on hover —
+ * and it has its own shared treatment, so a view that writes the accent and
+ * the underline out by hand is writing a second treatment for the same
+ * gesture rather than a variant of this one.
  */
 
 const ENTITY_LINK_VIEWS = [
@@ -76,6 +93,29 @@ test("no entity-link view spells its own hover treatment", () => {
     // The hand-spelled form that predates the constant.
     if (/underline-offset-4\s+hover:underline/u.test(src)) {
       offenders.push(`${rel}: still spells the underline pair inline`);
+    }
+  }
+  assert.deepEqual(offenders, [], offenders.join("\n"));
+});
+
+test("no view spells the action link's treatment by hand", () => {
+  // The accent and the underline are the action link's whole treatment, and
+  // the playtesting strand wrote the pair out twenty-odd times without the
+  // underline offset the shared treatment carries -- so the same gesture
+  // underlined at two different offsets depending on the page.
+  const offenders: string[] = [];
+  for (const file of featureFiles()) {
+    const src = readFileSync(file, "utf8");
+    if (/text-accent[^"'\s]*\s+hover:underline/u.test(src)) {
+      offenders.push(`${file}: spells the accent underline pair inline`);
+      continue;
+    }
+    if (
+      src.includes("hover:underline") &&
+      !src.includes("ACTION_LINK_CLASS") &&
+      !src.includes("ENTITY_LINK_CLASS")
+    ) {
+      offenders.push(`${file}: underlines on hover with no shared treatment`);
     }
   }
   assert.deepEqual(offenders, [], offenders.join("\n"));

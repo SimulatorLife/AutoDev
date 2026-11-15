@@ -17,7 +17,11 @@ import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import { CHECKBOX_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  ACTION_LINK_CLASS,
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 import {
   episodeScenarioLabel,
   executionStatusBadge,
@@ -286,7 +290,7 @@ export function PlaytestingSessionsWorkspace({
         ? React.createElement(
             "p",
             {
-              className: `mt-3 text-sm ${MUTED_META_CLASS}`,
+              className: `mt-3 ${MUTED_BODY_CLASS}`,
               "data-session-analysis-note": "true"
             },
             `Analysis counts are shown for the ${String(reviews.length)} most recent of ${String(reviewTotal ?? reviews.length)} analyst reviews.`
@@ -424,7 +428,7 @@ export function PlaytestingSessionsWorkspace({
               NavigationLink,
               {
                 href: playtestingPageHref(scope, nextCursor),
-                className: "text-sm font-medium text-accent hover:underline",
+                className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
                 dataAttributes: { "data-playtesting-next-page": "true" }
               },
               "Next page"

@@ -78,12 +78,41 @@ const DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS =
 const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS = `text-error transition-colors hover:bg-error/25 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const DESTRUCTIVE_BUTTON_CLASS = `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`;
 
+/**
+ * A quiet bordered control: the button that acts inside a panel without being
+ * the panel's primary action -- "Generate assignments", "Add session", "Close".
+ *
+ * The playtesting strand spelled this chrome out seven times across three
+ * files, and the copies had drifted: two of them carried a hover surface and
+ * one carried a `hover:bg-surface-muted` that named a token the theme has
+ * never had, so its hover emitted no rule at all. The others had no hover
+ * surface, which is why a quiet button in one panel answered the pointer and
+ * the same button in another panel did not.
+ *
+ * It is a member of this family, so it lives here rather than in the feature
+ * that needed it: the border is the quiet surface's own edge, the hover is the
+ * product's hover surface, and the pointer and the disabled cursor come from
+ * the same place every other control gets them from. It is split into the same
+ * three pieces as the other variants -- the shape, the shared size, and the
+ * interaction -- so a quiet button takes the family's size scale rather than
+ * carrying a padding of its own that the size maps could not reach.
+ */
+const QUIET_BUTTON_BEFORE_SIZE_CLASS = "rounded-md border border-border";
+const QUIET_BUTTON_AFTER_SIZE_CLASS = `transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
+export const QUIET_BUTTON_CLASS = `${QUIET_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${QUIET_BUTTON_AFTER_SIZE_CLASS}`;
+
 export interface ButtonProps {
   /** Optional here so callers can pass the label as `createElement`'s child. */
   readonly children?: React.ReactNode;
   readonly type?: "submit" | "button" | "reset" | undefined;
   readonly variant?:
-    "primary" | "secondary" | "destructive" | "outline" | "inline" | undefined;
+    | "primary"
+    | "secondary"
+    | "destructive"
+    | "outline"
+    | "quiet"
+    | "inline"
+    | undefined;
   readonly size?: "default" | "compact" | "icon" | undefined;
   readonly disabled?: boolean | undefined;
   /**
@@ -134,6 +163,7 @@ const BUTTON_VARIANT_CLASS = {
   secondary: SECONDARY_BUTTON_CLASS,
   destructive: DESTRUCTIVE_BUTTON_CLASS,
   outline: OUTLINE_BUTTON_CLASS,
+  quiet: QUIET_BUTTON_CLASS,
   inline: `${INLINE_BUTTON_CHROME_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS}`
 } as const;
 
@@ -142,6 +172,7 @@ const BUTTON_VARIANT_COMPACT_CLASS = {
   secondary: `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`,
   destructive: `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`,
   outline: `${OUTLINE_BUTTON_CLASS} ${COMPACT_BUTTON_SIZE_CLASS}`,
+  quiet: `${QUIET_BUTTON_BEFORE_SIZE_CLASS} ${COMPACT_BUTTON_SIZE_CLASS} ${QUIET_BUTTON_AFTER_SIZE_CLASS}`,
   inline: `${INLINE_BUTTON_CHROME_CLASS} ${COMPACT_BUTTON_SIZE_CLASS}`
 } as const;
 
@@ -150,6 +181,7 @@ const BUTTON_VARIANT_ICON_CLASS = {
   secondary: `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`,
   destructive: `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`,
   outline: `${OUTLINE_BUTTON_CLASS} ${ICON_BUTTON_SIZE_CLASS}`,
+  quiet: `${QUIET_BUTTON_BEFORE_SIZE_CLASS} ${ICON_BUTTON_SIZE_CLASS} ${QUIET_BUTTON_AFTER_SIZE_CLASS}`,
   inline: `${INLINE_BUTTON_CHROME_CLASS} ${INLINE_ICON_BUTTON_SIZE_CLASS}`
 } as const;
 

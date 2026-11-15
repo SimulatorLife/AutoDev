@@ -1307,7 +1307,7 @@ export function FormNavigationOwner({
             "aria-label": "Dismiss notification",
             title: "Dismiss notification",
             className:
-              "-mr-1 -mt-1 shrink-0 rounded p-1 text-base leading-none hover:bg-black/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+              "-mr-1 -mt-1 shrink-0 rounded p-1 text-base leading-none hover:bg-black/10",
             onClick: dismissFeedback
           },
           "×"

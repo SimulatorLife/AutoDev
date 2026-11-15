@@ -984,7 +984,7 @@ function drawerTraceValue(
         nav.tab,
         nav.page
       ),
-      className: `${MONO_VALUE_CLASS} ${ACTION_LINK_CLASS}`,
+      className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       dataAttributes: { "data-evaluation-trace-span-id": reference.spanId }
     },

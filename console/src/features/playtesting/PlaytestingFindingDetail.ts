@@ -29,8 +29,8 @@ import {
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
 import {
-  MUTED_BODY_CLASS,
-  MUTED_META_CLASS
+  ACTION_LINK_CLASS,
+  MUTED_BODY_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   evidenceKindLabel,
@@ -259,7 +259,7 @@ export function PlaytestingFindingDetail({
       finding.evidenceRefs.length === 0
         ? React.createElement(
             "p",
-            { className: `text-sm ${MUTED_META_CLASS}` },
+            { className: `${MUTED_BODY_CLASS}` },
             "This finding cites no evidence."
           )
         : React.createElement(
@@ -282,7 +282,7 @@ export function PlaytestingFindingDetail({
                           ref.step ?? null,
                           finding.findingId
                         ),
-                        className: "text-accent hover:underline",
+                        className: ACTION_LINK_CLASS,
                         dataAttributes: {
                           "data-finding-evidence-link": finding.findingId
                         }
@@ -306,7 +306,7 @@ export function PlaytestingFindingDetail({
       ),
       React.createElement(
         "p",
-        { className: `text-sm ${MUTED_META_CLASS}` },
+        { className: `${MUTED_BODY_CLASS}` },
         "The identity below is what makes this the same finding in another build or another run. It is derived from the game and the failure itself, never from the session that happened to observe it."
       ),
       React.createElement(

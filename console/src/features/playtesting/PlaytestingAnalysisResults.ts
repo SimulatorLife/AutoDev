@@ -8,6 +8,7 @@ import React from "react";
 
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import {
+  ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -16,8 +17,6 @@ import {
   playtestingEpisodeHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
-
-const EVIDENCE_LINK_CLASS = "text-accent hover:underline";
 
 type CrossSessionSynthesisView =
   ControlApiPlaytestingAnalysesResponse["syntheses"][number];
@@ -43,7 +42,7 @@ function synthesisEvidenceLinks(
         React.createElement(
           NavigationLink,
           {
-            className: EVIDENCE_LINK_CLASS,
+            className: ACTION_LINK_CLASS,
             href: playtestingEpisodeHref(scope, reference.episodeId, step),
             dataAttributes: {
               "data-synthesis-citation": reference.episodeId
@@ -143,7 +142,7 @@ function metricAggregationView(
                         React.createElement(
                           NavigationLink,
                           {
-                            className: EVIDENCE_LINK_CLASS,
+                            className: ACTION_LINK_CLASS,
                             href: playtestingEpisodeHref(
                               scope,
                               source.episodeId,
@@ -224,7 +223,7 @@ function crossSessionSynthesisView(
           React.createElement(
             NavigationLink,
             {
-              className: EVIDENCE_LINK_CLASS,
+              className: ACTION_LINK_CLASS,
               href: playtestingEpisodeHref(scope, contributor.episodeId, null)
             },
             `Open contributing session ${contributor.episodeId}`
@@ -322,7 +321,7 @@ function analysisReceiptList(
               React.createElement(
                 NavigationLink,
                 {
-                  className: EVIDENCE_LINK_CLASS,
+                  className: ACTION_LINK_CLASS,
                   href: playtestingEpisodeHref(scope, receipt.episodeId, null)
                 },
                 `Open session ${receipt.episodeId}`
@@ -432,7 +431,7 @@ export function PlaytestingAnalysisResults({
                 React.createElement(
                   NavigationLink,
                   {
-                    className: EVIDENCE_LINK_CLASS,
+                    className: ACTION_LINK_CLASS,
                     href: playtestingEpisodeHref(scope, review.episodeId, null)
                   },
                   `Open ${review.status} review for ${review.episodeId}`

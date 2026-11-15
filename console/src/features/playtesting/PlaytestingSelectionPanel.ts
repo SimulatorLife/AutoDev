@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
 import { CheckboxField } from "../../components/forms/CheckboxField.ts";
+import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
@@ -293,7 +294,7 @@ export function PlaytestingSelectionPanel({
       ? React.createElement(
           "p",
           {
-            className: `${MUTED_BODY_CLASS} border-l-2 border-l-amber-500 pl-3`,
+            className: `${MUTED_BODY_CLASS} ${CALLOUT_BAR_WARNING_CLASS}`,
             role: "alert",
             "data-testid": "playtesting-selection-invalid-query"
           },
@@ -380,7 +381,7 @@ export function PlaytestingSelectionPanel({
       ? React.createElement(
           "p",
           {
-            className: `${MUTED_BODY_CLASS} border-l-2 border-l-amber-500 pl-3`,
+            className: `${MUTED_BODY_CLASS} ${CALLOUT_BAR_WARNING_CLASS}`,
             "data-testid": "playtesting-selection-error"
           },
           error

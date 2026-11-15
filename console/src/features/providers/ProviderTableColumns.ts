@@ -11,7 +11,8 @@ import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_ID_LINK_CLASS,
-  MUTED_META_CLASS
+  MUTED_META_CLASS,
+  NUMERIC_VALUE_CLASS
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
@@ -175,7 +176,7 @@ export function providerColumns(
         React.createElement(
           "span",
           {
-            className: "text-xs text-fg-secondary tabular-nums",
+            className: NUMERIC_VALUE_CLASS,
             "data-live-agent-provider": provider.id
           },
           liveAgentCount(liveAgents, "byProvider", provider.id)
@@ -302,7 +303,7 @@ export function modelColumns(
         React.createElement(
           "span",
           {
-            className: "text-xs text-fg-secondary tabular-nums",
+            className: NUMERIC_VALUE_CLASS,
             "data-live-agent-model": model.id
           },
           liveAgentCount(liveAgents, "byModel", `${model.provider}/${model.id}`)

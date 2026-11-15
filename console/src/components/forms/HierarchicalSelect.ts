@@ -49,7 +49,7 @@ export interface HierarchicalSelectProps {
 }
 
 const MENU_ITEM_CLASS =
-  "flex w-full min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-sm text-fg-secondary hover:bg-surface-muted";
+  "flex w-full min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-sm text-fg-secondary hover:bg-hover";
 
 /**
  * A select whose list has levels: each level names a target and opens to the
@@ -105,7 +105,7 @@ export function HierarchicalSelect({
           "aria-disabled": "true",
           "aria-label": label,
           title: `${summary} — ${disabledReason}`,
-          className: `${SELECT_CONTROL_CLASS} block cursor-not-allowed truncate opacity-60`
+          className: `${SELECT_CONTROL_CLASS} block aria-disabled:cursor-not-allowed truncate opacity-60`
         },
         summary
       ),

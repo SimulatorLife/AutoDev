@@ -251,7 +251,7 @@ function targetCard(
               React.createElement(
                 "summary",
                 {
-                  className: `cursor-pointer ${MUTED_BODY_CLASS} font-medium text-error`
+                  className: "cursor-pointer text-sm font-medium text-error"
                 },
                 "Revoke target"
               ),
@@ -793,14 +793,14 @@ export function WorkspaceVisualPlaytestTargetManager({
         failure
           ? React.createElement(
               "p",
-              { className: `${MUTED_BODY_CLASS} text-error`, role: "alert" },
+              { className: "text-sm text-error", role: "alert" },
               failure
             )
           : null,
         announcement
           ? React.createElement(
               "p",
-              { className: `${MUTED_BODY_CLASS} text-success`, role: "status" },
+              { className: "text-sm text-success", role: "status" },
               announcement
             )
           : null,

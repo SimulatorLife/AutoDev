@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import React from "react";
 
 import { NavigationLink } from "../../../../src/components/navigation/NavigationLink.ts";
-import { MUTED_BODY_CLASS } from "../../../../src/components/ui/text-classes.ts";
+import {
+  ACTION_LINK_CLASS,
+  MUTED_BODY_CLASS
+} from "../../../../src/components/ui/text-classes.ts";
 import { activeRunOwnsEpisode } from "../../../../src/features/playtesting/playtesting-active-runs.ts";
 import {
   defaultEpisodeInspectionStep,
@@ -144,7 +147,7 @@ function sessionFailureContent(
       NavigationLink,
       {
         href: playtestingInspectorBackHref(scope),
-        className: "text-sm text-accent hover:underline",
+        className: `text-sm ${ACTION_LINK_CLASS}`,
         dataAttributes: { "data-playtesting-back": "true" }
       },
       "← Back to sessions"

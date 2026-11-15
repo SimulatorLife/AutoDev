@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { QUIET_BUTTON_CLASS } from "../src/components/forms/Button.ts";
 import { CheckboxField } from "../src/components/forms/CheckboxField.ts";
 import { SelectField } from "../src/components/forms/SelectField.ts";
 import { TextField } from "../src/components/forms/TextField.ts";
@@ -15,6 +18,25 @@ import {
   SELECT_CONTROL_CLASS,
   TEXT_CONTROL_CLASS
 } from "../src/components/ui/field-classes.ts";
+
+/**
+ * Every feature source file, so a rule about feature views is checked against
+ * all of them rather than against the ones somebody remembered.
+ */
+function featureSourceFiles(
+  directory = fileURLToPath(new URL("../src/features/", import.meta.url))
+): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...featureSourceFiles(full));
+      continue;
+    }
+    if (/\.tsx?$/u.test(entry.name)) files.push(full);
+  }
+  return files;
+}
 
 /**
  * The Console's control vocabulary.
@@ -304,6 +326,67 @@ test("a button does not wear the form input chrome", () => {
       text,
       /components\/forms\/Button\.ts/u,
       `${source} must use the shared button vocabulary`
+    );
+  }
+});
+
+/**
+ * The quiet button, and the one focus ring.
+ *
+ * The quiet chrome was spelled out seven times across the playtesting strand
+ * before it became a member of the button family, and the copies had drifted:
+ * two carried a hover surface, one carried a hover that named a token the
+ * theme has never had -- so its hover never happened -- and the rest had no
+ * hover at all, which is why a quiet button in one panel answered the pointer
+ * and the same button in another panel did not.
+ *
+ * The focus ring is the other half of the same rule. The product has one
+ * canonical focus ring, in `app/globals.css`, and a feature view that declares
+ * a focus treatment of its own has replaced it: `focus:ring-1 focus:ring-accent`
+ * on a text field is a second ring in a different colour, and `focus:outline-none`
+ * suppresses the canonical one before it does.
+ */
+test("a quiet button wears the shared chrome", () => {
+  assert.match(
+    QUIET_BUTTON_CLASS,
+    /hover:bg-hover/u,
+    "the quiet button shows the product's hover surface"
+  );
+  assert.match(QUIET_BUTTON_CLASS, /cursor-pointer/u);
+
+  for (const source of [
+    "../src/features/playtesting/PlaytestingRunControls.tsx",
+    "../src/features/playtesting/PlaytestingRunDashboard.tsx",
+    "../src/features/playtesting/PlaytestingReadiness.tsx"
+  ]) {
+    const text = readFileSync(new URL(source, import.meta.url), "utf8");
+    assert.doesNotMatch(
+      text,
+      /rounded-md border border-border px-3 py-2/u,
+      `${source} must not spell a quiet button's chrome itself`
+    );
+    assert.match(
+      text,
+      /variant[:=]\s*"quiet"/u,
+      `${source} must use the shared quiet button`
+    );
+  }
+});
+
+test("no feature view declares a focus ring of its own", () => {
+  const featureFiles = featureSourceFiles();
+  assert.ok(featureFiles.length > 0, "the feature sources must be readable");
+  for (const file of featureFiles) {
+    const text = readFileSync(file, "utf8");
+    assert.doesNotMatch(
+      text,
+      /focus(?:-visible)?:(?:ring|outline)-/u,
+      `${file} must not declare a second focus treatment; the product has one canonical focus ring`
+    );
+    assert.doesNotMatch(
+      text,
+      /focus:outline-none/u,
+      `${file} must not suppress the canonical focus ring`
     );
   }
 });

@@ -215,7 +215,8 @@ function ProviderDisabledToggle({
       ? React.createElement(
           "span",
           {
-            className: `min-w-0 max-w-full break-words ${MUTED_META_CLASS} text-warning font-medium`
+            className:
+              "min-w-0 max-w-full break-words text-xs text-warning font-medium"
           },
           "Provider disabled"
         )

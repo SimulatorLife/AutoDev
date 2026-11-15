@@ -10,6 +10,8 @@
 import type { ControlApiPlaytestingRunRecord } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
+import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
 import { isTerminal } from "./playtesting-active-runs.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
@@ -210,8 +212,7 @@ export function PlaytestingLiveRuns({
       ? React.createElement(
           "p",
           {
-            className:
-              "text-sm text-fg-muted border-l-2 border-l-amber-500 pl-3",
+            className: `${MUTED_BODY_CLASS} ${CALLOUT_BAR_WARNING_CLASS}`,
             "data-testid": "playtesting-live-runs-action-error"
           },
           actionError

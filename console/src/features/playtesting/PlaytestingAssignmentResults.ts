@@ -10,6 +10,7 @@ import React, { useState } from "react";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
+  ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -112,7 +113,7 @@ export function PlaytestingAssignmentResults({
                     : React.createElement(
                         NavigationLink,
                         {
-                          className: "text-sm text-accent hover:underline",
+                          className: `text-sm ${ACTION_LINK_CLASS}`,
                           href: playtestingEpisodeHref(
                             scope,
                             outcome.episodeId,
@@ -131,8 +132,7 @@ export function PlaytestingAssignmentResults({
                   "button",
                   {
                     type: "button",
-                    className:
-                      "text-sm font-medium text-accent hover:underline",
+                    className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
                     onClick: () => setShowAll((current) => !current),
                     "data-testid": "playtesting-assignment-outcomes-toggle"
                   },
@@ -188,7 +188,7 @@ export function PlaytestingAssignmentResults({
                   : React.createElement(
                       NavigationLink,
                       {
-                        className: "text-sm text-accent hover:underline",
+                        className: `text-sm ${ACTION_LINK_CLASS}`,
                         href: playtestingEpisodeHref(
                           scope,
                           session.episodeId,

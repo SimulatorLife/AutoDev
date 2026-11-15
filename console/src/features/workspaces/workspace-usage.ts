@@ -1,7 +1,10 @@
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MUTED_META_CLASS,
+  NUMERIC_VALUE_CLASS
+} from "../../components/ui/text-classes.ts";
 import type { UsageWorkspaceRequestSource } from "../usage/usage-api.ts";
 
 /**
@@ -136,7 +139,7 @@ export function workspaceRequestValue(
   return React.createElement(
     "span",
     {
-      className: "text-xs text-fg-secondary tabular-nums",
+      className: NUMERIC_VALUE_CLASS,
       "data-workspace-requests": "observed"
     },
     String(reading.count)

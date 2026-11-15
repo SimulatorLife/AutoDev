@@ -15,7 +15,11 @@ import {
 import { AppNav } from "../navigation/AppNav.ts";
 import { CommandPalette } from "../navigation/CommandPalette.ts";
 import { NavigationLink } from "../navigation/NavigationLink.ts";
-import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
+} from "../ui/text-classes.ts";
 import { HydrationMarker } from "./HydrationMarker.ts";
 import { PageBody } from "./PageBody.ts";
 import { DETAIL_PANEL_CLASS, DETAIL_PANEL_SHAPE } from "./Panel.ts";
@@ -138,8 +142,7 @@ export function AppShell({
                 // brand is the one that can go, because the collapsed rail
                 // already carries the mark and the operator needs to know
                 // which *page* they are on.
-                className:
-                  "hidden text-xs uppercase font-semibold text-fg-muted tracking-wider sm:inline"
+                className: `hidden ${SECTION_LABEL_CLASS} font-semibold sm:inline`
               },
               "AutoDev Console"
             ),

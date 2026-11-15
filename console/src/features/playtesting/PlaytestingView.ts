@@ -42,6 +42,8 @@ import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { instantLabel } from "../../components/ui/instant.ts";
 import {
+  ACTION_LINK_CLASS,
+  MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -404,7 +406,7 @@ function PageSummary({
           NavigationLink,
           {
             href: playtestingPageHref(scope, nextCursor),
-            className: "text-sm font-medium text-accent hover:underline",
+            className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: { "data-playtesting-next-page": "true" }
           },
           "Next page"
@@ -531,7 +533,7 @@ function latestResultSection(
         NavigationLink,
         {
           href: playtestingViewHref(scope, "sessions"),
-          className: "text-sm font-medium text-accent hover:underline",
+          className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
           dataAttributes: { "data-playtesting-browse-sessions": "true" }
         },
         "Browse all sessions"
@@ -545,8 +547,7 @@ function latestResultSection(
               view: "sessions",
               batchId: latest.batchId
             }),
-            className:
-              "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+            className: `mt-3 inline-flex text-sm font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-playtesting-latest-batch-sessions": latest.batchId
             }
@@ -634,7 +635,7 @@ function recentSessionsSection(
                 React.createElement(
                   "p",
                   {
-                    className: `mt-1 break-all font-mono text-xs ${MUTED_META_CLASS}`,
+                    className: `mt-1 break-all ${MONO_META_CLASS}`,
                     title: episode.episodeId
                   },
                   episode.episodeId
@@ -649,7 +650,7 @@ function recentSessionsSection(
                 NavigationLink,
                 {
                   href: playtestingEpisodeHref(scope, episode.episodeId, null),
-                  className: "text-sm font-medium text-accent hover:underline",
+                  className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
                   dataAttributes: {
                     "data-playtest-episode-link": episode.episodeId
                   }
@@ -691,13 +692,13 @@ function latestConclusions(
     ),
     React.createElement(
       "p",
-      { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+      { className: `mb-3 ${MUTED_BODY_CLASS}` },
       "What the analyst concluded from the recorded frames. These are hypotheses, not defects: nothing here has been reproduced or verified."
     ),
     reviews.length === 0
       ? React.createElement(
           "p",
-          { className: `text-sm ${MUTED_META_CLASS}` },
+          { className: `${MUTED_BODY_CLASS}` },
           "No analysis has been recorded for this workspace yet. Run “Analyze this session” on a session and the analyst's conclusions will appear here."
         )
       : React.createElement(
@@ -726,8 +727,7 @@ function latestConclusions(
                 NavigationLink,
                 {
                   href: playtestingReviewHref(scope, review.reviewId),
-                  className:
-                    "line-clamp-2 font-medium text-accent hover:underline",
+                  className: `line-clamp-2 font-medium ${ACTION_LINK_CLASS}`,
                   dataAttributes: {
                     "data-overview-conclusion": review.reviewId
                   }
@@ -747,7 +747,7 @@ function latestConclusions(
           NavigationLink,
           {
             href: playtestingViewHref(scope, "findings"),
-            className: "mt-3 text-sm text-accent hover:underline",
+            className: `mt-3 text-sm ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-overview-all-conclusions": String(reviewCount)
             }
@@ -959,7 +959,7 @@ function analystReviewDetail(
       review.hypotheses.length === 0
         ? React.createElement(
             "p",
-            { className: `text-sm ${MUTED_META_CLASS}` },
+            { className: `${MUTED_BODY_CLASS}` },
             "This review records no written conclusions."
           )
         : React.createElement(
@@ -998,7 +998,7 @@ function analystReviewDetail(
       review.findings.length === 0
         ? React.createElement(
             "p",
-            { className: `text-sm ${MUTED_META_CLASS}` },
+            { className: `${MUTED_BODY_CLASS}` },
             "This review raised no findings. A hypothesis that was never reproduced stays a hypothesis."
           )
         : React.createElement(
@@ -1066,7 +1066,7 @@ function analystReviewDetail(
       review.evidenceRefs.length === 0
         ? React.createElement(
             "p",
-            { className: `text-sm ${MUTED_META_CLASS}` },
+            { className: `${MUTED_BODY_CLASS}` },
             "This review cites no evidence."
           )
         : React.createElement(
@@ -1085,7 +1085,7 @@ function analystReviewDetail(
       NavigationLink,
       {
         href: playtestingEpisodeHref(scope, review.episodeId),
-        className: "text-sm text-accent hover:underline",
+        className: `text-sm ${ACTION_LINK_CLASS}`,
         dataAttributes: { "data-review-detail-session": review.reviewId }
       },
       "Open the session this review came from"
@@ -1160,7 +1160,7 @@ function analystHypotheses(
               NavigationLink,
               {
                 href: playtestingReviewHref(scope, review.reviewId),
-                className: "text-accent hover:underline",
+                className: ACTION_LINK_CLASS,
                 dataAttributes: { "data-review-read": review.reviewId }
               },
               "Open review"
@@ -1180,7 +1180,7 @@ function analystHypotheses(
           NavigationLink,
           {
             href: playtestingEpisodeHref(scope, review.episodeId),
-            className: "text-accent hover:underline",
+            className: ACTION_LINK_CLASS,
             dataAttributes: { "data-review-session": review.reviewId }
           },
           "Open session"
@@ -1212,7 +1212,7 @@ function analystHypotheses(
     sectionHeading("playtesting-hypotheses-heading", "Analyst Hypotheses"),
     React.createElement(
       "p",
-      { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+      { className: `mb-3 ${MUTED_BODY_CLASS}` },
       "What the analyst concluded from the recorded frames. These are hypotheses, not defects: nothing here has been reproduced or verified."
     ),
     // The open review's detail leads the page. The list is fifteen rows long,
@@ -1354,7 +1354,7 @@ function findingsTable(
               episode.step ?? null,
               finding.findingId
             ),
-            className: "text-accent hover:underline",
+            className: ACTION_LINK_CLASS,
             dataAttributes: { "data-finding-witness": finding.findingId }
           },
           "Open witness"
@@ -1384,7 +1384,7 @@ function findingsTable(
       sectionHeading("playtesting-findings-heading", "Findings"),
       React.createElement(
         "p",
-        { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+        { className: `mb-3 ${MUTED_BODY_CLASS}` },
         "A finding is a claim about the game that was checked against the evidence and kept a stable identity, so the same problem is one row here however many times it was seen. Its evidence status says how well that claim is supported; a session win or loss is not itself a finding."
       ),
       React.createElement<DataTableProps<PlaytestFinding>>(DataTable, {
@@ -2027,7 +2027,7 @@ export function PlaytestingView({
     React.createElement(
       "p",
       {
-        className: `text-sm ${MUTED_META_CLASS}`,
+        className: `${MUTED_BODY_CLASS}`,
         "data-view-summary": scope.view
       },
       viewSummary(scope.view)

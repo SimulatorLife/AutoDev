@@ -44,3 +44,19 @@ export const CALLOUT_WARNING_CLASS = `${CALLOUT_CLASS} border-warning/60 bg-warn
 
 /** Something could not be loaded, confirmed or applied. */
 export const CALLOUT_ERROR_CLASS = `${CALLOUT_CLASS} border-error/60 bg-error/10 text-error`;
+
+/**
+ * A notice that wears a warning-coloured bar down its left edge.
+ *
+ * The boxed callout above is the loud treatment: a tinted panel with a tinted
+ * border. A notice is quieter than that — the operator has to read it, but the
+ * page should not stop around it — so it is a left bar and nothing else, with
+ * the text in the muted colour it had before.
+ *
+ * The bar is the only warning-coloured part of it, so the bar carries the tone
+ * and the shape is the bar plus the inset its text sits in. The colour is the
+ * semantic `warning` token rather than a raw palette value: the Console has one
+ * dark theme and one token per meaning, and a bare `amber-500` was a palette
+ * entry pretending to be a product decision.
+ */
+export const CALLOUT_BAR_WARNING_CLASS = "border-l-2 border-l-warning pl-3";

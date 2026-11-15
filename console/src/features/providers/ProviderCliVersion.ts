@@ -1,5 +1,6 @@
 import React from "react";
 
+import { NUMERIC_VALUE_CLASS } from "../../components/ui/text-classes.ts";
 import {
   providerCliVersionLabel,
   type ProviderCliVersionView
@@ -26,7 +27,7 @@ export function ProviderCliVersionText({
   return React.createElement(
     "span",
     {
-      className: "text-xs text-fg-secondary tabular-nums",
+      className: NUMERIC_VALUE_CLASS,
       "data-provider-cli-version": view.status,
       title: providerCliVersionTitle(view)
     },

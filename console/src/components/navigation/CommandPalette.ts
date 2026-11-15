@@ -80,7 +80,7 @@ const PALETTE_INPUT_ID = "command-palette-input";
 
 /** How a result row looks. */
 const PALETTE_RESULT_CLASS =
-  "flex min-h-6 flex-col gap-0.5 rounded px-3 py-2 transition-colors hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "flex min-h-6 flex-col gap-0.5 rounded px-3 py-2 transition-colors hover:bg-surface-raised";
 
 /**
  * How the selected result looks.
@@ -291,7 +291,7 @@ export function CommandPalette({
       type: "button",
       onClick: openPalette,
       className:
-        "flex min-h-6 items-center gap-2 whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-xs text-fg-muted transition-colors hover:border-fg-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "flex min-h-6 items-center gap-2 whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-xs text-fg-muted transition-colors hover:border-fg-muted hover:text-fg",
       "aria-label": triggerName,
       title: triggerName,
       "data-command-palette-trigger": true

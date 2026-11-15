@@ -1,7 +1,7 @@
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../status/StatusBadge.ts";
-import { MUTED_BODY_CLASS } from "../ui/text-classes.ts";
+import { MUTED_BODY_CLASS, SECTION_LABEL_CLASS } from "../ui/text-classes.ts";
 
 export interface StatCardProps {
   readonly title: string;
@@ -95,8 +95,7 @@ export function StatCard({
         React.createElement(
           "dt",
           {
-            className:
-              "text-xs font-medium text-fg-muted uppercase tracking-wider"
+            className: `${SECTION_LABEL_CLASS} font-medium`
           },
           title
         ),

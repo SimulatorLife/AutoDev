@@ -102,6 +102,21 @@ The background/surface hierarchy (background, surface, surface-raised, input, ho
 
 Prefer adapting OpenLIT's useful dark styling/components where they fit. Remove dead light-theme assets/tokens after dependency verification. A third-party primitive may internally carry unused theme code, but AutoDev must not expose or maintain light mode as a product capability.
 
+### One styling vocabulary, checked against the stylesheet it produces
+
+A Tailwind utility is a claim about the theme: it says "this element takes the Console's accent", and the theme answers by emitting a rule for it. Four such claims fail silently -- the page still renders, it just renders differently from what the source says -- so each is checked against what the Console actually writes rather than against a list of class names:
+
+- **Every utility names a token the theme defines.** A utility the theme has never heard of emits no rule at all: the element wears no background, no colour and no hover state, and nothing in the page says so.
+- **No class string writes two utilities for the same property.** The stylesheet decides the winner by its own order, not by the order they were written in, so one of them is dead and the author never learns which -- a muted colour written beside a status colour loses, and the status the operator is supposed to read never reaches the page.
+- **No utility names a raw Tailwind palette value**, including the directional forms (`border-l-amber-500` is the same palette entry as `border-amber-500`).
+- **No class string carries a literal interpolation.** An interpolation written inside a string that is not a template literal renders as the literal text `${...}`, so the element wears the classes around it and none of the ones the shared constant held.
+
+The first three are checked against the compiled stylesheet, so a utility the theme does know about is never reported and one it does not know about always is.
+
+The Console's source is checked for all four in [`console/tests/style-vocabulary.test.ts`](../console/tests/style-vocabulary.test.ts), and the absence of raw palette utilities is checked against the source as well in [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts).
+
+A role has **one spelling**, owned by the shared vocabulary under `console/src/components/ui/` and `console/src/components/forms/`: the control chrome (button, select, text field, checkbox), the text treatments, the status tones, the link treatments, the callouts and the headings. A feature view consumes those owners instead of restating them, and a role that needs a size or a weight of its own composes the shared treatment rather than copying it -- the section heading is the shared section label with a margin and a weight, and the action link is the shared link treatment with the caller's size.
+
 ### Page structure and density
 
 Prefer a small number of consistent page templates:

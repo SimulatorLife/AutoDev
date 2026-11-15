@@ -14,6 +14,7 @@
 import React from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
@@ -404,7 +405,7 @@ export function PlaytestingActiveRunsPanel({
       ? React.createElement(
           "p",
           {
-            className: `${MUTED_BODY_CLASS} border-l-2 border-l-amber-500 pl-3`,
+            className: `${MUTED_BODY_CLASS} ${CALLOUT_BAR_WARNING_CLASS}`,
             "data-testid": "playtesting-active-runs-notice"
           },
           notice,

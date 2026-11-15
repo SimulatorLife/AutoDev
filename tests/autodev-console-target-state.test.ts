@@ -1705,16 +1705,27 @@ test("Console favicon stays aligned with the canonical dark theme tokens", () =>
 });
 
 test("Console app/src source contains no raw Tailwind palette utilities", () => {
-  const rawPalettePattern =
-    /(?:bg|text|border|outline|divide|ring|from|to|via|fill|stroke|placeholder|decoration|caret|accent|shadow)-(?:slate|zinc|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\b/u;
+  // The directional form counts too: `border-l-amber-500` is the same raw
+  // palette entry as `border-amber-500`, and the left-bar form is what an
+  // accent bar is written as, so a pattern that only matched the plain form
+  // let those through. The two forms are two patterns rather than one with an
+  // optional middle, because an optional middle makes the pattern ambiguous
+  // about where the prefix ends -- and an ambiguous pattern can be walked
+  // exponentially.
+  const rawPalettePatterns = [
+    /(?:bg|text|border|outline|divide|ring|from|to|via|fill|stroke|placeholder|decoration|caret|accent|shadow)-(?:slate|zinc|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\b/u,
+    /(?:bg|text|border|outline|divide|ring|from|to|via|fill|stroke|placeholder|decoration|caret|accent|shadow)-(?:b|e|l|r|s|t|x|y)-(?:slate|zinc|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\b/u
+  ];
 
   for (const file of consoleSourceFiles()) {
     const source = readFileSync(file, "utf8");
-    assert.doesNotMatch(
-      source,
-      rawPalettePattern,
-      `${fileURLToPath(file)} must use semantic design tokens, not a raw Tailwind palette utility`
-    );
+    for (const rawPalettePattern of rawPalettePatterns) {
+      assert.doesNotMatch(
+        source,
+        rawPalettePattern,
+        `${fileURLToPath(file)} must use semantic design tokens, not a raw Tailwind palette utility`
+      );
+    }
   }
 });
 

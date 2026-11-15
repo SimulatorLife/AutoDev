@@ -31,8 +31,10 @@ import {
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
+  ACTION_LINK_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import { workspacePath } from "../workspaces/paths.ts";
 import {
@@ -167,8 +169,7 @@ function visualModeReadinessCard(
           NavigationLink,
           {
             href: workspacePath(workspaceId),
-            className:
-              "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+            className: `mt-3 inline-flex text-sm font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-playtesting-manage-visual-targets": "true"
             }
@@ -220,8 +221,7 @@ function adapterModeReadinessCard(
  * whose readiness is read from one vocabulary and written to another.
  */
 const TARGET_GRID_CLASS = "grid gap-1.5";
-const FORM_LABEL_CLASS =
-  "text-xs font-semibold uppercase tracking-wider text-fg-muted";
+const FORM_LABEL_CLASS = `${SECTION_LABEL_CLASS} font-semibold`;
 
 const AUTONOMOUS_VISUAL_MODE = "autonomous-visual";
 const ADAPTER_ACCELERATED_MODE = "adapter-accelerated";
@@ -538,7 +538,7 @@ function VisualPlaytestLaunchCockpit({
         busy: launching,
         onClick: handleLaunch,
         className:
-          "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md",
         dataAttributes: { "data-playtesting-visual-submit": "true" }
       },
       React.createElement(Icon, { name: "rocket", size: 18 }),
@@ -844,8 +844,7 @@ function VisualPlaytestLaunchCockpit({
                 NavigationLink,
                 {
                   href: workspacePath(workspaceId),
-                  className:
-                    "mt-3 inline-flex text-xs font-semibold text-accent hover:underline"
+                  className: `mt-3 inline-flex text-xs font-semibold ${ACTION_LINK_CLASS}`
                 },
                 "Configure visual target in Workspaces →"
               )
@@ -1141,7 +1140,7 @@ export function PlaytestingRunDashboard({
             {
               type: "button",
               className:
-                "inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-fg-inverse shadow-sm transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
+                "inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-fg-inverse shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60",
               onClick: () => setPlayDialogOpen(true),
               disabled: scope.workspaceId === null,
               "aria-label": "Start playtest",
@@ -1196,13 +1195,11 @@ export function PlaytestingRunDashboard({
                 )
               ),
               React.createElement(
-                "button",
+                Button,
                 {
-                  type: "button",
-                  className:
-                    "rounded-md border border-border px-3 py-2 text-sm hover:bg-surface-raised",
+                  variant: "quiet",
                   onClick: () => setPlayDialogOpen(false),
-                  "aria-label": "Close new playtest dialog"
+                  ariaLabel: "Close new playtest dialog"
                 },
                 "Close"
               )

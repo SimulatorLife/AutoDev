@@ -29,6 +29,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
@@ -82,7 +83,30 @@ const RAISED_PANEL_CLASS =
   "rounded-lg border border-border bg-surface-raised p-3";
 const SURFACE_PANEL_CLASS = "rounded-lg border border-border bg-surface p-3";
 
-const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
+const EVIDENCE_LINK_CLASS = `text-xs ${ACTION_LINK_CLASS}`;
+
+/**
+ * The heading of a panel that names what the panel is about.
+ *
+ * Two panels in the playtest record -- the intention and the effect it was
+ * predicted to have -- are headed in the accent colour with an icon beside the
+ * name, while every other label in the Console is the quiet muted one. The
+ * accent is the whole difference between these two and the rest, so it is the
+ * one thing they spell here rather than the muted colour they do not carry.
+ */
+const ACCENT_PANEL_LABEL_CLASS =
+  "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider";
+
+/**
+ * A label on the densest surface in the Console: the claim kind inside a
+ * synthesis card.
+ *
+ * It is the section label at the `meta` step, which exists for exactly these
+ * dense panels, and its tracking matches every other label so that a label
+ * never changes width between one surface and the next.
+ */
+const META_LABEL_CLASS =
+  "text-meta font-semibold uppercase tracking-wider text-fg-muted";
 
 /**
  * The word for a fact the record does not carry.
@@ -464,7 +488,7 @@ function stepNavigation(
           NavigationLink,
           {
             href: playtestingEpisodeHref(scope, episodeId, target),
-            className: "text-xs text-accent hover:underline",
+            className: `text-xs ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               [`data-playtest-step-${direction}`]: String(target)
             }
@@ -620,7 +644,7 @@ function episodeSteps(
           "li",
           {
             key: `${step ?? "unindexed"}:${index}`,
-            className: `border-b border-border py-3 last:border-b-0 ${selected ? "rounded-md border border-accent bg-surface-raised px-3" : ""}`,
+            className: `border-b py-3 last:border-b-0 ${selected ? "rounded-md border border-accent bg-surface-raised px-3" : "border-border"}`,
             ...(selected ? { "aria-current": "step" } : {}),
             "data-playtest-step": step === null ? "unindexed" : String(step)
           },
@@ -1060,7 +1084,7 @@ function truncationExplanation(
           NavigationLink,
           {
             href: playtestingEpisodeHref(scope, episode.episodeId, stopStep),
-            className: "font-medium text-accent hover:underline",
+            className: `font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-playtesting-stop-step": String(stopStep)
             }
@@ -1107,7 +1131,7 @@ function refusalExplanation(
           NavigationLink,
           {
             href: playtestingEpisodeHref(scope, episode.episodeId, step),
-            className: "font-medium text-accent hover:underline",
+            className: `font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-playtesting-refused-step": String(step)
             }
@@ -1167,7 +1191,7 @@ function runtimeFailureExplanation(
           NavigationLink,
           {
             href: playtestingEpisodeHref(scope, episode.episodeId, step),
-            className: "font-medium text-accent hover:underline",
+            className: `font-medium ${ACTION_LINK_CLASS}`,
             dataAttributes: {
               "data-playtesting-failed-step": String(step)
             }
@@ -1432,8 +1456,7 @@ function spectatorCockpitPanels(
       React.createElement(
         "p",
         {
-          className:
-            "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider"
+          className: ACCENT_PANEL_LABEL_CLASS
         },
         React.createElement(Icon, { name: "target", size: 14 }),
         "Planned Intention"
@@ -1452,8 +1475,7 @@ function spectatorCockpitPanels(
       React.createElement(
         "p",
         {
-          className:
-            "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider"
+          className: ACCENT_PANEL_LABEL_CLASS
         },
         React.createElement(Icon, { name: "eye", size: 14 }),
         "Predicted Visible Effect"
@@ -1882,8 +1904,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "span",
           {
-            className:
-              "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+            className: `${SECTION_LABEL_CLASS} font-semibold`
           },
           "Interactive Step Scrubber"
         ),
@@ -2179,8 +2200,7 @@ function aiGameplayCriticScorecard(
               React.createElement(
                 "p",
                 {
-                  className:
-                    "text-meta font-semibold uppercase tracking-wide text-fg-muted"
+                  className: META_LABEL_CLASS
                 },
                 kind
               ),
@@ -2332,8 +2352,7 @@ function discoveryAnalystReview(
               React.createElement(
                 "p",
                 {
-                  className:
-                    "text-meta font-semibold uppercase tracking-wide text-fg-muted"
+                  className: META_LABEL_CLASS
                 },
                 section + " · " + claim.status
               ),
@@ -2757,7 +2776,7 @@ export function PlaytestingSessionView({
         NavigationLink,
         {
           href: playtestingInspectorBackHref(scope),
-          className: "text-sm text-accent hover:underline",
+          className: `text-sm ${ACTION_LINK_CLASS}`,
           dataAttributes: { "data-playtesting-back": "true" }
         },
         scope.returnFindingId ? "← Back to findings" : "← Back to sessions"
@@ -2766,7 +2785,7 @@ export function PlaytestingSessionView({
         NavigationLink,
         {
           href: playtestingAnalyzeEpisodeHref(scope, episode.episodeId),
-          className: "text-sm font-medium text-accent hover:underline",
+          className: `text-sm font-medium ${ACTION_LINK_CLASS}`,
           dataAttributes: {
             "data-playtesting-analyze-session": episode.episodeId
           }

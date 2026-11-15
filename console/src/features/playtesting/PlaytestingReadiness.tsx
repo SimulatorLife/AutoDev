@@ -3,6 +3,8 @@
 import { CONTROL_API_PLAYTESTING_READINESS_SCHEMA } from "@simulatorlife/autodev-core";
 import React, { useEffect, useState } from "react";
 
+import { Button } from "../../components/forms/Button.ts";
+
 const READINESS_POLL_DELAYS_MS = [
   1000, 2000, 4000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000
 ] as const;
@@ -208,14 +210,13 @@ export function PlaytestingReadiness({
       {status === "unavailable" ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <code className="break-all text-xs text-fg-muted">{code}</code>
-          <button
-            className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2"
-            type="button"
+          <Button
             disabled={retrying}
             onClick={() => void retry()}
+            variant="quiet"
           >
             {retrying ? "Retrying…" : "Retry initialization"}
-          </button>
+          </Button>
         </div>
       ) : null}
     </section>

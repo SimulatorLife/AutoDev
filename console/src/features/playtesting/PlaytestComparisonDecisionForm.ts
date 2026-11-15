@@ -12,6 +12,7 @@ import {
   SELECT_CONTROL_CLASS,
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 export interface PlaytestComparisonDecisionFormProps {
   readonly workspaceId: string;
@@ -216,7 +217,7 @@ export function PlaytestComparisonDecisionForm({
       : React.createElement(
           "p",
           {
-            className: "text-xs text-muted-foreground",
+            className: MUTED_META_CLASS,
             role: "status",
             "aria-live": "polite"
           },

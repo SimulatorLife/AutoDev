@@ -15,13 +15,32 @@ import {
 } from "../../components/forms/HierarchicalSelect.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_VALUE_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 import {
   providerModelAvailability,
   providerModelChoices,
   type ProviderModelDiscoveryState,
   providerModelDiscoveryView
 } from "./provider-model-discovery.ts";
+
+/**
+ * The read-only chip that carries a role's reasoning effort.
+ *
+ * Two call sites render it -- the effort in force, and the effort a model slug
+ * fixes -- and they were the same string written twice, so a change to one of
+ * them would have left two different chips in the same column.
+ *
+ * The fill is the Console's `input` surface, which is the surface a control
+ * that holds a value wears: the chip is a value in a cell, not prose on the
+ * page. The earlier `bg-surface-muted/30` named a token that does not exist,
+ * so it emitted no rule at all and the chip carried no fill of its own -- the
+ * value looked like the placeholder beside it. The type treatment is the shared
+ * mono-value one rather than a hand-written copy of it.
+ */
+const ROLE_EFFORT_CHIP_CLASS = `min-w-0 w-28 truncate rounded border border-border bg-input px-2 py-1 text-center ${MONO_VALUE_CLASS}`;
 
 /**
  * The Roles column: the fixed roles, each with its priority and its model.
@@ -273,8 +292,7 @@ function RoleEffortSelect({
       return React.createElement(
         "span",
         {
-          className:
-            "min-w-0 w-28 truncate rounded border border-border bg-surface-muted/30 px-2 py-1 text-center font-mono text-xs text-fg-secondary",
+          className: ROLE_EFFORT_CHIP_CLASS,
           title: `Reasoning effort in force. The supported levels of ${assignment.model ?? "the configured model"} have not been observed.`,
           "data-role-effort-unobserved": `${provider}-${role}`
         },
@@ -295,8 +313,7 @@ function RoleEffortSelect({
     return React.createElement(
       "span",
       {
-        className:
-          "min-w-0 w-28 truncate rounded border border-border bg-surface-muted/30 px-2 py-1 text-center font-mono text-xs text-fg-secondary",
+        className: ROLE_EFFORT_CHIP_CLASS,
         title: `Fixed by model slug (${assignment.effectiveReasoningEffort ?? "model"})`,
         "data-role-effort-fixed": `${provider}-${role}`
       },

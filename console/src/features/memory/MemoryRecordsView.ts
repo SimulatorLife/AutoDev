@@ -42,7 +42,8 @@ import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import { codeOptions } from "./memory-code-options.ts";
 import {
@@ -879,8 +880,7 @@ function RecordDetailPanel({
       React.createElement(
         "span",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted mr-2"
+          className: `${SECTION_LABEL_CLASS} font-semibold mr-2`
         },
         "Governed Actions:"
       ),

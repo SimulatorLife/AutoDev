@@ -71,6 +71,22 @@ export const MONO_VALUE_CLASS = "font-mono text-xs text-fg-secondary";
 export const MONO_META_CLASS = "font-mono text-xs text-fg-muted";
 
 /**
+ * A number in a dense surface: a CLI version, a count, a cardinality.
+ *
+ * These are the values an operator reads by comparing rather than by reading --
+ * two providers' versions, two models' request counts -- so they need the
+ * figures to line up in a column. `tabular-nums` gives every digit the same
+ * width, which is what makes a column of numbers scannable; without it the
+ * values shift as the digits change and the eye loses its place.
+ *
+ * It is deliberately *not* monospaced: these are numbers, not identifiers, and
+ * the monospace family is reserved for the canonical names a machine owns. The
+ * size and the colour are the value treatment the rest of the Console uses for
+ * a secondary reading.
+ */
+export const NUMERIC_VALUE_CLASS = "text-xs text-fg-secondary tabular-nums";
+
+/**
  * The row's identifier as the link that opens it.
  *
  * `MONO_ID_CLASS` plus the two things that make it a link rather than a label:
