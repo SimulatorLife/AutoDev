@@ -856,3 +856,220 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
     await browser.close();
   }
 });
+
+/** The ChatGPT reply reader, as the installed package carries it. */
+interface ChatGPTReplyUtils {
+  waitForChatGPTResponse: (
+    page: unknown,
+    baselineCount: number,
+    prompt: string,
+    timeoutSeconds: number,
+    options: { baselinePairCounts: Map<string, number> }
+  ) => Promise<string>;
+  chatgptReplyFromConversation: (
+    conversation: unknown
+  ) => { text: string; finished: boolean } | null;
+}
+
+async function chatgptReplyUtils(): Promise<ChatGPTReplyUtils | null> {
+  const adapter = (await chatgptAdapter()) as unknown;
+  return adapter as ChatGPTReplyUtils | null;
+}
+
+const CHATGPT_CHAT_ID = "6afb4b8e-1520-83ea-9e27-4a42da8e7425";
+const CHATGPT_PROMPT =
+  "Read the attached file turn-54834ad80013.md and respond exactly as it instructs.";
+/** What ChatGPT stored as the worker's reply in session 01a1e592-6349-73a2-8d2f-3d8bea217417. */
+const CHATGPT_STORED_REPLY =
+  '<tool_call name="exec">\nconst names = ALL_TOOLS.filter(x => /exec_command/i.test(x.name)).map(x => ({name:x.name})); text(names);\n</tool_call>';
+/** What the page showed of it: the tags gone, the script cut at its first `{`. */
+const CHATGPT_SHOWN_REPLY =
+  "const names = ALL_TOOLS.filter(x => /exec_command/i.test(x.name)).map(x => (";
+
+/**
+ * A stored conversation shaped like ChatGPT's: the turn's messages hang off
+ * one another by `parent`, and the mapping's key order is not their order.
+ */
+function storedConversation(finalEndTurn: boolean | null): unknown {
+  const message = (
+    role: string,
+    contentType: string,
+    parts: unknown,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    author: { role },
+    recipient: "all",
+    content: { content_type: contentType, parts },
+    ...extra
+  });
+  const nodes: [string, string | null, unknown][] = [
+    ["root", null, null],
+    ["system", "root", message("system", "text", [""])],
+    ["prompt", "system", message("user", "text", [CHATGPT_PROMPT])],
+    [
+      "read",
+      "prompt",
+      message("tool", "multimodal_text", ["# Codex agent turn"])
+    ],
+    [
+      "thoughts",
+      "read",
+      {
+        author: { role: "assistant" },
+        recipient: "all",
+        content: { content_type: "thoughts", thoughts: [] }
+      }
+    ],
+    [
+      "reply",
+      "thoughts",
+      message("assistant", "text", [CHATGPT_STORED_REPLY], {
+        end_turn: finalEndTurn
+      })
+    ],
+    // An earlier branch of the chat, off the current one.
+    [
+      "edited",
+      "system",
+      message("assistant", "text", ["an abandoned reply"], { end_turn: true })
+    ]
+  ];
+  const mapping: Record<string, unknown> = {};
+  for (const [id, parent, value] of [...nodes].reverse())
+    mapping[id] = { id, parent, message: value };
+  return { current_node: "reply", mapping };
+}
+
+/**
+ * A ChatGPT tab that shows `shown` as the reply and stores `stored`.
+ * The stored reply is read by running the adapter's own page script against
+ * a fetch that serves the session and the conversation.
+ */
+function chatgptChat(shown: string, stored: () => Response) {
+  const fetched: string[] = [];
+  const fetch = (url: string, init?: { headers?: Record<string, string> }) => {
+    fetched.push(url);
+    if (url === "/api/auth/session")
+      return Promise.resolve(Response.json({ accessToken: "token" }));
+    assert.equal(init?.headers?.authorization, "Bearer token");
+    return Promise.resolve(stored());
+  };
+  return {
+    fetched,
+    page: {
+      sleep: () => Promise.resolve(),
+      evaluate: (script: string): Promise<unknown> => {
+        if (script === "window.location.href")
+          return Promise.resolve(`https://chatgpt.com/c/${CHATGPT_CHAT_ID}`);
+        if (script.includes("/backend-api/conversation/"))
+          return (
+            new Function("fetch", `return ${script.trim()}`) as (
+              fetch: unknown
+            ) => Promise<unknown>
+          )(fetch);
+        if (script.includes("stop-button")) return Promise.resolve(false);
+        return Promise.resolve([
+          { role: "User", text: CHATGPT_PROMPT, html: "" },
+          { role: "Assistant", text: shown, html: "" }
+        ]);
+      }
+    }
+  };
+}
+
+test("a ChatGPT reply is the one the site stored, not the page's rendering of it", async () => {
+  // The page drops what looks like an HTML tag and can stop partway: the
+  // worker in session 01a1e592-6349-73a2-8d2f-3d8bea217417 wrote a full
+  // <tool_call>, the page showed a tagless script cut at its first `{`, and
+  // that fragment ended the worker's turn as its answer.
+  const utils = await chatgptReplyUtils();
+  if (utils === null) return;
+  const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
+    Response.json(storedConversation(true))
+  );
+  const reply = await utils.waitForChatGPTResponse(
+    chat.page,
+    0,
+    CHATGPT_PROMPT,
+    30,
+    { baselinePairCounts: new Map() }
+  );
+  assert.equal(reply, CHATGPT_STORED_REPLY);
+  assert.deepEqual(chat.fetched, [
+    "/api/auth/session",
+    `/backend-api/conversation/${CHATGPT_CHAT_ID}`
+  ]);
+});
+
+test("a ChatGPT reply whose stored text cannot be read fails instead of using the page's", async () => {
+  const utils = await chatgptReplyUtils();
+  if (utils === null) return;
+  const chat = chatgptChat(
+    CHATGPT_SHOWN_REPLY,
+    () => new Response("{}", { status: 404 })
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 1, {
+      baselinePairCounts: new Map()
+    }),
+    /stored text could not be read: conversation fetch status 404/u
+  );
+});
+
+test("a stored ChatGPT turn is read along its current branch and ends only when the site says so", async () => {
+  const utils = await chatgptReplyUtils();
+  if (utils === null) return;
+  assert.deepEqual(
+    utils.chatgptReplyFromConversation(storedConversation(true)),
+    {
+      text: CHATGPT_STORED_REPLY,
+      finished: true
+    }
+  );
+  assert.deepEqual(
+    utils.chatgptReplyFromConversation(storedConversation(false)),
+    { text: CHATGPT_STORED_REPLY, finished: false }
+  );
+  assert.equal(
+    utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
+    null
+  );
+});
+
+test("a Gemini reply keeps the line breaks the page shows inside a paragraph", async () => {
+  // Gemini's reply panel is `white-space: pre-wrap`: a tool call's script is
+  // a paragraph whose line breaks show on screen. Reading it as collapsed
+  // whitespace put every script of session 01a1e592-6349-73a2-8d2f-3d8bea217417
+  // on one line, so `// @exec: {...}` swallowed the script after it.
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  const browser = await headlessChromium();
+  if (browser === null) return;
+  const script =
+    '<tool_call name="exec">\n// @exec: {"yield_time_ms": 330000}\nconst r = await tools.exec_command({\n  cmd: "pnpm test:unit"\n});\ntext(r.output);\n</tool_call>';
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body><chat-window>
+      <div class="conversation-container">
+        <user-query><div class="query-text"><p class="query-text-line">Run the tests.</p></div></user-query>
+        <model-response><div class="model-response-text"><div class="markdown" style="white-space: pre-wrap"><p></p></div></div></model-response>
+      </div>
+    </chat-window></body></html>`);
+    await page.$eval(
+      ".markdown p",
+      (paragraph, text) => {
+        paragraph.textContent = text;
+      },
+      script
+    );
+    const snapshot = (await page.evaluate(
+      utils.__test__.readGeminiSnapshotScript()
+    )) as GeminiSnapshot;
+    assert.deepEqual(snapshot.turns, [
+      { Role: "User", Text: "Run the tests." },
+      { Role: "Assistant", Text: script }
+    ]);
+  } finally {
+    await browser.close();
+  }
+});

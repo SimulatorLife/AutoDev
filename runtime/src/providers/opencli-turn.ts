@@ -1222,6 +1222,12 @@ export interface ParsedReply {
    * prose ends the agent's turn on an answer the model never gave.
    */
   readonly unparsedCall: boolean;
+  /**
+   * Whether the reply wrote a `<tool_output>` block of its own. Only Codex
+   * produces tool output; a reply that writes one has started inventing the
+   * results of its calls, so everything from that block on is dropped.
+   */
+  readonly inventedOutput: boolean;
 }
 
 /**
@@ -1233,6 +1239,7 @@ export interface ParsedReply {
 const TOOL_CALL_PATTERN =
   /<tool_call\s+name=(["'])([\w.:/-]{1,128})\1[^>]*>([\s\S]*?)(?:<\/tool_call>|$(?![\s\S]))/gu;
 const TOOL_CALL_OPENING = /<tool_call\b/u;
+const TOOL_OUTPUT_OPENING = /<tool_output\b/u;
 /** A reply the site rendered as escaped HTML carries its calls as `&lt;tool_call`. */
 const ESCAPED_TOOL_CALL = /&lt;\/?tool_call\b/u;
 const HTML_ENTITIES: Readonly<Record<string, string>> = {
@@ -1274,7 +1281,13 @@ export function parseOpencliReply(response: string): ParsedReply {
           (entity) => HTML_ENTITIES[entity] ?? entity
         )
       : response;
-  const text = source
+  // A model that writes a call's output itself goes on as if it had read it:
+  // a Gemini root turn ran one call, invented its result in the same reply,
+  // and later reported tests passing that never ran (session
+  // 01a1e592-6349-73a2-8d2f-3d8bea217417). The calls before the invented
+  // output are real requests; nothing from it on is.
+  const invented = TOOL_OUTPUT_OPENING.exec(source);
+  const text = (invented ? source.slice(0, invented.index) : source)
     .replaceAll(
       TOOL_CALL_PATTERN,
       (_match, _quote: string, name: string, body: string) => {
@@ -1284,7 +1297,12 @@ export function parseOpencliReply(response: string): ParsedReply {
     )
     .replaceAll(BLANK_RUN_PATTERN, "\n\n")
     .trim();
-  return { text, calls, unparsedCall: TOOL_CALL_OPENING.test(text) };
+  return {
+    text,
+    calls,
+    unparsedCall: TOOL_CALL_OPENING.test(text),
+    inventedOutput: invented !== null
+  };
 }
 
 /**

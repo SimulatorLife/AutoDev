@@ -2100,6 +2100,10 @@ export function createOpencliBridge(
       run = await runTurn(turn, controller.signal);
       signedOut.delete(turn.site);
       parsed = parseOpencliReply(run.reply.response);
+      if (parsed.inventedOutput)
+        writeErrorLine(
+          `opencli ${turn.site} reply wrote a <tool_output> of its own; it and everything after it were dropped`
+        );
       if (parsed.unparsedCall) {
         // The site's chat now holds a reply Codex never saw, so it is not
         // continued: the next turn starts a new chat.

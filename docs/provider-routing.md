@@ -3051,6 +3051,27 @@ single list; the route patterns and the site registry in
   (`UNUSABLE_REPLY`, the same type as a prompt that was never sent) instead
   of reaching Codex as prose that ends the agent's turn; the chat it was
   continued from is not continued again.
+- **A reply that writes its own `<tool_output>` is cut there.** Only Codex
+  produces tool output. A Gemini root turn ran one call, made up its result
+  in the same reply, and went on to report tests passing that never ran
+  (session `01a1e592-6349-73a2-8d2f-3d8bea217417`). The calls before the
+  invented block are kept, since they are real requests; the block and
+  everything after it are dropped, and the bridge logs that it did so.
+- **A reply is the text the model wrote, not the page's rendering of it.**
+  The page is lossy. On ChatGPT, a reply holding a `<tool_call>` reached the
+  bridge with its tags gone and its script cut at the first `{` (936
+  characters stored, 168 shown). Each time, that fragment ended a worker or
+  orchestrator turn as its final answer: 8 times in November 2026. So
+  AutoDev's opencli patch waits on the page only to learn that the reply has
+  settled. It then reads the reply's text from the conversation ChatGPT
+  stored (`/backend-api/conversation/<id>`; the access token never leaves
+  the page), following the conversation's current branch. A stored reply
+  that cannot be read fails the turn instead of using the page's text. On
+  Gemini, the reply panel is `white-space: pre-wrap`, so line breaks inside
+  a paragraph show on screen. The patch's text reader used to collapse them
+  like `normal` whitespace, which put every tool-call script on one line, so
+  a leading `// @exec: {...}` pragma swallowed the script after it. It now
+  keeps whitespace wherever the page's computed style keeps it.
 - **The orchestrator bootstrap is sent once.** An orchestrator's first
   prompt renders the bootstrap, the code-search prompt and the orchestration
   skill in its role section, so the root-delegation hook's copy of the

@@ -723,8 +723,34 @@ test("a reply splits into prose and tool calls, unwrapping a fenced body", () =>
   assert.deepEqual(parseOpencliReply("All done."), {
     text: "All done.",
     calls: [],
-    unparsedCall: false
+    unparsedCall: false,
+    inventedOutput: false
   });
+});
+
+test("a reply that writes its own tool output keeps only what came before it", () => {
+  // Gemini's reply in session 01a1e592-6349-73a2-8d2f-3d8bea217417: a real
+  // call, then an output the model made up for it. The made-up output reached
+  // the orchestrator's chat as prose, and the model went on as if it were true.
+  const parsed = parseOpencliReply(
+    '<tool_call name="exec" call_id="call_f80164673663b65cb3cb1980">\nconst r = await tools.exec_command({\ncmd: "cat src/ui/race-view.ts"\n});\ntext(r.output);\n</tool_call><tool_output call_id="call_f80164673663b65cb3cb1980">\nScript completed\nWall time 0.6 seconds\n</tool_output>\n\n<tool_call name="exec">\ntext("built on the invented output");\n</tool_call>\nAll tests pass.'
+  );
+  assert.deepEqual(parsed.calls, [
+    {
+      name: "exec",
+      input:
+        'const r = await tools.exec_command({\ncmd: "cat src/ui/race-view.ts"\n});\ntext(r.output);'
+    }
+  ]);
+  assert.equal(parsed.text, "");
+  assert.equal(parsed.inventedOutput, true);
+  // An escaped reply invents its output the same way.
+  const escaped = parseOpencliReply(
+    "Reading.\n&lt;tool_call name=&quot;exec&quot;&gt;text(1)&lt;/tool_call&gt;&lt;tool_output&gt;1&lt;/tool_output&gt;"
+  );
+  assert.deepEqual(escaped.calls, [{ name: "exec", input: "text(1)" }]);
+  assert.equal(escaped.text, "Reading.");
+  assert.equal(escaped.inventedOutput, true);
 });
 
 test("a call is read whatever its quoting, namespace, escaping or missing close", () => {
