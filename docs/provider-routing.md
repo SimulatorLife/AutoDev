@@ -1964,8 +1964,15 @@ transport responsible only for composing them:
 | MiniMax pass-through       | Native Codex request, including the rendered role configuration                                                                                  | The proxy remains transport-only and does not author a competing prompt                                                                                                             |
 
 The orchestration skill is the single source of truth for delegation procedure,
-child lifecycle, recovery, and role selection. The orchestrator prompt is only a
-small bootstrap of root identity and a pointer to the canonical policy. The native root
+child lifecycle, recovery, role selection, and the per-provider spawn call. The
+orchestrator prompt is only a small bootstrap: root identity, task sizing, output
+bounds, and a pointer to the canonical policy. A root sizes its task first and does
+trivial/atomic work itself without reading the skill; it reads the skill in full
+before its first spawn. Measured on Codex 0.154.0 with an isolated `CODEX_HOME`
+and the real root-delegation hook, this cut the hook's developer message from
+9,360 to about 5,700 characters, and a small task no longer pays a ~13.7k-character
+skill read that every later request re-sends (session 01a1e620: ~105k cumulative
+input tokens on a 22-request lint fix that never delegated). The native root
 hook points at the skill and adds the recovery preflight; the Antigravity and
 Copilot bridges use `runtime/src/agents/bridge-role.ts` to assemble the same role prompt,
 inlining the skill body. Both read the skill only from its installed link,
@@ -2957,8 +2964,7 @@ single list; the route patterns and the site registry in
   every reply costs minutes: batch every independent read, search and command
   the next step needs into one `exec` script (`await Promise.all([...])`),
   read a file once, and never repeat a call whose result is in the
-  conversation. The root bootstrap (`agents/prompts/orchestrator.md`) likewise
-  makes a root wait on all its children in one `wait_agent` call of at least
+  conversation. The orchestration skill likewise makes a root wait on all its children in one `wait_agent` call of at least
   300 s: a root polling at 10 s spent an Advanced-model turn, and one of the
   site's tabs, on every wake.
 - **Tab pool.** A site runs its turns in as many browser tabs as its route's

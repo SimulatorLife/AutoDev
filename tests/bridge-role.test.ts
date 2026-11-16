@@ -395,11 +395,11 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   assert.match(orchestrator, /Playtest requires Runtime-bound authorization/);
 });
 
-test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {
+test("the orchestration skill tells the model to quote a spawn message so Markdown cannot break it", () => {
   // Observed 2026-09-24: a spawn message written as a template literal
   // contained `claude-opus-5-5` in backticks; the first backtick ended the
   // literal and the exec cell failed with "Unexpected identifier 'claude'".
-  const prompt = read("agents/prompts/orchestrator.md");
+  const prompt = read(".rulesync/skills/orchestration/SKILL.md");
   assert.match(prompt, /double-quoted JavaScript string/);
   assert.match(prompt, /never as a template literal/);
 });

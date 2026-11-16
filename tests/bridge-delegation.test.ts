@@ -87,7 +87,9 @@ test("the shared prompt no longer names the shim in a shape no CLI has", () => {
   // tools through Codex's `tools` global sees it. agy has no `tools` global,
   // and its MCP tools are reached through a dispatcher, so the prompt must
   // not tell a bridged model to look for that name.
-  const prompt = read("agents/prompts/orchestrator.md");
+  // The delegation surface lives in the orchestration skill, which a root
+  // reads before its first spawn and a bridge inlines into its role prompt.
+  const prompt = read(".rulesync/skills/orchestration/SKILL.md");
   assert.doesNotMatch(prompt, /the model sees\s*`tools\.mcp__autodev_spawn/);
   assert.match(prompt, /"Delegation on this provider"/);
   // The catalog path moved; the prompt still pointed at the old one.

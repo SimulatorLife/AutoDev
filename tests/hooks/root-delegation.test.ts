@@ -392,15 +392,21 @@ test("root delegation injects the typed policy and canonical sources for a paren
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   assert.match(context, /# Root orchestrator bootstrap/);
   assert.match(context, /## Canonical orchestration skill/);
-  assert.match(context, /Read and follow the installed `orchestration` skill/);
+  // The skill is read before the first spawn, not on every root turn: a
+  // trivial task the root does itself never pays for it.
+  assert.match(context, /Size the task before acting on\s+it/);
+  assert.match(context, /Read the installed `orchestration` skill in full before your first spawn/);
   assert.match(context, /\.agents\/skills\/orchestration\/SKILL\.md/);
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
-  // Every wake is a full model turn, so the root waits long, not in a loop.
-  assert.match(context, /`timeout_ms` of at least 300000/);
+  // Every output stays in every later request, so the root bounds it whether
+  // or not it delegates; waiting mechanics live in the skill it reads first.
+  assert.match(context, /`max_output_tokens`\s+of 2000 or less/);
+  assert.match(context, /The root does not read git history/);
+  assert.doesNotMatch(context, /`timeout_ms` of at least 300000/);
   assert.match(context, /parent-test-1/);
   assert.ok(
-    context.length < 9500,
+    context.length < 6000,
     `root hook context is ${context.length} chars`
   );
 });
@@ -412,12 +418,12 @@ test("root delegation injects the typed policy for autodev/orchestrator alias", 
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   assert.match(context, /# Root orchestrator bootstrap/);
   assert.match(context, /## Canonical orchestration skill/);
-  assert.match(context, /Read and follow the installed `orchestration` skill/);
+  assert.match(context, /Read the installed `orchestration` skill in full before your first spawn/);
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /orchestrator-test-1/);
   assert.ok(
-    context.length < 9500,
+    context.length < 6000,
     `root hook context is ${context.length} chars`
   );
 });
@@ -507,7 +513,7 @@ test("root delegation keeps recovery context compact and owner-scoped", () => {
   assert.doesNotMatch(context, /```js/);
   assert.doesNotMatch(context, /const recoveryObjects/);
   assert.ok(
-    context.length < 9500,
+    context.length < 6000,
     `root hook context is ${context.length} chars`
   );
 });
@@ -569,7 +575,7 @@ test("root delegation reports a missing installed skill instead of naming a path
         ) as HookOutput
       ).hookSpecificOutput?.additionalContext ?? "";
     assert.match(context, /Canonical orchestration skill is unavailable at/);
-    assert.doesNotMatch(context, /Read and follow the installed/);
+    assert.doesNotMatch(context, /Read the installed `orchestration` skill/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

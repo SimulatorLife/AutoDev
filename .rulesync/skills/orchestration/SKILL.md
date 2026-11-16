@@ -28,6 +28,20 @@ For repository changes, follow `references/development-lifecycle.md`. For spawni
 
 Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
 
+## Delegation surface
+
+Use the delegation surface your provider actually offers.
+
+On Codex -- Codex-native GPT, MiniMax, and the opencli web-chat providers (`opencli-chatgpt`, `opencli-gemini`) -- that surface is `multi_agent_v1__spawn_agent` with `{ agent_type: "<role>", message: "<full task>" }`. A provider CLI bridge (Antigravity's `agy` CLI, Copilot) serves a delegation tool of its own and states the exact call in the "Delegation on this provider" section of your instructions. Where that section is present it is the surface to use: it is the one call this provider can serve, and a child created through it is a real Codex session. Where it is absent -- including for a Gemini model served by opencli, which is not Antigravity -- use `multi_agent_v1__spawn_agent` through `exec`.
+
+Every catalog in `config/catalogs/` and every model catalog in `~/.codex/*-model-catalog.json` declares `"tool_mode": "code_mode_only"` and `"multi_agent_version": "v1"`, so Codex delivers the entire tool surface as one `exec` custom tool whose input is raw JavaScript evaluated against a `tools` global. The spawn and lifecycle tools (`multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`, `multi_agent_v1__close_agent`, `multi_agent_v1__resume_agent`, `multi_agent_v1__send_input`) hang off that global inside the `exec` cell and are not listed as top-level functions -- by design, not a missing tool. Probe `typeof tools.multi_agent_v1__spawn_agent` inside an `exec` script before reporting a delegation capability failure. `runtime/src/agents/spawn-tools.ts` builds the batched `await Promise.allSettled(...)` script that fans out across children and is the reference implementation.
+
+Set `agent_type` to one of the roles above; do not hard-code a provider or model. Pass each child the full context it needs: a child cannot see your conversation. Write `message` as a double-quoted JavaScript string with `"`, `\` and line breaks escaped (`\"`, `\\`, `\n`), never as a template literal: task text routinely contains Markdown backticks and `${`, which end or interpolate a template literal and fail the whole `exec` cell before any child spawns.
+
+Use `@simulatorlife/autodev-runtime/shared/tool-names` as the source of canonical tool names. Provider CLIs may impose native exceptions; follow the role contract and provider instructions instead of inventing names.
+
+Root and child MCP capabilities can differ. For role-scoped MCP (`browser-tester` -> Playwright, `playtester` -> Playtest), verify a real call through the routed provider; do not infer exposure from root tools or telemetry, and never enable those servers at the root. Playtest requires Runtime-bound authorization, an approved target, and exact budgets; never pass credentials or invent run context. Use Console Play/Watch for the supported end-to-end workflow.
+
 ## Complexity and orchestration
 
 Classify work by semantic impact, uncertainty, and regression risk—not line count.
