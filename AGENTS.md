@@ -19,5 +19,3 @@ When falling back to `grep -rn` without `rg`, always pass `--exclude-dir=node_mo
 For multi-line or quote-containing inline shell scripts (`python3`, `node`), use single-quoted heredocs (`python3 - <<'EOF'`) rather than `-c '...'` with escaped quotes.
 
 Read relevant fixture and mock helpers contiguously before editing large E2E tests, and wait on long background tasks via reactive completion notifications (or a single bounded timer) rather than polling status in a loop.
-
-When you change what a hook under `runtime/src/hooks/` does, refresh `CANONICAL_HOOK_HASHES` in `runtime/src/platform/install-materializer.ts` from the trust state Codex records in `$CODEX_HOME/config.toml` (`[hooks.state]`). Codex refuses to run a hook whose hash it does not trust, so a changed hook -- or a new one missing from that map -- is silently not run.
