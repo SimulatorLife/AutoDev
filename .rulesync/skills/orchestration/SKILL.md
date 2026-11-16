@@ -16,15 +16,15 @@ For repository changes, follow `references/development-lifecycle.md`. For spawni
 
 ## Capability/subagent roles
 
-| Role              | Use for                                                 | Sandbox         |
-| ----------------- | ------------------------------------------------------- | --------------- |
+| Role              | Use for                                                 | Sandbox         | Notes |
+| ----------------- | ------------------------------------------------------- | --------------- | ------- |
 | `default`         | General-purpose development                             | workspace-write |
-| `docs-researcher` | Authoritative, version-aware external research          | read-only       |
-| `browser-tester`  | Browser and runtime evidence                            | read-only       |
-| `explorer`        | Architecture, dependencies, and current-state discovery | read-only       |
-| `worker`          | Bounded implementation                                  | workspace-write |
-| `validator`       | Independent review and validation                       | workspace-write |
-| `smart`           | Work requiring broader capability than normal roles     | workspace-write |
+| `docs-researcher` | Authoritative, version-aware external research, website research, documentation discovery | read-only       | - |
+| `browser-tester`  | Browser and runtime evidence                            | read-only       | Uses Playwright strictly for delegated UI and browser testing via browser-tester; do not use browser automation for general web research. |
+| `explorer`        | Architecture, dependencies, and current-state discovery | read-only       | - |
+| `worker`          | Bounded implementation                                  | workspace-write | - |
+| `validator`       | Independent review and validation                       | workspace-write | - |
+| `smart`           | Work requiring broader capability than normal roles     | workspace-write | - |
 
 Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
 
@@ -46,10 +46,10 @@ Root and child MCP capabilities can differ. For role-scoped MCP (`browser-tester
 
 Classify work by semantic impact, uncertainty, and regression risk—not line count.
 
-| Complexity                  | Planning                                                                                                                                                                                                                                                                                                                                                                                                                         | Execution                                                                                                                                     | Validation                                                                                          |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Trivial/atomic**          | Root may plan directly; keep planning proportional to the task                                                                                                                                                                                                                                                                                                                                                                   | Root may execute directly when delegation adds little value                                                                                   | Direct verification may suffice                                                                     |
-| **Standard**                | Root performs discovery and normally delegates at least one complementary discovery scope; reconcile findings into a single approach before implementation                                                                                                                                                                                                                                                                       | Root participates in implementation and normally delegates at least one useful, bounded portion that can proceed independently or in parallel | Root validates the integrated result and normally uses at least one independent validator or tester |
+| Complexity | Planning | Execution | Validation |
+| ----- | ----- | ----- | ----- |
+| **Trivial/atomic** | Root may plan directly; keep planning proportional to the task | Root may execute directly when delegation adds little value | Direct verification may suffice |
+| **Standard** | Root performs discovery and normally delegates at least one complementary discovery scope; reconcile findings into a single approach before implementation | Root participates in implementation and normally delegates at least one useful, bounded portion that can proceed independently or in parallel | Root validates the integrated result and normally uses at least one independent validator or tester |
 | **High-risk/cross-cutting** | Maintain one canonical Markdown plan with scope, decisions, dependencies, risks, and a checklist. Delegate discovery across relevant perspectives; the root owns synthesis, reconciliation, sequencing, and checklist state, integrating agent evidence and proposed changes into the plan. Refine it across execution and validation waves as new evidence emerges; it may be temporary when it has no lasting repository value | Decompose into bounded scopes; parallelize independent work and use multiple waves when useful                                                | At least two complementary independent validation perspectives; use additional waves when useful    |
 
 ## Delegation rules

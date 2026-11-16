@@ -57,6 +57,19 @@ const DEFAULT_USAGE = {
   cache_read_tokens: 0,
   cache_creation_tokens: 0
 };
+
+function addUsage(
+  a: typeof DEFAULT_USAGE,
+  b: typeof DEFAULT_USAGE
+): typeof DEFAULT_USAGE {
+  return {
+    input_tokens: a.input_tokens + b.input_tokens,
+    output_tokens: a.output_tokens + b.output_tokens,
+    cache_read_tokens: a.cache_read_tokens + b.cache_read_tokens,
+    cache_creation_tokens: a.cache_creation_tokens + b.cache_creation_tokens
+  };
+}
+
 const DEFAULT_AWAITED: AwaitedToolResults = {
   outputs: new Map(),
   messages: []
@@ -586,13 +599,18 @@ export class ClaudeTurn {
   private stashedFailure: TurnFailure | null = null;
   private lastText = "";
   /**
-   * What the last finished message cost.
+   * What the messages finished since the last response ended cost.
    *
-   * A response that carries tool calls ends before the turn does, so it has
-   * to report the tokens of the message it carries; the CLI's own result
-   * event only arrives when the whole turn ends.
+   * One CLI turn spans many Codex responses: each response that carries tool
+   * calls ends there, and the CLI's own result event only arrives when the
+   * whole turn ends, reporting every message of it. Codex reads a response's
+   * usage as that request's cost and context size, so each response reports
+   * only the messages it carries. The final response reporting the result's
+   * totals once showed a 74k-token turn as 1.1M tokens, "100% context used".
    */
-  private usage: typeof DEFAULT_USAGE = DEFAULT_USAGE;
+  private pendingUsage: typeof DEFAULT_USAGE = DEFAULT_USAGE;
+  /** Whether the CLI reported any per-message usage this turn. */
+  private sawMessageUsage = false;
   private readonly options: ClaudeTurnOptions;
 
   constructor(options: ClaudeTurnOptions) {
@@ -782,7 +800,8 @@ export class ClaudeTurn {
         return;
       }
       case "usage": {
-        this.usage = event.usage;
+        this.sawMessageUsage = true;
+        this.pendingUsage = addUsage(this.pendingUsage, event.usage);
         return;
       }
       case "complete": {
@@ -811,7 +830,9 @@ export class ClaudeTurn {
     // handed over: the children become a Codex `exec` call in this response.
     this.emitDelegation(stream);
     this.detach();
-    stream?.complete(event.usage);
+    // The result's totals stand in only for a CLI that reported no message
+    // usage at all; then this response is the whole turn.
+    stream?.complete(this.sawMessageUsage ? this.takeUsage() : event.usage);
     this.options.registry.remove(this);
   }
 
@@ -903,11 +924,17 @@ export class ClaudeTurn {
       this.reporter?.toolRequested(call.tool.name, callId);
     }
     this.detach();
-    // This response ends the message it carries, so it reports the tokens
-    // that message cost. The turn itself continues; its own result event
-    // arrives later and reports the turn's totals.
-    stream.complete(this.usage);
+    // This response ends the messages it carries, so it reports the tokens
+    // they cost. The turn itself continues.
+    stream.complete(this.takeUsage());
     this.startParkTimer();
+  }
+
+  /** The usage the ending response reports; the next response starts at zero. */
+  private takeUsage(): typeof DEFAULT_USAGE {
+    const usage = this.pendingUsage;
+    this.pendingUsage = DEFAULT_USAGE;
+    return usage;
   }
 
   private detach(): void {

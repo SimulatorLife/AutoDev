@@ -288,3 +288,69 @@ test("the Claude bridge reports the finished message's usage before the turn end
     }
   );
 });
+
+test("the Claude bridge reads a streamed message's output count from its message_delta, once", async () => {
+  // message_start carries a placeholder output count of a few tokens; the
+  // final count arrives in message_delta. The CLI also snapshots the message
+  // once per content block, and those snapshots carry the placeholder again.
+  const message = {
+    id: "msg_1",
+    role: "assistant",
+    content: [{ type: "text", text: "done" }],
+    usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 90 }
+  };
+  await withBridge(
+    [
+      {
+        type: "stream_event",
+        event: { type: "message_start", message: { usage: message.usage } }
+      },
+      { type: "assistant", message },
+      { type: "assistant", message },
+      {
+        type: "stream_event",
+        event: { type: "message_delta", usage: { output_tokens: 250 } }
+      },
+      { type: "stream_event", event: { type: "message_stop" } },
+      { type: "result", is_error: false, result: "done", usage: message.usage }
+    ],
+    async (options) => {
+      const usages = (await collect(options)).filter(
+        (event) => (event as { kind?: string }).kind === "usage"
+      );
+      assert.deepEqual(usages, [
+        {
+          kind: "usage",
+          usage: {
+            input_tokens: 100,
+            output_tokens: 250,
+            cache_read_tokens: 90,
+            cache_creation_tokens: 0
+          }
+        }
+      ]);
+    }
+  );
+});
+
+test("the Claude bridge counts a snapshot-only message once across its content blocks", async () => {
+  const message = {
+    id: "msg_1",
+    role: "assistant",
+    content: [{ type: "text", text: "done" }],
+    usage: { input_tokens: 10, output_tokens: 5 }
+  };
+  await withBridge(
+    [
+      { type: "assistant", message },
+      { type: "assistant", message },
+      { type: "result", is_error: false, result: "done", usage: message.usage }
+    ],
+    async (options) => {
+      const usages = (await collect(options)).filter(
+        (event) => (event as { kind?: string }).kind === "usage"
+      );
+      assert.equal(usages.length, 1);
+    }
+  );
+});

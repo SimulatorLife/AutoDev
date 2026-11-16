@@ -809,8 +809,47 @@ interface ClaudeStreamState {
   terminalResult: JsonRecord | null;
   sawStreamText: boolean;
   assistantSnapshot: string;
-  /** The usage of the message the CLI last finished. */
-  usage: ClaudeUsage | null;
+  /** The usage of the streamed message still open, on the Anthropic basis. */
+  messageUsage: ClaudeUsage | null;
+  /** The CLI streams messages, so their usage comes from the stream events. */
+  sawMessageStart: boolean;
+  /** The id of the last snapshot message whose usage was reported. */
+  reportedSnapshotId: string | null;
+}
+
+/**
+ * Fold a `message_delta` usage into the open message's usage.
+ *
+ * `message_start` carries the prompt counts and a placeholder output count of
+ * a few tokens; `message_delta` carries the message's final output count, and
+ * any prompt count it names supersedes the start's. Reading the start alone
+ * reported every Claude response as costing 3-40 output tokens.
+ */
+function mergeMessageDeltaUsage(
+  current: ClaudeUsage,
+  delta: unknown
+): ClaudeUsage {
+  if (!delta || typeof delta !== "object") return current;
+  const record = delta as JsonRecord;
+  const next = claudeUsageFrom(record);
+  return {
+    input_tokens:
+      record.input_tokens === undefined
+        ? current.input_tokens
+        : next.input_tokens,
+    output_tokens:
+      record.output_tokens === undefined
+        ? current.output_tokens
+        : next.output_tokens,
+    cache_read_tokens:
+      record.cache_read_input_tokens === undefined
+        ? current.cache_read_tokens
+        : next.cache_read_tokens,
+    cache_creation_tokens:
+      record.cache_creation_input_tokens === undefined
+        ? current.cache_creation_tokens
+        : next.cache_creation_tokens
+  };
 }
 
 type ClaudeLineSignal = { kind: "line"; line: string } | { kind: "timeout" };
@@ -874,6 +913,32 @@ class ClaudeLineQueue implements AsyncIterableIterator<ClaudeLineSignal> {
   }
 }
 
+/**
+ * Follow the open message's usage through its stream events; returns the
+ * message's usage, on the Responses basis, when the event finishes it.
+ */
+function trackMessageUsage(
+  inner: JsonRecord,
+  state: ClaudeStreamState
+): ClaudeUsage | null {
+  if (inner.type === "message_start") {
+    state.sawMessageStart = true;
+    state.messageUsage = claudeUsageFrom(
+      (inner.message as JsonRecord | undefined)?.usage
+    );
+  } else if (inner.type === "message_delta" && state.messageUsage) {
+    state.messageUsage = mergeMessageDeltaUsage(
+      state.messageUsage,
+      inner.usage
+    );
+  } else if (inner.type === "message_stop") {
+    const finished = state.messageUsage;
+    state.messageUsage = null;
+    return finished ? claudeResponsesUsage(finished) : null;
+  }
+  return null;
+}
+
 /** Translates the Anthropic stream event nested inside a `stream_event` line. */
 function* translateInnerStreamEvent(
   inner: JsonRecord,
@@ -881,9 +946,13 @@ function* translateInnerStreamEvent(
   options: ClaudeStreamOptions,
   state: ClaudeStreamState
 ): Generator<ClaudeCliEvent, void, void> {
+  const finishedUsage = trackMessageUsage(inner, state);
   if (inner.type === "message_start") {
     yield { kind: "message_start" };
   } else if (inner.type === "message_stop") {
+    // One usage per finished message, before the stop that lets the turn
+    // hand that message's tool calls to Codex in a response of their own.
+    if (finishedUsage) yield { kind: "usage", usage: finishedUsage };
     yield { kind: "message_stop" };
   } else if (inner.type === "content_block_delta") {
     const delta = inner.delta as JsonRecord | undefined;
@@ -918,13 +987,20 @@ function* translateAssistantEvent(
   // The CLI's snapshot of a finished message. Its text is streamed already
   // unless this CLI emitted no partial messages at all.
   const message = event.message as JsonRecord | undefined;
-  // The message's usage is the only place the CLI reports what this response
-  // cost before the turn ends, and a turn that calls a tool ends the response
-  // there -- before the CLI's own result event arrives. Without it every
-  // tool-calling response reported no tokens at all.
-  const usage = claudeResponsesUsage(claudeUsageFrom(message?.usage));
-  state.usage = usage;
-  yield { kind: "usage", usage };
+  // A CLI that streams no partial messages reports a message's usage only
+  // here, once per content block of the same message. Count each message
+  // once; a streamed message's usage comes from its stream events instead.
+  const messageId = typeof message?.id === "string" ? message.id : null;
+  if (
+    !state.sawMessageStart &&
+    (messageId === null || messageId !== state.reportedSnapshotId)
+  ) {
+    state.reportedSnapshotId = messageId;
+    yield {
+      kind: "usage",
+      usage: claudeResponsesUsage(claudeUsageFrom(message?.usage))
+    };
+  }
   if (!state.sawStreamText) {
     const fullText = textFromContent(message?.content);
     const delta = fullText.startsWith(state.assistantSnapshot)
@@ -1013,7 +1089,9 @@ export async function* runClaudeStream(
     terminalResult: null,
     sawStreamText: false,
     assistantSnapshot: "",
-    usage: null
+    messageUsage: null,
+    sawMessageStart: false,
+    reportedSnapshotId: null
   };
   const toolUses = new ToolUseAccumulator();
 
