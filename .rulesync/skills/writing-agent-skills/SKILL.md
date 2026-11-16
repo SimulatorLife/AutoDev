@@ -130,6 +130,8 @@ Do not create auxiliary files merely to make the skill look complete.
 
 Keep references shallow and easy to discover from `SKILL.md`.
 
+For advanced reliability patterns (independent reviews, divergence, memory, scripts, hooks, browser feedback, runtime adaptation, and hard gates), consult [`references/skill-engineering.md`](references/skill-engineering.md) when relevant; skip it for routine edits.
+
 ## 6. Validate structure
 
 Before behavioral testing, check:
