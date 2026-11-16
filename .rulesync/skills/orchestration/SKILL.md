@@ -37,7 +37,7 @@ Each reference is a self-contained procedure. Read one when its trigger applies 
 | `browser-tester` | Browser and runtime evidence | read-only | Uses Playwright strictly for delegated UI and browser testing via browser-tester; do not use browser automation for general web research. |
 | `explorer` | Architecture, dependencies, and current-state discovery | read-only | - |
 | `worker` | Bounded implementation | workspace-write | - |
-| `validator` | Independent review and validation | workspace-write | - |
+| `validator` | Independent review and validation | workspace-write | Validators must be independent of the scope they validate and pinned to an identified repository state; see `references/validation.md`. |
 | `smart` | Work requiring broader capability than normal roles | workspace-write | - |
 
 Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
@@ -86,16 +86,16 @@ After compaction, re-read files or re-request reports only when the current step
 
 ## Validation and integration
 
-Validators must be independent of the scope they validate and pinned to an identified repository state; see `references/validation.md`. Never weaken requirements, tests, or performance thresholds to obtain a passing result.
-
-The root:
+The root/orchestrator:
 
 1. collects delegated results
-2. checks them against acceptance criteria
-3. resolves conflicting findings
-4. integrates only relevant work
-5. re-delegates planning, implementation, or validation when findings reveal issues, gaps, improvements, or missing evidence
-6. repeats refinement and validation waves until evidence is sufficient
-7. advances lifecycle gates when evidence is sufficient
-8. reports unavailable evidence and unresolved risk
-9. treats agent reports as provisional evidence
+2. treats agent reports as provisional evidence
+3. checks them against acceptance criteria
+4. never weakens requirements, tests, or performance thresholds to obtain a passing result
+5. resolves conflicting findings
+6. integrates only relevant work
+7. re-delegates planning, implementation, or validation when findings reveal issues, gaps, improvements, or missing evidence
+8. repeats refinement and validation waves until evidence is sufficient
+9. advances lifecycle gates when evidence is sufficient
+10. reports unavailable evidence and unresolved risk
+
