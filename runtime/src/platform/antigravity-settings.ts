@@ -1,18 +1,8 @@
-import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeSync
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
   writeErrorLine,
   writeLine
@@ -73,29 +63,10 @@ function readObject(filePath: string): JsonObject {
 }
 
 function writeObject(filePath: string, value: JsonObject): void {
-  const directory = path.dirname(filePath);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporary = path.join(
-    directory,
-    `.autodev-${randomBytes(8).toString("hex")}.json`
-  );
-  const fd = openSync(temporary, "wx", 0o600);
-  try {
-    writeSync(fd, `${JSON.stringify(value, null, 2)}\n`, undefined, "utf8");
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, filePath);
-    chmodSync(filePath, 0o600);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      /* already renamed */
-    }
-  }
+  mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  atomicWriteSync(filePath, `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600
+  });
 }
 
 function expandHome(value: string, home: string): string {

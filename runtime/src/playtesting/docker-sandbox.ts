@@ -384,6 +384,7 @@ function materializeCommitSnapshot(input: {
       // private workspace parent provides host-side access control.
       mkdirSync(partial, { mode: 0o755 });
       checkoutCommit(input.sourceRoot, input.sha, partial);
+      // Publishes a whole checkout directory, which write-file-atomic cannot move.
       renameSync(partial, destination);
     } catch (error) {
       rmSync(partial, { recursive: true, force: true });

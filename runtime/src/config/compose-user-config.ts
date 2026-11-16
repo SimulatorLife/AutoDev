@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -8,7 +9,6 @@ import {
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
-  atomicWrite,
   ConfigError,
   parseTomlFile,
   serializeToml,
@@ -217,7 +217,7 @@ export function runCompose(
     );
     return 1;
   }
-  atomicWrite(output, rendered);
+  atomicWriteSync(output, rendered, { mode: 0o644, skipUnchanged: true });
   writeLine(`composed user-level config into ${output}`);
   return 0;
 }

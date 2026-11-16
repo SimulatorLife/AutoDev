@@ -14,7 +14,6 @@ import {
   mkdir,
   readFile,
   realpath,
-  rename,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -49,6 +48,7 @@ import {
 } from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
+import { atomicWrite } from "../files/atomic-write.ts";
 import {
   COMMANDS_SOURCE,
   isRecord,
@@ -2300,20 +2300,7 @@ export class RuleSyncRepository {
         );
       }
 
-      const temporaryPath = path.join(
-        commandsDir,
-        `.${name}.${randomUUID()}.tmp`
-      );
-      try {
-        await writeFile(temporaryPath, content, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o644
-        });
-        await rename(temporaryPath, commandPath);
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
+      await atomicWrite(commandPath, content, { mode: 0o644 });
 
       const persistedContent = await readFile(commandPath, "utf8");
       if (persistedContent !== content) {
@@ -2546,20 +2533,7 @@ export class RuleSyncRepository {
         return { source, event, target, revision, origin, actions };
       }
 
-      const temporaryPath = path.join(
-        this.repositoryRoot,
-        `.hooks.${randomUUID()}.tmp`
-      );
-      try {
-        await writeFile(temporaryPath, updated, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o644
-        });
-        await rename(temporaryPath, hooksPath);
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
+      await atomicWrite(hooksPath, updated, { mode: 0o644 });
       const persisted = await readFile(hooksPath, "utf8");
       if (persisted !== updated) {
         throw new RuleSyncHooksConflictError(
@@ -2882,20 +2856,7 @@ export class RuleSyncRepository {
         };
       }
 
-      const temporaryPath = path.join(
-        this.repositoryRoot,
-        `.mcp.${randomUUID()}.tmp`
-      );
-      try {
-        await writeFile(temporaryPath, updated, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o644
-        });
-        await rename(temporaryPath, mcpPath);
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
+      await atomicWrite(mcpPath, updated, { mode: 0o644 });
       const persisted = await readFile(mcpPath, "utf8");
       if (persisted !== updated) {
         throw new RuleSyncMcpConflictError(
@@ -3147,17 +3108,7 @@ export class RuleSyncRepository {
           `Canonical skill "${name}" changed since it was loaded.`
         );
       }
-      const temporaryPath = path.join(skillDir, `.${name}.${randomUUID()}.tmp`);
-      try {
-        await writeFile(temporaryPath, content, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o644
-        });
-        await rename(temporaryPath, skillPath);
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
+      await atomicWrite(skillPath, content, { mode: 0o644 });
       const persistedContent = await readFile(skillPath, "utf8");
       if (persistedContent !== content) {
         throw new RuleSyncSkillConflictError(

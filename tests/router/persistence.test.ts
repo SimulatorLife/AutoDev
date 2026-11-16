@@ -132,12 +132,16 @@ test("RouterPersistence persistNow writes atomically with mode 0o600", async () 
 });
 
 test("RouterPersistence reports failed writes to state-changing callers", async () => {
-  const missingDirectory = join(
+  const blocker = join(
     tmpdir(),
-    `autodev-persistence-failure-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    "autodev-persistence-failure-" +
+      Date.now() +
+      "-" +
+      Math.random().toString(36).slice(2)
   );
+  await writeFile(blocker, "a file, so nothing can be written beneath it");
   const persistence = new RouterPersistence({
-    stateFile: join(missingDirectory, "state.json"),
+    stateFile: join(blocker, "state.json"),
     getSnapshot: () => ({ control: true })
   });
   assert.equal(await persistence.persistNow(), false);
@@ -334,9 +338,15 @@ test("convenience functions delegate to default persistence manager", async () =
   setDefaultPersistenceManager(null);
 });
 
-test("a state write that fails leaves no temporary file, and load removes those of exited processes", async () => {
-  const { mkdtempSync, readdirSync, rmSync, mkdirSync, writeFileSync } =
-    await import("node:fs");
+test("a state write that fails leaves no temporary file, and load removes stale ones", async () => {
+  const {
+    mkdtempSync,
+    readdirSync,
+    rmSync,
+    mkdirSync,
+    utimesSync,
+    writeFileSync
+  } = await import("node:fs");
   const directory = mkdtempSync(join(tmpdir(), "autodev-router-state-"));
   try {
     // The rename fails: the state file's path is a directory.
@@ -348,24 +358,22 @@ test("a state write that fails leaves no temporary file, and load removes those 
     });
     assert.equal(await failing.persistNow(), false);
     assert.deepEqual(
-      readdirSync(directory).filter((name) => name.endsWith(".tmp")),
+      readdirSync(directory).filter((name) => name !== "blocked.json"),
       []
     );
 
-    // Left behind by processes that are gone, and one by this process.
+    // Left behind by a killed write long ago, and by a write in progress.
     const state = join(directory, "state.json");
-    const gone = `state.json.999999999.1.tmp`;
-    const live = `state.json.${process.pid}.2.tmp`;
-    writeFileSync(join(directory, gone), "{}");
-    writeFileSync(join(directory, live), "{}");
+    const stale = "state.json.123456789";
+    const fresh = "state.json.987654321";
+    writeFileSync(join(directory, stale), "{}");
+    writeFileSync(join(directory, fresh), "{}");
+    const longAgo = new Date(Date.now() - 60 * 60_000);
+    utimesSync(join(directory, stale), longAgo, longAgo);
     new RouterPersistence({ stateFile: state }).load();
     const left = readdirSync(directory);
-    assert.equal(left.includes(gone), false);
-    assert.equal(
-      left.includes(live),
-      true,
-      "a running process may be mid-write"
-    );
+    assert.equal(left.includes(stale), false);
+    assert.equal(left.includes(fresh), true, "a live write may be mid-write");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

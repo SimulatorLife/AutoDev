@@ -1,10 +1,6 @@
-export interface RequestWithHeaders {
+interface RequestWithHeaders {
   headers: Record<string, string | string[] | undefined>;
 }
-
-export const ROUTER_AUTH_REQUIRED_MESSAGE =
-  "Router authentication is required.";
-export const ROUTER_AUTH_ERROR_CODE = "router_authentication_error";
 
 const IPV4_MAPPED_PREFIX = /^::ffff:/;
 

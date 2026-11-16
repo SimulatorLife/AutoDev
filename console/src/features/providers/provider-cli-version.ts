@@ -1,6 +1,11 @@
 import type { ControlApiProviderVersionsResponse } from "@simulatorlife/autodev-core";
+import React from "react";
 
 import { NOT_OBSERVED_STATUS } from "../../components/status/StatusBadge.ts";
+import { NUMERIC_VALUE_CLASS } from "../../components/ui/text-classes.ts";
+
+const NOT_INSTALLED = "Not installed";
+const NOT_INSTALLED_STATUS = "not-installed" as const;
 
 /**
  * The CLI versions as the Console received them.
@@ -33,7 +38,7 @@ export type ProviderCliVersionView =
       readonly observedAt: string;
     }
   | {
-      readonly status: "not-installed";
+      readonly status: typeof NOT_INSTALLED_STATUS;
       readonly command: string | null;
       readonly reason: string;
     }
@@ -82,9 +87,9 @@ export function providerCliVersionView(
       observedAt: cli.observedAt
     };
   }
-  if (cli.kind === "not-installed") {
+  if (cli.kind === NOT_INSTALLED_STATUS) {
     return {
-      status: "not-installed",
+      status: NOT_INSTALLED_STATUS,
       command: cli.command,
       reason: cli.reason
     };
@@ -104,9 +109,9 @@ export function providerCliVersionLabel(view: ProviderCliVersionView): string {
     case "observed": {
       return `${view.command} ${view.version}`;
     }
-    case "not-installed": {
+    case NOT_INSTALLED_STATUS: {
       return view.command === null
-        ? "Not installed"
+        ? NOT_INSTALLED
         : `${view.command} · Not installed`;
     }
     case "not-readable": {
@@ -117,6 +122,53 @@ export function providerCliVersionLabel(view: ProviderCliVersionView): string {
     }
     default: {
       throw new TypeError("Provider CLI version state is invalid.");
+    }
+  }
+}
+
+/**
+ * The version of the CLI that serves a provider.
+ *
+ * The version is a small fact, and it is shown as small text: the number
+ * matters when an operator is comparing it with a release note, and it is
+ * not worth a column of the table to say so. It sits under the provider's
+ * name, where the eye looking for "which version is this provider on"
+ * already is.
+ *
+ * The reason a version is missing is kept in the title rather than in the
+ * text: "not installed" and "not read" are different problems, and the full
+ * sentence belongs beside the row rather than inside it.
+ */
+export function ProviderCliVersionText({
+  view
+}: {
+  readonly view: ProviderCliVersionView;
+}): React.JSX.Element {
+  return React.createElement(
+    "span",
+    {
+      className: NUMERIC_VALUE_CLASS,
+      "data-provider-cli-version": view.status,
+      title: providerCliVersionTitle(view)
+    },
+    providerCliVersionLabel(view)
+  );
+}
+
+/** Why the version reads the way it does, in one sentence. */
+function providerCliVersionTitle(view: ProviderCliVersionView): string {
+  switch (view.status) {
+    case "observed": {
+      return `${view.command} ${view.version}, observed ${view.observedAt}.`;
+    }
+    case NOT_INSTALLED_STATUS: {
+      return view.reason;
+    }
+    case "not-readable": {
+      return view.reason;
+    }
+    default: {
+      return view.reason;
     }
   }
 }

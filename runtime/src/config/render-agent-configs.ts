@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -9,12 +10,7 @@ import {
 import { parse } from "smol-toml";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import {
-  atomicWrite,
-  ConfigError,
-  parseTomlFile,
-  type TomlTable
-} from "./config-files.ts";
+import { ConfigError, parseTomlFile, type TomlTable } from "./config-files.ts";
 
 export const BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}";
 export const LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}";
@@ -169,7 +165,7 @@ export function renderRole(
     throw new ConfigError(
       `${source}: unsupported model_reasoning_effort '${config.model_reasoning_effort}'`
     );
-  atomicWrite(output, text);
+  atomicWriteSync(output, text, { mode: 0o644, skipUnchanged: true });
 }
 
 export function renderAgentDirectory(

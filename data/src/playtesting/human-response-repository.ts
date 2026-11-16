@@ -984,6 +984,7 @@ export class RestrictedHumanResponseRepository {
       fs.fsyncSync(fd);
       fs.closeSync(fd);
       fd = undefined;
+      // Retained rename: the O_EXCL|O_NOFOLLOW temp file and directory fsync are a security contract write-file-atomic does not offer.
       fs.renameSync(temp, filePath);
       fs.chmodSync(filePath, 0o600);
       const dirFd = fs.openSync(this.root, fsConstants.O_RDONLY);

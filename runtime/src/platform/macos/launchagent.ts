@@ -1,16 +1,7 @@
-import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { resolveConsolePort } from "../console-ensure.ts";
@@ -89,34 +80,8 @@ export function renderLaunchAgent(
     readFileSync(templatePath, "utf8"),
     values
   );
-  if (existsSync(targetPath)) {
-    const stat = lstatSync(targetPath);
-    if (
-      stat.isFile() &&
-      (stat.mode & 0o777) === 0o644 &&
-      readFileSync(targetPath, "utf8") === content
-    ) {
-      return;
-    }
-  }
-  const directory = path.dirname(targetPath);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporary = path.join(
-    directory,
-    `.autodev-launchagent-${randomBytes(8).toString("hex")}.plist`
-  );
-  try {
-    writeFileSync(temporary, content, { encoding: "utf8", mode: 0o644 });
-    chmodSync(temporary, 0o644);
-    renameSync(temporary, targetPath);
-    chmodSync(targetPath, 0o644);
-  } finally {
-    try {
-      rmSync(temporary, { force: true });
-    } catch {
-      /* already renamed */
-    }
-  }
+  mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+  atomicWriteSync(targetPath, content, { mode: 0o644, skipUnchanged: true });
 }
 
 export function launchAgentMatches(

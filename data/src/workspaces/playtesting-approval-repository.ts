@@ -1,15 +1,12 @@
 /** Workspaces-owned, owner-only local persistence for exact playtest approvals. */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync
+  realpathSync
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -20,10 +17,11 @@ import {
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
+import { atomicWriteSync } from "../files/atomic-write.ts";
+
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
-const TEMP_MARKER = ".tmp.";
 const APPROVAL_SCHEMA_V1 = "autodev-workspace-playtest-approval-v1";
 /** v1 pinned one commit; v2 authorizes the checkout's latest committed build. */
 const V1_PINNED_BUILD_FIELDS = [
@@ -284,22 +282,11 @@ export class WorkspacePlaytestApprovalRepository {
   private write(approval: WorkspacePlaytestApproval): void {
     const directory = this.workspaceDirectory(approval.workspaceId, true)!;
     const destination = path.join(directory, "approval.json");
-    const temp = `${destination}${TEMP_MARKER}${randomBytes(8).toString("hex")}`;
     try {
-      writeFileSync(temp, JSON.stringify(approval) + "\n", {
-        encoding: "utf8",
-        mode: OWNER_FILE_MODE,
-        flag: "wx"
+      atomicWriteSync(destination, JSON.stringify(approval) + "\n", {
+        mode: OWNER_FILE_MODE
       });
-      chmodSync(temp, OWNER_FILE_MODE);
-      renameSync(temp, destination);
-      chmodSync(destination, OWNER_FILE_MODE);
     } catch (error) {
-      try {
-        rmSync(temp, { force: true });
-      } catch {
-        // Preserve the original storage error.
-      }
       throw new WorkspacePlaytestApprovalStoreError(
         "Workspace approval could not be written atomically.",
         error

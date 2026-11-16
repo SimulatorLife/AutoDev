@@ -1448,7 +1448,9 @@ does not read as a role whose effort is unknown.
   provider's limits, a reset -- is applied and written to
   `$CODEX_HOME/codex-router-state.json` (`roleAssignments`,
   `disabledProviders`, `disabledModels`, `providerLimits`) in one serialized
-  step, through a temporary file renamed into place. A write that cannot be
+  step, through `write-file-atomic` (a unique temporary file renamed into place; a
+  temporary file a killed process left behind is removed at the next load once it
+  is ten minutes old). A write that cannot be
   persisted is rolled back and answered 500, so it never steers routing.
 - **Survives restarts:** the router reads the file at startup and restores
   every section; an assignment for a provider no longer configured is
@@ -3158,8 +3160,8 @@ single list; the route patterns and the site registry in
   delegation tools as unavailable.
 - **One version.** opencli is patched, so the version appears in the Runtime
   manifest, the pnpm workspace's `patchedDependencies` key, the patch file's
-  name and the lockfile. `runtime/src/shared/opencli-version.ts` is the one
-  place it is written down; `node runtime/src/cli/opencli-version.ts --check`
+  name and the lockfile. `runtime/src/cli/opencli-version.ts` is the one place
+  it is written down and checked; `node runtime/src/cli/opencli-version.ts --check`
   refuses to leave the four apart (`--write` puts them back together), and
   `tests/opencli-version.test.ts` asserts the repository agrees, including
   that the installed package is the pinned one.

@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -8,7 +9,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import { atomicWrite, readJsonFile } from "./config-files.ts";
+import { readJsonFile } from "./config-files.ts";
 
 export interface CatalogModelEntry {
   slug: string;
@@ -373,7 +374,7 @@ export function runModelCatalog(
     writeLine(`missing-or-drifted codex model catalog ${outputPath}`);
     return 1;
   }
-  atomicWrite(outputPath, rendered);
+  atomicWriteSync(outputPath, rendered, { mode: 0o644, skipUnchanged: true });
   writeLine(`rendered codex model catalog into ${outputPath}`);
   return 0;
 }

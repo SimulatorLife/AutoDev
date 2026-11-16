@@ -119,6 +119,7 @@ function writeAtomicWindow(
   try {
     fileSystem.writeFileSync(pending, bytes, FILE_MODE);
     fileSystem.chmodSync(pending, FILE_MODE);
+    // Retained rename: failed writes must keep their partial .tmp file as evidence, and write-file-atomic deletes it.
     fileSystem.renameSync(pending, file);
   } catch (error) {
     if (fileSystem.existsSync(pending)) {
@@ -929,6 +930,7 @@ function writeMetadata(
   const tmp = `${metadataFile}${TMP_SUFFIX}.${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
   fileSystem.writeFileSync(tmp, new TextEncoder().encode(json), FILE_MODE);
   fileSystem.chmodSync(tmp, FILE_MODE);
+  // Retained rename: the injected fileSystem owns artifact writes so partial evidence survives failures.
   fileSystem.renameSync(tmp, metadataFile);
 }
 
@@ -1172,6 +1174,7 @@ export class PlaytestArtifactStore {
     try {
       this.fileSystem.writeFileSync(blobTmp, bytes, FILE_MODE);
       this.fileSystem.chmodSync(blobTmp, FILE_MODE);
+      // Retained rename: failed blob writes keep their partial .tmp file as evidence.
       this.fileSystem.renameSync(blobTmp, blobFile);
     } catch (error) {
       if (this.fileSystem.existsSync(blobTmp)) {

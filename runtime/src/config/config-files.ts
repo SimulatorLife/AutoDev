@@ -1,14 +1,4 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import path from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 import { parse, stringify } from "smol-toml";
 
@@ -49,38 +39,6 @@ export function serializeToml(value: TomlTable): string {
   return stringify(value).replace(TRAILING_NEWLINES, "\n");
 }
 
-export function atomicWrite(
-  filePath: string,
-  content: string,
-  mode = 0o644
-): void {
-  if (existsSync(filePath)) {
-    const stat = lstatSync(filePath);
-    if (stat.isDirectory()) {
-      throw new ConfigError(`refusing to overwrite directory ${filePath}`);
-    }
-    if (
-      stat.isFile() &&
-      (stat.mode & 0o777) === (mode & 0o777) &&
-      readFileSync(filePath, "utf8") === content
-    ) {
-      return;
-    }
-  }
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  const directory = path.dirname(filePath);
-  const temporary = mkdtempSync(
-    path.join(directory, `.${filePath.split("/").pop() ?? "config"}.`)
-  );
-  const temporaryPath = path.join(temporary, "output");
-  try {
-    writeFileSync(temporaryPath, content, { mode });
-    renameSync(temporaryPath, filePath);
-  } finally {
-    rmSync(temporary, { recursive: true, force: true });
-  }
-}
-
 export function readJsonFile(
   filePath: string,
   label: string
@@ -93,8 +51,4 @@ export function readJsonFile(
   } catch (error) {
     throw new ConfigError(`unable to read ${label} ${filePath}: ${error}`);
   }
-}
-
-export function atomicWriteJson(filePath: string, value: unknown): void {
-  atomicWrite(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }

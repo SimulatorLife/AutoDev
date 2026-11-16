@@ -21,15 +21,10 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -1090,13 +1085,11 @@ export class OpencliConversationLedger {
     if (this.file === null) return;
     try {
       mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-      const temporary = `${this.file}.${process.pid}.tmp`;
-      writeFileSync(
-        temporary,
+      atomicWriteSync(
+        this.file,
         JSON.stringify({ schema: LEDGER_SCHEMA, entries: [...this.entries] }),
         { mode: 0o600 }
       );
-      renameSync(temporary, this.file);
     } catch {
       // A ledger that cannot be written still serves this process; the next
       // restart then starts fresh chats, which is the state before persisting.

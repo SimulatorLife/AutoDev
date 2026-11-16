@@ -134,8 +134,8 @@ test("Antigravity permissions are dynamic and machine-local", () => {
   assert.ok(!source.includes("mcp(codegraphcontext/*)"));
   assert.ok(!source.includes("mcp(codegraphcontext/add_code_to_graph)"));
   assert.ok(!source.includes("mcp(codegraphcontext/check_job_status)"));
-  assert.ok(source.includes('openSync(temporary, "wx"'));
-  assert.ok(source.includes("renameSync(temporary, filePath)"));
+  assert.ok(source.includes("atomicWriteSync(filePath"));
+  assert.ok(source.includes("mode: 0o600"));
 });
 
 test("Rulesync permissions and subagent generation remain deferred", () => {

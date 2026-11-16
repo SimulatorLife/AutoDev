@@ -1,12 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type {
@@ -15,6 +8,8 @@ import type {
   SandboxMode
 } from "@simulatorlife/autodev-core";
 import { parse as parseToml } from "smol-toml";
+
+import { atomicWriteSync } from "../files/atomic-write.ts";
 
 /**
  * The permission policy's one owner.
@@ -767,25 +762,7 @@ export function updatePermissionPolicy(input: {
  * write reporting success is not evidence that it succeeded.
  */
 function persistPolicyFile(file: string, next: string): void {
-  const temporaryPath = path.join(
-    path.dirname(file),
-    `.${path.basename(file)}.${randomUUID()}.tmp`
-  );
-  try {
-    writeFileSync(temporaryPath, next, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o644
-    });
-    renameSync(temporaryPath, file);
-  } catch (error) {
-    try {
-      unlinkSync(temporaryPath);
-    } catch {
-      // The temporary file was never created, so there is nothing to clear.
-    }
-    throw error;
-  }
+  atomicWriteSync(file, next, { mode: 0o644 });
   const persisted = readFileSync(file, "utf8");
   if (persisted !== next) {
     throw new PermissionPolicyConflictError(

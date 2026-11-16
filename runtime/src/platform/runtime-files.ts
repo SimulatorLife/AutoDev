@@ -2,20 +2,16 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
-  chmodSync,
   constants as fsConstants,
-  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
-  renameSync,
   statSync,
   symlinkSync,
-  unlinkSync,
-  writeFileSync
+  unlinkSync
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,6 +21,7 @@ import {
   Worker
 } from "node:worker_threads";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
   writeErrorLine,
   writeLine
@@ -250,9 +247,7 @@ export function writeRepoInstallCache(
   memoryRepoInstallCache.set(resolved, next);
   if (!cachePath) return;
   try {
-    const tmpPath = `${cachePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    renameSync(tmpPath, cachePath);
+    atomicWriteSync(cachePath, `${JSON.stringify(next, null, 2)}\n`);
   } catch {
     /* Cache persistence failure is non-fatal. */
   }
@@ -490,18 +485,7 @@ export function materializeRuntimeFile(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const temporary = `${target}.autodev-${process.pid}-${Date.now()}`;
-  try {
-    copyFileSync(source, temporary);
-    chmodSync(temporary, mode);
-    renameSync(temporary, target);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      /* already renamed or absent */
-    }
-  }
+  atomicWriteSync(target, readFileSync(source), { mode });
 }
 
 /**
@@ -531,17 +515,7 @@ export function materializeRuntimeContent(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const temporary = `${target}.autodev-${process.pid}-${Date.now()}`;
-  try {
-    writeFileSync(temporary, content, { mode });
-    renameSync(temporary, target);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      /* already renamed or absent */
-    }
-  }
+  atomicWriteSync(target, content, { mode });
 }
 
 export function linkRuntimeSource(source: string, target: string): void {

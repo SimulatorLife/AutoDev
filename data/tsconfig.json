@@ -1,8 +1,7 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
-    "types": ["node"]
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo"
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

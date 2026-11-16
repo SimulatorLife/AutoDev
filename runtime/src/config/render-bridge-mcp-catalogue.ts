@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -7,12 +8,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import {
-  atomicWrite,
-  ConfigError,
-  parseTomlFile,
-  type TomlTable
-} from "./config-files.ts";
+import { ConfigError, parseTomlFile, type TomlTable } from "./config-files.ts";
 
 const LAUNCH_KEYS = [
   "command",
@@ -65,7 +61,7 @@ export function runBridgeMcpCatalogue(
     writeLine(`missing-or-drifted bridge MCP catalogue ${output}`);
     return 1;
   }
-  atomicWrite(output, rendered);
+  atomicWriteSync(output, rendered, { mode: 0o644, skipUnchanged: true });
   writeLine(`rendered bridge MCP catalogue into ${output}`);
   return 0;
 }

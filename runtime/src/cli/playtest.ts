@@ -133,7 +133,12 @@ function declaredBenchmarkPath(checkoutRoot: string): string | null {
   // manifests use, so it must stay inside the integration directory.
   const resolved = path.resolve(root, declared);
   const relative = path.relative(root, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    return null;
   return existsSync(resolved) ? resolved : null;
 }
 

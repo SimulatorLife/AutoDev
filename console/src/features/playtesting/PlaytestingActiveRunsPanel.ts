@@ -18,7 +18,10 @@ import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -32,11 +35,18 @@ import {
 } from "./playtesting-active-runs.ts";
 import {
   CANCELLATION_REASON_LABELS,
+  runStateBadgeTone,
   runStateLabel
 } from "./playtesting-run-messages.ts";
-import { batchStatusBadge } from "./playtesting-run-presentation.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
+
+function batchStatusBadge(status: string): React.JSX.Element {
+  return React.createElement(StatusBadge, {
+    status: runStateBadgeTone(status),
+    label: runStateLabel(status)
+  });
+}
 
 const FRESHNESS_NOTICE: Readonly<
   Record<PlaytestingActiveRunsFreshness, string | null>

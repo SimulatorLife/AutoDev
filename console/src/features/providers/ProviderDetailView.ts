@@ -44,6 +44,7 @@ import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
   CLI_VERSIONS_NOT_OBSERVED,
   type ProviderCliVersionState,
+  ProviderCliVersionText,
   providerCliVersionView
 } from "./provider-cli-version.ts";
 import {
@@ -55,7 +56,6 @@ import {
 } from "./provider-model-discovery.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 import { ProviderBrowserControls } from "./ProviderBrowserControls.ts";
-import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import {

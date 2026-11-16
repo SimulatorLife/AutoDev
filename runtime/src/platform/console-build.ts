@@ -266,6 +266,7 @@ function seedStagingBuildCache(
       deps.readFile(rscInfoSource)
     );
   }
+  // The renames in this file move whole build directories, which write-file-atomic cannot.
   for (const subdir of movedSubdirs) {
     deps.rename(
       path.join(buildCachePath, subdir),

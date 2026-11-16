@@ -15,9 +15,11 @@
  * without restarting anything. The file lives with the bridge's other run
  * state in `$CODEX_HOME/run`.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 
 const SCHEMA = "autodev-opencli-browser-v1";
 
@@ -60,12 +62,7 @@ export function writeOpencliDedicatedBrowser(
   file: string,
   dedicated: boolean
 ): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(
-    temporary,
-    `${JSON.stringify({ schema: SCHEMA, dedicated })}\n`,
-    { mode: 0o600 }
-  );
-  renameSync(temporary, file);
+  atomicWriteSync(file, `${JSON.stringify({ schema: SCHEMA, dedicated })}\n`, {
+    mode: 0o600
+  });
 }

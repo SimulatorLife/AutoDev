@@ -1,15 +1,9 @@
 import { createHash } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync
-} from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { atomicWriteSync } from "../files/atomic-write.ts";
 
 /**
  * The canonical workspace catalog's schema, and the one place it is decided.
@@ -525,23 +519,6 @@ function readCatalogUpdate(
   return change;
 }
 
-/**
- * The temporary file a write lands in before it replaces the catalog.
- *
- * It is in the catalog's own directory, because a rename is only atomic
- * within a filesystem, and it is hidden, because a reader that lists the
- * directory must not see a half-written catalog.
- */
-let writeCounter = 0;
-
-function temporaryCatalogPath(catalogPath: string): string {
-  writeCounter += 1;
-  return path.join(
-    path.dirname(catalogPath),
-    `.${path.basename(catalogPath)}.${process.pid}.${writeCounter}.tmp`
-  );
-}
-
 /** The catalog's bytes, or the reason they could not be read. */
 function readCatalogBytes(catalogPath: string): Buffer {
   try {
@@ -612,20 +589,17 @@ function findCatalogEntry(
 /**
  * Replace the catalog with the document the write produced.
  *
- * The write lands in a temporary file in the catalog's own directory and is
- * moved into place with a rename, so a reader never sees a half-written
- * catalog. The catalog keeps the permissions it had: a rename replaces the
- * file, and a file that came back with different permissions would be a
- * change the operator never asked for.
+ * The atomic replacement means a reader never sees a half-written catalog.
+ * The catalog keeps the permissions it had: a replacement is a new file, and a
+ * file that came back with different permissions would be a change the
+ * operator never asked for.
  */
 function replaceCatalogFile(catalogPath: string, text: string): void {
-  const temporary = temporaryCatalogPath(catalogPath);
   try {
-    writeFileSync(temporary, text, { encoding: "utf8" });
-    chmodSync(temporary, statSync(catalogPath).mode & 0o777);
-    renameSync(temporary, catalogPath);
+    atomicWriteSync(catalogPath, text, {
+      mode: statSync(catalogPath).mode & 0o777
+    });
   } catch (error) {
-    rmSync(temporary, { force: true });
     throw new WorkspaceCatalogValidationError(
       `Workspace catalog could not be written: ${
         error instanceof Error ? error.message : String(error)

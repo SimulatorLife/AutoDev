@@ -219,6 +219,7 @@ const architecturePolicies = [
   ]),
   allowOnly("runtime-hooks", [
     "core",
+    "data",
     "runtime-agents",
     "runtime-platform",
     "runtime-shared",
@@ -228,12 +229,13 @@ const architecturePolicies = [
   allowOnly("runtime-mcp", ["runtime-shared"]),
   allowOnly("runtime-agents", ["runtime-shared"]),
   allowOnly("runtime-providers", [
+    "data",
     "runtime-agents",
     "runtime-shared",
     "runtime-telemetry",
     "runtime-telemetry-context"
   ]),
-  allowOnly("runtime-config", ["runtime-shared"]),
+  allowOnly("runtime-config", ["data", "runtime-shared"]),
   allowOnly("runtime-router", [
     "runtime-agents",
     "runtime-control-api",
@@ -281,7 +283,7 @@ const architecturePolicies = [
   allowOnly("runtime-router-concurrency", ["runtime-agents", "runtime-shared"]),
   allowOnly("runtime-router-cooldown", ["core", "runtime-shared"]),
   allowOnly("runtime-router-lifecycle", ["runtime-shared"]),
-  allowOnly("runtime-router-persistence", ["runtime-shared"]),
+  allowOnly("runtime-router-persistence", ["data", "runtime-shared"]),
   allowOnly("runtime-router-tool-ownership", ["runtime-shared"]),
   allowOnly("runtime-shared", []),
   allowOnly("runtime-telemetry-context", []),

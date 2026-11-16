@@ -1,131 +1,108 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { describe, test, type TestContext } from "node:test";
 
 import {
   OPENCLI_PACKAGE,
   OPENCLI_VERSION,
   opencliPatchFileName,
   opencliPatchKey,
+  opencliRepositoryDrift,
   opencliVersionDrift,
   parseLockfilePatchedDependencies,
   parsePatchedDependencies,
   withOpencliPatchEntry
-} from "@simulatorlife/autodev-runtime/shared/opencli-version";
+} from "@simulatorlife/autodev-runtime/cli/opencli-version";
 
 const root = path.resolve(import.meta.dirname, "..");
-const manifestPath = path.join(root, "runtime", "package.json");
-const workspacePath = path.join(root, "pnpm-workspace.yaml");
-const lockfilePath = path.join(root, "pnpm-lock.yaml");
 
 function readManifest(): string {
-  return readFileSync(manifestPath, "utf8");
+  return readFileSync(path.join(root, "runtime", "package.json"), "utf8");
 }
 
 function readWorkspace(): string {
-  return readFileSync(workspacePath, "utf8");
+  return readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
+}
+
+const FIXTURE_PATCH = "--- a/dist/index.js\n+++ b/dist/index.js\n";
+
+/** The lockfile block pnpm writes for the pinned patch recorded as \`hash\`. */
+function lockfileWithPatchHash(hash: string): string {
+  return [
+    "lockfileVersion: '9.0'",
+    "patchedDependencies:",
+    `  '${opencliPatchKey()}':`,
+    `    hash: ${hash}`,
+    `    path: ${opencliPatchFileName()}`,
+    "importers:",
+    ""
+  ].join("\n");
+}
+
+function writeInstalledVersion(dir: string, version: string): void {
+  const packageRoot = path.join(
+    dir,
+    "runtime",
+    "node_modules",
+    ...OPENCLI_PACKAGE.split("/")
+  );
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({ name: OPENCLI_PACKAGE, version })
+  );
+}
+
+/**
+ * A repository whose every statement about opencli says the pinned version:
+ * manifest, workspace patch key, patch file, lockfile and installed package.
+ */
+function consistentRepository(t: TestContext): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "autodev-opencli-version-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, "runtime"));
+  writeFileSync(
+    path.join(dir, "runtime", "package.json"),
+    JSON.stringify({ dependencies: { [OPENCLI_PACKAGE]: OPENCLI_VERSION } })
+  );
+  writeFileSync(
+    path.join(dir, "pnpm-workspace.yaml"),
+    [
+      "packages:",
+      "  - runtime",
+      "patchedDependencies:",
+      `  '${opencliPatchKey()}': ${opencliPatchFileName()}`,
+      ""
+    ].join("\n")
+  );
+  mkdirSync(path.join(dir, "patches"));
+  writeFileSync(path.join(dir, opencliPatchFileName()), FIXTURE_PATCH);
+  writeFileSync(
+    path.join(dir, "pnpm-lock.yaml"),
+    lockfileWithPatchHash(
+      createHash("sha256").update(FIXTURE_PATCH).digest("hex")
+    )
+  );
+  writeInstalledVersion(dir, OPENCLI_VERSION);
+  return dir;
 }
 
 describe("the pinned opencli version", () => {
-  test("the manifest, the workspace patch key and the patch file name agree", () => {
-    const drift = opencliVersionDrift({
-      manifest: readManifest(),
-      workspace: readWorkspace()
-    });
+  test("the repository's manifest, patch key, patch file, lockfile and installed package agree", () => {
     assert.deepEqual(
-      drift,
+      opencliRepositoryDrift(root),
       [],
       `the repository pins ${OPENCLI_VERSION} in ${opencliPatchKey()}, but the files disagree`
-    );
-  });
-
-  test("the patch for the pinned version is in the repository", () => {
-    const patch = path.join(root, opencliPatchFileName());
-    assert.ok(
-      existsSync(patch),
-      `${opencliPatchFileName()} is missing: the pinned version has no patch`
-    );
-  });
-
-  test("the lockfile installs the patch the repository holds", () => {
-    // The lockfile records the sha256 of the patch it installed, so the two
-    // together say whether the code the bridge runs is the patch in this
-    // repository. An edited patch that was not installed leaves the
-    // repository describing code the site never serves.
-    if (!existsSync(lockfilePath)) return;
-    const patch = path.join(root, opencliPatchFileName());
-    const hash = createHash("sha256").update(readFileSync(patch)).digest("hex");
-    const drift = opencliVersionDrift({
-      manifest: readManifest(),
-      workspace: readWorkspace(),
-      lockfile: readFileSync(lockfilePath, "utf8"),
-      patchHash: hash
-    });
-    assert.deepEqual(
-      drift,
-      [],
-      "the lockfile installs a different patch than the repository holds"
-    );
-  });
-
-  test("a lockfile that installs another patch is drift", () => {
-    const lockfile = [
-      "lockfileVersion: '9.0'",
-      "patchedDependencies:",
-      `  '${opencliPatchKey()}':`,
-      "    hash: 0000000000000000000000000000000000000000000000000000000000000000",
-      `    path: ${opencliPatchFileName()}`,
-      "importers:",
-      ""
-    ].join("\n");
-    const drift = opencliVersionDrift({
-      manifest: readManifest(),
-      workspace: readWorkspace(),
-      lockfile,
-      patchHash: "a".repeat(64)
-    });
-    assert.equal(drift.length, 1);
-    assert.equal(drift[0]?.file, "pnpm-lock.yaml");
-    assert.match(drift[0]?.reason ?? "", /different patch/u);
-  });
-
-  test("the lockfile's patched dependencies are read", () => {
-    const entries = parseLockfilePatchedDependencies(
-      [
-        "lockfileVersion: '9.0'",
-        "patchedDependencies:",
-        `  '${opencliPatchKey()}':`,
-        "    hash: abc123",
-        `    path: ${opencliPatchFileName()}`,
-        "importers:",
-        ""
-      ].join("\n")
-    );
-    assert.equal(entries.size, 1);
-    assert.deepEqual(entries.get(opencliPatchKey()), {
-      hash: "abc123",
-      path: opencliPatchFileName()
-    });
-  });
-
-  test("the installed opencli is the pinned version", () => {
-    const installed = path.join(
-      root,
-      "runtime",
-      "node_modules",
-      ...OPENCLI_PACKAGE.split("/"),
-      "package.json"
-    );
-    if (!existsSync(installed)) return;
-    const parsed = JSON.parse(readFileSync(installed, "utf8")) as {
-      version?: unknown;
-    };
-    assert.equal(
-      parsed.version,
-      OPENCLI_VERSION,
-      "the installed opencli is not the pinned version: the bridge runs it"
     );
   });
 
@@ -151,7 +128,74 @@ describe("the pinned opencli version", () => {
   });
 });
 
+describe("the repository drift check", () => {
+  test("a repository that says the pinned version everywhere has no drift", (t) => {
+    assert.deepEqual(opencliRepositoryDrift(consistentRepository(t)), []);
+  });
+
+  test("a repository without the patch file is drift", (t) => {
+    const dir = consistentRepository(t);
+    rmSync(path.join(dir, opencliPatchFileName()));
+    assert.deepEqual(
+      opencliRepositoryDrift(dir).map((entry) => [
+        entry.file,
+        entry.expected,
+        entry.found
+      ]),
+      [[opencliPatchFileName(), "present", "missing"]]
+    );
+  });
+
+  test("an installed package of another version is drift", (t) => {
+    const dir = consistentRepository(t);
+    writeInstalledVersion(dir, "0.0.1");
+    assert.deepEqual(
+      opencliRepositoryDrift(dir).map((entry) => [
+        entry.file,
+        entry.expected,
+        entry.found
+      ]),
+      [[`runtime/node_modules/${OPENCLI_PACKAGE}`, OPENCLI_VERSION, "0.0.1"]]
+    );
+  });
+
+  test("a lockfile that installed another patch than the repository holds is drift", (t) => {
+    const dir = consistentRepository(t);
+    writeFileSync(
+      path.join(dir, "pnpm-lock.yaml"),
+      lockfileWithPatchHash("0".repeat(64))
+    );
+    const drift = opencliRepositoryDrift(dir);
+    assert.equal(drift.length, 1);
+    assert.equal(drift[0]?.file, "pnpm-lock.yaml");
+    assert.match(drift[0]?.reason ?? "", /different patch/u);
+  });
+});
+
 describe("the drift check", () => {
+  test("a lockfile that installs another patch is drift", () => {
+    const drift = opencliVersionDrift({
+      manifest: readManifest(),
+      workspace: readWorkspace(),
+      lockfile: lockfileWithPatchHash("0".repeat(64)),
+      patchHash: "a".repeat(64)
+    });
+    assert.equal(drift.length, 1);
+    assert.equal(drift[0]?.file, "pnpm-lock.yaml");
+    assert.match(drift[0]?.reason ?? "", /different patch/u);
+  });
+
+  test("the lockfile's patched dependencies are read", () => {
+    const entries = parseLockfilePatchedDependencies(
+      lockfileWithPatchHash("abc123")
+    );
+    assert.equal(entries.size, 1);
+    assert.deepEqual(entries.get(opencliPatchKey()), {
+      hash: "abc123",
+      path: opencliPatchFileName()
+    });
+  });
+
   test("a manifest on another version is drift", () => {
     const manifest = JSON.parse(readManifest()) as {
       dependencies: Record<string, string>;

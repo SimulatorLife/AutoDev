@@ -1,16 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-/** The Runtime workspace package name, used to recognize an installed tree. */
+/** The Runtime workspace package name, used to recognize a source checkout. */
 const RUNTIME_PACKAGE_NAME = "@simulatorlife/autodev-runtime";
 /** The manifest file name a package root is recognized by. */
 const PACKAGE_MANIFEST_FILE = "package.json";
 
 /**
- * Whether a package manifest declares the Runtime package. The installed tree
- * keeps the manifest at the root of its source copy, so the name is what
- * distinguishes an installed root from an unrelated directory that happens to
- * sit at the same depth.
+ * Whether a package manifest declares the Runtime package. The name is what
+ * distinguishes a checkout's `runtime/` package from an unrelated directory
+ * that happens to sit at the same depth. A missing or unreadable manifest
+ * declares nothing.
  */
 function declaresRuntimePackage(manifestPath: string): boolean {
   try {
@@ -25,8 +25,10 @@ function declaresRuntimePackage(manifestPath: string): boolean {
 
 /**
  * Resolve the repository root from either a Runtime source module in a checkout
- * or its materialized CODEX_HOME/src copy. Runtime modules stay at the legacy
- * installed depth while their authoritative source lives one level deeper.
+ * or its materialized CODEX_HOME/src copy. A checkout is recognized by the
+ * Runtime package manifest at `<root>/runtime/package.json` three levels above
+ * the module; every other tree is the installed layout, whose root sits two
+ * levels above the module.
  */
 export function resolveRuntimeSourceRoot(
   moduleDirectory: string,
@@ -36,33 +38,14 @@ export function resolveRuntimeSourceRoot(
   if (configured) return path.resolve(configured);
 
   const workspaceRoot = path.resolve(moduleDirectory, "../../..");
-  const workspaceManifest = path.join(
-    workspaceRoot,
-    "runtime",
-    PACKAGE_MANIFEST_FILE
-  );
   if (
-    existsSync(workspaceManifest) &&
-    declaresRuntimePackage(workspaceManifest)
+    declaresRuntimePackage(
+      path.join(workspaceRoot, "runtime", PACKAGE_MANIFEST_FILE)
+    )
   )
     return workspaceRoot;
 
-  const installedRoot = path.resolve(moduleDirectory, "../..");
-  const installedManifest = path.join(
-    installedRoot,
-    "src",
-    PACKAGE_MANIFEST_FILE
-  );
-  if (
-    existsSync(installedManifest) &&
-    declaresRuntimePackage(installedManifest)
-  )
-    return installedRoot;
-
-  // A tree that carries neither marker is an installed copy whose manifest
-  // has not been written yet; the installed depth is the only other shape a
-  // Runtime module can live at.
-  return installedRoot;
+  return path.resolve(moduleDirectory, "../..");
 }
 
 /**

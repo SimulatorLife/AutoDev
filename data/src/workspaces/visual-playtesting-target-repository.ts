@@ -1,5 +1,5 @@
 /** Workspaces-owned local persistence for separately approved visual targets. */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -7,10 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync
+  realpathSync
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -20,12 +17,13 @@ import {
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
+import { atomicWriteSync } from "../files/atomic-write.ts";
+
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const HASH_PATTERN = /^[a-f\d]{64}$/u;
 const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
-const TEMP_MARKER = ".tmp.";
 
 export function defaultWorkspaceVisualPlaytestTargetRoot(): string {
   const codexHome =
@@ -337,22 +335,11 @@ export class WorkspaceVisualPlaytestTargetRepository {
     const directory = path.join(workspaceDirectory, digest(approval.targetId));
     ensureTargetDirectory(directory, workspaceDirectory);
     const destination = path.join(directory, "approval.json");
-    const temp = `${destination}${TEMP_MARKER}${randomBytes(8).toString("hex")}`;
     try {
-      writeFileSync(temp, JSON.stringify(approval) + "\n", {
-        encoding: "utf8",
-        mode: OWNER_FILE_MODE,
-        flag: "wx"
+      atomicWriteSync(destination, JSON.stringify(approval) + "\n", {
+        mode: OWNER_FILE_MODE
       });
-      chmodSync(temp, OWNER_FILE_MODE);
-      renameSync(temp, destination);
-      chmodSync(destination, OWNER_FILE_MODE);
     } catch (error) {
-      try {
-        rmSync(temp, { force: true });
-      } catch {
-        // Preserve the original storage error.
-      }
       throw new WorkspaceVisualPlaytestTargetStoreError(
         "Visual target approval could not be written atomically.",
         error

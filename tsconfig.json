@@ -12,8 +12,7 @@
     "rewriteRelativeImportExtensions": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "jsx": "react-jsx",
-    "types": ["node", "react", "react-dom"]
+    "types": ["node"]
   },
   "include": [
     "tests/**/*.ts",

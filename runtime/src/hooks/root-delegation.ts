@@ -5,14 +5,13 @@ import {
   appendFileSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
-  statSync,
-  writeFileSync
+  statSync
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   buildRootOrchestratorBootstrap,
@@ -203,17 +202,11 @@ function writeDedupEntries(
       .sort((a, b) => b[1] - a[1])
       .slice(0, DEDUP_MAX_ENTRIES)
   );
-  const temporary = `${stateFile}.${process.pid}.tmp`;
   try {
-    writeFileSync(temporary, JSON.stringify(boundedEntries), { mode: 0o600 });
-    renameSync(temporary, stateFile);
+    atomicWriteSync(stateFile, JSON.stringify(boundedEntries), { mode: 0o600 });
     return true;
   } catch {
-    try {
-      rmSync(temporary, { force: true });
-    } catch {
-      // State cleanup is best effort; always fail open and emit root policy.
-    }
+    // Always fail open and emit root policy.
     return false;
   }
 }

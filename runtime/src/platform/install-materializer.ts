@@ -16,8 +16,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RuleSyncRepository } from "@simulatorlife/autodev-data";
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
-  atomicWrite,
   parseTomlFile,
   renderAgentDirectory,
   runBridgeMcpCatalogue,
@@ -451,7 +451,10 @@ export function syncHookTrust(
 
   hooksTable.state = stateTable;
   config.hooks = hooksTable;
-  atomicWrite(configPath, serializeToml(config));
+  atomicWriteSync(configPath, serializeToml(config), {
+    mode: 0o644,
+    skipUnchanged: true
+  });
 }
 
 export function checkHookTrust(
@@ -1493,7 +1496,7 @@ export function generateRepositoryRulesync(
   const postFingerprint = computeRepositoryRulesyncFingerprint(repositoryRoot);
   const latestCache = readRepoInstallCache(repositoryRoot);
   const nextGenerateCache: Record<string, string> = {
-    ...(latestCache.rulesyncGenerate ?? {}),
+    ...latestCache.rulesyncGenerate,
     [featuresKey]: postFingerprint
   };
   if (isAllConfigFeatures) {
@@ -1806,7 +1809,10 @@ export function reconcileStaleOrchestratorState(codexHome: string): boolean {
     changed = true;
   }
   if (!changed) return false;
-  atomicWrite(statePath, `${JSON.stringify(parsed, null, 2)}\n`);
+  atomicWriteSync(statePath, JSON.stringify(parsed, null, 2) + "\n", {
+    mode: 0o644,
+    skipUnchanged: true
+  });
   return true;
 }
 

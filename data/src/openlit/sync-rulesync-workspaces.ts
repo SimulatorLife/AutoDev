@@ -1,12 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  readFileSync,
-  renameSync,
-  writeFileSync
-} from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -14,6 +8,7 @@ import { promisify } from "node:util";
 import type { WorkspaceEntry } from "@simulatorlife/autodev-core";
 
 import { ConfigRepository } from "../config/config-repository.ts";
+import { atomicWriteSync } from "../files/atomic-write.ts";
 
 const execFileAsync = promisify(execFile);
 const INSTALL_CACHE_SCHEMA = "autodev-install-cache-v1";
@@ -81,13 +76,10 @@ function writeCachedWorkspaceSync(
         existing = parsed;
       }
     }
-    const tmpPath = `${cachePath}.${process.pid}.tmp`;
-    writeFileSync(
-      tmpPath,
-      `${JSON.stringify({ ...existing, openlitWorkspacesSync: record }, null, 2)}\n`,
-      "utf8"
+    atomicWriteSync(
+      cachePath,
+      `${JSON.stringify({ ...existing, openlitWorkspacesSync: record }, null, 2)}\n`
     );
-    renameSync(tmpPath, cachePath);
   } catch {
     /* Non-fatal if cache cannot be persisted. */
   }

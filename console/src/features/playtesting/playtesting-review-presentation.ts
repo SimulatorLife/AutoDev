@@ -11,7 +11,7 @@ import { instantDate, isReadableInstant } from "../../components/ui/instant.ts";
  * asserted no claim has no headline, and every surface that shows the
  * headline says this instead of leaving the reader looking at an empty cell.
  */
-export const NO_CONCLUSION_LABEL =
+const NO_CONCLUSION_LABEL =
   "The analyst recorded no written conclusion for this session.";
 
 /** The review's conclusion, or the sentence that stands in for one. */

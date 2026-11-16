@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -9,7 +10,7 @@ import {
 import { parse as parseToml } from "smol-toml";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import { atomicWriteJson, ConfigError, readJsonFile } from "./config-files.ts";
+import { ConfigError, readJsonFile } from "./config-files.ts";
 
 const MCP_ORDER: Record<string, number> = {
   lsp: 0,
@@ -280,9 +281,14 @@ export function runExecutionContract(
   contractPath: string,
   output: string
 ): number {
-  atomicWriteJson(
+  atomicWriteSync(
     output,
-    renderExecutionContract(sourceDir, rootConfigPath, contractPath)
+    JSON.stringify(
+      renderExecutionContract(sourceDir, rootConfigPath, contractPath),
+      null,
+      2
+    ) + "\n",
+    { mode: 0o644, skipUnchanged: true }
   );
   writeLine(`rendered execution contract into ${output}`);
   return 0;

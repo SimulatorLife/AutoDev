@@ -26,7 +26,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   unwatchFile,
   watchFile,
@@ -42,6 +41,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
   isOrchestratorRole,
   orchestratorBootstrapHeading,
@@ -1743,9 +1743,8 @@ export function createOpencliBridge(
     if (uploadLogPath === null) return;
     try {
       mkdirSync(path.dirname(uploadLogPath), { recursive: true, mode: 0o700 });
-      const temporary = `${uploadLogPath}.${process.pid}.tmp`;
-      writeFileSync(
-        temporary,
+      atomicWriteSync(
+        uploadLogPath,
         JSON.stringify({
           schema: UPLOAD_LOG_SCHEMA,
           sites: Object.fromEntries(
@@ -1754,7 +1753,6 @@ export function createOpencliBridge(
         }),
         { mode: 0o600 }
       );
-      renameSync(temporary, uploadLogPath);
     } catch (error) {
       writeErrorLine(
         `opencli upload log could not be saved: ${errorMessage(error)}`

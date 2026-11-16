@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile, stat } from "node:fs/promises";
+
+import { atomicWrite } from "./files/atomic-write.ts";
 
 /**
  * The execution contract's role-assignment write.
@@ -275,21 +276,7 @@ function readContractFile(file: string): string {
  * the write reporting success is not evidence that it succeeded.
  */
 async function persistContract(file: string, next: string): Promise<void> {
-  const temporaryPath = path.join(
-    path.dirname(file),
-    `.${path.basename(file)}.${randomUUID()}.tmp`
-  );
-  try {
-    await writeFile(temporaryPath, next, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o644
-    });
-    await rename(temporaryPath, file);
-  } catch (error) {
-    await unlink(temporaryPath).catch(() => undefined);
-    throw error;
-  }
+  await atomicWrite(file, next, { mode: 0o644 });
   const persisted = await readFile(file, "utf8");
   if (persisted !== next) {
     throw new ExecutionContractConflictError(

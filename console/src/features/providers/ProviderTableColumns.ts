@@ -19,6 +19,7 @@ import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, providersPath } from "./paths.ts";
 import {
   type ProviderCliVersionState,
+  ProviderCliVersionText,
   providerCliVersionView
 } from "./provider-cli-version.ts";
 import {
@@ -26,7 +27,6 @@ import {
   type ProviderModelRow
 } from "./provider-model-discovery.ts";
 import { ProviderStatusBadge } from "./provider-status.ts";
-import { ProviderCliVersionText } from "./ProviderCliVersion.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge.ts";

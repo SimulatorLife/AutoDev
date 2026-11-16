@@ -393,6 +393,7 @@ async function acquireLock(
   if (Number.isFinite(owner) && !deps.pidExists(owner)) {
     const stale = `${paths.lockDir}.stale.${options.myPid}`;
     try {
+      // Rename is the compare-and-swap that claims a stale lock directory; write-file-atomic cannot move one.
       await deps.rename(paths.lockDir, stale);
       await deps.unlink(path.join(stale, "pid"));
       await deps.unlink(stale);
@@ -449,6 +450,7 @@ async function rotateLog(
   const stat = await deps.stat(filePath);
   if (!stat || stat.size <= maxBytes) return;
   try {
+    // Log rotation moves an existing file; there are no new bytes to write atomically.
     await deps.rename(filePath, `${filePath}.1`);
   } catch {
     /* ignore */

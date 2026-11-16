@@ -20,15 +20,14 @@ import {
   openSync,
   readFileSync,
   readlinkSync,
-  renameSync,
   rmSync,
-  writeFileSync,
   writeSync
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { resolveCodeGraphContextBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   writeErrorLine,
@@ -279,8 +278,7 @@ export function runCodeGraphWorker(
       refreshedAt: new Date().toISOString(),
       action
     };
-    writeFileSync(`${stateFile}.tmp`, `${JSON.stringify(state, null, 2)}\n`);
-    renameSync(`${stateFile}.tmp`, stateFile);
+    atomicWriteSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
     return indexed ? "updated" : "indexed";
   } catch (error) {
     writeErrorLine(

@@ -22,10 +22,12 @@
 // bounded so a stuck hook cannot leak disk.
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+
+import { atomicWrite } from "@simulatorlife/autodev-data/files";
 
 import {
   extractSkillReadPath,
@@ -180,10 +182,7 @@ async function writeSeenState({
   path: string;
   value: SeenState;
 }): Promise<void> {
-  await mkdir(STATE_DIR, { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  await writeFile(tmp, JSON.stringify(value));
-  await rename(tmp, filePath);
+  await atomicWrite(filePath, JSON.stringify(value));
 }
 
 function pruneKeys(keys: string[], keep: string[]): void {

@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
-  atomicWrite,
   compose,
   loadPortable,
   renderBridgeMcpCatalogue,
@@ -194,25 +193,6 @@ test("the portable Codex configuration exports its telemetry to OpenLIT without 
   // provider `env_key` names are not secrets: they name variables the agent
   // reads from its own environment.
   assert.doesNotMatch(source, /Bearer|OTLP_API_KEY/u);
-});
-
-test("atomic writes replace the target without leaving temporary files and skip unchanged rewrites", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "autodev-config-"));
-  try {
-    const output = join(directory, "config.toml");
-    atomicWrite(output, "value = 1\n", 0o600);
-    assert.equal(await readFile(output, "utf8"), "value = 1\n");
-    assert.deepEqual(await readdir(directory), ["config.toml"]);
-    const firstStat = lstatSync(output);
-
-    atomicWrite(output, "value = 1\n", 0o600);
-    assert.equal(lstatSync(output).ino, firstStat.ino);
-
-    atomicWrite(output, "value = 1\n", 0o644);
-    assert.equal(lstatSync(output).mode & 0o777, 0o644);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 });
 
 test("bridge MCP catalogues are deterministic and preserve launch authentication", async () => {

@@ -1,7 +1,13 @@
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { rename, rm, writeFile } from "node:fs/promises";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync
+} from "node:fs";
 import path from "node:path";
 
+import { atomicWrite } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
@@ -167,41 +173,43 @@ export interface RouterPersistenceOptions {
   onPostRestore?: ((parsed: Record<string, unknown>) => void) | undefined;
 }
 
-/** Whether a process with this id is still running. */
-function processRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+/** How long a state write's temporary file may sit before it counts as abandoned. */
+const ABANDONED_TEMPORARY_FILE_AGE_MS = 10 * 60_000;
+
+const TEMPORARY_FILE_SUFFIX = /^\d+$/u;
+
+/** write-file-atomic names its temporary file "<state>.<number>". */
+function isTemporaryStateFile(name: string, stateFileName: string): boolean {
+  return (
+    name.startsWith(stateFileName + ".") &&
+    TEMPORARY_FILE_SUFFIX.test(name.slice(stateFileName.length + 1))
+  );
 }
 
 /**
- * Remove the temporary files of state writes whose process is gone.
+ * Remove the temporary files of state writes that never finished.
  *
- * A write goes to `<state>.<pid>.<ms>.tmp` and is renamed over the state
- * file. A process that exited between the two -- a crash, a test process, the
- * router's fatal exit -- left its file behind, and nothing else ever removed
- * it. A running process's file may be mid-write, so it is left alone.
+ * A write goes to a temporary file beside the state file and is renamed over
+ * it. A process that was killed between the two -- a crash, a SIGKILL, a test
+ * process -- left its file behind, and nothing else ever removed it. A live
+ * write touches its file within milliseconds, so only a file untouched for
+ * ABANDONED_TEMPORARY_FILE_AGE_MS is removed.
  */
 function removeAbandonedTemporaryFiles(stateFile: string): void {
   const directory = path.dirname(stateFile);
-  const prefix = `${path.basename(stateFile)}.`;
+  const stateFileName = path.basename(stateFile);
   let names: string[];
   try {
     names = readdirSync(directory);
   } catch {
     return;
   }
+  const cutoff = Date.now() - ABANDONED_TEMPORARY_FILE_AGE_MS;
   for (const name of names) {
-    if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
-    const tail = name.slice(prefix.length);
-    const dot = tail.indexOf(".");
-    const pid = Number(dot === -1 ? tail : tail.slice(0, dot));
-    if (!Number.isInteger(pid) || pid <= 0 || processRunning(pid)) continue;
+    if (!isTemporaryStateFile(name, stateFileName)) continue;
+    const file = path.join(directory, name);
     try {
-      unlinkSync(path.join(directory, name));
+      if (statSync(file).mtimeMs < cutoff) unlinkSync(file);
     } catch {
       // Another process removed it first.
     }
@@ -291,16 +299,9 @@ export class RouterPersistence {
     }
   }
 
-  private async writeState(
-    targetFile: string,
-    temporaryFile: string
-  ): Promise<boolean> {
+  private async writeState(targetFile: string): Promise<boolean> {
     try {
-      await writeFile(temporaryFile, this.serialize(), {
-        encoding: "utf8",
-        mode: 0o600
-      });
-      await rename(temporaryFile, targetFile);
+      await atomicWrite(targetFile, this.serialize(), { mode: 0o600 });
       this.persistedStateUpdatedAt = new Date().toISOString();
       return true;
     } catch (error) {
@@ -310,9 +311,6 @@ export class RouterPersistence {
           ": " +
           errorMessage(error)
       );
-      // A write that never became the state file must not stay beside it:
-      // 98 of them, up to 29 MB each, had collected in CODEX_HOME.
-      await rm(temporaryFile, { force: true }).catch(() => undefined);
       return false;
     }
   }
@@ -323,12 +321,10 @@ export class RouterPersistence {
       this.persistTimeout = null;
     }
     const targetFile = this.getStateFile(file);
-    const temporaryFile =
-      targetFile + "." + process.pid + "." + Date.now() + ".tmp";
 
     this.persistChain = this.persistChain
       .catch(() => false)
-      .then(() => this.writeState(targetFile, temporaryFile));
+      .then(() => this.writeState(targetFile));
 
     return this.persistChain;
   }

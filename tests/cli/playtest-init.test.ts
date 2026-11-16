@@ -375,6 +375,45 @@ test("the benchmark's derived digests are checked, not trusted", () => {
   );
 });
 
+test("benchmark paths beginning with dots remain valid inside the integration directory", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const benchmarkFile = path.join(root, ".autodev", "..benchmark.json");
+  writeFileSync(
+    benchmarkFile,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      benchmarkId: "fixture",
+      rubricHash: "0".repeat(64)
+    })}\n`,
+    "utf8"
+  );
+  const configFile = path.join(root, ".autodev", PLAYTESTS_CONFIG_FILE);
+  const config = read(root, PLAYTESTS_CONFIG_FILE) as {
+    analysis: Record<string, unknown>;
+  };
+  config.analysis.benchmark = "..benchmark.json";
+  writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  assert.ok(
+    checkPlaytestIntegration(root).problems.some(
+      (problem) =>
+        problem.code === "hash-mismatch" &&
+        problem.file.endsWith("..benchmark.json")
+    )
+  );
+  writePlaytestHashes(root);
+  const written = JSON.parse(readFileSync(benchmarkFile, "utf8")) as Record<
+    string,
+    string
+  >;
+  assert.notEqual(written.rubricHash, "0".repeat(64));
+  assert.equal(
+    written.contentHash,
+    playtestBenchmarkContentHash(written as never)
+  );
+});
+
 test("a game without a binding is rejected instead of retaining a handwritten protocol path", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
