@@ -400,19 +400,37 @@ export const OBSOLETE_HOOKS = [
   "codex-claude-cli-responses-proxy.py"
 ] as const;
 export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
+/**
+ * The trust hashes Codex expects for the canonical hooks.
+ *
+ * Codex hashes each hook it is asked to run and refuses to run one whose hash
+ * is not trusted, so the installer has to write the hash the installed hook
+ * content hashes to. The key is the hook's position in the projected
+ * `hooks.json` -- `<event>:<group>:<hook>` -- and the value is the hash Codex
+ * computes for the materialized script.
+ *
+ * Codex computes that hash itself and records it in `[hooks.state]` in
+ * `$CODEX_HOME/config.toml` when it loads the hook, so the values are read
+ * back from there after a materialize run rather than computed here: the hash
+ * covers the hook script's content, which changes whenever a hook changes.
+ * A hook that is missing from this map is a hook the installer never trusts,
+ * and Codex will not run it.
+ */
 export const CANONICAL_HOOK_HASHES = {
-  "session_end:0:0":
-    "sha256:4f2e98c3213948038c7ac8c69c750121d5ec4a80dd6fb9661778d608b6b7865d",
   "pre_tool_use:0:0":
-    "sha256:5f1d5b28fdc75a6290e2dc8deecebe92ffaad5e7352e1122f02a1680e10f0567",
+    "sha256:7ac577f46abcb492b9e68887d1b4161ebe94c630e584ee7faba5b8c67b43e754",
   "pre_tool_use:1:0":
-    "sha256:f81073b7b43edd2b08ba8a6f8a07d3f269326f0b133157c8f5367851c99167ce",
+    "sha256:6b4570797d67d7d6588f75a9259f1130b525d9afd8ff59ef563558cfd13bd309",
+  "pre_tool_use:2:0":
+    "sha256:ae60c65e5df3105decbdae36dfd9aab04923a718d2d7b52e4e113801eac7f015",
+  "session_end:0:0":
+    "sha256:f0ab1b40d4481d128f3f3158d5c219ac3701d7108c1febf9c06ca787cb386e50",
   "session_start:0:0":
-    "sha256:ffe71c68625270b1a58ea48db245f1a4f35f9071c086be5988514a329b14933d",
-  "user_prompt_submit:0:0":
-    "sha256:e90b5998c2d5b47752bcb486784d5e66a32f92dbabda14b5d04e2f47282fe019",
+    "sha256:232fed476e86852e0e28311ef2deeeb10ad9fb0ecee3db2db7cd27f4f227779c",
   "subagent_start:0:0":
-    "sha256:d3796d1a79be308b1fd16b311ee343c7f0797c03f9a4fc267082ab2ffd53b596"
+    "sha256:bfd8149a981310cfe1ce1e9e8a24876a50e9ee827ee3a7711ec080c681664bcc",
+  "user_prompt_submit:0:0":
+    "sha256:57b83265447a5a23eff86cf99e5b2ce6e68af1fd845277a800f91c915588c108"
 } as const;
 
 const CONFIG_TOML_KEY_PREFIX = "config.toml:";
