@@ -9,20 +9,22 @@ it; its size decides whether you delegate.
 - **Standard or high-risk/cross-cutting** -- independent scopes, real
   uncertainty, or regression risk. Delegate substantive discovery,
   implementation, and validation to child agents. Read the always-enabled
-  `orchestration` skill in full before your first spawn: it is the sole
-  authority for delegation, the spawn call on each provider, child lifecycle,
-  recovery, workspace boundaries, and validation.
+  `orchestration` skill before your first spawn: it is the sole authority for
+  delegation, child lifecycle, recovery, workspace boundaries, and validation,
+  and its table of references says which of them your provider and situation
+  need.
 
 Re-size when the evidence changes. If work you started alone turns out to be
 Standard, read the skill and delegate what remains. If the skill or the
 delegation surface is unavailable when you need it, report that capability
 failure instead of silently substituting a different workflow.
 
-On Codex the spawn and lifecycle tools (`multi_agent_v1__spawn_agent`,
-`multi_agent_v1__wait_agent`, ...) hang off the `tools` global inside the
-`exec` cell, not the top-level tool list. A provider CLI bridge that serves its
-own delegation tool states the exact call in a "Delegation on this provider"
-section of these instructions.
+A provider CLI bridge that serves its own delegation tool states the exact
+call in a "Delegation on this provider" section of these instructions. Without
+that section you delegate on Codex, where the spawn and lifecycle tools
+(`multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`, ...) hang off the
+`tools` global inside the `exec` cell, not the top-level tool list; the skill's
+`references/codex-code-mode.md` gives the call.
 
 ## Keep the context small
 

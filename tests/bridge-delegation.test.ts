@@ -89,9 +89,11 @@ test("the shared prompt no longer names the shim in a shape no CLI has", () => {
   // not tell a bridged model to look for that name.
   // The delegation surface lives in the orchestration skill, which a root
   // reads before its first spawn and a bridge inlines into its role prompt.
-  const prompt = read(".rulesync/skills/orchestration/SKILL.md");
+  const prompt = read(
+    ".rulesync/skills/orchestration/references/codex-code-mode.md"
+  );
   assert.doesNotMatch(prompt, /the model sees\s*`tools\.mcp__autodev_spawn/);
-  assert.match(prompt, /"Delegation on this provider"/);
+  assert.match(prompt, /"Delegation on\s+this provider"/);
   // The catalog path moved; the prompt still pointed at the old one.
   assert.doesNotMatch(prompt, /scripts\/codex\/catalogs/);
   assert.match(prompt, /config\/catalogs\//);

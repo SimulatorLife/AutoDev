@@ -1482,7 +1482,7 @@ export function createOpencliBridge(
     const recorded = ledger.find(scope, prefixDigests(segments));
     const instructions =
       typeof payload.instructions === "string" ? payload.instructions : "";
-    const role = orchestrator ? roleInstructions(agentRole) : null;
+    const role = orchestrator ? roleInstructions(agentRole, "web-chat") : null;
     // Both sites narrow MCP tool descriptions before omitting transcript.
     // ChatGPT additionally attempts MCP-only compaction to stay in typed mode.
     // Rendered only when the turn needs it: a continued turn sends the delta,

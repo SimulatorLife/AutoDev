@@ -111,16 +111,42 @@ export function orchestratorBootstrapHeading(): string {
 }
 
 /**
- * The canonical orchestration skill, inlined from its installed directory.
+ * How a bridged orchestrator delegates, which decides the orchestration
+ * skill references it needs: a provider CLI delegates through the bridge's
+ * spawn server, a web-chat site through Codex's code-mode `exec` at a minute a
+ * turn. The bridge knows which it is, so it inlines those references rather
+ * than have the model read every provider's rules.
+ */
+export type OrchestratorSurface = "provider-bridge" | "web-chat";
+
+const SURFACE_REFERENCES: Readonly<
+  Record<OrchestratorSurface, readonly string[]>
+> = Object.freeze({
+  "provider-bridge": ["provider-bridges.md"],
+  "web-chat": ["codex-code-mode.md", "web-chat.md"]
+});
+
+/**
+ * The canonical orchestration skill, inlined from its installed directory,
+ * with the references this surface always needs.
  *
- * The skill names its lifecycle procedures by relative `references/` paths, so
+ * The skill names its other procedures by relative `references/` paths, so
  * the section also names the installed directory those paths resolve against;
  * the body alone would send the provider to paths it cannot find.
  */
-function orchestrationSkillSection(): string {
+function orchestrationSkillSection(
+  surface: OrchestratorSurface | undefined
+): string {
   const directory = installedSkillDirectory("orchestration");
   const body = readFileSync(path.join(directory, "SKILL.md"), "utf8").trim();
-  return `\n\n## Canonical orchestration skill\n\nInstalled at ${directory}; resolve its relative \`references/\` paths against that directory.\n\n${body}`;
+  const references = (surface ? SURFACE_REFERENCES[surface] : []).map(
+    (name) =>
+      `### references/${name} (inlined; do not read it again)\n\n${readFileSync(path.join(directory, "references", name), "utf8").trim()}`
+  );
+  return [
+    `\n\n## Canonical orchestration skill\n\nInstalled at ${directory}; resolve its relative \`references/\` paths against that directory.\n\n${body}`,
+    ...references
+  ].join("\n\n");
 }
 
 /**
@@ -130,15 +156,19 @@ function orchestrationSkillSection(): string {
  * that composition explicit prevents Claude's replacement system prompt from
  * accidentally receiving the base twice while the other bridges omit it.
  */
-export function roleInstructions(role: string | null | undefined): string {
+export function roleInstructions(
+  role: string | null | undefined,
+  surface?: OrchestratorSurface
+): string {
   const key = isOrchestratorRole(role) ? "orchestrator" : "leaf";
   const contractKey = isOrchestratorRole(role) ? "orchestrator" : role;
   const contract = roleContract(contractKey);
-  const cacheKey = `${key}:${contractKey ?? "default"}`;
+  const cacheKey = `${key}:${contractKey ?? "default"}:${surface ?? ""}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
   const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
-  const canonical = key === "orchestrator" ? orchestrationSkillSection() : "";
+  const canonical =
+    key === "orchestrator" ? orchestrationSkillSection(surface) : "";
   const codeSearch =
     contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&
     contract.mcp.includes(MCP_SERVER_LSP) &&
@@ -168,7 +198,9 @@ export function roleInstructions(role: string | null | undefined): string {
  * Compose the complete prompt sent to a bridge-owned CLI.
  *
  * Every bridge gets the same shared base, workspace context, and role section;
- * only the downstream CLI invocation differs. Native Codex role configs use
+ * only the downstream CLI invocation differs. A bridge-owned CLI delegates
+ * through the bridge's spawn server, so an orchestrator gets the
+ * provider-bridge references inlined. Native Codex role configs use
  * render-agent-configs.py to materialize this same base+leaf+role-fragment composition.
  */
 export function composeProviderPrompt(
@@ -179,5 +211,5 @@ export function composeProviderPrompt(
     typeof cwd === "string" && cwd.trim()
       ? `\n\n## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`
       : "";
-  return `${BASE_PROMPT}${workspace}\n\n${roleInstructions(role)}`;
+  return `${BASE_PROMPT}${workspace}\n\n${roleInstructions(role, "provider-bridge")}`;
 }

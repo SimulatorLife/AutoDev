@@ -1007,6 +1007,18 @@ test("orchestrator spawn session survives orphaned turn cleanup, leaf burst, and
     join(home, ".agents", "skills", "orchestration", "SKILL.md"),
     "# Orchestration\n"
   );
+  mkdirSync(join(home, ".agents", "skills", "orchestration", "references"));
+  writeFileSync(
+    join(
+      home,
+      ".agents",
+      "skills",
+      "orchestration",
+      "references",
+      "provider-bridges.md"
+    ),
+    "# Provider bridges\n"
+  );
   writeFileSync(join(agyHome, "config", "mcp_config.json"), "{}\n");
   writeFileSync(
     join(agyCliDir, "settings.json"),

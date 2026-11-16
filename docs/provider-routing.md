@@ -1967,12 +1967,29 @@ The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, role selection, and the per-provider spawn call. The
 orchestrator prompt is only a small bootstrap: root identity, task sizing, output
 bounds, and a pointer to the canonical policy. A root sizes its task first and does
-trivial/atomic work itself without reading the skill; it reads the skill in full
+trivial/atomic work itself without reading the skill; it reads the skill
 before its first spawn. Measured on Codex 0.154.0 with an isolated `CODEX_HOME`
 and the real root-delegation hook, this cut the hook's developer message from
 9,360 to about 5,700 characters, and a small task no longer pays a ~13.7k-character
 skill read that every later request re-sends (session 01a1e620: ~105k cumulative
-input tokens on a 22-request lint fix that never delegated). The native root
+input tokens on a 22-request lint fix that never delegated).
+
+The skill uses progressive disclosure. `SKILL.md` is a short core every
+provider needs (roles, complexity, delegation rules, waiting and context
+budget, integration) plus a table naming each `references/` file with the
+situation that needs it: `runtime-contract.md` (spawn, wait, park, close,
+commits), `codex-code-mode.md` (Codex-native GPT, MiniMax, opencli),
+`provider-bridges.md` (Claude, Antigravity, Copilot), `web-chat.md` (opencli
+sites), `recovery.md`, `validation.md`, `development-lifecycle.md`,
+`playtesting.md`, and `tool-names.md`. A delegating Codex-native root reads
+the core, the runtime contract and the code-mode reference: about 18.0k
+characters, down from 27.8k for the old `SKILL.md` plus runtime contract
+(`SKILL.md` alone went from 14,680 to 8,201). Where the serving provider is
+known, AutoDev points straight at its reference: the bridges' "Delegation on
+this provider" section names `provider-bridges.md`, and `roleInstructions(role,
+surface)` inlines `provider-bridges.md` for the Antigravity and Copilot CLIs
+and `codex-code-mode.md` plus `web-chat.md` for opencli, so those models never
+spend a turn reading them. The native root
 hook points at the skill and adds the recovery preflight; the Antigravity and
 Copilot bridges use `runtime/src/agents/bridge-role.ts` to assemble the same role prompt,
 inlining the skill body. Both read the skill only from its installed link,

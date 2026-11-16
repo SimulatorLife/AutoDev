@@ -1,13 +1,15 @@
 # Orchestration runtime contract
 
-Use this reference when creating, waiting for, recovering, resuming, or closing
-delegated agents.
+Read this before your first spawn: it governs creating, waiting for, parking,
+resuming, and closing delegated agents. After a capacity or admission failure,
+also read `references/recovery.md`.
 
 ## Delegation path
 
-Use the configured role-based `spawn_subagent` surface. Native code-mode
-providers use `exec` with `tools.multi_agent_v1__spawn_agent` and
-`{ agent_type, message }`.
+Use the delegation surface your provider offers: the bridge's call where your
+instructions have a "Delegation on this provider" section
+(`references/provider-bridges.md`), otherwise `tools.multi_agent_v1__spawn_agent`
+with `{ agent_type, message }` inside `exec` (`references/codex-code-mode.md`).
 
 Do not substitute `create_thread`, `fork_thread`, `handoff_thread`, or
 provider-private task APIs for the configured child path.
@@ -25,7 +27,7 @@ verified spawn history.
 
 Do not use filesystem state, global thread/task listings, telemetry, UI state,
 or another parent's output as ownership proof. Other orchestrators and their
-children are peers.
+children are peers. Never perform global cleanup.
 
 ## Concurrency and child lifecycle
 
@@ -83,7 +85,6 @@ When evicting under capacity pressure, evict (close) only the oldest
 parked/terminal children owned by this parent. Never evict, terminate, or
 interrupt active (running) children, and never touch foreign children owned
 by other parents. Never invoke `close_agent` as a cleanup step in wait or spawn scripts.
-
 ### Terminal result handling and partial results
 
 Treat `agent_id` as an opaque handle and pass the complete value from
@@ -102,27 +103,6 @@ Do not automatically retry a deterministic permission denial; correct the cause
 first and leave any retry to the parent. When terminal or errored sessions must
 be closed, ensure any useful partial findings produced by the child are
 collected and preserved rather than discarded.
-
-Bridge-dispatched spawn batches carry an injected current-parent recovery
-preflight: when this parent's open child handles (Codex's own spawn edges)
-plus the new children exceed the session limit, it closes errored or shut-down
-handles and evicts the oldest completed ones, never a running child, and
-reports each as a `recovery_status` line. A native `spawn_agent` call the
-model writes itself carries no preflight.
-
-On interruption or admission failure (`agent thread limit reached`):
-
-1. enumerate this parent's children with owner-scoped `list_agents` or `manage_subagents` when available
-2. otherwise use the exact child IDs from this parent's own spawn results and `<subagent_notification>` messages -- they are this parent's verified spawn history, including across compaction summaries
-3. preserve running children (a wait timeout never implies child failure or justifies termination)
-4. collect and preserve any available finished results or partial findings
-5. under capacity pressure, evict only this parent's oldest parked/terminal children to free capacity
-6. leave running or foreign children untouched
-7. retry the original delegation once if recovery freed capacity
-8. report the unavailable path if it still fails
-
-Never perform global cleanup. A spawn failure does not authorize silently taking
-over delegated implementation work.
 
 A new user request is a new assignment. Once a child's result has been
 integrated and no follow-up for the *current* request will reuse it, close it
@@ -146,7 +126,6 @@ outside it. Other agents edit the same checkout concurrently, so:
 - make a new commit; never `--amend` (the rules require approval for it)
 - write the commit as a separate command from any other work so the rule
   matches it
-
 ## Workspace and role resolution
 
 Keep delegated work in the parent-selected repository or worktree. Do not let
@@ -159,60 +138,3 @@ The selected `agent_type` must resolve through the installed
 `agents/<agent_type>.toml` contract, including that role's configured skills
 and MCP servers. Report missing role/tool configuration rather than silently
 substituting another path.
-
-## Provider-specific behavior
-
-Provider bridges may implement the common contract differently but must preserve
-parent-owned child identity, bounded scope, explicit terminal-result handling,
-safe capacity recovery, and no global child cleanup.
-
-Antigravity's `invoke_subagent`/`manage_subagents` children are agy-owned
-subprocesses rather than router `autodev/<role>` children, so router
-per-session concurrency does not cover them. When the parent stream disappears
-mid-delegation, the bridge must report
-`INCOMPLETE_REASON_CLIENT_DISCONNECTED` rather than
-`INCOMPLETE_REASON_INTERRUPTED`.
-
-The router keeps a parent with active router-owned children in `subagent_wait`
-on its original provider so live-load routing can prefer idle providers. Child
-progress refreshes the parent's liveness; stale parents may age out normally
-after their children stop reporting.
-
-Report rate limits, stalls, provider failures, skipped roles, partial child
-results, and unavailable recovery surfaces explicitly.
-
-## Tool naming convention
-
-Every canonical AutoDev tool name follows `<namespace>__<tool>` with
-snake_case segments and a double-underscore separator (or a single bare
-snake_case segment, e.g. `exec`). The single owner of these names is
-`@simulatorlife/autodev-runtime/shared/tool-names`; bridges, hooks, the orchestrator prompt, and
-tests all import from there so a rename moves the whole surface together.
-
-| Family                                | Form                     | Examples                                                                                                                                                 |
-| ------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex code-mode meta-tool             | bare                     | `exec`                                                                                                                                                   |
-| Multi-agent delegation                | `multi_agent_v1__<tool>` | `multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`, `multi_agent_v1__close_agent`, `multi_agent_v1__resume_agent`, `multi_agent_v1__send_input` |
-| MCP tools                             | `mcp__<server>__<tool>`  | `mcp__lsp__lsp_goto_definition`, `mcp__cocoindex-code__search`, `mcp__autodev_spawn__spawn_subagent`                                                     |
-| Codex-native web research             | bare                     | `web_search`, `web_fetch`                                                                                                                                |
-| Codex App plugin (request_user_input) | bare                     | `request_user_input`                                                                                                                                     |
-
-The `<server>` segment of an MCP name is snake_case; the one historical
-exception is `openaiDeveloperDocs`, which is allowed in the canonical regex
-because it already ships in `.rulesync/mcp.jsonc`. A new server name must be
-snake_case unless it is a port of an existing third-party tool that already
-ships under its camelCase identity.
-
-CLI-required exceptions (PascalCase `WebSearch`/`WebFetch`/`Agent` from the
-Claude CLI, lowercase `bash`/`search_web`/`read_file`/`glob`/`grep` from the
-Antigravity CLI, lowercase `bash`/`shell`/`execute` from the Copilot CLI,
-`invoke_subagent` from Antigravity) live in `@simulatorlife/autodev-runtime/shared/tool-names` under
-`CLAUDE_NATIVE_TOOL_EXCEPTIONS`, `ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS`, and
-`COPILOT_NATIVE_TOOL_EXCEPTIONS`. The bridges translate them into the
-canonical surface; do not adopt their style for a new AutoDev tool.
-
-A guard rail in `tests/shared/tool-names.test.ts` fails the suite if anyone
-hard-codes a `multi_agent_v1__*` literal anywhere in `src/` outside
-`@simulatorlife/autodev-runtime/shared/tool-names`. The audit helper `auditToolNames(names)` classifies
-every string into `canonical`, `exception` (with provider), or `unrecognised`,
-and is the recommended surface for any new tool-name validation.

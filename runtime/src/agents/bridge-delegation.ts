@@ -94,6 +94,7 @@ export function bridgeDelegationInstruction(options: {
     "```json",
     delegationCall(reach),
     "```",
+    "The orchestration skill's `references/provider-bridges.md` holds the rules that apply to a bridged orchestrator; skip `references/codex-code-mode.md`, which is for Codex's own `exec` surface.",
     'One call may carry a whole batch of children in `children`; each child needs the full context it needs, because a child cannot see this conversation. Compatible completed subagents can be parked and reused for follow-up tasks by specifying `target: "<child_id>" ` instead of `agent_type`. Do not close or terminate running discovery/worker subagents; allow them to finish or prompt them for a summary of findings so far.'
   ].join("\n\n");
 }

@@ -170,7 +170,10 @@ test("the Antigravity bridge tells an orchestrator the delegation call its CLI c
   // The shared policy still reaches the model: the delegation section names
   // the surface the provider offers rather than only Codex's own.
   assert.match(prompt, /## Delegation/);
-  assert.match(prompt, /Use the delegation surface your provider actually offers/);
+  // The bridge knows it is a provider CLI, so it inlines that reference
+  // and leaves out Codex's own code-mode surface.
+  assert.match(prompt, /### references\/provider-bridges\.md \(inlined/);
+  assert.doesNotMatch(prompt, /### references\/codex-code-mode\.md/);
 });
 
 test("a turn the bridge cannot delegate in is told nothing about delegating", async () => {

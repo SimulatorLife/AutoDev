@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const skill = readFileSync(
   fileURLToPath(
-    new URL("../.rulesync/skills/orchestration/SKILL.md", import.meta.url)
+    new URL("../.rulesync/skills/orchestration/references/playtesting.md", import.meta.url)
   ),
   "utf8"
 );

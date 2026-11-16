@@ -348,8 +348,11 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
   }
 });
 
-test("the orchestrator prompt teaches the canonical code-mode spawn path", () => {
-  const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE);
+test("a web-chat orchestrator is taught the canonical code-mode spawn path", () => {
+  // opencli roots delegate through Codex's own `exec`, so the bridge inlines
+  // the code-mode reference with the skill instead of making the model read it
+  // at a minute a turn.
+  const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE, "web-chat");
   // Verified against a live Codex 0.153.1 and against recorded rollouts of
   // GPT-served turns that spawned successfully. Codex runs these models in code
   // mode: there is no spawn tool in the request, only an `exec` tool whose
@@ -360,22 +363,12 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   // The role travels as `agent_type`; `agent` is accepted and silently ignored,
   // producing a generic agent instead of the requested role.
   assert.match(orchestrator, /agent_type/);
-  assert.match(orchestrator, /Promise\.all/);
-  // The provider-specific bootstrap keeps the concrete batched spawn pattern.
-  assert.match(orchestrator, /batched `await Promise\.allSettled/);
-  assert.match(orchestrator, /Promise\.allSettled/);
-  // The parent host may not list the role MCP, while the routed provider does.
-  assert.match(orchestrator, /Root and child MCP capabilities can differ/);
-  assert.match(
-    orchestrator,
-    /do not infer exposure from root tools or telemetry/
-  );
-  assert.match(orchestrator, /browser-tester.*Playwright/);
+  assert.match(orchestrator, /batched\s+`await Promise\.allSettled/);
+  assert.match(orchestrator, /### references\/web-chat\.md \(inlined/);
+  assert.doesNotMatch(orchestrator, /### references\/provider-bridges\.md/);
   assert.match(orchestrator, /provider-bridge shim, not a Codex MCP server/);
-  // Provider-specific bootstrap stays here; generic child lifecycle belongs to
-  // the canonical orchestration runtime contract rather than a second prompt.
+  // Generic child lifecycle stays in the runtime contract the skill names.
   assert.doesNotMatch(orchestrator, /Wait timeouts and running children/);
-  assert.doesNotMatch(orchestrator, /Code-mode delegation & polling reference/);
   const runtimeContract = read(
     ".rulesync/skills/orchestration/references/runtime-contract.md"
   );
@@ -391,15 +384,56 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   );
   assert.match(runtimeContract, /minutes when appropriate.*repeated short/);
   assert.match(runtimeContract, /Never perform global cleanup/);
+});
+
+test("the orchestration skill core names each reference with the situation that needs it", () => {
+  const skill = read(".rulesync/skills/orchestration/SKILL.md");
+  for (const reference of [
+    "runtime-contract",
+    "codex-code-mode",
+    "provider-bridges",
+    "web-chat",
+    "recovery",
+    "validation",
+    "development-lifecycle",
+    "playtesting",
+    "tool-names"
+  ])
+    assert.match(
+      skill,
+      new RegExp(String.raw`\| \`references/${reference}\.md\` \| \S`),
+      reference
+    );
+  // Provider-specific rules live in their references, not the core every
+  // provider reads.
+  assert.doesNotMatch(skill, /round trip through a\s+web chat/);
+  assert.doesNotMatch(skill, /INCOMPLETE_REASON_CLIENT_DISCONNECTED/);
+  assert.doesNotMatch(skill, /MachPortRendezvousServer/);
+  assert.ok(skill.length < 9000, `SKILL.md is ${skill.length} chars`);
+  // The parent host may not list the role MCP, while the routed provider does.
+  const validation = read(
+    ".rulesync/skills/orchestration/references/validation.md"
+  );
+  assert.match(validation, /Root and child MCP capabilities can differ/);
+  assert.match(
+    validation,
+    /do not infer exposure from root tools or\s+telemetry/
+  );
+  assert.match(validation, /`browser-tester` -> Playwright/);
   // The dedicated runner remains restricted to trusted Runtime context.
-  assert.match(orchestrator, /Playtest requires Runtime-bound authorization/);
+  assert.match(
+    read(".rulesync/skills/orchestration/references/playtesting.md"),
+    /Playtest requires Runtime-bound authorization/
+  );
 });
 
 test("the orchestration skill tells the model to quote a spawn message so Markdown cannot break it", () => {
   // Observed 2026-09-24: a spawn message written as a template literal
   // contained `claude-opus-5-5` in backticks; the first backtick ended the
   // literal and the exec cell failed with "Unexpected identifier 'claude'".
-  const prompt = read(".rulesync/skills/orchestration/SKILL.md");
+  const prompt = read(
+    ".rulesync/skills/orchestration/references/codex-code-mode.md"
+  );
   assert.match(prompt, /double-quoted JavaScript string/);
   assert.match(prompt, /never as a template literal/);
 });

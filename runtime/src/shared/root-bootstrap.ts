@@ -76,7 +76,7 @@ export function buildRootOrchestratorBootstrap({
     ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER;
 
   const skill = existsSync(skillFile)
-    ? `\n\n## Canonical orchestration skill\n\nRead the installed \`orchestration\` skill in full before your first spawn; a trivial task you do yourself does not need it. Source: ${skillFile}; resolve its relative \`references/\` paths against ${skillDirectory}.`
+    ? `\n\n## Canonical orchestration skill\n\nRead the installed \`orchestration\` skill before your first spawn, and only the references it names for your situation. Source: ${skillFile}; resolve its relative \`references/\` paths against ${skillDirectory}.`
     : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;
   const codeSearch = existsSync(codeSearchFile)
     ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
