@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 
@@ -1068,4 +1069,59 @@ export async function createCodexStateCollector(
   const collector = new CodexStateCollector({ ...config, ...overrides });
   await collector.collectSnapshot();
   return collector;
+}
+
+/** One child thread a parent spawned and Codex has not closed yet. */
+export interface OpenChildThread {
+  childId: string;
+  role: string | null;
+  workspace: string | null;
+}
+
+const OPEN_CHILD_THREADS_SQL = `SELECT e.child_thread_id AS child_id, t.agent_role AS role, t.cwd AS workspace
+FROM thread_spawn_edges e LEFT JOIN threads t ON t.id = e.child_thread_id
+WHERE e.parent_thread_id = ? AND e.status = 'open'
+ORDER BY t.created_at_ms ASC`;
+
+/**
+ * The child threads `parentThreadId` still holds open, oldest first.
+ *
+ * Codex records every `spawn_agent` as a `thread_spawn_edges` row and flips it
+ * to `closed` only on `close_agent`, so an open edge is exactly a handle that
+ * still occupies one of the parent's `max_concurrent_threads_per_session`
+ * slots. This is the one durable answer to "which children does this parent
+ * own": it survives compaction, a provider hop to another bridge process and
+ * a bridge restart, none of which a bridge's in-memory record does.
+ *
+ * Synchronous so a bridge can consult it while it assembles a turn. An absent
+ * database or schema yields no children, never an error.
+ */
+export function readOpenChildThreads(
+  parentThreadId: string,
+  databasePath: string = loadCodexStateCollectorConfig().path
+): OpenChildThread[] {
+  const parent = parentThreadId.trim();
+  if (!parent || !existsSync(databasePath)) return [];
+  const sqlite = process.getBuiltinModule("node:sqlite");
+  let database: DatabaseSync | null = null;
+  try {
+    database = new sqlite.DatabaseSync(databasePath, { readOnly: true });
+    return rows(database.prepare(OPEN_CHILD_THREADS_SQL).all(parent)).flatMap(
+      (row): OpenChildThread[] => {
+        const childId = stringOrNull(rowValue(row, "child_id"));
+        if (!childId) return [];
+        return [
+          {
+            childId,
+            role: stringOrNull(rowValue(row, "role")),
+            workspace: stringOrNull(rowValue(row, "workspace"))
+          }
+        ];
+      }
+    );
+  } catch {
+    return [];
+  } finally {
+    database?.close();
+  }
 }

@@ -113,6 +113,54 @@ prefix_rule(
     justification = "Force pushing can overwrite remote history. Ask the user before force pushing.",
 )
 
+# Let agents record their own work. Codex's workspace-write sandbox keeps
+# `<root>/.git` read-only, so `git add` and `git commit` fail with
+# `.git/index.lock: Operation not permitted` inside it. An `allow` rule runs
+# exactly these local, non-destructive index/history writes outside the sandbox;
+# every other command still sees `.git` read-only, so it cannot plant hooks or
+# rewrite `.git/config`. Prefixes are matched from the first token, so
+# `git -c ... commit` and `env ... git commit` stay sandboxed. Push is not here:
+# publishing stays subject to the normal approval policy. If the repository
+# ever configures commit hooks that live in the worktree (core.hooksPath,
+# husky), they run unsandboxed under this rule; review that before adding one.
+prefix_rule(
+    pattern = ["git", ["add", "commit", "mv", "rm"]],
+    decision = "allow",
+    justification = "Staging and committing the agent's own changes needs write access to .git, which workspace-write keeps read-only.",
+    match = [
+        "git add runtime/src/agents/spawn-tools.ts",
+        "git commit -m message",
+        "git mv old.ts new.ts",
+        "git rm --cached file",
+    ],
+    not_match = [
+        "git push",
+        "git -c core.hooksPath=x commit",
+    ],
+)
+prefix_rule(
+    pattern = ["git", "restore", "--staged"],
+    decision = "allow",
+    justification = "Unstaging a path only edits the index and never touches the working tree.",
+)
+prefix_rule(
+    pattern = ["git", "switch", ["-c", "--create"]],
+    decision = "allow",
+    justification = "Creating a branch from the current HEAD keeps every uncommitted change.",
+)
+prefix_rule(
+    pattern = ["git", "worktree", "add"],
+    decision = "allow",
+    justification = "Adding a worktree writes only new Git metadata and a new checkout.",
+)
+# Amending rewrites a commit that may not be this agent's: other agents commit
+# to the same branch concurrently. The most restrictive matching rule wins.
+prefix_rule(
+    pattern = ["git", "commit", "--amend"],
+    decision = "prompt",
+    justification = "Amending can rewrite another agent's commit on a shared branch. Make a new commit instead.",
+)
+
 # Protect the host from raw-disk and superuser destruction. Targeted, tracked
 # cleanup remains available through the installer and normal project tooling.
 prefix_rule(

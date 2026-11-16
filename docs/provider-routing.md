@@ -1816,13 +1816,32 @@ The router's `concurrency.scope` is `router-admitted-child-requests`:
 router, not open Codex app child handles or provider CLI processes. Cumulative
 `denials` and `spawnFailures` remain historical diagnostics. A Codex app
 `thread limit reached` error can therefore occur while this router reports zero
-active requests. The root delegation hook injects an executable current-parent
-recovery preflight: when Codex App `read_thread` is available, it reads only
-that parent's `collabAgentToolCall.receiverThreadIds`, waits each child, and
-calls `close_agent` only for terminal statuses. The same owner-scoped preflight
-is emitted before bridge-driven native spawn batches when the bridge has the
-parent session id. The owning orchestrator can therefore reclaim terminal
-handles before retrying; no global cleanup is safe.
+active requests.
+
+Ownership of child handles comes from Codex itself: `thread_spawn_edges` in
+`$CODEX_HOME/state_5.sqlite` keeps a parent's edge `open` until `close_agent`,
+so the open edges are exactly the handles holding that parent's slots
+(`readOpenChildThreads` in `runtime/src/router/state-collector.ts`). Bridge-driven
+spawn batches use it twice:
+
+- **Recovery preflight.** When the parent's open handles plus the new
+  children exceed `max_concurrent_threads_per_session`, the `exec` script
+  probes every owned child in parallel (`wait_agent`'s 10s minimum bounds the
+  whole preflight), closes errored or shut-down handles, then evicts the
+  oldest completed ones until the batch fits. Running children are never
+  closed; a batch that still cannot fit is refused before any spawn call.
+  Without pressure no preflight is emitted.
+- **Reuse ownership.** `openSpawnSession` adopts the parent's open edges into
+  the bridge's registry, so a parent that reaches a bridge after compaction,
+  a provider hop to another bridge process, or a restart can still reuse its
+  parked children. A child whose edge is closed is dropped. A
+  `<subagent_notification>` or spawn item in the payload only refines a
+  known child's status; it never establishes ownership.
+
+The earlier preflight read the parent's history through the Codex App
+`read_thread` tool, which the Codex App MCP does not expose, so it never
+recovered a handle: one session locked out 13 queued tasks after its two
+finished children kept both slots. No global cleanup is safe.
 
 The concurrency status carries the configured limit as `maxConcurrentThreadsPerSession`,
 and it has three states rather than two. A number is a config file that was read and

@@ -103,11 +103,17 @@ first and leave any retry to the parent. When terminal or errored sessions must
 be closed, ensure any useful partial findings produced by the child are
 collected and preserved rather than discarded.
 
-On interruption or admission failure, run any injected current-parent recovery
-preflight first when available, then:
+Bridge-dispatched spawn batches carry an injected current-parent recovery
+preflight: when this parent's open child handles (Codex's own spawn edges)
+plus the new children exceed the session limit, it closes errored or shut-down
+handles and evicts the oldest completed ones, never a running child, and
+reports each as a `recovery_status` line. A native `spawn_agent` call the
+model writes itself carries no preflight.
+
+On interruption or admission failure (`agent thread limit reached`):
 
 1. enumerate this parent's children with owner-scoped `list_agents` or `manage_subagents` when available
-2. otherwise recover IDs only from this parent's verified spawn history, including Codex App `read_thread` when needed
+2. otherwise use the exact child IDs from this parent's own spawn results and `<subagent_notification>` messages -- they are this parent's verified spawn history, including across compaction summaries
 3. preserve running children (a wait timeout never implies child failure or justifies termination)
 4. collect and preserve any available finished results or partial findings
 5. under capacity pressure, evict only this parent's oldest parked/terminal children to free capacity
@@ -117,6 +123,29 @@ preflight first when available, then:
 
 Never perform global cleanup. A spawn failure does not authorize silently taking
 over delegated implementation work.
+
+A new user request is a new assignment. Once a child's result has been
+integrated and no follow-up for the *current* request will reuse it, close it
+with `close_agent` before reporting: a parked handle from a finished request
+holds a concurrency slot that the next request needs.
+
+Report a child as started only after its `spawn_status` is `created` (or
+`reused`). A `rejected` status created no child; say so rather than describing
+work in progress.
+
+## Commits
+
+The root owns commits; delegated roles never stage or commit. Codex's
+workspace-write sandbox keeps `.git` read-only, and AutoDev's command rules
+(`agents/rules/default.rules`) run exactly `git add`, `git commit`, `git mv`,
+`git rm`, `git restore --staged`, `git switch -c` and `git worktree add`
+outside it. Other agents edit the same checkout concurrently, so:
+
+- stage only the paths this task changed (`git add <path>...`), never
+  `git add -A` or `git add .`
+- make a new commit; never `--amend` (the rules require approval for it)
+- write the commit as a separate command from any other work so the rule
+  matches it
 
 ## Workspace and role resolution
 

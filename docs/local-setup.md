@@ -708,6 +708,21 @@ PATH environments do not lose the backend executable. The rules also deny
 destructive Git history/worktree operations, force pushes and branch deletion,
 superuser/raw-disk commands, and catastrophic root/home recursive deletion.
 
+Agents can commit their own work. Codex's `workspace-write` sandbox keeps
+`<root>/.git` read-only inside the writable root, so a sandboxed `git commit`
+fails with `.git/index.lock: Operation not permitted`. An `allow` rule runs a
+matching command outside the sandbox, and the rules allow exactly `git add`,
+`git commit`, `git mv`, `git rm`, `git restore --staged`, `git switch -c` and
+`git worktree add`; `git commit --amend` needs approval. This is a rule rather
+than a `.git` entry in `sandbox_workspace_write.writable_roots` on purpose: a
+writable `.git` lets any sandboxed command plant a hook or a `core.fsmonitor`
+command that later runs unsandboxed in the operator's own shell. A rule
+matches from the first token, so `git -c ... commit` and `env ... git commit`
+stay sandboxed. Commit hooks stored in the worktree (`core.hooksPath`, husky)
+would run unsandboxed under this rule; none is configured. `git push` is not
+allowed and stays subject to the sandbox. `tests/config/command-rules.test.ts`
+pins each decision.
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`. The model

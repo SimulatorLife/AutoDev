@@ -33,6 +33,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
+import { readOpenChildThreads } from "@simulatorlife/autodev-runtime/router/state-collector";
 import {
   EXEC_TOOL,
   MULTI_AGENT_CLOSE_TOOL,
@@ -47,6 +48,11 @@ import {
 // The children keep running after the script returns.
 const DEFAULT_YIELD_MS = 60_000;
 
+// `wait_agent` rejects a timeout below 10s. A completed or errored child
+// answers at once, so this only bounds how long a running child is probed;
+// the probes run in parallel, so it bounds the whole preflight too.
+const WAIT_PROBE_MS = 10_000;
+
 export interface SpawnChild {
   agentType?: string | null;
   message: string;
@@ -55,21 +61,17 @@ export interface SpawnChild {
 
 export interface SpawnScriptOptions {
   yieldTimeMs?: number;
-  recoverParentId?: string | null;
-  preserveParked?: boolean;
+  /** This parent's open child handles, oldest first. */
+  ownedChildIds?: readonly string[];
   maxCapacity?: number | null;
 }
 
 export interface RecoveryScriptOptions {
-  preserveParked?: boolean;
-  maxCapacity?: number | null;
-  newSlotsNeeded?: number;
+  /** This parent's open child handles, oldest first. */
+  ownedChildIds: readonly string[];
+  maxCapacity: number | null;
+  newSlotsNeeded: number;
   reusedTargets?: readonly string[];
-}
-
-export interface SpawnResult {
-  agentId: string;
-  nickname: string | null;
 }
 
 /**
@@ -140,118 +142,79 @@ export function resolveAuthoritativeCapacity(): number | null {
 }
 
 /**
- * JavaScript preflight that recovers terminal child handles owned by the
- * current parent when the Codex App MCP is available inside code mode.
+ * The parent's open child handles, oldest first, from Codex's own state.
  *
- * This is intentionally owner-scoped and best-effort: a missing app tool or a
- * child that is still running must never block the real spawn batch or close a
- * foreign parent's child. The parent id is supplied by the bridge from the
- * router-generated conversation identity.
+ * Codex keeps a `thread_spawn_edges` row `open` until `close_agent`, so these
+ * are exactly the handles holding the parent's concurrency slots -- whichever
+ * bridge process, compaction or restart the parent has been through.
  */
-export function buildRecoveryScript(
-  parentId: string,
-  options: RecoveryScriptOptions = {}
-): string {
-  if (!parentId.trim()) return "";
-  const encodedParent = JSON.stringify(parentId.trim());
-  const preserveParked = options.preserveParked ?? true;
-  const maxCapacity =
-    options.maxCapacity === undefined
-      ? resolveAuthoritativeCapacity()
-      : options.maxCapacity;
-  const encodedCapacity = maxCapacity === null ? "null" : String(maxCapacity);
-  const newSlotsNeeded = options.newSlotsNeeded ?? 0;
-  const reusedTargets = options.reusedTargets ?? [];
+export function resolveOwnedChildIds(parentId: string): string[] {
+  return readOpenChildThreads(parentId).map((child) => child.childId);
+}
+
+/**
+ * JavaScript preflight that frees concurrency slots for a spawn batch.
+ *
+ * It is emitted only when the batch would not fit: this parent's open handles
+ * plus the new children exceed the session limit. Every owned child is probed
+ * in parallel (`wait_agent`'s minimum timeout bounds the whole preflight);
+ * errored or shut-down handles are closed, then the oldest completed (parked)
+ * handles are evicted until the batch fits. A running child is never closed,
+ * and a handle the batch is reusing is neither probed nor evicted. When the
+ * batch still cannot fit, the spawn calls are refused up front rather than
+ * left to fail one by one.
+ *
+ * The ids come from Codex's spawn edges for this parent only, so a foreign
+ * parent's child can never be touched. Returns an empty string when there is
+ * no pressure to relieve.
+ */
+export function buildRecoveryScript({
+  ownedChildIds,
+  maxCapacity,
+  newSlotsNeeded,
+  reusedTargets = []
+}: RecoveryScriptOptions): string {
+  const owned = [...new Set(ownedChildIds.map((id) => id.trim()))].filter(
+    Boolean
+  );
+  if (
+    maxCapacity === null ||
+    newSlotsNeeded <= 0 ||
+    owned.length + newSlotsNeeded <= maxCapacity
+  ) {
+    return "";
+  }
+  const reused = new Set(reusedTargets);
+  const probed = owned.filter((id) => !reused.has(id));
+  const reusedCount = owned.length - probed.length;
 
   return [
-    `const recoveryParentId = ${encodedParent};`,
-    `const recoveryPreserveParked = ${preserveParked ? "true" : "false"};`,
-    `const recoveryMaxCapacity = ${encodedCapacity};`,
-    `const recoveryNewSlotsNeeded = ${newSlotsNeeded};`,
-    `const recoveryReusedTargets = new Set(${JSON.stringify(reusedTargets)});`,
-    'const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);',
-    "const recoveryObjects = (value, seen = new Set()) => {",
-    '  if (!value || typeof value !== "object" || seen.has(value)) return [];',
-    "  seen.add(value);",
-    "  const found = [value];",
-    "  if (Array.isArray(value)) for (const item of value) found.push(...recoveryObjects(item, seen));",
-    "  else for (const item of Object.values(value)) found.push(...recoveryObjects(item, seen));",
-    "  return found;",
-    "};",
-    "const recoveryParse = (value) => {",
-    '  if (value && typeof value === "object") return value;',
-    '  if (typeof value !== "string") return null;',
-    "  try { return JSON.parse(value); } catch { return null; }",
-    "};",
-    "const recoverOwnedTerminalChildren = async () => {",
-    '  if (typeof tools.mcp__codex_app__read_thread !== "function") return;',
-    "  let history;",
-    "  try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 10, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; }",
-    "  const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; });",
-    '  const calls = recoveryObjects(parsed).filter((item) => item?.type === "collabAgentToolCall" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));',
-    '  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === "string" && id.trim())))];',
-    `  if (typeof tools.${MULTI_AGENT_WAIT_TOOL} !== "function" || typeof tools.${MULTI_AGENT_CLOSE_TOOL} !== "function") return;`,
-    "  const childStatuses = [];",
-    "  for (const childId of childIds) {",
-    "    let waited;",
-    `    try { waited = await tools.${MULTI_AGENT_WAIT_TOOL}({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }`,
-    "    const status = waited?.status?.[childId];",
-    "    childStatuses.push({ childId, status });",
+    `const recoveryOwned = ${JSON.stringify(probed)};`,
+    `const recoveryFree = ${maxCapacity} - ${reusedCount} - ${newSlotsNeeded};`,
+    "const recoveryProbes = await Promise.all(recoveryOwned.map(async (childId) => {",
+    `  try { const waited = await tools.${MULTI_AGENT_WAIT_TOOL}({ targets: [childId], timeout_ms: ${WAIT_PROBE_MS} }); return { childId, status: waited?.status?.[childId] }; }`,
+    '  catch { return { childId, status: "running" }; }',
+    "}));",
+    'const recoveryState = (status) => typeof status === "string" ? status : (status && typeof status === "object" ? Object.keys(status)[0] : "running");',
+    "const recoveryRunning = [];",
+    "const recoveryParked = [];",
+    "for (const probe of recoveryProbes) {",
+    "  const state = recoveryState(probe.status);",
+    '  if (state === "completed") recoveryParked.push(probe);',
+    '  else if (state === "errored" || state === "interrupted" || state === "shutdown") {',
+    `    try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: probe.childId }); text(JSON.stringify({ recovery_status: "closed", child_id: probe.childId, previous_status: probe.status })); } catch { recoveryRunning.push(probe); }`,
     "  }",
-    "  const activeChildren = [];",
-    "  const parkedChildren = [];",
-    "  const deadChildren = [];",
-    "  for (const entry of childStatuses) {",
-    "    const { childId, status } = entry;",
-    '    const isCompleted = (typeof status === "object" && status !== null && "completed" in status) || status === "completed";',
-    '    const terminal = typeof status === "string" ? recoveryTerminal.has(status) : Boolean(status && typeof status === "object" && Object.keys(status).some((key) => recoveryTerminal.has(key)));',
-    "    if (!terminal) {",
-    "      activeChildren.push(childId);",
-    "      continue;",
-    "    }",
-    "    if (isCompleted) {",
-    "      let completedResult = null;",
-    '      if (typeof status === "object" && status !== null && "completed" in status) {',
-    "        const comp = status.completed;",
-    '        if (typeof comp === "string") {',
-    "          completedResult = comp;",
-    '        } else if (comp && typeof comp === "object") {',
-    "          completedResult = comp.text ?? comp.content ?? JSON.stringify(comp);",
-    "        }",
-    "      }",
-    "      if (completedResult) {",
-    '        text(JSON.stringify({ recovery_status: "partial_result", child_id: childId, result: completedResult }));',
-    "      }",
-    "    }",
-    "    if (recoveryPreserveParked && isCompleted) {",
-    "      parkedChildren.push(entry);",
-    "    } else {",
-    "      deadChildren.push(entry);",
-    "    }",
-    "  }",
-    "  for (const { childId, status } of deadChildren) {",
-    `    try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { }`,
-    "  }",
-    '  if (typeof recoveryMaxCapacity === "number") {',
-    "    const reusedCount = parkedChildren.filter((p) => recoveryReusedTargets.has(p.childId)).length;",
-    "    const allowedEvictableParked = recoveryNewSlotsNeeded > 0 ? Math.max(0, recoveryMaxCapacity - activeChildren.length - reusedCount - recoveryNewSlotsNeeded) : Math.max(0, recoveryMaxCapacity - reusedCount);",
-    "    const evictable = parkedChildren.filter((p) => !recoveryReusedTargets.has(p.childId));",
-    "    while (evictable.length > allowedEvictableParked) {",
-    "      const oldest = evictable.shift();",
-    "      const idx = parkedChildren.indexOf(oldest);",
-    "      if (idx !== -1) parkedChildren.splice(idx, 1);",
-    `      try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: oldest.childId }); text(JSON.stringify({ recovery_status: "evicted", child_id: oldest.childId, previous_status: oldest.status })); } catch { }`,
-    "    }",
-    "    const availableSlots = recoveryMaxCapacity - activeChildren.length - reusedCount - parkedChildren.filter((p) => !recoveryReusedTargets.has(p.childId)).length;",
-    "    if (recoveryNewSlotsNeeded > 0 && availableSlots < recoveryNewSlotsNeeded) {",
-    "      globalThis.__autodev_capacity_refusal = true;",
-    "    }",
-    "  }",
-    "  for (const { childId, status } of parkedChildren) {",
-    '    text(JSON.stringify({ recovery_status: "parked", child_id: childId, previous_status: status }));',
-    "  }",
-    "};",
-    "await recoverOwnedTerminalChildren();",
+    '  else if (state !== "not_found") recoveryRunning.push(probe);',
+    "}",
+    "let recoveryHeld = recoveryRunning.length + recoveryParked.length;",
+    "while (recoveryHeld > recoveryFree && recoveryParked.length > 0) {",
+    "  const oldest = recoveryParked.shift();",
+    "  const result = oldest.status?.completed;",
+    '  if (typeof result === "string" && result) text(JSON.stringify({ recovery_status: "partial_result", child_id: oldest.childId, result }));',
+    `  try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: oldest.childId }); recoveryHeld -= 1; text(JSON.stringify({ recovery_status: "evicted", child_id: oldest.childId })); } catch { }`,
+    "}",
+    'for (const parked of recoveryParked) text(JSON.stringify({ recovery_status: "parked", child_id: parked.childId }));',
+    "if (recoveryHeld > recoveryFree) globalThis.__autodev_capacity_refusal = true;",
     ""
   ].join("\n");
 }
@@ -260,8 +223,7 @@ export function buildSpawnScript(
   children: readonly SpawnChild[],
   {
     yieldTimeMs = DEFAULT_YIELD_MS,
-    recoverParentId = null,
-    preserveParked = true,
+    ownedChildIds = [],
     maxCapacity = resolveAuthoritativeCapacity()
   }: SpawnScriptOptions = {}
 ): string {
@@ -293,15 +255,12 @@ export function buildSpawnScript(
     .map((c) => c.target)
     .filter((t): t is string => typeof t === "string" && Boolean(t.trim()));
 
-  const recovery =
-    recoverParentId === null
-      ? ""
-      : buildRecoveryScript(recoverParentId, {
-          preserveParked,
-          maxCapacity,
-          newSlotsNeeded,
-          reusedTargets
-        });
+  const recovery = buildRecoveryScript({
+    ownedChildIds,
+    maxCapacity,
+    newSlotsNeeded,
+    reusedTargets
+  });
 
   const lines = [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
@@ -309,7 +268,7 @@ export function buildSpawnScript(
     `const tasks = ${JSON.stringify(taskPayloads)};`
   ];
 
-  if (!hasReused && recoverParentId === null) {
+  if (!hasReused && !recovery) {
     lines.push(
       `const out = await Promise.allSettled(tasks.map((t) => tools.${MULTI_AGENT_SPAWN_TOOL}(t)));`,
       `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
@@ -339,53 +298,6 @@ export function buildSpawnScript(
   }
 
   return lines.join("\n");
-}
-
-/**
- * The `{ agent_id, nickname }` objects a spawn batch returned.
- *
- * Codex wraps the script's output in a `custom_tool_call_output` whose `output`
- * is a list of `input_text` parts: a "Script completed ..." preamble, then one
- * part per `text()` call. Anything that does not parse as an object carrying an
- * `agent_id` is skipped rather than treated as an error, so the preamble and
- * any stray diagnostic line cost nothing.
- */
-export function parseSpawnResults(output: unknown): SpawnResult[] {
-  const parts = Array.isArray(output)
-    ? output
-        .map((part: unknown) =>
-          typeof part === "string"
-            ? part
-            : isRecord(part)
-              ? part.text
-              : undefined
-        )
-        .filter((text): text is string => typeof text === "string")
-    : [typeof output === "string" ? output : ""];
-  const results: SpawnResult[] = [];
-  for (const part of parts) {
-    for (const line of part.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("{")) continue;
-      try {
-        const parsed: unknown = JSON.parse(trimmed);
-        if (
-          isRecord(parsed) &&
-          typeof parsed.agent_id === "string" &&
-          parsed.agent_id.trim()
-        ) {
-          results.push({
-            agentId: parsed.agent_id,
-            nickname:
-              typeof parsed.nickname === "string" ? parsed.nickname : null
-          });
-        }
-      } catch {
-        // Not a result line; the script may legitimately text() other things.
-      }
-    }
-  }
-  return results;
 }
 
 /**
@@ -493,8 +405,7 @@ export function buildSpawnToolCallItem(
     call_id: callId,
     name: EXEC_TOOL,
     input: buildSpawnScript(children, {
-      recoverParentId: parentId,
-      preserveParked: true,
+      ownedChildIds: resolveOwnedChildIds(parentId),
       maxCapacity: resolveAuthoritativeCapacity()
     }),
     status: "completed"

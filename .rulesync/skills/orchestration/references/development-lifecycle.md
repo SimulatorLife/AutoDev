@@ -84,7 +84,7 @@ Report completed validation, unavailable evidence, and remaining known risk.
 
 ## 8. Commit
 
-Commit the completed change to `main` with a concise message and push it to the
-remote repository.
+Commit the completed change to `main` with a concise message, staging only the
+paths this task changed (see the runtime contract's Commits section).
 
-**Gate:** the completed repository state is committed and pushed
+**Gate:** the completed repository state is committed

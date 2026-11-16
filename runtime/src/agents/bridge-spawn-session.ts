@@ -1,4 +1,8 @@
 import {
+  type OpenChildThread,
+  readOpenChildThreads
+} from "@simulatorlife/autodev-runtime/router/state-collector";
+import {
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER
 } from "@simulatorlife/autodev-runtime/router/subagents";
@@ -127,6 +131,8 @@ export interface SpawnRegistryOptions {
   maxSessions?: number;
   idleMs?: number;
   now?: () => number;
+  /** The parent's open child handles; Codex's spawn edges by default. */
+  openChildren?: (parentId: string) => OpenChildThread[];
 }
 
 // Defence in depth only: every turn closes its own session in a finally block,
@@ -319,6 +325,7 @@ export class SpawnSessionRegistry {
     "closed" | "expired" | "evicted"
   >();
   private readonly verifiedChildren = new Map<string, ChildSessionRecord>();
+  private readonly openChildren: (parentId: string) => OpenChildThread[];
 
   private setBounded<V>(
     map: Map<string, V>,
@@ -354,40 +361,87 @@ export class SpawnSessionRegistry {
     return true;
   }
 
-  scanAndRegisterChildren(
+  /**
+   * Make this parent's ownership match Codex's own record of it.
+   *
+   * Ownership is what Codex's spawn edges say, not what this process happens
+   * to remember: a parent reaches a bridge after compaction, after a provider
+   * hop from another bridge process, or after a restart, and each of those
+   * used to leave its children "not a verified subagent owned by this
+   * session". Every open edge becomes a record (parked until the payload says
+   * otherwise); a record whose edge is no longer open was closed and is
+   * dropped, so it can never be offered for reuse.
+   */
+  adoptOpenChildren(parentId: string, workspace: string | null): void {
+    const open = this.openChildren(parentId);
+    const openIds = new Set(open.map((child) => child.childId));
+    for (const [childId, record] of this.verifiedChildren) {
+      if (record.parentId === parentId && !openIds.has(childId)) {
+        this.verifiedChildren.delete(childId);
+      }
+    }
+    for (const child of open) {
+      const existing = this.verifiedChildren.get(child.childId);
+      if (existing) {
+        if (existing.role === "default" && child.role) {
+          existing.role = child.role;
+        }
+        if (!existing.workspace && child.workspace) {
+          existing.workspace = child.workspace;
+        }
+        continue;
+      }
+      this.registerChildSession({
+        childId: child.childId,
+        parentId,
+        role: child.role ?? "default",
+        workspace: child.workspace ?? workspace ?? "",
+        status: "parked"
+      });
+    }
+  }
+
+  /**
+   * Refine the status (and role) of children this parent already owns from
+   * what the turn's payload reports about them.
+   *
+   * The payload never establishes ownership: a notification or spawn item
+   * naming a child Codex has no open edge for -- quoted text, a foreign
+   * transcript, a closed handle -- changes nothing.
+   */
+  refineChildStatuses(
     sessionKey: string,
     workspace: string | null,
     payload: unknown
   ): void {
-    const records = scanPayloadChildren(payload, sessionKey, workspace);
-    for (const record of records) {
+    // A spawn item says "running"; a later notification says how it ended.
+    // Whatever order the scan meets them in, the ending wins.
+    const reported = new Map<string, ChildSessionRecord["status"]>();
+    for (const record of scanPayloadChildren(payload, sessionKey, workspace)) {
       const existing = this.verifiedChildren.get(record.childId);
-      if (existing) {
-        if (
-          record.status !== "running" ||
-          (existing.status !== "completed" && existing.status !== "parked")
-        ) {
-          existing.status = record.status;
-        }
-        if (record.role !== "default") {
-          existing.role = record.role;
-        }
-        if (record.workspace && !existing.workspace) {
-          existing.workspace = record.workspace;
-        }
-      } else {
-        this.registerChildSession(record);
+      if (!existing || existing.parentId !== sessionKey) continue;
+      if (record.status !== "running" || !reported.has(record.childId)) {
+        reported.set(record.childId, record.status);
       }
+      if (record.role !== "default") {
+        existing.role = record.role;
+      }
+    }
+    for (const [childId, status] of reported) {
+      const existing = this.verifiedChildren.get(childId);
+      if (existing) existing.status = status;
     }
   }
   constructor({
     maxSessions = DEFAULT_MAX_SESSIONS,
     idleMs = DEFAULT_IDLE_MS,
-    now = () => Date.now()
+    now = () => Date.now(),
+    openChildren = readOpenChildThreads
   }: SpawnRegistryOptions = {}) {
     this.maxSessions = maxSessions;
     this.idleMs = idleMs;
     this.now = now;
+    this.openChildren = openChildren;
   }
 
   /** Whether this turn may collect delegation state at all. */
@@ -685,12 +739,15 @@ export function openSpawnSession(
   if (session === null) return null;
   if (!SpawnSessionRegistry.canHold(session, scope)) return null;
   registry.open(session, options);
-  if (options.payload) {
-    registry.scanAndRegisterChildren(
-      session,
-      options.workspace ?? null,
-      options.payload
-    );
+  if (options.orchestrator) {
+    registry.adoptOpenChildren(session, options.workspace ?? null);
+    if (options.payload) {
+      registry.refineChildStatuses(
+        session,
+        options.workspace ?? null,
+        options.payload
+      );
+    }
   }
   return session;
 }

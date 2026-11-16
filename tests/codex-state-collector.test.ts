@@ -8,6 +8,7 @@ import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/ro
 import {
   CodexStateCollector,
   loadCodexStateCollectorConfig,
+  readOpenChildThreads,
   type SqliteBinding,
   type SqliteDatabase,
   type SqliteRow
@@ -471,4 +472,29 @@ test("live poll delivers subsequent snapshots to subscribers without blocking", 
     received >= 1,
     "subscriber must be invoked at least once by the poll"
   );
+});
+
+test("readOpenChildThreads returns only the parent's open spawn edges, oldest first", () => {
+  const sqlite = process.getBuiltinModule("node:sqlite");
+  const file = join(
+    mkdtempSync(join(tmpdir(), "codex-state-")),
+    "state_5.sqlite"
+  );
+  const database = new sqlite.DatabaseSync(file);
+  database.exec(`
+    CREATE TABLE threads (id TEXT PRIMARY KEY, agent_role TEXT, cwd TEXT, created_at_ms INTEGER);
+    CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL);
+    INSERT INTO threads VALUES ('newer', 'validator', '/repo', 20), ('older', 'worker', '/repo', 10), ('closed', 'worker', '/repo', 5), ('foreign', 'worker', '/repo', 1);
+    INSERT INTO thread_spawn_edges VALUES ('parent-a', 'newer', 'open'), ('parent-a', 'older', 'open'), ('parent-a', 'closed', 'closed'), ('parent-b', 'foreign', 'open'), ('parent-a', 'no-thread-row', 'open');
+  `);
+  database.close();
+
+  assert.deepEqual(readOpenChildThreads("parent-a", file), [
+    { childId: "no-thread-row", role: null, workspace: null },
+    { childId: "older", role: "worker", workspace: "/repo" },
+    { childId: "newer", role: "validator", workspace: "/repo" }
+  ]);
+  assert.deepEqual(readOpenChildThreads("parent-c", file), []);
+  assert.deepEqual(readOpenChildThreads("parent-a", `${file}.missing`), []);
+  assert.deepEqual(readOpenChildThreads("  ", file), []);
 });
