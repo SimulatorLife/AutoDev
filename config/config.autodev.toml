@@ -23,9 +23,16 @@ background_terminal_max_timeout = 600000
 
 [sandbox_workspace_write]
 # Permit diagnostics against localhost services from workspace-write sessions.
-# External filesystem inspection for read-only roles is granted explicitly by
-# those roles' danger-full-access policy and read-only instructions.
 network_access = true
+# Shared package-manager caches outside the workspace: the pnpm store, the npm
+# cache, and Playwright's browser downloads. Without them a sandboxed
+# `pnpm install`, `npm view` or `playwright install` fails with EPERM (npm
+# misreports it as "root-owned files"). Codex expands `~` in these entries.
+writable_roots = [
+  "~/Library/pnpm/store",
+  "~/.npm",
+  "~/Library/Caches/ms-playwright",
+]
 
 [otel]
 environment = "autodev"

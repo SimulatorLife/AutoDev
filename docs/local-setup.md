@@ -723,6 +723,19 @@ would run unsandboxed under this rule; none is configured. `git push` is not
 allowed and stays subject to the sandbox. `tests/config/command-rules.test.ts`
 pins each decision.
 
+Package-manager caches outside the workspace are writable roots instead:
+`sandbox_workspace_write.writable_roots` in `config/config.autodev.toml` lists
+`~/Library/pnpm/store`, `~/.npm` and `~/Library/Caches/ms-playwright`, so a
+sandboxed `pnpm install`, `npm view` or `pnpm exec playwright install` uses the
+operator's normal store and browser cache rather than a throwaway one in
+`/tmp`. Without them each fails with `EPERM` (npm reports it as "root-owned
+files", which is wrong). A writable root rather than an `allow` rule keeps
+package lifecycle scripts sandboxed; the trade-off is that sandboxed commands
+can write the shared pnpm store other projects link from. Codex 0.154.0
+expands `~` in these entries (verified with a replayed `codex exec` turn; the
+`codex sandbox -P :workspace` CLI ignores `writable_roots` and is not a valid
+check).
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`. The model
