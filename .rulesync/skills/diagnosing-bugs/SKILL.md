@@ -20,7 +20,7 @@ Preserve useful evidence before changing the system:
 - Failing test names and commands
 - Environment and configuration differences
 - Timing or performance measurements
-- Relevant recent commits or diffs
+- The current uncommitted diff, and the commit range when the failure is a regression
 
 Do not stack speculative changes on top of an unexplained failure
 
@@ -35,7 +35,7 @@ Use as applicable:
 - Repository-local skills
 - Tests, fixtures, and known-good examples
 - Build, lint, typecheck, test, benchmark, and runtime commands
-- Recent history in the affected area
+- History in the affected area, only when the failure is a regression: start from `git log --oneline -n 20 -- <path>` or `-S <symbol>` and `git show --stat`, not whole patches
 - Dependency and configuration changes
 
 Do not assume a language, framework, test runner, deployment model, or debugging tool

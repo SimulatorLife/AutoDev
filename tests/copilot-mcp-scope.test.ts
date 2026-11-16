@@ -3,6 +3,7 @@ import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import {
   copilotMcpArgs,
   runCopilot
@@ -291,4 +292,44 @@ test("runCopilot hands the role's MCP arguments to the Copilot CLI", async () =>
   ).additional.autodev_spawn?.env;
   assert.ok(spawnEnvironment);
   assert.equal(spawnEnvironment.GIT_COMMITTER_EMAIL, undefined);
+});
+
+test("runCopilot denies the orchestrator Copilot's git-history shell commands, and only the orchestrator", async () => {
+  const fakeCli = join(homes.root, "fake-copilot-deny.mjs");
+  const argsFile = join(homes.root, "copilot-deny-args.json");
+  await writeFile(
+    fakeCli,
+    `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\n`,
+    "utf8"
+  );
+  await chmod(fakeCli, 0o755);
+  const saved = process.env.COPILOT_BIN;
+  process.env.COPILOT_BIN = fakeCli;
+  const argsFor = async (role: string): Promise<string[]> => {
+    await runCopilot(
+      "task",
+      "copilot",
+      homes.root,
+      () => {},
+      role,
+      "spawn-session"
+    ).catch(() => {});
+    return JSON.parse(await readFile(argsFile, "utf8")) as string[];
+  };
+  try {
+    const orchestrator = await argsFor("orchestrator");
+    for (const deny of copilotOrchestratorDenyToolArgs())
+      assert.ok(orchestrator.includes(deny), `orchestrator is missing ${deny}`);
+    assert.ok(orchestrator.includes("--deny-tool=shell(git log)"));
+    assert.ok(orchestrator.includes("--allow-all-tools"));
+
+    const worker = await argsFor("worker");
+    assert.equal(
+      worker.some((argument) => argument.startsWith("--deny-tool=")),
+      false
+    );
+  } finally {
+    if (saved === undefined) delete process.env.COPILOT_BIN;
+    else process.env.COPILOT_BIN = saved;
+  }
 });

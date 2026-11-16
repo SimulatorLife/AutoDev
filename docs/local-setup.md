@@ -848,6 +848,21 @@ tier itself at the tool boundary:
 - The hook is registered in `.rulesync/hooks.jsonc` and materialized to
   `$CODEX_HOME/src/hooks/role-sandbox.ts`.
 
+The same hook holds the root orchestrator to its delegation boundary. A root
+turn carries no role; the hook recognizes it by the turn's model
+(`autodev/orchestrator`, or a Codex-native model the operator chose -- the same
+rule the root-delegation hook uses) and applies
+`runtime/src/agents/orchestrator-policy.ts`, which refuses the `git`
+subcommands that read history (`log`, `show`, `blame`, `reflog`, `rev-list`,
+and the rest of `GIT_HISTORY_SUBCOMMANDS`). Current-state and integration
+commands (`git status`, `git diff`, `git add`, `git commit`) still run, and
+children are unaffected: a regression investigation that needs history is
+delegated to one child with a scoped brief. Codex executes the root's tools for
+the Codex-native, Claude, Antigravity, MiniMax and opencli roots, so the hook
+covers them; Copilot runs its own shell, so the Copilot bridge passes the same
+list as `--deny-tool=shell(git <subcommand>)` arguments for the orchestrator.
+Claude Code reports no model, so its sessions are never treated as the root.
+
 The provider bridges enforce the same tier from the other side. The router
 forwards the tier a bridge must enforce in `x-autodev-sandbox-mode`, and the
 bridge refuses a read-only role's writes. A bridge has two tiers -- read-only

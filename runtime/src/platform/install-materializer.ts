@@ -183,6 +183,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/agents/bridge-role.ts",
   "runtime/src/agents/bridge-sandbox.ts",
   "runtime/src/agents/bridge-spawn-session.ts",
+  "runtime/src/agents/orchestrator-policy.ts",
   "runtime/src/agents/read-only-policy.ts",
   "runtime/src/agents/role-mcp-environment.ts",
   "runtime/src/agents/spawn-shim-server.ts",

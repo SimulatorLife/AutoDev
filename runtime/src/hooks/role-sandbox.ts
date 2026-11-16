@@ -18,6 +18,10 @@
  * The refusal is the tool call's own permission decision, so the model is
  * told why the call did not run and can report what it needed instead.
  *
+ * The root orchestrator's own turns carry no role, and the root runs in the
+ * session's sandbox. Its tool calls are held to the orchestrator policy
+ * instead: the root delegates investigation, so it may not read git history.
+ *
  * The role's declaration is read from the installed execution contract, which
  * is the projection of the role files. A contract left behind by an older
  * install does not carry the declaration at all, and the tier would then be
@@ -27,6 +31,10 @@
 
 import { readFileSync } from "node:fs";
 
+import {
+  evaluateOrchestratorToolCall,
+  isRootOrchestratorModel
+} from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/read-only-policy";
 import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
@@ -35,6 +43,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 interface HookPayload {
   readonly agent_type?: unknown;
+  readonly model?: unknown;
   readonly tool_name?: unknown;
   readonly tool_input?: unknown;
 }
@@ -47,8 +56,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The role the tool call was made in.
  *
  * Null for the root session's own turns: the root session runs in the
- * session's sandbox, which is the policy the product declares, and nothing
- * here narrows it.
+ * session's sandbox, which is the policy the product declares, and no role
+ * sandbox narrows it.
  */
 function roleOf(payload: HookPayload): string | null {
   const role = payload.agent_type;
@@ -73,18 +82,23 @@ export function evaluateRoleSandboxHook(rawInput: string): {
     return { denied: false, reason: null };
   }
 
+  const toolName =
+    typeof payload.tool_name === "string" ? payload.tool_name : "";
+  const call = { toolName, toolInput: payload.tool_input };
   const role = roleOf(payload);
-  if (role === null) return { denied: false, reason: null };
+  if (role === null) {
+    const model = typeof payload.model === "string" ? payload.model : "";
+    if (!isRootOrchestratorModel(model)) return { denied: false, reason: null };
+    const decision = evaluateOrchestratorToolCall(call);
+    return decision.allowed
+      ? { denied: false, reason: null }
+      : { denied: true, reason: decision.reason };
+  }
 
   const declared = roleSandboxMode(role);
   if (declared !== "read-only") return { denied: false, reason: null };
 
-  const toolName =
-    typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const decision = evaluateReadOnlyToolCall({
-    toolName,
-    toolInput: payload.tool_input
-  });
+  const decision = evaluateReadOnlyToolCall(call);
   if (decision.allowed) return { denied: false, reason: null };
   return { denied: true, reason: decision.reason };
 }

@@ -8,6 +8,8 @@ You have access to skills and tools; read them and use those applicable.
 
 Ensure to update any documentation and tests accordingly to your changes.
 
+Work from the codebase as it is now. Use git history (`git log -p`, `git show <sha>`, blame) only for scoped regression investigations, and bound its output (`--oneline -n`, `--stat`, a path filter).
+
 Don't add any legacy support or wrappers; just remove obsolete paths, collapse transitional layers, migrate remaining call sites to the new APIs, delete deprecated utilities, update tests to reflect the new ownership boundaries, and ensure the workspace responsibilities/boundaries strictly match the target/documented split without compatibility shims.
 
 Never make 'band-aid' fixes; always address the issues/bugs at the source instead of trying to catch/fix downstream, even if this results in a larger diff/churn.

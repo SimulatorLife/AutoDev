@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./agents": "./src/agents/index.ts",
+    "./agents/orchestrator-policy": "./src/agents/orchestrator-policy.ts",
     "./agents/read-only-policy": "./src/agents/read-only-policy.ts",
     "./agents/role-mcp-environment": "./src/agents/role-mcp-environment.ts",
     "./cli": "./src/cli/index.ts",

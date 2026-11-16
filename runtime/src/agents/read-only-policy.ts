@@ -327,9 +327,7 @@ interface GitSubcommandRule {
   readonly why: string;
 }
 
-const LIST_ONLY_GIT_SUBCOMMANDS: Readonly<
-  Record<string, GitSubcommandRule>
-> = {
+const LIST_ONLY_GIT_SUBCOMMANDS: Readonly<Record<string, GitSubcommandRule>> = {
   branch: {
     allowedVerbs: [],
     maxArguments: 0,
@@ -447,10 +445,7 @@ const GIT_EXECUTING_OPTIONS: ReadonlySet<string> = new Set([
 /**
  * The `git` options that write the diff or the log to a file.
  */
-const GIT_OUTPUT_OPTIONS: ReadonlySet<string> = new Set([
-  "--output",
-  "-o"
-]);
+const GIT_OUTPUT_OPTIONS: ReadonlySet<string> = new Set(["--output", "-o"]);
 
 /**
  * How a `gh` subcommand reads.
@@ -758,7 +753,30 @@ export function tokenize(segment: string): string[] {
 
 /** The tool name, normalized so that the spellings of one tool are one tool. */
 export function normalizeToolName(name: string): string {
-  return name.trim().toLowerCase().replaceAll(/[\s-]+/gu, "_");
+  return name
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s-]+/gu, "_");
+}
+
+/** Whether a tool, by its normalized name, runs a shell command. */
+export function isShellToolName(normalizedName: string): boolean {
+  return SHELL_TOOL_NAMES.has(normalizedName);
+}
+
+/**
+ * The script a shell interpreter segment runs, when the segment is one:
+ * `bash -c "git log"` runs `git log`. Null for any other command.
+ */
+export function shellInterpreterScript(
+  name: string,
+  args: readonly string[]
+): string | null {
+  if (!SHELL_INTERPRETERS.has(name)) return null;
+  const flagIndex = args.findIndex((argument) =>
+    SHELL_COMMAND_FLAG.test(argument)
+  );
+  return flagIndex === -1 ? null : (args[flagIndex + 1] ?? null);
 }
 
 /**
@@ -773,16 +791,17 @@ export function normalizeToolName(name: string): string {
  * tool uses, and its first element may be the shell itself: `["/bin/zsh",
  * "-lc", "ls"]` runs `ls`, so the script is what is judged.
  */
-export function shellCommandFromToolInput(
-  toolInput: unknown
-): string | null {
+export function shellCommandFromToolInput(toolInput: unknown): string | null {
   if (typeof toolInput === "string") return toolInput;
   if (toolInput === null || typeof toolInput !== "object") return null;
   const record = toolInput as Record<string, unknown>;
   for (const key of ["cmd", "command", "input", "text", "chars"]) {
     const value = record[key];
     if (typeof value === "string") return value;
-    if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+    if (
+      Array.isArray(value) &&
+      value.every((entry) => typeof entry === "string")
+    ) {
       return shellScriptFromArgumentVector(value as string[]);
     }
   }
@@ -836,7 +855,8 @@ function hasFlag(
 ): boolean {
   const names = Array.isArray(flags) ? flags : [...flags];
   return args.some(
-    (arg) => names.includes(arg) || names.some((flag) => arg.startsWith(`${flag}=`))
+    (arg) =>
+      names.includes(arg) || names.some((flag) => arg.startsWith(`${flag}=`))
   );
 }
 
@@ -868,36 +888,35 @@ function positionalArgumentsMatch(
  * refname` lists branches, and `refname` is the sort order rather than a
  * branch to create.
  */
-const GIT_SUBCOMMAND_VALUE_FLAGS: Readonly<
-  Record<string, readonly string[]>
-> = {
-  branch: [
-    "--sort",
-    "--format",
-    "--contains",
-    "--no-contains",
-    "--merged",
-    "--no-merged",
-    "--points-at"
-  ],
-  tag: [
-    "--sort",
-    "--format",
-    "--contains",
-    "--no-contains",
-    "--merged",
-    "--no-merged",
-    "--points-at"
-  ],
-  config: ["--file", "--type"],
-  remote: ["--push", "--fetch"],
-  stash: ["--message", "--include-untracked", "--keep-index", "--index"],
-  notes: ["--ref", "--object"],
-  worktree: [],
-  submodule: [],
-  reflog: ["--date", "--format"],
-  "symbolic-ref": []
-};
+const GIT_SUBCOMMAND_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> =
+  {
+    branch: [
+      "--sort",
+      "--format",
+      "--contains",
+      "--no-contains",
+      "--merged",
+      "--no-merged",
+      "--points-at"
+    ],
+    tag: [
+      "--sort",
+      "--format",
+      "--contains",
+      "--no-contains",
+      "--merged",
+      "--no-merged",
+      "--points-at"
+    ],
+    config: ["--file", "--type"],
+    remote: ["--push", "--fetch"],
+    stash: ["--message", "--include-untracked", "--keep-index", "--index"],
+    notes: ["--ref", "--object"],
+    worktree: [],
+    submodule: [],
+    reflog: ["--date", "--format"],
+    "symbolic-ref": []
+  };
 
 /**
  * The `gh` flags that take a value.
@@ -980,8 +999,7 @@ function splitGitGlobalOptions(args: readonly string[]): {
     globals.push(argument);
     const separator = argument.indexOf("=");
     const name = separator === -1 ? argument : argument.slice(0, separator);
-    const takesValue =
-      GIT_VALUE_OPTIONS.has(name) && !argument.includes("=");
+    const takesValue = GIT_VALUE_OPTIONS.has(name) && !argument.includes("=");
     index += takesValue ? 2 : 1;
   }
   return { globals, rest: args.slice(index) };
@@ -994,6 +1012,14 @@ function splitGitGlobalOptions(args: readonly string[]): {
  * only reads is allowed; one that reads only in its list form is allowed when
  * the invocation is that form.
  */
+/**
+ * The subcommand a `git` invocation runs: the first argument after the global
+ * options that is not a flag. Undefined for a bare `git`.
+ */
+export function gitSubcommand(args: readonly string[]): string | undefined {
+  return positionalArguments(splitGitGlobalOptions(args).rest)[0];
+}
+
 export function gitCommandIsReadOnly(args: readonly string[]): boolean {
   const { globals, rest } = splitGitGlobalOptions(args);
   for (const option of globals) {
@@ -1087,11 +1113,8 @@ function segmentIsReadOnly(
 
   // A shell runs the script it is given, so the script is what runs.
   if (SHELL_INTERPRETERS.has(name)) {
-    const flagIndex = args.findIndex((argument) =>
-      SHELL_COMMAND_FLAG.test(argument)
-    );
-    const script = flagIndex === -1 ? undefined : args[flagIndex + 1];
-    if (script === undefined) {
+    const script = shellInterpreterScript(name, args);
+    if (script === null) {
       return {
         ok: false,
         why: "`${name}` was given no script to run"
@@ -1106,15 +1129,15 @@ function segmentIsReadOnly(
     return segmentIsReadOnly(script, depth + 1);
   }
 
-  if (name === "git") return { ok: gitCommandIsReadOnly(args), why: "git writes" };
+  if (name === "git")
+    return { ok: gitCommandIsReadOnly(args), why: "git writes" };
   if (name === "gh") return { ok: ghCommandIsReadOnly(args), why: "gh writes" };
   if (name === "curl")
     return { ok: curlCommandIsReadOnly(args), why: "curl writes" };
 
   const flagged = FLAGGED_COMMANDS[name];
   if (flagged) {
-    if (hasFlag(args, flagged.flags))
-      return { ok: false, why: flagged.why };
+    if (hasFlag(args, flagged.flags)) return { ok: false, why: flagged.why };
     return { ok: true, why: "" };
   }
 
@@ -1138,7 +1161,10 @@ function segmentIsReadOnly(
  * Redirection writes a file, command substitution runs another command, and
  * both are ways to smuggle a write past a list of readable commands.
  */
-const WRITE_CONSTRUCTS: readonly { readonly pattern: RegExp; readonly why: string }[] = [
+const WRITE_CONSTRUCTS: readonly {
+  readonly pattern: RegExp;
+  readonly why: string;
+}[] = [
   { pattern: />/u, why: "it redirects output into a file" },
   { pattern: /`/u, why: "it substitutes the output of another command" },
   { pattern: /\$\(/u, why: "it substitutes the output of another command" }
@@ -1214,7 +1240,7 @@ export function evaluateReadOnlyToolCall(input: {
         "This role runs in a read-only sandbox and may not change files. Report what you found instead of editing."
     };
   }
-  if (SHELL_TOOL_NAMES.has(toolName)) {
+  if (isShellToolName(toolName)) {
     const command = shellCommandFromToolInput(input.toolInput);
     if (command === null) {
       return {

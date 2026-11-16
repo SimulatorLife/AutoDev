@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isRootOrchestratorModel } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   buildRootOrchestratorBootstrap,
@@ -45,8 +46,6 @@ const INJECTION_RECORDS = [
   '"role":"developer"',
   '"type":"hook_additional_context"'
 ];
-const NON_ROOT_MODEL =
-  /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/;
 const DEDUP_TTL_MS = 15 * 60 * 1000;
 const DEDUP_MAX_ENTRIES = 1024;
 const LOCK_STALE_MS = 30 * 1000;
@@ -250,7 +249,7 @@ export function runRootDelegation(raw = readFileSync(0, "utf8")): number {
   // contract that does not apply to it, so a payload without a model is not a
   // root turn.
   if (!model) return 0;
-  if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
+  if (!isRootOrchestratorModel(model)) return 0;
   const root = repositoryRoot();
   const marker = readRootBootstrapMarker(root);
   if (!marker) {

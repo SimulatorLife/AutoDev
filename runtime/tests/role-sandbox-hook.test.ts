@@ -14,6 +14,7 @@ import {
  */
 function payload(input: {
   readonly agentType?: string | null;
+  readonly model?: string;
   readonly toolName: string;
   readonly toolInput?: unknown;
 }): string {
@@ -21,7 +22,7 @@ function payload(input: {
     session_id: "session",
     cwd: "/Users/henrykirk/AutoDev",
     hook_event_name: "PreToolUse",
-    model: "autodev/explorer",
+    model: input.model ?? "autodev/explorer",
     permission_mode: "default",
     tool_name: input.toolName,
     tool_input: input.toolInput ?? {},
@@ -90,6 +91,68 @@ test("the root session's own turns are left to the session's sandbox", () => {
     })
   );
   assert.equal(outcome.denied, false);
+});
+
+test("the root orchestrator may not read git history, on any root model", () => {
+  for (const model of ["autodev/orchestrator", "gpt-5.5"]) {
+    for (const cmd of [
+      "git log -p -- src/a.ts",
+      "git show abc123",
+      "git -C /repo blame src/a.ts",
+      "cd /repo && git log --oneline | head -40",
+      "GIT_PAGER=cat git log",
+      "bash -lc 'git reflog'"
+    ]) {
+      const outcome = evaluateRoleSandboxHook(
+        payload({ model, toolName: "exec_command", toolInput: { cmd } })
+      );
+      assert.equal(outcome.denied, true, `${model}: ${cmd} was allowed`);
+      assert.match(outcome.reason ?? "", /does not read git history/u);
+      assert.match(outcome.reason ?? "", /delegate/u);
+    }
+  }
+});
+
+test("the root orchestrator still integrates and delegates", () => {
+  for (const [toolName, toolInput] of [
+    ["exec_command", { cmd: "git status --short && git diff --stat" }],
+    ["exec_command", { cmd: "git add -A && git commit -m 'fix: lint'" }],
+    ["exec_command", { cmd: "pnpm test" }],
+    ["exec_command", { cmd: "grep -rn 'git log' docs" }],
+    [
+      "multi_agent_v1__spawn_agent",
+      { agent_type: "worker", message: "git log -p" }
+    ],
+    ["exec", { code: "await tools.multi_agent_v1__spawn_agent({})" }]
+  ] as const) {
+    const outcome = evaluateRoleSandboxHook(
+      payload({ model: "autodev/orchestrator", toolName, toolInput })
+    );
+    assert.equal(
+      outcome.denied,
+      false,
+      `${toolName} ${JSON.stringify(toolInput)} was denied`
+    );
+  }
+});
+
+test("children and Claude Code sessions may read git history", () => {
+  // A child carries its role; Claude Code reports no model at all.
+  for (const [agentType, model] of [
+    ["worker", "autodev/worker"],
+    ["explorer", "autodev/explorer"],
+    [undefined, ""]
+  ] as const) {
+    const outcome = evaluateRoleSandboxHook(
+      payload({
+        ...(agentType === undefined ? {} : { agentType }),
+        model,
+        toolName: "exec_command",
+        toolInput: { cmd: "git log -p -5 -- src/a.ts" }
+      })
+    );
+    assert.equal(outcome.denied, false, `${agentType ?? "root"} was denied`);
+  }
 });
 
 test("a payload that cannot be read is left alone rather than refused blindly", () => {
@@ -164,4 +227,17 @@ test("the hook allows the call silently when the role may make it", () => {
   );
   assert.equal(status, 0);
   assert.equal(output, "");
+});
+
+test("the hook denies a root orchestrator's git-history call with the reason Codex reads", () => {
+  const { status, output } = runHookCapturing(
+    payload({
+      model: "autodev/orchestrator",
+      toolName: "exec_command",
+      toolInput: { cmd: "git show HEAD~3" }
+    })
+  );
+  assert.equal(status, 2);
+  assert.match(output, /"deny"/u);
+  assert.match(output, /git show/u);
 });

@@ -32,12 +32,25 @@ test("orchestration skill bounds re-sent context from polling background command
 
 test("orchestration skill steers unrelated follow-up work to a fresh session", () => {
   assert.match(skill, /fresh session/);
-  assert.match(skill, /auto_compact_token_limit/);
+  assert.match(skill, /After compaction/);
 });
 
 // Tool results over ~20k characters were 12% of calls but 58% of tool-output
 // volume, mostly unscoped `rg`/`cat` dumps re-sent until compaction.
 test("orchestration skill scopes reads and searches to the step", () => {
   assert.match(skill, /Scope reads and searches/);
-  assert.match(skill, /truncation_policy/);
+});
+
+// Prompt caching bills the re-sent prefix at a fraction of the price, so the
+// skill must not claim a repeated request costs as much as new work.
+test("orchestration skill states the cost of re-sent context accurately", () => {
+  assert.match(skill, /Prompt caching/);
+  assert.doesNotMatch(skill, /costs as much as real work/);
+});
+
+// Session 01a1e620 spent eight root calls (one 34k chars) on git-history
+// archaeology for a two-error lint fix.
+test("orchestration skill keeps git history out of the root", () => {
+  assert.match(skill, /The root does not read git history/);
+  assert.match(skill, /role-sandbox hook/);
 });

@@ -82,9 +82,15 @@ Batch initial read-only exploration and CodeGraphContext lookups in parallel up 
 
 ## Waiting and context budget
 
-Every tool call re-sends the whole conversation, so a poll that returns nothing new costs as much as real work. Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. In code mode, start that `exec` cell with `// @exec: {"yield_time_ms": <timeout_ms + 30000>}` on its first line: without it the cell yields after about 30 seconds with `Script running`, and resuming it costs a full extra model turn (a minute or more on a web-chat provider) for every wait. Never call bare `setTimeout` or `setInterval` inside a Codex code-mode `exec` isolate (`ReferenceError` because timer globals are absent); use `multi_agent_v1__wait_agent` or `write_stdin` instead. Run commands to completion with a timeout sized to their expected runtime; when a command must run in the background, poll it with empty `write_stdin` at `yield_time_ms` of at least 60000, never 1000–30000. Do not re-run a call whose output is already in context. Scope reads and searches to what the step needs (`rg -l`, `--max-count`, a line range, a path filter): every result stays in context until compaction, and output past the catalog's `truncation_policy` is cut to its head and tail anyway.
+Each model request re-sends the whole conversation, as with any stateless LLM API, so every tool output stays in every later request until compaction. Prompt caching bills that repeated prefix at a fraction of the normal price, but it still counts against usage limits and adds latency, and a wake that returns nothing new buys nothing.
 
-Codex compacts at the catalog's `auto_compact_token_limit`; do not re-read files or re-request reports to rebuild context compaction dropped unless the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
+- Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. In code mode, put `// @exec: {"yield_time_ms": <timeout_ms + 30000>}` on the cell's first line: without it the cell yields after about 30 seconds and each resume is an extra model turn.
+- A Codex code-mode `exec` cell has no `setTimeout` or `setInterval`; wait through `wait_agent` or `write_stdin`.
+- Run commands to completion with a timeout sized to them. Poll a background command with empty `write_stdin` at `yield_time_ms` of at least 60000.
+- Scope reads and searches to the step (`rg -l`, `--max-count`, a line range, a path filter), and do not re-run a call whose output is already in context.
+- The root does not read git history: the role-sandbox hook refuses `git log`, `git show`, `git blame` and the other history commands for the root orchestrator. When a regression needs history, delegate it to one child with the symptom, the files, and a commit range, and have it report the finding.
+
+After compaction, re-read files or re-request reports only when the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
 
 ## Validation rules
 

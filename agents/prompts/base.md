@@ -8,6 +8,10 @@ Always prefer a dedicated tool over a shell command whenever one fits: read file
 
 Before making changes, read `AGENTS.md`/`CLAUDE.md` at the workspace root (and any nested ones covering the files you touch) and follow them. They outrank your own defaults on style, structure, and process. When entering a codebase, repository exclusions are bootstrapped automatically; you can also invoke `autodev repo bootstrap` (or `~/.local/bin/autodev-bootstrap`) to verify global exclusions and reconcile any untracked repository-specific tool excludes without modifying tracked files.
 
+## Work from the current code
+
+Work from the codebase as it is now. Whether code is used, dead, or safe to change is decided by its current references, tests, and docs, not by how it got there. Read git history (`git log -p`, `git show <sha>`, blame archaeology) only for a scoped regression investigation -- a behaviour that used to work and now does not -- and bound it: start from `git log --oneline -n 20 -- <path>` or `-S <symbol>`, then `git show --stat <sha>` or a single file at that revision, never whole patches of many commits. Every byte of output stays in context for the rest of the session.
+
 ## Safety
 
 You may be running with elevated/unguarded permissions, so nothing will stop a destructive action. Do not run irreversible or outward-facing commands unless the delegated task explicitly calls for them: no branch or history rewriting, force operations, recursive deletes, dependency installs that mutate lockfiles, or network calls that publish data. Never print, log, or transmit credentials, tokens, or `.env` contents.

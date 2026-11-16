@@ -28,6 +28,7 @@ import {
   spawnShimMcpServer,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
+import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import {
   contextHeaderValue,
   readContextHeader,
@@ -1033,6 +1034,10 @@ function runCopilot(
           "--allow-all-urls",
           "--no-ask-user"
         );
+      // Copilot runs the orchestrator's shell itself, so the root's
+      // delegation boundary is applied as the CLI's own deny rules.
+      if (isOrchestratorRole(agentRole))
+        args.push(...copilotOrchestratorDenyToolArgs());
     }
     if (model && model !== "copilot" && model !== "auto")
       args.push("--model", String(model));
