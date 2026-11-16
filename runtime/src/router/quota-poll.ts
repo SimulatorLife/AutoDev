@@ -47,9 +47,11 @@ export interface QuotaPollPlan {
  *
  * The bridge's Claude token is a Claude Code inference token: it lacks the
  * `user:profile` scope Anthropic's OAuth usage endpoint requires, so that
- * endpoint can never answer for it (quota-axi reports
- * `claude_env_usage_scope_unavailable`). quota-axi's supported reading for
- * exactly that credential is `--allow-claude-inference`: one bounded
+ * endpoint can never answer for it: it refuses with a 403 scope denial
+ * (`claude_env_usage_scope_unavailable`) or a 429 it never lifts. quota-axi's
+ * supported reading for exactly that credential is
+ * `--allow-claude-inference` (taken after either refusal, the 429 via
+ * `patches/quota-axi@0.1.69.patch`): one bounded
  * "Reply OK" Claude Code call whose rate-limit headers carry the session and
  * weekly windows. That spends a tiny amount of Claude quota per read, which
  * is why Claude has its own read interval. quota-axi rejects the flag on a

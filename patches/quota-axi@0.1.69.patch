@@ -1,0 +1,21 @@
+diff --git a/dist/src/providers/claude.js b/dist/src/providers/claude.js
+index a5c8fbbdd0ced0996c064209964283c6d775fff0..2dff9126fbc198b29572ec0bf2701d8cfdeb15d0 100644
+--- a/dist/src/providers/claude.js
++++ b/dist/src/providers/claude.js
+@@ -637,7 +637,15 @@ async function attemptClaudeQuota(options, attempts, locations, lane) {
+                     status: "failed",
+                     error: failure.code,
+                 };
+-                if (credential.source === "env" && failure.envProfileScopeDenied) {
++                // The usage endpoint refuses an inference-only env token either
++                // with a 403 scope denial or with a 429 it never lifts; either way
++                // the endpoint cannot answer for this token, and the env-selected
++                // report has no stale cache to fall back on. With inference
++                // allowed, both take the native reading.
++                if (credential.source === "env" &&
++                    (failure.envProfileScopeDenied ||
++                        (options.allowClaudeInference &&
++                            failure.status === "rate_limited"))) {
+                     attempts[attempts.length - 1].degraded = false;
+                     if (options.allowClaudeInference) {
+                         attempts.push({

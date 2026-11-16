@@ -8,6 +8,9 @@ patchedDependencies:
   '@jackwener/opencli@2.0.3':
     hash: 42577217ae1201f36631b2b91767d9082aa3b673178ea8c55654c9338ed36fbf
     path: patches/@jackwener__opencli@2.0.3.patch
+  quota-axi@0.1.69:
+    hash: 05d1b946efea27be92f9fc571c9983083e73d1827c5f047121381f9061a48436
+    path: patches/quota-axi@0.1.69.patch
 
 importers:
 
@@ -190,7 +193,7 @@ importers:
     dependencies:
       quota-axi:
         specifier: 0.1.69
-        version: 0.1.69
+        version: 0.1.69(patch_hash=05d1b946efea27be92f9fc571c9983083e73d1827c5f047121381f9061a48436)
 
   data:
     dependencies:
@@ -278,7 +281,7 @@ importers:
         version: 1.63.0-alpha-2026-08-31
       quota-axi:
         specifier: 0.1.69
-        version: 0.1.69
+        version: 0.1.69(patch_hash=05d1b946efea27be92f9fc571c9983083e73d1827c5f047121381f9061a48436)
       smol-toml:
         specifier: ^1.8.0
         version: 1.8.0
@@ -5517,7 +5520,7 @@ snapshots:
 
   queue-microtask@1.2.3: {}
 
-  quota-axi@0.1.69:
+  quota-axi@0.1.69(patch_hash=05d1b946efea27be92f9fc571c9983083e73d1827c5f047121381f9061a48436):
     dependencies:
       '@toon-format/toon': 2.1.0
       axi-sdk-js: 0.1.14

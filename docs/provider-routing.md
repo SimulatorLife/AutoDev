@@ -665,12 +665,17 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   every five minutes** (`quotaAxiArgs` and `QUOTA_READ_INTERVAL_MS` in
   `runtime/src/router/quota-poll.ts`). The bridge's `CLAUDE_CODE_OAUTH_TOKEN`
   is an inference token without the `user:profile` scope Anthropic's OAuth
-  usage endpoint requires, so that endpoint can never answer for it
-  (quota-axi: `claude_env_usage_scope_unavailable`), and it also refuses
-  after a handful of reads and holds that refusal for close to an hour. A
-  read that includes Claude therefore passes quota-axi's
+  usage endpoint requires, so that endpoint can never answer for it. It
+  refuses that token either with a 403 scope denial (quota-axi:
+  `claude_env_usage_scope_unavailable`) or with a 429 whose hour-long
+  `Retry-After` it renews on every read, however rarely it is asked. A read
+  that includes Claude therefore passes quota-axi's
   `--allow-claude-inference`: a bounded "Reply OK" Claude Code call whose
-  rate-limit headers carry the session and weekly windows. Each read spends a
+  rate-limit headers carry the session and weekly windows. quota-axi 0.1.69
+  took that reading only after the 403, so a 429 left Claude showing "Quota
+  rate limited" indefinitely; `patches/quota-axi@0.1.69.patch` makes the 429
+  take it too (covered by `runtime/tests/quota-axi-claude-inference.test.ts`).
+  Each read spends a
   small amount of Claude quota, hence the interval. Runtime adds the directory
   of the `claude` executable its bridge runs (`CLAUDE_BIN`, else
   `~/.local/bin/claude`) to the quota-axi child's `PATH`, as it does for
