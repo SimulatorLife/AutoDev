@@ -387,6 +387,17 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     server.listen(port, host, () => {
       if (cleanedUp) return;
       try {
+        if (process.env.AUTODEV_ROUTER_WORKER_GENERATION && process.send) {
+          const bound = server.address();
+          if (!bound || typeof bound === "string") {
+            throw new Error("Router worker did not bind a TCP listener");
+          }
+          process.send({
+            type: "autodev-router-worker-listening",
+            generationId: process.env.AUTODEV_ROUTER_WORKER_GENERATION,
+            port: bound.port
+          });
+        }
         const controlListener = configuredControlApiListener(port);
         if (controlListener) {
           controlServer = createControlApiServer();

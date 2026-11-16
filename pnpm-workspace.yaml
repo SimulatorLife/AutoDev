@@ -5,7 +5,9 @@ packages:
   - data
 
 allowBuilds:
+  "@jackwener/opencli": true
   tldjs: true
+  unrs-resolver: true
 patchedDependencies:
-  '@jackwener/opencli@2.0.3': patches/@jackwener__opencli@2.0.3.patch
+  "@jackwener/opencli@2.0.3": patches/@jackwener__opencli@2.0.3.patch
   quota-axi@0.1.69: patches/quota-axi@0.1.69.patch

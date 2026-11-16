@@ -2,6 +2,8 @@ export * from "./auth.ts";
 export * from "./concurrency/index.ts";
 export * from "./cooldown/index.ts";
 export * from "./events.ts";
+export * from "./ingress.ts";
+export * from "./ingress-control.ts";
 export * from "./lifecycle/index.ts";
 export * from "./live-feed.ts";
 export * from "./metric-label.ts";
