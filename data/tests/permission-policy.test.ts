@@ -10,7 +10,6 @@ import {
   permissionPolicyRevision,
   PermissionPolicyValidationError,
   readPermissionPolicyFile,
-  readRoleSandboxModes,
   sandboxModeFromConfig,
   sandboxModeToConfig,
   updatePermissionPolicy
@@ -111,62 +110,17 @@ test("the sandbox vocabulary is translated in one place, both ways", () => {
   assert.equal(sandboxModeToConfig("read-only"), "read-only");
 });
 
-test("a role's sandbox is the one its own declaration states", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "autodev-role-sandbox-"));
-  await writeFile(
-    path.join(directory, "orchestrator.toml"),
-    'name = "orchestrator"\nsandbox_mode = "danger-full-access"\n',
-    "utf8"
+test("a role's sandbox is read from the contract, not from a second reader", async () => {
+  // The role declarations are the canonical source for what a role may do, and
+  // the execution contract is the projection of them. This module used to
+  // read the same files a second time, which is how the two answers could
+  // disagree; the projection is the one reader now, and its own tests hold
+  // the rules this module used to hold.
+  const exported = Object.keys(
+    await import("../src/config/permission-policy.ts")
   );
-  await writeFile(
-    path.join(directory, "explorer.toml"),
-    'name = "explorer"\nsandbox_mode = "read-only"\n',
-    "utf8"
-  );
-  await writeFile(
-    path.join(directory, "default.toml"),
-    'name = "default"\n',
-    "utf8"
-  );
-  const modes = readRoleSandboxModes(directory, "workspace-write");
-  assert.equal(modes.orchestrator, "unrestricted");
-  assert.equal(modes.explorer, "read-only");
-  // A role that declares no sandbox inherits the policy's: its configuration
-  // is layered over the portable source.
-  assert.equal(modes.default, "workspace-write");
-});
-
-test("a role that declares a sandbox the product does not support is unknown", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "autodev-role-sandbox-"));
-  await writeFile(
-    path.join(directory, "odd.toml"),
-    'name = "odd"\nsandbox_mode = "somewhere-else"\n',
-    "utf8"
-  );
-  const modes = readRoleSandboxModes(directory, "workspace-write");
-  assert.equal(modes.odd, null);
-});
-
-test("a role that declares no sandbox under an unreadable policy has no observed sandbox", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "autodev-role-sandbox-"));
-  await writeFile(
-    path.join(directory, "default.toml"),
-    'name = "default"\n',
-    "utf8"
-  );
-  await writeFile(
-    path.join(directory, "explorer.toml"),
-    'name = "explorer"\nsandbox_mode = "read-only"\n',
-    "utf8"
-  );
-  // The policy could not be read, so there is no mode for a role that declares
-  // none to inherit. The nearest mode the product knows is not a mode any
-  // source stated, so the role's sandbox is not observed.
-  const modes = readRoleSandboxModes(directory, null);
-  assert.equal(modes.default, null);
-  // A role that declares its own mode is still known: the policy is only the
-  // answer for a role that is silent.
-  assert.equal(modes.explorer, "read-only");
+  assert.equal(exported.includes("readRoleSandboxModes"), false);
+  assert.equal(exported.includes("roleSandboxMode"), false);
 });
 
 test("a write changes the key it was asked to change and nothing else", async () => {

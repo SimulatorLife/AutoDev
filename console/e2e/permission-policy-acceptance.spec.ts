@@ -139,7 +139,7 @@ test("a stale policy write is refused rather than overwriting somebody else's ch
   expect(after.revision).not.toBe(before.revision);
 });
 
-test("the role matrix names the sandbox each role declares", async ({
+test("the role matrix names the sandbox each role runs in, and the one it declared", async ({
   page,
   request
 }) => {
@@ -147,11 +147,26 @@ test("the role matrix names the sandbox each role declares", async ({
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(PERMISSIONS_URL);
 
-  // The matrix used to answer every role but the read-only ones with
-  // "workspace-write", so a role declared `danger-full-access` was shown as a
-  // sandboxed one. The fixture's roles declare their own modes.
+  // The matrix shows the sandbox a role actually runs in: the stricter of the
+  // mode it declared and the mode the session allows. The fixture's worker
+  // declares `read-only` and the session runs `workspace-write`, so it runs
+  // read-only.
   const worker = page.locator('[data-permission-mode="read-only"]');
   await expect(worker).toHaveCount(1);
-  const defaultRole = page.locator('[data-permission-mode="workspace-write"]');
-  await expect(defaultRole).toHaveCount(1);
+  // The orchestrator declares `unrestricted`, but a role may narrow the
+  // sandbox it runs in and never widen it, so it runs in the session's
+  // sandbox: two roles run workspace-write, and one of them asked for more.
+  const workspaceWrite = page.locator(
+    '[data-permission-mode="workspace-write"]'
+  );
+  await expect(workspaceWrite).toHaveCount(2);
+  // The declaration is published beside the effective mode, so the narrowing
+  // is visible rather than folded away.
+  const declaredUnrestricted = page.locator(
+    '[data-permission-declared-mode="unrestricted"]'
+  );
+  await expect(declaredUnrestricted).toHaveCount(1);
+  // And the row that was narrowed says so.
+  const narrowed = page.locator('[data-permission-narrowed="true"]');
+  await expect(narrowed).toHaveCount(1);
 });

@@ -61,7 +61,6 @@ import {
   RUNTIME_MODULES,
   staleUserSkillLinks
 } from "./install-materializer.ts";
-import { userLevelSkills } from "./user-level-skills.ts";
 import {
   launchAgentMatches,
   resolveLaunchAgentValues
@@ -75,6 +74,7 @@ import {
   skillLinkMatches
 } from "./runtime-files.ts";
 import { stalePaths } from "./runtime-reconciliation.ts";
+import { userLevelSkills } from "./user-level-skills.ts";
 
 export interface InstallCheckOptions {
   readonly repositoryRoot?: string;
@@ -764,6 +764,21 @@ function checkUserConfigAndAgents(
     ) &&
       readFileSync(
         path.join(paths.repositoryRoot, "config/execution-contract.json"),
+        "utf8"
+      ) === expectedContract,
+    failures
+  );
+  // The installed contract is the copy the running product reads, and the
+  // role sandbox hook enforces a role's tier from it. A contract left behind
+  // by an older install does not carry the declared sandbox at all, so the
+  // hook would have nothing to enforce and the tier would be quietly absent.
+  check(
+    "installed execution contract",
+    existsSync(
+      path.join(paths.codexHome, "config", "execution-contract.json")
+    ) &&
+      readFileSync(
+        path.join(paths.codexHome, "config", "execution-contract.json"),
         "utf8"
       ) === expectedContract,
     failures

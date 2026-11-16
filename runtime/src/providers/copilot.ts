@@ -45,6 +45,7 @@ import {
 import {
   type RoleContract,
   roleContract,
+  roleSandboxMode,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -124,12 +125,11 @@ function parseJson(text: string): JsonParseResult {
 }
 // `roleContract` returns the fields every consumer shares (`mcp`) typed, plus
 // an index signature for the rest. This bridge additionally reads
-// `mcpTools`, `readOnly`, and `skills`, which are real contract fields the
-// shared interface leaves untyped for other consumers; narrow them here
-// rather than widening the shared type for one bridge's shape.
+// `mcpTools` and `skills`, which are real contract fields the shared
+// interface leaves untyped for other consumers; narrow them here rather than
+// widening the shared type for one bridge's shape.
 type CopilotRoleContract = RoleContract & {
   mcpTools?: Record<string, string[]>;
-  readOnly?: boolean;
   skills?: string[];
 };
 
@@ -1006,7 +1006,6 @@ function runCopilot(
     if (compaction) {
       args.splice(4, 0, "--no-ask-user");
     } else {
-      const contract = copilotRoleContract(agentRole);
       args.push(
         ...copilotMcpArgs(agentRole, spawnSession, {
           requestId,
@@ -1019,11 +1018,12 @@ function runCopilot(
       if (isResearchRole(agentRole))
         args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
       // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
-      // trust that header over roleContract(agentRole).readOnly because the
-      // header is the authoritative wire signal for this turn.
+      // trust that header over the role's own declaration because the header is
+      // the authoritative wire signal for this turn.
       const readOnly =
         sandboxMode === "read-only" ||
-        (sandboxMode !== "workspace-write" && contract.readOnly);
+        (sandboxMode !== "workspace-write" &&
+          roleSandboxMode(agentRole) === "read-only");
       if (!readOnly)
         args.splice(
           4,

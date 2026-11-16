@@ -1,6 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  isCodexSandboxMode,
+  productSandboxMode,
+  type SandboxMode} from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -96,7 +100,15 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
 type UnknownRecord = Record<string, unknown>;
 type RoleProjection = {
   kind: "leaf" | "orchestrator";
-  readOnly: boolean;
+  /**
+   * The sandbox this role declares, in the product's vocabulary.
+   *
+   * Null when the role declares none: a role that says nothing inherits the
+   * session's sandbox rather than naming one of its own. The mode used to be a
+   * boolean, which could not say "the orchestrator runs unrestricted" and
+   * answered "workspace-write" for every role that was not read-only.
+   */
+  sandboxMode: SandboxMode | null;
   mcp: string[];
   skills: string[];
   mcpTools?: Record<string, string[]>;
@@ -115,6 +127,26 @@ function record(value: unknown): UnknownRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as UnknownRecord)
     : {};
+}
+
+/**
+ * The sandbox a role declares, in the product's vocabulary.
+ *
+ * A role that declares no sandbox declares none: it inherits the session's.
+ * A role that declares one the product does not know is a declaration the
+ * product cannot honour, and it is refused rather than read as the nearest
+ * mode the product knows -- the same rule the permission policy follows.
+ */
+function declaredSandboxMode(
+  declared: unknown,
+  source: string
+): SandboxMode | null {
+  if (declared === undefined || declared === null) return null;
+  if (!isCodexSandboxMode(declared))
+    throw new ConfigError(
+      `${source}: sandbox_mode must be one of read-only, workspace-write, danger-full-access`
+    );
+  return productSandboxMode(declared);
 }
 
 function stringArray(value: unknown): string[] {
@@ -186,7 +218,7 @@ function readRole(source: string): RoleProjection {
     : "leaf";
   const projection: RoleProjection = {
     kind,
-    readOnly: config.sandbox_mode === "read-only",
+    sandboxMode: declaredSandboxMode(config.sandbox_mode, source),
     mcp,
     skills: sortedByOrder(skills, SKILL_ORDER)
   };

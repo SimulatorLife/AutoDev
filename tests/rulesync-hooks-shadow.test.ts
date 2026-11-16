@@ -47,7 +47,8 @@ const sourceCommands = [
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
 ];
 /**
  * The root-delegation bootstrap names Codex's spawn tools and code-mode
@@ -388,6 +389,7 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"
   ]);
   assert.deepEqual(
@@ -408,6 +410,10 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
       [
         "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
         "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+      ],
+      [
+        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
+        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
       ]
     ]
   );
@@ -418,7 +424,8 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   ]);
   assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), [
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
   ]);
   assert.deepEqual(asObject(antigravity.rulesync).SessionStart, [
     {
@@ -447,6 +454,10 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
         [
           "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
         ]
+      ],
+      [
+        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
+        ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"]
       ]
     ]
   );

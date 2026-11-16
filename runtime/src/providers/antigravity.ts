@@ -66,6 +66,7 @@ import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executab
 import {
   type RoleContract,
   roleContract,
+  roleSandboxMode,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -495,7 +496,6 @@ function isTextDeltaEvent(event: AgyEvent): event is AgyTextDeltaEvent {
 // and `skills`, which are real contract fields; narrow them here rather than
 // widening the shared type for one bridge's shape. Mirrors the Copilot adapter.
 type AntigravityRoleContract = RoleContract & {
-  readOnly?: boolean;
   skills?: string[];
   mcpTools?: Record<string, string[]>;
 };
@@ -2494,15 +2494,21 @@ function invocationMcpPermissionGrants(
   return grants;
 }
 
+/**
+ * Whether a turn runs read-only.
+ *
+ * The header the router forwards is the authoritative wire signal: it says
+ * which sandbox the turn was routed under. The role contract is the fallback
+ * for a bridge that has not been updated to send one, and it answers the same
+ * question from the role's own declared sandbox.
+ */
 function isReadOnlyRole(
   agentRole: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null
 ): boolean {
-  return (
-    sandboxMode === "read-only" ||
-    (sandboxMode !== "workspace-write" &&
-      Boolean(antigravityRoleContract(agentRole).readOnly))
-  );
+  if (sandboxMode === "read-only") return true;
+  if (sandboxMode === "workspace-write") return false;
+  return roleSandboxMode(agentRole) === "read-only";
 }
 
 function buildReadOnlyInvocationSettings({
@@ -2890,10 +2896,9 @@ function agyArgs(
   invocation: AgyInvocation | null = null
 ): string[] {
   // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
-  // trust that header over roleContract(agentRole).readOnly because the
-  // header is the authoritative wire signal for this turn, and falls back
-  // to the contract for backwards compatibility with bridges that have not
-  // been updated to send it yet.
+  // trust that header over the role's own declaration because the header is
+  // the authoritative wire signal for this turn, and falls back to the
+  // contract for bridges that have not been updated to send it yet.
   const readOnly = isReadOnlyRole(agentRole, sandboxMode);
   // Headless print mode (-p) cannot prompt interactively for tool approvals.
   // AGY_SKIP_PERMISSIONS ("true" by default) auto-approves tool permission

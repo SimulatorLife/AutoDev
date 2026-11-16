@@ -1289,6 +1289,15 @@ those paths. The broader sandbox is intentional because Codex's `read-only`
 policy restricts reads outside the active workspace; the parent must explicitly
 scope any external inspection.
 
+A read-only role's instruction is not what keeps it read-only. Codex cannot
+narrow the sandbox of a child it spawns -- the child inherits the parent's
+sandbox, and the role layer carries no sandbox -- so AutoDev enforces the tier
+at the tool boundary with a Codex `PreToolUse` hook
+(`runtime/src/hooks/role-sandbox.ts`) and an allowlist policy
+(`runtime/src/agents/read-only-policy.ts`). The mechanism, the rule that a role
+may narrow the session's sandbox but never widen it, and its limits are
+described in [`docs/local-setup.md`](local-setup.md#role-sandboxes).
+
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `$CODEX_HOME/run/codex-model-router.launchd.err.log` (stdout uses
 the sibling `*.out.log` so structured events are never interleaved with

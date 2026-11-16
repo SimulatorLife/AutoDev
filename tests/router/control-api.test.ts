@@ -3290,10 +3290,9 @@ test("Control API surfaces all 13 typed resource families", async () => {
         (entry.skills as unknown[]).every((value) => typeof value === "string"),
         `role ${role} skill entries must be strings`
       );
-      // A role's sandbox is what its own declaration states. The projection
-      // keeps a boolean instead, and the runtime answered every role but the
-      // read-only ones with "workspace-write" -- so the orchestrator, declared
-      // `danger-full-access`, was published as a sandboxed role.
+      // A role's sandbox is published as the effective mode: the stricter of
+      // what the role declared and what the session allows. A role may narrow
+      // the sandbox it runs in, never widen it.
       assert.ok(
         entry.sandboxMode === null ||
           ["read-only", "workspace-write", "unrestricted"].includes(
@@ -3301,12 +3300,29 @@ test("Control API surfaces all 13 typed resource families", async () => {
           ),
         `role ${role} must publish a sandbox the product supports`
       );
+      // The declaration is published beside it, in the same vocabulary, so a
+      // role that asks for more than the session allows is visible.
+      assert.ok(
+        entry.declaredSandboxMode === null ||
+          ["read-only", "workspace-write", "unrestricted"].includes(
+            entry.declaredSandboxMode as string
+          ),
+        `role ${role} must publish a declared sandbox the product supports`
+      );
     }
-    // The orchestrator is the product's unsandboxed role. It must say so.
+    // The orchestrator declares `danger-full-access` and the session runs
+    // `workspace-write`, so the orchestrator runs in the session's sandbox:
+    // the declaration is published beside the effective mode rather than
+    // folded into it.
     assert.equal(
       permissions.body.rolePermissions.orchestrator?.sandboxMode,
+      "workspace-write",
+      "the orchestrator may not widen the session's sandbox"
+    );
+    assert.equal(
+      permissions.body.rolePermissions.orchestrator?.declaredSandboxMode,
       "unrestricted",
-      "the orchestrator declares danger-full-access and must be published as unrestricted"
+      "the orchestrator declares danger-full-access"
     );
     const agentsForComparison = await call("GET", CONTROL_API_PATHS.agents, {
       actor: "viewer-a"

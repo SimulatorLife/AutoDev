@@ -106,7 +106,7 @@ test("only the exact orchestrator role escapes the leaf policy", () => {
 
 test("the execution contract preserves role-specific capabilities across bridge prompts", () => {
   assert.equal(EXECUTION_CONTRACT.version, 1);
-  assert.equal(roleContract("explorer").readOnly, true);
+  assert.equal(roleContract("explorer").sandboxMode, "read-only");
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("explorer").mcp.includes("codegraphcontext"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));

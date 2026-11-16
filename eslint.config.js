@@ -235,7 +235,10 @@ const architecturePolicies = [
     "runtime-telemetry",
     "runtime-telemetry-context"
   ]),
-  allowOnly("runtime-config", ["data", "runtime-shared"]),
+  // The configuration layer projects the role declarations and reads the
+  // permission policy, so it consumes Core's sandbox vocabulary and the Data
+  // layer's policy reader rather than reimplementing either of them.
+  allowOnly("runtime-config", ["core", "data", "runtime-shared"]),
   allowOnly("runtime-router", [
     "runtime-agents",
     "runtime-control-api",

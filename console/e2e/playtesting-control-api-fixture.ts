@@ -128,9 +128,17 @@ const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
  * underneath an open page has to be able to make the page's next write a
  * conflict.
  */
+/**
+ * The sandbox the fixture's session runs in.
+ *
+ * It is the ceiling every role runs under: a role may narrow the sandbox it
+ * runs in, never widen it.
+ */
+const SESSION_SANDBOX_MODE = "workspace-write";
+
 const permissionPolicy = {
   approvalPolicy: "on-demand" as "never" | "always" | "on-demand",
-  sandboxMode: "workspace-write" as
+  sandboxMode: SESSION_SANDBOX_MODE as
     "read-only" | "workspace-write" | "unrestricted",
   approvalsReviewer: "operator",
   networkAccess: false,
@@ -5717,15 +5725,29 @@ function handleCatalogResourceRead(
       },
       rolePermissions: {
         default: {
-          sandboxMode: "workspace-write",
+          sandboxMode: SESSION_SANDBOX_MODE,
+          declaredSandboxMode: SESSION_SANDBOX_MODE,
           mcp: ["lsp"],
           skills: ["code-review"],
           mcpTools: { lsp: ["lsp_goto_definition"] }
         },
         worker: {
           sandboxMode: "read-only",
+          declaredSandboxMode: "read-only",
           mcp: [],
           skills: ["code-review"],
+          mcpTools: {}
+        },
+        // A role that declares more than the session allows. The session runs
+        // `workspace-write`, so the role runs `workspace-write` too -- a role
+        // may narrow the sandbox it runs in, never widen it -- and the matrix
+        // shows the declaration beside the effective mode so the narrowing is
+        // visible rather than folded away.
+        orchestrator: {
+          sandboxMode: SESSION_SANDBOX_MODE,
+          declaredSandboxMode: "unrestricted",
+          mcp: [],
+          skills: [],
           mcpTools: {}
         }
       }

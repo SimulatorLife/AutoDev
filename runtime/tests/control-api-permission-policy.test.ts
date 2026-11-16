@@ -191,19 +191,31 @@ test("the permissions read publishes the policy the canonical source states", as
   assert.equal(Object.hasOwn(policy ?? {}, "defaultToolsApprovalMode"), false);
 });
 
-test("a role's sandbox is the one its own declaration states", async () => {
+test("a role's sandbox is the stricter of its declaration and the session's", async () => {
   const options = fixture();
   const result = await call("GET", "/control/permissions", options);
   const rolePermissions = result.body?.rolePermissions as
-    Record<string, { readonly sandboxMode: string | null }> | undefined;
-  // The orchestrator declares `danger-full-access`. The read used to answer
-  // every role but the read-only ones with "workspace-write", so the product's
-  // unsandboxed role was published as a sandboxed one.
-  assert.equal(rolePermissions?.orchestrator?.sandboxMode, "unrestricted");
+    | Record<
+        string,
+        {
+          readonly sandboxMode: string | null;
+          readonly declaredSandboxMode: string | null;
+        }
+      >
+    | undefined;
+  // The orchestrator declares `danger-full-access`, and the session runs
+  // `workspace-write`. A role may narrow the sandbox it runs in, never widen
+  // it, so the orchestrator runs in the session's sandbox: the effective mode
+  // is what the role may do, and the declaration is what it asked for.
+  assert.equal(rolePermissions?.orchestrator?.sandboxMode, "workspace-write");
+  assert.equal(rolePermissions?.orchestrator?.declaredSandboxMode, "unrestricted");
+  // A read-only role narrows the session's sandbox, so both are the mode it
+  // runs in.
   assert.equal(rolePermissions?.explorer?.sandboxMode, "read-only");
-  // A role that declares no sandbox inherits the policy's: its configuration
-  // is layered over the portable source. This is the mode the policy states.
-  assert.equal(rolePermissions?.worker?.sandboxMode, "workspace-write");
+  assert.equal(rolePermissions?.explorer?.declaredSandboxMode, "read-only");
+  // A role that declares no sandbox runs in the session's.
+  assert.equal(rolePermissions?.default?.sandboxMode, "workspace-write");
+  assert.equal(rolePermissions?.default?.declaredSandboxMode, null);
 });
 
 test("a policy that cannot be read is reported as not observed, not as defaults", async () => {
@@ -216,15 +228,23 @@ test("a policy that cannot be read is reported as not observed, not as defaults"
   assert.equal(typeof result.body?.policyReason, "string");
 
   const rolePermissions = result.body?.rolePermissions as
-    Record<string, { readonly sandboxMode: string | null }> | undefined;
-  // A role that declares no sandbox inherits the policy's, and the policy
-  // could not be read: there is no mode to inherit, so the role's sandbox is
-  // not observed. It used to be published as `workspace-write`, which named a
-  // role as sandboxed on the strength of a policy nobody read.
-  assert.equal(rolePermissions?.worker?.sandboxMode, null);
-  // A role that declares its own mode is still known: the policy is only the
-  // answer for a role that is silent.
-  assert.equal(rolePermissions?.orchestrator?.sandboxMode, "unrestricted");
+    | Record<
+        string,
+        {
+          readonly sandboxMode: string | null;
+          readonly declaredSandboxMode: string | null;
+        }
+      >
+    | undefined;
+  // The session's sandbox could not be read, so there is no ceiling to apply:
+  // a role's own declaration is then the whole of what is known about the
+  // sandbox it runs in.
+  assert.equal(rolePermissions?.worker?.sandboxMode, "unrestricted");
+  assert.equal(rolePermissions?.worker?.declaredSandboxMode, "unrestricted");
+  // A role that declares no sandbox has no observed sandbox: the nearest mode
+  // the product knows is not a mode any source stated.
+  assert.equal(rolePermissions?.default?.sandboxMode, null);
+  assert.equal(rolePermissions?.default?.declaredSandboxMode, null);
 });
 
 test("a policy write changes the canonical source and answers with the new revision", async () => {

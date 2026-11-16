@@ -78,6 +78,23 @@ function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
 }
 
 /**
+ * How a declared sandbox reads in prose.
+ *
+ * A role that declares no sandbox inherits the session's, which is a
+ * declaration in its own right -- "not declared" and "not observed" are
+ * different facts, and only one of them is a claim about the role.
+ */
+function declaredSandboxLabel(
+  mode: RoleCapabilityMatrix["declaredSandboxMode"]
+): string {
+  if (mode === null) return "Inherits session";
+  if (mode === "read-only") return "Read-only";
+  if (mode === "workspace-write") return "Workspace write";
+  if (mode === "unrestricted") return "Unrestricted";
+  return NOT_OBSERVED;
+}
+
+/**
  * How the applied state reads.
  *
  * The canonical source and the composed configuration are two facts, and the
@@ -132,9 +149,36 @@ export function PermissionsView({
             // the mode itself rather than a boolean derived from it. The
             // orchestrator is declared `danger-full-access`, and the column
             // used to report it as a workspace-write role.
-            "data-permission-mode": r.sandboxMode ?? "not-observed"
+            "data-permission-mode": r.sandboxMode ?? "not-observed",
+            // The mode is the effective one: the stricter of what the role
+            // declared and what the session allows. A role whose declaration
+            // was narrowed by the session's sandbox says so in the cell, so
+            // the matrix does not read as if the role had asked for the mode
+            // it runs in.
+            ...(r.declaredSandboxMode !== null &&
+            r.declaredSandboxMode !== r.sandboxMode
+              ? { "data-permission-narrowed": "true" }
+              : {})
           },
           children: sandboxLabel(r.sandboxMode)
+        }),
+      meta: {
+        weight: 160
+      }
+    },
+    {
+      id: "declaredSandboxMode",
+      header: "Declared Sandbox",
+      cell: ({ row: { original: r } }) =>
+        React.createElement(Tag, {
+          className: CHIP_TONE_CLASS,
+          dataAttributes: {
+            // The declaration is published beside the effective mode because
+            // the two answer different questions: what the role may do, and
+            // what it asked for.
+            "data-permission-declared-mode": r.declaredSandboxMode ?? "not-declared"
+          },
+          children: declaredSandboxLabel(r.declaredSandboxMode)
         }),
       meta: {
         weight: 160

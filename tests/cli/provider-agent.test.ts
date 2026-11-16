@@ -24,6 +24,7 @@ import {
   readRoleExecutionSettings,
   runProviderAgent
 } from "@simulatorlife/autodev-runtime/cli/provider-agent";
+import { roleSessionSandboxMode } from "@simulatorlife/autodev-runtime/config";
 import { parse as parseToml } from "smol-toml";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -256,6 +257,53 @@ test("role settings are read from typed TOML without Python or shell parsing", (
     });
   } finally {
     rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a role-scoped session runs in the stricter of the role's sandbox and the policy's", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-role-session-sandbox-"));
+  try {
+    const policyFile = join(root, "config.autodev.toml");
+    writeFileSync(
+      policyFile,
+      [
+        'approval_policy = "never"',
+        'sandbox_mode = "workspace-write"',
+        'approvals_reviewer = "user"',
+        "",
+        "[sandbox_workspace_write]",
+        "network_access = true",
+        "",
+        "[tools]",
+        "web_search = true",
+        ""
+      ].join("\n")
+    );
+    // A role may narrow the sandbox it runs in, never widen it: a role that
+    // declares the unrestricted sandbox runs in the session's own.
+    assert.equal(
+      roleSessionSandboxMode("danger-full-access", policyFile),
+      "workspace-write"
+    );
+    // A role that narrows runs in what it declared.
+    assert.equal(
+      roleSessionSandboxMode("read-only", policyFile),
+      "read-only"
+    );
+    // A role that declares nothing inherits the session's.
+    assert.equal(
+      roleSessionSandboxMode(null, policyFile),
+      "workspace-write"
+    );
+    // A policy that cannot be read leaves the role's own declaration as the
+    // whole of what is known.
+    writeFileSync(policyFile, "approval_policy = \n");
+    assert.equal(
+      roleSessionSandboxMode("read-only", policyFile),
+      "read-only"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

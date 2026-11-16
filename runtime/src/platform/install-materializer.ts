@@ -183,6 +183,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/agents/bridge-role.ts",
   "runtime/src/agents/bridge-sandbox.ts",
   "runtime/src/agents/bridge-spawn-session.ts",
+  "runtime/src/agents/read-only-policy.ts",
   "runtime/src/agents/role-mcp-environment.ts",
   "runtime/src/agents/spawn-shim-server.ts",
   "runtime/src/agents/spawn-tools.ts",
@@ -194,6 +195,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/config/render-bridge-mcp-catalogue.ts",
   "runtime/src/config/render-execution-contract.ts",
   "runtime/src/config/render-model-catalog.ts",
+  "runtime/src/config/role-sandbox-mode.ts",
   "runtime/src/memory/index.ts",
   "runtime/src/memory/context-injection.ts",
   "runtime/src/memory/git-curation.ts",
@@ -275,7 +277,9 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-check.ts",
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/hooks/root-delegation.ts",
-  "runtime/src/hooks/block-ccc-cli.ts"
+  "runtime/src/hooks/block-ccc-cli.ts",
+  "runtime/src/hooks/entry-point.ts",
+  "runtime/src/hooks/role-sandbox.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
   "src/providers/quota-discovery.ts",

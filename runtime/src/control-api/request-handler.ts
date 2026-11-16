@@ -63,6 +63,7 @@ import {
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacesResponse,
+  effectiveSandboxMode,
   type HookAction,
   type HookEvent,
   isAntigravityProvider,
@@ -103,7 +104,6 @@ import {
   PermissionPolicyValidationError,
   PlaytestRepository,
   readPermissionPolicyFile,
-  readRoleSandboxModes,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
   resolveSkillScopes,
@@ -2672,7 +2672,7 @@ function agentsView(
           : isOrchestrator
             ? "orchestrator"
             : "leaf";
-      const readOnly = Boolean(raw?.readOnly);
+      const readOnly = raw?.sandboxMode === "read-only";
       const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
       const skills = Array.isArray(raw?.skills) ? raw.skills : [];
       const roleType = isOrchestrator ? "orchestrator" : "subagent";
@@ -2809,7 +2809,7 @@ function agentDetailView(
       : isOrchestrator
         ? "orchestrator"
         : "leaf";
-  const readOnly = Boolean(raw?.readOnly);
+  const readOnly = raw?.sandboxMode === "read-only";
   const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
   const skills = Array.isArray(raw?.skills) ? raw.skills : [];
   const promptPath = path.join(
@@ -4033,17 +4033,12 @@ function permissionsView(
   codexHome: string = defaultCodexHomeForReconciliation()
 ): Record<string, unknown> {
   const roles = getDefaultExecutionContract().roles ?? {};
-  const repository = new ConfigRepository(repositoryRoot);
   const state = permissionPolicyState(repositoryRoot, codexHome);
-  const roleSandboxes = readRoleSandboxModes(
-    repository.agentRolesPath(),
-    // A role that declares no sandbox inherits the policy's. When the policy
-    // could not be read there is no mode to inherit, and the role's sandbox
-    // is not observed -- it is not the product's nearest mode. This used to
-    // fall back to `workspace-write`, which named a role as sandboxed on the
-    // strength of a policy nobody read.
-    state.policy?.sandboxMode ?? null
-  );
+  // The session's own sandbox is the policy the portable source declares, and
+  // it is the ceiling every role runs under: a role may narrow the sandbox it
+  // runs in, never widen it. A role that declares no sandbox runs in the
+  // session's; a role that declares a wider one runs in the session's too.
+  const sessionSandbox = state.policy?.sandboxMode ?? null;
   // Typed as the contract's own entry rather than `Record<string, unknown>`:
   // the anonymous shape above *is* the published one, and writing it out here is
   // what stops the two from drifting without a compiler noticing. Mutable
@@ -4054,11 +4049,19 @@ function permissionsView(
   > = {};
   for (const [role, raw] of Object.entries(roles)) {
     const entry = (raw ?? {}) as Record<string, unknown>;
+    const declared = isSandboxMode(entry.sandboxMode)
+      ? entry.sandboxMode
+      : null;
     rolePermissions[role] = {
-      // A role with no readable declaration has no observed sandbox. It is
-      // not the read-only mode and it is not the unrestricted one: both would
-      // be a claim the source does not support.
-      sandboxMode: roleSandboxes[role] ?? null,
+      // What the role actually runs in: the stricter of what it declared and
+      // what the session allows. Null when neither could be observed -- it is
+      // not the read-only mode and it is not the unrestricted one, because both
+      // would be a claim the source does not support.
+      sandboxMode: effectiveSandboxMode(declared, sessionSandbox),
+      // What the role asked for, kept beside the effective mode so a role that
+      // declares more than the session allows is visible rather than folded
+      // away.
+      declaredSandboxMode: declared,
       // Same execution-contract join `/control/agents` uses, so the effective
       // capability matrix never contradicts the Agents surface.
       mcp: Array.isArray(entry.mcp) ? entry.mcp : [],

@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const REDIRECTION_MESSAGE = `Direct CLI execution of 'ccc' is blocked by policy.
@@ -138,7 +139,7 @@ export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
   return 0;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isHookEntryPoint(import.meta.url)) {
   try {
     process.exitCode = runBlockCccCli();
   } catch {

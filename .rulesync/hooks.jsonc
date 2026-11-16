@@ -26,6 +26,12 @@
         "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
         "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
         "statusMessage": "Recording skill-read telemetry"
+      },
+      {
+        "type": "command",
+        "matcher": "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts",
+        "statusMessage": "Enforcing the role sandbox"
       }
     ]
   },

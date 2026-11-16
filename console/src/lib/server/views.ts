@@ -229,6 +229,10 @@ export function permissionsFromControlApi(
       // place rather than published beside it.
       readOnly: entry.sandboxMode === "read-only",
       sandboxMode: entry.sandboxMode,
+      // The mode the role asked for, kept beside the effective one so the
+      // matrix can show that a role's declaration was narrowed by the
+      // session's sandbox rather than silently reporting only the result.
+      declaredSandboxMode: entry.declaredSandboxMode,
       allowedMcpServers: entry.mcp,
       allowedMcpTools: entry.mcpTools,
       allowedSkills: entry.skills

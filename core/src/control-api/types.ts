@@ -1379,17 +1379,28 @@ export interface ControlApiPermissionsResponse {
       string,
       {
         /**
-         * The sandbox this role runs in, as its own declaration states it.
+         * The sandbox this role actually runs in.
          *
-         * The projection the Runtime installs keeps a boolean instead, so a
-         * role declared `danger-full-access` was reported as `workspace-write`
-         * -- the product's most privileged role named as a sandboxed one.
+         * A role runs in the stricter of its own declaration and the session's
+         * sandbox: a role may narrow the sandbox it runs in, never widen it.
+         * That rule is the one the enforcement follows, so the matrix answers
+         * the question the operator has -- what may this role do -- rather than
+         * what it asked for.
          *
-         * Null when the role's declaration could not be read: the sandbox is
-         * then not observed, which is neither the read-only mode nor the
-         * unrestricted one.
+         * Null when neither the declaration nor the session's sandbox could be
+         * read: the sandbox is then not observed, which is neither the
+         * read-only mode nor the unrestricted one.
          */
         readonly sandboxMode: SandboxMode | null;
+        /**
+         * The sandbox this role declares for itself.
+         *
+         * The declaration is kept beside the effective mode because the two
+         * answer different questions, and a role that asks for more than the
+         * session allows is a fact an operator wants to see rather than a
+         * value to silently fold into the effective one.
+         */
+        readonly declaredSandboxMode: SandboxMode | null;
         /**
          * MCP servers this role is permitted to reach, projected from the same
          * execution contract that backs `/control/agents`. Kept here so the

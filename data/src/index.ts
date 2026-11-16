@@ -11,8 +11,6 @@ export {
   PermissionPolicyValidationError,
   type PermissionPolicyWrite,
   readPermissionPolicyFile,
-  readRoleSandboxModes,
-  roleSandboxMode,
   sandboxModeFromConfig,
   sandboxModeToConfig,
   updatePermissionPolicy

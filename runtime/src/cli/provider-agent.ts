@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   parseTomlFile,
+  roleSessionSandboxMode,
   type TomlValue
 } from "@simulatorlife/autodev-runtime/config";
 import {
@@ -199,6 +200,29 @@ export function readRoleExecutionSettings(
     reasoningSummary: stringValue(config.model_reasoning_summary),
     sandboxMode: stringValue(config.sandbox_mode)
   };
+}
+
+/**
+ * The sandbox a role-scoped session runs in.
+ *
+ * The session's own sandbox is the policy the portable source declares, and a
+ * role may narrow it but never widen it: a role that declares
+ * `danger-full-access` under a workspace-write policy runs workspace-write,
+ * exactly as a child spawned inside that session would. That is the same rule
+ * Codex applies to a spawned child, and it is what keeps a role-scoped run and
+ * the session that spawned it from disagreeing about what a role may do.
+ *
+ * The composition itself belongs to the configuration layer, which is where
+ * the role declarations and the permission policy are read.
+ */
+function roleSessionSandbox(
+  roleFile: string,
+  policyFile: string
+): string {
+  return roleSessionSandboxMode(
+    readRoleExecutionSettings(roleFile).sandboxMode,
+    policyFile
+  );
 }
 
 function readPromptFile(file: string): string {
@@ -1212,8 +1236,15 @@ function providerCodexArguments(
   if (settings.reasoningSummary) {
     args.push("-c", `model_reasoning_summary=${settings.reasoningSummary}`);
   }
-  if (settings.sandboxMode) {
-    args.push("-c", `sandbox_mode=${settings.sandboxMode}`);
+  // The session runs in the stricter of the policy's sandbox and the role's
+  // own declaration, so a role-scoped run cannot be more privileged than the
+  // session that would have spawned it.
+  const sandboxMode = roleSessionSandbox(
+    options.roleFile,
+    path.join(repositoryRoot, "config/config.autodev.toml")
+  );
+  if (sandboxMode) {
+    args.push("-c", `sandbox_mode=${sandboxMode}`);
   }
   if (analystDispatch) {
     const sourceCodexHome =

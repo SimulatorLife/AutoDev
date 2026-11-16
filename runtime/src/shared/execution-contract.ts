@@ -1,10 +1,20 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import type { SandboxMode } from "@simulatorlife/autodev-core";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export interface RoleContract {
   mcp: string[];
+  /**
+   * The sandbox this role declares, in the product's vocabulary.
+   *
+   * Null when the role declares none: it inherits the session's sandbox. The
+   * contract used to carry a boolean, which could say only "read-only" or "not
+   * read-only" and so reported every unrestricted role as a workspace-write
+   * one.
+   */
+  sandboxMode?: SandboxMode | null;
   mcpEnvVars?: Record<string, string[]>;
   roleScopedMcp?: string[];
   webResearch?: {
@@ -55,7 +65,7 @@ export interface ExecutionContract {
   [key: string]: unknown;
 }
 
-export type SandboxMode = "read-only" | "workspace-write";
+export type BridgeSandboxMode = "read-only" | "workspace-write";
 
 /**
  * The workspace id grammar the contract and the workspace catalogue share: a
@@ -171,18 +181,17 @@ export function providerInjectsRoleMcp(provider: string): boolean {
 }
 
 /**
- * Resolve the role's sandbox mode from the execution contract.
+ * The sandbox a role declares.
  *
- * The contract's `readOnly` flag is the authoritative source. The orchestrator
- * tier is never read-only by design (it owns the workspace-write budget for
- * the session); unknown / empty role names return null so callers can decide
- * whether to default to workspace-write or refuse.
+ * The contract is the machine-readable projection of the role declarations, so
+ * this is the declared mode: null when the role declares none, which means the
+ * role inherits the session's sandbox rather than naming one of its own.
  *
- *   readOnly: true               -> "read-only"
- *   readOnly: false, any tier    -> "workspace-write"
- *   unknown / empty role         -> null
+ * An unknown role name returns null as well: a role the contract does not
+ * describe has no declaration to report, and inventing the nearest mode the
+ * product knows would be a claim no source supports.
  */
-export function resolveSandboxMode(
+export function roleSandboxMode(
   role: string | null | undefined
 ): SandboxMode | null {
   if (typeof role !== "string") return null;
@@ -190,7 +199,30 @@ export function resolveSandboxMode(
   if (!key) return null;
   const contract = CONTRACT.roles[key];
   if (!contract) return null;
-  if (contract.readOnly === true) return "read-only";
-  if (contract.readOnly === false) return "workspace-write";
-  return null;
+  const declared = contract.sandboxMode;
+  return declared === undefined ? null : declared;
+}
+
+/**
+ * The tier a provider bridge is told to run a role in.
+ *
+ * A bridge enforces two tiers and no more: a read-only role may not write, and
+ * every other role may. The tiers are therefore not the product's sandbox
+ * modes -- a bridge has no tier for the unrestricted sandbox -- so a role that
+ * declares a mode the bridge cannot express runs in the writable tier. What
+ * the tier says is whether the role may write, which is what the bridge acts
+ * on; the mode the role declared is the contract's own answer, reported by
+ * {@link roleSandboxMode}.
+ *
+ * Null means the contract does not describe the role at all: there is nothing
+ * to enforce and nothing to say.
+ */
+export function resolveSandboxMode(
+  role: string | null | undefined
+): BridgeSandboxMode | null {
+  if (typeof role !== "string") return null;
+  const key = role.trim().toLowerCase();
+  if (!key) return null;
+  if (!CONTRACT.roles[key]) return null;
+  return roleSandboxMode(role) === "read-only" ? "read-only" : "workspace-write";
 }

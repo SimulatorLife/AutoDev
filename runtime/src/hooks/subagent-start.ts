@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import {
   ensureAntigravityProxy,
   ensureClaudeBridge,
@@ -45,6 +46,6 @@ export function createSubagentStart(
 
 export const runSubagentStart = createSubagentStart();
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isHookEntryPoint(import.meta.url)) {
   process.exitCode = await runSubagentStart();
 }

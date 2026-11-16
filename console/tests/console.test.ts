@@ -12980,6 +12980,7 @@ test("View adapters translate Control API responses without inventing data", () 
     rolePermissions: {
       orchestrator: {
         sandboxMode: "unrestricted",
+        declaredSandboxMode: "unrestricted",
         mcp: ["cocoindex-code", "lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: ["autodev-session-diagnostics", "ccc"]
@@ -13003,6 +13004,55 @@ test("View adapters translate Control API responses without inventing data", () 
   ]);
 });
 
+test("the matrix shows the sandbox a role runs in beside the one it declared", () => {
+  // The effective mode is what the role may do, and the declaration is what
+  // it asked for. A role whose declaration the session narrowed has to show
+  // both, or the matrix reads as if the role had asked for what it got.
+  const markup = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      executionContractObserved: true,
+      policy: {
+        approvalPolicy: "never",
+        sandboxMode: "workspace-write",
+        approvalsReviewer: "user",
+        networkAccess: true,
+        webSearch: true
+      },
+      policyStatus: "valid",
+      policyReason: null,
+      revision: "c".repeat(64),
+      applied: null,
+      appliedSource: "/tmp/codex/config.toml",
+      roleMatrices: [
+        {
+          role: "orchestrator",
+          readOnly: false,
+          sandboxMode: "workspace-write",
+          declaredSandboxMode: "unrestricted",
+          allowedMcpServers: [],
+          allowedSkills: [],
+          allowedMcpTools: {}
+        },
+        {
+          role: "explorer",
+          readOnly: true,
+          sandboxMode: "read-only",
+          declaredSandboxMode: "read-only",
+          allowedMcpServers: [],
+          allowedSkills: [],
+          allowedMcpTools: {}
+        }
+      ],
+      returnTo: "/permissions"
+    })
+  );
+  assert.match(markup, /data-permission-mode="workspace-write"/u);
+  assert.match(markup, /data-permission-declared-mode="unrestricted"/u);
+  assert.match(markup, /data-permission-declared-mode="read-only"/u);
+  // The role the session narrowed says so.
+  assert.match(markup, /data-permission-narrowed="true"/u);
+});
+
 test("the capability matrix lists the fixed roles in the one order the app uses", () => {
   // The matrix sorted roles alphabetically, so it showed `orchestrator` before
   // `smart` -- an order the target state does not use anywhere. It fixes the
@@ -13015,6 +13065,7 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
   // order among themselves, so the table cannot churn between reads.
   const role = () => ({
     sandboxMode: "workspace-write" as const,
+    declaredSandboxMode: "workspace-write" as const,
     mcp: [],
     mcpTools: {},
     skills: []
@@ -23699,12 +23750,14 @@ test("the permissions page answers which tools a role may call, not only which s
     rolePermissions: {
       worker: {
         sandboxMode: "workspace-write",
+        declaredSandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: []
       },
       validator: {
         sandboxMode: "read-only",
+        declaredSandboxMode: "read-only",
         // Reaches an MCP server with no tool grants. That is a real state, and
         // it must not read the same as a role whose grants were never reported.
         mcp: ["lsp"],
@@ -23713,6 +23766,7 @@ test("the permissions page answers which tools a role may call, not only which s
       },
       orchestrator: {
         sandboxMode: "unrestricted",
+        declaredSandboxMode: "unrestricted",
         mcp: [],
         mcpTools: {},
         skills: []
@@ -23825,6 +23879,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
     rolePermissions: {
       default: {
         sandboxMode: "workspace-write",
+        declaredSandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: {},
         skills: []
@@ -23876,6 +23931,7 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
     rolePermissions: {
       default: {
         sandboxMode: "workspace-write",
+        declaredSandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: {},
         skills: []

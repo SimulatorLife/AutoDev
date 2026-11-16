@@ -3544,11 +3544,17 @@ function isControlApiPermissionsResponse(
   return Object.values(value.rolePermissions).every(
     (entry) =>
       isRecord(entry) &&
-      // A role's sandbox is what its own declaration states, and a role whose
+      // A role's sandbox is what it actually runs in, and a role whose
       // declaration could not be read has no observed sandbox. The check is
       // exact so a drifted mode fails closed instead of being rendered as the
       // nearest mode the Console knows.
       (entry.sandboxMode === null || isSandboxMode(entry.sandboxMode)) &&
+      // The mode the role declares for itself is published beside the
+      // effective one, so a role that asks for more than the session allows
+      // is visible rather than folded away. It is checked exactly too: a
+      // drifted declaration must not be rendered as a mode the Console knows.
+      (entry.declaredSandboxMode === null ||
+        isSandboxMode(entry.declaredSandboxMode)) &&
       // The capability matrix must be a real projection. An absent list is
       // missing evidence, not "no MCP servers", so it fails closed instead of
       // letting the Console print a fabricated `None`.

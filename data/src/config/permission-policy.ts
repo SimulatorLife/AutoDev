@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
+import { readFileSync, statSync } from "node:fs";
 
-import type {
-  ApprovalPolicy,
-  PermissionPolicy,
-  SandboxMode
+import {
+  type ApprovalPolicy,
+  codexSandboxMode,
+  isCodexSandboxMode,
+  isSandboxMode,
+  type PermissionPolicy,
+  productSandboxMode,
+  type SandboxMode
 } from "@simulatorlife/autodev-core";
 import { parse as parseToml } from "smol-toml";
 
@@ -15,10 +18,12 @@ import { atomicWriteSync } from "../files/atomic-write.ts";
  * The permission policy's one owner.
  *
  * The permission policy of a Codex session is declared in the portable source
- * (`config/config.autodev.toml`) and in the role declarations
- * (`agents/roles/<role>.toml`). Nothing else states it, so this module is the
- * only place that decides what those files mean, what a policy value is, and
- * how a policy is changed.
+ * (`config/config.autodev.toml`). Nothing else states it, so this module is the
+ * only place that decides what that file means, what a policy value is, and
+ * how a policy is changed. A role's own sandbox is declared beside it, in
+ * `agents/roles/<role>.toml`, and reaches the product as the execution
+ * contract's projection of those declarations rather than as a second reading
+ * of the same files.
  *
  * It used to be two places that said the same thing without reading either
  * file: the Runtime published a policy block of literals while naming the
@@ -34,16 +39,9 @@ import { atomicWriteSync } from "../files/atomic-write.ts";
  * The vocabulary is the file's, not this module's: the portable source states
  * `sandbox_mode` in the vocabulary Codex configures sessions in, and the
  * product's own vocabulary (`core`'s `SandboxMode`) is what the Console shows.
- * The translation between the two lives here, once, so no reader can invent a
- * third one.
+ * The translation between the two lives in `core`, once, so no reader can
+ * invent a third one.
  */
-
-/** The sandbox modes the portable source declares a session in. */
-const CONFIG_SANDBOX_MODES = {
-  "read-only": "read-only",
-  "workspace-write": "workspace-write",
-  "danger-full-access": "unrestricted"
-} as const satisfies Record<string, SandboxMode>;
 
 /** The approval policies the portable source declares. */
 const CONFIG_APPROVAL_POLICIES = new Set<string>([
@@ -168,10 +166,8 @@ export function permissionPolicyGeneration(policy: PermissionPolicy): string {
  * names three, and a fourth would be a configuration the product cannot honour.
  */
 export function sandboxModeFromConfig(value: unknown): SandboxMode | null {
-  if (typeof value !== "string") return null;
-  return (
-    CONFIG_SANDBOX_MODES[value as keyof typeof CONFIG_SANDBOX_MODES] ?? null
-  );
+  if (!isCodexSandboxMode(value)) return null;
+  return productSandboxMode(value);
 }
 
 /**
@@ -181,15 +177,12 @@ export function sandboxModeFromConfig(value: unknown): SandboxMode | null {
  * vocabulary is turned back into the file's.
  */
 export function sandboxModeToConfig(mode: SandboxMode): string {
-  const entry = Object.entries(CONFIG_SANDBOX_MODES).find(
-    ([, product]) => product === mode
-  );
-  if (!entry) {
+  if (!isSandboxMode(mode)) {
     throw new PermissionPolicyValidationError(
       `Unsupported sandbox mode: ${mode}`
     );
   }
-  return entry[0];
+  return codexSandboxMode(mode);
 }
 
 /** The approval policy the portable source declares, or null. */
@@ -347,70 +340,6 @@ export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
     return { status: "invalid", reason, revision };
   }
   return { status: "valid", policy, revision };
-}
-
-/**
- * The sandbox mode each role declares.
- *
- * A role that declares none inherits the policy's: the role's own
- * configuration is layered over the portable source, so an absent key is the
- * source's value rather than an unstated one.
- *
- * A role whose declaration names a mode this product does not support is
- * reported as unknown rather than as the nearest supported one: a role that
- * cannot be sandboxed the way it asks is not a role whose sandbox is known.
- *
- * The fallback is the policy's mode, and it is null when the policy was not
- * observed. A role that declares no mode under a policy that could not be read
- * has no observed sandbox: the nearest mode the product knows is not a mode
- * any source stated.
- */
-export function readRoleSandboxModes(
-  rolesDirectory: string,
-  fallback: SandboxMode | null
-): Readonly<Record<string, SandboxMode | null>> {
-  const modes: Record<string, SandboxMode | null> = {};
-  let entries: string[];
-  try {
-    entries = readdirSync(rolesDirectory);
-  } catch {
-    return modes;
-  }
-  for (const entry of entries) {
-    if (!entry.endsWith(".toml")) continue;
-    const role = entry.slice(0, -".toml".length);
-    modes[role] = roleSandboxMode(path.join(rolesDirectory, entry), fallback);
-  }
-  return modes;
-}
-
-/**
- * The sandbox mode one role declares.
- *
- * The role declarations are the canonical source for what a role may do, and
- * this is the one place that reads the mode out of them. The projection the
- * Runtime installs (`config/execution-contract.json`) keeps a boolean instead,
- * so this cannot be answered from the projection without losing the mode.
- */
-export function roleSandboxMode(
-  roleFile: string,
-  fallback: SandboxMode | null
-): SandboxMode | null {
-  let content: string;
-  try {
-    content = readFileSync(roleFile, "utf8");
-  } catch {
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = parseToml(content);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed)) return null;
-  if (parsed.sandbox_mode === undefined) return fallback;
-  return sandboxModeFromConfig(parsed.sandbox_mode);
 }
 
 /**

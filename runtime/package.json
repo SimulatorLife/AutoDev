@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./agents": "./src/agents/index.ts",
+    "./agents/read-only-policy": "./src/agents/read-only-policy.ts",
     "./agents/role-mcp-environment": "./src/agents/role-mcp-environment.ts",
     "./cli": "./src/cli/index.ts",
     "./cli/autodev": "./src/cli/autodev.ts",
@@ -19,6 +20,7 @@
     "./control-api/opencli-browser": "./src/control-api/opencli-browser.ts",
     "./cli/control-api-compatibility": "./src/cli/control-api-compatibility.ts",
     "./hooks": "./src/hooks/index.ts",
+    "./hooks/entry-point": "./src/hooks/entry-point.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/codex-tools-shim": "./src/mcp/codex-tools-shim.ts",
     "./mcp/process-registry": "./src/mcp/process-registry.ts",

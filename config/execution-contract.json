@@ -3,7 +3,7 @@
   "roles": {
     "browser-tester": {
       "kind": "leaf",
-      "readOnly": true,
+      "sandboxMode": "read-only",
       "mcp": [
         "playwright"
       ],
@@ -51,7 +51,7 @@
     },
     "default": {
       "kind": "leaf",
-      "readOnly": false,
+      "sandboxMode": null,
       "mcp": [
         "lsp",
         "cocoindex-code",
@@ -103,7 +103,7 @@
     },
     "docs-researcher": {
       "kind": "leaf",
-      "readOnly": true,
+      "sandboxMode": "read-only",
       "mcp": [
         "openaiDeveloperDocs",
         "context7"
@@ -119,7 +119,7 @@
     },
     "explorer": {
       "kind": "leaf",
-      "readOnly": true,
+      "sandboxMode": "read-only",
       "mcp": [
         "lsp",
         "cocoindex-code",
@@ -149,7 +149,7 @@
     },
     "orchestrator": {
       "kind": "orchestrator",
-      "readOnly": false,
+      "sandboxMode": "unrestricted",
       "mcp": [
         "lsp",
         "cocoindex-code",
@@ -189,7 +189,7 @@
     },
     "playtest-analyst": {
       "kind": "leaf",
-      "readOnly": true,
+      "sandboxMode": "read-only",
       "mcp": [
         "playtest"
       ],
@@ -233,7 +233,7 @@
     },
     "playtester": {
       "kind": "leaf",
-      "readOnly": true,
+      "sandboxMode": "read-only",
       "mcp": [
         "playtest"
       ],
@@ -288,7 +288,7 @@
     },
     "smart": {
       "kind": "leaf",
-      "readOnly": false,
+      "sandboxMode": "unrestricted",
       "mcp": [
         "lsp",
         "cocoindex-code",
@@ -351,7 +351,7 @@
     },
     "validator": {
       "kind": "leaf",
-      "readOnly": false,
+      "sandboxMode": "workspace-write",
       "mcp": [
         "lsp",
         "cocoindex-code",
@@ -382,7 +382,7 @@
     },
     "worker": {
       "kind": "leaf",
-      "readOnly": false,
+      "sandboxMode": "unrestricted",
       "mcp": [
         "lsp",
         "cocoindex-code",

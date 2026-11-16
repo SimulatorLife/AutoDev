@@ -36,6 +36,8 @@ function markup(
       readonly readOnly: boolean;
       readonly sandboxMode:
         "read-only" | "workspace-write" | "unrestricted" | null;
+      readonly declaredSandboxMode:
+        "read-only" | "workspace-write" | "unrestricted" | null;
       readonly allowedMcpServers: readonly string[];
       readonly allowedSkills: readonly string[];
       readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
@@ -62,6 +64,7 @@ function markup(
           role: "orchestrator",
           readOnly: false,
           sandboxMode: "unrestricted",
+          declaredSandboxMode: "unrestricted",
           allowedMcpServers: ["lsp"],
           allowedSkills: [],
           allowedMcpTools: {}
@@ -114,6 +117,7 @@ test("a role whose sandbox was not observed is shown as not observed", () => {
         role: "mystery",
         readOnly: false,
         sandboxMode: null,
+        declaredSandboxMode: null,
         allowedMcpServers: [],
         allowedSkills: [],
         allowedMcpTools: {}
