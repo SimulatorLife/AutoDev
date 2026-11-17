@@ -18,6 +18,7 @@ import {
   type MemoryReadContext,
   parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import { createPostgresMemoryRuntime } from "./postgres.ts";
 import {
@@ -605,10 +606,6 @@ function parseCaptureEvidence(value: unknown): EvidenceReference {
       ? { observedAt: value.observedAt }
       : {})
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function required(value: string | undefined, name: string): string {

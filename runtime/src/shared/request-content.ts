@@ -9,11 +9,9 @@
  * carries an image" means.
  */
 
-const DATA_URL_PATTERN = /^data:([^;,]+);base64,(.*)$/su;
+import { isRecord } from "./object-guards.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+const DATA_URL_PATTERN = /^data:([^;,]+);base64,(.*)$/su;
 
 /** An image the request carries. */
 export type RequestImage =

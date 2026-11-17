@@ -10,15 +10,12 @@ import {
   type ExecutionContract,
   type RoleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import type { RecordRouterEventInput } from "./events.ts";
 import { safeMetricLabel } from "./metric-label.ts";
 import type { RecordUsageEventParams } from "./usage.ts";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 // Normalise the persisted `settled` counter block. The router records it
 // as `{ success, failure }`; persistence may hand back an object whose

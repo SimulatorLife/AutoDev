@@ -1,5 +1,6 @@
 /**
- * Server-only record of a Console mutation that did not land.
+ * Server-only record of a Console mutation that did not land, and the answer
+ * a mutation route gives when it did.
  *
  * A mutation route answers every rejection with a redirect carrying the
  * bounded "could not be confirmed" notice, and the Runtime audits only the
@@ -13,8 +14,16 @@
  * as one JSON line naming the route, the resource and the cause. The line
  * carries codes and statuses, never form values or messages from the
  * request, so nothing an attacker submits is echoed into the log.
+ *
+ * The redirect and the failure answer live here too, because a route's
+ * rejection answer is the other half of the same record: the log line says
+ * why the change did not land, and the redirect says where the operator is
+ * sent to find out. One owner keeps the two from drifting apart.
  */
 
+import { NextResponse } from "next/server.js";
+
+import { withControlFailure } from "../control-failure.ts";
 import type { ControlApiResult } from "./control-api.ts";
 
 export const MUTATION_REJECTION_SCHEMA = "autodev-console-mutation-rejected-v1";
@@ -68,6 +77,39 @@ export function logMutationRejection(rejection: MutationRejection): void {
       code: bounded(rejection.code) ?? null
     })}\n`
   );
+}
+
+/**
+ * The redirect a mutation route answers a browser form with.
+ *
+ * 303 is the status that keeps the answer a redirect after a POST: the
+ * browser follows it with a GET, so a reloaded form cannot resubmit the
+ * change the server already turned away.
+ */
+export function redirectTo(location: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { location } });
+}
+
+/**
+ * The failure answer for a mutation the Console turned away itself.
+ *
+ * The returned function logs the rejection against the route that refused it
+ * and redirects the operator back to the page the change was made on, with
+ * the bounded "could not be confirmed" notice attached. The return path
+ * defaults to the page the route owns and is overridden once the form has
+ * named the page it came from.
+ */
+export function mutationFailure(
+  route: string,
+  defaultReturnTo: string
+): (
+  rejection: Omit<MutationRejection, "route">,
+  returnTo?: string
+) => NextResponse {
+  return (rejection, returnTo = defaultReturnTo): NextResponse => {
+    logMutationRejection({ route, ...rejection });
+    return redirectTo(withControlFailure(returnTo));
+  };
 }
 
 /** The cause and evidence a failed Control API result gives. */

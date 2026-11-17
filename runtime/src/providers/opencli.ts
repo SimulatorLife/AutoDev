@@ -54,6 +54,7 @@ import {
   type OpencliCommand,
   resolveOpencliCommand
 } from "@simulatorlife/autodev-runtime/shared/executables";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   opencliBrowserSettingFile,
   readOpencliDedicatedBrowser
@@ -192,10 +193,6 @@ const LIMIT_STATUS_CLASSES = new Set([
   "session_limit",
   "quota_exhausted"
 ]);
-
-function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Preserve instructions and transcript while shrinking only MCP references. */
 function compactForTypedChatgpt(

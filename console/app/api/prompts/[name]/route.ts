@@ -1,6 +1,7 @@
 /** Same-origin mutation boundary for canonical RuleSync slash commands. */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   type CanonicalSourceSaveOutcome,
@@ -14,9 +15,9 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../src/lib/server/mutation-rejection.ts";
 
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_FORM_BODY_BYTES = 160_000;
 
 export const dynamic = "force-dynamic";
@@ -31,12 +32,7 @@ function redirectToPrompt(
   const query = new URLSearchParams();
   if (saveOutcome) query.set("save", saveOutcome);
   if (basedOn) query.set("based", basedOn);
-  return new NextResponse(null, {
-    status: 303,
-    headers: {
-      location: query.size > 0 ? `${path}?${query.toString()}` : path
-    }
-  });
+  return redirectTo(query.size > 0 ? `${path}?${query.toString()}` : path);
 }
 
 function saveOutcomeForFailure(
@@ -83,7 +79,7 @@ export async function POST(
   if (
     content === null ||
     expectedRevision === null ||
-    !REVISION_PATTERN.test(expectedRevision)
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
   ) {
     return redirectToPrompt(name, "failed");
   }

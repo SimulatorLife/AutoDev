@@ -19,13 +19,12 @@
  * refreshed provider state is authoritative.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,
   providersPath
 } from "../../../../../src/features/providers/paths.ts";
-import { withControlFailure } from "../../../../../src/lib/control-failure.ts";
 import {
   patchProviderLimits,
   readControlApiConfig
@@ -35,8 +34,8 @@ import {
   readStrictUrlEncodedFormBody
 } from "../../../../../src/lib/server/form-mutation.ts";
 import {
-  logMutationRejection,
-  type MutationRejection,
+  mutationFailure,
+  redirectTo,
   runtimeRejection
 } from "../../../../../src/lib/server/mutation-rejection.ts";
 
@@ -75,10 +74,6 @@ const ROUTE = "/api/providers/[provider]/limits";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
-}
 
 /**
  * Read the current value of one axis. "unlimited" is an explicit decision;
@@ -130,13 +125,7 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string }> }
 ): Promise<NextResponse> {
-  const failed = (
-    rejection: Omit<MutationRejection, "route">,
-    returnTo: string = providersPath()
-  ): NextResponse => {
-    logMutationRejection({ route: ROUTE, ...rejection });
-    return redirectTo(withControlFailure(returnTo));
-  };
+  const failed = mutationFailure(ROUTE, providersPath());
   if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { provider } = await context.params;

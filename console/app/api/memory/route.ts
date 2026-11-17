@@ -25,6 +25,7 @@ import {
   isUrlEncodedFormRequest,
   readStrictUrlEncodedFormBody
 } from "../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../src/lib/server/mutation-rejection.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -202,10 +203,6 @@ const MEMORY_ACTION_TARGETS: Readonly<Record<string, MemoryActionTarget>> = {
     required: ["experienceId"]
   }
 };
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
-}
 
 /**
  * The refusal a write from another origin gets.

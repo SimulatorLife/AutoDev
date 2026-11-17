@@ -1,3 +1,4 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestBranchLineage, PlaytestEpisode } from "./artifacts.ts";
 import { isPlainObject } from "./object-guards.ts";
 import type {
@@ -8,8 +9,6 @@ import {
   type PlaytestAssignmentBranch,
   PLAYTESTS_RNG_POLICY_VERSION
 } from "./types.ts";
-
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 function assertText(value: unknown, field: string): asserts value is string {
   if (

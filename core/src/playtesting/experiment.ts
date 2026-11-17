@@ -21,6 +21,7 @@
  * automatically re-queued into running.
  */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestExperiment } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { isPlaytestFindingId } from "./finding-identity.ts";
@@ -38,7 +39,6 @@ const EXPOSURE_UNITS = [
   "participant",
   "cluster"
 ] as const;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 function objectWithKeys(
   value: unknown,

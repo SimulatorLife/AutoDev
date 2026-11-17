@@ -10,24 +10,24 @@
  * submission is invalid or Runtime rejects it.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,
   providersPath
 } from "../../../../src/features/providers/paths.ts";
-import { withControlFailure } from "../../../../src/lib/control-failure.ts";
 import {
   patchModel,
   readControlApiConfig
 } from "../../../../src/lib/server/control-api.ts";
 import {
   isSameOriginMutation,
+  parseEnabled,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
 import {
-  logMutationRejection,
-  type MutationRejection,
+  mutationFailure,
+  redirectTo,
   runtimeRejection
 } from "../../../../src/lib/server/mutation-rejection.ts";
 
@@ -39,27 +39,11 @@ const ROUTE = "/api/models/[model]";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
-}
-
-function parseEnabled(raw: string | null): boolean | null {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  return null;
-}
-
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ model: string }> }
 ): Promise<NextResponse> {
-  const failed = (
-    rejection: Omit<MutationRejection, "route">,
-    returnTo: string = providersPath("models")
-  ): NextResponse => {
-    logMutationRejection({ route: ROUTE, ...rejection });
-    return redirectTo(withControlFailure(returnTo));
-  };
+  const failed = mutationFailure(ROUTE, providersPath("models"));
   if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { model } = await context.params;

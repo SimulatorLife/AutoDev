@@ -4,6 +4,7 @@ import type {
   MemoryPacket,
   MemoryReadContext
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
 import { MAX_QUERY_LENGTH, type MemoryService } from "./service.ts";
@@ -141,10 +142,6 @@ function textFromContent(content: unknown): string {
       parts.push(block.text);
   }
   return parts.join("\n");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Research and attach a packet to one trusted root request; never persist task text. */

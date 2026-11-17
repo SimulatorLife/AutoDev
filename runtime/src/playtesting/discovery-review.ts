@@ -19,6 +19,7 @@ import {
   PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP,
   type PlaytestVisualBatch
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import {
   type PlaytestArtifactStore,
@@ -32,10 +33,6 @@ export interface PreparedPlaytestDiscoveryPacket {
 
 interface TraceRow extends Record<string, unknown> {
   readonly step: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPng(bytes: Uint8Array): boolean {

@@ -960,7 +960,7 @@ async function insertModels(
   );
 }
 
-export async function syncRulesyncModels(
+export async function syncModelCatalogue(
   options: SyncModelsOptions = {}
 ): Promise<SyncModelsResult> {
   const { endpoint } = resolveOpenLitClickHouseConnection(options);
@@ -1031,7 +1031,7 @@ export async function syncRulesyncModels(
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  syncRulesyncModels()
+  syncModelCatalogue()
     .then((result) => {
       process.stdout.write(
         [

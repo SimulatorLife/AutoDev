@@ -28,6 +28,7 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../../../src/lib/server/mutation-rejection.ts";
 import { workspacePlaytestingRefusalFor } from "../../../../../../src/lib/server/workspace-playtesting-refusal.ts";
 
 export const dynamic = "force-dynamic";
@@ -70,10 +71,6 @@ interface TargetSubmission {
   readonly entryRequirements: string;
   readonly limits: WorkspaceVisualPlaytestLimits;
   readonly progressPolicy: WorkspaceVisualPlaytestProgressPolicy | undefined;
-}
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
 }
 
 function acceptsJson(request: NextRequest): boolean {

@@ -85,7 +85,8 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSessionReview,
-  type PlaytestVisualBatch
+  type PlaytestVisualBatch,
+  SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSourceUnavailableError } from "./errors.ts";
@@ -375,7 +376,6 @@ export function encodeEpisode(
 const PLAYTEST_ADAPTER_EXECUTION_MODE = "adapter-accelerated" as const;
 const PLAYTEST_VISUAL_EXECUTION_MODE = "autonomous-visual" as const;
 const VISUAL_ASSIGNMENT_INVENTORY_STATUS = "frozen-visual" as const;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 /**
  * Recompute the SHA-256 fingerprint Runtime promises to set on every

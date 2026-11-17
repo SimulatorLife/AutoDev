@@ -64,7 +64,7 @@ test("modules converted to the shared owner do not re-inline the ternary", () =>
   // than repeating `error instanceof Error ? error.message : ...`.
   const converted = [
     "runtime/src/router/proxy.ts",
-    "runtime/src/router/state-collector.ts",
+    "runtime/src/router/codex-state-collector.ts",
     "runtime/src/providers/antigravity.ts",
     "runtime/src/platform/install-check.ts",
     "runtime/src/platform/install-command.ts",

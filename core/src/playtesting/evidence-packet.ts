@@ -1,5 +1,6 @@
 /** Deterministic selection and validation for bounded confirmatory analyst evidence packets. */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   type PlaytestAdapterEpisode,
   type PlaytestCoverageManifest,
@@ -27,7 +28,6 @@ import {
   assertUniqueSelectedEventIds,
   assertUniqueTraceEventIds,
   buildBoundedEvidenceWindows,
-  EVIDENCE_SHA256_PATTERN,
   hasMandatoryEventEvidenceValue,
   isCount,
   isPlaytestEvidencePacketId,
@@ -62,7 +62,6 @@ import {
 } from "./types.ts";
 
 /** Local aliases keep this file's confirmatory-only logic unchanged below. */
-const SHA256_PATTERN = EVIDENCE_SHA256_PATTERN;
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const MAX_PACKET_WINDOWS = MAX_EVIDENCE_PACKET_WINDOWS;
 export const MAX_PACKET_CROSS_SESSION_SESSIONS = 4;

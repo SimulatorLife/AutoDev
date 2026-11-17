@@ -22,6 +22,7 @@ import {
   type PlaytestVisualPolicy,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { isDirectory } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 
 const SMART_MODEL_ALIAS = "autodev/smart" as const;
@@ -459,10 +460,6 @@ function assertLocalRouterEndpoint(value: string): void {
       "Smart-direct decisions must use the credential-free local AutoDev model router."
     );
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function safeVisibleText(value: string): string {

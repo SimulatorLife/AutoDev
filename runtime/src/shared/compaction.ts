@@ -9,6 +9,8 @@
  * orchestrator bootstrap recovery.
  */
 
+import { isRecord } from "./object-guards.ts";
+
 export const ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER =
   "# Root orchestrator bootstrap";
 
@@ -29,10 +31,6 @@ const COMPACTED_ITEM_TYPES = new Set([
   "compaction",
   "compaction_summary"
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Collect visible text from a message/content value without throwing on odd shapes. */
 export function extractItemText(value: unknown): string {

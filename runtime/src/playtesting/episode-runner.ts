@@ -37,9 +37,11 @@ import {
   PLAYTESTS_GAME_OUTCOMES,
   samePlaytestCheckpoint,
   samePlaytestRngCheckpoint,
+  SHA256_PATTERN,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import {
   type PlaytestAdapterCallResult,
@@ -56,7 +58,6 @@ import { PlaytestLoopGuard } from "./loop-guard.ts";
 import type { PlaytestPolicy, PlaytestPolicyDecision } from "./policies.ts";
 import { projectPlaytestVisibleObservation } from "./visible-observation.ts";
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const COMMIT_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
 export const MAX_PLAYTEST_EPISODE_TRACE_STEPS = 4096;
@@ -220,10 +221,6 @@ class PolicyViolationError extends Error {
     super("Policy selected an action not in the current legal-action set.");
     this.name = "PolicyViolationError";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isJsonValue(value: unknown, depth = 0): value is PlaytestJsonValue {

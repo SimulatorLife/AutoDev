@@ -1,12 +1,12 @@
 /** Validation and canonical content projection for immutable benchmarks. */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestBenchmark } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestEvidenceLocator } from "./protocol.ts";
 import { PLAYTESTS_GAME_MODES } from "./types.ts";
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const BENCHMARK_KEYS = [
   "benchmarkId",

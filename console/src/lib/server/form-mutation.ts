@@ -22,6 +22,21 @@ export function isUrlEncodedFormRequest(request: Request): boolean {
   );
 }
 
+/**
+ * A toggle's enabled field, when it names one.
+ *
+ * The value is three-valued on purpose: "true" and "false" are the two
+ * answers a form can give, and anything else -- a missing field, a truncated
+ * one, an unexpected value -- is not an answer at all. The caller refuses
+ * such a submission rather than guessing which way the toggle was meant to
+ * point.
+ */
+export function parseEnabled(raw: string | null): boolean | null {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return null;
+}
+
 export function isSameOriginMutation(request: Request): boolean {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");

@@ -22,6 +22,7 @@
  * as `wait`. Captured from Codex 0.154.0 with the request-capture skill.
  */
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   requestContentParts,
   type RequestImage,
@@ -63,10 +64,6 @@ const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
 const DATA_URL_REGEX = /^data:([^;,]+);base64,(.*)$/su;
 const CODEX_OUTPUT_FAILED_REGEX =
   /^(aborted|script (failed|error|timed out)|error\b)/iu;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function parseCodexTool(
   entry: JsonRecord,

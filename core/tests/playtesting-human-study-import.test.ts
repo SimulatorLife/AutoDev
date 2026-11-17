@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  aggregateHumanStudyResponses,
-  applyHumanStudySmallCellSuppression,
-  type HumanPlaytestStudy,
   type HumanStudyExportManifest,
   type HumanStudyImportValidators,
   type HumanStudyRawRow,
   importHumanStudyResponses,
   parseHumanStudyExportRows,
+  PLAYTESTS_PXI_CONSTRUCTS
+} from "../src/playtesting/human-study-import.ts";
+import {
+  aggregateHumanStudyResponses,
+  applyHumanStudySmallCellSuppression,
+  type HumanPlaytestStudy,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
-  PLAYTESTS_PXI_CONSTRUCTS,
   withdrawHumanStudyParticipant
 } from "../src/playtesting/index.ts";
 

@@ -1,4 +1,5 @@
 /** Deterministic, bounded aggregation of exact frozen playtest metric packets. */
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCrossSessionMetricAggregate,
   PlaytestCrossSessionMetricAggregation,
@@ -19,7 +20,6 @@ import {
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const MAX_METRIC_AGGREGATION_BYTES = 16 * 1024;
 const MAX_METRIC_AGGREGATE_ROWS = 256;

@@ -19,7 +19,8 @@
  * facts, and the operator is told which one happened.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   HOOKS_PATH,
@@ -37,9 +38,9 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../src/lib/server/mutation-rejection.ts";
 
 const HOOK_EVENT_PATTERN = /^[a-z][A-Za-z]{0,63}$/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 /**
  * The field names one action's group carries.
  *
@@ -76,10 +77,7 @@ function redirectToHooks(
   // second place for the same fact to disagree.
   if (returnTo === HOOKS_PATH) query.set("event", event);
   const suffix = query.toString();
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: `${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}` }
-  });
+  return redirectTo(`${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}`);
 }
 
 /**
@@ -186,7 +184,10 @@ export async function POST(
   const returnTo = hookWriteReturnPath(form.get("returnTo"), event);
 
   const expectedRevision = form.get("expectedRevision");
-  if (expectedRevision === null || !REVISION_PATTERN.test(expectedRevision)) {
+  if (
+    expectedRevision === null ||
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
+  ) {
     return redirectToHooks(returnTo, event, "failed");
   }
   const actions = readActions(form);

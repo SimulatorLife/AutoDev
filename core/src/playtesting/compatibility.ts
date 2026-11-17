@@ -1,11 +1,10 @@
 /** Semantic compatibility gates for the single canonical PlaytestComparison. */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCompatibilityMode,
   PlaytestMetricSemantics
 } from "./types.ts";
-
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 export interface PlaytestMetricCompatibility {
   readonly compatible: boolean;

@@ -1,6 +1,7 @@
 /** Same-origin mutation boundary for RuleSync skill role assignment. */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import { saveOutcomeForConvergence } from "../../../../src/features/skills/SkillRoleAssignment.ts";
 import { skillsListHref } from "../../../../src/features/skills/skills-list-url.ts";
@@ -12,9 +13,9 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../src/lib/server/mutation-rejection.ts";
 
 const SKILL_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 /**
  * The workspace id grammar the workspace catalogue and the execution contract
@@ -56,10 +57,7 @@ function redirectToSkills(
     "http://skills.invalid"
   );
   if (saveOutcome) url.searchParams.set("save", saveOutcome);
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: `${url.pathname}${url.search}` }
-  });
+  return redirectTo(`${url.pathname}${url.search}`);
 }
 
 function saveOutcomeForFailure(
@@ -134,7 +132,7 @@ export async function POST(
   const workspace = form.get("workspace");
   if (
     expectedRevision === null ||
-    !REVISION_PATTERN.test(expectedRevision) ||
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision) ||
     roles.some((role) => !ROLE_PATTERN.test(role)) ||
     new Set(roles).size !== roles.length ||
     (workspace !== null && !WORKSPACE_PATTERN.test(workspace))

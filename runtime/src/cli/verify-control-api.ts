@@ -3,7 +3,7 @@
 import {
   ControlApiUnavailableError,
   verifyControlApiCompatibility
-} from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
+} from "@simulatorlife/autodev-runtime/cli/control-api-preflight";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import {
   writeErrorLine,

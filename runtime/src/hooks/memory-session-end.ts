@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+
 // Control API's fixed local identity; hooks cannot import Core under the layer rules.
 const LOCAL_CONTROL_API_ACTOR = "autodev-local";
 const MAX_HOOK_INPUT_BYTES = 64 * 1024;
@@ -245,10 +247,6 @@ function controlApiPort(env: NodeJS.ProcessEnv): number {
   if (!PORT_PATTERN.test(raw)) return 4101;
   const port = Number(raw);
   return Number.isInteger(port) && port >= 1 && port <= 65_535 ? port : 4101;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export const runMemorySessionEnd = createMemorySessionEndHandler();

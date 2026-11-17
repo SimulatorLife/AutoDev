@@ -14,6 +14,7 @@
  * key. The result is one place where the registry vocabulary is written.
  */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestCoverageModality,
@@ -63,7 +64,6 @@ export const PLAYTESTS_METRIC_REQUIRED_FIELDS = [
 export type PlaytestMetricRequiredField =
   (typeof PLAYTESTS_METRIC_REQUIRED_FIELDS)[number];
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const REGISTRY_INPUT_FIELDS = new Set([
   "schemaVersion",
   "workspaceId",

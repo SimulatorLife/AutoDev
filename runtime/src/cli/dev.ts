@@ -19,7 +19,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { verifyControlApiCompatibility } from "./control-api-compatibility.ts";
+import { verifyControlApiCompatibility } from "./control-api-preflight.ts";
 
 export const IS_MAIN =
   Boolean(process.argv[1]) &&

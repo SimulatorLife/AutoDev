@@ -20,7 +20,8 @@
  * and the operator is told which one happened.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import { type PermissionPolicySaveOutcome } from "../../../src/features/permissions/configuration.ts";
 import {
@@ -36,12 +37,12 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../src/lib/server/mutation-rejection.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_FORM_BODY_BYTES = 16_384;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const APPROVAL_POLICIES = new Set(["never", "always", "on-demand"]);
 const SANDBOX_MODES = new Set(["read-only", "workspace-write", "unrestricted"]);
 
@@ -60,12 +61,7 @@ function redirectToPermissions(
   if (outcome) query.set("save", outcome);
   if (basedOn) query.set("based", basedOn);
   const suffix = query.toString();
-  return new NextResponse(null, {
-    status: 303,
-    headers: {
-      location: `${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}`
-    }
-  });
+  return redirectTo(`${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}`);
 }
 
 /**
@@ -240,7 +236,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     : PERMISSIONS_PATH;
 
   const expectedRevision = form.get("expectedRevision");
-  if (expectedRevision === null || !REVISION_PATTERN.test(expectedRevision)) {
+  if (
+    expectedRevision === null ||
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
+  ) {
     return redirectToPermissions(returnTo, "failed");
   }
 

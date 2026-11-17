@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type {
-  EvidenceReference,
-  ExperienceEnvelope,
-  MemoryActor,
-  MemoryExecutionMode,
-  MemoryReadContext,
-  MemoryScope
+import {
+  type EvidenceReference,
+  type ExperienceEnvelope,
+  type MemoryActor,
+  type MemoryExecutionMode,
+  type MemoryReadContext,
+  type MemoryScope,
+  SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
 import { z } from "zod/v4";
 
@@ -66,7 +67,7 @@ const evidenceReference = z.strictObject({
 const trajectoryReference = z.strictObject({
   format: z.string().min(1).max(128),
   uri: z.string().min(1).max(2000),
-  digest: z.string().regex(/^[a-f\d]{64}$/iu),
+  digest: z.string().regex(SHA256_PATTERN),
   recordCount: z.number().int().min(0).max(10_000_000).optional()
 });
 const experienceOutcome = z.enum([

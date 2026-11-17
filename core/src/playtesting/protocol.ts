@@ -12,6 +12,7 @@
  * a downstream caller could silently drop.
  */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestAdapterErrorCode,
@@ -127,7 +128,6 @@ function hasOnlyKeys(
 const APPLICATION_ERROR_CODE_SET = new Set<number>(
   Object.values(PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)
 );
-const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 
 function isApplicationErrorCode(value: number): boolean {
   return APPLICATION_ERROR_CODE_SET.has(value);
@@ -329,7 +329,7 @@ function assertUniqueStringArray(
 }
 
 function assertSchemaHash(value: unknown, field: string): void {
-  if (typeof value !== "string" || !SHA256_HEX_PATTERN.test(value)) {
+  if (typeof value !== "string" || !SHA256_PATTERN.test(value)) {
     throw new TypeError(
       `Capability advertisement ${field} must be a SHA-256 hex digest.`
     );

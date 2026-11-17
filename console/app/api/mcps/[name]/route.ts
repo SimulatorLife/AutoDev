@@ -19,7 +19,8 @@
  * facts, and the operator is told which one happened.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   type CanonicalSourceSaveOutcome,
@@ -33,9 +34,9 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../src/lib/server/mutation-rejection.ts";
 
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_FORM_BODY_BYTES = 16_384;
 
 export const dynamic = "force-dynamic";
@@ -66,10 +67,7 @@ function redirectToMcpServer(
   const query = new URLSearchParams({ tab: "configuration" });
   if (outcome) query.set("save", outcome);
   if (basedOn) query.set("based", basedOn);
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: `${path}?${query.toString()}` }
-  });
+  return redirectTo(`${path}?${query.toString()}`);
 }
 
 /**
@@ -162,7 +160,10 @@ export async function POST(
   }
 
   const expectedRevision = form.get("expectedRevision");
-  if (expectedRevision === null || !REVISION_PATTERN.test(expectedRevision)) {
+  if (
+    expectedRevision === null ||
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
+  ) {
     return redirectToMcpServer(name, "failed");
   }
   const launch = readLaunch(form);

@@ -1,4 +1,16 @@
 /** Workspaces-owned local approval boundary for running a target game. */
+/**
+ * Operator-authored approval stored by Workspaces, not by a game adapter.
+ * Model-controlled requests may select only a scenario/seed/policy within this
+ * record; they cannot change the checkout, command, image, budgets or grants.
+ *
+ * The approval authorizes a checkout, not one commit: every batch runs the
+ * checkout's latest committed build, resolved by the Runtime at batch start
+ * and recorded as that batch's {@link WorkspacePlaytestBuild}.
+ */
+
+import { SHA256_PATTERN } from "../shared/sha256.ts";
+
 export const WORKSPACE_PLAYTEST_APPROVAL_SCHEMA =
   "autodev-workspace-playtest-approval-v2" as const;
 
@@ -13,16 +25,6 @@ export interface WorkspacePlaytestLimits {
   readonly maxStepsPerEpisode: number;
   readonly critiqueCount: number;
 }
-
-/**
- * Operator-authored approval stored by Workspaces, not by a game adapter.
- * Model-controlled requests may select only a scenario/seed/policy within this
- * record; they cannot change the checkout, command, image, budgets or grants.
- *
- * The approval authorizes a checkout, not one commit: every batch runs the
- * checkout's latest committed build, resolved by the Runtime at batch start
- * and recorded as that batch's {@link WorkspacePlaytestBuild}.
- */
 export interface WorkspacePlaytestApproval {
   readonly schema: typeof WORKSPACE_PLAYTEST_APPROVAL_SCHEMA;
   readonly workspaceId: string;
@@ -57,7 +59,6 @@ export interface WorkspacePlaytestBuild {
   readonly configHash: string;
 }
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const IMAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9._/:+-]{0,254}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const IMAGE_DIGEST_MARKER = "@sha256:";

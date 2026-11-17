@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { syncRulesyncModels } from "@simulatorlife/autodev-data/openlit";
+import { syncModelCatalogue } from "@simulatorlife/autodev-data/openlit";
 
 const connection = {
   clickhouseUrl: "http://clickhouse.test:8123",
@@ -94,7 +94,7 @@ function ndjsonBody(
 test("the catalog adapter reads, then writes, the two ClickHouse tables it owns", async () => {
   const clickhouse = stubClickHouse({});
   try {
-    const result = await syncRulesyncModels(connection);
+    const result = await syncModelCatalogue(connection);
 
     assert.ok(result.totalProviders > 0);
     assert.ok(result.totalModels > 0);
@@ -150,7 +150,7 @@ test("a catalog table that already holds the row is not rewritten", async () => 
     }
   });
   try {
-    const result = await syncRulesyncModels(connection);
+    const result = await syncModelCatalogue(connection);
 
     assert.deepEqual(result.providersUnchanged, ["claude"]);
     assert.ok(
@@ -178,7 +178,7 @@ test("a rejected insert names the status ClickHouse returned", async () => {
     }
   });
   try {
-    await assert.rejects(syncRulesyncModels(connection), {
+    await assert.rejects(syncModelCatalogue(connection), {
       message: "ClickHouse statement failed (507): Not enough memory"
     });
   } finally {
@@ -194,7 +194,7 @@ test("a rejected read names the status ClickHouse returned", async () => {
     }
   });
   try {
-    await assert.rejects(syncRulesyncModels(connection), {
+    await assert.rejects(syncModelCatalogue(connection), {
       message: "ClickHouse statement failed (404): no table"
     });
   } finally {

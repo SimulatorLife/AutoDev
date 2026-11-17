@@ -58,7 +58,8 @@ import path from "node:path";
 
 import {
   isPlainObject,
-  type PlaytestArtifactReference
+  type PlaytestArtifactReference,
+  SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
 
 function encodeWindowEntries(
@@ -207,7 +208,6 @@ const TMP_SUFFIX = ".tmp";
 /** Canonical workspace identity pattern (matches the Core validator). */
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 
-const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]{4,128}$/u;
 const NON_ALPHANUMERIC_PATTERN = /[^A-Za-z0-9]/gu;
 const MEDIA_TYPE_TOKEN_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+$/u;
@@ -809,7 +809,7 @@ function metadataPath(
 }
 
 function blobPath(root: string, workspaceId: string, sha256: string): string {
-  if (!SHA256_HEX_PATTERN.test(sha256)) {
+  if (!SHA256_PATTERN.test(sha256)) {
     throw new PlaytestArtifactFormatError(
       `SHA-256 ${JSON.stringify(sha256)} is not a valid hex digest.`
     );
@@ -871,7 +871,7 @@ function readMetadata(
       `Artifact metadata kind must be "blob" or "window".`
     );
   }
-  if (!SHA256_HEX_PATTERN.test(parsed.sha256 as string)) {
+  if (!SHA256_PATTERN.test(parsed.sha256 as string)) {
     throw new PlaytestArtifactFormatError(
       "Artifact metadata sha256 must be a SHA-256 hex digest."
     );

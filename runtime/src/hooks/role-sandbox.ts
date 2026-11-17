@@ -39,6 +39,7 @@ import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/
 import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 interface HookPayload {
@@ -46,10 +47,6 @@ interface HookPayload {
   readonly model?: unknown;
   readonly tool_name?: unknown;
   readonly tool_input?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   writeErrorLine,
   writeLine
@@ -252,10 +253,6 @@ const ROLE_ALIAS_NAMES = [
   "playtester",
   "playtest-analyst"
 ] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function isCatalogRecord(value: unknown): value is CatalogRecord {
   return isRecord(value) && typeof value.slug === "string";

@@ -26,8 +26,8 @@
   },
   "scripts": {
     "memory:migrate": "node src/memory/migrate.ts",
-    "openlit:sync-models": "node src/openlit/sync-rulesync-models.ts",
-    "openlit:sync-workspaces": "node src/openlit/sync-rulesync-workspaces.ts",
+    "openlit:sync-models": "node src/openlit/sync-model-catalogue.ts",
+    "openlit:sync-workspaces": "node src/openlit/sync-workspace-catalogue.ts",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },

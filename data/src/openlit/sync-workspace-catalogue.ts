@@ -100,7 +100,7 @@ export interface SyncWorkspacesResult {
 }
 
 /** Read the validated Data-owned workspace catalog for OpenLIT projection. */
-export function loadRulesyncWorkspaces(
+export function loadWorkspaceCatalogue(
   repositoryRoot: string
 ): readonly WorkspaceEntry[] {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
@@ -330,16 +330,16 @@ run()
 }
 
 /**
- * Synchronize the canonical SimulatorLife/AutoDev OpenLIT project and rulesync workspace architecture.
+ * Synchronize the canonical SimulatorLife/AutoDev OpenLIT project and workspace catalogue architecture.
  */
-export async function syncRulesyncWorkspaces(
+export async function syncWorkspaceCatalogue(
   options: SyncWorkspacesOptions = {}
 ): Promise<SyncWorkspacesResult> {
   const repositoryRoot =
     options.repositoryRoot || path.resolve(import.meta.dirname, "../../..");
   const containerName = options.containerName || "openlit";
 
-  const workspaces = loadRulesyncWorkspaces(repositoryRoot);
+  const workspaces = loadWorkspaceCatalogue(repositoryRoot);
   const workspaceIds = workspaces.map((workspace) => workspace.id);
   const script = buildPrismaSyncScript(workspaceIds);
   const stamp = createHash("sha256")
@@ -391,7 +391,7 @@ export async function syncRulesyncWorkspaces(
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  syncRulesyncWorkspaces()
+  syncWorkspaceCatalogue()
     .then((result) => {
       process.stdout.write(
         "Synchronized AutoDev Console project architecture for AutoDev:"
@@ -410,7 +410,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     })
     .catch((error) => {
       process.stderr.write(
-        `Rulesync workspace synchronization failed: ${error instanceof Error ? error.message : String(error)}`
+        `Workspace catalogue synchronization failed: ${error instanceof Error ? error.message : String(error)}`
       );
       process.exitCode = 1;
       return null;

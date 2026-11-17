@@ -32,8 +32,8 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { readOpenChildThreads } from "@simulatorlife/autodev-runtime/router/codex-state-collector";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
-import { readOpenChildThreads } from "@simulatorlife/autodev-runtime/router/state-collector";
 import {
   EXEC_TOOL,
   MULTI_AGENT_CLOSE_TOOL,

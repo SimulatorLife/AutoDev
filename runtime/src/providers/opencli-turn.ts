@@ -26,6 +26,7 @@ import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_SITES,
@@ -46,10 +47,6 @@ import {
 } from "./claude-codex-tools.ts";
 
 type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /**
  * The file name a turn's prompt is attached under: unique per turn.

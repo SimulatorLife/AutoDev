@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import {
+  CodexStateCollector,
+  loadCodexStateCollectorConfig
+} from "@simulatorlife/autodev-runtime/router/codex-state-collector";
 import { resetCorrelation } from "@simulatorlife/autodev-runtime/router/correlation";
 import {
   getRouterStatus,
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import {
-  CodexStateCollector,
-  loadCodexStateCollectorConfig
-} from "@simulatorlife/autodev-runtime/router/state-collector";
 
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 

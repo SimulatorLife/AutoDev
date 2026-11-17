@@ -22,6 +22,7 @@ import {
   assertWorkspacePlaytestApproval,
   assertWorkspaceVisualPlaytestTargetApproval,
   CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
+  CONTROL_API_REVISION_PATTERN,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchRequest,
   type ControlApiAgentEnablementPatchResponse,
@@ -188,7 +189,6 @@ const GITHUB_CONTROL_API_TIMEOUT_MS = 20_000;
 export const PLAYTESTING_CONTROL_API_TIMEOUT_MS = 20_000;
 const INVALID_RESPONSE_KIND = "invalid-response" as const;
 const PROMPT_VERSION_TIMEOUT_MS = 12_000;
-const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const CONTROL_API_GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const TRAILING_SLASHES = /\/+$/u;
 

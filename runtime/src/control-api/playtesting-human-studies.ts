@@ -18,7 +18,8 @@ import {
   type PlaytestEpisode,
   type PlaytestExperiment,
   PLAYTESTS_HUMAN_INSTRUMENTS,
-  PLAYTESTS_HUMAN_STUDY_SCHEMA
+  PLAYTESTS_HUMAN_STUDY_SCHEMA,
+  SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import {
@@ -47,7 +48,6 @@ const MAX_HUMAN_IMPORT_BODY_BYTES = 12_000_000;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const ENTITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const DATE_PATTERN = /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/u;
 const WRITE_ACTIONS = new Set([
   "register_human_study",

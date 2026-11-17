@@ -1,7 +1,7 @@
 import {
   type OpenChildThread,
   readOpenChildThreads
-} from "@simulatorlife/autodev-runtime/router/state-collector";
+} from "@simulatorlife/autodev-runtime/router/codex-state-collector";
 import {
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER

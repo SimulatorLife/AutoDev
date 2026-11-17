@@ -14,6 +14,7 @@ import {
   providerInjectsRoleMcp,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   ANTIGRAVITY_PROVIDER_PATTERNS,
   CLAUDE_MODEL_PATTERN,
@@ -222,10 +223,6 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
     maxConcurrentRequests: 1
   }
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;

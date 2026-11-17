@@ -1,3 +1,4 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestCapabilityAdvertisement } from "./protocol.ts";
 import type {
@@ -7,7 +8,6 @@ import type {
 } from "./protocol-types.ts";
 import type { PlaytestAdapterMethod } from "./types.ts";
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const GAME_BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const GAME_METHOD = {

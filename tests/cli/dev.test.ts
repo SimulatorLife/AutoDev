@@ -18,7 +18,7 @@ import {
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
-import { verifyControlApiCompatibility } from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
+import { verifyControlApiCompatibility } from "@simulatorlife/autodev-runtime/cli/control-api-preflight";
 import {
   type DevBackendDependencies,
   type DevCommandOptions,

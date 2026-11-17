@@ -25,6 +25,7 @@ import { request as httpRequest } from "node:http";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
@@ -108,10 +109,6 @@ interface JsonRpcMessage {
 
 function send(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
-}
-
-function isRecord(value: unknown): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** The reply body as a JSON object, or null when it is empty, malformed, or not an object. */

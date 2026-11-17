@@ -8,6 +8,8 @@
  * these fixed, pre-written clauses to include.
  */
 
+import { SHA256_PATTERN } from "@simulatorlife/autodev-core";
+
 import type { ClickHouseParamValue } from "../clickhouse/clickhouse-client.ts";
 import type { PlaytestKeysetCursor } from "./cursor.ts";
 import type {
@@ -20,7 +22,6 @@ import type {
   PlaytestHumanStudyFilter
 } from "./types.ts";
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 /** A finding's public id: the `finding-` prefix and its SHA-256 fingerprint. */
 const FINDING_ID_PATTERN = /^finding-[a-f\d]{64}$/u;
 

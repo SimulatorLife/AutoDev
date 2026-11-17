@@ -8,6 +8,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
   CONTROL_API_CONTRACT,
+  CONTROL_API_REVISION_PATTERN,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentRecord,
@@ -414,8 +415,6 @@ const HOOK_EVENT_PATH = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 const WORKSPACE_DETAIL_PATH = /^\/control\/workspaces\/([^/\s]+)\/([^/\s]+)$/u;
 const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
-const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
-const AGENT_ENABLEMENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const SKILL_CONTENT_REQUEST_MAX_BYTES = 300_000;
 const routerStateMutationTails = new Map<string, Promise<void>>();
 
@@ -2277,9 +2276,6 @@ const WORKSPACE_UPDATE_KEYS: ReadonlySet<string> = new Set([
   "agentRoles"
 ]);
 
-/** The revision a workspace write is compared against. */
-const WORKSPACE_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
-
 /**
  * The change a workspace write asks for, or null when the body cannot be one.
  *
@@ -2302,7 +2298,7 @@ function workspaceUpdateFromBody(body: Record<string, unknown>): {
   const expectedRevision = body.expectedRevision;
   if (
     typeof expectedRevision !== "string" ||
-    !WORKSPACE_REVISION_PATTERN.test(expectedRevision)
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
   ) {
     return null;
   }
@@ -3694,9 +3690,6 @@ const PERMISSION_POLICY_UPDATE_KEYS = new Set([
   "webSearch"
 ]);
 
-/** A revision is a sha256: the canonical file's own digest. */
-const PERMISSION_POLICY_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
-
 /**
  * One setting of the policy, read from a request body.
  *
@@ -3746,7 +3739,7 @@ function permissionPolicyUpdateFromBody(body: Record<string, unknown>): {
   const expectedRevision = body.expectedRevision;
   if (
     typeof expectedRevision !== "string" ||
-    !PERMISSION_POLICY_REVISION_PATTERN.test(expectedRevision)
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
   ) {
     return null;
   }
@@ -4732,7 +4725,7 @@ async function patchEnablement(
     typeof body.enabled !== "boolean" ||
     (revisionAware &&
       (typeof body.expectedRevision !== "string" ||
-        !AGENT_ENABLEMENT_REVISION_PATTERN.test(body.expectedRevision)))
+        !CONTROL_API_REVISION_PATTERN.test(body.expectedRevision)))
   ) {
     audit("error", null, "invalid_body");
     sendControlError(
@@ -7803,7 +7796,7 @@ async function readSkillContentPatchBody(
     Object.keys(body).length === 2 &&
     typeof body.content === "string" &&
     typeof body.expectedRevision === "string" &&
-    SKILL_CONTENT_REVISION_PATTERN.test(body.expectedRevision)
+    CONTROL_API_REVISION_PATTERN.test(body.expectedRevision)
   ) {
     return {
       content: body.content,

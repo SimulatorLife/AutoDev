@@ -9,6 +9,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { parse as parseToml } from "smol-toml";
 
 const MAX_BINDING_FILE_BYTES = 32 * 1024;
@@ -405,8 +406,4 @@ export function resolveClaudeCodeTranscriptBinding(
     };
   }
   return { ok: true };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

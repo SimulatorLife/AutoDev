@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   CodexStateCollector,
   loadCodexStateCollectorConfig,
@@ -12,7 +11,8 @@ import {
   type SqliteBinding,
   type SqliteDatabase,
   type SqliteRow
-} from "@simulatorlife/autodev-runtime/router/state-collector";
+} from "@simulatorlife/autodev-runtime/router/codex-state-collector";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 

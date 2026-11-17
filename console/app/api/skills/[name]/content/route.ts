@@ -1,6 +1,7 @@
 /** Same-origin mutation boundary for canonical RuleSync skill content. */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   type CanonicalSourceSaveOutcome,
@@ -14,9 +15,9 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../../src/lib/server/mutation-rejection.ts";
 
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_FORM_BODY_BYTES = 160_000;
 
 export const dynamic = "force-dynamic";
@@ -32,10 +33,7 @@ function redirectToSkill(
   if (outcome) query.set("save", outcome);
   if (basedOn) query.set("based", basedOn);
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: `${path}${suffix}` }
-  });
+  return redirectTo(`${path}${suffix}`);
 }
 
 function saveOutcomeForFailure(
@@ -83,7 +81,7 @@ export async function POST(
   if (
     content === null ||
     expectedRevision === null ||
-    !REVISION_PATTERN.test(expectedRevision)
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
   ) {
     return redirectToSkill(name, "failed");
   }

@@ -1,3 +1,4 @@
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
@@ -827,8 +828,4 @@ export function upstreamPayload(
   return route.provider === "codex"
     ? { ...prepared, stream: true, store: false }
     : { ...prepared, stream: wantsStream };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

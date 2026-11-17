@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { setRouterAuthTokenForTests } from "@simulatorlife/autodev-runtime/router/auth";
+import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
+import { getRecentRouterEvents } from "@simulatorlife/autodev-runtime/router/events";
 import {
   handleRequest,
   ingestAgentEvents,
@@ -43,6 +45,18 @@ class FakeRequest extends EventTarget {
   async *[Symbol.asyncIterator](): AsyncGenerator<Buffer> {
     if (this.body.length > 0) yield this.body;
   }
+
+  // The request lifecycle listeners the router registers on a real request.
+  once(_event: string, _listener: (...args: unknown[]) => void): this {
+    return this;
+  }
+
+  removeListener(
+    _event: string,
+    _listener: (...args: unknown[]) => void
+  ): this {
+    return this;
+  }
 }
 
 function responseRecorder(): any {
@@ -71,6 +85,9 @@ function responseRecorder(): any {
       this.writableEnded = true;
     },
     on() {
+      return this;
+    },
+    once() {
       return this;
     },
     removeListener() {
@@ -204,6 +221,60 @@ test("HTTP endpoint routing keeps health, status, models, control, and response 
     else process.env.AUTODEV_CONTROL_OPERATORS = previousControlOperators;
   }
 });
+
+test(
+  "a concrete request whose provider is under a hard cooldown makes no upstream fetch",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response("{}", { status: 500 });
+    }) as typeof fetch;
+    const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+    try {
+      COOLDOWNS.cooldownProvider("claude", {
+        failureClass: "quota_exhausted",
+        resetsAt,
+        structured: true
+      });
+      const response = responseRecorder();
+      await handleRequest(
+        new FakeRequest("POST", "/v1/responses", {
+          model: "sonnet",
+          stream: false
+        }) as any,
+        response
+      );
+      assert.equal(calls, 0);
+      // The refusal is terminal, in the chain's exhaustion shape: no
+      // `retry-after`, because a window measured in days is an instruction the
+      // caller cannot hurry.
+      assert.equal(response.statusCode, 400);
+      assert.equal(
+        response.headers["x-autodev-limit-class"],
+        "quota_exhausted"
+      );
+      assert.equal(response.headers["x-autodev-limit-resets-at"], resetsAt);
+      assert.equal(response.headers["retry-after"], undefined);
+      const body = JSON.parse(response.body);
+      assert.equal(body.error.code, "router_provider_exhausted");
+      assert.equal(body.error.retryable, false);
+      const events = getRecentRouterEvents().filter(
+        (event) => event.requestId === response.headers["x-autodev-request-id"]
+      );
+      assert.ok(
+        events.some((event) => event.phase === "skipped"),
+        "the cooled route is refused without an attempt"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
 
 test("agent event ingestion accepts activity only for a router-owned request", () => {
   resetSubagentTelemetry();

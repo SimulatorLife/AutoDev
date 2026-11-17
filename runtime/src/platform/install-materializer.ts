@@ -147,6 +147,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/provider-limits.ts",
   "runtime/src/shared/provider-reset-headers.ts",
   "runtime/src/shared/compaction.ts",
+  "runtime/src/shared/object-guards.ts",
   "runtime/src/shared/root-bootstrap.ts",
   "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
@@ -174,7 +175,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/lifecycle/index.ts",
   "runtime/src/router/live-feed.ts",
   "runtime/src/router/persistence/index.ts",
-  "runtime/src/router/state-collector.ts",
+  "runtime/src/router/codex-state-collector.ts",
   "runtime/src/router/status.ts",
   "runtime/src/router/tool-call-ownership/index.ts",
   "runtime/src/agents/index.ts",
@@ -299,7 +300,8 @@ export const OBSOLETE_RUNTIME_MODULES = [
   "src/router/memory-control-api.ts",
   "src/platform/otel-collector.ts",
   "src/platform/otel-provision.ts",
-  "src/platform/sync-rulesync-workspaces.ts"
+  "src/platform/sync-rulesync-workspaces.ts",
+  "src/router/state-collector.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
   path.join("run", "claude-rate-limit.json")

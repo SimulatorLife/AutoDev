@@ -8,6 +8,7 @@ import type {
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { providerSignInRequiredMessage } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   ANTIGRAVITY_PROVIDER_PATTERNS,
@@ -117,10 +118,6 @@ export interface ProviderModelDiscoveryOptions {
  */
 export class ProviderSignInRequiredError extends Error {
   override readonly name = "ProviderSignInRequiredError";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isCanonicalTimestamp(value: unknown): value is string {

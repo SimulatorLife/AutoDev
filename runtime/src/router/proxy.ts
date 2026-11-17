@@ -11,6 +11,7 @@ import {
   type CooldownOptions,
   COOLDOWNS,
   type CooldownSummary,
+  hardCooldownBlocksAttempt,
   PROBE_FAILURE_CLASS
 } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
@@ -58,6 +59,7 @@ import {
   LIMIT_HEADER_CLASS,
   LIMIT_HEADER_RESETS_AT,
   LIMIT_SOURCE_REPORTED,
+  limitResponseHeaders,
   normalizeResetsAt,
   type ProviderLimit,
   readLimitHeaders,
@@ -2938,6 +2940,8 @@ function sendConcreteFailureResponse(args: {
   modelName: string;
   status: number;
   failureClass: string;
+  /** The limit the provider reported, when it reported one. */
+  limit?: ProviderLimit | null;
 }): void {
   const { response, route, requestId, modelName, status, failureClass } = args;
   if (response.writableEnded) return;
@@ -2987,6 +2991,12 @@ function sendConcreteFailureResponse(args: {
       "x-autodev-provider": route.provider,
       "x-autodev-model": modelName,
       "x-autodev-request-id": requestId,
+      // The provider's own limit headers travel with the failure; the router
+      // does not synthesize a `retry-after` from the provider's reset. A
+      // window measured in hours or days is an instruction the caller cannot
+      // hurry, and a client that honours it holds the turn open for the whole
+      // window with nothing happening in between.
+      ...limitResponseHeaders(args.limit ?? null),
       ...(retryAfterSeconds ? { "retry-after": String(retryAfterSeconds) } : {})
     }
   );
@@ -3038,6 +3048,30 @@ export async function proxyConcreteResponse(
         disabledReason === "model_disabled"
           ? "model is disabled for this request"
           : "provider is disabled for this request"
+    });
+    return;
+  }
+
+  // A concrete request names its provider, so it has no alternative candidate
+  // to fall back to: asking a provider that said it is out of usage until a
+  // reset time still in the future only repeats the refusal it already
+  // reported. The fallback chain skips such a route for the same reason
+  // (`allowsLastResort`), so the concrete path refuses it locally too, in the
+  // chain's terminal exhaustion shape, instead of making an attempt.
+  const cooldown = COOLDOWNS.get(route.provider, Date.now(), modelName);
+  if (hardCooldownBlocksAttempt(cooldown, Date.now())) {
+    rejectConcreteCooldown(
+      response,
+      route,
+      requestId,
+      modelName,
+      workspace,
+      attribution,
+      cooldown
+    );
+    endLogicalRequestSpan(logicalSpan, {
+      status: "error",
+      errorMessage: "provider is under a hard cooldown until its stated reset"
     });
     return;
   }
@@ -3132,6 +3166,81 @@ export async function proxyConcreteResponse(
   }
 }
 
+/** How a concrete request is refused without an upstream attempt. */
+interface ConcreteRejection {
+  /** The status the refusal is answered with. Defaults to 400. */
+  status?: number;
+  /** The stable router code the refusal carries. */
+  code?: string;
+  /** The refusal message. Defaults to the disabled-provider wording. */
+  message?: string;
+  /** Whether a later attempt could serve this request. */
+  retryable?: boolean;
+  /** Extra response headers, such as the limit headers a refusal carries. */
+  headers?: Record<string, string>;
+  /** A body another owner shaped, such as the chain's exhaustion body. */
+  body?: Record<string, unknown>;
+}
+
+/**
+ * Refuse a concrete request whose provider is under a hard cooldown whose
+ * known reset is still in the future.
+ *
+ * The answer is the chain's terminal exhaustion: HTTP 400, `retryable: false`,
+ * and no `retry-after`. A `retry-after` measured in hours or days is an
+ * instruction the caller cannot hurry, and a client that honours it holds the
+ * turn open for the whole window with nothing happening in between (observed
+ * 2026-10-27: a 503 with `retry-after: 8224` held a Codex turn for two hours).
+ * The provider's own window still travels in the limit headers and in the
+ * message, so the reader knows when to come back -- and the request is not
+ * rerouted, because the caller named that provider.
+ */
+function rejectConcreteCooldown(
+  response: ServerResponse,
+  route: ProviderRoute,
+  requestId: string,
+  modelName: string,
+  workspace: { key: string; cwd?: string | null } | null,
+  attribution: ConcreteRequestAttribution,
+  cooldown: CooldownEntry
+): void {
+  const now = Date.now();
+  const summary = COOLDOWNS.summary(
+    [{ provider: route.provider, model: modelName }],
+    now,
+    "subagent"
+  );
+  const observed = new Map<string, string>();
+  const body = exhaustionBody({
+    subject: `the direct request to ${modelName}`,
+    summary,
+    failures: [],
+    observed,
+    model: modelName,
+    requestId,
+    lastResortAttempts: 0,
+    deadlineReached: false
+  });
+  rejectConcreteRequest(
+    response,
+    route,
+    requestId,
+    modelName,
+    workspace,
+    attribution,
+    cooldown.failureClass ?? "quota_exhausted",
+    {
+      status:
+        exhaustedByUsage(summary, observed) ||
+        noCandidateCanServe(summary, observed)
+          ? 400
+          : 503,
+      body,
+      headers: exhaustionHeaders({ summary, observed, requestId })
+    }
+  );
+}
+
 function rejectConcreteRequest(
   response: ServerResponse,
   route: ProviderRoute,
@@ -3139,8 +3248,12 @@ function rejectConcreteRequest(
   modelName: string,
   workspace: { key: string; cwd?: string | null } | null,
   attribution: ConcreteRequestAttribution,
-  failureClass: RouteDisabledReason
+  failureClass: string,
+  rejection: ConcreteRejection = {}
 ): void {
+  const status = rejection.status ?? 400;
+  const code = rejection.code ?? "router_provider_unavailable";
+  const headers = rejection.headers ?? {};
   recordRouterEvent({
     phase: "skipped",
     requestId,
@@ -3162,32 +3275,35 @@ function rejectConcreteRequest(
     model: modelName,
     workspace,
     outcome: "failure",
-    status: 400,
+    status,
     failureClass
   });
   // A disabled provider or model is not something a retry reaches: the body
   // says so, and a 5xx would have the client retry it anyway.
   sendJson(
     response,
-    400,
-    errorBody(
-      failureClass === "model_disabled"
-        ? `Direct concrete request to ${modelName} (${route.provider}) is unavailable because model ${modelName} is disabled.`
-        : `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
-      "router_provider_unavailable",
-      {
-        code: "router_provider_unavailable",
-        retryable: false,
-        failureClass,
-        provider: route.provider,
-        model: modelName,
-        requestId
-      }
-    ),
+    status,
+    rejection.body ??
+      errorBody(
+        rejection.message ??
+          (failureClass === "model_disabled"
+            ? `Direct concrete request to ${modelName} (${route.provider}) is unavailable because model ${modelName} is disabled.`
+            : `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`),
+        code,
+        {
+          code,
+          retryable: rejection.retryable ?? false,
+          failureClass,
+          provider: route.provider,
+          model: modelName,
+          requestId
+        }
+      ),
     {
       "x-autodev-provider": route.provider,
       "x-autodev-model": modelName,
-      "x-autodev-request-id": requestId
+      "x-autodev-request-id": requestId,
+      ...headers
     }
   );
 }
@@ -3324,13 +3440,22 @@ function handleConcreteStatusFailure(
   result: Extract<FetchUpstreamResult, { ok: false }>
 ): void {
   const { response, route, activitySubject, requestId, modelName } = ctx;
-  const failureClass = classifyProviderFailure(
-    result.status ?? 500,
-    result.body
-  );
+  // A provider that reported a limit said what class of limit it hit; the
+  // lexical guess over its prose is only the fallback for a response that
+  // reported nothing. The fallback chain reads the same two in this order.
+  const failureClass =
+    result.limit?.limitClass ??
+    classifyProviderFailure(result.status ?? 500, result.body);
   recordConcreteResult(ctx, "failure", result.status ?? 500, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
-  if (result.retryable)
+  // A structured limit is the provider telling the router that this route
+  // cannot serve until the reset it named. Cooling only on a retryable status
+  // dropped that report on the floor: a 429 with a limit class and a reset
+  // left the route healthy, so every later concrete request asked the same
+  // provider again. The chain cools the route for that report, so the
+  // concrete path does too -- a cancellation never reaches here, and cools
+  // nothing.
+  if (result.limit || result.retryable)
     coolDownRoute(
       route.provider,
       cooldownFor(failureClass, result.limit, modelName, result.body ?? null)
@@ -3341,7 +3466,8 @@ function handleConcreteStatusFailure(
     requestId,
     modelName,
     status: result.status ?? 500,
-    failureClass
+    failureClass,
+    limit: result.limit
   });
 }
 

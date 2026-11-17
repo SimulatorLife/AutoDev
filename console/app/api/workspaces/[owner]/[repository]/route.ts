@@ -20,7 +20,8 @@
  * and the operator is told which one happened.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import { type WorkspaceConfigurationSaveOutcome } from "../../../../../src/features/workspaces/configuration.ts";
 import {
@@ -36,12 +37,12 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../../src/lib/server/mutation-rejection.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_FORM_BODY_BYTES = 16_384;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const WORKSPACE_OWNER_PATTERN = /^[^/\s]+$/u;
 const WORKSPACE_REPOSITORY_PATTERN = /^[^/\s]+$/u;
 
@@ -70,10 +71,7 @@ function redirectToWorkspaces(
   // would be a second place for the same fact to disagree.
   if (returnTo === WORKSPACES_PATH) query.set("workspace", workspaceId);
   const suffix = query.toString();
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: `${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}` }
-  });
+  return redirectTo(`${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}`);
 }
 
 /**
@@ -158,7 +156,10 @@ export async function POST(
     : WORKSPACES_PATH;
 
   const expectedRevision = form.get("expectedRevision");
-  if (expectedRevision === null || !REVISION_PATTERN.test(expectedRevision)) {
+  if (
+    expectedRevision === null ||
+    !CONTROL_API_REVISION_PATTERN.test(expectedRevision)
+  ) {
     return redirectToWorkspaces(returnTo, workspaceId, "failed");
   }
   const enabled = form.get("enabled");

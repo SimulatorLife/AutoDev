@@ -40,6 +40,7 @@ import {
   type PlaytestVisualPolicyUsage,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 /** The upstream `qev` server's System One endpoint, relative to the base. */
 const SYSTEMONE_PATH = "/v1/systemone";
@@ -387,10 +388,6 @@ type DecisionPlan =
       /** The frame's path under the image root, as the upstream resolves it. */
       readonly framePath: string;
     };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {

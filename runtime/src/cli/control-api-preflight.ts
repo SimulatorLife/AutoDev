@@ -3,6 +3,7 @@ import {
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 const CONTROL_API_PROBE_TIMEOUT_MS = 10_000;
 const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
@@ -34,10 +35,6 @@ export class ControlApiUnavailableError extends Error {
     );
     this.name = "ControlApiUnavailableError";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isControlApiContractResponse(value: unknown): boolean {

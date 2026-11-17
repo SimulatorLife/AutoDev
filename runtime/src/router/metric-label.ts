@@ -3,7 +3,7 @@
 // `subagents.ts` next to unrelated orchestration code, which made the
 // subagent registry the de facto owner of a utility the whole router needs.
 // `usage.ts` importing it from there closed the router's only import cycle
-// (`usage` -> `subagents` -> `usage`), and `state-collector.ts` had to keep a
+// (`usage` -> `subagents` -> `usage`), and `codex-state-collector.ts` had to keep a
 // private copy because that module is not allowed to import anything.
 // This module has no router-internal imports so every router module can
 // depend on it without creating a cycle.

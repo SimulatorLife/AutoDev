@@ -6,6 +6,8 @@
  * recall claim.
  */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
+
 export type PlaytestDiagnosticLabel = "positive" | "negative" | "unresolved";
 export type PlaytestDiagnosticPredictionSource = "critic" | "deterministic";
 export type PlaytestDiagnosticScoredSource =
@@ -93,7 +95,6 @@ export interface PlaytestDiagnosticCorpusResult {
 }
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
-const SHA256 = /^[a-f\d]{64}$/iu;
 const MAX_COVERAGE_STRATA = 128;
 const MAX_DIAGNOSTIC_INSTANCES = 2000;
 /** Shared collator for deterministic identifier ordering; construction is not free. */
@@ -498,7 +499,7 @@ export function evaluatePlaytestDiagnosticCorpus(
   input: PlaytestDiagnosticCorpusInput
 ): PlaytestDiagnosticCorpusResult {
   identifier(input.referenceCorpusVersion, "referenceCorpusVersion");
-  if (!SHA256.test(input.labelProtocolHash)) {
+  if (!SHA256_PATTERN.test(input.labelProtocolHash)) {
     throw new TypeError("labelProtocolHash must be a SHA-256 digest.");
   }
   if (!Array.isArray(input.coverage) || input.coverage.length === 0) {

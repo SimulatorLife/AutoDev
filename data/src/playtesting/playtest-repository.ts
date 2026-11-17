@@ -29,7 +29,8 @@ import {
   type PlaytestFinding,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
-  type PlaytestSessionReview
+  type PlaytestSessionReview,
+  SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -122,7 +123,6 @@ const EPISODE_SCHEMA_MIGRATION_BATCH_SIZE = 100;
 const CURRENT_EPISODE_SCHEMA_PRIORITY = `(JSONExtractString(payload_json, 'schema') = '${PLAYTESTS_EPISODE_SCHEMA}') DESC`;
 const LINE_BREAK_PATTERN = /\r?\n/u;
 const COUNT_PATTERN = /^\d+$/u;
-const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,256}$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -195,7 +195,7 @@ function assertPlaytestLaunchIntent(intent: PlaytestLaunchIntent): void {
     !WORKSPACE_ID_PATTERN.test(intent.workspaceId) ||
     !ACTOR_ID_PATTERN.test(intent.actorId) ||
     !REQUEST_ID_PATTERN.test(intent.requestId) ||
-    !SHA256_HEX_PATTERN.test(intent.launchIntentHash) ||
+    !SHA256_PATTERN.test(intent.launchIntentHash) ||
     !BATCH_ID_PATTERN.test(intent.batchId) ||
     !Number.isSafeInteger(intent.assignmentCount) ||
     intent.assignmentCount < 1 ||
@@ -760,10 +760,7 @@ export class PlaytestRepository {
     workspaceId: string,
     fingerprint: string
   ): Promise<PlaytestFinding | null> {
-    if (
-      typeof fingerprint !== "string" ||
-      !SHA256_HEX_PATTERN.test(fingerprint)
-    ) {
+    if (typeof fingerprint !== "string" || !SHA256_PATTERN.test(fingerprint)) {
       throw new TypeError(
         "getLatestFindingByFingerprint requires a SHA-256 fingerprint."
       );

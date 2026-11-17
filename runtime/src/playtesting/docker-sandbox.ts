@@ -32,6 +32,7 @@ import {
   type PlaytestArtifactReference,
   type PlaytestMetricRegistry,
   PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
+  SHA256_PATTERN,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
@@ -46,7 +47,6 @@ import {
 } from "./approved-configuration.ts";
 
 const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const RUN_ID_PATTERN = /^[A-Za-z\d][A-Za-z\d._:-]{0,127}$/u;
 const PATH_SEPARATOR_PATTERN = /[\\/]/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;

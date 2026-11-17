@@ -21,6 +21,7 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../../../../../src/lib/server/mutation-rejection.ts";
 import { workspacePlaytestingRefusalFor } from "../../../../../../../../src/lib/server/workspace-playtesting-refusal.ts";
 
 export const dynamic = "force-dynamic";
@@ -70,10 +71,7 @@ export async function POST(
   ): NextResponse =>
     acceptsJson(request)
       ? jsonResult({ kind: "refused", refusal }, status)
-      : new NextResponse(null, {
-          status: 303,
-          headers: { location: withControlFailure(returnTo) }
-        });
+      : redirectTo(withControlFailure(returnTo));
   if (!isSameOriginMutation(request)) {
     return failed(WORKSPACES_PATH, "forbidden", 403);
   }
@@ -134,17 +132,11 @@ export async function POST(
   if (result.kind === "ok") {
     return acceptsJson(request)
       ? jsonResult({ kind: "ok", data: result.data })
-      : new NextResponse(null, {
-          status: 303,
-          headers: { location: returnTo }
-        });
+      : redirectTo(returnTo);
   }
   const refusal = workspacePlaytestingRefusalFor(result);
   if (!acceptsJson(request)) {
-    return new NextResponse(null, {
-      status: 303,
-      headers: { location: withControlRefusal(returnTo, refusal) }
-    });
+    return redirectTo(withControlRefusal(returnTo, refusal));
   }
   let currentTargets:
     ControlApiWorkspaceVisualPlaytestTargetsResponse | undefined;

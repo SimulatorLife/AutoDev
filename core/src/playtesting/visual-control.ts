@@ -7,6 +7,7 @@
  * persistence/model exposure, and resolve semantic control IDs again at the
  * input boundary.
  */
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
   WORKSPACE_VISUAL_PLAYTEST_INPUTS,
@@ -230,7 +231,6 @@ export function playtestActionRefusalMeansPageMoved(
 }
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const FRAME_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TEXT_CONTROL_ROLES = new Set<PlaytestVisualControlRole>([

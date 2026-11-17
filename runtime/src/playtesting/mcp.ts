@@ -50,6 +50,7 @@ import {
   PLAYTESTS_VERIFICATION_STAGES,
   type PlaytestSessionReview,
   scorePlaytestDimensionAnchor,
+  SHA256_PATTERN,
   triagePlaytestFindings
 } from "@simulatorlife/autodev-core";
 import { z } from "zod/v4";
@@ -92,7 +93,6 @@ import {
   REVIEWER_ROLE,
   RUN_STATUS_READER_ROLES,
   RUNTIME_VERSION,
-  SHA256_PATTERN,
   withAssignmentLock
 } from "./run-control.ts";
 

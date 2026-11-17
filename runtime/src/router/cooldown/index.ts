@@ -348,12 +348,7 @@ export class ProviderCooldowns {
   allowsLastResort(entry: CooldownEntry | null, now = Date.now()): boolean {
     if (!entry) return true;
     if (entry.kind === "config") return false;
-    if (
-      entry.kind === "hard" &&
-      entry.resetsAt &&
-      Date.parse(entry.resetsAt) > now
-    )
-      return false;
+    if (hardCooldownBlocksAttempt(entry, now)) return false;
     return true;
   }
 
@@ -428,6 +423,29 @@ export class ProviderCooldowns {
       this.cooldowns.set(entry.provider, restored);
     }
   }
+}
+
+/**
+ * Whether a cooldown makes the route ineligible for any attempt.
+ *
+ * A provider that declared it is out of usage until a reset time still in the
+ * future cannot serve before then, so no path may attempt it: the fallback
+ * chain skips such a route (see `allowsLastResort`), and a direct concrete
+ * request, which has no alternative candidate to fall back to, has to refuse
+ * it locally instead of asking the provider again. The rule lives here so the
+ * two paths cannot drift.
+ *
+ * A `hard` cooldown with no known reset stays attemptable: the provider named
+ * no window, so a bounded probe is the only way to learn whether it recovered.
+ */
+export function hardCooldownBlocksAttempt(
+  entry: CooldownEntry | null,
+  now = Date.now()
+): entry is CooldownEntry {
+  if (!entry || entry.kind !== "hard") return false;
+  if (!entry.resetsAt) return false;
+  const resetsAt = Date.parse(entry.resetsAt);
+  return Number.isFinite(resetsAt) && resetsAt > now;
 }
 
 function modelKey(provider: string, model: string): string {

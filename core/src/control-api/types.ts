@@ -90,6 +90,21 @@ import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual
 /** Maximum number of source-confirmed live session identities returned by Runtime. */
 export const CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT = 100;
 
+/**
+ * A Control API revision: the sha256 digest of a canonical file.
+ *
+ * The Runtime and the Console both compare-and-swap on this value, so the
+ * shape of a revision is one contract rather than a spelling each side
+ * keeps: a lowercase hex digest of exactly 64 characters. Uppercase is not
+ * accepted, because a digest the Runtime computed is always lowercase and a
+ * revision that differs only in case is not the revision that was read.
+ *
+ * This is the revision of a canonical *file*. A git commit or build sha is a
+ * different thing and has its own pattern, which accepts the shorter git
+ * form as well.
+ */
+export const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+
 /** Typed response contracts exposed by the AutoDev Control API. */
 export interface ControlApiError {
   readonly code: string;

@@ -8,6 +8,7 @@ import {
   type Tracer
 } from "@opentelemetry/api";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "@simulatorlife/autodev-data";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import {
   type MemoryEmbeddingProvider,
@@ -262,8 +263,4 @@ function embeddingVector(payload: unknown): readonly number[] {
     );
   }
   return first.embedding as number[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

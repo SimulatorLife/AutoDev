@@ -9,6 +9,7 @@ import {
   type MemoryReconstructor
 } from "@simulatorlife/autodev-runtime/memory";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 const MAX_EVIDENCE_REFERENCES = 12;
 const MAX_ISSUE_OBSERVATIONS = 4;
@@ -269,10 +270,6 @@ function isDisposition(
     value === "reject" ||
     value === "uncertain"
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function uncertainReview(): {

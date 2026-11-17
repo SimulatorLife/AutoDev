@@ -567,11 +567,11 @@ the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 | Kind        | Applies to                                                                  | Duration                                                   | Last resort?                      | Survives a restart? |
 | ----------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------- | ------------------- |
 | `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min                                      | yes                               | no                  |
-| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared**   | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes                 |
+| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared**; a direct concrete request for that route is refused locally (HTTP 400, no reroute) until the reset | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes                 |
 | `probe`     | a local bridge that did not answer its health check                         | 5s doubling to 30s                                         | yes                               | no                  |
 | `config`    | `authentication`, and `invalid_model` for the rejected **model only**       | fixed 30s, never escalates                                 | no                                | no                  |
 
-Six rules are load-bearing:
+Seven rules are load-bearing:
 
 - **A client leaving is not a provider failing.** A stream that stops because
   the client disconnected (Codex Desktop archiving a thread mid-turn, a
@@ -604,6 +604,22 @@ Six rules are load-bearing:
 reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   headers -- produces a hard cooldown. An inferred limit stays on the transient
   ladder.
+- **A direct concrete request honors the same cooldowns.** A concrete
+  request names its provider, so it has no alternative candidate to fall back
+  to. While that provider is under a `hard` cooldown whose known reset is
+  still in the future, the router makes no upstream attempt and refuses the
+  request in the chain's terminal exhaustion shape: HTTP 400, code
+  `router_provider_exhausted`, `retryable: false`, and no `retry-after`. The
+  provider's window still travels in `x-autodev-limit-class` and
+  `x-autodev-limit-resets-at` and in the message, which names the provider and
+  its reset. The request is never rerouted: the caller asked for that model on
+  that provider. A `hard` cooldown with no known reset, a `transient` cooldown
+  and a `probe` cooldown stay attemptable -- the fallback chain treats them as
+  last-resort material, and refusing them would fail requests the chain still
+  serves. A concrete request whose provider reports a structured limit cools
+  that route exactly as the chain does, with the provider's own reset; only
+  that report (not a lexical guess over the response prose) earns the hard
+  cooldown.
 - **Antigravity model families have separate AutoDev routes.** The one
   Antigravity service (the `agy` CLI behind its bridge on :4002) is routed as
   three providers: `antigravity-gemini` (Gemini ids other than Argon),
@@ -1737,6 +1753,18 @@ response includes
 correlation fields, and a `retry-after` header after the provider is cooled
 down. Concrete model requests are never silently rerouted.
 
+A concrete request also honors the cooldowns the chain honors. While its
+provider is under a `hard` cooldown with a known reset in the future, no
+upstream attempt is made and the request is refused locally in the chain's
+terminal exhaustion shape: HTTP 400, code `router_provider_exhausted`,
+`retryable: false`, no `retry-after`, and the provider's window in
+`x-autodev-limit-class` and `x-autodev-limit-resets-at`. The refusal is
+recorded as a skip rather than an attempt, so the Console shows it as a
+refusal. A concrete request that reports a structured limit
+(`x-autodev-limit-class` with a reported source and a reset) cools its route
+with the provider's own reset, so the next concrete request for that provider
+is refused locally instead of asking again.
+
 The Router uses Cockatiel 4.0.0 for provider-attempt retry/backoff and timeout
 policies. The per-attempt deadline encloses the upstream call and response
 consumption, including streamed forwarding, so a returned response header does
@@ -1816,6 +1844,16 @@ The message text says the same thing in prose, naming each provider and its rese
 time, because that is what a model actually reads. Concurrency denials return HTTP
 429 with `retry-after: 1` and the same `x-autodev-request-id`.
 
+A direct concrete request is the one case with no candidates to exhaust, and it
+is answered the same way: its provider is out of usage until a reset it named,
+so the refusal is terminal -- HTTP 400, `retryable: false`, no `retry-after` --
+for the same reason the chain's exhaustion is. A `retry-after` measured in
+hours or days is an instruction the caller cannot hurry, and a client that
+honours it holds the turn open for the whole window with nothing happening in
+between. The provider's window travels in `x-autodev-limit-class` and
+`x-autodev-limit-resets-at` and in the message, which names the provider and
+its reset, so the reader knows when to come back.
+
 A started stream never ends without a terminal event on any of these paths: an
 exhausted chain, a concrete-request failure, or an internal router error will
 close the stream rather than leaving the caller with a truncated body that is
@@ -1830,7 +1868,7 @@ active requests.
 Ownership of child handles comes from Codex itself: `thread_spawn_edges` in
 `$CODEX_HOME/state_5.sqlite` keeps a parent's edge `open` until `close_agent`,
 so the open edges are exactly the handles holding that parent's slots
-(`readOpenChildThreads` in `runtime/src/router/state-collector.ts`). Bridge-driven
+(`readOpenChildThreads` in `runtime/src/router/codex-state-collector.ts`). Bridge-driven
 spawn batches use it twice:
 
 - **Recovery preflight.** When the parent's open handles plus the new

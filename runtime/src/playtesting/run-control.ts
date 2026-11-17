@@ -104,6 +104,7 @@ import {
   playtestVisualProgressStuck,
   recordPlaytestOwnerDecision,
   selectPlaytestBatchReviews,
+  SHA256_PATTERN,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild,
   type WorkspaceVisualPlaytestLimits,
@@ -658,7 +659,6 @@ const NO_EPISODE_OUTCOME_STATES = new Set([
 const APPROVAL_REVOKED_REASON = "approval-revoked" as const;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const SAFE_SESSION_VALUE_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
-export const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const PLAYTEST_BATCH_ID_PREFIX_PATTERN = /^batch-/u;
 
 async function readPersistedAnalystReviews(

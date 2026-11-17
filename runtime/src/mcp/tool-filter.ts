@@ -5,12 +5,10 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function parseJson(value: string): JsonRecord | null {
   try {

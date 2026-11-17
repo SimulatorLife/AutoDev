@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { ConfigRepository } from "../../src/config/config-repository.ts";
 import {
   buildPrismaSyncScript,
-  loadRulesyncWorkspaces,
-  syncRulesyncWorkspaces
-} from "../../src/openlit/sync-rulesync-workspaces.ts";
+  loadWorkspaceCatalogue,
+  syncWorkspaceCatalogue
+} from "../../src/openlit/sync-workspace-catalogue.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -53,7 +53,7 @@ test("OpenLIT workspace sync writes only the current DatabaseConfigUser schema",
 });
 
 test("OpenLIT workspace projection consumes Data's canonical workspace ids", () => {
-  const workspaces = loadRulesyncWorkspaces(repositoryRoot);
+  const workspaces = loadWorkspaceCatalogue(repositoryRoot);
   assert.deepEqual(
     workspaces.map((workspace) => workspace.id),
     expectedWorkspaceIds
@@ -76,7 +76,7 @@ test("OpenLIT workspace projection fails closed for an invalid canonical registr
       "utf8"
     );
     assert.throws(
-      () => loadRulesyncWorkspaces(isolatedRoot),
+      () => loadWorkspaceCatalogue(isolatedRoot),
       /Workspace catalog is invalid/u
     );
   } finally {
@@ -84,9 +84,9 @@ test("OpenLIT workspace projection fails closed for an invalid canonical registr
   }
 });
 
-test("syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapses silos idempotently", async () => {
+test("syncWorkspaceCatalogue synchronizes canonical AutoDev project and collapses silos idempotently", async () => {
   try {
-    const result1 = await syncRulesyncWorkspaces({ repositoryRoot });
+    const result1 = await syncWorkspaceCatalogue({ repositoryRoot });
     assert.equal(result1.organisation, "SimulatorLife");
     assert.equal(result1.project, "AutoDev");
     assert.equal(result1.environment, "production");
@@ -94,7 +94,7 @@ test("syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapse
     assert.ok(result1.workspaces.includes("SimulatorLife/AutoDev"));
     assert.ok(result1.workspaces.includes("SimulatorLife/RacingGame"));
 
-    const result2 = await syncRulesyncWorkspaces({ repositoryRoot });
+    const result2 = await syncWorkspaceCatalogue({ repositoryRoot });
     assert.equal(result2.organisation, "SimulatorLife");
     assert.equal(result2.project, "AutoDev");
     assert.equal(result2.environment, "production");

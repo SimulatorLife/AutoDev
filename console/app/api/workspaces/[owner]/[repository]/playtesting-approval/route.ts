@@ -46,6 +46,7 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../src/lib/server/form-mutation.ts";
+import { redirectTo } from "../../../../../../src/lib/server/mutation-rejection.ts";
 import { workspacePlaytestingRefusalFor } from "../../../../../../src/lib/server/workspace-playtesting-refusal.ts";
 
 export const dynamic = "force-dynamic";
@@ -55,10 +56,6 @@ const MAX_FORM_BODY_BYTES = 16_384;
 const REVISION_PATTERN = /^[1-9]\d*$/u;
 const INTEGER_PATTERN = /^\d+$/u;
 const ISSUE_REPORTING_VALUES = new Set(["disabled", "review"]);
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
-}
 
 function acceptsJson(request: NextRequest): boolean {
   return request.headers.get("accept")?.includes("application/json") === true;

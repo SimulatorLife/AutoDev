@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -97,6 +97,26 @@ test("the owner validates and indexes the canonical registry", () => {
   );
   for (const workspace of catalog.list) {
     assert.equal(workspace.id, workspace.id.match(WORKSPACE_ID_PATTERN)?.[0]);
+  }
+});
+
+test("the canonical catalog names exactly the current SimulatorLife workspaces", () => {
+  const catalog = loadWorkspaceCatalog(canonicalCatalogPath);
+  assert.deepEqual(catalog.list.map((workspace) => workspace.id).sort(), [
+    "SimulatorLife/3DSpider",
+    "SimulatorLife/AutoDev",
+    "SimulatorLife/Colourful-Life",
+    "SimulatorLife/GMLoop",
+    "SimulatorLife/RacingGame"
+  ]);
+});
+
+test("every canonical workspace names a usable branch", () => {
+  const document = JSON.parse(readFileSync(canonicalCatalogPath, "utf8")) as {
+    workspaces: Array<{ id: string; baseBranch: string }>;
+  };
+  for (const workspace of document.workspaces) {
+    assert.match(workspace.baseBranch, /^[A-Za-z0-9._/-]+$/u, workspace.id);
   }
 });
 

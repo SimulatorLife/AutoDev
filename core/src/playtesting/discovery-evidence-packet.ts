@@ -16,6 +16,7 @@
  * artifact mechanics as the confirmatory packet so an analyst can cite
  * observations by {kind,id} across packet families.
  */
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
@@ -39,7 +40,6 @@ import {
   assertTraceStep,
   assertUniqueSelectedEventIds,
   buildBoundedEvidenceWindows,
-  EVIDENCE_SHA256_PATTERN,
   type EvidenceWindowLimits,
   isCount,
   isJson,
@@ -557,7 +557,7 @@ function assertFrameHashBinding(input: {
       !isText(frame.frameId) ||
       !isCount(frame.step) ||
       !isCount(frame.frameIndex) ||
-      !EVIDENCE_SHA256_PATTERN.test(frame.sha256) ||
+      !SHA256_PATTERN.test(frame.sha256) ||
       !isText(frame.capturedAt) ||
       !isCount(frame.captureWidthPx) ||
       !isCount(frame.captureHeightPx) ||
@@ -814,7 +814,7 @@ export function buildPlaytestDiscoveryEvidencePacket(
   });
   if (
     !isPlaytestEvidencePacketId(input.packetId) ||
-    !EVIDENCE_SHA256_PATTERN.test(input.traceHash) ||
+    !SHA256_PATTERN.test(input.traceHash) ||
     !isText(input.measurementVersion) ||
     !PLAYTESTS_GAME_OUTCOMES.includes(
       input.episode.outcome as PlaytestGameOutcomeKind
@@ -831,7 +831,7 @@ export function buildPlaytestDiscoveryEvidencePacket(
   }
   if (
     Object.values(input.frameHashes).some(
-      (hash) => typeof hash !== "string" || !EVIDENCE_SHA256_PATTERN.test(hash)
+      (hash) => typeof hash !== "string" || !SHA256_PATTERN.test(hash)
     )
   ) {
     throw new TypeError("Discovery packet frame hash is invalid.");
@@ -1058,7 +1058,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
   if (
     !isPlaytestEvidencePacketId(value.packetId) ||
     !isText(value.packetHash) ||
-    !EVIDENCE_SHA256_PATTERN.test(value.packetHash) ||
+    !SHA256_PATTERN.test(value.packetHash) ||
     !isText(value.workspaceId) ||
     !isText(value.batchId) ||
     !isText(value.episodeId) ||
@@ -1467,7 +1467,7 @@ function assertModel(
     (value.modelRevision !== null && !isText(value.modelRevision)) ||
     (value.promptHash !== null &&
       (typeof value.promptHash !== "string" ||
-        !EVIDENCE_SHA256_PATTERN.test(value.promptHash)))
+        !SHA256_PATTERN.test(value.promptHash)))
   ) {
     throw new TypeError(
       "Discovery evidence packet model identity is malformed."
@@ -1515,7 +1515,7 @@ function assertFrame(
     !isCount(value.step) ||
     !isCount(value.frameIndex) ||
     typeof value.sha256 !== "string" ||
-    !EVIDENCE_SHA256_PATTERN.test(value.sha256) ||
+    !SHA256_PATTERN.test(value.sha256) ||
     !isText(value.capturedAt) ||
     !isCount(value.captureWidthPx) ||
     !isCount(value.captureHeightPx) ||
@@ -2069,7 +2069,7 @@ export function assertPlaytestDiscoverySessionReview(
     !isPlainObject(packetReference.artifact) ||
     Object.keys(packetReference.artifact).length !== 4 ||
     !isText(packetReference.artifact.artifactId) ||
-    !EVIDENCE_SHA256_PATTERN.test(String(packetReference.artifact.sha256)) ||
+    !SHA256_PATTERN.test(String(packetReference.artifact.sha256)) ||
     !isCount(packetReference.artifact.bytes) ||
     packetReference.artifact.bytes < 1 ||
     packetReference.artifact.mediaType !==

@@ -80,6 +80,13 @@ test("scheduler weights reference the canonical workspace catalog exactly once",
   assert.deepEqual(scheduledIds, workspaceIds);
 });
 
+test("scheduler weights carry no duplicated workspace identity metadata", () => {
+  for (const entry of config.repositories) {
+    assert.equal("name" in entry, false, entry.workspaceId);
+    assert.equal("baseBranch" in entry, false, entry.workspaceId);
+  }
+});
+
 test("workspace IDs participate in deterministic scheduler weighting", () => {
   const cycle = weightedCycle([
     { workspaceId: "SimulatorLife/low", weight: 0.001 },

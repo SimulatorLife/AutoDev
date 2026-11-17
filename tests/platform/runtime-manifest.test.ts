@@ -853,9 +853,9 @@ test("router state collection and MCP process lifecycle are Runtime-owned", () =
   ) as { exports: Record<string, string> };
   const migrations = [
     {
-      exportPath: "./router/state-collector",
-      exportTarget: "./src/router/state-collector.ts",
-      runtimePath: "runtime/src/router/state-collector.ts",
+      exportPath: "./router/codex-state-collector",
+      exportTarget: "./src/router/codex-state-collector.ts",
+      runtimePath: "runtime/src/router/codex-state-collector.ts",
       legacyPath: "src/router/state-collector.ts"
     },
     {

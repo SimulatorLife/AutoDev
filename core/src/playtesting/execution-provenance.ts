@@ -1,3 +1,4 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestAdapterEpisode,
   PlaytestBranchLineage,
@@ -89,7 +90,6 @@ export interface PlaytestExecutionProvenance {
 }
 
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const COMMIT_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const ORIGIN_PATTERN = /^https?:\/\/[^/\s]+$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;

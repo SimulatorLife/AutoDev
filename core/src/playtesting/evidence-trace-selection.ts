@@ -6,6 +6,7 @@
  * artifact bookkeeping; packet-kind-specific fields (rubric/metrics/
  * cross-session context) stay owned by their respective packet modules.
  */
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidenceSuppliedArtifact,
@@ -18,7 +19,6 @@ import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestEvidenceLocator } from "./types.ts";
 
-export const EVIDENCE_SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 export const PLAYTEST_EVIDENCE_PACKET_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export const MAX_EVIDENCE_PACKET_WINDOWS = 32;
@@ -751,7 +751,7 @@ export function assertPacketArtifactProvenance(
       ) ||
       !isText(artifact.artifactId) ||
       typeof artifact.sha256 !== "string" ||
-      !EVIDENCE_SHA256_PATTERN.test(artifact.sha256)
+      !SHA256_PATTERN.test(artifact.sha256)
     ) {
       throw new TypeError(
         "Evidence packet supplied-artifact provenance is invalid."

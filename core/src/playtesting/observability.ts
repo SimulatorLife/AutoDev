@@ -1,8 +1,8 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestJsonValue } from "./protocol-types.ts";
 import { PLAYTESTS_SEVERITIES, type PlaytestSeverity } from "./types.ts";
 
-const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const EVENT_TAXONOMY_KEYS = [
   "schemaVersion",
   "workspaceId",
@@ -62,7 +62,7 @@ function nonEmpty(value: unknown): value is string {
 }
 
 function isHash(value: unknown): value is string {
-  return typeof value === "string" && SHA256_HEX_PATTERN.test(value);
+  return typeof value === "string" && SHA256_PATTERN.test(value);
 }
 
 function isSeverity(value: unknown): value is PlaytestSeverity {

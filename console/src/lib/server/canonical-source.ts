@@ -1,3 +1,5 @@
+import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
+
 /**
  * The revision a canonical source editor's content is based on.
  *
@@ -14,9 +16,6 @@
 /** The outcomes a canonical source write can end in. */
 export type CanonicalSourceSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
-
-/** A source revision: the sha256 of the canonical file. */
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 
 /**
  * The revision the editor's content is based on, when the source moved.
@@ -43,7 +42,7 @@ export function editorBaseRevisionFromQuery(
   value: string | readonly string[] | undefined
 ): string | undefined {
   const revision = typeof value === "string" ? value : value?.[0];
-  return revision !== undefined && REVISION_PATTERN.test(revision)
+  return revision !== undefined && CONTROL_API_REVISION_PATTERN.test(revision)
     ? revision
     : undefined;
 }

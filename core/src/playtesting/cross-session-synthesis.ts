@@ -1,3 +1,4 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCrossSessionEvidenceRef,
   PlaytestCrossSessionMetricAggregation,
@@ -16,7 +17,6 @@ import {
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const MAX_SUMMARY_LENGTH = 16_000;
-const PROMPT_HASH_PATTERN = /^[a-f\d]{64}$/iu;
 const MAX_CLAIMS = 64;
 const MAX_CLAIM_LENGTH = 8000;
 const MAX_EVIDENCE_REFS_PER_CLAIM = 64;
@@ -228,7 +228,7 @@ function assertSynthesisIdentity(
         value.modelRevision.length > 256)) ||
     (value.promptHash !== null &&
       (typeof value.promptHash !== "string" ||
-        !PROMPT_HASH_PATTERN.test(value.promptHash))) ||
+        !SHA256_PATTERN.test(value.promptHash))) ||
     typeof value.generatedAt !== "string" ||
     !Number.isFinite(Date.parse(value.generatedAt))
   ) {

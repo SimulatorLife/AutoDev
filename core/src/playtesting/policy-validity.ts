@@ -21,6 +21,7 @@
  * one are different facts, and only one of them belongs on a claim that
  * authorizes a policy to speak for a player.
  */
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlayerPolicyValidity } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import type { PlaytestComparison } from "./types.ts";
@@ -76,7 +77,6 @@ export interface BuildPlaytestPolicyValidityInput {
   readonly createdAt: string;
 }
 
-const SHA256 = /^[a-f\d]{64}$/iu;
 /** A build is identified by a 40-character Git revision or a 64-char digest. */
 const BUILD_ID = /^([a-f\d]{40}|[a-f\d]{64})$/iu;
 const BUILDER_ID = /^[^/\s]+\/[^/\s]+$/u;
@@ -110,7 +110,7 @@ function assertPolicyIdentity(input: BuildPlaytestPolicyValidityInput): void {
     throw new TypeError("buildSha must be a Git revision or content digest.");
   }
   for (const hash of [input.observationSchemaHash, input.actionSchemaHash]) {
-    if (!SHA256.test(hash)) {
+    if (!SHA256_PATTERN.test(hash)) {
       throw new TypeError(
         "Observation and action schema hashes must be SHA-256."
       );

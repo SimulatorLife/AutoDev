@@ -17,7 +17,7 @@ import {
   type ProviderRole,
   type ProviderRolePriority
 } from "@simulatorlife/autodev-core";
-import { type NextRequest, NextResponse } from "next/server.js";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,
@@ -37,7 +37,8 @@ import {
 } from "../../../../../../src/lib/server/form-mutation.ts";
 import {
   logMutationRejection,
-  type MutationRejection,
+  mutationFailure,
+  redirectTo,
   runtimeRejection
 } from "../../../../../../src/lib/server/mutation-rejection.ts";
 import { providerMutationRefusalFor } from "../../../../../../src/lib/server/provider-mutation-refusal.ts";
@@ -52,10 +53,6 @@ export const runtime = "nodejs";
 
 function isProviderRole(value: string): value is ProviderRole {
   return PROVIDER_ROLES.includes(value as ProviderRole);
-}
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
 }
 
 /**
@@ -85,13 +82,7 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string; role: string }> }
 ): Promise<NextResponse> {
-  const failed = (
-    rejection: Omit<MutationRejection, "route">,
-    returnTo: string = providersPath()
-  ): NextResponse => {
-    logMutationRejection({ route: ROUTE, ...rejection });
-    return redirectTo(withControlFailure(returnTo));
-  };
+  const failed = mutationFailure(ROUTE, providersPath());
   if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 
   const { provider, role } = await context.params;

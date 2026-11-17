@@ -128,8 +128,8 @@ const architectureFiles = [
     pattern: "runtime/src/router/live-feed.ts"
   },
   {
-    category: "runtime-router-state-collector",
-    pattern: "runtime/src/router/state-collector.ts"
+    category: "runtime-router-codex-state-collector",
+    pattern: "runtime/src/router/codex-state-collector.ts"
   }
 ];
 const architectureElements = [
@@ -248,7 +248,7 @@ const architecturePolicies = [
     "runtime-memory",
     "runtime-router-cooldown",
     "runtime-router-lifecycle",
-    "runtime-router-state-collector",
+    "runtime-router-codex-state-collector",
     "runtime-router-persistence",
     "runtime-router-tool-ownership",
     "runtime-mcp",
@@ -299,7 +299,7 @@ const architecturePolicies = [
   allowOnly("console-components", ["core", "console-lib"]),
   allowOnly("console-features", ["core", "console-components"]),
   allowOnly("console-lib", ["core", "data"]),
-  allowFileOnly("runtime-router-state-collector", []),
+  allowFileOnly("runtime-router-codex-state-collector", []),
   allowFileOnly("runtime-router-status", []),
   allowFileOnly("runtime-router-events", ["runtime-shared"]),
   allowFileOnly("runtime-router-live-feed", []),
@@ -313,8 +313,8 @@ const architecturePolicies = [
   allowFileOnly("test", ["runtime-router-auth"]),
   allowFileOnly("runtime-cli", ["runtime-router-status"]),
   allowFileOnly("test", ["runtime-router-status"]),
-  allowFileOnly("runtime-router", ["runtime-router-state-collector"]),
-  allowFileOnly("test", ["runtime-router-state-collector"]),
+  allowFileOnly("runtime-router", ["runtime-router-codex-state-collector"]),
+  allowFileOnly("test", ["runtime-router-codex-state-collector"]),
   // next.config.ts applies Console build policy owned by console/src/lib.
   allowFileOnly("package-config", ["console-lib"]),
   allowFileOnly("console-entrypoint", [

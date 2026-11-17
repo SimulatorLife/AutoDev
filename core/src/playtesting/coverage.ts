@@ -1,5 +1,6 @@
 /** Frozen per-batch coverage plans and counts for game-owned metric cells. */
 
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCoverageManifest,
   PlaytestCoverageManifestCell
@@ -20,7 +21,6 @@ import {
   PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
 
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const ANALYSIS_UNITS = new Set([
   "episode",

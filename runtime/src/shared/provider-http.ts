@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 
 import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
 
+import { isRecord } from "./object-guards.ts";
 import { writeErrorLine } from "./output.ts";
 import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
 
@@ -17,10 +18,6 @@ import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
  * relies on was asserted in prose while being re-implemented by hand in each
  * bridge. It is owned here instead, once.
  */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * The typed refusal a bridge answers when the request carries content the

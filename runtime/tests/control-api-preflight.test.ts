@@ -3,11 +3,11 @@ import test from "node:test";
 
 import { CONTROL_API_CONTRACT } from "@simulatorlife/autodev-core";
 
-import { verifyControlApiCompatibility } from "../src/cli/control-api-compatibility.ts";
+import { verifyControlApiCompatibility } from "../src/cli/control-api-preflight.ts";
 
 const config = {
   baseUrl: "http://control-api.test",
-  serviceToken: "control-api-compatibility-test-token"
+  serviceToken: "control-api-preflight-test-token"
 };
 
 function controlApiFixture(

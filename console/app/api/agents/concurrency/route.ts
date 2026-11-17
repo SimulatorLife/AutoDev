@@ -10,16 +10,13 @@
  * a refusal/failure query parameter.
  */
 
-import { type NextRequest, NextResponse } from "next/server.js";
+import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
   AGENTS_PATH,
   isAgentsReturnPath
 } from "../../../../src/features/agents/paths.ts";
-import {
-  withControlFailure,
-  withControlRefusal
-} from "../../../../src/lib/control-failure.ts";
+import { withControlRefusal } from "../../../../src/lib/control-failure.ts";
 import {
   patchConcurrencyLimit,
   readControlApiConfig
@@ -30,7 +27,8 @@ import {
 } from "../../../../src/lib/server/form-mutation.ts";
 import {
   logMutationRejection,
-  type MutationRejection,
+  mutationFailure,
+  redirectTo,
   runtimeRejection
 } from "../../../../src/lib/server/mutation-rejection.ts";
 
@@ -43,10 +41,6 @@ const ROUTE = "/api/agents/concurrency";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function redirectTo(location: string): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { location } });
-}
 
 function parseRevision(
   raw: string | null
@@ -91,13 +85,7 @@ function resolvePayload(
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const resource = "agents/concurrency";
-  const failed = (
-    rejection: Omit<MutationRejection, "route">,
-    returnTo: string = AGENTS_PATH
-  ): NextResponse => {
-    logMutationRejection({ route: ROUTE, ...rejection });
-    return redirectTo(withControlFailure(returnTo));
-  };
+  const failed = mutationFailure(ROUTE, AGENTS_PATH);
 
   if (!isSameOriginMutation(request)) return failed({ cause: "cross_origin" });
 

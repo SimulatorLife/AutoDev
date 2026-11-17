@@ -1,3 +1,4 @@
+import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
 import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
@@ -1092,8 +1093,6 @@ export interface PlaytestFixLineage {
   readonly nextReviewAt: string | null;
 }
 
-const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
-
 const OBSERVATION_CONTRACT_FIELDS = [
   "schemaVersion",
   "schemaHash",
@@ -1205,7 +1204,7 @@ export function assertPlaytestObservationContract(
     throw new TypeError("Observation contract schemaVersion must be 1.");
   if (
     typeof value.schemaHash !== "string" ||
-    !SHA256_HEX_PATTERN.test(value.schemaHash)
+    !SHA256_PATTERN.test(value.schemaHash)
   ) {
     throw new TypeError(
       "Observation contract schemaHash must be a SHA-256 hex digest."
@@ -1241,7 +1240,7 @@ export function assertPlaytestObservationContract(
   const fixtureHash = value.conformanceFixtureHash;
   if (
     fixtureHash !== null &&
-    (typeof fixtureHash !== "string" || !SHA256_HEX_PATTERN.test(fixtureHash))
+    (typeof fixtureHash !== "string" || !SHA256_PATTERN.test(fixtureHash))
   ) {
     throw new TypeError(
       "Observation conformanceFixtureHash must be a SHA-256 digest or null."

@@ -17,6 +17,8 @@
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+
 const BRIDGE_URL = process.env.AUTODEV_BRIDGE_URL ?? "";
 const BRIDGE_TOKEN = process.env.AUTODEV_BRIDGE_TOKEN ?? "";
 const SESSION = process.env.AUTODEV_SPAWN_SESSION ?? "";
@@ -293,10 +295,6 @@ export function runStdio(): void {
         );
     });
   });
-}
-
-function isRecord(value: unknown): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function asJsonRpcId(value: unknown): JsonRpcId {

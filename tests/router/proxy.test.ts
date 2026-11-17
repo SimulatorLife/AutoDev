@@ -451,6 +451,269 @@ test(
 );
 
 test(
+  "a concrete request under a hard cooldown is refused locally, with no upstream attempt",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return jsonResponse({
+        id: "resp_never",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      });
+    }) as typeof fetch;
+    const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+    try {
+      COOLDOWNS.cooldownProvider("claude", {
+        failureClass: "quota_exhausted",
+        resetsAt,
+        structured: true
+      });
+      const response = responseRecorder();
+      await proxyConcreteResponse(
+        response,
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-cooled-concrete",
+        null,
+        null,
+        null,
+        { key: "session-cooled", scope: "identified" }
+      );
+      // The provider said it is out of usage until the reset it named, so it
+      // is not asked again: there is no alternative provider to fall back to.
+      assert.equal(calls, 0);
+      // The refusal is terminal, in the chain's exhaustion shape: no
+      // `retry-after`, because a window measured in days is an instruction the
+      // caller cannot hurry.
+      assert.equal(response.statusCode, 400);
+      assert.equal(
+        response.headers["x-autodev-limit-class"],
+        "quota_exhausted"
+      );
+      assert.equal(response.headers["x-autodev-limit-resets-at"], resetsAt);
+      assert.equal(response.headers["retry-after"], undefined);
+      const body = JSON.parse(response.body);
+      assert.equal(body.error.code, "router_provider_exhausted");
+      assert.equal(body.error.retryable, false);
+      assert.equal(body.error.failureClass, "quota_exhausted");
+      assert.equal(body.error.model, "sonnet");
+      assert.match(body.error.message, /claude/);
+      assert.ok(
+        body.error.message.includes(resetsAt),
+        "the message names the provider's window"
+      );
+      const events = getRecentRouterEvents().filter(
+        (event) => event.requestId === "req-cooled-concrete"
+      );
+      assert.ok(
+        events.some(
+          (event) =>
+            event.phase === "skipped" &&
+            event.failureClass === "quota_exhausted"
+        ),
+        "a refused cooled route is a skip, not an attempt"
+      );
+      assert.ok(
+        events.some(
+          (event) => event.phase === "result" && event.status === 400
+        ),
+        "the refusal is recorded as a failure result"
+      );
+      assert.ok(
+        !events.some((event) => event.phase === "selected"),
+        "a refused cooled route is never selected"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "a concrete request that reports a structured limit cools the route and is refused locally afterwards",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return Response.json(
+        { error: { message: "quota exhausted" } },
+        {
+          status: 429,
+          headers: {
+            "x-autodev-limit-class": "quota_exhausted",
+            "x-autodev-limit-source": "reported",
+            "x-autodev-limit-resets-at": resetsAt
+          }
+        }
+      );
+    }) as typeof fetch;
+    try {
+      const first = responseRecorder();
+      await proxyConcreteResponse(
+        first,
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-limit-first",
+        null,
+        null,
+        null,
+        { key: "session-limit", scope: "identified" }
+      );
+      assert.equal(calls, 1);
+      assert.equal(first.statusCode, 429);
+      assert.equal(first.headers["x-autodev-limit-class"], "quota_exhausted");
+      // The provider's own report cools the route, with the reset it named.
+      const entry = COOLDOWNS.get("claude", Date.now(), "sonnet");
+      assert.equal(entry?.kind, "hard");
+      assert.equal(entry?.resetsAt, resetsAt);
+
+      const second = responseRecorder();
+      await proxyConcreteResponse(
+        second,
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-limit-second",
+        null,
+        null,
+        null,
+        { key: "session-limit", scope: "identified" }
+      );
+      assert.equal(calls, 1);
+      assert.equal(second.statusCode, 400);
+      assert.equal(second.headers["x-autodev-limit-class"], "quota_exhausted");
+      assert.equal(second.headers["retry-after"], undefined);
+      assert.equal(
+        JSON.parse(second.body).error.code,
+        "router_provider_exhausted"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "a transient cooldown does not block a concrete request",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return jsonResponse({
+        id: "resp_transient",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      });
+    }) as typeof fetch;
+    try {
+      COOLDOWNS.cooldownProvider("claude", { failureClass: "upstream_error" });
+      const entry = COOLDOWNS.get("claude", Date.now(), "sonnet");
+      assert.equal(entry?.kind, "transient");
+      const response = responseRecorder();
+      await proxyConcreteResponse(
+        response,
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-transient-concrete",
+        null,
+        null,
+        null,
+        { key: "session-transient", scope: "identified" }
+      );
+      // A transient cooldown is a blip the fallback chain treats as last-resort
+      // material; a concrete request has no other provider to try, so it is
+      // attempted rather than refused.
+      assert.equal(calls, 1);
+      assert.equal(response.statusCode, 200);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "a hard cooldown with no known reset still permits a bounded probe",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return jsonResponse({
+        id: "resp_probe",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      });
+    }) as typeof fetch;
+    try {
+      COOLDOWNS.cooldownProvider("claude", {
+        failureClass: "quota_exhausted",
+        structured: true
+      });
+      const entry = COOLDOWNS.get("claude", Date.now(), "sonnet");
+      assert.equal(entry?.kind, "hard");
+      assert.equal(entry?.resetsAt, null);
+      const response = responseRecorder();
+      await proxyConcreteResponse(
+        response,
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-no-reset-concrete",
+        null,
+        null,
+        null,
+        { key: "session-no-reset", scope: "identified" }
+      );
+      // Without a known reset the provider may have recovered, so the request
+      // is probed once rather than refused.
+      assert.equal(calls, 1);
+      assert.equal(response.statusCode, 200);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
   "role-scoped specialists reach Copilot after a late Antigravity quota failure",
   { concurrency: false },
   async () => {
