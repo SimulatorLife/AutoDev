@@ -1,6 +1,6 @@
 {
   "schema": "autodev-cooldown-behavior-v2",
-  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation from provider/model candidates, an `invalid_model` failure that cools down only the rejected model rather than its provider, and the structured candidate summary (provider, model, and the provider's own detail for configuration failures). Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
+  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing) where a stated future reset is held to exactly the provider's reset and only the ladder for a limit with no stated reset is capped by the hard ceiling, ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation from provider/model candidates, an `invalid_model` failure that cools down only the rejected model rather than its provider, and the structured candidate summary (provider, model, and the provider's own detail for configuration failures). Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
   "now": 1700000000000,
   "constants": {
     "providerCooldownMs": 30000,
@@ -213,7 +213,7 @@
         { "kind": "hard", "streak": 7, "durationMs": 21600000 }
       ]
     },
-    "hard_with_far_reset_clamped_to_ceiling": {
+    "hard_with_far_reset_is_held_to_the_stated_reset": {
       "setup": [
         {
           "provider": "claude",
@@ -227,8 +227,8 @@
       "expected": {
         "kind": "hard",
         "streak": 0,
-        "durationMs": 21600000,
-        "cooldownUntilDeltaMs": 21600000,
+        "durationMs": 2592000000,
+        "cooldownUntilDeltaMs": 2592000000,
         "resetsAt": "2023-12-14T22:13:20.000Z"
       }
     },

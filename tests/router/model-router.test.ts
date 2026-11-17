@@ -852,15 +852,24 @@ test("holds a provider that reported a real reset until that reset, not on the t
       Date.parse(resetsAt)
     );
 
-    // A reset further out than the ceiling is clamped rather than trusted whole.
+    // A reset further out than the router's own hard ceiling is still trusted
+    // whole: the provider said when its quota comes back, and the route stays
+    // ineligible until then. Only a limit that named no reset at all climbs
+    // the bounded ladder.
     cooldowns.clear("minimax");
+    const farReset = new Date(now + 30 * 86_400_000).toISOString();
     const far = cooldowns.cooldownProvider("minimax", {
       now,
       failureClass: "quota_exhausted",
-      resetsAt: new Date(now + 30 * 86_400_000).toISOString(),
+      resetsAt: farReset,
       structured: true
     });
-    assert.equal(far.cooldownUntil, now + 21_600_000);
+    assert.equal(far.cooldownUntil, Date.parse(farReset));
+    assert.equal(
+      cooldowns.get("minimax", now + 21_600_000)?.kind,
+      "hard",
+      "the route is still cooling a week after the router's hard ceiling"
+    );
   } finally {
     cooldowns.clear("minimax");
   }
@@ -7359,6 +7368,42 @@ test("only a provider-declared cooldown survives a router restart", async () => 
     assert.equal(providers.claude.cooldownResetsAt, resetsAt);
     assert.equal(providers.minimax.cooldownUntil, null);
     assert.equal(providers.copilot.cooldownUntil, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
+    resetRouterTelemetry();
+  }
+});
+
+test("a hard cooldown with a far reset keeps its own deadline across a restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "router-cooldown-far-reset-"));
+  const file = join(directory, "state.json");
+  // A quota that resets in three days: the provider said when it comes back,
+  // and a launchd restart does not move that deadline either.
+  const resetsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+  try {
+    resetRouterTelemetry();
+    cooldowns.cooldownProvider("claude", {
+      failureClass: "quota_exhausted",
+      resetsAt,
+      structured: true
+    });
+    await writeFile(file, serializeRouterState(), "utf8");
+
+    resetRouterTelemetry();
+    assert.equal(loadRouterState(file), true);
+    const provider = getRouterStatus().providers.claude;
+    assert.equal(provider.cooldownKind, "hard");
+    assert.equal(
+      provider.cooldownUntil,
+      resetsAt,
+      "the restored cooldown ends at the provider's own reset, not at a new window"
+    );
+    assert.equal(
+      provider.lastResortEligible,
+      false,
+      "a provider that named a future reset stays ineligible"
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
     for (const provider of DEFAULT_TIER) cooldowns.clear(provider);

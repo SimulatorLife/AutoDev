@@ -59,7 +59,13 @@ export interface PersistedCooldownEntry {
 export interface CooldownConfig {
   providerCooldownMs: number;
   providerCooldownMaxMs: number;
+  /** The floor of the hard ladder a limit with no stated reset climbs. */
   hardCooldownMs: number;
+  /**
+   * The ceiling of that same ladder. It bounds only a limit that carried no
+   * reset of its own: a provider that stated a reset is held to exactly that
+   * reset, which no router-chosen ceiling may shorten.
+   */
   hardCooldownMaxMs: number;
   probeCooldownMs: number;
   probeCooldownMaxMs: number;
@@ -86,6 +92,9 @@ const providerCooldownMaxMs = Math.max(
   providerCooldownMs,
   positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS, 600_000)
 );
+// The hard ladder: the floor it starts at and the ceiling it stops at. It is
+// the policy for a hard limit that named no reset, because a provider that
+// named one has already told the router when it may be asked again.
 const hardCooldownMs = positiveDuration(
   process.env.CODEX_ROUTER_HARD_COOLDOWN_MS,
   900_000
@@ -253,7 +262,8 @@ export class ProviderCooldowns {
       kind: CooldownKind,
       durationMs: number,
       streak = 0,
-      until = now + durationMs
+      until = now + durationMs,
+      resetAt: string | null = resetsAt
     ): CooldownResult => {
       const entry: CooldownEntry = {
         until,
@@ -267,7 +277,7 @@ export class ProviderCooldowns {
         // quota saying "resets in 24m43s" surface as a bare "retry in 480s" --
         // a number derived from the failure streak that had no relationship to
         // the window the provider had just named.
-        resetsAt,
+        resetsAt: resetAt,
         since: now
       };
       const existing = this.cooldowns.get(provider);
@@ -299,8 +309,16 @@ export class ProviderCooldowns {
       );
     }
     if (structured && isHardLimitClass(failureClass ?? "")) {
-      const declared = resetsAt ? Date.parse(resetsAt) : Number.NaN;
+      // A structured limit may carry the provider's own reset deadline. It is
+      // normalized the way the bridge boundary normalizes it, so the stored
+      // value is always an ISO-8601 UTC instant the router can compare with
+      // its clock.
+      const statedReset = normalizeResetsAt(resetsAt);
+      const declared = statedReset ? Date.parse(statedReset) : Number.NaN;
       if (Number.isNaN(declared)) {
+        // The provider named no window, so the only policy left is the bounded
+        // escalating ladder capped by `hardCooldownMaxMs`. That ceiling is the
+        // last consumer of the setting: a stated reset is never clamped to it.
         const streak = this.failureStreak(provider) + 1;
         this.failureStreaks.set(provider, streak);
         const durationMs = Math.min(
@@ -309,11 +327,27 @@ export class ProviderCooldowns {
         );
         return record("hard", durationMs, streak, now + durationMs);
       }
-      const until =
-        declared <= now
-          ? now + this.config.providerCooldownMs
-          : Math.min(declared, now + this.config.hardCooldownMaxMs);
-      return record("hard", until - now, 0, until);
+      if (declared <= now) {
+        // The window the provider named has already passed, so there is
+        // nothing to wait for: the route gets the short cooldown and is
+        // retried soon.
+        const until = now + this.config.providerCooldownMs;
+        return record("hard", until - now, 0, until, statedReset);
+      }
+      // A stated reset is the provider's own deadline, and the router holds it
+      // whole: the route stays ineligible until that instant, and the entry
+      // lapses when it arrives, which is the revalidation the policy asks for.
+      // Shortening it to a router-chosen ceiling would put a provider that
+      // said "out of usage until Tuesday" back in rotation on the router's
+      // clock rather than the provider's.
+      //
+      // No upper bound is imposed on the value the provider reported: the
+      // provider's deadline is the policy here, and a router-side ceiling on
+      // it is exactly what that policy exists to forbid. The safeguards live
+      // elsewhere -- only a *reported* limit earns a hard cooldown at all, the
+      // entry is scoped to the one provider route that failed, and it lapses by
+      // itself when the reset arrives.
+      return record("hard", declared - now, 0, declared, statedReset);
     }
     const streak = this.failureStreak(provider) + 1;
     this.failureStreaks.set(provider, streak);
@@ -413,7 +447,11 @@ export class ProviderCooldowns {
       const until = Number(entry.until);
       if (!Number.isFinite(until) || until <= now) continue;
       const restored: CooldownEntry = {
-        until: Math.min(until, now + this.config.hardCooldownMaxMs),
+        // The persisted deadline is restored as it was: a hard cooldown that
+        // was declared until a reset three days out still ends three days out
+        // after a restart. Re-clamping it here would reset the clock on every
+        // restart, which is exactly what the durability policy forbids.
+        until,
         kind: "hard",
         failureClass:
           typeof entry.failureClass === "string" ? entry.failureClass : null,

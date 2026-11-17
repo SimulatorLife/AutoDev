@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   COOLDOWN_CONFIG,
+  hardCooldownBlocksAttempt,
   ProviderCooldowns
 } from "@simulatorlife/autodev-runtime/router/cooldown";
 
@@ -123,7 +124,7 @@ test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry su
   );
 });
 
-test("typed cooldown persistence restores only future hard entries and clamps them", () => {
+test("typed cooldown persistence restores only future hard entries and keeps their deadlines", () => {
   const source = new ProviderCooldowns();
   source.cooldownProvider("claude", {
     now: NOW,
@@ -145,6 +146,71 @@ test("typed cooldown persistence restores only future hard entries and clamps th
   assert.equal(restored.isCooling("claude", NOW + 1), true);
   assert.equal(restored.isCooling("minimax", NOW + 1), false);
   assert.equal(restored.isCooling("expired", NOW + 1), false);
+  // The restored deadline is the one that was persisted, not a fresh window.
+  assert.equal(
+    restored.get("claude", NOW + 1)?.until,
+    persisted.find((entry) => entry.provider === "claude")?.until
+  );
+});
+
+test("a hard cooldown with a reset days out stays blocking past the hard ceiling", () => {
+  // A weekly quota that resets in three days is a fact the provider reported,
+  // not a router-chosen window: the route stays ineligible until that reset,
+  // however far past the router's own hard ceiling the reset falls.
+  const cooldowns = new ProviderCooldowns();
+  const resetsAt = new Date(NOW + 3 * 86_400_000).toISOString();
+  const hard = cooldowns.cooldownProvider("claude", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt,
+    structured: true
+  });
+  assert.equal(hard.kind, "hard");
+  assert.equal(hard.cooldownUntil, Date.parse(resetsAt));
+  assert.ok(hard.durationMs > COOLDOWN_CONFIG.hardCooldownMaxMs);
+
+  const sevenHoursLater = NOW + 7 * 3_600_000;
+  const entry = cooldowns.get("claude", sevenHoursLater);
+  assert.equal(entry?.kind, "hard");
+  assert.equal(entry?.until, Date.parse(resetsAt));
+  assert.equal(hardCooldownBlocksAttempt(entry, sevenHoursLater), true);
+  assert.equal(cooldowns.allowsLastResort(entry, sevenHoursLater), false);
+  assert.equal(
+    cooldowns.nextRetryMs(
+      [{ provider: "claude", model: "claude-opus-5-5" }],
+      sevenHoursLater
+    ),
+    Date.parse(resetsAt) - sevenHoursLater
+  );
+
+  // The entry lapses when the reset arrives: the provider's own deadline
+  // revalidates the route, and nothing else keeps it out.
+  assert.equal(cooldowns.get("claude", Date.parse(resetsAt)), null);
+});
+
+test("a restored hard cooldown keeps the deadline it was persisted with", () => {
+  const source = new ProviderCooldowns();
+  const resetsAt = new Date(NOW + 3 * 86_400_000).toISOString();
+  source.cooldownProvider("claude", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt,
+    structured: true
+  });
+  const persisted = source.persistedHardEntries();
+
+  // The router restarts seven hours later: the restored cooldown still ends
+  // at the provider's reset instead of starting a fresh window.
+  const restartedAt = NOW + 7 * 3_600_000;
+  const restored = new ProviderCooldowns();
+  restored.restoreHardEntries(persisted, restartedAt);
+  const entry = restored.get("claude", restartedAt + 1);
+  assert.equal(entry?.kind, "hard");
+  assert.equal(entry?.until, Date.parse(resetsAt));
+  assert.equal(entry?.resetsAt, resetsAt);
+  assert.equal(entry?.since, NOW);
+  assert.equal(hardCooldownBlocksAttempt(entry, restartedAt + 1), true);
+  assert.equal(restored.allowsLastResort(entry, restartedAt + 1), false);
 });
 
 test("Antigravity model-family routes keep independent cooldown state", () => {

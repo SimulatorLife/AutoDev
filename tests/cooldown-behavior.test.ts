@@ -356,6 +356,26 @@ describe("cooldown behavior", () => {
           now: NOW,
           ...last.args
         });
+        // A hard limit that carried a future reset is held to exactly the
+        // provider's own deadline, which is deliberately not bounded by the
+        // router-chosen ceilings: the ceiling only bounds the ladder a limit
+        // with no stated reset climbs.
+        const statedReset =
+          typeof last.args.resetsAt === "string"
+            ? Date.parse(last.args.resetsAt)
+            : Number.NaN;
+        if (
+          last.args.structured === true &&
+          Number.isFinite(statedReset) &&
+          statedReset > NOW
+        ) {
+          assert.equal(
+            final.durationMs,
+            statedReset - NOW,
+            `${name}: a stated future reset is held whole`
+          );
+          continue;
+        }
         assert.ok(
           final.durationMs <=
             Math.max(

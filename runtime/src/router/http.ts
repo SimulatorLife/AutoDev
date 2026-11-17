@@ -777,6 +777,8 @@ export function limitsStatus(): Record<string, unknown> {
   return {
     providerCooldownMs: COOLDOWN_CONFIG.providerCooldownMs,
     providerCooldownMaxMs: COOLDOWN_CONFIG.providerCooldownMaxMs,
+    // The hard ladder applies only to a limit that carried no stated reset; a
+    // stated reset is the provider's own deadline and is not bounded by it.
     hardCooldownMs: COOLDOWN_CONFIG.hardCooldownMs,
     hardCooldownMaxMs: COOLDOWN_CONFIG.hardCooldownMaxMs,
     probeCooldownMs: COOLDOWN_CONFIG.probeCooldownMs,

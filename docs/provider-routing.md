@@ -567,7 +567,7 @@ the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 | Kind        | Applies to                                                                  | Duration                                                   | Last resort?                      | Survives a restart? |
 | ----------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------- | ------------------- |
 | `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min                                      | yes                               | no                  |
-| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared**; a direct concrete request for that route is refused locally (HTTP 400, no reroute) until the reset | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes                 |
+| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared**; a direct concrete request for that route is refused locally (HTTP 400, no reroute) until the reset | exactly until the declared reset (never capped); with no reset, 15min doubling to 6h | only while no reset time is known | yes                 |
 | `probe`     | a local bridge that did not answer its health check                         | 5s doubling to 30s                                         | yes                               | no                  |
 | `config`    | `authentication`, and `invalid_model` for the rejected **model only**       | fixed 30s, never escalates                                 | no                                | no                  |
 
@@ -920,6 +920,12 @@ to the default rather than failing startup.
 fallback rather than a startup error, a typo in one of the others leaves the
 default quietly in place.
 
+`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` is the ceiling of the escalating ladder a
+limit *without* a stated reset climbs, and that is its only remaining role. It
+is not a cap on a stated reset: a provider that reported a reset is held until
+exactly that reset, however far out the reset falls, and a hard cooldown that
+carried one keeps that deadline across a restart.
+
 ### Declared limits
 
 A provider bridge that knows it hit a usage limit says so structurally rather
@@ -933,7 +939,11 @@ than only in prose, on both the streamed and non-streamed paths:
 | `x-autodev-limit-source`    | `reported` (the provider said so) or `inferred` (a bridge matched free text) |
 
 A stated reset is kept on the cooldown entry whether or not it is trusted long
-enough to sleep through. An `inferred` limit stays on the transient ladder — the
+enough to sleep through. For a `reported` limit it is more than that: the reset
+*is* the deadline. A hard cooldown with a future reset ends exactly at that
+reset, the route is ineligible for any attempt until then, and the entry lapses
+when it arrives — the router does not shorten a provider's window to a ceiling
+of its own. An `inferred` limit stays on the transient ladder — the
 corroboration rule above is unchanged, and a long sleep is still not taken on the
 strength of free text — but the window the provider named survives into
 `cooldownResetsAt` and the exhaustion body. The two times routinely disagree, so
@@ -947,7 +957,8 @@ antigravity-claude-gpt: quota_exhausted, provider reports usage resets in 25m
 Reporting only the provider's reset would overstate the wait, since the router
 will in fact retry sooner; reporting only the ladder hid the window the provider
 had just given. When the retry lands on the reset within a minute the single time
-is enough and is stated once.
+is enough and is stated once. A reported limit has only one time: the router
+retries at the reset the provider named.
 
 The same shape appears as `error.limit` in a failure body -- a non-streamed
 one, or a stream's `response.failed` -- and as
@@ -1365,8 +1376,10 @@ passed, and a restart is a legitimate reason to go and look again. A `hard`
 cooldown survives: a provider that declared it is out of usage until Tuesday is
 still out of usage on Tuesday, and the router restarts often enough under launchd
 that dropping it would put it straight back to re-probing an exhausted account.
-Restored cooldowns are dropped if already past and re-clamped to
-`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` on the way back in.
+Restored cooldowns are dropped if already past; the ones that remain keep the
+deadline they were persisted with, so a restart never restarts a provider's
+clock. A hard cooldown declared until a reset three days out still ends three
+days out after a restart.
 Failure classes include `session_limit`,
 `throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
 `authentication`, `invalid_model`, and `probe_unavailable` (a local bridge that

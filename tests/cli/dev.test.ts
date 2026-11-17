@@ -767,6 +767,18 @@ test("macOS opens Docker when daemon is absent and then starts OpenLIT", async (
 
   assert.equal(commands[1]?.command, "open");
   assert.deepEqual(commands[1]?.args, ["-a", "Docker"]);
+  // open(1) hands its environment to Docker Desktop, so the launch carries
+  // only the login-session identity -- never the caller's toolchain
+  // environment or the Usage service token.
+  const desktopEnv = commands[1]?.options.env ?? {};
+  assert.deepEqual(
+    Object.keys(desktopEnv).sort(),
+    ["HOME", "LOGNAME", "PATH", "USER"].filter(
+      (name) => name === "PATH" || Boolean(process.env[name])
+    )
+  );
+  assert.equal(desktopEnv.PATH, "/usr/bin:/bin:/usr/sbin:/sbin");
+  assert.equal(desktopEnv.HOME, process.env.HOME);
 
   assert.equal(commands[2]?.command, "docker");
   assert.deepEqual(commands[2]?.args, ["info"]);

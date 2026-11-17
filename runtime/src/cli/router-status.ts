@@ -100,7 +100,7 @@ if (body.limits && typeof body.limits === "object") {
     `${Math.round(Number(ms ?? 0) / 1000)}s`;
   writeLine("Effective limits & cooldowns:");
   writeLine(
-    `  transient cooldown: ${msToSec(lim.providerCooldownMs)}-${msToSec(lim.providerCooldownMaxMs)}, hard cooldown: ${msToSec(lim.hardCooldownMs)}-${msToSec(lim.hardCooldownMaxMs)}`
+    `  transient cooldown: ${msToSec(lim.providerCooldownMs)}-${msToSec(lim.providerCooldownMaxMs)}, hard ladder (no stated reset): ${msToSec(lim.hardCooldownMs)}-${msToSec(lim.hardCooldownMaxMs)}`
   );
   writeLine(
     `  probe cooldown: ${msToSec(lim.probeCooldownMs)}-${msToSec(lim.probeCooldownMaxMs)} (timeout ${lim.probeTimeoutMs ?? 700}ms), exhaustion wait: ${lim.exhaustionWaitMs ?? 0}ms`

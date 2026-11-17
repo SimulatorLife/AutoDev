@@ -147,6 +147,35 @@ function waitForDockerEngine(
   );
 }
 
+/** launchd's default search path for processes in the user's login session. */
+const LOGIN_SESSION_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/**
+ * The environment Docker Desktop is launched with.
+ *
+ * `open` hands its whole environment to the application it launches
+ * ("Opened applications inherit environment variables just as if you had
+ * launched the application directly", open(1)). The caller's environment is
+ * a toolchain environment -- pnpm lifecycle variables, Node and Electron
+ * options, AutoDev secrets such as the Usage service token. Launched with
+ * it, Docker Desktop's backend fails to start its Electron UI ("starting
+ * electron: unmarshaling start request: unexpected EOF") and shuts itself
+ * down, so the Engine never comes up -- while the same app opened from Finder
+ * starts normally. Docker Desktop is therefore launched the way Finder
+ * launches it: with only the login-session identity, never the caller's
+ * environment.
+ */
+export function desktopLaunchEnvironment(
+  callerEnv: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { PATH: LOGIN_SESSION_PATH };
+  for (const name of ["HOME", "USER", "LOGNAME"] as const) {
+    const value = callerEnv[name];
+    if (value) env[name] = value;
+  }
+  return env;
+}
+
 async function ensureDockerEngine(
   dependencies: UsageStackDependencies,
   options: UsageStackOptions
@@ -164,7 +193,8 @@ async function ensureDockerEngine(
   const launched = dependencies.runCommand("open", ["-a", "Docker"], {
     cwd: options.repositoryRoot,
     stdio: "ignore",
-    timeoutMs: 10_000
+    timeoutMs: 10_000,
+    env: desktopLaunchEnvironment(dependencies.runnerEnv)
   });
   if (!commandSucceeded(launched)) {
     throw new Error(
