@@ -444,8 +444,8 @@ function checkRulesAndSkills(
 ): void {
   for (const name of RULES)
     check(
-      `rule link ${name}`,
-      runtimeLinkMatches(
+      `rule file ${name}`,
+      runtimeFileMatches(
         path.join(paths.repositoryRoot, "agents/rules", name),
         path.join(paths.rules, name)
       ),

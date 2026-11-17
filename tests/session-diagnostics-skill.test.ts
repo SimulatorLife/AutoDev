@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,10 @@ import { fileURLToPath } from "node:url";
 
 import { compareInvestigations } from "../.rulesync/skills/autodev-session-diagnostics/scripts/investigation-compare.ts";
 import { probe } from "../.rulesync/skills/autodev-session-diagnostics/scripts/mcp-probe.ts";
+import {
+  probeRuleLoading,
+  ruleEntryLoads
+} from "../.rulesync/skills/autodev-session-diagnostics/scripts/rule-loading-probe.ts";
 import {
   buildReport,
   deploymentDrift,
@@ -36,6 +41,8 @@ const SCRIPT = fileURLToPath(
     import.meta.url
   )
 );
+const codexAvailable =
+  spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
 const ROOT = "01a0b662-0000-7000-8000-000000000001";
 const CHILD = "01a0b664-0000-7000-8000-000000000002";
 const OTHER = "01a0b699-0000-7000-8000-000000000003";
@@ -1009,3 +1016,46 @@ test("session-trace captures delegation unavailability failures, spawn_failed ro
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a rules entry loads only when it resolves to a file directly in the rules directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-rule-entries-"));
+  try {
+    const rules = join(root, "rules");
+    const nested = join(rules, "nested");
+    const outside = join(root, "outside.rules");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(outside, "prefix_rule()\n");
+    writeFileSync(join(rules, "source.rules"), "prefix_rule()\n");
+    writeFileSync(join(nested, "source.rules"), "prefix_rule()\n");
+
+    const regular = join(rules, "default.rules");
+    writeFileSync(regular, "prefix_rule()\n");
+    assert.equal(ruleEntryLoads(rules, regular).loads, true);
+
+    const sameDirectory = join(rules, "same-directory.rules");
+    symlinkSync(join(rules, "source.rules"), sameDirectory);
+    assert.equal(ruleEntryLoads(rules, sameDirectory).loads, true);
+
+    const escaping = join(rules, "escaping.rules");
+    symlinkSync(outside, escaping);
+    assert.equal(ruleEntryLoads(rules, escaping).loads, false);
+
+    const subdirectory = join(rules, "subdirectory.rules");
+    symlinkSync(join(nested, "source.rules"), subdirectory);
+    assert.equal(ruleEntryLoads(rules, subdirectory).loads, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test(
+  "Codex enforces a rules file only when it resolves inside the rules directory",
+  { skip: codexAvailable ? false : "codex CLI not installed" },
+  async () => {
+    const results = await probeRuleLoading({ codex: "codex", keep: false });
+    const regular = results.find((result) => result.case === "regular");
+    const symlink = results.find((result) => result.case === "symlink");
+    assert.equal(regular?.enforced, true, regular?.detail);
+    assert.equal(symlink?.enforced, false, symlink?.detail);
+  }
+);

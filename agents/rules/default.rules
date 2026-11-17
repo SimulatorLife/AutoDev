@@ -1,3 +1,9 @@
+# AutoDev's Codex command rules. The installer copies this file to
+# "$CODEX_HOME/rules/default.rules" as a regular file: Codex loads a rules
+# entry only when it resolves to a file directly inside that directory, and
+# skips anything else -- a symlink into this checkout, for example --
+# silently, which leaves every rule below inert.
+
 # Code-search agents must use the configured CocoIndex MCP server. The CLI
 # executable remains available to the MCP server itself, but model-issued shell
 # commands cannot invoke it as a search/indexing fallback.

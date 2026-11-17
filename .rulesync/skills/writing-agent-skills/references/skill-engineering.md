@@ -53,8 +53,9 @@ Combine these when needed: seed, generate, discard defaults, independently rank.
 
 A monolithic `SKILL.md` containing every procedure and exception wastes context and increases conflicting instructions. Separate skills work when capabilities are independent; for a cohesive toolkit, use **internal routing**.
 
-Keep `SKILL.md` as a lightweight entrypoint that selects task-specific references:
+Keep a `SKILL.md` as a lightweight entrypoint that selects task-specific references. The example below is illustrative: it names a hypothetical skill, so those files are not part of this one.
 
+<!-- skill-example -->
 - “Polish this interface” → `references/polish.md`
 - “Review this component” → `references/review.md`
 - “Migrate this project” → `references/migration.md`
@@ -71,6 +72,7 @@ skill/
     ├── inspect-context.mjs
     └── validate.mjs
 ```
+<!-- /skill-example -->
 
 Each reference owns its inputs, tools, steps, and acceptance criteria. Load the **smallest sufficient set** rather than every command's documentation. Avoid needless fragmentation, too.
 

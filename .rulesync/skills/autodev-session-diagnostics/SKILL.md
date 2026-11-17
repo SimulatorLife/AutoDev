@@ -66,6 +66,7 @@ every event and looked like "the router logged nothing".
 | Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
 | Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
 | Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
+| Did Codex load the command rules? | `node "$SKILL_DIR/scripts/rule-loading-probe.ts" --codex "$(command -v codex)"` — a real Codex run against an isolated `CODEX_HOME`; `ls -l "$CODEX_HOME/rules/default.rules"` must show a regular file, and `bash scripts/install.sh --check` reports a symlink or stale copy as drift |
 | Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json`; `exec` inputs reading `SKILL.md` |
 
 ## 3. Diagnose
@@ -187,6 +188,19 @@ every event and looked like "the router logged nothing".
   that ends at the allowance is this. The bridge types prompts up to 32 KB
   and reports the rest as `UPLOADS_EXHAUSTED` (a `throttled` limit), so a
   session that still dies of it is uploading more than it should.
+- **Codex loads a rules entry only when it resolves to a file directly inside
+  `$CODEX_HOME/rules/`**, so a symlink that points anywhere else — the repository
+  checkout, another file in `$CODEX_HOME`, a subdirectory of `rules/` — is skipped
+  silently and every rule in that file turns inert: an `allow` rule stops
+  lifting the workspace-write sandbox (`git add` fails with `.git/index.lock:`
+  `Operation not permitted`) and a `forbidden` rule stops blocking (`git stash`
+  runs). `codex execpolicy check` cannot see it: it resolves the path itself and
+  reports the decision the skipped file would have produced. Check
+  `ls -l "$CODEX_HOME/rules/default.rules"` (a regular file) or
+  `bash scripts/install.sh --check` (drift on `rule file default.rules`), and
+  reproduce it with `node "$SKILL_DIR/scripts/rule-loading-probe.ts"`. Verified
+  2026-11-17 against `codex-cli 0.154.0` and `0.169.0-alpha.11.1`; the write-up is
+  in `docs/local-setup.md` ("Codex command rules").
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.
 - **Never print tokens or paste prompts**; quote ids, counts, and timestamps.

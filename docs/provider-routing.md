@@ -3578,9 +3578,13 @@ installer is the only supported materialization path into
   source `SKILL.md` as a regular file; `--check` rejects file-level or relative
   skill links because Codex currently skips symlinked `SKILL.md` files.
 - Native command rules: `agents/rules/default.rules` is the versioned
-  source for restrictive Codex `prefix_rule` entries. The installer symlinks it
-  to `$CODEX_HOME/rules/default.rules`; it replaces the old custom Git hook and
-  is testable with `codex execpolicy check` before restart. These prefix rules
+  source for Codex `prefix_rule` entries. The installer copies it to
+  `$CODEX_HOME/rules/default.rules` as a regular file, because Codex loads a
+  rules entry only when it resolves to a file directly inside
+  `$CODEX_HOME/rules/` and skips anything else silently; it replaces the old
+  custom Git hook and is testable with `codex execpolicy check` before
+  restart ([`local-setup.md`](local-setup.md#codex-command-rules-only-entries-inside-the-rules-directory-load)
+  documents the skipped-entry behaviour and how it was verified). These prefix rules
   cover direct command tokens and the native engine's supported shell parsing;
   they are not a general-purpose parser for arbitrary environment wrappers or
   global-option placement. Explicit localhost diagnostic URLs are allowed for

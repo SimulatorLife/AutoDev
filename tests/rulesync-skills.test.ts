@@ -459,10 +459,48 @@ test("every skill a role enables is installed at user level", () => {
     );
 });
 
+/**
+ * A skill may show what another skill could look like. Such an example names
+ * files on purpose that the skill does not ship, so the reference check
+ * ignores the paths inside a `skill-example` region.
+ */
+function withoutExampleRegions(text: string, document: string): string {
+  const openings = text.match(/<!--\s*skill-example\s*-->/gu)?.length ?? 0;
+  const closings = text.match(/<!--\s*\/skill-example\s*-->/gu)?.length ?? 0;
+  assert.equal(
+    openings,
+    closings,
+    `${document}: unbalanced skill-example markers`
+  );
+  return text.replaceAll(
+    /<!--\s*skill-example\s*-->[\s\S]*?<!--\s*\/skill-example\s*-->/gu,
+    ""
+  );
+}
+
+test("an example region is exempt from the reference check", () => {
+  const document = [
+    "Load `references/polish.md` for polishing.",
+    "<!-- skill-example -->",
+    "Load `references/review.md` for reviews.",
+    "<!-- /skill-example -->"
+  ].join("\n");
+  assert.equal(
+    withoutExampleRegions(document, "skill.md"),
+    "Load `references/polish.md` for polishing.\n"
+  );
+  assert.throws(
+    () => withoutExampleRegions("<!-- skill-example -->\ntext", "skill.md"),
+    /unbalanced skill-example markers/
+  );
+});
+
 test("every file a skill names exists where an agent resolves it", () => {
   // A skill names its bundled files relative to its own directory and
   // repository files relative to the repository root. Either way the file
   // must exist, or an agent following the skill stops at a missing path.
+  // Illustrative examples are exempt: a skill may name files it does not
+  // ship, as long as it marks them as an example.
   const bundled = /^(?:references|scripts|assets|templates|examples|agents)\//u;
   const repository =
     /^(?:docs|runtime|core|console|data|config|agents|tests|scripts|\.rulesync)\//u;
@@ -473,11 +511,12 @@ test("every file a skill names exists where an agent resolves it", () => {
     const documents = readdirSync(directory, { recursive: true })
       .map(String)
       .filter((file) => file.endsWith(".md"));
-    for (const document of documents)
-      for (const [, named] of readFileSync(
-        join(directory, document),
-        "utf8"
-      ).matchAll(/`([\w.@/-]+\.[a-z]{1,5})`/gu)) {
+    for (const document of documents) {
+      const body = withoutExampleRegions(
+        readFileSync(join(directory, document), "utf8"),
+        `${skill}/${document}`
+      );
+      for (const [, named] of body.matchAll(/`([\w.@/-]+\.[a-z]{1,5})`/gu)) {
         const reference = named!;
         if (reference.includes("*") || reference.includes("<")) continue;
         const inSkill = existsSync(join(directory, reference));
@@ -490,6 +529,7 @@ test("every file a skill names exists where an agent resolves it", () => {
         )
           missing.push(`${skill}/${document}: ${reference}`);
       }
+    }
   }
   assert.deepEqual(missing, []);
 });

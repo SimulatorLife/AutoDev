@@ -688,9 +688,14 @@ servers, and trusted hook state. Re-running the installer must be idempotent;
 `bash scripts/install.sh --check` must pass afterward.
 
 Destructive Git commands are enforced by Codex's native rules engine. The
-tracked rules live in `agents/rules/default.rules` and are symlinked by
-the installer to `$CODEX_HOME/rules/default.rules`. Validate a rule without
-running the command:
+tracked rules live in `agents/rules/default.rules` and the installer copies
+them to `$CODEX_HOME/rules/default.rules` as a regular file: Codex loads a
+rules entry only when it resolves to a file directly inside
+`$CODEX_HOME/rules/` and skips anything else silently, which leaves every rule
+inert, including the `allow` rule that lets `git add`/`git commit` write the
+otherwise read-only `.git`. `bash scripts/install.sh --check` reports a symlink
+or stale copy as drift, and [Codex command rules](#codex-command-rules-only-entries-inside-the-rules-directory-load)
+records how that was verified. Validate a rule without running the command:
 
 ```bash
 codex execpolicy check --pretty \
@@ -735,6 +740,70 @@ can write the shared pnpm store other projects link from. Codex 0.154.0
 expands `~` in these entries (verified with a replayed `codex exec` turn; the
 `codex sandbox -P :workspace` CLI ignores `writable_roots` and is not a valid
 check).
+
+### Codex command rules: only entries inside the rules directory load
+
+Codex reads command rules from `$CODEX_HOME/rules/*.rules`. It loads an entry
+only when that entry resolves to a file **directly inside
+`$CODEX_HOME/rules/`**. A symlink whose target sits anywhere else — the
+repository checkout, another file in `$CODEX_HOME`, or a subdirectory of
+`rules/` — resolves outside that directory and is skipped **silently**: no
+error, no warning, and no rule from the file takes effect. The whole file
+turns inert in both directions: an `allow` rule stops lifting the
+workspace-write sandbox, so `git add`/`git commit` fail with
+`.git/index.lock: Operation not permitted`, and a `forbidden` rule stops
+blocking, so `git stash` runs.
+
+That is why the installer copies `agents/rules/default.rules` into
+`$CODEX_HOME/rules/default.rules` instead of symlinking it: the symlink
+pointed into the checkout, so Codex never loaded a rule from it.
+
+**Detection.** `codex execpolicy check` cannot show this — it resolves the
+path itself and reports the decision the skipped file would have produced
+(`allow` for `git add`). Look at the installed file instead:
+
+```bash
+ls -l "$CODEX_HOME/rules/default.rules"   # a regular file, not "default.rules -> ..."
+bash scripts/install.sh --check             # reports "rule file default.rules" drift
+```
+
+`install.sh --check` compares the installed file with
+`agents/rules/default.rules` by content and rejects a symlink, so a drifted
+installation is visible without running Codex at all.
+
+**Verified how.** The behaviour was reproduced against real Codex binaries
+instead of being inferred: an isolated `CODEX_HOME` holding one rule file, a
+throwaway workdir, and a scripted fake provider (no API key, no network). The
+probe is repeatable:
+
+```bash
+node .rulesync/skills/autodev-session-diagnostics/scripts/rule-loading-probe.ts --codex "$(command -v codex)"
+```
+
+It writes one `forbidden` rule (`touch`), has the fake model run
+`touch probe-marker`, and reads the tool result: a policy rejection means the
+file was loaded. Observed on 2026-11-17 with `codex-cli 0.154.0` (standalone)
+and `codex-cli 0.169.0-alpha.11.1` (the Codex app bundle), identically on
+both:
+
+| `$CODEX_HOME/rules/default.rules` | resolves to | Codex loads it |
+| --- | --- | --- |
+| regular file | `.../rules/default.rules` | yes, the rule is enforced |
+| symlink to a file in the same directory | `.../rules/source.rules` | yes, the rule is enforced |
+| symlink to a file in `$CODEX_HOME` outside `rules/` | `.../source.rules` | no, skipped silently |
+| symlink to a file in a subdirectory of `rules/` | `.../rules/sub/source.rules` | no, skipped silently |
+| symlink to the repository checkout | `<repo>/agents/rules/default.rules` | no, skipped silently |
+
+The `allow` direction was reproduced the same way: with the shipped
+`agents/rules/default.rules` copied into the isolated `CODEX_HOME`, the
+model-issued `git add` ran outside the sandbox and staged the file; with the
+same file symlinked into the isolated `CODEX_HOME`, `git add` stayed
+sandboxed and failed — `.git/index.lock: Operation not permitted` on a normal
+machine, `sandbox-exec: sandbox_apply: Operation not permitted` where the
+sandbox cannot be applied at all.
+
+`tests/config/command-rules.test.ts` pins the installer side: the installed
+rules file must be a regular file with the tracked content.
 
 ## Safety
 
@@ -907,7 +976,7 @@ AutoDev scripts remain the hook implementations, while Rulesync owns declaration
 node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev-authored skill, and external curated skills declared in `rulesync.jsonc` (`sources`) and locked in `rulesync.lock` (`karpathy-guidelines` and `react-best-practices`) are materialized under gitignored `.rulesync/skills/.curated/` via `pnpm exec rulesync install --frozen --silent`. The generated repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output combining both local repository skills and curated skills. The installer installs frozen sources from `rulesync.lock` and generates the projections by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two as well as `/.rulesync/skills/.curated/` (while tracking `rulesync.lock`). The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent installs frozen sources and generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` — as well as the external curated skills in `.rulesync/skills/.curated/` — keep the default targets (`["*"]`) and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks every skill that declares `targets` (the user-level set `runtime/src/platform/user-level-skills.ts` reads from the frontmatter) from `.rulesync/skills/` into `$HOME/.agents/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`.
+Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev-authored skill, and external curated skills declared in `rulesync.jsonc` (`sources`) and locked in `rulesync.lock` (`karpathy-guidelines` and `react-best-practices`) are materialized under gitignored `.rulesync/skills/.curated/` via `pnpm exec rulesync install --frozen --silent`. The generated repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output combining both local repository skills and curated skills. The installer installs frozen sources from `rulesync.lock` and generates the projections by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two as well as `/.rulesync/skills/.curated/` (while tracking `rulesync.lock`). The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent installs frozen sources and generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` — as well as the external curated skills in `.rulesync/skills/.curated/` — keep the default targets (`["*"]`) and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks every skill that declares `targets` (the user-level set `runtime/src/platform/user-level-skills.ts` reads from the frontmatter) from `.rulesync/skills/` into `$HOME/.agents/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`. A skill may also show what another skill could look like: such an example names files on purpose that the skill does not ship, so `tests/rulesync-skills.test.ts` ignores the paths inside a `<!-- skill-example -->` … `<!-- /skill-example -->` region, and a skill that names a file it does not ship has to mark it as one.
 
 The Console Skills detail view edits only an existing canonical `.rulesync/skills/<name>/SKILL.md`; Runtime revision-checks the source, then runs the pinned RuleSync skills-only generator and `--check` across the configured targets before confirming. For manual source edits, regenerate and verify the same projections with:
 

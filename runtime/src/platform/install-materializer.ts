@@ -1197,11 +1197,7 @@ function materializeScripts(hooks: string, source: FileTarget): void {
     linkRuntimeSource(source(`scripts/${name}`), path.join(hooks, name));
 }
 
-function linkRuntimeConfigs(
-  codexHome: string,
-  source: FileTarget,
-  rules: string
-): void {
+function linkRuntimeConfigs(codexHome: string, source: FileTarget): void {
   for (const name of PROFILES)
     linkRuntimeSource(
       source(`config/profiles/${name}.config.toml`),
@@ -1212,8 +1208,29 @@ function linkRuntimeConfigs(
       source(`config/catalogs/${name}-model-catalog.json`),
       path.join(codexHome, `${name}-model-catalog.json`)
     );
+}
+
+/**
+ * Install AutoDev's Codex command rules as regular-file copies.
+ *
+ * Codex loads a rules entry only when it resolves to a file directly inside
+ * `$CODEX_HOME/rules/`; anything else — a symlink into the checkout, for
+ * example — is skipped silently. A symlinked `default.rules` left every rule
+ * inert: `forbidden` commands ran, and the `allow` rule for `git add`/`git
+ * commit` never lifted the workspace-write sandbox, so agents failed with
+ * `.git/index.lock: Operation not permitted`. `docs/local-setup.md` records
+ * the reproduction.
+ */
+export function materializeCommandRules(
+  repositoryRoot: string,
+  rules: string
+): void {
   for (const name of RULES)
-    linkRuntimeSource(source(`agents/rules/${name}`), path.join(rules, name));
+    materializeRuntimeFile(
+      path.join(repositoryRoot, "agents/rules", name),
+      path.join(rules, name),
+      0o644
+    );
 }
 
 export interface NodeModuleLink {
@@ -2185,7 +2202,8 @@ export function materializeInstallation(options: MaterializeOptions): void {
     source("config/catalogs"),
     source("config/catalogs/codex-model-catalog.json")
   );
-  linkRuntimeConfigs(options.codexHome, source, rules);
+  linkRuntimeConfigs(options.codexHome, source);
+  materializeCommandRules(options.repositoryRoot, rules);
   replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
   materializeMcpConfiguration({
     repositoryRoot: options.repositoryRoot,

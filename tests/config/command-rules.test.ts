@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import {
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { materializeCommandRules } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 /**
  * `agents/rules/default.rules` is Codex execpolicy: the decision it returns is
@@ -59,3 +69,20 @@ for (const [command, expected] of GIT_DECISIONS) {
     }
   );
 }
+
+test("installer replaces a symlinked default.rules with a regular-file copy, because Codex skips symlinked rule files", () => {
+  const repositoryRoot = path.resolve(path.dirname(RULES), "../..");
+  const rules = mkdtempSync(path.join(os.tmpdir(), "autodev-rules-"));
+  try {
+    const installed = path.join(rules, "default.rules");
+    symlinkSync(RULES, installed);
+    materializeCommandRules(repositoryRoot, rules);
+    const stat = lstatSync(installed);
+    assert.equal(stat.isSymbolicLink(), false);
+    assert.equal(stat.isFile(), true);
+    assert.equal(stat.mode & 0o777, 0o644);
+    assert.deepEqual(readFileSync(installed), readFileSync(RULES));
+  } finally {
+    rmSync(rules, { recursive: true, force: true });
+  }
+});
