@@ -42,30 +42,69 @@ test("typed cooldowns preserve config, probe, transient, and hard ladders", () =
   assert.equal(hard.cooldownUntil, NOW + 3_600_000);
 });
 
-test("an inferred quota keeps the window the provider reported", () => {
-  // An inferred limit -- one read out of a CLI's stderr -- never earns a hard
-  // cooldown, so it stays on the transient ladder and is retried long before
-  // the window agy named. The deadline must stay short; the reported window is
-  // still a fact about the provider and has to survive into the entry, because
-  // it is what the reader is shown in place of a number derived from a failure
-  // streak. Dropping it is what produced a quota saying "resets in 24m43s"
-  // surfacing as "retry in 480s".
+test("an inferred hard-limit class with a stated future reset holds a hard cooldown up to hardCooldownMaxMs", () => {
   const cooldowns = new ProviderCooldowns();
-  const reset = new Date(NOW + 24 * 60_000 + 43_000).toISOString();
-  const inferred = cooldowns.cooldownProvider("antigravity", {
+  const resetMs = 24 * 60_000 + 43_000;
+  const reset = new Date(NOW + resetMs).toISOString();
+  const inferred = cooldowns.cooldownProvider("antigravity-argon", {
     now: NOW,
     failureClass: "quota_exhausted",
     resetsAt: reset,
     structured: false,
-    model: "gemini-3.8-flash-high"
+    model: "gemini-3-argon-high"
   });
-  assert.equal(inferred.kind, "transient");
-  // The retry deadline is the ladder's, not the provider's.
-  assert.equal(inferred.cooldownUntil, NOW + inferred.durationMs);
-  assert.ok(inferred.durationMs < 24 * 60_000);
-  // The window the provider stated is retained for display.
+  assert.equal(inferred.kind, "hard");
+  assert.equal(inferred.durationMs, resetMs);
+  assert.equal(inferred.cooldownUntil, NOW + resetMs);
   assert.equal(inferred.resetsAt, reset);
-  assert.equal(cooldowns.get("antigravity", NOW + 1)?.resetsAt, reset);
+  assert.equal(cooldowns.get("antigravity-argon", NOW + 1)?.resetsAt, reset);
+  assert.equal(cooldowns.persistedHardEntries().length, 1);
+
+  // Far-future inferred reset is bounded by hardCooldownMaxMs, while reported stays unbounded.
+  const farResetMs = 30 * 24 * 60 * 60_000;
+  const farReset = new Date(NOW + farResetMs).toISOString();
+  const capped = cooldowns.cooldownProvider("antigravity-gemini", {
+    now: NOW,
+    failureClass: "session_limit",
+    resetsAt: farReset,
+    structured: false
+  });
+  assert.equal(capped.kind, "hard");
+  assert.equal(capped.durationMs, cooldowns.config.hardCooldownMaxMs);
+  assert.equal(capped.cooldownUntil, NOW + cooldowns.config.hardCooldownMaxMs);
+  assert.equal(capped.resetsAt, farReset);
+
+  const unbounded = cooldowns.cooldownProvider("codex", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt: farReset,
+    structured: true
+  });
+  assert.equal(unbounded.kind, "hard");
+  assert.equal(unbounded.durationMs, farResetMs);
+});
+
+test("an inferred hard-limit class without a future reset stays on the transient ladder", () => {
+  const cooldowns = new ProviderCooldowns();
+  const noReset = cooldowns.cooldownProvider("antigravity-argon", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt: null,
+    structured: false
+  });
+  assert.equal(noReset.kind, "transient");
+  assert.equal(noReset.durationMs, cooldowns.config.providerCooldownMs);
+  assert.equal(cooldowns.persistedHardEntries().length, 0);
+
+  const pastReset = new Date(NOW - 5000).toISOString();
+  const past = cooldowns.cooldownProvider("antigravity-gemini", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt: pastReset,
+    structured: false
+  });
+  assert.equal(past.kind, "transient");
+  assert.equal(past.resetsAt, pastReset);
 });
 
 test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry summaries", () => {

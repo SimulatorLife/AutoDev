@@ -9,7 +9,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
-import { exhaustedQuotaByProvider } from "../src/features/providers/ProviderQuota.ts";
+import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
+import {
+  exhaustedQuotaByProvider,
+  providerQuotaView
+} from "../src/features/providers/ProviderQuota.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { fetchProviders } from "../src/lib/server/control-api.ts";
 
@@ -977,4 +981,44 @@ test("fetchProviders passes the quota-axi report through without reshaping it", 
   assert.equal(result.kind, "ok");
   if (result.kind !== "ok") return;
   assert.deepEqual(result.data.quotaAxi, quotaAxi);
+});
+
+test("ProviderDetailView shows Quota exhausted for a fresh provider-wide exhausted report and Ready otherwise", () => {
+  const provider = healthyProviderRecord("claude");
+  const report = quotaReport([exhaustedQuotaProvider()]);
+  const quotaExhaustion = providerQuotaView(report, Date.now()).exhaustion.get(
+    provider.id
+  );
+  assert.ok(quotaExhaustion !== undefined);
+
+  const exhaustedMarkup = renderToStaticMarkup(
+    React.createElement(ProviderDetailView, {
+      provider,
+      tiers: [],
+      orchestratorTier: "orchestrator",
+      models: null,
+      modelDiscovery: emptyDiscovery,
+      usagePanel: React.createElement("div"),
+      quotaExhaustion
+    })
+  );
+  assert.match(exhaustedMarkup, />Quota exhausted</);
+  assert.doesNotMatch(exhaustedMarkup, />Ready</);
+  assert.match(exhaustedMarkup, /data-provider-check-form="claude"/);
+  assert.match(exhaustedMarkup, /name="returnTo" value="\/providers\/claude"/);
+
+  const readyMarkup = renderToStaticMarkup(
+    React.createElement(ProviderDetailView, {
+      provider,
+      tiers: [],
+      orchestratorTier: "orchestrator",
+      models: null,
+      modelDiscovery: emptyDiscovery,
+      usagePanel: React.createElement("div")
+    })
+  );
+  assert.match(readyMarkup, />Ready</);
+  assert.doesNotMatch(readyMarkup, />Quota exhausted</);
+  assert.match(readyMarkup, /data-provider-check-form="claude"/);
+  assert.match(readyMarkup, /name="returnTo" value="\/providers\/claude"/);
 });

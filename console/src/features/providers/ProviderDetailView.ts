@@ -54,7 +54,8 @@ import {
   providerModelRows,
   unsupportedProviderModels
 } from "./provider-model-discovery.ts";
-import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
+import { CredentialBadge, ProviderStatusBadge } from "./provider-status.ts";
+import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 import { ProviderBrowserControls } from "./ProviderBrowserControls.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
@@ -81,6 +82,7 @@ export interface ProviderDetailViewProps {
   readonly cliVersions?: ProviderCliVersionState | undefined;
   readonly usagePanel: React.ReactNode;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
+  readonly quotaExhaustion?: ProviderQuotaExhaustion | undefined;
   readonly controlFailed?: boolean | undefined;
 }
 
@@ -599,11 +601,6 @@ function HealthPanel({
       { columns: 4 },
       React.createElement(
         DetailValue,
-        { label: "State" },
-        React.createElement(ProviderHealthBadge, { health })
-      ),
-      React.createElement(
-        DetailValue,
         { label: "Cooldown until" },
         cooldown === null ? "None" : formatTimestamp(cooldown.until)
       ),
@@ -681,6 +678,7 @@ export function ProviderDetailView({
   cliVersions,
   usagePanel,
   runtime,
+  quotaExhaustion,
   controlFailed
 }: ProviderDetailViewProps): React.JSX.Element {
   const returnTo = providerPath(provider.id);
@@ -715,7 +713,11 @@ export function ProviderDetailView({
         React.createElement(
           "div",
           { className: "flex flex-col items-end gap-2" },
-          React.createElement(ProviderHealthBadge, { health: provider.health }),
+          React.createElement(ProviderStatusBadge, {
+            provider,
+            returnTo,
+            ...(quotaExhaustion === undefined ? {} : { quotaExhaustion })
+          }),
           React.createElement(ProviderExternalLinks, {
             provider: provider.id,
             links: provider.links

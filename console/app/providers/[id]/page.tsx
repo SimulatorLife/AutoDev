@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import React from "react";
 
 import { ProviderDetailView } from "../../../src/features/providers/ProviderDetailView.ts";
+import { providerQuotaView } from "../../../src/features/providers/ProviderQuota.ts";
 import { ProviderUsagePanel } from "../../../src/features/providers/ProviderUsagePanel.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import { controlApiFailureCode } from "../../../src/lib/server/control-api.ts";
@@ -81,6 +82,10 @@ export default async function ProviderDetailPage({
     (entry) => entry.id === id
   );
   if (!provider) notFound();
+  const quotaExhaustion = providerQuotaView(
+    providersResult.data.quotaAxi,
+    Date.now()
+  ).exhaustion.get(provider.id);
 
   return React.createElement(
     ConsolePageShell,
@@ -108,6 +113,7 @@ export default async function ProviderDetailPage({
           : { status: "unavailable", message: versionsResult.message },
       usagePanel: React.createElement(ProviderUsagePanel, { provider }),
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
+      ...(quotaExhaustion === undefined ? {} : { quotaExhaustion }),
       controlFailed: isControlFailure(query.control)
     })
   );

@@ -4776,20 +4776,17 @@ class StreamingTurn implements ParkableTurn {
     // agy states a usage limit as prose on stderr -- "Individual quota reached.
     // Please upgrade your subscription to increase your limits. Resets in
     // 24m43s." -- so this is the one place the difference between "out of
-    // quota" and "the CLI crashed" can be recovered. It is only ever `inferred`,
-    // never enough on its own to take the provider out for a hard-cooldown
-    // window, but it is enough to pick a status the router can act on and a
-    // retry hint it can size a wait against.
+    // quota" and "the CLI crashed" can be recovered. It is classified as
+    // `inferred`: without a stated future reset it stays on the transient
+    // ladder, and with a stated future reset (such as "Resets in 24m43s") the
+    // router holds it as a `hard` cooldown until that reset (bounded by
+    // `hardCooldownMaxMs`).
     //
     // The class is load-bearing beyond the wording. Reading `quota reached` as
     // `quota_exhausted` rather than letting the `429` in agy's status carry it
     // to `throttled` is what holds the exhausted provider -- one Antigravity
     // quota: Gemini, Argon, or Claude/GPT-OSS -- out until its window resets,
-    // while the other Antigravity providers keep serving. agy also emits a
-    // structured `AGY_ERROR` envelope naming `RESOURCE_EXHAUSTED`, which is
-    // reported rather than inferred evidence and would let the cooldown honour
-    // a hard window; that envelope is not read here, so this limit stays
-    // inferred by design.
+    // while the other Antigravity providers keep serving.
     const limit = classifyCliLimit(message, agyFailure(error).exitCode);
     if (!this.stream.started) {
       const { agentRole, cwd, requestId } = this.turn;

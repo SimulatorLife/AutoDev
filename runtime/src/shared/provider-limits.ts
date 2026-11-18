@@ -32,9 +32,9 @@ export const LIMIT_HEADER_SOURCE = "x-autodev-limit-source";
 
 // How the limit was established. `reported` means the provider itself said so
 // -- a Claude `rate_limit_event`, an upstream response carrying these headers.
-// `inferred` means a bridge matched free text, which is a useful hint but not
-// evidence: a CLI's stderr tail can mention "quota" for unrelated reasons. Only
-// `reported` corroborates a long hard cooldown in the router.
+// `inferred` means a bridge matched free text, which stays on the transient
+// ladder unless a hard-limit class also carries a stated future reset
+// (bounded by `hardCooldownMaxMs`). `reported` is never capped.
 export const LIMIT_SOURCE_REPORTED = "reported";
 export const LIMIT_SOURCE_INFERRED = "inferred";
 
@@ -112,10 +112,10 @@ const RESETS_AT_PATTERN =
 
 /**
  * Best-effort classification of a CLI failure message. Always reports
- * `inferred`: this reads free text, and a bridge that hands the router a
- * 4000-character stderr tail must not be able to lock a provider out for the
- * hard-cooldown window on the strength of one keyword. It is enough to pick a
- * better HTTP status and a retry hint, which is what it is used for.
+ * `inferred`: this reads free text, so a bare keyword without a stated future
+ * reset stays on the transient ladder rather than locking a provider out. When
+ * the message states a future reset window (absolute or relative), the router
+ * holds a hard-limit class as a `hard` cooldown up to `hardCooldownMaxMs`.
  */
 export function classifyCliLimit(
   message: unknown,

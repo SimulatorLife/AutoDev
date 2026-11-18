@@ -1,5 +1,4 @@
 import {
-  type ControlApiProviderHealth,
   type ControlApiProviderRecord,
   providerHealthReadiness,
   providerSignInRequired,
@@ -285,37 +284,4 @@ export function CredentialBadge({
         // silently shortened to an identifier that no longer exists.
         title: `Missing ${credential.envKey}`
       });
-}
-
-/**
- * Live readiness on its own, for the same reason as `CredentialBadge`.
- * Never implies health without router evidence.
- */
-export function ProviderHealthBadge({
-  health
-}: {
-  readonly health: ControlApiProviderHealth | null;
-}): React.JSX.Element {
-  if (health === null) {
-    return React.createElement(StatusBadge, {
-      status: NOT_OBSERVED_STATUS
-    });
-  }
-  const readiness = providerHealthReadiness(health);
-  if (readiness === "not-observed") {
-    return React.createElement(StatusBadge, {
-      status: NOT_OBSERVED_STATUS
-    });
-  }
-  if (readiness === "unavailable") {
-    return React.createElement(StatusBadge, {
-      status: "unavailable",
-      label: health.cooldown?.failureClass
-        ? `Cooling down (${health.cooldown.failureClass})`
-        : health.lastFailure?.failureClass
-          ? `Unavailable (${health.lastFailure.failureClass})`
-          : "Unavailable"
-    });
-  }
-  return React.createElement(StatusBadge, { status: "ready", label: "Ready" });
 }

@@ -2435,3 +2435,76 @@ test("empty role-scoped MCP candidate chain names missing role MCP injection pro
     COOLDOWNS.clearAll();
   }
 });
+
+test(
+  "a concrete request whose 200 SSE stream fails with a limit cools the route and records the limit class",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "test-key";
+    const originalFetch = globalThis.fetch;
+    const resetsAt = new Date(Date.now() + 24 * 60_000).toISOString();
+    const failedPayload = JSON.stringify({
+      type: "response.failed",
+      response: {
+        id: "resp_sse_limit",
+        status: "failed",
+        error: {
+          type: "quota_exhausted",
+          message: "Individual quota reached. Resets in 24m.",
+          limit: {
+            class: "quota_exhausted",
+            type: "quota",
+            resets_at: resetsAt,
+            source: "inferred"
+          }
+        }
+      }
+    });
+    globalThis.fetch = (async () =>
+      new Response(
+        [
+          "event: response.created\n" +
+            'data: {"type":"response.created","response":{"id":"resp_sse_limit","status":"in_progress"}}\n\n',
+          "event: response.failed\n" + "data: " + failedPayload + "\n\n",
+          "data: [DONE]\n\n"
+        ].join(""),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )) as typeof fetch;
+    try {
+      const response = responseRecorder();
+      await proxyConcreteResponse(
+        response,
+        route("antigravity-argon", "LITELLM_API_KEY"),
+        { model: "gemini-3-argon-high", input: [], stream: true },
+        true,
+        "req-concrete-sse-limit",
+        null,
+        null,
+        null,
+        { key: "session-sse-limit", scope: "identified" }
+      );
+      const entry = COOLDOWNS.get("antigravity-argon");
+      assert.ok(
+        entry,
+        "in-stream limit failure must cool down the concrete route"
+      );
+      assert.equal(entry.kind, "hard");
+      assert.equal(entry.failureClass, "quota_exhausted");
+      assert.equal(entry.resetsAt, resetsAt);
+      const events = getRecentRouterEvents().filter(
+        (event) => event.requestId === "req-concrete-sse-limit"
+      );
+      const resultEvent = events.find((event) => event.phase === "result");
+      assert.equal(resultEvent?.outcome, "failure");
+      assert.equal(resultEvent?.failureClass, "quota_exhausted");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      agentActivity.reset();
+      COOLDOWNS.clearAll();
+    }
+  }
+);

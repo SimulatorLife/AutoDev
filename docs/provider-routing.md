@@ -564,12 +564,12 @@ provider can still be attempted when nothing else is left. `GET /status` reports
 the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 `lastResortEligible` alongside it.
 
-| Kind        | Applies to                                                                  | Duration                                                   | Last resort?                      | Survives a restart? |
-| ----------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------- | ------------------- |
-| `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min                                      | yes                               | no                  |
-| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared**; a direct concrete request for that route is refused locally (HTTP 400, no reroute) until the reset | exactly until the declared reset (never capped); with no reset, 15min doubling to 6h | only while no reset time is known | yes                 |
-| `probe`     | a local bridge that did not answer its health check                         | 5s doubling to 30s                                         | yes                               | no                  |
-| `config`    | `authentication`, and `invalid_model` for the rejected **model only**       | fixed 30s, never escalates                                 | no                                | no                  |
+| Kind        | Applies to                                                                                                                                                                                                                                                  | Duration                                                                                                                                                                              | Last resort?                      | Survives a restart? |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------- |
+| `transient` | any fallbackable failure, inferred `throttled`/`capacity`, and inferred `quota_exhausted` / `session_limit` with **no** stated future reset                                                                                                                 | 30s doubling to 10min                                                                                                                                                                 | yes                               | no                  |
+| `hard`      | `quota_exhausted` / `session_limit` that the **provider itself declared** (`reported`), or an `inferred` one carrying a stated **future** reset; a direct concrete request for that route is refused locally (HTTP 400, no reroute) until the cooldown ends | `reported`: exactly until the declared reset (never capped), or 15min doubling to 6h with no reset; `inferred` with future reset: until the reset, capped at `hardCooldownMaxMs` (6h) | only while no reset time is known | yes                 |
+| `probe`     | a local bridge that did not answer its health check                                                                                                                                                                                                         | 5s doubling to 30s                                                                                                                                                                    | yes                               | no                  |
+| `config`    | `authentication`, and `invalid_model` for the rejected **model only**                                                                                                                                                                                       | fixed 30s, never escalates                                                                                                                                                            | no                                | no                  |
 
 Seven rules are load-bearing:
 
@@ -597,13 +597,18 @@ Seven rules are load-bearing:
   `4-argon`. Every root request then tried that id again after each
   cooldown, about twenty failed hops per session.
 
-- **A hard cooldown needs corroboration.** `classifyProviderFailure` matches
+- **A hard cooldown needs corroboration or a stated future reset.** `classifyProviderFailure` matches
   keywords, and bridges put CLI stderr tails into error messages, so one stray
   "quota" in an unrelated crash could otherwise take a provider out for fifteen
-  minutes. Only a provider _reporting_ a limit -- `x-autodev-limit-source:
+  minutes. A provider _reporting_ a limit -- `x-autodev-limit-source:
 reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
-  headers -- produces a hard cooldown. An inferred limit stays on the transient
-  ladder.
+  headers -- produces a hard cooldown (unbounded when it names a reset). An
+  `inferred` hard-limit class (`quota_exhausted` / `session_limit`) with a
+  stated **future** reset (for example `agy`'s `Resets in 24m43s`) also
+  produces a `hard` cooldown held until that reset, capped by
+  `hardCooldownMaxMs` (`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS`) because it was
+  read from free text. An inferred limit with no stated future reset stays on
+  the transient ladder.
 - **A direct concrete request honors the same cooldowns.** A concrete
   request names its provider, so it has no alternative candidate to fall back
   to. While that provider is under a `hard` cooldown whose known reset is
@@ -616,10 +621,9 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   that provider. A `hard` cooldown with no known reset, a `transient` cooldown
   and a `probe` cooldown stay attemptable -- the fallback chain treats them as
   last-resort material, and refusing them would fail requests the chain still
-  serves. A concrete request whose provider reports a structured limit cools
-  that route exactly as the chain does, with the provider's own reset; only
-  that report (not a lexical guess over the response prose) earns the hard
-  cooldown.
+  serves. A concrete request whose provider fails with a limit (including an in-stream
+  SSE failure carrying `limit`) cools that route exactly as the chain does,
+  honoring the same `reported` vs `inferred`-with-reset hard-cooldown rules.
 - **Antigravity model families have separate AutoDev routes.** The one
   Antigravity service (the `agy` CLI behind its bridge on :4002) is routed as
   three providers: `antigravity-gemini` (Gemini ids other than Argon),
@@ -649,7 +653,7 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 
 - **Provider usage is a display-only quota-axi report.** Runtime invokes the
   pinned `quota-axi@0.1.69` public CLI (`quota-axi --json
-  --no-credential-refresh`) in the background every 60 seconds and forwards its
+--no-credential-refresh`) in the background every 60 seconds and forwards its
   JSON report as `quotaAxi` on `/control/providers` (providers API v5,
   Control API contract v34). Quota collection does not block provider requests;
   one in-flight CLI read is shared while a refresh is running. The Console reads
@@ -921,7 +925,7 @@ fallback rather than a startup error, a typo in one of the others leaves the
 default quietly in place.
 
 `CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` is the ceiling of the escalating ladder a
-limit *without* a stated reset climbs, and that is its only remaining role. It
+limit _without_ a stated reset climbs, and that is its only remaining role. It
 is not a cap on a stated reset: a provider that reported a reset is held until
 exactly that reset, however far out the reset falls, and a hard cooldown that
 carried one keeps that deadline across a restart.
@@ -940,25 +944,15 @@ than only in prose, on both the streamed and non-streamed paths:
 
 A stated reset is kept on the cooldown entry whether or not it is trusted long
 enough to sleep through. For a `reported` limit it is more than that: the reset
-*is* the deadline. A hard cooldown with a future reset ends exactly at that
-reset, the route is ineligible for any attempt until then, and the entry lapses
-when it arrives — the router does not shorten a provider's window to a ceiling
-of its own. An `inferred` limit stays on the transient ladder — the
-corroboration rule above is unchanged, and a long sleep is still not taken on the
-strength of free text — but the window the provider named survives into
-`cooldownResetsAt` and the exhaustion body. The two times routinely disagree, so
-both are reported rather than one standing in for the other:
-
-```text
-antigravity-claude-gpt: quota_exhausted, provider reports usage resets in 25m
-  (2026-10-14T16:47:21.728Z); retrying in 480s
-```
-
-Reporting only the provider's reset would overstate the wait, since the router
-will in fact retry sooner; reporting only the ladder hid the window the provider
-had just given. When the retry lands on the reset within a minute the single time
-is enough and is stated once. A reported limit has only one time: the router
-retries at the reset the provider named.
+_is_ the deadline. A `reported` hard cooldown with a future reset ends exactly
+at that reset, the route is ineligible for any attempt until then, and the entry
+lapses when it arrives — the router does not shorten a provider's window to a
+ceiling of its own. An `inferred` hard-limit class (`quota_exhausted` /
+`session_limit`) with a stated future reset is also held as a `hard`
+cooldown until that reset, bounded by `hardCooldownMaxMs` (6h) so free text
+cannot lock a provider out indefinitely. An `inferred` limit without a stated
+future reset (or a non-hard class like `throttled`) stays on the transient
+ladder, while still keeping any stated `resetsAt` for display.
 
 The same shape appears as `error.limit` in a failure body -- a non-streamed
 one, or a stream's `response.failed` -- and as
@@ -966,10 +960,11 @@ one, or a stream's `response.failed` -- and as
 so the router reads one shape wherever it finds it. `@simulatorlife/autodev-runtime/shared/provider-limits` is the single implementation imported by all
 typed bridges, with `tests/provider-limits.test.ts` guarding the boundary.
 
-Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
-error text always reports `inferred`, which is enough to pick a better HTTP
-status and a `Retry-After` but never enough to strand a provider for the hard
-window.
+A bridge classifying its CLI's error text reports `inferred`: without a stated
+future reset it stays on the transient ladder (enough to pick a better HTTP
+status and `Retry-After` without stranding the provider), and with a stated
+future reset on a hard-limit class it produces a `hard` cooldown capped at
+`hardCooldownMaxMs`.
 
 ### Partial results on provider exhaustion
 
@@ -2550,14 +2545,14 @@ intended repository, and inspect the app task/log event for those failures.
 
 ## Provider paths and constraints
 
-| Provider                        | Local path                                                                             | Important constraint                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude                          | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI                     | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                                               |
-| MiniMax                         | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
-| Antigravity                     | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
-| GitHub Copilot                  | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
-| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge :4004 -> opencli site command -> signed-in browser tab (the operator's Chrome via the Browser Bridge extension by default; AutoDev's dedicated Chrome for Testing when the Console's Dedicated browser toggle is on) | One provider per web chat site, each with its own site models. Requires a site session signed into whichever browser is selected. Turns use a per-site tab pool sized to route concurrency. Opt-in: in no providerGroups tier by default. |
-| Local router                    | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
+| Provider                        | Local path                                                                                                                                                                                                                                             | Important constraint                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                          | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI                                                                                                                                                                                     | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                                               |
+| MiniMax                         | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                                                                                                                                                                                                  | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                      |
+| Antigravity                     | Codex -> Antigravity adapter `:4002` -> `agy` CLI                                                                                                                                                                                                      | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                                      |
+| GitHub Copilot                  | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI                                                                                                                                                                                      | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. The bridge resolves `COPILOT_BIN`, PATH, nvm installs, and `~/.local/bin` explicitly because launchd does not load the interactive shell's PATH; unavailable adapters are skipped by fallback. |
+| opencli-chatgpt, opencli-gemini | Codex -> opencli Responses bridge :4004 -> opencli site command -> signed-in browser tab (the operator's Chrome via the Browser Bridge extension by default; AutoDev's dedicated Chrome for Testing when the Console's Dedicated browser toggle is on) | One provider per web chat site, each with its own site models. Requires a site session signed into whichever browser is selected. Turns use a per-site tab pool sized to route concurrency. Opt-in: in no providerGroups tier by default.                                                                                                                                                                                 |
+| Local router                    | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch                                                                                                                                                                                   | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                                         |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
 OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local
@@ -3040,11 +3035,11 @@ single list; the route patterns and the site registry in
   half of a ChatGPT turn's time was spent queued behind other agents' turns.
   How a command gets its tab depends on the browser setting
   (`processRunner` in `opencli.ts`):
-  - *The operator's Chrome (default).* The bridge passes the pool to opencli as
+  - _The operator's Chrome (default)._ The bridge passes the pool to opencli as
     `OPENCLI_SITE_SLOTS` (`chatgpt:3,gemini:1`): each command borrows a free
     persistent tab (`site:<site>#<n>`) of the extension's "OpenCLI" tab group
     from opencli's daemon and gives it back when it ends.
-  - *Dedicated browser.* The bridge owns a separate visible Chrome for Testing
+  - _Dedicated browser._ The bridge owns a separate visible Chrome for Testing
     process and persistent profile under `$CODEX_HOME`; it launches it with an
     ephemeral CDP port bound to `127.0.0.1` and reads that port from the
     profile's `DevToolsActivePort`. `OpencliBrowser` creates the initial site
@@ -3073,6 +3068,7 @@ single list; the route patterns and the site registry in
   browser step finishes, and a refusal with `SESSION_BUSY` is waited out until
   the turn's own deadline. If the site's request was already sent, the
   accepted-turn ledger governs recovery rather than assuming nothing happened.
+
 - **A daemon of another version is replaced, not fatal.** In the operator's
   Chrome, opencli's daemon is shared machine-wide on one port, so the pinned
   CLI can meet a daemon a global install left running. The CLI's own remedy is
@@ -3716,13 +3712,13 @@ completion. The Claude bridge is the exception: it serves Claude as a model
 whose every tool call Codex executes (see "Claude bridge: Codex executes every
 tool"):
 
-| Bridge                                 | Authenticates as                                                                                                                                                                                                            |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime/src/providers/claude.ts`      | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
-| `runtime/src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
-| `runtime/src/providers/copilot.ts`     | the `copilot` CLI's own login.                                                                                                                                                                                              |
-| `runtime/src/providers/minimax.ts`     | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
-| runtime/src/providers/opencli.ts | the operator's own signed-in Chrome through opencli's Browser Bridge extension, or, with the dedicated browser on, an AutoDev-owned Chrome for Testing profile through loopback CDP; cookies stay in the browser and no credential reaches the bridge. |
+| Bridge                                 | Authenticates as                                                                                                                                                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `runtime/src/providers/claude.ts`      | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing.                            |
+| `runtime/src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                                                   |
+| `runtime/src/providers/copilot.ts`     | the `copilot` CLI's own login.                                                                                                                                                                                                                         |
+| `runtime/src/providers/minimax.ts`     | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                                              |
+| runtime/src/providers/opencli.ts       | the operator's own signed-in Chrome through opencli's Browser Bridge extension, or, with the dedicated browser on, an AutoDev-owned Chrome for Testing profile through loopback CDP; cookies stay in the browser and no credential reaches the bridge. |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have

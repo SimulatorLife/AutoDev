@@ -821,6 +821,37 @@ function coolDownRoute(provider: string, options: CooldownOptions): void {
   }
 }
 
+/**
+ * Cool down the route whose HTTP 200 stream failed before completing, and
+ * return the failure class to record. Shared by concrete (pinned) requests and
+ * fallback-chain candidates so a mid-stream limit holds the route the same way
+ * on both paths.
+ */
+function coolDownFailedStreamResponse(
+  provider: string,
+  model: string,
+  responseResult: Pick<
+    StreamWriteResult,
+    "limit" | "incompleteReason" | "error"
+  >
+): string {
+  const failureClass =
+    responseResult.limit?.limitClass ??
+    (responseResult.incompleteReason
+      ? "unavailable"
+      : classifyReportedFailure(responseResult.error));
+  // A route that cannot serve this request is not a broken provider: the
+  // prompt never reached it, the provider is healthy, and cooling it down
+  // pushes every other agent away from a working route. The refusal is
+  // reported, and the provider keeps serving the traffic it can serve.
+  if (failureClass !== "unsupported_request")
+    coolDownRoute(
+      provider,
+      cooldownFor(failureClass, responseResult.limit, model, null)
+    );
+  return failureClass;
+}
+
 const MAX_UPSTREAM_DETAIL_CHARS = 300;
 
 /** The provider's own `error.message`, kept for failures only the user can fix. */
@@ -3500,11 +3531,18 @@ async function handleConcreteSuccess(
     endConcreteRequest(ctx.activitySubject, ctx.requestId, "failure");
     return;
   }
+  const failureClass = responseResult.failed
+    ? coolDownFailedStreamResponse(
+        ctx.route.provider,
+        ctx.modelName,
+        responseResult
+      )
+    : null;
   recordConcreteResult(
     ctx,
     responseResult.failed ? "failure" : "success",
     result.upstream.status,
-    responseResult.failed ? "upstream_error" : null,
+    failureClass,
     responseResult.toolCalls
   );
   endConcreteRequest(
@@ -5159,20 +5197,11 @@ async function handleCandidateSuccess(
     if (responseResult.beforeOutput && ctx.wantsStream) holdClientStream(ctx);
     else commitClientStream(ctx);
     if (responseResult.failed) {
-      const failureClass =
-        responseResult.limit?.limitClass ??
-        (responseResult.incompleteReason
-          ? "unavailable"
-          : classifyReportedFailure(responseResult.error));
-      // A route that cannot serve this request is not a broken provider: the
-      // prompt never reached it, the provider is healthy, and cooling it down
-      // pushes every other agent away from a working route. The refusal is
-      // reported, and the provider keeps serving the traffic it can serve.
-      if (failureClass !== "unsupported_request")
-        coolDownRoute(
-          route.provider,
-          cooldownFor(failureClass, responseResult.limit, route.model, null)
-        );
+      const failureClass = coolDownFailedStreamResponse(
+        route.provider,
+        route.model,
+        responseResult
+      );
       recordRouterEvent({
         phase: "result",
         requestId: ctx.requestId,
