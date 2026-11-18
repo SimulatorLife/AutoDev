@@ -17,7 +17,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 /** Terminal states are read once, then that batch stops being polled. */
-export const TERMINAL_RUN_STATES = new Set([
+const TERMINAL_RUN_STATES = new Set([
   "completed",
   "failed",
   "cancelled",
@@ -26,7 +26,7 @@ export const TERMINAL_RUN_STATES = new Set([
 
 export const INITIAL_POLL_INTERVAL_MS = 1500;
 export const MAX_POLL_INTERVAL_MS = 30_000;
-export const MAX_TRACKED_RUNS = 64;
+const MAX_TRACKED_RUNS = 64;
 
 export type PlaytestingActiveRunsFreshness =
   /** At least one nonterminal batch is being watched and reads are succeeding. */
@@ -275,7 +275,7 @@ export function freshnessForFailure(): PlaytestingActiveRunsFreshness {
   return "unavailable";
 }
 
-export interface PollLoopHandle {
+interface PollLoopHandle {
   /** Poll once immediately, then re-arm after each completed poll. */
   readonly start: () => void;
   /** Cancel the pending arm. No further poll is issued. */

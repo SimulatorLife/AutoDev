@@ -1223,7 +1223,7 @@ Current state, from source:
   (`console/e2e/playtesting-usability.spec.ts`).
 - `console/src/features/playtesting/PlaytestingLiveRuns.ts` is the client island
   that owns polling, the focused batch and the cancellation confirmation read;
-  `PlaytestingActiveRunsPanel.ts` renders it; `playtesting-active-runs.ts` holds
+  `active-runs/ActiveRunsPanel.ts` renders it; `active-runs/state.ts` holds
   the pure read/terminal/backoff decisions so they are directly testable.
 
 - Runtime now returns `PlaytestRunAssignmentOutcome` for every recorded
@@ -1980,7 +1980,7 @@ Checklist:
   the resulting array/table types. A fresh Runtime/Console browser run is still
   required to verify a persisted RacingGame review after this correction.
 - The same live check then failed on `invalid transport in
-  mcp_servers.autodev_memory`: the provider runner "disabled" the run-scoped
+mcp_servers.autodev_memory`: the provider runner "disabled" the run-scoped
   Memory MCP with a bare `enabled=false` override for a server that is only
   ever defined by its enable path. Disabled runs now omit the server entirely;
   this affected every non-JIT provider-agent run, not only the analyst.

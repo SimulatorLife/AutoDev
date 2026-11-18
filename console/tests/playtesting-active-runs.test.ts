@@ -6,15 +6,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   activeRunOwnsEpisode,
+  cancellationAvailability,
+  isTerminal,
+  PlaytestingActiveRunsPanel
+} from "../src/features/playtesting/active-runs/index.ts";
+import {
   assignmentCounts,
   assignmentOutcomes,
-  cancellationAvailability,
   createPollLoop,
   departedRuns,
   freshnessForFailure,
   freshnessForSuccess,
   INITIAL_POLL_INTERVAL_MS,
-  isTerminal,
   isWatching,
   MAX_POLL_INTERVAL_MS,
   mergeRunsRead,
@@ -23,10 +26,9 @@ import {
   readActiveRuns,
   readRunStatus,
   trackStartedRun
-} from "../src/features/playtesting/playtesting-active-runs.ts";
+} from "../src/features/playtesting/active-runs/state.ts";
 import { responseMessage } from "../src/features/playtesting/playtesting-run-messages.ts";
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
-import { PlaytestingActiveRunsPanel } from "../src/features/playtesting/PlaytestingActiveRunsPanel.ts";
 import { PlaytestingAssignmentResults } from "../src/features/playtesting/PlaytestingAssignmentResults.ts";
 
 const WORKSPACE = "acme/game";

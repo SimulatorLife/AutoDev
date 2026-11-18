@@ -313,7 +313,7 @@ test("the features do not spell the checkbox chrome themselves", () => {
 
 test("a button does not wear the form input chrome", () => {
   for (const source of [
-    "../src/features/playtesting/PlaytestingActiveRunsPanel.ts",
+    "../src/features/playtesting/active-runs/ActiveRunsPanel.ts",
     "../src/features/playtesting/PlaytestingSelectionPanel.ts"
   ]) {
     const text = readFileSync(new URL(source, import.meta.url), "utf8");

@@ -88,7 +88,7 @@ test("the same destination is not warmed twice inside the router's reuse window"
 test("the playtesting poll loop is not re-created when the watch state flips", () => {
   const source = readFileSync(
     new URL(
-      "../src/features/playtesting/use-playtesting-active-runs.ts",
+      "../src/features/playtesting/active-runs/use-active-runs.ts",
       import.meta.url
     ),
     "utf8"

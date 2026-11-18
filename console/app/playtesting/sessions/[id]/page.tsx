@@ -6,7 +6,7 @@ import {
   ACTION_LINK_CLASS,
   MUTED_BODY_CLASS
 } from "../../../../src/components/ui/text-classes.ts";
-import { activeRunOwnsEpisode } from "../../../../src/features/playtesting/playtesting-active-runs.ts";
+import { activeRunOwnsEpisode } from "../../../../src/features/playtesting/active-runs/index.ts";
 import {
   defaultEpisodeInspectionStep,
   planEpisodeTraceWindow

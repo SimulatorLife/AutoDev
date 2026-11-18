@@ -12,11 +12,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
-import { isTerminal } from "./playtesting-active-runs.ts";
+import {
+  isTerminal,
+  PlaytestingActiveRunsPanel,
+  type UsePlaytestingActiveRunsResult
+} from "./active-runs/index.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
-import { PlaytestingActiveRunsPanel } from "./PlaytestingActiveRunsPanel.ts";
-import type { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
 
 async function postCancel(
   workspaceId: string,
@@ -81,7 +83,7 @@ export interface PlaytestingLiveRunsProps {
   readonly allowCancel: boolean;
   readonly cancelUnavailableReason: string | null;
   /** The dashboard's single status owner, shared with the run start card. */
-  readonly live: ReturnType<typeof usePlaytestingActiveRuns>;
+  readonly live: UsePlaytestingActiveRunsResult;
 }
 
 export function PlaytestingLiveRuns({

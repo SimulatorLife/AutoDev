@@ -13,33 +13,36 @@
  */
 import React from "react";
 
-import { Button } from "../../components/forms/Button.ts";
-import { CALLOUT_BAR_WARNING_CLASS } from "../../components/layout/Callout.ts";
-import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
-import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
+import { Button } from "../../../components/forms/Button.ts";
+import { CALLOUT_BAR_WARNING_CLASS } from "../../../components/layout/Callout.ts";
+import { SECTION_HEADING_CLASS } from "../../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../../components/layout/Panel.ts";
+import {
+  DetailGrid,
+  DetailValue
+} from "../../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
-} from "../../components/status/StatusBadge.ts";
+} from "../../../components/status/StatusBadge.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
-} from "../../components/ui/text-classes.ts";
+} from "../../../components/ui/text-classes.ts";
+import {
+  CANCELLATION_REASON_LABELS,
+  runStateBadgeTone,
+  runStateLabel
+} from "../playtesting-run-messages.ts";
+import type { PlaytestingScope } from "../playtesting-url.ts";
+import { PlaytestingAssignmentResults } from "../PlaytestingAssignmentResults.ts";
 import {
   assignmentCounts,
   assignmentOutcomes,
   isTerminal,
   type PlaytestingActiveRun,
   type PlaytestingActiveRunsFreshness
-} from "./playtesting-active-runs.ts";
-import {
-  CANCELLATION_REASON_LABELS,
-  runStateBadgeTone,
-  runStateLabel
-} from "./playtesting-run-messages.ts";
-import type { PlaytestingScope } from "./playtesting-url.ts";
-import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
+} from "./state.ts";
 
 function batchStatusBadge(status: string): React.JSX.Element {
   return React.createElement(StatusBadge, {
@@ -313,7 +316,7 @@ function runRow(
   );
 }
 
-export interface PlaytestingActiveRunsPanelProps {
+interface PlaytestingActiveRunsPanelProps {
   readonly scope: PlaytestingScope;
   readonly runs: readonly PlaytestingActiveRun[];
   readonly freshness: PlaytestingActiveRunsFreshness;

@@ -39,8 +39,9 @@ import {
 import { workspacePath } from "../workspaces/paths.ts";
 import {
   cancellationAvailability,
-  isTerminal
-} from "./playtesting-active-runs.ts";
+  isTerminal,
+  usePlaytestingActiveRuns
+} from "./active-runs/index.ts";
 import { policyLabel } from "./playtesting-labels.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingLiveRuns } from "./PlaytestingLiveRuns.ts";
@@ -51,7 +52,6 @@ import {
   type PlaytestLaunchRequestDraft,
   usePlaytestingLaunchRecovery
 } from "./PlaytestingRunControls.tsx";
-import { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
 
 function adapterReadinessStatus(
   setup: PlaytestingRunSetup

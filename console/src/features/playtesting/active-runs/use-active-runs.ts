@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { responseMessage } from "../playtesting-run-messages.ts";
 import {
   createPollLoop,
   departedRuns,
@@ -21,13 +22,7 @@ import {
   readActiveRuns,
   readRunStatus,
   trackStartedRun
-} from "./playtesting-active-runs.ts";
-import { responseMessage } from "./playtesting-run-messages.ts";
-
-export type {
-  PlaytestingActiveRun,
-  PlaytestingActiveRunsFreshness
-} from "./playtesting-active-runs.ts";
+} from "./state.ts";
 
 type ActiveRuns = NonNullable<ReturnType<typeof readActiveRuns>>;
 type ActiveRunsFreshness = ReturnType<typeof freshnessForSuccess>;
@@ -39,22 +34,24 @@ export interface PlaytestingActiveRunsState {
   readonly lastUpdatedAt: number | null;
 }
 
-export interface UsePlaytestingActiveRunsOptions {
+interface UsePlaytestingActiveRunsOptions {
   readonly workspaceId: string | null;
   /** Pause polling while the operator is elsewhere; resume on return. */
   readonly paused?: boolean;
 }
 
-export function usePlaytestingActiveRuns({
-  workspaceId,
-  paused = false
-}: UsePlaytestingActiveRunsOptions): {
+export interface UsePlaytestingActiveRunsResult {
   readonly state: PlaytestingActiveRunsState;
   readonly refresh: () => void;
   /** Tracks the exact start acknowledgement before the first active-list read. */
   readonly trackRun: (run: ActiveRuns[number]) => void;
   readonly watching: boolean;
-} {
+}
+
+export function usePlaytestingActiveRuns({
+  workspaceId,
+  paused = false
+}: UsePlaytestingActiveRunsOptions): UsePlaytestingActiveRunsResult {
   const [runs, setRuns] = useState<ActiveRuns>([]);
   const [freshness, setFreshness] = useState<ActiveRunsFreshness>("idle");
   const [lastFailure, setLastFailure] = useState<string | null>(null);

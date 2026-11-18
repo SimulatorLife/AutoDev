@@ -23082,7 +23082,13 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Polls Data-owned schema readiness, and offers an operator-only retry, while every page read remains server-owned."
     ],
     [
-      join("src", "features", "playtesting", "use-playtesting-active-runs.ts"),
+      join(
+        "src",
+        "features",
+        "playtesting",
+        "active-runs",
+        "use-active-runs.ts"
+      ),
       "Polls the workspace-scoped active-runs read on an interval with backoff so live batch progress reflects the typed run owner without moving that read server-side."
     ],
     [
@@ -23098,7 +23104,13 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Starts an optional bounded review for the sessions selected in the row list; eligibility, the critique cap and receipts come from the Runtime owner."
     ],
     [
-      join("src", "features", "playtesting", "PlaytestingActiveRunsPanel.ts"),
+      join(
+        "src",
+        "features",
+        "playtesting",
+        "active-runs",
+        "ActiveRunsPanel.ts"
+      ),
       "Shows one concise progress summary and disclosed owner counts; every status is server-read and stale reads are labelled."
     ],
     [
