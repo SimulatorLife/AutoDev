@@ -1,10 +1,10 @@
-import { type ChildProcess,spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { chmod, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import path from "node:path";
 
-import type {RouterIngress } from "./ingress.ts";
+import type { RouterIngress } from "./ingress.ts";
 import { type RouterGenerationEndpoint } from "./ingress.ts";
 
 export interface RouterIngressSupervisorOptions {
@@ -47,9 +47,11 @@ export class RouterIngressSupervisor {
     this.startupTimeoutMs = options.workerStartupTimeoutMs ?? 10_000;
     this.controlServer = createServer((request, response) => {
       void this.handle(request, response).catch(() => {
-        if (response.headersSent)
-          {response.destroy();}
-        else {this.json(response, 500, { error: "internal_error" });}
+        if (response.headersSent) {
+          response.destroy();
+        } else {
+          this.json(response, 500, { error: "internal_error" });
+        }
       });
     });
   }
@@ -282,14 +284,15 @@ export class RouterIngressSupervisor {
       const generation = this.ingress
         .getStatus()
         .generations.find((candidate) => candidate.id === retirement[1]);
-      if (generation)
-        {this.json(
+      if (generation) {
+        this.json(
           response,
           generation.state === "retired" ? 200 : 202,
           generation
-        );}
-      else
-        {this.json(response, 404, { error: "unknown_generation" });}
+        );
+      } else {
+        this.json(response, 404, { error: "unknown_generation" });
+      }
       return;
     }
     if (request.method !== "POST" || pathname !== "/v1/generations") {

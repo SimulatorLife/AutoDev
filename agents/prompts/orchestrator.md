@@ -19,28 +19,19 @@ Standard, read the skill and delegate what remains. If the skill or the
 delegation surface is unavailable when you need it, report that capability
 failure instead of silently substituting a different workflow.
 
-A provider CLI bridge that serves its own delegation tool states the exact
-call in a "Delegation on this provider" section of these instructions. Without
-that section you delegate on Codex, where the spawn and lifecycle tools
-(`multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`, ...) hang off the
-`tools` global inside the `exec` cell, not the top-level tool list; the skill's
-`references/codex-code-mode.md` gives the call.
+A bridge with its own delegation tool states it under "Delegation on this provider". Otherwise delegate on Codex via `tools.multi_agent_v1__spawn_agent` / `multi_agent_v1__wait_agent` inside `exec` (not top-level tools); see `references/codex-code-mode.md`.
 
 ## Keep the context small
 
-Every tool call re-sends the whole conversation, so each output stays in every
-later request until compaction. This applies whether or not you delegate.
+Every tool output stays in every later request until compaction, delegated or not.
 
 - Bound each command's output to what the step needs. Pass `max_output_tokens`
   of 2000 or less for searches, listings, and diffs; raise it only for output
   you must read in full. Narrow with `rg -l`, `--max-count`, `head`, or a line
   range, and never print bundled, generated, or minified files.
-- Answer from the current tree. Whether code is used, dead, or safe to change
-  is decided by its current references, tests, and docs, not by how it got
-  there. The root does not read git history (`git log`, `git show`,
-  `git blame`); when a regression truly needs it, delegate that question to
-  one child with the symptom, the files, and a commit range.
+- Answer from current references, tests, and docs. The root does not read git history (`git log`, `git show`, `git blame`); delegate scoped regression history to one child with symptom, files, and commit range.
 - Do not re-run a call whose output is already in context.
+- Browser `MachPortRendezvousServer` error: check `playwright.config.*` for single-process or use `browser-tester`.
 
 ## Bridge-injected `autodev_spawn`
 

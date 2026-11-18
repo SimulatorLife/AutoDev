@@ -68,6 +68,7 @@ import {
   type RoleContract,
   roleContract,
   roleSandboxMode,
+  roleScopedMcp,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -2378,8 +2379,16 @@ function writeCompactionAgent(isolatedHome: string): string {
  */
 function writeCodexToolsAgent(
   isolatedHome: string,
-  attachments: readonly AgyAttachment[]
+  attachments: readonly AgyAttachment[],
+  directMcpServers: readonly string[] = []
 ): string {
+  const directMcpNote =
+    directMcpServers.length > 0
+      ? [
+          "",
+          `Role-scoped MCP servers (${directMcpServers.join(", ")}) are exposed directly as their own MCP servers alongside \`${CODEX_TOOLS_SERVER}\`; invoke their tools through \`call_mcp_tool\` with their server name rather than looking for them inside \`${CODEX_TOOLS_SERVER}\`.`
+        ].join("\n")
+      : "";
   const attachmentNote =
     attachments.length > 0
       ? [
@@ -2407,6 +2416,7 @@ function writeCodexToolsAgent(
     "files, writing them, running commands. Delegation is a separate server,",
     "and the instructions name it. Do not describe a tool you have not called",
     "as done. If a call returns an error, say what failed.",
+    directMcpNote,
     attachmentNote,
     ""
   ]);
@@ -2458,15 +2468,20 @@ function buildInvocationMcpConfig(
 ): AntigravityMcpConfig {
   if (options?.compaction) return { mcpServers: {} };
   const mcpServers: Record<string, AntigravityMcpServerConfig> = {};
+  const contract = antigravityRoleContract(agentRole);
   // When a turn runs with Codex's tool surface (`toolTurnId` set), Codex owns
-  // and exposes the role's MCP tools through `codex`. Launching duplicate local
-  // stdio MCP servers inside agy contends on single-writer graph locks/sockets
-  // and hides MCP calls from Codex's thread rollout.
-  if (!toolTurnId) {
-    const contract = antigravityRoleContract(agentRole);
+  // the session's root-level MCP servers (`lsp`, `cocoindex-code`,
+  // `codegraphcontext`) so agy avoids duplicate stdio locks/sockets. Role-scoped
+  // servers (`roleScopedMcp`: `playwright` for `browser-tester`, `playtest` for
+  // `playtester`) are disabled at Codex root and never propagated by Codex to
+  // spawned children, so agy still injects them directly.
+  const scopedMcp = toolTurnId ? new Set(roleScopedMcp(agentRole)) : null;
+  const bridgeMcpNames = (contract.mcp ?? []).filter(
+    (name) => name !== "autodev_spawn" && (!scopedMcp || scopedMcp.has(name))
+  );
+  if (bridgeMcpNames.length > 0) {
     const catalogue = bridgeMcpCatalogue(options?.codexHome);
-    for (const name of contract.mcp ?? []) {
-      if (name === "autodev_spawn") continue;
+    for (const name of bridgeMcpNames) {
       const server = catalogue[name];
       if (!server || typeof server !== "object" || Array.isArray(server))
         throw new Error(
@@ -2877,6 +2892,9 @@ function createIsolatedAntigravityHome(
       process.once("exit", cleanupIsolatedHomesAtExit);
     activeIsolatedHomeCleanups.add(cleanup);
 
+    const directMcpServers = Object.keys(mcpConfig.mcpServers).filter(
+      (name) => name !== CODEX_TOOLS_SERVER && name !== "autodev_spawn"
+    );
     return {
       isolatedHome: tempHome,
       mcpConfig,
@@ -2884,7 +2902,7 @@ function createIsolatedAntigravityHome(
       customizationDir: options?.compaction
         ? writeCompactionAgent(tempHome)
         : toolTurnId
-          ? writeCodexToolsAgent(tempHome, attachments)
+          ? writeCodexToolsAgent(tempHome, attachments, directMcpServers)
           : null,
       attachments,
       cleanup
@@ -5063,13 +5081,27 @@ async function handleResponsesRequest(
 }
 
 if (IS_MAIN) {
-  createServer((request, response) => {
+  const server = createServer((request, response) => {
     void handle(request, response);
   }).listen(PORT, HOST, () => {
     writeErrorLine(
       `Antigravity Responses proxy listening at http://${HOST}:${PORT}`
     );
   });
+  // An agy turn's CLI is this process's child and outlives a parent that is
+  // merely signalled; cancel live turns on shutdown so reinstall/restart does
+  // not orphan agy processes.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      const cancelled = codexToolTurns.cancelAll();
+      if (cancelled > 0)
+        writeErrorLine(
+          `antigravity bridge stopping: cancelled ${cancelled} live turn(s)`
+        );
+      server.close();
+      process.exit(0);
+    });
+  }
 }
 
 export {

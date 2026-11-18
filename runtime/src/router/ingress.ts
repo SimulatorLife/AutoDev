@@ -333,7 +333,9 @@ export class RouterIngress {
       finish();
     });
     backend.once("error", () => {
-      if (response.headersSent) {response.destroy();} else {
+      if (response.headersSent) {
+        response.destroy();
+      } else {
         this.emit({
           phase: "backend_connection_failed",
           generationId: generation.endpoint.id,

@@ -198,6 +198,14 @@
         {
           "name": "work-pets:update-pet",
           "enabled": false
+        },
+        {
+          "name": "cloud-environment:cloud-desktop",
+          "enabled": false
+        },
+        {
+          "name": "cloud-environment:cloud-environment-runtime",
+          "enabled": false
         }
       ]
     },
@@ -266,6 +274,9 @@
       },
       "github@openai-curated": {
         "enabled": false
+      },
+      "cloud-environment@openai-curated-remote": {
+        "enabled": false
       }
     }
   },
@@ -331,6 +342,8 @@
   ],
   "skillsConfigNames": [
     "ccc",
+    "cloud-environment:cloud-desktop",
+    "cloud-environment:cloud-environment-runtime",
     "google-drive:google-docs",
     "google-drive:google-drive",
     "google-drive:google-drive-comments",
@@ -358,6 +371,8 @@
   ],
   "skillsConfigNamesRequired": [
     "ccc",
+    "cloud-environment:cloud-desktop",
+    "cloud-environment:cloud-environment-runtime",
     "google-drive:google-docs",
     "google-drive:google-drive",
     "google-drive:google-drive-comments",

@@ -33,6 +33,13 @@ breaks escaped (`\"`, `\\`, `\n`), never as a template literal: task text
 routinely contains Markdown backticks and `${`, which end or interpolate a
 template literal and fail the whole `exec` cell before any child spawns.
 
+The same rule applies when passing inline Python/Node scripts or shell commands
+to `tools.exec_command`: never wrap them in a JS template literal when they
+contain backticks or `${`, and check `ALL_TOOLS` (or
+`typeof tools.apply_patch === "function"`) before calling `tools.apply_patch` —
+Codex 0.169+ exposes file editing through `exec_command` rather than
+`tools.apply_patch` on some providers.
+
 ## Waiting inside `exec`
 
 Start the cell that waits on children with

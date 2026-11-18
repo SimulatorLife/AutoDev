@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmod,
   mkdir,
@@ -12,6 +13,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/antigravity.ts");
@@ -92,9 +94,24 @@ async function waitForFile(
     } catch {
       if (Date.now() > deadline)
         throw new Error(`the CLI was never invoked: ${path}\n${stderr()}`);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50);
     }
   }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function exitsWithin(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (isAlive(pid) && Date.now() < deadline) await delay(25);
+  return !isAlive(pid);
 }
 
 /**
@@ -114,7 +131,7 @@ async function promptForTurn(input: unknown[]): Promise<string> {
   const proxyPort = await freePort();
   const fakeSource = String.raw`
 import { writeFileSync } from "node:fs";
-writeFileSync(process.env.AGY_ARGV_FILE, JSON.stringify(process.argv));
+writeFileSync(process.env.AGY_ARGV_FILE, JSON.stringify({ argv: process.argv, pid: process.pid }));
 process.stdout.write(JSON.stringify({ event: "step_update", step_update: { step_type: "text", text_delta: "looking" } }) + "\n");
 setInterval(() => {}, 1000);
 `;
@@ -154,6 +171,7 @@ setInterval(() => {}, 1000);
   child.stderr?.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
   });
+  let agyPid: number | null = null;
   try {
     await waitForListening(child);
     void fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
@@ -172,18 +190,45 @@ setInterval(() => {}, 1000);
         stream: true
       })
     }).catch(() => undefined);
-    const argv = JSON.parse(
-      await waitForFile(argvFile, () => stderr)
-    ) as string[];
-    const promptIndex = argv.indexOf("-p");
+    const recorded = JSON.parse(await waitForFile(argvFile, () => stderr)) as {
+      argv: string[];
+      pid: number;
+    };
+    agyPid = recorded.pid;
+    const promptIndex = recorded.argv.indexOf("-p");
     assert.notEqual(
       promptIndex,
       -1,
       `the bridge must pass the prompt to the CLI: ${stderr}`
     );
-    return argv[promptIndex + 1] ?? "";
+    return recorded.argv[promptIndex + 1] ?? "";
   } finally {
-    child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null)
+          child.kill("SIGKILL");
+      }, 5000);
+      await exited;
+      clearTimeout(timer);
+    }
+    if (agyPid === null) {
+      try {
+        const recorded = JSON.parse(await readFile(argvFile, "utf8")) as {
+          pid?: number;
+        };
+        if (typeof recorded.pid === "number") agyPid = recorded.pid;
+      } catch {
+        /* fake-agy never wrote its record */
+      }
+    }
+    if (agyPid !== null) {
+      assert.ok(
+        await exitsWithin(agyPid, 5000),
+        `fake-agy CLI (pid ${agyPid}) outlived its bridge`
+      );
+    }
     await rm(temp, { recursive: true, force: true });
   }
 }

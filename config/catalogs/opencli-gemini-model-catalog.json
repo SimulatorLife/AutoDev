@@ -2,6 +2,7 @@
   "models": [
     {
       "slug": "opencli-gemini-3.5-flash-lite",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 3.5 Flash Lite (opencli)",
       "description": "Gemini web's 3.5 Flash Lite model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -48,6 +49,7 @@
     },
     {
       "slug": "opencli-gemini-4-hydrogen",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Hydrogen (opencli)",
       "description": "Gemini web's 4 Hydrogen model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -94,6 +96,7 @@
     },
     {
       "slug": "opencli-gemini-3.1-pro",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 3.1 Pro (opencli)",
       "description": "Gemini web's 3.1 Pro model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -140,6 +143,7 @@
     },
     {
       "slug": "opencli-gemini-4-argon",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Argon (opencli)",
       "description": "Gemini web's 4 Argon model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -186,6 +190,7 @@
     },
     {
       "slug": "opencli-gemini-4-carbon",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Carbon (opencli)",
       "description": "Gemini web's 4 Carbon model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",

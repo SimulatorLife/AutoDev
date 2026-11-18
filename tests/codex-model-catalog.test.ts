@@ -114,6 +114,11 @@ test("every catalog model compacts and truncates tool output inside the cost ban
     ) as Catalog;
     for (const model of source.models) {
       assert.equal(
+        model.apply_patch_tool_type,
+        "freeform",
+        `${file}:${model.slug} must expose freeform apply_patch`
+      );
+      assert.equal(
         model.auto_compact_token_limit,
         autoCompactTokenLimit(model.context_window),
         `${file}:${model.slug} must declare the shared auto-compact limit`

@@ -54,8 +54,7 @@ export function roleSessionSandboxMode(
   policyFile: string
 ): string {
   const policy = readPermissionPolicyFile(policyFile);
-  const session =
-    policy.status === "valid" ? policy.policy.sandboxMode : null;
+  const session = policy.status === "valid" ? policy.policy.sandboxMode : null;
   const effective = effectiveSandboxMode(
     declaredRoleSandboxMode(declared),
     session

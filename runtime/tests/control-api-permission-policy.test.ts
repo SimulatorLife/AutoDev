@@ -208,7 +208,10 @@ test("a role's sandbox is the stricter of its declaration and the session's", as
   // it, so the orchestrator runs in the session's sandbox: the effective mode
   // is what the role may do, and the declaration is what it asked for.
   assert.equal(rolePermissions?.orchestrator?.sandboxMode, "workspace-write");
-  assert.equal(rolePermissions?.orchestrator?.declaredSandboxMode, "unrestricted");
+  assert.equal(
+    rolePermissions?.orchestrator?.declaredSandboxMode,
+    "unrestricted"
+  );
   // A read-only role narrows the session's sandbox, so both are the mode it
   // runs in.
   assert.equal(rolePermissions?.explorer?.sandboxMode, "read-only");

@@ -2,6 +2,7 @@
   "models": [
     {
       "slug": "gemini-3.8-flash-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Flash subscription (High)",
       "description": "Antigravity CLI subscription through the local Responses adapter.",
       "default_reasoning_level": "high",
@@ -48,6 +49,7 @@
     },
     {
       "slug": "gemini-3.8-flash-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Flash subscription",
       "description": "Antigravity CLI subscription through the local Responses adapter.",
       "default_reasoning_level": "medium",

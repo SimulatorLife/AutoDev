@@ -215,10 +215,7 @@ export function readRoleExecutionSettings(
  * The composition itself belongs to the configuration layer, which is where
  * the role declarations and the permission policy are read.
  */
-function roleSessionSandbox(
-  roleFile: string,
-  policyFile: string
-): string {
+function roleSessionSandbox(roleFile: string, policyFile: string): string {
   return roleSessionSandboxMode(
     readRoleExecutionSettings(roleFile).sandboxMode,
     policyFile

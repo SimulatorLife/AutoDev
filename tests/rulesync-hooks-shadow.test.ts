@@ -457,7 +457,9 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
       ],
       [
         "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
-        ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"]
+        [
+          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
+        ]
       ]
     ]
   );

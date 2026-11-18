@@ -693,3 +693,15 @@ test("the orchestrator's inlined skill names the installed directory its referen
   for (const reference of references)
     assert.ok(existsSync(join(installedOrchestration, reference)), reference);
 });
+
+test("code and orchestration prompts surface the macOS Seatbelt MachPortRendezvousServer browser recovery path", () => {
+  for (const instructions of [
+    composeProviderPrompt("worker", "/tmp/workspace"),
+    composeProviderPrompt("validator", "/tmp/workspace"),
+    roleInstructions(ORCHESTRATOR_AGENT_ROLE)
+  ]) {
+    assert.match(instructions, /MachPortRendezvousServer/);
+    assert.match(instructions, /playwright\.config\.\*/);
+    assert.match(instructions, /single-process/i);
+  }
+});

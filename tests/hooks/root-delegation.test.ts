@@ -395,7 +395,10 @@ test("root delegation injects the typed policy and canonical sources for a paren
   // The skill is read before the first spawn, not on every root turn: a
   // trivial task the root does itself never pays for it.
   assert.match(context, /Size the task before acting on\s+it/);
-  assert.match(context, /Read the installed `orchestration` skill before your first spawn/);
+  assert.match(
+    context,
+    /Read the installed `orchestration` skill before your first spawn/
+  );
   assert.match(context, /\.agents\/skills\/orchestration\/SKILL\.md/);
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
@@ -418,7 +421,10 @@ test("root delegation injects the typed policy for autodev/orchestrator alias", 
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   assert.match(context, /# Root orchestrator bootstrap/);
   assert.match(context, /## Canonical orchestration skill/);
-  assert.match(context, /Read the installed `orchestration` skill before your first spawn/);
+  assert.match(
+    context,
+    /Read the installed `orchestration` skill before your first spawn/
+  );
   assert.doesNotMatch(context, /# Agent orchestration/);
   assert.match(context, /## Shared codebase navigation/);
   assert.match(context, /orchestrator-test-1/);

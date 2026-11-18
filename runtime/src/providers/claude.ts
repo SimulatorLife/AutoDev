@@ -1009,7 +1009,11 @@ function* translateAssistantEvent(
     state.assistantSnapshot = fullText;
     if (delta) yield { kind: "text", text: delta };
   }
-  yield { kind: "message_stop" };
+  // When streaming partial messages, stream_event: message_stop owns emitting
+  // usage followed by message_stop; yielding message_stop early from an
+  // assistant snapshot closes messageOpen before usage arrives and rolls this
+  // message's usage onto the next response.
+  if (!state.sawMessageStart) yield { kind: "message_stop" };
 }
 
 /**

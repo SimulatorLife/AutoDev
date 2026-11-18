@@ -224,5 +224,7 @@ export function resolveSandboxMode(
   const key = role.trim().toLowerCase();
   if (!key) return null;
   if (!CONTRACT.roles[key]) return null;
-  return roleSandboxMode(role) === "read-only" ? "read-only" : "workspace-write";
+  return roleSandboxMode(role) === "read-only"
+    ? "read-only"
+    : "workspace-write";
 }

@@ -286,22 +286,13 @@ test("a role-scoped session runs in the stricter of the role's sandbox and the p
       "workspace-write"
     );
     // A role that narrows runs in what it declared.
-    assert.equal(
-      roleSessionSandboxMode("read-only", policyFile),
-      "read-only"
-    );
+    assert.equal(roleSessionSandboxMode("read-only", policyFile), "read-only");
     // A role that declares nothing inherits the session's.
-    assert.equal(
-      roleSessionSandboxMode(null, policyFile),
-      "workspace-write"
-    );
+    assert.equal(roleSessionSandboxMode(null, policyFile), "workspace-write");
     // A policy that cannot be read leaves the role's own declaration as the
     // whole of what is known.
     writeFileSync(policyFile, "approval_policy = \n");
-    assert.equal(
-      roleSessionSandboxMode("read-only", policyFile),
-      "read-only"
-    );
+    assert.equal(roleSessionSandboxMode("read-only", policyFile), "read-only");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

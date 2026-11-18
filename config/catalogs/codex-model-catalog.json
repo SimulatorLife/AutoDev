@@ -2,6 +2,7 @@
   "models": [
     {
       "slug": "gpt-6-luna",
+      "apply_patch_tool_type": "freeform",
       "display_name": "GPT-6 Luna",
       "description": "OpenAI Codex model for orchestration and exploration.",
       "base_instructions": "You are a bounded Codex agent.",
@@ -57,6 +58,7 @@
     },
     {
       "slug": "gpt-5.6-terra",
+      "apply_patch_tool_type": "freeform",
       "display_name": "GPT-5.6 Terra",
       "description": "OpenAI Codex model for implementation work.",
       "base_instructions": "You are a bounded Codex agent.",
@@ -112,6 +114,7 @@
     },
     {
       "slug": "gpt-6-sol",
+      "apply_patch_tool_type": "freeform",
       "display_name": "GPT-6 Sol",
       "description": "OpenAI Codex model for targeted research.",
       "base_instructions": "You are a bounded Codex agent.",
@@ -159,6 +162,7 @@
     },
     {
       "slug": "sonnet",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Claude Sonnet subscription",
       "description": "Claude Code OAuth subscription through the local bridge.",
       "default_reasoning_level": "medium",
@@ -205,6 +209,7 @@
     },
     {
       "slug": "claude-opus-5-5",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Claude Opus 5.5",
       "description": "Claude Opus 5.5 through the Claude Code OAuth subscription on the local bridge.",
       "default_reasoning_level": "medium",
@@ -251,6 +256,7 @@
     },
     {
       "slug": "MiniMax-M3",
+      "apply_patch_tool_type": "freeform",
       "display_name": "MiniMax-M3",
       "description": "MiniMax subscription/API model through the local Responses proxy.",
       "default_reasoning_level": "high",
@@ -294,6 +300,7 @@
     },
     {
       "slug": "MiniMax-M3.1-Flash-Preview",
+      "apply_patch_tool_type": "freeform",
       "display_name": "MiniMax-M3.1-Flash-Preview",
       "description": "MiniMax M Plan preview model with tunable thinking depth through the local Responses proxy.",
       "default_reasoning_level": "max",
@@ -349,6 +356,7 @@
     },
     {
       "slug": "gemini-3.8-flash-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Flash subscription (High)",
       "description": "Antigravity CLI subscription through the local Responses adapter.",
       "default_reasoning_level": "high",
@@ -395,6 +403,7 @@
     },
     {
       "slug": "gemini-3.8-flash-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Flash subscription",
       "description": "Antigravity CLI subscription through the local Responses adapter.",
       "default_reasoning_level": "medium",
@@ -441,6 +450,7 @@
     },
     {
       "slug": "gemini-4-argon-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (High)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -487,6 +497,7 @@
     },
     {
       "slug": "gemini-4-argon-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (Medium)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -533,6 +544,7 @@
     },
     {
       "slug": "gemini-4-argon-low",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (Low)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",
@@ -579,6 +591,7 @@
     },
     {
       "slug": "claude-opus-5-5-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (High)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -625,6 +638,7 @@
     },
     {
       "slug": "claude-opus-5-5-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (Medium)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -671,6 +685,7 @@
     },
     {
       "slug": "claude-opus-5-5-low",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (Low)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",
@@ -717,6 +732,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (High)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -763,6 +779,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (Medium)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -809,6 +826,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-low",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (Low)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",
@@ -855,6 +873,7 @@
     },
     {
       "slug": "gpt-oss-120b-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity GPT-OSS 120B (Medium)",
       "description": "GPT-OSS 120B through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -900,6 +919,7 @@
     },
     {
       "slug": "opencli-chatgpt-fast",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT Fast (opencli)",
       "description": "ChatGPT web at its Fast setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "fast",
@@ -938,6 +958,7 @@
     },
     {
       "slug": "opencli-chatgpt-balanced",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT Balanced (opencli)",
       "description": "ChatGPT web at its Balanced setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "balanced",
@@ -976,6 +997,7 @@
     },
     {
       "slug": "opencli-chatgpt-advanced",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT Advanced (opencli)",
       "description": "ChatGPT web at its Advanced setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "advanced",
@@ -1014,6 +1036,7 @@
     },
     {
       "slug": "opencli-chatgpt-xhigh",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT Very High (opencli)",
       "description": "ChatGPT web at its Very High setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "xhigh",
@@ -1052,6 +1075,7 @@
     },
     {
       "slug": "opencli-chatgpt-pro",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT Pro (opencli)",
       "description": "ChatGPT web at its Pro setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "pro",
@@ -1090,6 +1114,7 @@
     },
     {
       "slug": "opencli-chatgpt-gpt-5.6-pro",
+      "apply_patch_tool_type": "freeform",
       "display_name": "ChatGPT GPT-5.6 Pro (opencli)",
       "description": "ChatGPT web at its GPT-5.6 Pro setting, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "gpt-5.6-pro",
@@ -1128,6 +1153,7 @@
     },
     {
       "slug": "opencli-gemini-3.5-flash-lite",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 3.5 Flash Lite (opencli)",
       "description": "Gemini web's 3.5 Flash Lite model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -1174,6 +1200,7 @@
     },
     {
       "slug": "opencli-gemini-4-hydrogen",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Hydrogen (opencli)",
       "description": "Gemini web's 4 Hydrogen model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -1220,6 +1247,7 @@
     },
     {
       "slug": "opencli-gemini-3.1-pro",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 3.1 Pro (opencli)",
       "description": "Gemini web's 3.1 Pro model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -1266,6 +1294,7 @@
     },
     {
       "slug": "opencli-gemini-4-argon",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Argon (opencli)",
       "description": "Gemini web's 4 Argon model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -1312,6 +1341,7 @@
     },
     {
       "slug": "opencli-gemini-4-carbon",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Gemini 4 Carbon (opencli)",
       "description": "Gemini web's 4 Carbon model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
@@ -1358,6 +1388,7 @@
     },
     {
       "slug": "autodev/default",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev default role",
       "description": "Provider-neutral AutoDev default role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1413,6 +1444,7 @@
     },
     {
       "slug": "autodev/orchestrator",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev orchestrator",
       "description": "Root orchestrator alias: pinned to the primary provider, degrades across providers through the local model router when that provider is out of usage.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1468,6 +1500,7 @@
     },
     {
       "slug": "autodev/docs-researcher",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev docs-researcher role",
       "description": "Provider-neutral AutoDev docs-researcher role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1523,6 +1556,7 @@
     },
     {
       "slug": "autodev/browser-tester",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev browser-tester role",
       "description": "Provider-neutral AutoDev browser-tester role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1578,6 +1612,7 @@
     },
     {
       "slug": "autodev/explorer",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev explorer role",
       "description": "Provider-neutral AutoDev explorer role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1633,6 +1668,7 @@
     },
     {
       "slug": "autodev/worker",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev worker role",
       "description": "Provider-neutral AutoDev worker role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1688,6 +1724,7 @@
     },
     {
       "slug": "autodev/validator",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev validator role",
       "description": "Provider-neutral AutoDev validator role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1743,6 +1780,7 @@
     },
     {
       "slug": "autodev/smart",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev smart role",
       "description": "Provider-neutral AutoDev smart role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1798,6 +1836,7 @@
     },
     {
       "slug": "autodev/playtester",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev playtester role",
       "description": "Provider-neutral AutoDev playtester role routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
@@ -1853,6 +1892,7 @@
     },
     {
       "slug": "autodev/playtest-analyst",
+      "apply_patch_tool_type": "freeform",
       "display_name": "AutoDev playtest-analyst role",
       "description": "Provider-neutral AutoDev read-only playtest analyst routed by the local model router.",
       "base_instructions": "You are a bounded provider-neutral AutoDev agent.",

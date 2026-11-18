@@ -1549,3 +1549,68 @@ test("Codex-tools turns register only the codex shim and autodev_spawn without l
     env.cleanup();
   }
 });
+
+test("Codex-tools turns still inject roleScopedMcp servers disabled at Codex root", () => {
+  const env = createFixtureEnvironment();
+  try {
+    // browser-tester: playwright is disabled in Codex's root config, so Codex
+    // 0.169 does not expose it to spawned children; agy must inject playwright
+    // alongside codex, allowlist its tools, and name it in agent.md.
+    const btHome = createIsolatedAntigravityHome("browser-tester", null, {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT,
+      toolTurnId: "turn-codex-bt"
+    });
+    try {
+      assert.deepEqual(Object.keys(btHome.mcpConfig.mcpServers).sort(), [
+        "codex",
+        "playwright"
+      ]);
+      const allow = stringList(
+        btHome.settings.permissions.allow,
+        "allow permissions"
+      );
+      for (const tool of roleMcpToolList("browser-tester", "playwright")) {
+        assert.ok(
+          allow.includes(`mcp(playwright/${tool})`),
+          `missing grant for mcp(playwright/${tool})`
+        );
+      }
+      assert.ok(btHome.customizationDir);
+      const agentMd = readFileSync(
+        join(
+          btHome.customizationDir,
+          ".agents",
+          "agents",
+          "autodev-codex-tools",
+          "agent.md"
+        ),
+        "utf8"
+      );
+      assert.match(agentMd, /playwright/);
+    } finally {
+      btHome.cleanup();
+    }
+
+    // playtester: playtest is role-scoped and disabled at Codex root.
+    const ptConfig = buildInvocationMcpConfig(
+      "playtester",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: "/Users/henrykirk/Desktop/RacingGame",
+        requestId: "trusted-request-codex-pt",
+        workspaceKey: "SimulatorLife/RacingGame"
+      },
+      "turn-codex-pt"
+    );
+    assert.deepEqual(Object.keys(ptConfig.mcpServers).sort(), [
+      "codex",
+      "playtest"
+    ]);
+  } finally {
+    env.cleanup();
+  }
+});

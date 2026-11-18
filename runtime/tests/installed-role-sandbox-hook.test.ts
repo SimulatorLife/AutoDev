@@ -38,7 +38,11 @@ function installedCodexHome(): string {
   const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-installed-tree-"));
   const source = path.join(codexHome, "src");
   for (const module of RUNTIME_MODULES) {
-    const target = path.join(codexHome, "src", module.slice("runtime/src/".length));
+    const target = path.join(
+      codexHome,
+      "src",
+      module.slice("runtime/src/".length)
+    );
     mkdirSync(path.dirname(target), { recursive: true });
     copyFileSync(path.join(repositoryRoot, module), target);
   }

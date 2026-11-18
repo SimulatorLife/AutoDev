@@ -80,14 +80,9 @@ function fixture(roles: Record<string, string>): Fixture {
   writeFileSync(contractPath, JSON.stringify(CONTRACT_TEMPLATE), "utf8");
   // The root config is the portable source: the renderer's second argument.
   const rootConfigPath = path.join(root, "config", "config.autodev.toml");
-  writeFileSync(
-    rootConfigPath,
-    '[mcp_servers.lsp]\ncommand = "lsp"\n',
-    "utf8"
-  );
+  writeFileSync(rootConfigPath, '[mcp_servers.lsp]\ncommand = "lsp"\n', "utf8");
   return { rolesDirectory, contractPath, rootConfigPath };
 }
-
 
 test("a role's declared sandbox is projected as the mode it states", () => {
   const options = fixture(roleFiles());

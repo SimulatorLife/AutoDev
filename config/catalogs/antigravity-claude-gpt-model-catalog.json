@@ -2,6 +2,7 @@
   "models": [
     {
       "slug": "claude-opus-5-5-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (High)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -48,6 +49,7 @@
     },
     {
       "slug": "claude-opus-5-5-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (Medium)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -94,6 +96,7 @@
     },
     {
       "slug": "claude-opus-5-5-low",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Opus 5.5 (Low)",
       "description": "Claude Opus 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",
@@ -140,6 +143,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-high",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (High)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -186,6 +190,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (Medium)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -232,6 +237,7 @@
     },
     {
       "slug": "claude-sonnet-5-5-low",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Claude Sonnet 5.5 (Low)",
       "description": "Claude Sonnet 5.5 through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",
@@ -278,6 +284,7 @@
     },
     {
       "slug": "gpt-oss-120b-medium",
+      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity GPT-OSS 120B (Medium)",
       "description": "GPT-OSS 120B through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",

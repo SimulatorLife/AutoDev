@@ -240,6 +240,9 @@ enabled = false
 [plugins."github@openai-curated"]
 enabled = false
 
+[plugins."cloud-environment@openai-curated-remote"]
+enabled = false
+
 # Per-skill disables for the irrelevant Codex `.system/` skills. Each
 # `imagegen`, `plugin-creator`, `skill-creator`, and `skill-installer` is
 # noise for AutoDev; only `openai-docs` is kept.
@@ -336,6 +339,14 @@ enabled = false
 
 [[skills.config]]
 name = "work-pets:update-pet"
+enabled = false
+
+[[skills.config]]
+name = "cloud-environment:cloud-desktop"
+enabled = false
+
+[[skills.config]]
+name = "cloud-environment:cloud-environment-runtime"
 enabled = false
 
 [shell_environment_policy]

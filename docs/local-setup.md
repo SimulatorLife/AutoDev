@@ -513,8 +513,8 @@ that works for each:
   `~/.codex/plugins/cache`. Every skill-declaring plugin AutoDev does not
   use is disabled: the whole `openai-primary-runtime` family (`pdf`,
   `documents`, `presentations`, `spreadsheets`, `template-creator`),
-  `sites`, `openai-developers`, and `openai-templates` from
-  `openai-curated-remote`, and `sites`, `browser`, `computer-use`,
+  `sites`, `openai-developers`, `openai-templates`, and `cloud-environment`
+  from `openai-curated-remote`, and `sites`, `browser`, `computer-use`,
   `unified-computer-use`, and `visualize` from `openai-bundled`. `sites`
   ships from two marketplaces that declare the same
   `sites-building`/`sites-hosting` skill names, so both copies must be
@@ -533,10 +533,12 @@ that works for each:
   (`openai-curated-remote`) even when the portable source disables the
   plugin: every agent on 2026-11-12 carried `openai-developers`, `sites`,
   `visualize`, `google-drive`, and `work-pets` skills, about 6 KB of
-  context per thread. The account's `openai-templates` skills, which the
+  context per thread, and `cloud-environment` (`cloud-desktop`,
+  `cloud-environment-runtime`) also surfaced from the plugin cache. The
+  account's `openai-templates` skills, which the
   machine-local config disables by name, were absent. So the portable
   source also disables each of those skills by `<plugin>:<skill>` name,
-  and `google-drive` and `work-pets` as plugins. An isolated `CODEX_HOME`
+  and `google-drive`, `work-pets`, and `cloud-environment` as plugins. An isolated `CODEX_HOME`
   cannot reproduce this, because it has no account-installed plugins. Check
   the next live rollout's `### Available skills` to confirm.
 - `[skills.bundled] enabled = false` is **not** used at user level

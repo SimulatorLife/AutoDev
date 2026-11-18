@@ -4,7 +4,8 @@ import path from "node:path";
 import {
   isCodexSandboxMode,
   productSandboxMode,
-  type SandboxMode} from "@simulatorlife/autodev-core";
+  type SandboxMode
+} from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {

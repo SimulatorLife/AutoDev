@@ -68,7 +68,9 @@ const EXPECTED_SKILLS = Object.freeze([
   "visualize:visualize",
   "work-pets:create-pet",
   "work-pets:pets",
-  "work-pets:update-pet"
+  "work-pets:update-pet",
+  "cloud-environment:cloud-desktop",
+  "cloud-environment:cloud-environment-runtime"
 ]);
 
 type PortableFixture = {

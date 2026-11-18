@@ -75,9 +75,16 @@ for (const step of JSON.parse(process.env.CLAUDE_FAKE_SCRIPT)) {
     stream({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "mcp__codex__" + step.call, input: {} } });
     stream({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify(step.arguments) } });
     stream({ type: "content_block_stop", index: 1 });
+    let pendingCall = null;
+    if (step.assistantSnapshotBeforeStop) {
+      pendingCall = rpc("tools/call", { name: step.call, arguments: step.arguments });
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+      out({ type: "assistant", message: { id: "msg_snap_1", content: [], usage: step.snapshotUsage ?? {} } });
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 60));
+    }
     if (step.outputTokens !== undefined) stream({ type: "message_delta", usage: { output_tokens: step.outputTokens } });
     stream({ type: "message_stop" });
-    const result = await rpc("tools/call", { name: step.call, arguments: step.arguments });
+    const result = await (pendingCall ?? rpc("tools/call", { name: step.call, arguments: step.arguments }));
     record.results = [...(record.results ?? []), result];
     writeFileSync(process.env.CLAUDE_FAKE_RECORD, JSON.stringify(record));
   } else if (step.say !== undefined) {
@@ -524,6 +531,78 @@ test("each response of a Claude turn reports only the messages it carries", asyn
         }
       },
       { call: "exec", arguments: { input: "text(1)" }, outputTokens: 400 },
+      {
+        say: "saw {result}",
+        usage: {
+          input_tokens: 50,
+          cache_read_input_tokens: 10_400,
+          output_tokens: 1
+        },
+        outputTokens: 300,
+        resultUsage: {
+          input_tokens: 1050,
+          cache_read_input_tokens: 19_400,
+          output_tokens: 700
+        }
+      }
+    ],
+    async ({ port }) => {
+      const history: JsonRecord[] = [
+        CODEX_TOOLS,
+        { type: "message", role: "user", content: "go" }
+      ];
+      const first = completedResponse(
+        parseSse(await (await codexRequest(port, history)).text())
+      );
+      assert.deepEqual(first.usage, {
+        input_tokens: 10_000,
+        output_tokens: 400,
+        total_tokens: 10_400,
+        input_tokens_details: { cached_tokens: 9000 }
+      });
+      const call = first.output.at(-1);
+      const last = completedResponse(
+        parseSse(
+          await (
+            await codexRequest(port, [
+              ...history,
+              call,
+              {
+                type: "custom_tool_call_output",
+                call_id: call.call_id,
+                output: "ok"
+              }
+            ])
+          ).text()
+        )
+      );
+      assert.deepEqual(last.usage, {
+        input_tokens: 10_450,
+        output_tokens: 300,
+        total_tokens: 10_750,
+        input_tokens_details: { cached_tokens: 10_400 }
+      });
+    }
+  );
+});
+
+test("an assistant snapshot before stream message_stop neither zeroes out the current response nor double-counts the next", async () => {
+  await withBridge(
+    [
+      {
+        think: "list the files",
+        usage: {
+          input_tokens: 1000,
+          cache_read_input_tokens: 9000,
+          output_tokens: 1
+        }
+      },
+      {
+        call: "exec",
+        arguments: { input: "text(1)" },
+        assistantSnapshotBeforeStop: true,
+        outputTokens: 400
+      },
       {
         say: "saw {result}",
         usage: {

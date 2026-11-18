@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   resolveSandboxMode,
-  roleSandboxMode} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+  roleSandboxMode
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 void test("roleSandboxMode: a role's declaration is reported as it states it", () => {
   assert.equal(roleSandboxMode("explorer"), "read-only");

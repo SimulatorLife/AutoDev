@@ -19,6 +19,7 @@ import {
   gitRoot,
   runCodeGraphWorker
 } from "@simulatorlife/autodev-runtime/platform/code-graph-ensure";
+import { patchCodeGraphContextFalkorDb } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 interface Fixture {
   root: string;
@@ -280,4 +281,60 @@ test("a graph database that cannot be reached leaves the reason in the worker's 
   // graph was not there and named nothing.
   assert.match(output.stderr, /code-graph-ensure:/u);
   assert.match(output.stderr, /Connection refused\./u);
+});
+
+test("patchCodeGraphContextFalkorDb updates upstream and prior patches so shutdown tries unauthenticated Redis after password failure", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "autodev-cgc-patch-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const coreDir = join(base, "core");
+  mkdirSync(coreDir, { recursive: true });
+  const workerPath = join(coreDir, "falkor_worker.py");
+  const upstreamSample = [
+    "        except Exception as e:",
+    "            logger.error(",
+    '                f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "',
+    '                f"Please stop the conflicting service or configure a different port. "',
+    '                f"Underlying error: {e}"',
+    "            )",
+    "            sys.exit(1)"
+  ].join("\n");
+  writeFileSync(workerPath, upstreamSample, "utf8");
+  patchCodeGraphContextFalkorDb(base);
+  const patchedFromUpstream = readFileSync(workerPath, "utf8");
+  assert.match(
+    patchedFromUpstream,
+    /for pw in dict\.fromkeys\(\(os\.getenv\("FALKORDB_PASSWORD"\) or None, None\)\):/u
+  );
+  assert.match(
+    patchedFromUpstream,
+    / {16}f"Underlying error: \{e\}"\n {16}\)\n {16}sys\.exit\(1\)/u
+  );
+
+  // Also upgrades an already-patched single-password worker in place.
+  const priorPatchSample = [
+    "        except Exception as e:",
+    "            try:",
+    "                from redis import Redis",
+    '                Redis(host="127.0.0.1", port=port, password=os.getenv("FALKORDB_PASSWORD") or None).shutdown(save=True)',
+    "                time.sleep(0.3)",
+    "            except Exception:",
+    "                pass",
+    '            if is_port_in_use("127.0.0.1", port):',
+    "                logger.error(",
+    '                    f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "',
+    '                    f"Underlying error: {e}"',
+    "                )",
+    "                sys.exit(1)"
+  ].join("\n");
+  writeFileSync(workerPath, priorPatchSample, "utf8");
+  patchCodeGraphContextFalkorDb(base);
+  const upgraded = readFileSync(workerPath, "utf8");
+  assert.match(
+    upgraded,
+    /for pw in dict\.fromkeys\(\(os\.getenv\("FALKORDB_PASSWORD"\) or None, None\)\):/u
+  );
+  assert.doesNotMatch(
+    upgraded,
+    /Redis\(host="127\.0\.0\.1", port=port, password=os\.getenv/u
+  );
 });

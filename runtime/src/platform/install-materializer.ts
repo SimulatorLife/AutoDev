@@ -974,7 +974,7 @@ function patchCodeGraphContextIgnore(cgcDir: string): void {
   );
 }
 
-function patchCodeGraphContextFalkorDb(cgcDir: string): void {
+export function patchCodeGraphContextFalkorDb(cgcDir: string): void {
   const dbFalkorFile = path.join(cgcDir, "core", "database_falkordb.py");
   if (exists(dbFalkorFile)) {
     const original = readFileSync(dbFalkorFile, "utf8");
@@ -987,9 +987,9 @@ function patchCodeGraphContextFalkorDb(cgcDir: string): void {
   const workerFile = path.join(cgcDir, "core", "falkor_worker.py");
   if (exists(workerFile)) {
     const original = readFileSync(workerFile, "utf8");
-    const target =
+    const upstreamTarget =
       '        except Exception as e:\n            logger.error(\n                f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "';
-    const replacement = [
+    const previousPatch = [
       "        except Exception as e:",
       "            try:",
       "                from redis import Redis",
@@ -1001,12 +1001,29 @@ function patchCodeGraphContextFalkorDb(cgcDir: string): void {
       "                logger.error(",
       '                    f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "'
     ].join("\n");
-    if (
-      original.includes(target) &&
-      !original.includes('Redis(host="127.0.0.1", port=port')
+    const replacement = [
+      "        except Exception as e:",
+      "            from redis import Redis",
+      '            for pw in dict.fromkeys((os.getenv("FALKORDB_PASSWORD") or None, None)):',
+      "                try:",
+      '                    Redis(host="127.0.0.1", port=port, password=pw).shutdown(save=True)',
+      "                    time.sleep(0.3)",
+      "                    break",
+      "                except Exception:",
+      "                    pass",
+      '            if is_port_in_use("127.0.0.1", port):',
+      "                logger.error(",
+      '                    f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "'
+    ].join("\n");
+    if (original.includes(previousPatch)) {
+      const updated = original.replace(previousPatch, replacement);
+      if (updated !== original) writeFileSync(workerFile, updated, "utf8");
+    } else if (
+      original.includes(upstreamTarget) &&
+      !original.includes("for pw in dict.fromkeys(")
     ) {
       const updated = original
-        .replace(target, replacement)
+        .replace(upstreamTarget, replacement)
         .replace(
           '                f"Underlying error: {e}"\n            )\n            sys.exit(1)',
           '                    f"Underlying error: {e}"\n                )\n                sys.exit(1)'

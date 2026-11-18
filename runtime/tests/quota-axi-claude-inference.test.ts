@@ -96,7 +96,9 @@ async function readClaude(args: readonly string[]) {
       return { stdout: error.stdout };
     });
     const report = JSON.parse(stdout) as QuotaAxiResponse;
-    const claude = report.providers.find((entry) => entry.provider === "claude");
+    const claude = report.providers.find(
+      (entry) => entry.provider === "claude"
+    );
     assert.ok(claude, "quota-axi reports Claude");
     return claude;
   } finally {

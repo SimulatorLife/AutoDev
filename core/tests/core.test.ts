@@ -234,11 +234,10 @@ test("the two sandbox vocabularies are related by one translation", () => {
   // The portable source and the role declarations name the modes the way
   // Codex configures a session in; the product names them its own way. The
   // translation lives here, so no reader can invent a third one.
-  assert.deepEqual([...CODEX_SANDBOX_MODES], [
-    "read-only",
-    "workspace-write",
-    "danger-full-access"
-  ]);
+  assert.deepEqual(
+    [...CODEX_SANDBOX_MODES],
+    ["read-only", "workspace-write", "danger-full-access"]
+  );
   for (const mode of CODEX_SANDBOX_MODES) {
     assert.equal(isCodexSandboxMode(mode), true, `${mode} must validate`);
   }

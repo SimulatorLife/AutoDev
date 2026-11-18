@@ -176,7 +176,8 @@ export function PermissionsView({
             // The declaration is published beside the effective mode because
             // the two answer different questions: what the role may do, and
             // what it asked for.
-            "data-permission-declared-mode": r.declaredSandboxMode ?? "not-declared"
+            "data-permission-declared-mode":
+              r.declaredSandboxMode ?? "not-declared"
           },
           children: declaredSandboxLabel(r.declaredSandboxMode)
         }),

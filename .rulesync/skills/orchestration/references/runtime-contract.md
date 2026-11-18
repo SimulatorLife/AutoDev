@@ -124,8 +124,12 @@ outside it. Other agents edit the same checkout concurrently, so:
 - stage only the paths this task changed (`git add <path>...`), never
   `git add -A` or `git add .`
 - make a new commit; never `--amend` (the rules require approval for it)
-- write the commit as a separate command from any other work so the rule
-  matches it
+- run **every** `.git`-writing command (`git add`, `git commit`, `git mv`,
+  `git rm`, `git restore --staged`, `git switch -c`, `git worktree add`) as its
+  own standalone command with `workdir` set — never chain it with `&&`, `;`,
+  `|`, `2>&1`, `cd ... &&`, or `set -e;`. Compound shell commands fail to match
+  the `allow` prefix rule and stay inside the `workspace-write` sandbox, where
+  `.git/index.lock` fails with `Operation not permitted`
 ## Workspace and role resolution
 
 Keep delegated work in the parent-selected repository or worktree. Do not let
