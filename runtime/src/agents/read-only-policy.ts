@@ -180,6 +180,7 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "pwd",
   "readlink",
   "realpath",
+  "rev",
   "rg",
   "ripgrep",
   "seq",
@@ -1129,6 +1130,56 @@ const SAFE_SED_SIMPLE_FLAGS = new Set([
   "--unbuffered"
 ]);
 
+const READ_ONLY_NPM_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "explain",
+  "info",
+  "list",
+  "ls",
+  "show",
+  "view",
+  "why"
+]);
+
+const SAFE_NPM_FLAGS: ReadonlySet<string> = new Set([
+  "--all",
+  "--depth",
+  "--json",
+  "--long",
+  "--parseable",
+  "-- silent",
+  "--silent",
+  "-a",
+  "-l",
+  "-p",
+  "-s"
+]);
+
+/**
+ * Whether an `npm` invocation strictly inspects package metadata or dependency
+ * trees without writing files or overriding config/prefix paths.
+ */
+export function npmCommandIsReadOnly(args: readonly string[]): boolean {
+  const subcommand = args[0];
+  if (subcommand === undefined || !READ_ONLY_NPM_SUBCOMMANDS.has(subcommand))
+    return false;
+  let hasTarget = subcommand === "list" || subcommand === "ls";
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--depth") {
+      if (args[index + 1] === undefined) return false;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--depth=")) continue;
+    if (arg.startsWith("-")) {
+      if (!SAFE_NPM_FLAGS.has(arg)) return false;
+      continue;
+    }
+    hasTarget = true;
+  }
+  return hasTarget;
+}
+
 function isSafeSedScript(script: string): boolean {
   const clauses = script
     .split(";")
@@ -1246,6 +1297,11 @@ function segmentIsReadOnly(
     return {
       ok: sedCommandIsReadOnly(args),
       why: "sed can write or execute commands unless restricted to line-range printing"
+    };
+  if (name === "npm")
+    return {
+      ok: npmCommandIsReadOnly(args),
+      why: "npm writes or executes scripts unless restricted to read-only package inspection"
     };
 
   const flagged = FLAGGED_COMMANDS[name];
@@ -1377,9 +1433,12 @@ export function evaluateReadOnlyCommand(command: string): ReadOnlyDecision {
 
   const verdict = evaluateCommandSegments(trimmed, 0);
   if (!verdict.ok) {
+    const reasonClause = verdict.why.startsWith("it ")
+      ? verdict.why.slice(3)
+      : verdict.why;
     return {
       allowed: false,
-      reason: `This role runs in a read-only sandbox, and the command ${verdict.why}. Report what you needed instead of running it.`
+      reason: `This role runs in a read-only sandbox, and the command ${reasonClause}. Report what you needed instead of running it.`
     };
   }
   return ALLOWED;

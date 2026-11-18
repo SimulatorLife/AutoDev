@@ -1515,3 +1515,37 @@ test("write-capable roles preserve user non-MCP permissions and keep --dangerous
     env.cleanup();
   }
 });
+
+test("Codex-tools turns register only the codex shim and autodev_spawn without launching duplicate local MCP servers", () => {
+  const env = createFixtureEnvironment();
+  try {
+    const explorerConfig = buildInvocationMcpConfig(
+      "explorer",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
+      },
+      "turn-codex-123"
+    );
+    assert.deepEqual(Object.keys(explorerConfig.mcpServers), ["codex"]);
+
+    const orchestratorConfig = buildInvocationMcpConfig(
+      "orchestrator",
+      "orch-session-123",
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
+      },
+      "turn-codex-456"
+    );
+    assert.deepEqual(Object.keys(orchestratorConfig.mcpServers).sort(), [
+      "autodev_spawn",
+      "codex"
+    ]);
+  } finally {
+    env.cleanup();
+  }
+});

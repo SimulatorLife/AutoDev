@@ -748,6 +748,8 @@ export function openSpawnSession(
   const scope = contextHeaderValue(headers, SESSION_SCOPE_HEADER);
   if (session === null) return null;
   if (!SpawnSessionRegistry.canHold(session, scope)) return null;
+  if (!options.orchestrator && thread === null && registry.mayDelegate(session))
+    return null;
   registry.open(session, options);
   if (options.orchestrator) {
     registry.adoptOpenChildren(session, options.workspace ?? null);

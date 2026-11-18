@@ -49,7 +49,8 @@ import {
   codexToolReferenceForDispatcher,
   codexToolSurface,
   mcpResultFromCodexOutput,
-  mcpToolDefinition
+  mcpToolDefinition,
+  renderCodexTranscript
 } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import {
   contextHeaderValue,
@@ -1652,10 +1653,36 @@ ${files}
 `;
 }
 
+const CONVERSATION_HISTORY_ITEM_TYPES = new Set([
+  "custom_tool_call",
+  "function_call",
+  "custom_tool_call_output",
+  "function_call_output"
+]);
+
+function hasConversationHistory(items: readonly unknown[]): boolean {
+  return items.some(
+    (item) =>
+      isJsonRecord(item) &&
+      (item.role === "assistant" ||
+        CONVERSATION_HISTORY_ITEM_TYPES.has(String(item.type ?? "")))
+  );
+}
+
 function promptFromInput(value: unknown, instructions?: unknown): string {
   if (typeof value === "string") return `${instructions}\n\n${value}`;
   if (!Array.isArray(value))
     return `${instructions}\n\n${JSON.stringify(value)}`;
+  if (hasConversationHistory(value)) {
+    const transcript = renderCodexTranscript(
+      value.filter(
+        (item) =>
+          !isJsonRecord(item) ||
+          !["developer", "system"].includes(String(item.role ?? ""))
+      )
+    );
+    if (transcript.length > 0) return `${instructions}\n\n${transcript}`;
+  }
   const userItems = value.filter(
     (item) =>
       item &&
@@ -2430,41 +2457,49 @@ function buildInvocationMcpConfig(
   toolTurnId: string | null = null
 ): AntigravityMcpConfig {
   if (options?.compaction) return { mcpServers: {} };
-  const contract = antigravityRoleContract(agentRole);
-  const catalogue = bridgeMcpCatalogue(options?.codexHome);
   const mcpServers: Record<string, AntigravityMcpServerConfig> = {};
-  for (const name of contract.mcp ?? []) {
-    if (name === "autodev_spawn") continue;
-    const server = catalogue[name];
-    if (!server || typeof server !== "object" || Array.isArray(server))
-      throw new Error(
-        `MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun scripts/install.sh`
+  // When a turn runs with Codex's tool surface (`toolTurnId` set), Codex owns
+  // and exposes the role's MCP tools through `codex`. Launching duplicate local
+  // stdio MCP servers inside agy contends on single-writer graph locks/sockets
+  // and hides MCP calls from Codex's thread rollout.
+  if (!toolTurnId) {
+    const contract = antigravityRoleContract(agentRole);
+    const catalogue = bridgeMcpCatalogue(options?.codexHome);
+    for (const name of contract.mcp ?? []) {
+      if (name === "autodev_spawn") continue;
+      const server = catalogue[name];
+      if (!server || typeof server !== "object" || Array.isArray(server))
+        throw new Error(
+          `MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun scripts/install.sh`
+        );
+      const roleEnvironment = roleMcpEnvironment({
+        role: agentRole,
+        server: name,
+        requestId: options?.requestId ?? null,
+        workspaceId:
+          typeof options?.workspaceKey === "string"
+            ? options.workspaceKey
+            : null,
+        workspaceRoot: options?.cwd ?? null,
+        repositoryRoot: REPO_ROOT,
+        codeHome:
+          options?.codexHome ??
+          process.env.CODEX_HOME ??
+          pathApi.join(
+            options?.originalHome ?? process.env.HOME ?? homedir(),
+            ".codex"
+          ),
+        // The user's own home, which the CLI's temporary HOME is not. The MCP
+        // launcher resolves the tools it starts from it.
+        userHome: options?.originalHome ?? process.env.HOME ?? homedir()
+      });
+      mcpServers[name] = bridgeMcpEntry(
+        name,
+        server,
+        contract.mcpTools?.[name],
+        roleEnvironment
       );
-    const roleEnvironment = roleMcpEnvironment({
-      role: agentRole,
-      server: name,
-      requestId: options?.requestId ?? null,
-      workspaceId:
-        typeof options?.workspaceKey === "string" ? options.workspaceKey : null,
-      workspaceRoot: options?.cwd ?? null,
-      repositoryRoot: REPO_ROOT,
-      codeHome:
-        options?.codexHome ??
-        process.env.CODEX_HOME ??
-        pathApi.join(
-          options?.originalHome ?? process.env.HOME ?? homedir(),
-          ".codex"
-        ),
-      // The user's own home, which the CLI's temporary HOME is not. The MCP
-      // launcher resolves the tools it starts from it.
-      userHome: options?.originalHome ?? process.env.HOME ?? homedir()
-    });
-    mcpServers[name] = bridgeMcpEntry(
-      name,
-      server,
-      contract.mcpTools?.[name],
-      roleEnvironment
-    );
+    }
   }
   if (isOrchestratorRole(agentRole) && spawnSession)
     mcpServers.autodev_spawn = bridgeSpawnMcpEntry(spawnSession);
@@ -3564,7 +3599,7 @@ function prepareTurnPromptAndTools(args: {
       spawnSession: null,
       spawnToken: null,
       codexTools: [] as ReturnType<typeof codexToolSurface>["tools"],
-      toolTurnId: null,
+      toolTurnId: payload.stream ? turnId(12) : null,
       prompt: promptFromInput(payload.input ?? "", COMPACTION_SYSTEM_PROMPT),
       skillContext: null,
       attachments: [] as ReturnType<typeof userMessageImages>,
@@ -4461,7 +4496,7 @@ class StreamingTurn implements ParkableTurn {
    */
   resume(awaited: AwaitedToolResults): void {
     this.touchSpawnSession();
-    this.releaseOutputs(awaited.outputs);
+    this.releaseOutputs(awaited.outputs, awaited.messages);
     // Anything agy asked for while this turn was parked is owed Codex now, on
     // the response that just reopened -- not on the one that has already ended.
     this.emitQueuedCalls();
@@ -4557,12 +4592,33 @@ class StreamingTurn implements ParkableTurn {
    * Anything still awaiting after this is a call Codex never answered, and is
    * failed rather than left hanging on a promise nobody will settle.
    */
-  private releaseOutputs(outputs: Map<string, unknown>): void {
+  private releaseOutputs(
+    outputs: Map<string, unknown>,
+    messages: AwaitedToolResults["messages"] = []
+  ): void {
+    const resolved: Array<{
+      call: AwaitingCodexCall;
+      callId: string;
+      result: ShimJson;
+    }> = [];
     for (const [callId, output] of outputs) {
       const call = this.awaiting.get(callId);
       if (!call) continue;
       this.awaiting.delete(callId);
-      const result = mcpResultFromCodexOutput(output);
+      resolved.push({
+        call,
+        callId,
+        result: mcpResultFromCodexOutput(output)
+      });
+    }
+    const last = resolved.at(-1)?.result;
+    if (last && messages.length > 0 && Array.isArray(last.content)) {
+      (last.content as ShimJson[]).push({
+        type: "text",
+        text: `Codex added to the conversation while this ran:\n\n${renderCodexTranscript(messages)}`
+      });
+    }
+    for (const { call, callId, result } of resolved) {
       call.resolve(result);
       this.turn.toolObserver.observeShimOutput(
         call.tool.name,

@@ -29,6 +29,7 @@ import {
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
+import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import {
   contextHeaderValue,
   readContextHeader,
@@ -444,11 +445,38 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
+const CONVERSATION_HISTORY_ITEM_TYPES = new Set([
+  "custom_tool_call",
+  "function_call",
+  "custom_tool_call_output",
+  "function_call_output"
+]);
+
+function hasConversationHistory(items: readonly unknown[]): boolean {
+  return items.some(
+    (item) =>
+      isJsonRecord(item) &&
+      (item.role === "assistant" ||
+        CONVERSATION_HISTORY_ITEM_TYPES.has(String(item.type ?? "")))
+  );
+}
+
 function inputText(input: unknown, instructions: string): string {
   if (typeof input === "string")
     return `${instructions}\n\nDelegated task:\n${input}`;
   if (!Array.isArray(input))
     return `${instructions}\n\nDelegated task:\n${String(input ?? "")}`;
+  if (hasConversationHistory(input)) {
+    const transcript = renderCodexTranscript(
+      input.filter(
+        (item) =>
+          !isJsonRecord(item) ||
+          !["developer", "system"].includes(String(item.role ?? ""))
+      )
+    );
+    if (transcript.length > 0)
+      return `${instructions}\n\nDelegated task:\n${transcript}`;
+  }
   const userItems = input.filter(
     (item) => item && typeof item === "object" && item.role === "user"
   );

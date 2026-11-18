@@ -26,6 +26,7 @@ import {
   hasOpenTurn,
   recentSessions,
   renderReport,
+  summarizeRouter,
   traceThread
 } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
 
@@ -1175,3 +1176,94 @@ test(
     assert.equal(symlink?.enforced, false, symlink?.detail);
   }
 );
+
+test("summarizeRouter keeps matchedBy=thread when router daemon lifecycle events occur during the thread window", () => {
+  const thread = traceThread("/dev/null", false);
+  thread.id = "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0";
+  thread.model = "autodev/orchestrator";
+  thread.start = "2026-11-18T01:15:36.835Z";
+  thread.end = "2026-11-18T03:26:51.690Z";
+
+  const summary = summarizeRouter(
+    thread,
+    [
+      {
+        at: "2026-11-18T03:08:13.063Z",
+        requestId: "",
+        thread: null,
+        phase: "shutdown_started",
+        role: null,
+        requestedModel: null,
+        provider: null,
+        model: null,
+        outcome: null,
+        status: null,
+        failureClass: null,
+        spawnFailureReason: null,
+        denialReason: null,
+        elapsedMs: null,
+        toolCalls: null,
+        selection: null
+      },
+      {
+        at: "2026-11-18T03:08:14.076Z",
+        requestId: "",
+        thread: null,
+        phase: "startup",
+        role: null,
+        requestedModel: null,
+        provider: null,
+        model: null,
+        outcome: null,
+        status: null,
+        failureClass: null,
+        spawnFailureReason: null,
+        denialReason: null,
+        elapsedMs: null,
+        toolCalls: null,
+        selection: null
+      },
+      {
+        at: "2026-11-18T03:20:00.000Z",
+        requestId: "req-1",
+        thread: "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0",
+        phase: "selected",
+        role: "orchestrator",
+        requestedModel: "autodev/orchestrator",
+        provider: "claude",
+        model: "claude-opus-5-5",
+        outcome: null,
+        status: null,
+        failureClass: null,
+        spawnFailureReason: null,
+        denialReason: null,
+        elapsedMs: null,
+        toolCalls: null,
+        selection: "primary"
+      },
+      {
+        at: "2026-11-18T03:20:10.000Z",
+        requestId: "req-1",
+        thread: "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0",
+        phase: "result",
+        role: "orchestrator",
+        requestedModel: "autodev/orchestrator",
+        provider: "claude",
+        model: "claude-opus-5-5",
+        outcome: "success",
+        status: 200,
+        failureClass: null,
+        spawnFailureReason: null,
+        denialReason: null,
+        elapsedMs: 10_000,
+        toolCalls: 1,
+        selection: null
+      }
+    ],
+    true
+  );
+
+  assert.equal(summary.matchedBy, "thread");
+  assert.equal(summary.requests, 1);
+  assert.equal(summary.events?.length, 2);
+});

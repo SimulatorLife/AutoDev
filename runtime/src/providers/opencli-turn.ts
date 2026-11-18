@@ -1249,6 +1249,7 @@ const HTML_ENTITIES: Readonly<Record<string, string>> = {
 const HTML_ENTITY_PATTERN = /&(?:lt|gt|quot|#39|amp);/gu;
 const FENCED_BODY_PATTERN = /^```[\w-]*\n([\s\S]*?)\n?```$/u;
 const EMPTY_ESCAPE_TAG_PATTERN = /<escape>\s*<\/escape>/gu;
+const ESCAPE_TAG_PATTERN = /<\/?escape>/gu;
 const LEADING_NEWLINE_PATTERN = /^\r?\n/u;
 const TRAILING_NEWLINE_PATTERN = /\r?\n$/u;
 const BLANK_RUN_PATTERN = /\n{3,}/gu;
@@ -1294,6 +1295,7 @@ export function parseOpencliReply(response: string): ParsedReply {
       }
     )
     .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
+    .replaceAll(ESCAPE_TAG_PATTERN, "")
     .replaceAll(BLANK_RUN_PATTERN, "\n\n")
     .trim();
   return {

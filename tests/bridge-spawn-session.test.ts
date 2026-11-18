@@ -647,3 +647,31 @@ test("concurrent leaf subagents sharing root session id never overwrite or close
   assert.equal(rec.accepted, true, rec.message);
   assert.equal(r.close("root-sess", orchToken).length, 1);
 });
+
+test("a leaf request without a thread header falling back to the shared session id does not revoke the active orchestrator session", () => {
+  const [r] = registry();
+  openSpawnSession(
+    {
+      "x-autodev-session-id": "root-shared-only",
+      "x-autodev-session-scope": "identified"
+    },
+    r,
+    { orchestrator: true, role: "orchestrator", workspace: "/repo" }
+  );
+  assert.equal(r.mayDelegate("root-shared-only"), true);
+
+  const leafKey = openSpawnSession(
+    {
+      "x-autodev-session-id": "root-shared-only",
+      "x-autodev-session-scope": "identified"
+    },
+    r,
+    { orchestrator: false, role: "explorer", workspace: "/repo" }
+  );
+  assert.equal(leafKey, null);
+  assert.equal(
+    r.mayDelegate("root-shared-only"),
+    true,
+    "fallback leaf request must not overwrite active orchestrator session"
+  );
+});

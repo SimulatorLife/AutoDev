@@ -67,6 +67,10 @@ test("the commands that read are allowed", () => {
     "tail -20 file",
     "jq .name package.json",
     "wc -l file",
+    "rg --files src | rev | cut -d. -f1 | rev",
+    "npm view three version peerDependencies",
+    "npm info vitest version",
+    "npm ls --depth=0",
     "find . -name '*.ts'",
     "find . -name '*.ts' -type f"
   ]) {
@@ -398,4 +402,12 @@ test("refused command message interpolates the actual command name rather than l
   assert.equal(bareShell.allowed, false);
   assert.doesNotMatch(bareShell.reason ?? "", /\$\{name\}/u);
   assert.match(bareShell.reason ?? "", /`bash`/u);
+
+  const redirected = evaluateReadOnlyCommand("rg foo src > /tmp/out.txt");
+  assert.equal(redirected.allowed, false);
+  assert.doesNotMatch(redirected.reason ?? "", /and the command it /u);
+  assert.match(
+    redirected.reason ?? "",
+    /and the command redirects output into a file/u
+  );
 });

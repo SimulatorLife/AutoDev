@@ -1461,7 +1461,7 @@ function startResponsesTurn(
     }
   });
   writeErrorLine(
-    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${spawnSession !== null}${compaction ? " compaction=true" : ""}`
+    `claude request model=${model} effort=${effort} role=${agentRole ?? "default"} cwd=${cwd} turn=${turn.id} tools=${JSON.stringify(surface.tools.map((tool) => tool.name))} web_search=${surface.webSearch} delegation=${mayDelegate}${compaction ? " compaction=true" : ""}`
   );
   turn.attach(stream, reporter);
   void turn.run(

@@ -227,3 +227,64 @@ test("a turn with no Codex tools is told about none", async () => {
   assert.doesNotMatch(prompt, /## Codex tools/);
   assert.doesNotMatch(prompt, /call_mcp_tool/);
 });
+
+test("a continuation turn that spawns a new agy process preserves prior assistant messages and tool outputs", async () => {
+  // Observed 2026-11-18 in 01a1ecaf-3e82-76b2-af14-1a7860a4d749: after
+  // `autodev_spawn` emitted a Codex `exec` delegation call and ended the first
+  // `agy` invocation, Codex executed `multi_agent_v1__spawn_agent` and sent the
+  // next request with the spawned `agent_id` in `custom_tool_call_output`.
+  // `promptFromInput` filtered `input` to `role === "user"` only, discarding
+  // the prior assistant message and the `spawn_agent` output so the new `agy`
+  // invocation started blind, re-read skill references 4 times, and spawned a
+  // duplicate explorer instead of waiting on the child it just created.
+  const prompt = await promptForTurn([
+    CODEX_TOOLS,
+    { type: "message", role: "user", content: "audit the physics engine" },
+    {
+      type: "message",
+      role: "assistant",
+      content: "Delegating discovery to explorer."
+    },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_spawn_1",
+      input:
+        '// delegate\nconst spawned = await tools.multi_agent_v1__spawn_agent({ agent_type: "explorer", message: "inspect physics" });'
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_spawn_1",
+      output:
+        '{"spawn_status":"created","agent_id":"01a1ecb1-fd41-7703-b8c3-643a1920b7a9"}'
+    }
+  ]);
+  assert.match(prompt, /<user>\naudit the physics engine\n<\/user>/);
+  assert.match(
+    prompt,
+    /<assistant>\nDelegating discovery to explorer\.\n<\/assistant>/
+  );
+  assert.match(prompt, /<tool_call name="exec" call_id="call_spawn_1">/);
+  assert.match(prompt, /01a1ecb1-fd41-7703-b8c3-643a1920b7a9/);
+});
+
+test("a streaming compaction request completes cleanly without crashing the Antigravity bridge", async () => {
+  // Observed 2026-11-18 in 01a1ec39-3a72-78d3-9c2b-cee4e28d88c0: a manual
+  // `/compact` request arrived with `stream: true`. `prepareTurnPromptAndTools`
+  // set `toolTurnId: null` on compaction turns, causing `new StreamingTurn` to
+  // throw an uncaught error (`A streaming turn must carry a Codex tool turn id`)
+  // and crash the entire Antigravity proxy process.
+  const prompt = await promptForTurn([
+    { type: "message", role: "user", content: "initial request" },
+    { type: "message", role: "assistant", content: "initial answer" },
+    {
+      type: "message",
+      role: "user",
+      content:
+        "# Context Compaction\n\nCondense the conversation above into a structured checkpoint"
+    }
+  ]);
+  assert.match(prompt, /initial request/);
+  assert.match(prompt, /initial answer/);
+  assert.match(prompt, /# Context Compaction/);
+});

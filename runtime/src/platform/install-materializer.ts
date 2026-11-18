@@ -974,6 +974,48 @@ function patchCodeGraphContextIgnore(cgcDir: string): void {
   );
 }
 
+function patchCodeGraphContextFalkorDb(cgcDir: string): void {
+  const dbFalkorFile = path.join(cgcDir, "core", "database_falkordb.py");
+  if (exists(dbFalkorFile)) {
+    const original = readFileSync(dbFalkorFile, "utf8");
+    const updated = original.replace(
+      "atexit.register(self.shutdown)",
+      "atexit.register(self.close_driver)"
+    );
+    if (updated !== original) writeFileSync(dbFalkorFile, updated, "utf8");
+  }
+  const workerFile = path.join(cgcDir, "core", "falkor_worker.py");
+  if (exists(workerFile)) {
+    const original = readFileSync(workerFile, "utf8");
+    const target =
+      '        except Exception as e:\n            logger.error(\n                f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "';
+    const replacement = [
+      "        except Exception as e:",
+      "            try:",
+      "                from redis import Redis",
+      '                Redis(host="127.0.0.1", port=port, password=os.getenv("FALKORDB_PASSWORD") or None).shutdown(save=True)',
+      "                time.sleep(0.3)",
+      "            except Exception:",
+      "                pass",
+      '            if is_port_in_use("127.0.0.1", port):',
+      "                logger.error(",
+      '                    f"Port {port} is already occupied by another service and cannot be reused by FalkorDB. "'
+    ].join("\n");
+    if (
+      original.includes(target) &&
+      !original.includes('Redis(host="127.0.0.1", port=port')
+    ) {
+      const updated = original
+        .replace(target, replacement)
+        .replace(
+          '                f"Underlying error: {e}"\n            )\n            sys.exit(1)',
+          '                    f"Underlying error: {e}"\n                )\n                sys.exit(1)'
+        );
+      if (updated !== original) writeFileSync(workerFile, updated, "utf8");
+    }
+  }
+}
+
 function ensureCodeGraphContextPackagePatches(home: string): void {
   const libDir = path.join(
     home,
@@ -1002,6 +1044,7 @@ function ensureCodeGraphContextPackagePatches(home: string): void {
     try {
       patchCodeGraphContextConstants(cgcDir);
       patchCodeGraphContextIgnore(cgcDir);
+      patchCodeGraphContextFalkorDb(cgcDir);
     } catch {
       // Non-fatal if package patch cannot be applied
     }

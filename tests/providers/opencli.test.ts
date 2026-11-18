@@ -779,6 +779,15 @@ test("a call is read whatever its quoting, namespace, escaping or missing close"
   );
   assert.equal(withEscape.text, "");
   assert.deepEqual(withEscape.calls, [{ name: "exec", input: "text(1);" }]);
+  // Non-empty <escape>...</escape> wrapper tags around XML blocks such as <compacted-summary> are unwrapped.
+  const wrappedSummary = parseOpencliReply(
+    "<escape><compacted-summary>\n## Objective\nShip it.\n</compacted-summary></escape>"
+  );
+  assert.equal(
+    wrappedSummary.text,
+    "<compacted-summary>\n## Objective\nShip it.\n</compacted-summary>"
+  );
+  assert.deepEqual(wrappedSummary.calls, []);
 });
 
 test("parsed calls become the Responses item for the tool Codex offered", () => {

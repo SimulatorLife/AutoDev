@@ -1523,7 +1523,8 @@ export function summarizeRouter(
   // Decided per event: a log spanning a router upgrade holds both kinds.
   const mine = rows.filter((row) =>
     row.thread === null
-      ? row.at >= start &&
+      ? row.requestId.length > 0 &&
+        row.at >= start &&
         row.at <= end &&
         (!thread.model ||
           !row.requestedModel ||

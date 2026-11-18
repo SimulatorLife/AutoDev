@@ -376,6 +376,12 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
             type: "function_call_output",
             call_id: call.item.call_id,
             output: "the file body"
+          },
+          {
+            type: "message",
+            role: "user",
+            content:
+              '<subagent_notification>{"agent_path":"child-1","status":{"completed":"done"}}</subagent_notification>'
           }
         ],
         model: "gemini-3.8-flash-medium",
@@ -409,6 +415,10 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
     assert.deepEqual(
       launches.find((e) => e.result)?.result?.content?.[0]?.text,
       "the file body"
+    );
+    assert.match(
+      launches.find((e) => e.result)?.result?.content?.[1]?.text ?? "",
+      /Codex added to the conversation while this ran:[\s\S]*<subagent_notification>/
     );
     // agy ran as the agent whose built-ins are excluded.
     const argv: string[] = launches.find((e) => e.argv)?.argv ?? [];
