@@ -44,6 +44,7 @@ import type {
   PlaytestSandboxResult
 } from "../src/playtesting/docker-sandbox.ts";
 import { runPlaytestEpisode } from "../src/playtesting/episode-runner.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import { createScoredPlaytestPolicy } from "../src/playtesting/policies.ts";
 import {
   fixturePlaytestMetricRegistry,
@@ -53,20 +54,6 @@ import {
 const WORKSPACE_ID = "owner/game";
 const GAME_BUILD = "fixture-game-build-1";
 const ENVIRONMENT_HASH = "d".repeat(64);
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
-}
-
-function hash(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value)).digest("hex");
-}
 
 function capabilities(
   engineBuild = GAME_BUILD,
@@ -100,9 +87,9 @@ function capabilities(
     observationSchema,
     actionSchema,
     eventSchema,
-    observationSchemaHash: hash(observationSchema),
-    actionSchemaHash: hash(actionSchema),
-    eventSchemaHash: hash(eventSchema),
+    observationSchemaHash: playtestManifestHash(observationSchema),
+    actionSchemaHash: playtestManifestHash(actionSchema),
+    eventSchemaHash: playtestManifestHash(eventSchema),
     optionalOperations: [
       ...(supportsBranching
         ? (["game.snapshot", "game.replay", "game.fork"] as const)

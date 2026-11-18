@@ -12,6 +12,7 @@ import {
   PlaytestAdapterProtocolError,
   type PlaytestAdapterStreams
 } from "../src/playtesting/adapter-client.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
 const fixturesDir = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
@@ -546,6 +547,31 @@ test("a wrong capability protocolVersion number is rejected even with an otherwi
     (error: unknown) =>
       error instanceof PlaytestAdapterProtocolError && error.code === -32_004
   );
+});
+
+test("capability schema verification accepts the shared manifest hash regardless of key order", async () => {
+  const { observationSchema } = capabilitiesResult() as {
+    observationSchema: Record<string, unknown>;
+  };
+  const reordered = Object.fromEntries(
+    Object.entries(observationSchema).reverse()
+  );
+  const adapter = fakeAdapter();
+  const client = new PlaytestAdapterClient(adapter.streams, {
+    mintId: () => "req-0001"
+  });
+  const negotiated = client.negotiateCapabilities(5000);
+  await wait(10);
+  respondCapabilities(adapter, {
+    observationSchema: reordered,
+    observationSchemaHash: playtestManifestHash(reordered).toUpperCase()
+  });
+  const result = await negotiated;
+  assert.equal(
+    result.observationSchemaHash.toLowerCase(),
+    playtestManifestHash(observationSchema)
+  );
+  client.close();
 });
 
 test("capability schemas must match the negotiated canonical SHA-256 hashes", async () => {

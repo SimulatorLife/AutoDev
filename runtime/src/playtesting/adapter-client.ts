@@ -23,7 +23,7 @@
  * client never re-uses a request id, never retries a possibly-executed
  * step in place, and never completes a reused id with a late response.
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
 import {
@@ -49,6 +49,7 @@ import {
   PLAYTESTS_PROTOCOL_VERSION
 } from "@simulatorlife/autodev-core";
 
+import { playtestManifestHash } from "./hash-chain.ts";
 import { JsonLineFrameError, JsonLineFramer } from "./jsonl-framer.ts";
 
 /** Method names used by stateful request handling; Core owns the vocabulary. */
@@ -233,36 +234,6 @@ function defaultMintId(): string {
   return `r-${randomUUID()}`;
 }
 
-function canonicalJson(value: unknown): string {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean"
-  ) {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("Schema contains a non-finite number.");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(canonicalJson).join(",") + "]";
-  }
-  if (!isPlainObject(value))
-    throw new TypeError("Schema must contain only JSON values.");
-  const entries = Object.keys(value)
-    .sort()
-    .map((key) => JSON.stringify(key) + ":" + canonicalJson(value[key]));
-  return "{" + entries.join(",") + "}";
-}
-
-function schemaSha256(value: unknown): string {
-  return createHash("sha256")
-    .update(canonicalJson(value), "utf8")
-    .digest("hex");
-}
-
 function assertCapabilitySchemaHashes(
   capabilities: PlaytestCapabilityAdvertisement
 ): void {
@@ -276,7 +247,7 @@ function assertCapabilitySchemaHashes(
     ["eventSchema", capabilities.eventSchema, capabilities.eventSchemaHash]
   ] as const;
   for (const [name, schema, expectedHash] of schemas) {
-    if (schemaSha256(schema) !== expectedHash.toLowerCase()) {
+    if (playtestManifestHash(schema) !== expectedHash.toLowerCase()) {
       throw new TypeError(
         name + " does not match its negotiated SHA-256 schema hash."
       );
