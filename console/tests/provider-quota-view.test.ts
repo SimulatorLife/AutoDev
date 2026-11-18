@@ -272,6 +272,94 @@ test("quota status ignores raw percentages, stale or unknown scopes, and unrecog
   );
 });
 
+test("quota status ignores non-routing and single-model scopes when provider-wide routing is not exhausted", () => {
+  const nonRoutingCodex: QuotaAxiProvider = {
+    provider: "codex",
+    windows: [
+      { id: "weekly", label: "Weekly", kind: "weekly", percentRemaining: 60 },
+      {
+        id: "code_review_weekly",
+        label: "Code review",
+        kind: "weekly",
+        percentRemaining: 0
+      }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["weekly"],
+          runway: { status: "through_reset" }
+        },
+        {
+          scope: "code_review",
+          status: "known",
+          boundedBy: ["code_review_weekly"],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "code_review_weekly"
+          }
+        }
+      ]
+    }
+  };
+  const singleModelClaude: QuotaAxiProvider = {
+    provider: "claude",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        kind: "session",
+        percentRemaining: 50
+      },
+      { id: "model:opus", label: "Opus", kind: "model", percentRemaining: 0 }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["five_hour"],
+          runway: { status: "through_reset" }
+        },
+        {
+          scope: "model:opus",
+          status: "known",
+          boundedBy: ["five_hour", "model:opus"],
+          runway: { status: "exhausted_now", limitingWindowId: "model:opus" }
+        }
+      ]
+    }
+  };
+  const toolsZai: QuotaAxiProvider = {
+    provider: "zai",
+    windows: [
+      { id: "mcp_month", label: "MCP", kind: "monthly", percentRemaining: 0 }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "tools",
+          status: "known",
+          boundedBy: ["mcp_month"],
+          runway: { status: "exhausted_now", limitingWindowId: "mcp_month" }
+        }
+      ]
+    }
+  };
+  const exhausted = exhaustedQuotaByProvider(
+    quotaReport([nonRoutingCodex, singleModelClaude, toolsZai])
+  );
+  assert.equal(exhausted.size, 0);
+});
+
 test("an exhausted agy quota scope changes only the route named by its known limiting window", () => {
   const markup = renderProvidersView(
     quotaReport([
@@ -646,6 +734,43 @@ test("Copilot premium interactions bar reflects used rather than remaining quota
   assert.match(quota, /bg-warning/u);
   assert.match(quota, /text-warning/u);
   assert.doesNotMatch(quota, /bg-error/u);
+});
+
+test("fractional remaining quota above zero does not round up to 100% used", () => {
+  const markup = renderProvidersView(
+    quotaReport([
+      {
+        provider: "codex",
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly",
+            kind: "weekly",
+            percentRemaining: 0.4
+          }
+        ],
+        state: { status: "fresh", stale: false },
+        quotaSemantics: {
+          status: "known",
+          effectiveAvailability: [
+            {
+              scope: "all_models",
+              status: "known",
+              boundedBy: ["weekly"],
+              runway: { status: "through_reset" }
+            }
+          ]
+        }
+      }
+    ]),
+    ["codex"],
+    [healthyProviderRecord("codex")]
+  );
+  const row = rowFor(markup, "codex");
+  assert.match(row, /data-status="ready"/u);
+  assert.match(row, />7d 99% used</u);
+  assert.match(row, /aria-valuetext="99% used, 1% remaining"/u);
+  assert.doesNotMatch(row, /100% used/u);
 });
 
 test("agy quota windows map only to their matching Antigravity route rows", () => {

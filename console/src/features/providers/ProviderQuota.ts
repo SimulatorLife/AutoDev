@@ -288,22 +288,31 @@ function antigravityRouteForExhaustion(
   return null;
 }
 
-function prefersProviderWideExhaustion(
-  current: ProviderQuotaExhaustion | undefined,
+function isProviderWideRoutingScope(scope: string): boolean {
+  return scope === "all_models" || scope === "all_products";
+}
+
+function providerIdForExhaustion(
+  entryProvider: string,
   candidate: ProviderQuotaExhaustion
-): boolean {
-  if (current === undefined) return true;
-  const candidateIsProviderWide =
-    candidate.scope === "all_models" || candidate.scope === "all_products";
-  const currentIsProviderWide =
-    current.scope === "all_models" || current.scope === "all_products";
-  return candidateIsProviderWide && !currentIsProviderWide;
+): string | null {
+  // The shared service has separate AutoDev routes. Do not fan an
+  // unfamiliar limiter out to every route row: both its quota scope and
+  // authoritative limiting window must identify the same family.
+  if (entryProvider === "agy") {
+    return antigravityRouteForExhaustion(
+      candidate.scope,
+      candidate.limitingWindowId
+    );
+  }
+  return isProviderWideRoutingScope(candidate.scope) ? entryProvider : null;
 }
 
 /**
- * Projects only quota-axi's explicit, fresh exhaustion verdicts onto Console
- * provider rows. Percentages remain presentation-only bars: they do not prove
- * exhaustion, provider health, or a routing/cooldown decision.
+ * Projects only quota-axi's explicit, fresh, provider-wide exhaustion verdicts
+ * onto Console provider rows. Non-routing workloads (such as `code_review`,
+ * `tools`, or `grok_bot`), single-model scopes, stale readings, and raw
+ * percentages do not mark a usable provider unavailable.
  */
 export function exhaustedQuotaByProvider(
   report: QuotaAxiSnapshot | null
@@ -319,21 +328,9 @@ export function exhaustedQuotaByProvider(
       []) {
       const candidate = authoritativeExhaustion(entry, availability);
       if (candidate === null) continue;
-      // The shared service has separate AutoDev routes. Do not fan an
-      // unfamiliar limiter out to every route row: both its quota scope and
-      // authoritative limiting window must identify the same family.
-      const providerId =
-        entry.provider === "agy"
-          ? antigravityRouteForExhaustion(
-              candidate.scope,
-              candidate.limitingWindowId
-            )
-          : entry.provider;
+      const providerId = providerIdForExhaustion(entry.provider, candidate);
       if (providerId === null) continue;
-      const current = exhausted.get(providerId);
-      // Prefer a provider-wide verdict when the report also names narrower
-      // exhausted scopes, while retaining one explicit scope for the badge.
-      if (prefersProviderWideExhaustion(current, candidate)) {
+      if (!exhausted.has(providerId)) {
         exhausted.set(providerId, candidate);
       }
     }
@@ -537,8 +534,12 @@ export function ProviderQuotaCell({
       const isWarning =
         !isExhausted &&
         (window.usedPercent > 95 || window.remainingPercent < 5);
-      const remainingRounded = Math.round(window.remainingPercent);
-      const usedRounded = Math.round(window.usedPercent);
+      const remainingRounded = isExhausted
+        ? 0
+        : Math.max(1, Math.round(window.remainingPercent));
+      const usedRounded = isExhausted
+        ? 100
+        : Math.min(99, Math.round(window.usedPercent));
       const summaryText = `${window.label} ${usedRounded}% used`;
       const barColorClass = isExhausted
         ? "bg-error"
