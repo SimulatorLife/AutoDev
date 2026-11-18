@@ -22,7 +22,7 @@ import {
 import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
-import { ToolsView } from "../src/features/tools/ToolsView.ts";
+import { ToolsView } from "../src/features/tools/index.ts";
 
 /**
  * The Console's control affordances.

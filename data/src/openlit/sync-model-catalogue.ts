@@ -516,8 +516,8 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     },
     {
       provider: OPENCLI_GEMINI,
-      modelId: "opencli-gemini-3.8-flash",
-      displayName: "Gemini 3.8 Flash (opencli)",
+      modelId: "opencli-gemini-4-hydrogen",
+      displayName: "Gemini 4 Hydrogen (opencli)",
       modelType: "chat",
       contextWindow: 128_000,
       inputPricePerMToken: 0,

@@ -46,7 +46,11 @@ import {
   responseOutputText
 } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
-import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  providerInjectsRoleMcp,
+  resolveSandboxMode,
+  roleScopedMcp
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,
@@ -124,7 +128,8 @@ import {
   recordSpawnFailure,
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER,
-  subagentProviderForThread
+  subagentProviderForThread,
+  THREAD_ID_HEADER
 } from "./subagents.ts";
 import {
   endAttemptSpan,
@@ -619,6 +624,9 @@ export function downstreamHeaders(
   if (session?.key && route.provider !== "codex") {
     headers[SESSION_ID_HEADER] = session.key;
     headers[SESSION_SCOPE_HEADER] = session.scope ?? "identified";
+    if (session.thread) {
+      headers[THREAD_ID_HEADER] = session.thread;
+    }
   }
   return headers;
 }
@@ -4270,6 +4278,27 @@ function routingRejection(
         capable.length > 0 ? ` (${capable.join(", ")})` : ""
       }.`,
       reason: `no provider with a delegation path can serve ${subject}`
+    };
+  }
+  const scopedMcp = providerRole === "subagent" ? roleScopedMcp(role) : [];
+  if (scopedMcp.length > 0) {
+    const configuredProviders = tier
+      ? ROUTING_POLICY.effectiveProviderGroups(tier, providerRole).flat()
+      : [];
+    const injecting = [
+      ...new Set(
+        configuredProviders.filter((provider) =>
+          providerInjectsRoleMcp(provider)
+        )
+      )
+    ];
+    return {
+      failureClass: "provider_disabled",
+      message:
+        injecting.length > 0
+          ? `No provider with role-scoped MCP injection (${scopedMcp.join(", ")}) is enabled for ${subject}. Enable one of: ${injecting.join(", ")}.`
+          : `No provider configured for ${subject} supports role-scoped MCP injection (${scopedMcp.join(", ")}).`,
+      reason: `no enabled provider supports role-scoped MCP injection (${scopedMcp.join(", ")}) for ${subject}`
     };
   }
   return {

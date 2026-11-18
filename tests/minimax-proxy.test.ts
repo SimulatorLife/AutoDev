@@ -1361,3 +1361,50 @@ test("MiniMax compacts multibyte history using actual JSON bytes", async () => {
     )
   );
 });
+
+test("MiniMax HTTP error limit detection emits reported quota_exhausted for HTTP 500 limit errors and null for non-limit 500s", async () => {
+  const { minimaxDeclaredErrorLimit } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const { declaredLimit } =
+    await import("@simulatorlife/autodev-runtime/router/proxy");
+  const { limitResponseHeaders } =
+    await import("@simulatorlife/autodev-runtime/shared/provider-limits");
+
+  const quotaLimit = minimaxDeclaredErrorLimit(
+    { ok: false, status: 500, headers: new Headers() },
+    JSON.stringify({
+      type: "error",
+      error: { type: "server_error", message: "usage limit exceeded (2056)" }
+    })
+  );
+  assert.deepEqual(quotaLimit, {
+    limitClass: "quota_exhausted",
+    limitType: "quota",
+    resetsAt: null,
+    source: "reported"
+  });
+
+  // Router declaredLimit reads those headers as a structured reported limit.
+  const routerLimit = declaredLimit(
+    new Headers(limitResponseHeaders(quotaLimit)),
+    "{}"
+  );
+  assert.equal(routerLimit?.limitClass, "quota_exhausted");
+  assert.equal(routerLimit?.source, "reported");
+
+  const baseRespLimit = minimaxDeclaredErrorLimit(
+    { ok: false, status: 500, headers: new Headers() },
+    JSON.stringify({
+      base_resp: { status_code: 1008, status_msg: "insufficient balance" }
+    })
+  );
+  assert.equal(baseRespLimit?.limitClass, "quota_exhausted");
+
+  const plainServerError = minimaxDeclaredErrorLimit(
+    { ok: false, status: 500, headers: new Headers() },
+    JSON.stringify({
+      error: { type: "server_error", message: "internal backend timeout" }
+    })
+  );
+  assert.equal(plainServerError, null);
+});

@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { canonicalToolIdentity } from "../../../src/features/tools/tool-identity.ts";
-import { ToolDetailView } from "../../../src/features/tools/ToolDetailView.ts";
-import { ToolUsagePanel } from "../../../src/features/tools/ToolUsagePanel.ts";
+import {
+  findToolById,
+  readToolsFilters,
+  ToolDetailView,
+  ToolUsagePanel
+} from "../../../src/features/tools/index.ts";
 import {
   catalogueDetailOutcome,
   type CatalogueObservation
@@ -22,18 +25,20 @@ import {
 
 export const dynamic = "force-dynamic";
 
-interface ToolDetailSearchParams {
-  readonly range?: string | string[] | undefined;
-  readonly startDate?: string | string[] | undefined;
-  readonly endDate?: string | string[] | undefined;
-  /** The list's narrowing, carried here so the breadcrumb can go back to it. */
-  readonly source?: string | string[] | undefined;
-  readonly role?: string | string[] | undefined;
-  readonly q?: string | string[] | undefined;
-}
+/**
+ * The address the detail page was opened with.
+ *
+ * It carries the usage window the panel reads (`startDate`, `endDate`) and
+ * the list's narrowing (`source`, `role`, `q`), which the breadcrumb travels
+ * back with. The narrowing is read by the catalogue's own reader, so the
+ * detail page and the list page read one address the same way.
+ */
+type ToolDetailSearchParams = Readonly<
+  Record<string, string | readonly string[] | undefined>
+>;
 
-function first(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+function first(value: string | readonly string[] | undefined): string {
+  return typeof value === "string" ? value : (value?.[0] ?? "");
 }
 
 /**
@@ -98,7 +103,6 @@ export default async function ToolDetailPage({
     params,
     searchParams ?? Promise.resolve({} as ToolDetailSearchParams)
   ]);
-  const decoded = decodeURIComponent(rawName);
   const { section, config } = readNodeContext("/tools");
   if (!config) {
     return React.createElement(
@@ -126,12 +130,10 @@ export default async function ToolDetailPage({
     );
   }
 
-  const tool = result.data.tools.find(
-    (entry) =>
-      entry.name === decoded ||
-      `mcp__${entry.server ?? ""}__${entry.name}` === decoded ||
-      `${entry.source}:${entry.server ?? ""}:${entry.name}` === decoded
-  );
+  // The catalogue owns the address of its own entries, so the lookup is the
+  // catalogue's: the id the list wrote is the id that resolves, and any other
+  // spelling addresses an entry the Console never linked.
+  const tool = findToolById(result.data.tools, rawName);
   // A tool the catalogue does not hold has no page -- but only when the
   // catalogue was fully read. It is built from two independent reads, and a
   // catalogue whose RuleSync half or whose contract half was not observed
@@ -172,10 +174,10 @@ export default async function ToolDetailPage({
       validity: result.data.validity,
       executionContractObserved: result.data.executionContractObserved,
       usagePanel: React.createElement(ToolUsagePanel, {
-        // The catalogue owns the identity of a tool, and the telemetry store
-        // only knows the names it happened to record, so the matching names
-        // travel with the panel rather than being invented in the browser.
-        identities: canonicalToolIdentity(tool),
+        // The panel is given the entry rather than the names to match: the
+        // catalogue owns a tool's identity, and the telemetry store only
+        // knows the names it happened to record.
+        tool,
         usageLink: result.data.usageLink,
         startDate: first(sp.startDate),
         endDate: first(sp.endDate)
@@ -183,11 +185,7 @@ export default async function ToolDetailPage({
       // The list the operator came from. The detail route is a path, so the
       // narrowing travels beside it as a query and the breadcrumb returns
       // them to the list they were reading.
-      listFilters: {
-        source: first(sp.source),
-        role: first(sp.role),
-        query: first(sp.q)
-      }
+      listFilters: readToolsFilters(sp)
     })
   );
 }

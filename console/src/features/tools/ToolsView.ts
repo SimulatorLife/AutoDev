@@ -50,13 +50,13 @@ import {
   SUCCESS_TONE_CLASS
 } from "../../components/ui/tones.ts";
 import { qualifiedToolName, toolId } from "./tool-identity.ts";
+import type { ToolsListFilters } from "./tools-list-filters.ts";
 import {
   filterTools,
   isToolSource,
   TOOL_SOURCE_LABEL,
   toolDetailHref,
   TOOLS_LIST_PATH,
-  type ToolsListFilters,
   toolsRoleHref,
   toolsSourceHref
 } from "./tools-list-url.ts";

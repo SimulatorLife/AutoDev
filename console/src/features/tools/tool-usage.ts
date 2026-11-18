@@ -1,4 +1,31 @@
-import type { ToolUsageEvidence } from "@simulatorlife/autodev-core";
+import type {
+  ToolCatalogItem,
+  ToolUsageEvidence
+} from "@simulatorlife/autodev-core";
+
+import { qualifiedToolName } from "./tool-identity.ts";
+
+/**
+ * Canonical identifiers the Usage telemetry breakdown may use for a Tools
+ * catalog entry. The dedicated read-only Usage path surfaces the
+ * `mcp-by-tool` widget whose rows are matched by tool name; the catalogue
+ * exposes the same identifiers so the evidence can be looked up without
+ * inventing a second authority for a tool's name.
+ *
+ * The identities belong here rather than with the URL id: they are the names
+ * the telemetry store happened to record, not the names the Console writes
+ * into an address.
+ */
+export function canonicalToolIdentity(
+  tool: ToolCatalogItem
+): readonly string[] {
+  const identities = new Set<string>([tool.name]);
+  if (tool.server) {
+    identities.add(qualifiedToolName(tool));
+    identities.add(tool.server + "__" + tool.name);
+  }
+  return Array.from(identities);
+}
 
 /**
  * Resolve the historical use/error evidence for a single Tools catalog
@@ -10,8 +37,8 @@ import type { ToolUsageEvidence } from "@simulatorlife/autodev-core";
  *
  * The Usage `mcp-by-tool` widget exposes call counts grouped by tool name;
  * the matching algorithm walks each canonical identity the catalog exposes
- * for a tool (bare name, Codex-prefixed MCP form, source-qualified form)
- * and stops at the first hit. `mcp-errors` is a global Usage widget; the
+ * for a tool (the bare name, the qualified MCP name, and the server-prefixed
+ * name) and stops at the first hit. `mcp-errors` is a global Usage widget; the
  * per-tool error count is intentionally left null because the canonical
  * Usage telemetry path does not break errors down by tool name. The
  * catalog never synthesises per-tool error counts.

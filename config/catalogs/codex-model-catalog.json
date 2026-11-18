@@ -1173,9 +1173,9 @@
       ]
     },
     {
-      "slug": "opencli-gemini-3.8-flash",
-      "display_name": "Gemini 3.8 Flash (opencli)",
-      "description": "Gemini web's 3.8 Flash model, driven through opencli and the signed-in browser.",
+      "slug": "opencli-gemini-4-hydrogen",
+      "display_name": "Gemini 4 Hydrogen (opencli)",
+      "description": "Gemini web's 4 Hydrogen model, driven through opencli and the signed-in browser.",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {

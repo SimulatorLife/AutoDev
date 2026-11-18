@@ -773,6 +773,12 @@ test("a call is read whatever its quoting, namespace, escaping or missing close"
   const garbled = parseOpencliReply("<tool_call exec>text(1);</tool_call>");
   assert.deepEqual(garbled.calls, []);
   assert.equal(garbled.unparsedCall, true);
+  // Empty <escape></escape> tags emitted around tool calls by ChatGPT DOM rendering are stripped.
+  const withEscape = parseOpencliReply(
+    '<escape></escape>\n<tool_call name="exec">\ntext(1);\n</tool_call>'
+  );
+  assert.equal(withEscape.text, "");
+  assert.deepEqual(withEscape.calls, [{ name: "exec", input: "text(1);" }]);
 });
 
 test("parsed calls become the Responses item for the tool Codex offered", () => {

@@ -135,6 +135,7 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "basename",
   "b2sum",
   "cat",
+  "cd",
   "cksum",
   "cmp",
   "column",
@@ -689,10 +690,21 @@ export function splitSegments(command: string): string[] {
   const segments: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  for (const character of command) {
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
     if (quote !== null) {
+      if (quote === '"' && character === "\\" && index + 1 < command.length) {
+        current += character + command[index + 1]!;
+        index += 1;
+        continue;
+      }
       current += character;
       if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "\\" && index + 1 < command.length) {
+      current += character + command[index + 1]!;
+      index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
@@ -718,17 +730,39 @@ export function splitSegments(command: string): string[] {
     .filter((segment) => segment.length > 0);
 }
 
+const DOUBLE_QUOTED_ESCAPE_CHARS = new Set(['"', "\\", "$", "`"]);
+
+function consumeEscapedTokenChar(
+  segment: string,
+  index: number,
+  quote: '"' | "'" | null
+): { char: string; nextIndex: number } | null {
+  if (segment[index] !== "\\" || index + 1 >= segment.length) return null;
+  if (quote === "'") return null;
+  const next = segment[index + 1]!;
+  if (quote === '"' && !DOUBLE_QUOTED_ESCAPE_CHARS.has(next)) return null;
+  return { char: next, nextIndex: index + 1 };
+}
+
 /**
  * Split one segment into its command and arguments.
  *
  * Quoting is honoured so that a quoted argument is one argument: a command
- * whose name is quoted is still the command it names.
+ * whose name is quoted is still the command it names. Backslash escapes
+ * inside double quotes (`\"`, `\\`) or outside quotes preserve quoting.
  */
 export function tokenize(segment: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  for (const character of segment) {
+  for (let index = 0; index < segment.length; index += 1) {
+    const escaped = consumeEscapedTokenChar(segment, index, quote);
+    if (escaped) {
+      current += escaped.char;
+      index = escaped.nextIndex;
+      continue;
+    }
+    const character = segment[index]!;
     if (quote) {
       if (character === quote) quote = null;
       else current += character;
@@ -1081,6 +1115,80 @@ export function curlCommandIsReadOnly(args: readonly string[]): boolean {
   return true;
 }
 
+const SAFE_SED_SINGLE = /^\d+[pq=]$/u;
+const SAFE_SED_RANGE = /^\d+,(?:\d+|\$)[pq=]$/u;
+const SAFE_SED_SHORT_FLAGS = /^-[nEru]+$/u;
+const SAFE_SED_SIMPLE_FLAGS = new Set([
+  "-n",
+  "--quiet",
+  "--silent",
+  "-E",
+  "-r",
+  "--regexp-extended",
+  "-u",
+  "--unbuffered"
+]);
+
+function isSafeSedScript(script: string): boolean {
+  const clauses = script
+    .split(";")
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+  return (
+    clauses.length > 0 &&
+    clauses.every(
+      (clause) => SAFE_SED_SINGLE.test(clause) || SAFE_SED_RANGE.test(clause)
+    )
+  );
+}
+
+function consumeSedExpressionFlag(
+  args: readonly string[],
+  index: number
+): { expr: string; nextIndex: number } | null {
+  const arg = args[index]!;
+  if (arg === "-e" || arg === "--expression") {
+    const expr = args[index + 1];
+    return expr === undefined ? null : { expr, nextIndex: index + 1 };
+  }
+  if (arg.startsWith("--expression=")) {
+    return { expr: arg.slice("--expression=".length), nextIndex: index };
+  }
+  return null;
+}
+
+/**
+ * Whether a `sed` invocation is strictly a line-range print inspection.
+ *
+ * Rejects `-i`/`--in-place`, `-f`/`--file`, unknown flags, and any script that
+ * goes beyond printing (`p`), quitting (`q`), or printing line numbers (`=`).
+ */
+export function sedCommandIsReadOnly(args: readonly string[]): boolean {
+  let script: string | null = null;
+  let endOfFlags = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (!endOfFlags && arg === "--") {
+      endOfFlags = true;
+      continue;
+    }
+    if (!endOfFlags && arg.startsWith("-") && arg.length > 1) {
+      if (SAFE_SED_SIMPLE_FLAGS.has(arg) || SAFE_SED_SHORT_FLAGS.test(arg))
+        continue;
+      const exprFlag = consumeSedExpressionFlag(args, index);
+      if (!exprFlag || !isSafeSedScript(exprFlag.expr)) return false;
+      script = exprFlag.expr;
+      index = exprFlag.nextIndex;
+      continue;
+    }
+    if (script === null) {
+      if (!isSafeSedScript(arg)) return false;
+      script = arg;
+    }
+  }
+  return script !== null;
+}
+
 /**
  * Whether one shell segment is read-only.
  */
@@ -1117,7 +1225,7 @@ function segmentIsReadOnly(
     if (script === null) {
       return {
         ok: false,
-        why: "`${name}` was given no script to run"
+        why: `\`${name}\` was given no script to run`
       };
     }
     if (depth >= 2) {
@@ -1126,7 +1234,7 @@ function segmentIsReadOnly(
         why: "it nests shells more deeply than a read-only role may run"
       };
     }
-    return segmentIsReadOnly(script, depth + 1);
+    return evaluateCommandSegments(script, depth + 1);
   }
 
   if (name === "git")
@@ -1134,6 +1242,11 @@ function segmentIsReadOnly(
   if (name === "gh") return { ok: ghCommandIsReadOnly(args), why: "gh writes" };
   if (name === "curl")
     return { ok: curlCommandIsReadOnly(args), why: "curl writes" };
+  if (name === "sed")
+    return {
+      ok: sedCommandIsReadOnly(args),
+      why: "sed can write or execute commands unless restricted to line-range printing"
+    };
 
   const flagged = FLAGGED_COMMANDS[name];
   if (flagged) {
@@ -1151,24 +1264,106 @@ function segmentIsReadOnly(
 
   return {
     ok: false,
-    why: "`${name}` is not a command a read-only role may run"
+    why: `\`${name}\` is not a command a read-only role may run`
+  };
+}
+
+const SAFE_NULL_REDIRECT = /^>(?:\/dev\/null|&[12-])(?=$|[\s;|&])/u;
+const SAFE_REDIRECT_BOUNDARY = /[\s;|&]/u;
+
+function isCommandSubstitutionStart(command: string, index: number): boolean {
+  const ch = command[index]!;
+  return ch === "`" || (ch === "$" && command[index + 1] === "(");
+}
+
+function consumeSafeRedirect(
+  command: string,
+  index: number,
+  cleaned: string
+): { cleaned: string; nextIndex: number } | null {
+  const match = SAFE_NULL_REDIRECT.exec(command.slice(index));
+  if (!match) return null;
+  const prev = cleaned.at(-1) ?? "";
+  const beforePrev = cleaned.at(-2) ?? "";
+  const hasFdPrefix =
+    prev === "1" || prev === "2" || (prev === "&" && match[0].startsWith(">/"));
+  const atBoundary =
+    cleaned.length === 1 || SAFE_REDIRECT_BOUNDARY.test(beforePrev);
+  const nextCleaned =
+    hasFdPrefix && atBoundary ? `${cleaned.slice(0, -1)} ` : `${cleaned} `;
+  return { cleaned: nextCleaned, nextIndex: index + match[0].length - 1 };
+}
+
+function consumeRedirectEscape(
+  command: string,
+  index: number,
+  quote: '"' | "'" | null
+): { text: string; nextIndex: number } | null {
+  if (quote === "'" || command[index] !== "\\" || index + 1 >= command.length)
+    return null;
+  return {
+    text: `${command[index]}${command[index + 1]}`,
+    nextIndex: index + 1
   };
 }
 
 /**
- * The shell constructs that let a command write or run something else.
- *
- * Redirection writes a file, command substitution runs another command, and
- * both are ways to smuggle a write past a list of readable commands.
+ * Scan unquoted/quoted shell syntax for write-capable redirections and command
+ * substitutions, while stripping benign null/fd redirections (`2>/dev/null`,
+ * `2>&1`, `&>/dev/null`) so downstream `splitSegments` does not split on `&`.
  */
-const WRITE_CONSTRUCTS: readonly {
-  readonly pattern: RegExp;
-  readonly why: string;
-}[] = [
-  { pattern: />/u, why: "it redirects output into a file" },
-  { pattern: /`/u, why: "it substitutes the output of another command" },
-  { pattern: /\$\(/u, why: "it substitutes the output of another command" }
-];
+function inspectAndCleanRedirects(command: string): {
+  why: string | null;
+  cleaned: string;
+} {
+  let quote: '"' | "'" | null = null;
+  let cleaned = "";
+  for (let index = 0; index < command.length; index += 1) {
+    const escaped = consumeRedirectEscape(command, index, quote);
+    if (escaped) {
+      cleaned += escaped.text;
+      index = escaped.nextIndex;
+      continue;
+    }
+    const ch = command[index]!;
+    if (quote !== "'" && isCommandSubstitutionStart(command, index)) {
+      return { why: "it substitutes the output of another command", cleaned };
+    }
+    if (quote !== null) {
+      cleaned += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      cleaned += ch;
+      continue;
+    }
+    if (ch === ">") {
+      const consumed = consumeSafeRedirect(command, index, cleaned);
+      if (!consumed) return { why: "it redirects output into a file", cleaned };
+      cleaned = consumed.cleaned;
+      index = consumed.nextIndex;
+      continue;
+    }
+    cleaned += ch;
+  }
+  return { why: null, cleaned };
+}
+
+function evaluateCommandSegments(
+  command: string,
+  depth: number
+): { ok: boolean; why: string } {
+  const { why, cleaned } = inspectAndCleanRedirects(command);
+  if (why !== null) return { ok: false, why };
+
+  for (const segment of splitSegments(cleaned)) {
+    const verdict = segmentIsReadOnly(segment, depth);
+    if (!verdict.ok) return verdict;
+  }
+  return { ok: true, why: "" };
+}
 
 /**
  * Whether a shell command may run in a read-only role.
@@ -1180,22 +1375,12 @@ export function evaluateReadOnlyCommand(command: string): ReadOnlyDecision {
   const trimmed = command.trim();
   if (trimmed.length === 0) return ALLOWED;
 
-  for (const construct of WRITE_CONSTRUCTS) {
-    if (construct.pattern.test(trimmed))
-      return {
-        allowed: false,
-        reason: `This role runs in a read-only sandbox, and the command ${construct.why}.`
-      };
-  }
-
-  for (const segment of splitSegments(trimmed)) {
-    const verdict = segmentIsReadOnly(segment, 0);
-    if (!verdict.ok) {
-      return {
-        allowed: false,
-        reason: `This role runs in a read-only sandbox, and the command ${verdict.why}. Report what you needed instead of running it.`
-      };
-    }
+  const verdict = evaluateCommandSegments(trimmed, 0);
+  if (!verdict.ok) {
+    return {
+      allowed: false,
+      reason: `This role runs in a read-only sandbox, and the command ${verdict.why}. Report what you needed instead of running it.`
+    };
   }
   return ALLOWED;
 }

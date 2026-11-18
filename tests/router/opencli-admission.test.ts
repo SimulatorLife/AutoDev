@@ -61,7 +61,7 @@ function recorder(): any {
 
 const KEY = "CODEX_ROUTER_OPENCLI_API_KEY";
 const chatgptModel = "opencli-chatgpt-balanced";
-const geminiModel = "opencli-gemini-3.8-flash";
+const geminiModel = "opencli-gemini-4-hydrogen";
 
 /**
  * The site's configured route, with room for one request: the tests below

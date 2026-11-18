@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import { readToolsFilters } from "../../src/features/tools/tools-list-url.ts";
-import { ToolsView } from "../../src/features/tools/ToolsView.ts";
+import { readToolsFilters, ToolsView } from "../../src/features/tools/index.ts";
 import {
   controlApiFailureCode,
   fetchTools

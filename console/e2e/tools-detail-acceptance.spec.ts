@@ -5,7 +5,6 @@ import { documentFitsViewport } from "./acceptance-helpers.ts";
 const TOOLS_URL = "/tools";
 const NATIVE_TOOL_ID = "read_file";
 const MCP_TOOL_ID = "mcp__lsp__lsp_goto_definition";
-const MCP_TOOL_SOURCE_QUALIFIED_ID = "mcp:lsp:lsp_goto_definition";
 const MCP_SERVER = "lsp";
 
 /**
@@ -102,23 +101,6 @@ test("the tool detail reports the catalog's source authority for an MCP tool", a
   await expect(roleLinks.first()).toHaveAttribute("href", "/tools?role=worker");
 
   expect(consoleErrors).toEqual([]);
-});
-
-test("the tool detail addresses the same entry by its source-qualified name", async ({
-  page
-}) => {
-  await page.setViewportSize({ width: 1280, height: 844 });
-  // The catalog exposes three identities for one entry. All of them have to
-  // reach the same page, or a link written against one of them 404s.
-  await page.goto(`${TOOLS_URL}/${MCP_TOOL_SOURCE_QUALIFIED_ID}`);
-
-  await expect(page.locator("[data-tool-name]")).toHaveAttribute(
-    "data-tool-name",
-    MCP_TOOL_ID
-  );
-  await expect(fieldValue(page, "tool-source-authority", "Server")).toHaveText(
-    MCP_SERVER
-  );
 });
 
 test("the tool detail does not invent a usage count for an unobserved tool", async ({

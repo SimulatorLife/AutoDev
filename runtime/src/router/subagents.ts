@@ -63,6 +63,7 @@ export const INHERITED_CHILD_MODELS = Object.freeze(
 
 export const SESSION_ID_HEADER = "x-autodev-session-id";
 export const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
+export const THREAD_ID_HEADER = "x-autodev-thread-id";
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
 export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
 export const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";

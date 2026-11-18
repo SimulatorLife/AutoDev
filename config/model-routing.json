@@ -173,7 +173,7 @@
     },
     "opencli-gemini": {
       "models": {
-        "default": "opencli-gemini-3.8-flash",
+        "default": "opencli-gemini-4-hydrogen",
         "smart": "opencli-gemini-4-argon",
         "orchestrator": "opencli-gemini-4-argon"
       },

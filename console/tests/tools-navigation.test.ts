@@ -6,7 +6,7 @@ import type { ToolCatalogItem } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToolsView } from "../src/features/tools/ToolsView.ts";
+import { ToolsView } from "../src/features/tools/index.ts";
 
 /**
  * Same-origin internal links on `/tools` must go through the shared

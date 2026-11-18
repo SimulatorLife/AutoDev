@@ -4,15 +4,14 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { readToolsFilters, ToolsView } from "../src/features/tools/index.ts";
 import {
   filterTools,
-  readToolsFilters,
   toolDetailHref,
   toolsListHref,
   toolsRoleHref,
   toolsSourceHref
 } from "../src/features/tools/tools-list-url.ts";
-import { ToolsView } from "../src/features/tools/ToolsView.ts";
 
 /**
  * The tool catalogue can be narrowed.

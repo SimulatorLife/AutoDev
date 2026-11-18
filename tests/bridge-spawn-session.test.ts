@@ -603,3 +603,47 @@ test("a notification naming a child with no open edge establishes no ownership",
   });
   assert.equal(r.getChildSession("forged-child"), undefined);
 });
+
+test("concurrent leaf subagents sharing root session id never overwrite or close the orchestrator spawn session", () => {
+  const [r] = registry();
+  const orchSession = openSpawnSession(
+    {
+      "x-autodev-session-id": "root-sess",
+      "x-autodev-thread-id": "root-sess",
+      "x-autodev-session-scope": "identified"
+    },
+    r,
+    { orchestrator: true, role: "orchestrator", workspace: "/repo" }
+  );
+  assert.equal(orchSession, "root-sess");
+  const orchToken = r.tokenOf("root-sess");
+  assert.ok(orchToken);
+
+  // Leaf subagent shares x-autodev-session-id but carries its own thread id.
+  const leafSession = openSpawnSession(
+    {
+      "x-autodev-session-id": "root-sess",
+      "x-autodev-thread-id": "child-thread-1",
+      "x-autodev-session-scope": "identified"
+    },
+    r,
+    { orchestrator: false, role: "explorer", workspace: "/repo" }
+  );
+  assert.equal(leafSession, "child-thread-1");
+  assert.equal(r.tokenOf("child-thread-1"), null);
+
+  // Closing the leaf turn with its null token leaves the active orchestrator intact.
+  assert.deepEqual(r.close("child-thread-1", null), []);
+  assert.equal(r.mayDelegate("root-sess"), true);
+
+  // Even without a separate thread header, closing a leaf turn with token=null
+  // does not wipe an active orchestrator session held on that key.
+  assert.deepEqual(r.close("root-sess", null), []);
+  assert.equal(r.mayDelegate("root-sess"), true);
+
+  const rec = r.record("root-sess", [
+    { agent_type: "worker", message: "implement fix" }
+  ]);
+  assert.equal(rec.accepted, true, rec.message);
+  assert.equal(r.close("root-sess", orchToken).length, 1);
+});

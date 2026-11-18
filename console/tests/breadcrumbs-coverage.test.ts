@@ -81,7 +81,40 @@ function featureModules(route: Route): readonly string[] {
     if (specifier === undefined) continue;
     modules.push(join(dirname(route.page), specifier));
   }
-  return modules;
+  return publishedModules(modules);
+}
+
+/**
+ * The modules a feature's entrypoint publishes.
+ *
+ * A route imports a feature through its entrypoint rather than through the
+ * modules behind it, so the guard has to look through the entrypoint: the
+ * view that renders the trail is one of the modules the entrypoint
+ * publishes. Reading only the entrypoint would report every such route as
+ * having no trail at all, which is the guard failing on the shape of the
+ * import rather than on the behaviour it guards.
+ */
+function publishedModules(modules: readonly string[]): readonly string[] {
+  const published: string[] = [];
+  const seen = new Set<string>();
+  const visit = (module: string): void => {
+    if (seen.has(module)) return;
+    seen.add(module);
+    let source: string;
+    try {
+      source = readFileSync(module, "utf8");
+    } catch {
+      return;
+    }
+    published.push(module);
+    for (const match of source.matchAll(/export\s+\*\s+from\s+"(\.[^"]+)"/gu)) {
+      const specifier = match[1];
+      if (specifier === undefined) continue;
+      visit(join(dirname(module), specifier));
+    }
+  };
+  for (const module of modules) visit(module);
+  return published;
 }
 
 test("every detail route presents the shared breadcrumb landmark", () => {

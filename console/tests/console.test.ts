@@ -134,6 +134,7 @@ import { ProviderStatusBadge } from "../src/features/providers/provider-status.t
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
+import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -216,7 +217,6 @@ import {
   TAG_SHAPE,
   ToolDetailView,
   ToolsView,
-  toolUsageView,
   UsageView,
   withControlFailure,
   WorkspacesView

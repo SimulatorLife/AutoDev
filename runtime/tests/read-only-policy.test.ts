@@ -307,7 +307,10 @@ test("the git, gh and curl rules answer on their own", () => {
   assert.equal(ghCommandIsReadOnly(["pr", "list"]), true);
   assert.equal(ghCommandIsReadOnly(["pr", "create"]), false);
   assert.equal(curlCommandIsReadOnly(["https://example.com"]), true);
-  assert.equal(curlCommandIsReadOnly(["-X", "POST", "https://example.com"]), false);
+  assert.equal(
+    curlCommandIsReadOnly(["-X", "POST", "https://example.com"]),
+    false
+  );
 });
 
 test("an MCP server's tools are left to the role's own contract", () => {
@@ -343,4 +346,56 @@ test("a native tool the policy does not know is refused when its name says it wr
     evaluateReadOnlyToolCall({ toolName: "view_image", toolInput: {} }).allowed,
     true
   );
+});
+
+test("harmless null/fd redirects, quoted arrows, and escaped regex quotes are allowed while real redirects fail closed", () => {
+  for (const cmd of [
+    String.raw`rg "from ['\"]a|b['\"]" src 2>/dev/null || true`,
+    "rg foo src 2>&1 | head -n 20",
+    "git branch >/dev/null",
+    "rg 'a => b' src",
+    'rg "a => b" src',
+    "rg '`foo`' src",
+    "rg '$(literal)' src",
+    "cd /repo && rg -n 'pattern' src",
+    "sed -n '1,120p' src/app.ts",
+    "sed -n -e '10,40p;80q' src/app.ts"
+  ]) {
+    const decision = evaluateReadOnlyCommand(cmd);
+    assert.equal(
+      decision.allowed,
+      true,
+      `expected allowed: ${cmd} (${decision.reason ?? ""})`
+    );
+  }
+
+  for (const unsafe of [
+    "rg foo src > /tmp/out.txt",
+    "rg foo src >> out.txt",
+    "rg foo src 2>/tmp/err.txt",
+    "rg foo src >/dev/nullfile",
+    'echo "$(rm -rf /)"',
+    'echo "`whoami`"',
+    "sed -i 's/a/b/' src/app.ts",
+    "sed -n '1,10w out.txt' src/app.ts",
+    "sed 's/a/b/e' src/app.ts"
+  ]) {
+    assert.equal(
+      evaluateReadOnlyCommand(unsafe).allowed,
+      false,
+      `expected refused: ${unsafe}`
+    );
+  }
+});
+
+test("refused command message interpolates the actual command name rather than literal ${name}", () => {
+  const unknownCmd = evaluateReadOnlyCommand("python3 script.py");
+  assert.equal(unknownCmd.allowed, false);
+  assert.doesNotMatch(unknownCmd.reason ?? "", /\$\{name\}/u);
+  assert.match(unknownCmd.reason ?? "", /`python3`/u);
+
+  const bareShell = evaluateReadOnlyCommand("bash");
+  assert.equal(bareShell.allowed, false);
+  assert.doesNotMatch(bareShell.reason ?? "", /\$\{name\}/u);
+  assert.match(bareShell.reason ?? "", /`bash`/u);
 });

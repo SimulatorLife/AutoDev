@@ -4,7 +4,8 @@ import {
 } from "@simulatorlife/autodev-runtime/router/codex-state-collector";
 import {
   SESSION_ID_HEADER,
-  SESSION_SCOPE_HEADER
+  SESSION_SCOPE_HEADER,
+  THREAD_ID_HEADER
 } from "@simulatorlife/autodev-runtime/router/subagents";
 import { contextHeaderValue } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
@@ -661,7 +662,11 @@ export class SpawnSessionRegistry {
    */
   close(sessionKey: string, token?: string | null): SpawnChild[] {
     const session = this.sessions.get(sessionKey);
-    if (token !== undefined && token !== null) {
+    if (token === null) {
+      this.leafSessions.delete(sessionKey);
+      return [];
+    }
+    if (token !== undefined) {
       if (!session || session.token !== token) return [];
       this.sessions.delete(sessionKey);
       this.setBounded(
@@ -715,11 +720,15 @@ export class SpawnSessionRegistry {
 /**
  * The delegation session this request holds, or null when it holds none.
  *
- * The session key is the Codex conversation: the spawn script recovers
- * terminal children under it, so it has to be the thread id and not a
- * bridge-local token. A request the router could not identify holds none --
- * the router falls back to one process-wide key, and collecting under it
- * would attach one conversation's delegation to another's turn.
+ * The session key is the agent's Codex thread (`THREAD_ID_HEADER`), falling
+ * back to `SESSION_ID_HEADER` when no thread header was sent: the spawn script
+ * recovers terminal children under the orchestrator's thread, and every child
+ * subagent shares the root's `SESSION_ID_HEADER` while carrying its own
+ * `THREAD_ID_HEADER`. Keying by thread keeps concurrent leaf subagents from
+ * revoking the active orchestrator session. A request the router could not
+ * identify holds none -- the router falls back to one process-wide key, and
+ * collecting under it would attach one conversation's delegation to another's
+ * turn.
  *
  * Opening replaces whatever was there: the previous turn on that conversation
  * is over, and carrying its children forward would spawn them twice.
@@ -734,7 +743,8 @@ export function openSpawnSession(
     payload?: unknown;
   }
 ): string | null {
-  const session = contextHeaderValue(headers, SESSION_ID_HEADER);
+  const thread = contextHeaderValue(headers, THREAD_ID_HEADER);
+  const session = thread ?? contextHeaderValue(headers, SESSION_ID_HEADER);
   const scope = contextHeaderValue(headers, SESSION_SCOPE_HEADER);
   if (session === null) return null;
   if (!SpawnSessionRegistry.canHold(session, scope)) return null;

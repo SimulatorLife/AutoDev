@@ -2402,3 +2402,36 @@ test("proxyOrchestratorResponse restores compact root bootstrap after compaction
     COOLDOWNS.clearAll();
   }
 });
+
+test("empty role-scoped MCP candidate chain names missing role MCP injection providers rather than generic provider_disabled", async () => {
+  const response = responseRecorder();
+  try {
+    await proxyFallbackChain(
+      response,
+      {
+        candidates: [],
+        role: "browser-tester",
+        origin: "subagent",
+        agentRole: "browser-tester",
+        subject: "role browser-tester"
+      },
+      { model: "autodev/browser-tester", input: [], stream: false },
+      false,
+      "req-browser-tester-empty",
+      null,
+      null
+    );
+    assert.equal(response.statusCode, 400);
+    const parsed = JSON.parse(response.body) as {
+      error?: { message?: string };
+    };
+    assert.match(
+      parsed.error?.message ?? "",
+      /role-scoped MCP injection \(playwright\).*browser-tester/u
+    );
+    assert.match(parsed.error?.message ?? "", /antigravity|copilot/u);
+  } finally {
+    agentActivity.reset();
+    COOLDOWNS.clearAll();
+  }
+});

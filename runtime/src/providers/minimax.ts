@@ -35,6 +35,13 @@ import {
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { sendUnsupportedRequestFailure } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
+  LIMIT_SOURCE_REPORTED,
+  limitResponseHeaders,
+  normalizeResetsAt,
+  type ProviderLimit,
+  readResetAtFromHeaders
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import {
   type AgentEventReporter,
   resolveAgentEventReporter
 } from "@simulatorlife/autodev-runtime/telemetry";
@@ -1276,6 +1283,71 @@ function processOutboundPayload(
   return { body, freeformNames, compaction };
 }
 
+const MINIMAX_QUOTA_CODE_OR_TYPE =
+  /quota|usage.?limit|insufficient.*(?:quota|balance|credit|fund)|billing|\b(?:1008|2056)\b/iu;
+const MINIMAX_QUOTA_MESSAGE =
+  /quota|usage.?limit|usage exhausted|insufficient.*(?:fund|quota|balance|credit)|billing/iu;
+const MINIMAX_RATE_LIMIT_SIGNAL = /rate.?limit|too many requests/iu;
+
+/**
+ * Extracts a structured provider limit from a failed MiniMax API HTTP JSON
+ * response so the router treats upstream quota exhaustion as a reported limit
+ * rather than falling back to transient 30s retry churn.
+ */
+function minimaxDeclaredErrorLimit(
+  upstream: Pick<Response, "ok" | "status" | "headers">,
+  responseText: string
+): ProviderLimit | null {
+  if (upstream.ok) return null;
+  let parsed: JsonRecord;
+  try {
+    const raw = JSON.parse(responseText);
+    if (!isJsonRecord(raw)) return null;
+    parsed = raw;
+  } catch {
+    return null;
+  }
+  const error = isJsonRecord(parsed.error) ? parsed.error : null;
+  const baseResp = isJsonRecord(parsed.base_resp) ? parsed.base_resp : null;
+  const codeOrType = [
+    error?.type,
+    error?.code,
+    baseResp?.status_code === undefined ? null : String(baseResp.status_code)
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const message = [error?.message, baseResp?.status_msg, parsed.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const resetsAt =
+    normalizeResetsAt(error?.resets_at) ??
+    readResetAtFromHeaders(upstream.headers);
+
+  if (
+    MINIMAX_QUOTA_CODE_OR_TYPE.test(codeOrType) ||
+    MINIMAX_QUOTA_MESSAGE.test(message)
+  ) {
+    return {
+      limitClass: "quota_exhausted",
+      limitType: "quota",
+      resetsAt,
+      source: LIMIT_SOURCE_REPORTED
+    };
+  }
+  if (
+    upstream.status === 429 ||
+    MINIMAX_RATE_LIMIT_SIGNAL.test(`${codeOrType} ${message}`)
+  ) {
+    return {
+      limitClass: "throttled",
+      limitType: "rate",
+      resetsAt,
+      source: LIMIT_SOURCE_REPORTED
+    };
+  }
+  return null;
+}
+
 async function handleUpstreamResponse(
   upstream: Response,
   response: ServerResponse,
@@ -1285,19 +1357,25 @@ async function handleUpstreamResponse(
   freeformNames: Set<string>
 ): Promise<void> {
   upstreamHeaders(response, upstream);
-  response.writeHead(upstream.status);
   if (upstream.body === null) {
+    response.writeHead(upstream.status);
     response.end();
     return;
   }
 
   const contentType = upstream.headers.get("content-type") ?? "";
-  if (contentType.toLowerCase().includes("text/event-stream")) {
+  if (upstream.ok && contentType.toLowerCase().includes("text/event-stream")) {
+    response.writeHead(upstream.status);
     await streamSse(upstream.body, response, coerce, observe, agentEvents);
     return;
   }
 
   const responseText = await upstream.text();
+  const limit = minimaxDeclaredErrorLimit(upstream, responseText);
+  for (const [name, value] of Object.entries(limitResponseHeaders(limit))) {
+    response.setHeader(name, value);
+  }
+  response.writeHead(upstream.status);
   if (contentType.toLowerCase().includes("application/json")) {
     try {
       const parsed = JSON.parse(responseText) as JsonRecord;
@@ -1404,6 +1482,7 @@ export {
   freeformInputFromArguments,
   isWebResearchTool,
   MCP_EXPOSURE_SOURCE,
+  minimaxDeclaredErrorLimit,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,

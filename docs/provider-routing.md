@@ -2679,7 +2679,7 @@ single list; the route patterns and the site registry in
     the picker is out of reach, and a switch that still cannot be made
     leaves the turn at the level the site has instead of failing it.
   - `opencli-gemini-<model>`: whatever `opencli gemini models` lists for the
-    account (`3.5-flash-lite`, `3.8-flash`, `3.1-pro`, `4-argon`,
+    account (`3.5-flash-lite`, `4-hydrogen`, `3.1-pro`, `4-argon`,
     `4-carbon`), read from the site by the bridge's `GET /v1/models` and kept
     five minutes; each turn passes `--model`. opencli 2.0.3 is patched
     (`patches/@jackwener__opencli@2.0.3.patch`) so a model's id is its own

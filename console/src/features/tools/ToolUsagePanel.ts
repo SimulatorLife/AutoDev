@@ -1,9 +1,14 @@
 "use client";
 
+import type { ToolCatalogItem } from "@simulatorlife/autodev-core";
 import type React from "react";
 
 import { useUsageTelemetry } from "../usage/use-usage-telemetry.ts";
-import { toolUsageEvidence, type ToolUsageState } from "./tool-usage.ts";
+import {
+  canonicalToolIdentity,
+  toolUsageEvidence,
+  type ToolUsageState
+} from "./tool-usage.ts";
 import { toolUsageView } from "./tool-usage-view.ts";
 
 function stateFor(
@@ -32,19 +37,27 @@ function stateFor(
  * that it is still waiting rather than showing a zero.
  */
 export function ToolUsagePanel({
-  identities,
+  tool,
   usageLink,
   startDate,
   endDate
 }: {
-  readonly identities: readonly string[];
+  /**
+   * The catalogue entry the panel reports on.
+   *
+   * The panel takes the entry rather than the names to match, because the
+   * names are the catalogue's to derive: the telemetry store only knows the
+   * names it happened to record, and a page that assembled them would be a
+   * second authority for a tool's identity.
+   */
+  readonly tool: ToolCatalogItem;
   readonly usageLink: string;
   readonly startDate: string;
   readonly endDate: string;
 }): React.JSX.Element {
   const telemetry = useUsageTelemetry("tool-usage", { startDate, endDate });
   return toolUsageView({
-    state: stateFor(telemetry, identities),
+    state: stateFor(telemetry, canonicalToolIdentity(tool)),
     usageLink
   });
 }

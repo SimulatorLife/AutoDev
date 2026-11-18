@@ -85,6 +85,7 @@ import {
   spawnFailureStatus,
   SUBAGENT_SPAWN_TOOLS_HEADER,
   subagentStatus,
+  THREAD_ID_HEADER,
   UNATTRIBUTED_SUBAGENT_ROLE,
   workspaceContextFromRequest
 } from "@simulatorlife/autodev-runtime/router/server";
@@ -7550,10 +7551,11 @@ test("a bridge is told which Codex conversation it is serving, and how sure the 
     null,
     "orchestrator",
     "req-1",
-    { key: "sess-1", scope: "identified" }
+    { key: "sess-1", scope: "identified", thread: "thread-1" }
   );
   assert.equal(claude[SESSION_ID_HEADER], "sess-1");
   assert.equal(claude[SESSION_SCOPE_HEADER], "identified");
+  assert.equal(claude[THREAD_ID_HEADER], "thread-1");
 
   const codex = downstreamHeaders(
     { provider: "codex" } as any,
@@ -7561,9 +7563,10 @@ test("a bridge is told which Codex conversation it is serving, and how sure the 
     null,
     "orchestrator",
     "req-1",
-    { key: "sess-1", scope: "identified" }
+    { key: "sess-1", scope: "identified", thread: "thread-1" }
   );
   assert.equal(codex[SESSION_ID_HEADER], undefined);
+  assert.equal(codex[THREAD_ID_HEADER], undefined);
 
   // The scope is what stops a bridge holding CLI state under the router's
   // process-wide fallback key, where two unrelated conversations would share
@@ -7596,6 +7599,7 @@ test("the session headers are router-generated and never forwarded from the clie
   // must not be able to name someone else's session.
   assert.equal(FORWARDED_REQUEST_HEADERS.includes(SESSION_ID_HEADER), false);
   assert.equal(FORWARDED_REQUEST_HEADERS.includes(SESSION_SCOPE_HEADER), false);
+  assert.equal(FORWARDED_REQUEST_HEADERS.includes(THREAD_ID_HEADER), false);
 });
 
 test("a turn continuing a tool call is recognised as one", () => {

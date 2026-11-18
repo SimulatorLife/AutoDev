@@ -31,11 +31,8 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { qualifiedToolName } from "./tool-identity.ts";
-import {
-  type ToolsListFilters,
-  toolsListHref,
-  toolsRoleHref
-} from "./tools-list-url.ts";
+import type { ToolsListFilters } from "./tools-list-filters.ts";
+import { toolsListHref, toolsRoleHref } from "./tools-list-url.ts";
 
 /**
  * Tools catalog detail view.

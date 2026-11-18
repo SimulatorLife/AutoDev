@@ -529,6 +529,7 @@ export {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   subagentSpawnToolsFor,
   subagentStatus,
+  THREAD_ID_HEADER,
   UNATTRIBUTED_SUBAGENT_ROLE
 } from "./subagents.ts";
 export { safeAgentIdentity, safePrivacyWorkspace } from "./usage.ts";
