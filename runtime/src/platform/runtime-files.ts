@@ -41,7 +41,7 @@ export interface RulesyncGenerateOptions {
   readonly delete?: boolean;
 }
 
-const RULESYNC_WORKER_SCRIPT = `
+const RULESYNC_WORKER_SCRIPT = String.raw`
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
@@ -74,7 +74,7 @@ function resolveReadCacheKey(filePath, options) {
     : path.resolve(activeReadRoot, filePath);
   const rulesyncPrefix = activeReadRoot + path.sep + ".rulesync" + path.sep;
   if (!resolved.startsWith(rulesyncPrefix)) return null;
-  return resolved + "\\0" + encKey;
+  return resolved + "\0" + encKey;
 }
 fsPromises.readFile = function cachedRulesyncReadFile(filePath, options) {
   const key = resolveReadCacheKey(filePath, options);
@@ -234,15 +234,15 @@ export function writeRepoInstallCache(
   const cachePath = repoInstallCachePath(resolved);
   const onDisk = readDiskInstallCache(cachePath);
   const next: RepoInstallCache = {
-    ...(onDisk ?? {}),
+    ...onDisk,
     ...cache,
     schema: REPO_INSTALL_CACHE_SCHEMA,
-    ...(cache.rulesyncInstallFingerprint !== undefined
-      ? { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }
-      : {}),
-    ...(cache.rulesyncGenerate !== undefined
-      ? { rulesyncGenerate: { ...cache.rulesyncGenerate } }
-      : {})
+    ...(cache.rulesyncInstallFingerprint === undefined
+      ? {}
+      : { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }),
+    ...(cache.rulesyncGenerate === undefined
+      ? {}
+      : { rulesyncGenerate: { ...cache.rulesyncGenerate } })
   };
   memoryRepoInstallCache.set(resolved, next);
   if (!cachePath) return;

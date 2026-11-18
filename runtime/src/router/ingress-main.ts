@@ -5,9 +5,10 @@
  * in an immutable release; never run it from a mutable checkout in production.
  * Worker code is loaded only in independently spawned child processes.
  */
+import { pathToFileURL } from "node:url";
+
 import { RouterIngress } from "./ingress.ts";
 import { RouterIngressSupervisor } from "./ingress-control.ts";
-import { pathToFileURL } from "node:url";
 
 export async function startRouterIngressProcess(
   env: NodeJS.ProcessEnv = process.env
@@ -22,7 +23,7 @@ export async function startRouterIngressProcess(
   }
   const port = Number(env.CODEX_MODEL_ROUTER_PORT ?? "4100");
   const host = env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error("Invalid ingress public port");
   }
   const ingress = new RouterIngress();

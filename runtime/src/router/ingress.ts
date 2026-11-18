@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
   createServer,
-  request as httpRequest,
   type IncomingHttpHeaders,
   type IncomingMessage,
+  request as httpRequest,
   type Server,
   type ServerResponse
 } from "node:http";
@@ -91,7 +91,7 @@ export class RouterIngress {
     return {
       ready: this.active !== null,
       activeGenerationId: this.active?.endpoint.id ?? null,
-      generations: [...this.generations.values()].map((generation) => ({
+      generations: Array.from(this.generations.values(), (generation) => ({
         id: generation.endpoint.id,
         state: generation.state,
         inFlight: generation.inFlight
@@ -109,7 +109,7 @@ export class RouterIngress {
         endpoint.host !== "127.0.0.1" ||
         !Number.isInteger(endpoint.port) ||
         endpoint.port < 1 ||
-        endpoint.port > 65535
+        endpoint.port > 65_535
       )
         throw new Error("Invalid router generation endpoint");
       if (this.generations.has(endpoint.id))
@@ -333,7 +333,7 @@ export class RouterIngress {
       finish();
     });
     backend.once("error", () => {
-      if (!response.headersSent) {
+      if (response.headersSent) {response.destroy();} else {
         this.emit({
           phase: "backend_connection_failed",
           generationId: generation.endpoint.id,
@@ -343,7 +343,7 @@ export class RouterIngress {
         response.end(
           JSON.stringify({ error: { code: "router_backend_unavailable" } })
         );
-      } else response.destroy();
+      }
     });
     request.pipe(backend);
   }

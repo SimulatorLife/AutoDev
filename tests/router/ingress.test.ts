@@ -4,8 +4,8 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import test from "node:test";
 
 import {
-  RouterIngress,
   type RouterGenerationEndpoint,
+  RouterIngress,
   type RouterIngressEvent
 } from "../../runtime/src/router/ingress.ts";
 

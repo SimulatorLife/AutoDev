@@ -36,7 +36,7 @@ const quotaAxi = path.join(
   "quota-axi"
 );
 
-const FIVE_HOUR_RESET_S = Math.floor(Date.now() / 1000) + 3_600;
+const FIVE_HOUR_RESET_S = Math.floor(Date.now() / 1000) + 3600;
 const SEVEN_DAY_RESET_S = Math.floor(Date.now() / 1000) + 3 * 86_400;
 
 /** Every vendor request fails; the usage endpoint answers 429 as observed. */

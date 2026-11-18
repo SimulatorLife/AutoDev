@@ -3,8 +3,8 @@ import { once } from "node:events";
 import type { Server } from "node:http";
 import test from "node:test";
 
-import { warmupDefaultPlaytestingRepository } from "../src/control-api/request-handler.ts";
 import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
+import { warmupDefaultPlaytestingRepository } from "../src/control-api/request-handler.ts";
 import { codexState } from "../src/router/http.ts";
 import { startRouterServer } from "../src/router/server.ts";
 import {
