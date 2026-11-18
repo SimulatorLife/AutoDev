@@ -16,10 +16,12 @@ description: Evaluate AutoDev and recent sessions to improve usage/token/model e
 5. **Loops and retries:** Repeated reasoning, failed attempts, excessive polling, ineffective retries, and unproductive steps.
 6. **Hooks and automation:** Unnecessary triggers, excessive execution frequency, and redundant context injections.
 7. **Skills:** Oversized or verbose skills, unnecessary always-loaded content, redundant skills, and opportunities to split reference files or consolidate skills.
-8. **Agent orchestration:** Unnecessary delegation, duplicated agent work, excessive context transfers, and inefficient coordination.
-9. **Model routing:** Inefficient model selection, unnecessary escalation/fallback, and avoidable usage or latency.
-10. **Workflow and code inefficiencies:** Redundant steps, repeated cross-session patterns, unnecessary custom logic, and underused existing tooling.
-11. **Model switching:** Unnecessary model switching, which causes the agent to re-read the whole session on the next message, which uses more usage and invalidates the context cache.
+8. **Under-delegation:** Missed opportunities to delegate focused tasks to subagents with isolated contexts, enabling parallel execution, reduced context pollution, lower token usage, and more efficient orchestration.
+9. **Over-delegation and coordination overhead:** Unnecessary delegation, excessive subagent spawning, duplicated work, oversized context transfers, redundant coordination, lost subagent results, and delegation costs exceeding their benefits.
+10. **Model routing:** Inefficient model selection, unnecessary escalation/fallback, and avoidable usage or latency.
+11. **Workflow and code inefficiencies:** Redundant steps, repeated cross-session patterns, unnecessary custom logic, and underused existing tooling.
+12. **Model switching:** Unnecessary model switching, which causes the agent to re-read the whole session on the next message, which uses more usage and invalidates the context cache.
+13. **Multiple system prompts:** Since AutoDev supports dynamic routing and multiple model providers/CLIs, multiple system prompts could end up being injected into a session, which is unnecessary, confusing, wasteful, and can cause the model to behave inconsistently.
 
 ## 2. Procedure
 
