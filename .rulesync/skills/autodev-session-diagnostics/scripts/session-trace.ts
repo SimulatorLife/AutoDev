@@ -11,8 +11,9 @@
  * match the checkout. It reads local files and the loopback router only,
  * never prints credentials, and truncates every prompt/output excerpt.
  *
- *   node session-trace.ts <session-or-thread-id> [--items] [--events] [--json]
- *        [--codex-home DIR] [--router-log FILE] [--offline]
+ *   node session-trace.ts <session-or-thread-id> [--items] [--events]
+ *        [--failures] [--efficiency] [--json] [--codex-home DIR]
+ *        [--router-log FILE] [--offline]
  *   node session-trace.ts --recent [N]            # when no id was given
  */
 
@@ -167,6 +168,8 @@ interface RouterEventFields {
 interface RouterStatusBody {
   agents?: RouterAgentStatus;
   startedAt?: string;
+  providers?: Record<string, JsonRecord>;
+  usage?: JsonRecord;
   [key: string]: unknown;
 }
 
@@ -449,6 +452,16 @@ function parseRouterStatus(raw: unknown): RouterStatusBody | null {
     const agents = parseRouterAgentStatus(raw.agents);
     if (agents) result.agents = agents;
   }
+  if (isRecord(raw.providers)) {
+    const providers: Record<string, JsonRecord> = {};
+    for (const [k, v] of Object.entries(raw.providers)) {
+      if (isRecord(v)) providers[k] = v;
+    }
+    result.providers = providers;
+  }
+  if (isRecord(raw.usage)) {
+    result.usage = raw.usage;
+  }
   return result;
 }
 
@@ -468,6 +481,8 @@ export interface TraceOptions {
   routerLog: string;
   items: boolean;
   events?: boolean;
+  failures?: boolean;
+  efficiency?: boolean;
   /** Skip everything that reads live state: processes, the router, deployed files. */
   offline: boolean;
   routerUrl?: string;
@@ -479,6 +494,12 @@ export interface ToolFailure {
   tool: string;
   callId: string;
   detail: string;
+  input?: string;
+}
+
+export interface ThreadAnomalies {
+  tagOnlyMessages: number;
+  samples: string[];
 }
 
 export interface ThreadTrace {
@@ -506,6 +527,7 @@ export interface ThreadTrace {
   /** Calls by tool; MCP tools are keyed `mcp__<server>__<tool>`, wherever they were called from. */
   tools: Record<string, number>;
   toolFailures: ToolFailure[];
+  anomalies?: ThreadAnomalies;
   investigation: Investigation;
   items?: Array<{ at: string; kind: string; detail: string }>;
 }
@@ -595,15 +617,37 @@ export interface BridgeLogAlert {
   samples: string[];
 }
 
+export interface EfficiencyWorkspaceMcpSummary {
+  workspace: string;
+  exposed: Record<string, number>;
+  used: Record<string, number>;
+  topTools: Array<{ tool: string; ok: number; error: number }>;
+}
+
+export interface EfficiencySummary {
+  disabledProviders: string[];
+  nullRoleModels: string[];
+  providerLastFailures?: Array<{
+    provider: string;
+    status: string | null;
+    cooldownKind: string | null;
+    lastFailureClass: string | null;
+    lastFailureStatus: number | null;
+  }>;
+  workspaces?: EfficiencyWorkspaceMcpSummary[];
+}
+
 export interface TraceReport {
   threads: ThreadTrace[];
   router: RouterSummary[];
   logs: Array<{ file: string; modified: string; bytes: number }>;
   bridgeAlerts?: BridgeLogAlert[];
   live: LiveReport | null;
+  efficiency?: EfficiencySummary;
 }
 
 const EXCERPT = 160;
+const FAILURE_EXCERPT = 400;
 /** Codebase-context MCP servers, as the target state names them. */
 const CONTEXT_SERVERS: Record<string, keyof Investigation["context"]> = {
   "cocoindex-code": "ccc",
@@ -624,13 +668,15 @@ const WRITING_WINDOW_MS = 10 * 60 * 1000;
 const TOOL_FAILURE =
   /Encountered error in tool execution|Delegation is unavailable|tool call failed|Transport closed|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/im;
 const BRIDGE_LOG_ALERT_REGEX =
-  /spawn rejected|missing session header|invalid model selection|Delegation is unavailable/;
+  /spawn rejected|missing session header|invalid model selection|Delegation is unavailable|ERR_PACKAGE_PATH_NOT_EXPORTED|earlier message\(s\) left out/;
+const TAG_ONLY_ASSISTANT_MESSAGE_REGEX =
+  /^<([a-z][a-z0-9_-]*)>\s*<\/([a-z][a-z0-9_-]*)>$/iu;
 const BRIDGE_LOG_TAIL_BYTES = 64 * 1024;
 
-function excerpt(value: unknown): string {
+function excerpt(value: unknown, maxLen = EXCERPT): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const flat = text.replaceAll(/\s+/g, " ").trim();
-  return flat.length > EXCERPT ? `${flat.slice(0, EXCERPT)}…` : flat;
+  return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
 }
 
 function outputText(output: unknown): string {
@@ -889,6 +935,9 @@ interface ThreadTraceAccumulator {
   tools: Record<string, number>;
   toolFailures: ToolFailure[];
   callTools: Map<string, string>;
+  callInputs: Map<string, string>;
+  tagOnlyMessages: number;
+  tagOnlySamples: string[];
   previous: { at: string; label: string } | null;
   investigation: Investigation;
   cwd: string;
@@ -947,6 +996,53 @@ function recordTraceGap(
   acc.previous = { at, label };
 }
 
+function callInputText(payload: ResponseItemPayload): string | null {
+  if (payload.type !== "custom_tool_call" && payload.type !== "function_call")
+    return null;
+  const raw = payload.input ?? payload.arguments;
+  if (raw === undefined || raw === null) return null;
+  return excerpt(raw, FAILURE_EXCERPT);
+}
+
+function recordTagOnlyAssistantMessage(
+  payload: ResponseItemPayload,
+  acc: ThreadTraceAccumulator
+): void {
+  if (payload.type !== "message" || payload.role !== "assistant") return;
+  const text = (payload.content ?? [])
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+  const match = TAG_ONLY_ASSISTANT_MESSAGE_REGEX.exec(text);
+  if (!match || match[1]?.toLowerCase() !== match[2]?.toLowerCase()) return;
+  acc.tagOnlyMessages += 1;
+  if (acc.tagOnlySamples.length < 3 && !acc.tagOnlySamples.includes(text)) {
+    acc.tagOnlySamples.push(text);
+  }
+}
+
+function recordToolCallOutput(
+  at: string | null,
+  payload: Extract<
+    ResponseItemPayload,
+    { type: "custom_tool_call_output" | "function_call_output" }
+  >,
+  acc: ThreadTraceAccumulator
+): void {
+  const text = outputText(payload.output);
+  const failure = TOOL_FAILURE.exec(text);
+  if (!failure) return;
+  const callId = typeof payload.call_id === "string" ? payload.call_id : "";
+  const input = callId ? acc.callInputs.get(callId) : undefined;
+  acc.toolFailures.push({
+    at: at ?? "",
+    tool: (callId && acc.callTools.get(callId)) || "?",
+    callId,
+    detail: excerpt(text.slice(Math.max(0, failure.index - 40))),
+    ...(input ? { input } : {})
+  });
+}
+
 function recordToolUsage(
   record: RolloutPayload,
   at: string | null,
@@ -954,28 +1050,21 @@ function recordToolUsage(
   acc: ThreadTraceAccumulator
 ): void {
   if (record.type !== "response_item" || !payload) return;
+  recordTagOnlyAssistantMessage(payload, acc);
   if (payload.type === "custom_tool_call" || payload.type === "function_call") {
     const reached = toolsOfCall(payload);
     for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
-    if (typeof payload.call_id === "string")
-      acc.callTools.set(payload.call_id, reached.join("+"));
-  } else if (
+    if (typeof payload.call_id !== "string") return;
+    acc.callTools.set(payload.call_id, reached.join("+"));
+    const rawInput = callInputText(payload);
+    if (rawInput) acc.callInputs.set(payload.call_id, rawInput);
+    return;
+  }
+  if (
     payload.type === "custom_tool_call_output" ||
     payload.type === "function_call_output"
   ) {
-    const text = outputText(payload.output);
-    const failure = TOOL_FAILURE.exec(text);
-    if (failure) {
-      acc.toolFailures.push({
-        at: at ?? "",
-        tool:
-          (typeof payload.call_id === "string" &&
-            acc.callTools.get(payload.call_id)) ||
-          "?",
-        callId: typeof payload.call_id === "string" ? payload.call_id : "",
-        detail: excerpt(text.slice(Math.max(0, failure.index - 40)))
-      });
-    }
+    recordToolCallOutput(at, payload, acc);
   }
 }
 
@@ -1147,6 +1236,9 @@ function createTraceAccumulator(
     tools: {},
     toolFailures: [],
     callTools: new Map(),
+    callInputs: new Map(),
+    tagOnlyMessages: 0,
+    tagOnlySamples: [],
     previous: null,
     investigation: {
       observed: false,
@@ -1216,8 +1308,17 @@ function buildThreadTrace(
   acc: ThreadTraceAccumulator,
   withItems: boolean
 ): ThreadTrace {
-  const { counts, turns, gaps, tools, toolFailures, items, investigation } =
-    acc;
+  const {
+    counts,
+    turns,
+    gaps,
+    tools,
+    toolFailures,
+    tagOnlyMessages,
+    tagOnlySamples,
+    items,
+    investigation
+  } = acc;
   const { start, end } = timestampBounds(records);
   return {
     id: typeof meta.id === "string" ? meta.id : file,
@@ -1245,6 +1346,14 @@ function buildThreadTrace(
     gaps: gaps.sort((a, b) => b.seconds - a.seconds).slice(0, 5),
     tools,
     toolFailures,
+    ...(tagOnlyMessages > 0
+      ? {
+          anomalies: {
+            tagOnlyMessages,
+            samples: tagOnlySamples
+          }
+        }
+      : {}),
     investigation,
     ...(withItems ? { items } : {})
   };
@@ -1563,7 +1672,147 @@ export function deploymentDrift(
   return { checked, differing, missing };
 }
 
-async function liveReport(options: TraceOptions): Promise<LiveReport> {
+function readRouterStateFields(codexHome: string): {
+  disabledProviders: string[];
+  nullRoleModels: string[];
+} {
+  const stateFile = path.join(codexHome, "codex-router-state.json");
+  if (!existsSync(stateFile)) {
+    return { disabledProviders: [], nullRoleModels: [] };
+  }
+  try {
+    const raw: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
+    if (!isRecord(raw)) return { disabledProviders: [], nullRoleModels: [] };
+    const disabledProviders = Array.isArray(raw.disabledProviders)
+      ? raw.disabledProviders.filter((v): v is string => typeof v === "string")
+      : [];
+    const nullRoleModels: string[] = [];
+    if (isRecord(raw.roleAssignments)) {
+      for (const [provider, roles] of Object.entries(raw.roleAssignments)) {
+        if (!isRecord(roles)) continue;
+        for (const [role, entry] of Object.entries(roles)) {
+          if (isRecord(entry) && entry.model === null) {
+            nullRoleModels.push(`${provider}.${role}`);
+          }
+        }
+      }
+    }
+    return { disabledProviders, nullRoleModels };
+  } catch {
+    return { disabledProviders: [], nullRoleModels: [] };
+  }
+}
+
+function parseExposedServers(raw: unknown): Record<string, number> {
+  const exposed: Record<string, number> = {};
+  if (!Array.isArray(raw)) return exposed;
+  for (const row of raw) {
+    if (
+      isRecord(row) &&
+      typeof row.server === "string" &&
+      typeof row.count === "number"
+    ) {
+      exposed[row.server] = row.count;
+    }
+  }
+  return exposed;
+}
+
+function parseUsedServers(raw: unknown): Record<string, number> {
+  const used: Record<string, number> = {};
+  if (!isRecord(raw)) return used;
+  for (const [srv, count] of Object.entries(raw)) {
+    if (typeof count === "number") used[srv] = count;
+  }
+  return used;
+}
+
+function parseTopBridgeTools(
+  raw: unknown
+): Array<{ tool: string; ok: number; error: number }> {
+  if (!Array.isArray(raw)) return [];
+  const tools: Array<{ tool: string; ok: number; error: number }> = [];
+  for (const row of raw) {
+    if (!isRecord(row) || typeof row.tool !== "string") continue;
+    const byStatus = isRecord(row.byStatus) ? row.byStatus : {};
+    const ok = typeof byStatus.ok === "number" ? byStatus.ok : 0;
+    const error = typeof byStatus.error === "number" ? byStatus.error : 0;
+    tools.push({ tool: row.tool, ok, error });
+  }
+  tools.sort((a, b) => b.ok + b.error - (a.ok + a.error));
+  return tools.slice(0, 8);
+}
+
+function readWorkspaceMcpSummaries(
+  status: RouterStatusBody
+): EfficiencyWorkspaceMcpSummary[] {
+  const byWs =
+    isRecord(status.usage) && isRecord(status.usage.byWorkspace)
+      ? status.usage.byWorkspace
+      : null;
+  if (!byWs) return [];
+  const out: EfficiencyWorkspaceMcpSummary[] = [];
+  for (const [workspace, entry] of Object.entries(byWs)) {
+    if (!isRecord(entry)) continue;
+    out.push({
+      workspace,
+      exposed: parseExposedServers(entry.mcpExposed),
+      used: parseUsedServers(entry.byMcp),
+      topTools: parseTopBridgeTools(entry.bridgeTools)
+    });
+  }
+  return out;
+}
+
+function readProviderFailuresSummary(
+  status: RouterStatusBody
+): NonNullable<EfficiencySummary["providerLastFailures"]> {
+  if (!status.providers) return [];
+  const rows: NonNullable<EfficiencySummary["providerLastFailures"]> = [];
+  for (const [provider, info] of Object.entries(status.providers)) {
+    const lastFailure = isRecord(info.lastFailure) ? info.lastFailure : null;
+    const cooldownKind =
+      typeof info.cooldownKind === "string" ? info.cooldownKind : null;
+    const provStatus = typeof info.status === "string" ? info.status : null;
+    if (!cooldownKind && !lastFailure && provStatus === "ready") continue;
+    rows.push({
+      provider,
+      status: provStatus,
+      cooldownKind,
+      lastFailureClass:
+        lastFailure && typeof lastFailure.class === "string"
+          ? lastFailure.class
+          : null,
+      lastFailureStatus:
+        lastFailure && typeof lastFailure.status === "number"
+          ? lastFailure.status
+          : null
+    });
+  }
+  return rows;
+}
+
+function buildEfficiencySummary(
+  codexHome: string,
+  status: RouterStatusBody | null
+): EfficiencySummary {
+  const { disabledProviders, nullRoleModels } =
+    readRouterStateFields(codexHome);
+  if (!status) return { disabledProviders, nullRoleModels };
+  const providerLastFailures = readProviderFailuresSummary(status);
+  const workspaces = readWorkspaceMcpSummaries(status);
+  return {
+    disabledProviders,
+    nullRoleModels,
+    ...(providerLastFailures.length > 0 ? { providerLastFailures } : {}),
+    ...(workspaces.length > 0 ? { workspaces } : {})
+  };
+}
+
+async function liveReportWithStatus(
+  options: TraceOptions
+): Promise<{ live: LiveReport; status: RouterStatusBody | null }> {
+  let parsedStatus: RouterStatusBody | null = null;
   let router: LiveReport["router"] = {
     reachable: false,
     canonicalLiveCount: null,
@@ -1577,16 +1826,19 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
       { signal: AbortSignal.timeout(3000) }
     );
     const parsed: unknown = await response.json();
-    const status = parseRouterStatus(parsed);
+    parsedStatus = parseRouterStatus(parsed);
     router = {
       reachable: true,
       canonicalLiveCount:
-        typeof status?.agents?.canonicalLiveCount === "number"
-          ? status.agents.canonicalLiveCount
+        typeof parsedStatus?.agents?.canonicalLiveCount === "number"
+          ? parsedStatus.agents.canonicalLiveCount
           : null,
-      byState: status?.agents?.byState ?? null,
-      liveByRole: status?.agents?.liveByRole ?? null,
-      startedAt: typeof status?.startedAt === "string" ? status.startedAt : null
+      byState: parsedStatus?.agents?.byState ?? null,
+      liveByRole: parsedStatus?.agents?.liveByRole ?? null,
+      startedAt:
+        typeof parsedStatus?.startedAt === "string"
+          ? parsedStatus.startedAt
+          : null
     };
   } catch {
     /* router down or not reachable: reported as such */
@@ -1607,11 +1859,14 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
       ];
     });
   return {
-    router,
-    openThreads,
-    processes: providerProcesses(),
-    services: services(),
-    drift: deploymentDrift(options.codexHome, options.repoRoot)
+    live: {
+      router,
+      openThreads,
+      processes: providerProcesses(),
+      services: services(),
+      drift: deploymentDrift(options.codexHome, options.repoRoot)
+    },
+    status: parsedStatus
   };
 }
 
@@ -1676,6 +1931,12 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
         )
       : [];
   const bridgeAlerts = bridgeLogAlerts(options.codexHome);
+  const liveResult = options.offline
+    ? null
+    : await liveReportWithStatus(options);
+  const efficiency = options.efficiency
+    ? buildEfficiencySummary(options.codexHome, liveResult?.status ?? null)
+    : undefined;
   return {
     threads,
     router: threads.map((thread) =>
@@ -1683,7 +1944,8 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
     ),
     logs: logFreshness(options.codexHome),
     ...(bridgeAlerts.length > 0 ? { bridgeAlerts } : {}),
-    live: options.offline ? null : await liveReport(options)
+    live: liveResult?.live ?? null,
+    ...(efficiency ? { efficiency } : {})
   };
 }
 
@@ -1739,7 +2001,8 @@ function renderInvestigation(investigation: Investigation): string {
 
 function renderThreadSection(
   thread: ThreadTrace,
-  router?: RouterSummary
+  router?: RouterSummary,
+  { failures = false }: { failures?: boolean } = {}
 ): string[] {
   const lines: string[] = [
     `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`,
@@ -1760,10 +2023,19 @@ function renderThreadSection(
       `   tools ${tools.map(([tool, count]) => `${tool}=${count}`).join(" ")}`
     );
   lines.push(renderInvestigation(thread.investigation));
-  for (const failure of thread.toolFailures)
+  if (thread.anomalies && thread.anomalies.tagOnlyMessages > 0) {
+    lines.push(
+      `   ANOMALY tag-only assistant messages: ${thread.anomalies.tagOnlyMessages} (${thread.anomalies.samples.join(", ")})`
+    );
+  }
+  for (const failure of thread.toolFailures) {
     lines.push(
       `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`
     );
+    if (failures && failure.input) {
+      lines.push(`     input=${failure.input}`);
+    }
+  }
   if (router) {
     lines.push(...renderRouterDetails(router));
   }
@@ -1807,7 +2079,41 @@ function renderLiveSection(live: LiveReport): string[] {
   return lines;
 }
 
-export function renderReport(report: TraceReport): string {
+function renderEfficiencySection(efficiency: EfficiencySummary): string[] {
+  const lines: string[] = [
+    "== efficiency & persisted router state",
+    `   disabledProviders=${JSON.stringify(efficiency.disabledProviders)} nullRoleModels=${JSON.stringify(efficiency.nullRoleModels)}`
+  ];
+  for (const p of efficiency.providerLastFailures ?? []) {
+    lines.push(
+      `   provider ${p.provider}: status=${p.status ?? "-"} cooldown=${p.cooldownKind ?? "none"} lastFailure=${p.lastFailureClass ?? "-"} (${p.lastFailureStatus ?? "-"})`
+    );
+  }
+  for (const ws of efficiency.workspaces ?? []) {
+    const servers = new Set([
+      ...Object.keys(ws.exposed),
+      ...Object.keys(ws.used)
+    ]);
+    const mcpPairs = [...servers]
+      .sort()
+      .map((s) => `${s}:${ws.used[s] ?? 0}/${ws.exposed[s] ?? 0}`)
+      .join(" ");
+    lines.push(
+      `   workspace ${ws.workspace} mcp(used/exposed): ${mcpPairs || "none"}`
+    );
+    if (ws.topTools.length > 0) {
+      lines.push(
+        `     topTools: ${ws.topTools.map((t) => `${t.tool}(ok=${t.ok},err=${t.error})`).join(" ")}`
+      );
+    }
+  }
+  return lines;
+}
+
+export function renderReport(
+  report: TraceReport,
+  options: { failures?: boolean } = {}
+): string {
   const out: string[] = [];
   if (report.threads.length === 0)
     out.push(
@@ -1815,10 +2121,13 @@ export function renderReport(report: TraceReport): string {
     );
   for (const thread of report.threads) {
     const router = report.router.find((entry) => entry.thread === thread.id);
-    out.push(...renderThreadSection(thread, router));
+    out.push(...renderThreadSection(thread, router, options));
   }
   if (report.live) {
     out.push(...renderLiveSection(report.live));
+  }
+  if (report.efficiency) {
+    out.push(...renderEfficiencySection(report.efficiency));
   }
   out.push(
     "== log freshness (bridge logs carry no timestamps; correlate by order and mtime)"
@@ -1868,6 +2177,8 @@ function parseArgs(
   let routerLog = "";
   let items = false;
   let events = false;
+  let failures = false;
+  let efficiency = false;
   let json = false;
   let offline = false;
   let recent: number | null = null;
@@ -1875,6 +2186,8 @@ function parseArgs(
     const arg = argv[index]!;
     if (arg === "--items") items = true;
     else if (arg === "--events") events = true;
+    else if (arg === "--failures") failures = true;
+    else if (arg === "--efficiency") efficiency = true;
     else if (arg === "--json") json = true;
     else if (arg === "--offline") offline = true;
     else if (arg === "--codex-home") codexHome = argv[++index] ?? codexHome;
@@ -1894,6 +2207,8 @@ function parseArgs(
       path.join(codexHome, "run", "codex-model-router.launchd.err.log"),
     items,
     events,
+    failures,
+    efficiency,
     json,
     offline,
     recent,
@@ -1908,14 +2223,14 @@ if (
   const options = parseArgs(process.argv.slice(2));
   if (!options) {
     process.stderr.write(
-      "usage: session-trace.ts <session-or-thread-id> [--items] [--events] [--json] [--codex-home DIR] [--router-log FILE] [--offline]\n       session-trace.ts --recent [N]\n"
+      "usage: session-trace.ts <session-or-thread-id> [--items] [--events] [--failures] [--efficiency] [--json] [--codex-home DIR] [--router-log FILE] [--offline]\n       session-trace.ts --recent [N]\n"
     );
     process.exit(2);
   }
   if (options.recent === null) {
     const report = await buildReport(options);
     process.stdout.write(
-      `${options.json ? JSON.stringify(report, null, 2) : renderReport(report)}\n`
+      `${options.json ? JSON.stringify(report, null, 2) : renderReport(report, { failures: Boolean(options.failures) })}\n`
     );
   } else {
     const sessions = recentSessions(

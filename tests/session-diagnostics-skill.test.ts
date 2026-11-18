@@ -1003,6 +1003,8 @@ test("session-trace captures delegation unavailability failures, spawn_failed ro
       rendered,
       /TOOL FAILED .* autodev_spawn .* Delegation is unavailable/
     );
+    const renderedFailures = renderReport(report, { failures: true });
+    assert.match(renderedFailures, /input=\{\}/);
     assert.match(
       rendered,
       /ROUTER FAILURE .* spawn_failure \(spawn_tool_unavailable\)/
@@ -1012,6 +1014,120 @@ test("session-trace captures delegation unavailability failures, spawn_failed ro
       rendered,
       /antigravity-proxy\.launchd\.log: 2 matching line\(s\)/
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("session-trace surfaces tool input on failures, tag-only assistant messages, proxy truncation alerts, and efficiency state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-efficiency-diag-"));
+  try {
+    const sessionsDir = join(dir, "sessions", "2026", "11", "17");
+    const runDir = join(dir, "run");
+    const hooksDir = join(dir, "hooks");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(hooksDir, { recursive: true });
+
+    const threadId = "01a1ec99-0000-7000-8000-000000000001";
+    const rolloutFile = join(
+      sessionsDir,
+      `rollout-2026-11-17T20-00-00-${threadId}.jsonl`
+    );
+    writeFileSync(
+      rolloutFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-11-17T20:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            session_id: threadId,
+            agent_role: "explorer"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-17T20:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "<escape></escape>" }]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-17T20:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec_command",
+            call_id: "call_ro_1",
+            input: 'rg "foo" src 2>/dev/null'
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-17T20:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "call_ro_1",
+            output:
+              "Script error: Command blocked by PreToolUse hook: This role runs in a read-only sandbox."
+          }
+        })
+      ].join("\n") + "\n"
+    );
+
+    writeFileSync(
+      join(hooksDir, "opencli-proxy.launchd.log"),
+      "opencli chatgpt first prompt is 119524 bytes; 41 earlier message(s) left out to fit the site's limit\n"
+    );
+    writeFileSync(
+      join(hooksDir, "minimax-proxy.launchd.log"),
+      "Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './shared/compaction'\n"
+    );
+    writeFileSync(
+      join(dir, "codex-router-state.json"),
+      JSON.stringify({
+        disabledProviders: ["copilot"],
+        roleAssignments: {
+          "opencli-gemini": { subagent: { priority: 3, model: null } }
+        }
+      })
+    );
+
+    const report = await buildReport({
+      id: threadId,
+      codexHome: dir,
+      routerLog: join(runDir, "codex-model-router.launchd.err.log"),
+      items: false,
+      failures: true,
+      efficiency: true,
+      offline: true
+    });
+    assert.equal(report.threads[0]?.anomalies?.tagOnlyMessages, 1);
+    assert.deepEqual(report.threads[0]?.anomalies?.samples, [
+      "<escape></escape>"
+    ]);
+    assert.equal(
+      report.threads[0]?.toolFailures[0]?.input,
+      'rg "foo" src 2>/dev/null'
+    );
+    assert.ok(
+      report.bridgeAlerts?.some((a) => a.file === "opencli-proxy.launchd.log")
+    );
+    assert.ok(
+      report.bridgeAlerts?.some((a) => a.file === "minimax-proxy.launchd.log")
+    );
+    assert.deepEqual(report.efficiency?.disabledProviders, ["copilot"]);
+    assert.deepEqual(report.efficiency?.nullRoleModels, [
+      "opencli-gemini.subagent"
+    ]);
+
+    const rendered = renderReport(report, { failures: true });
+    assert.match(rendered, /ANOMALY tag-only assistant messages: 1/);
+    assert.match(rendered, /input=rg "foo" src 2>\/dev\/null/);
+    assert.match(rendered, /== efficiency & persisted router state/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

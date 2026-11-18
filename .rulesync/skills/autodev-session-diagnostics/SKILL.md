@@ -27,6 +27,8 @@ to reproduce a request shape.
 ```bash
 node "$SKILL_DIR/scripts/session-trace.ts" --recent            # no id given: newest sessions
 node "$SKILL_DIR/scripts/session-trace.ts" <id>                # session or thread id
+node "$SKILL_DIR/scripts/session-trace.ts" <id> --failures     # include paired call input on TOOL FAILED lines
+node "$SKILL_DIR/scripts/session-trace.ts" <id> --efficiency   # include codex-router-state.json + MCP/tool exposure vs usage
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --items        # plus every item, truncated
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --events       # plus every router event
 ```
@@ -61,8 +63,9 @@ every event and looked like "the router logged nothing".
 | --- | --- |
 | What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
 | Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside |
-| What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times) |
-| Health, cooldowns, agent counts, MCP usage now | `curl -s 127.0.0.1:4100/status \| jq` -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>.byMcp`, `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. (`autodev router status` is not wired up.) |
+| What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times; check `opencli-proxy.launchd.log` for `earlier message(s) left out` and `minimax-proxy.launchd.log` for startup errors) |
+| Health, cooldowns, agent counts, MCP usage now | `curl -s 127.0.0.1:4100/status \| jq` -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>` (`byMcp`/`mcpUses`, `mcpExposed`, `bridgeTools`), `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. (`autodev router status` is not wired up.) |
+| Persisted router state vs live `/status` | `$CODEX_HOME/codex-router-state.json` (`disabledProviders`, `providerCooldowns`, `roleAssignments.*.model: null` falling back to `config/model-routing.json`) |
 | Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
 | Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
 | Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
@@ -89,7 +92,8 @@ every event and looked like "the router logged nothing".
 ## 4. Reproduce, fix, verify
 
 - **Hermetic first:** drive the real bridge or router with a fake CLI or fake
-  upstream (`tests/claude-codex-tool-loop.test.ts`, `tests/router/proxy.test.ts`).
+  upstream (`tests/claude-codex-tool-loop.test.ts`, `tests/router/proxy.test.ts`). When running router/proxy unit tests directly with `node --test`, include `--import ./runtime/tests/support/isolate-codex-state.ts` (matching `package.json`'s `test:root`) so tests do not read live `$CODEX_HOME/codex-router-state.json` cooldowns.
+- **Model catalog changes:** keep `config/model-routing.json`, `config/catalogs/*-model-catalog.json`, `config/catalogs/codex-model-catalog.json`, and `data/src/openlit/sync-model-catalogue.ts` in sync (`data/tests/openlit/price-catalogue.test.ts`, `tests/providers/opencli.test.ts`).
 - **Prove the test catches the bug:** disable the fix (revert it or neuter one
   line), confirm the new test fails with the observed symptom, restore.
 - **Request shapes:** `autodev-codex-request-capture`; replay a spawn to see a
