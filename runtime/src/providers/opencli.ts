@@ -541,6 +541,9 @@ const MODEL_LIST_TIMEOUT_MS = 60_000;
 /** How long a first listing waits for the site before answering unavailable. */
 const FIRST_MODEL_LIST_WAIT_MS = 5000;
 
+/** How long an aborted command has to exit after SIGTERM before SIGKILL. */
+const KILL_GRACE_MS = 2000;
+
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
  *
@@ -619,17 +622,15 @@ export function processRunner(
           }
         });
       }
+      // `child.killed` only says a signal was delivered, so it is already true
+      // after the SIGTERM: a command that ignores it is still running and is
+      // killed outright once the grace period ends.
       const onAbort = () => {
         child.kill("SIGTERM");
         const killTimer = setTimeout(() => {
-          if (!child.killed) {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              /* the process is already gone */
-            }
-          }
-        }, 2000);
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill("SIGKILL");
+        }, KILL_GRACE_MS);
         if (typeof killTimer.unref === "function") killTimer.unref();
       };
       signal.addEventListener("abort", onAbort, { once: true });
@@ -2097,9 +2098,15 @@ export function createOpencliBridge(
               throw error;
             });
           if (uploading) recordUpload(turn.site);
+          // A switch that failed left the site on the model it had, which is
+          // what the bridge already knows; forgetting it made every later
+          // turn, at any model, wait for the site to drain and run alone
+          // (session 01a1f56a-5e8a-7232-abfb-d4d5e2104595: a ChatGPT site
+          // with three tabs ran one turn at a time, each queued minutes).
+          // The next turn that wants the model the switch failed to reach
+          // still differs from the recorded one, so it asks for it again.
           if (reply.modelSelected)
             selectedModels.set(turn.site, turn.siteModel);
-          else selectedModels.delete(turn.site);
           // The site reports the level it answered at. A turn that asked for
           // a level the site would not take answers at the level the site
           // had, so the bridge keeps what it knew: the site's level did not

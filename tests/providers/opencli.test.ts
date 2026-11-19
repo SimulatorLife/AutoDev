@@ -1277,6 +1277,43 @@ test("the process runner hears progress on its own descriptor, apart from the re
   }
 });
 
+test("an aborted command that ignores SIGTERM is killed and its turn settles", async () => {
+  // `child.killed` is true once SIGTERM is delivered, so the SIGKILL fallback
+  // was never sent and a command that ignored SIGTERM held its turn open.
+  const script = [
+    'process.on("SIGTERM", () => {});',
+    'process.stdout.write("ready");',
+    "setInterval(() => {}, 1000);"
+  ].join("");
+  const live = new Set<import("node:child_process").ChildProcess>();
+  const runner = processRunner(
+    () => ({ command: process.execPath, args: ["-e", script] }),
+    { chatgpt: 1, gemini: 1 },
+    () => false,
+    live
+  );
+  const controller = new AbortController();
+  try {
+    const turn = runner({
+      args: ["chatgpt", "ask", "x"],
+      signal: controller.signal
+    });
+    const [child] = live;
+    assert.ok(child, "the command was started");
+    await new Promise<void>((resolve) =>
+      child.stdout!.once("data", () => resolve())
+    );
+    controller.abort();
+    const started = Date.now();
+    await assert.rejects(turn, /turn cancelled/u);
+    assert.ok(Date.now() - started < 5000, "the turn settled after the grace period");
+    assert.equal(child.signalCode, "SIGKILL");
+  } finally {
+    for (const child of live) child.kill("SIGKILL");
+    await runner.close();
+  }
+});
+
 test("a reply being written is previewed only as whole, agreed, tool-free prose", () => {
   const preview = new OpencliReplyPreview();
   // A line still being written is not shown, nor is one reading's word.

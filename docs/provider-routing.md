@@ -3098,10 +3098,16 @@ single list; the route patterns and the site registry in
   the model the site is on take the free tabs for its first 30 s
   (`MODEL_SWITCH_PASS_MS`); after that nothing more starts until the site
   has drained for the switch, so a switch is never starved and a root at one
-  level no longer serializes its workers at another. ChatGPT's upload
+  level no longer serializes its workers at another. A switch the site
+  refuses (ChatGPT's picker needs a visible page, so it fails in a background
+  window) leaves the site on the model the bridge already recorded; the next
+  turn that wants the refused model asks for it again, while turns at the
+  kept model go on sharing the tabs. Forgetting the model on a failed switch
+  made every later turn drain the site and run alone. ChatGPT's upload
   allowance is checked once a turn has a tab, counting the uploads the site's
   other tabs are making, so concurrent turns cannot both spend the last one.
-  Different sites run in parallel. A cancelled command stops its CLI process;
+  Different sites run in parallel. A cancelled command stops its CLI process
+  (SIGTERM, then SIGKILL after 2 s if it has not exited);
   in the dedicated browser that releases its leased target at once, while in
   the operator's Chrome opencli's daemon keeps the tab until that command's
   browser step finishes, and a refusal with `SESSION_BUSY` is waited out until

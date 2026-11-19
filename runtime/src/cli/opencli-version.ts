@@ -52,6 +52,8 @@ export const OPENCLI_PACKAGE = "@jackwener/opencli";
  * `opencli-version` command does the first four and refuses to leave any of
  * them out of step with this one.
  */
+// TODO: This version should NOT be pinned here; we should have ONE source of truth for the opencli version, and it should be in the package.json file
+// The opencli-version.ts file should read the version from package.json instead of having it hardcoded here.
 export const OPENCLI_VERSION = "2.0.3";
 
 /** The key pnpm patches a package version under. */

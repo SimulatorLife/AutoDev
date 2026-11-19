@@ -1062,6 +1062,79 @@ test("a turn that wants another model waits for the site to drain and switches i
   );
 });
 
+test("a model switch the site refused leaves its turns sharing the tabs at the model it kept", async () => {
+  // Workers asked for one ChatGPT level and the root for another; the switch
+  // failed in a background window every time, and the bridge then forgot the
+  // site's model, so every later turn waited for the site to drain and ran
+  // alone (session 01a1f56a-5e8a-7232-abfb-d4d5e2104595: three tabs, one turn
+  // at a time, each queued minutes).
+  const asks = new HeldAsks();
+  const refused = "opencli-chatgpt-advanced";
+  let switchesRefused = 0;
+  await withBridge(
+    {
+      turnTimeoutSeconds: 30,
+      siteTabs: { chatgpt: 3, gemini: 1 },
+      run: async (request, sites) => {
+        if (request.args[1] === "model" && request.args[2] === "advanced") {
+          switchesRefused += 1;
+          throw new OpencliCommandError(
+            "Native input requires a visible browser page; input was not dispatched.",
+            "COMMAND_EXEC",
+            1
+          );
+        }
+        return asks.run(request, sites);
+      }
+    },
+    async (baseUrl) => {
+      const first = postTurn(
+        baseUrl,
+        turnRequest("first", MODEL.chatgpt, "kept-0")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await first).status, 200);
+
+      const switching = postTurn(
+        baseUrl,
+        turnRequest("switch", refused, "kept-switch")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await switching).status, 200);
+      assert.equal(switchesRefused, 1);
+
+      const turns = [1, 2].map((index) =>
+        postTurn(
+          baseUrl,
+          turnRequest(`kept-${index}`, MODEL.chatgpt, `kept-${index}`)
+        )
+      );
+      await asks.waitForHeld(2);
+      await settle();
+      assert.equal(
+        asks.inFlight,
+        2,
+        "turns at the model the site kept run side by side"
+      );
+      asks.releaseAll();
+      for (const response of await Promise.all(turns))
+        assert.equal(response.status, 200);
+
+      // The refused model is still asked for by the next turn that wants it.
+      const again = postTurn(
+        baseUrl,
+        turnRequest("again", refused, "kept-again")
+      );
+      await asks.waitForHeld(1);
+      asks.releaseAll();
+      assert.equal((await again).status, 200);
+      assert.equal(switchesRefused, 2);
+    }
+  );
+});
+
 test("turns at the site's model take its free tabs while a model switch is young", async () => {
   // A root at one level and its workers at another ran one at a time: every
   // turn behind a waiting switch waited for the site to drain too.
