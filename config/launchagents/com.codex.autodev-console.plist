@@ -28,9 +28,9 @@
   <key>ThrottleInterval</key>
   <integer>5</integer>
 
-  <!-- Launchd's default PATH lacks nvm/homebrew node. The launcher resolves a
-       real node binary first via AUTODEV_NODE_BIN, then PATH, then the
-       usual nvm/homebrew fallbacks. CODEX_HOME so the launcher can read
+  <!-- Launchd's default PATH lacks pnpm-managed node. The launcher resolves a
+       real node binary first via AUTODEV_NODE_BIN, then the pnpm Node shim.
+       CODEX_HOME is supplied so the launcher can read
        its out-of-repository config (.env + openlit-secrets.env). HOME so
        other credential lookups succeed. AUTODEV_REPO_ROOT so the launcher can
        confirm console/.next/BUILD_ID exists before exec'ing Next. The

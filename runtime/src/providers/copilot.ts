@@ -989,7 +989,7 @@ function mcpServerFromToolName(toolName: string): string | null {
 /**
  * The PATH the Copilot CLI is started with.
  *
- * The CLI is an npm launcher whose shebang is `#!/usr/bin/env node`, so the
+ * The CLI is a Node-based launcher whose shebang is `#!/usr/bin/env node`, so the
  * Node that runs it is whichever `node` its PATH names first. Under launchd
  * that PATH is the launchd default, whose `node` is an Intel build on Apple
  * Silicon and runs the whole CLI through Rosetta. The bridge already runs

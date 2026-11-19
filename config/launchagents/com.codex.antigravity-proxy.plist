@@ -7,7 +7,7 @@
 
   <!-- Antigravity CLI Responses proxy on 127.0.0.1:4002, upstream for the
        LiteLLM gateway (:4001). KeepAlive keeps it up across restarts, crashes,
-       and sleep. PATH includes nvm so `env node` resolves under launchd.
+       and sleep. PATH includes the pnpm-managed Node supplied by the installer.
        Invokes the installed hook copy under ~/.codex (outside Desktop). -->
   <key>ProgramArguments</key>
   <array>
