@@ -13,6 +13,7 @@ import {
   type TomlTable,
   validateProviderContracts
 } from "@simulatorlife/autodev-runtime/config";
+import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
 import { parse } from "smol-toml";
 
 test("TOML serialization is parseable and ends with one newline", () => {
@@ -506,6 +507,16 @@ test("Playtester and Browser Tester declare isolated MCP injection requirements"
     >;
     providers: Record<string, { roleMcpInjection?: boolean }>;
   };
+  assert.equal(
+    contract.roles["browser-tester"]?.mcpTools?.playwright?.includes(
+      "browser_evaluate"
+    ),
+    true
+  );
+  assert.equal(
+    contract.roles.smart?.mcpTools?.playwright?.includes("browser_evaluate"),
+    true
+  );
   assert.deepEqual(contract.roles["browser-tester"]?.roleScopedMcp, [
     "playwright"
   ]);
@@ -540,4 +551,47 @@ test("Playtester and Browser Tester declare isolated MCP injection requirements"
   assert.equal(contract.providers.codex?.roleMcpInjection ?? false, false);
   assert.equal(contract.providers.claude?.roleMcpInjection ?? false, false);
   assert.equal(contract.providers.minimax?.roleMcpInjection ?? false, false);
+});
+
+test("every AutoDev user-level skill is explicitly gated on root config and every role", () => {
+  const userSkills = userLevelSkills(
+    join(import.meta.dirname, "../../.rulesync/skills")
+  );
+  const checkSurface = (tomlPath: string) => {
+    const parsed = parse(readFileSync(tomlPath, "utf8")) as {
+      skills?: { config?: Array<{ name?: unknown; enabled?: unknown }> };
+    };
+    const entries = parsed.skills?.config ?? [];
+    const seen = new Map<string, boolean>();
+    for (const entry of entries) {
+      assert.equal(typeof entry.name, "string", `${tomlPath}: skill name`);
+      assert.equal(
+        typeof entry.enabled,
+        "boolean",
+        `${tomlPath}: skill enabled flag for ${String(entry.name)}`
+      );
+      const name = entry.name as string;
+      assert.equal(
+        seen.has(name),
+        false,
+        `${tomlPath}: duplicate [[skills.config]] entry for ${name}`
+      );
+      seen.set(name, entry.enabled as boolean);
+    }
+    for (const skill of userSkills) {
+      assert.equal(
+        seen.has(skill),
+        true,
+        `${tomlPath}: missing explicit enabled/disabled gate for user-level skill ${skill}`
+      );
+    }
+  };
+
+  checkSurface(join(import.meta.dirname, "../../config/config.autodev.toml"));
+  const rolesDir = join(import.meta.dirname, "../../agents/roles");
+  for (const file of readdirSync(rolesDir).filter((name) =>
+    name.endsWith(".toml")
+  )) {
+    checkSurface(join(rolesDir, file));
+  }
 });

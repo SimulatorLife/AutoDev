@@ -25,19 +25,19 @@ to reproduce a request shape.
 `$SKILL_DIR` is this skill's directory.
 
 ```bash
-node "$SKILL_DIR/scripts/session-trace.ts" --recent            # no id given: newest sessions
+node "$SKILL_DIR/scripts/session-trace.ts" --recent            # no id given: newest sessions (active + archived)
+node "$SKILL_DIR/scripts/session-trace.ts" --scan-recent [N]   # cross-session fleet efficiency & failure/skip scan
+node "$SKILL_DIR/scripts/session-trace.ts" --hooks [--since D] # PreToolUse denial summary from hooks.log (default 7d)
 node "$SKILL_DIR/scripts/session-trace.ts" <id>                # session or thread id
-node "$SKILL_DIR/scripts/session-trace.ts" <id> --failures     # include paired call input on TOOL FAILED lines
-node "$SKILL_DIR/scripts/session-trace.ts" <id> --efficiency   # include codex-router-state.json + MCP/tool exposure vs usage
+node "$SKILL_DIR/scripts/session-trace.ts" <id> --failures     # include paired call input on TOOL FAILED lines (2/category cap)
+node "$SKILL_DIR/scripts/session-trace.ts" <id> --all-failures # list every failure without the per-category cap
+node "$SKILL_DIR/scripts/session-trace.ts" <id> --efficiency   # per-thread tokens/cache/compaction/skills + router state & MCP exposure
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --items        # plus every item, truncated
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --events       # plus every router event
 ```
 
 A Codex App "Session" id is the root thread; a "Thread" id may be a subagent.
-Either finds the whole session. To compare investigation metrics across tool-surface changes, save two `--json` reports, then run `node "$SKILL_DIR/scripts/investigation-compare.ts" before.json after.json`. Inputs must be the JSON object emitted by `session-trace --json`, with a top-level `threads` array; every array entry must be an object with an `investigation` object containing boolean `observed`. Metric fields (`toolCalls`, `tokens`, `filesRead`, `repeatedReads`, `searches`, `repeatedSearches`, and `context.ccc`/`cgc`/`lsp`) may be omitted; present counts must be finite numbers, and `tokens` may also be null. The report gives per-period totals/means, metric-specific observed/missing counts, separate unavailable-thread counts, and after-minus-before deltas. It is descriptive only and does not establish causation. Per thread the report gives turn outcomes,
-`GAP`s of 60s+ inside a turn, tool calls by name (MCP tools called inside
-`exec` counted as `mcp__<server>__<tool>`), `TOOL FAILED` lines, and the
-router's requests: per-provider counts, `ROUTER FAILURE`s, and `PROVIDER HOPS`.
+Either finds the whole session. To compare investigation metrics across tool-surface changes, save two `--json` reports, then run `node "$SKILL_DIR/scripts/investigation-compare.ts" before.json after.json`. Inputs must be the JSON object emitted by `session-trace --json`, with a top-level `threads` array; every array entry must be an object with an `investigation` object containing boolean `observed`. Metric fields (`toolCalls`, `tokens`, `filesRead`, `repeatedReads`, `searches`, `repeatedSearches`, and `context.ccc`/`cgc`/`lsp`) may be omitted; present counts must be finite numbers, and `tokens` may also be null. The report gives per-period totals/means, metric-specific observed/missing counts, separate unavailable-thread counts, and after-minus-before deltas. It is descriptive only and does not establish causation. Each thread gets turn outcomes, `GAP`s of 60s+ inside a turn, tool calls by name (MCP tools called inside `exec` counted as `mcp__<server>__<tool>`), grouped `TOOL FAILURES` + `TOOL FAILED` lines (capped at 2 samples per failure category unless `--all-failures` is passed so noisy repeated errors do not truncate the report), and the router's requests: per-provider counts, `ROUTER SKIPPED` (`probe_unavailable`, `quota_exhausted`, etc.), `ROUTER RETRIES` (`retries`, `transport_errors`, `exhaustion_waits`), `ROUTER FAILURE`s, and `PROVIDER HOPS`. With `--efficiency` (and always in `--json`), each thread also reports cumulative `token_count` usage (`cached` %, `reasoning` %, peak input, >50% cache drops), compaction count & max `replacement_history` items/bytes/images, and initial developer-prompt bytes + loaded skills grouped by source root alongside observed `SKILL.md` reads and `$CODEX_HOME/run/skill-read-telemetry` counts.
 Each thread also gets an `investigation` line: what it did before its first
 file change (the whole thread if it never edited). It reports tool calls,
 tokens, unique files read, repeated reads, searches and repeated searches, and
@@ -64,13 +64,14 @@ every event and looked like "the router logged nothing".
 | What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
 | Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside |
 | What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times; check `opencli-proxy.launchd.log` for `earlier message(s) left out` and `minimax-proxy.launchd.log` for startup errors) |
-| Health, cooldowns, agent counts, MCP usage now | `curl -s 127.0.0.1:4100/status \| jq` -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>` (`byMcp`/`mcpUses`, `mcpExposed`, `bridgeTools`), `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. (`autodev router status` is not wired up.) |
+| Health, cooldowns, agent counts, MCP usage now | `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status \| jq`) -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>` (`byMcp`/`mcpUses`, `mcpExposed`, `bridgeTools`), `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. Retry `/status` once if `session-trace.ts` hits a router restart window (`router /status unreachable`). |
 | Persisted router state vs live `/status` | `$CODEX_HOME/codex-router-state.json` (`disabledProviders`, `providerCooldowns`, `roleAssignments.*.model: null` falling back to `config/model-routing.json`) |
 | Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
 | Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
 | Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
 | Did Codex load the command rules? | `node "$SKILL_DIR/scripts/rule-loading-probe.ts" --codex "$(command -v codex)"` — a real Codex run against an isolated `CODEX_HOME`; `ls -l "$CODEX_HOME/rules/default.rules"` must show a regular file, and `bash scripts/install.sh --check` reports a symlink or stale copy as drift |
-| Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json`; `exec` inputs reading `SKILL.md` |
+| What `PreToolUse` hooks blocked? | `$CODEX_HOME/hooks/hooks.log` (`event="PreToolUse"`, `decision="deny"`, `policy`, `role`, `reason`, `commandHead`); summarize via `node "$SKILL_DIR/scripts/session-trace.ts" --hooks --since 7`, or scan historical rollouts via `--scan-recent [N]` |
+| Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json` stores per-turn SHA-256 dedupe hashes (`session-trace.ts --efficiency` reports the count), while rollout tool inputs reading `SKILL.md` give exact skill names |
 
 ## 3. Diagnose
 
@@ -84,8 +85,7 @@ every event and looked like "the router logged nothing".
    change after reinstall and restart (see `DRIFT` and service start times);
    the MCP launcher resolves into the checkout and applies on the next server
    start.
-5. **Size it**: scan `sessions/` for the error string or item pattern (counts and
-   date range) to tell a one-off from a systemic bug.
+5. **Size it**: run `node "$SKILL_DIR/scripts/session-trace.ts" --scan-recent 15` and `--hooks --since 7`, or scan `sessions/` + `archived_sessions/` for the error string or item pattern, to tell a one-off from a systemic bug.
 6. **Trace to code** in `src/router/`, `src/providers/<bridge>.ts`, or
    `runtime/src/mcp/`, and fix it there, not downstream.
 
@@ -205,6 +205,7 @@ every event and looked like "the router logged nothing".
   reproduce it with `node "$SKILL_DIR/scripts/rule-loading-probe.ts"`. Verified
   2026-11-17 against `codex-cli 0.154.0` and `0.169.0-alpha.11.1`; the write-up is
   in `docs/local-setup.md` ("Codex command rules").
+- **Zero `ROUTER FAILURE`s does not mean Priority-1 stayed selected.** A single `ROUTER SKIPPED` event (`probe_unavailable`, `quota_exhausted`, `session_limit`, etc.) can pin a long session onto a fallback provider with zero failed requests; always check `ROUTER SKIPPED` and `ROUTER RETRIES` in `session-trace.ts`.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.
 - **Never print tokens or paste prompts**; quote ids, counts, and timestamps.

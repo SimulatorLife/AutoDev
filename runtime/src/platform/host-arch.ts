@@ -3,12 +3,16 @@ import {
   accessSync,
   closeSync,
   constants,
+  existsSync,
   openSync,
   readdirSync,
+  readFileSync,
   readSync,
   statSync
 } from "node:fs";
 import path from "node:path";
+
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 
 import { findExecutable } from "../shared/executables.ts";
 
@@ -190,7 +194,7 @@ export function codexCliVersion(
     try {
       stat = statSync(binary);
     } catch {
-      stat = null;
+      /* unavailable */
     }
     const cached = stat ? defaultCodexVersionCache.get(binary) : undefined;
     if (
@@ -276,4 +280,140 @@ function nvmCodexBinaries(home: string): readonly string[] {
     .filter((entry) => NODE_VERSION_PATTERN.test(entry))
     .sort()
     .map((entry) => path.join(versions, entry, "bin", "codex"));
+}
+
+export const NATIVE_NODE_PROFILE_BEGIN = "# >>> AutoDev native node >>>";
+export const NATIVE_NODE_PROFILE_END = "# <<< AutoDev native node <<<";
+
+const SYSTEM_NODE_CANDIDATES = ["/usr/local/bin/node"] as const;
+
+export interface NativeNodeLoginProfileOptions {
+  readonly host?: HostArch;
+  readonly systemCandidates?: readonly string[];
+  readonly nodeCandidates?: readonly (string | null)[];
+}
+
+function escapeDoubleQuotedShell(value: string): string {
+  return value.replaceAll(/["$\\`]/gu, String.raw`\$&`);
+}
+
+/**
+ * First executable system Node whose architecture does not match the machine
+ * (e.g. an Intel `/usr/local/bin/node` on Apple Silicon). macOS `/etc/zprofile`
+ * runs `/usr/libexec/path_helper -s`, which puts `/usr/local/bin` back near the
+ * front of `PATH` on every login shell (`zsh -lc`).
+ */
+export function foreignArchSystemNodePath(
+  host: HostArch = hostArch(),
+  candidates: readonly string[] = SYSTEM_NODE_CANDIDATES
+): string | null {
+  return (
+    candidates.find(
+      (candidate) => isExecutable(candidate) && !runsNatively(candidate, host)
+    ) ?? null
+  );
+}
+
+/**
+ * Directory of the native Node binary to prepend in `~/.zprofile` so login
+ * shells do not resolve a Rosetta `node` from `/usr/local/bin`, or null when
+ * no shadowing foreign-arch system Node exists or no alternative native binary
+ * is installed.
+ */
+export function nativeNodeLoginProfileDir(
+  home: string,
+  options: NativeNodeLoginProfileOptions = {}
+): string | null {
+  const host = options.host ?? hostArch();
+  const foreign = foreignArchSystemNodePath(host, options.systemCandidates);
+  if (foreign === null) return null;
+  const nativeNode = resolveServiceNode(home, host, options.nodeCandidates);
+  if (!isExecutable(nativeNode) || !runsNatively(nativeNode, host)) return null;
+  const nodeDir = path.dirname(nativeNode);
+  return nodeDir === path.dirname(foreign) ? null : nodeDir;
+}
+
+/** Render the managed `.zprofile` snippet placing `nodeDir` ahead of system paths. */
+export function renderNativeNodeLoginProfileBlock(nodeDir: string): string {
+  const quoted = escapeDoubleQuotedShell(nodeDir);
+  return [
+    NATIVE_NODE_PROFILE_BEGIN,
+    "# Keep macOS login shells (e.g. zsh -lc after path_helper) on native Node",
+    "# instead of a Rosetta binary under /usr/local/bin.",
+    `if [ -d "${quoted}" ]; then`,
+    `  export PATH="${quoted}:$PATH"`,
+    "fi",
+    NATIVE_NODE_PROFILE_END
+  ].join("\n");
+}
+
+function stripManagedNativeNodeBlock(existing: string): string {
+  const lines = existing.replaceAll("\r\n", "\n").split("\n");
+  const output: string[] = [];
+  let insideBlock = false;
+  for (const line of lines) {
+    if (!insideBlock && line === NATIVE_NODE_PROFILE_BEGIN) {
+      insideBlock = true;
+      continue;
+    }
+    if (insideBlock) {
+      if (line === NATIVE_NODE_PROFILE_END) insideBlock = false;
+      continue;
+    }
+    output.push(line);
+  }
+  return output.join("\n").trimEnd();
+}
+
+/**
+ * Idempotently insert, update, or remove the AutoDev native-node login-shell
+ * block in `.zprofile` while preserving all operator-owned content.
+ */
+export function applyNativeNodeLoginProfileContent(
+  existing: string,
+  nodeDir: string | null
+): string {
+  const cleanedBase = stripManagedNativeNodeBlock(existing);
+  if (nodeDir === null) return cleanedBase ? `${cleanedBase}\n` : "";
+  const block = renderNativeNodeLoginProfileBlock(nodeDir);
+  return cleanedBase ? `${cleanedBase}\n\n${block}\n` : `${block}\n`;
+}
+
+/**
+ * Ensure `$HOME/.zprofile` resolves native Node after macOS `path_helper` when
+ * a foreign-arch system Node would otherwise shadow it in login shells.
+ */
+export function syncNativeNodeLoginProfile(
+  home: string,
+  options: NativeNodeLoginProfileOptions = {}
+): {
+  readonly profilePath: string;
+  readonly nodeDir: string | null;
+  readonly changed: boolean;
+} {
+  const profilePath = path.join(home, ".zprofile");
+  const nodeDir = nativeNodeLoginProfileDir(home, options);
+  const fileExists = existsSync(profilePath);
+  if (!fileExists && nodeDir === null) {
+    return { profilePath, nodeDir, changed: false };
+  }
+  const existing = fileExists ? readFileSync(profilePath, "utf8") : "";
+  const next = applyNativeNodeLoginProfileContent(existing, nodeDir);
+  if (next === existing) {
+    return { profilePath, nodeDir, changed: false };
+  }
+  atomicWriteSync(profilePath, next, { mode: 0o644, skipUnchanged: true });
+  return { profilePath, nodeDir, changed: true };
+}
+
+/** Whether `$HOME/.zprofile` matches the expected native-node login-shell state. */
+export function nativeNodeLoginProfileMatches(
+  home: string,
+  options: NativeNodeLoginProfileOptions = {}
+): boolean {
+  const profilePath = path.join(home, ".zprofile");
+  const nodeDir = nativeNodeLoginProfileDir(home, options);
+  if (!existsSync(profilePath)) return nodeDir === null;
+  const existing = readFileSync(profilePath, "utf8");
+  return existing === applyNativeNodeLoginProfileContent(existing, nodeDir);
 }

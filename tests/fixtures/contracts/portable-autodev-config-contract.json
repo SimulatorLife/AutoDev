@@ -112,6 +112,46 @@
           "enabled": true
         },
         {
+          "name": "code-simplification",
+          "enabled": false
+        },
+        {
+          "name": "diagnosing-bugs",
+          "enabled": false
+        },
+        {
+          "name": "doubt-driven-development",
+          "enabled": false
+        },
+        {
+          "name": "game-playtesting",
+          "enabled": false
+        },
+        {
+          "name": "improve-codebase-architecture",
+          "enabled": false
+        },
+        {
+          "name": "playtest-analysis",
+          "enabled": false
+        },
+        {
+          "name": "remove-legacy-shims",
+          "enabled": false
+        },
+        {
+          "name": "resolve-merge-conflicts",
+          "enabled": false
+        },
+        {
+          "name": "source-driven-development",
+          "enabled": false
+        },
+        {
+          "name": "writing-agent-skills",
+          "enabled": false
+        },
+        {
           "name": "imagegen",
           "enabled": false
         },
@@ -344,12 +384,17 @@
     "ccc",
     "cloud-environment:cloud-desktop",
     "cloud-environment:cloud-environment-runtime",
+    "code-simplification",
+    "diagnosing-bugs",
+    "doubt-driven-development",
+    "game-playtesting",
     "google-drive:google-docs",
     "google-drive:google-drive",
     "google-drive:google-drive-comments",
     "google-drive:google-sheets",
     "google-drive:google-slides",
     "imagegen",
+    "improve-codebase-architecture",
     "lsp-mcp-server",
     "openai-developers:agents",
     "openai-developers:devday-guide",
@@ -359,26 +404,36 @@
     "openai-developers:openai-platform-api-key",
     "openai-developers:setup",
     "orchestration",
+    "playtest-analysis",
     "plugin-creator",
+    "remove-legacy-shims",
+    "resolve-merge-conflicts",
     "sites:sites",
     "sites:sites-remix",
     "skill-creator",
     "skill-installer",
+    "source-driven-development",
     "visualize:visualize",
     "work-pets:create-pet",
     "work-pets:pets",
-    "work-pets:update-pet"
+    "work-pets:update-pet",
+    "writing-agent-skills"
   ],
   "skillsConfigNamesRequired": [
     "ccc",
     "cloud-environment:cloud-desktop",
     "cloud-environment:cloud-environment-runtime",
+    "code-simplification",
+    "diagnosing-bugs",
+    "doubt-driven-development",
+    "game-playtesting",
     "google-drive:google-docs",
     "google-drive:google-drive",
     "google-drive:google-drive-comments",
     "google-drive:google-sheets",
     "google-drive:google-slides",
     "imagegen",
+    "improve-codebase-architecture",
     "lsp-mcp-server",
     "openai-developers:agents",
     "openai-developers:devday-guide",
@@ -388,14 +443,19 @@
     "openai-developers:openai-platform-api-key",
     "openai-developers:setup",
     "orchestration",
+    "playtest-analysis",
     "plugin-creator",
+    "remove-legacy-shims",
+    "resolve-merge-conflicts",
     "sites:sites",
     "sites:sites-remix",
     "skill-creator",
     "skill-installer",
+    "source-driven-development",
     "visualize:visualize",
     "work-pets:create-pet",
     "work-pets:pets",
-    "work-pets:update-pet"
+    "work-pets:update-pet",
+    "writing-agent-skills"
   ]
 }

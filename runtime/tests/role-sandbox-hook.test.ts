@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
+import { sanitizeCommandHead } from "../src/hooks/hook-log.ts";
 import {
   evaluateRoleSandboxHook,
   runRoleSandboxHook
@@ -180,10 +184,19 @@ test("a role the contract does not describe is left to the session's sandbox", (
  * are captured; the status is the hook's exit code, which is what Codex reads
  * as a blocking refusal.
  */
-function runHookCapturing(raw: string): {
+function runHookCapturing(
+  raw: string,
+  codexHome?: string
+): {
   readonly status: number;
   readonly output: string;
 } {
+  const ownedTemp = codexHome
+    ? null
+    : mkdtempSync(path.join(tmpdir(), "autodev-hook-test-"));
+  const targetHome = codexHome ?? ownedTemp!;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = targetHome;
   const chunks: string[] = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
   const originalError = process.stderr.write.bind(process.stderr);
@@ -200,6 +213,9 @@ function runHookCapturing(raw: string): {
   } finally {
     process.stdout.write = originalWrite;
     process.stderr.write = originalError;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    if (ownedTemp) rmSync(ownedTemp, { recursive: true, force: true });
   }
 }
 
@@ -240,4 +256,84 @@ test("the hook denies a root orchestrator's git-history call with the reason Cod
   assert.equal(status, 2);
   assert.match(output, /"deny"/u);
   assert.match(output, /git show/u);
+});
+
+test("PreToolUse denials append structured records to hooks.log and allowed calls stay silent", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "autodev-hook-denial-log-"));
+  try {
+    const allowed = runHookCapturing(
+      payload({
+        agentType: "explorer",
+        toolName: "exec_command",
+        toolInput: { cmd: "ls -la" }
+      }),
+      home
+    );
+    assert.equal(allowed.status, 0);
+    const logPath = path.join(home, "hooks", "hooks.log");
+    assert.equal(existsSync(logPath), false);
+
+    runHookCapturing(
+      payload({
+        agentType: "explorer",
+        toolName: "exec_command",
+        toolInput: { cmd: "python3 -c 'print(1)'" }
+      }),
+      home
+    );
+    runHookCapturing(
+      payload({
+        agentType: "explorer",
+        toolName: "apply_patch",
+        toolInput: { input: "*** Begin Patch\nSECRET PATCH BODY" }
+      }),
+      home
+    );
+    runHookCapturing(
+      payload({
+        model: "autodev/orchestrator",
+        toolName: "exec_command",
+        toolInput: { cmd: "git show HEAD~3" }
+      }),
+      home
+    );
+
+    const entries = readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(entries.length, 3);
+
+    assert.equal(entries[0]?.event, "PreToolUse");
+    assert.equal(entries[0]?.hook, "role-sandbox");
+    assert.equal(entries[0]?.decision, "deny");
+    assert.equal(entries[0]?.policy, "read-only");
+    assert.equal(entries[0]?.role, "explorer");
+    assert.equal(entries[0]?.commandHead, "python3 -c 'print(1)'");
+
+    assert.equal(entries[1]?.policy, "read-only");
+    assert.equal(entries[1]?.tool, "apply_patch");
+    assert.equal("commandHead" in (entries[1] ?? {}), false);
+
+    assert.equal(entries[2]?.policy, "orchestrator-git-history");
+    assert.equal(entries[2]?.role, "root");
+    assert.equal(entries[2]?.commandHead, "git show HEAD~3");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("sanitizeCommandHead redacts credentials and truncates long commands", () => {
+  const sanitized = sanitizeCommandHead(
+    "API_KEY=supersecretvalue curl -H 'Authorization: Bearer tok_123.abc' --token=mysecret123 https://example.com/sk-abcdefghijklmno " +
+      "x".repeat(150)
+  );
+  assert.doesNotMatch(sanitized, /supersecretvalue/u);
+  assert.doesNotMatch(sanitized, /tok_123\.abc/u);
+  assert.doesNotMatch(sanitized, /mysecret123/u);
+  assert.doesNotMatch(sanitized, /sk-abcdefghijklmno/u);
+  assert.match(sanitized, /API_KEY=\[REDACTED\]/u);
+  assert.match(sanitized, /Bearer \[REDACTED\]/u);
+  assert.match(sanitized, /--token=\[REDACTED\]/u);
+  assert.ok(sanitized.length <= 120);
 });

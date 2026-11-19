@@ -22,6 +22,7 @@
     "./cli/control-api-preflight": "./src/cli/control-api-preflight.ts",
     "./hooks": "./src/hooks/index.ts",
     "./hooks/entry-point": "./src/hooks/entry-point.ts",
+    "./hooks/hook-log": "./src/hooks/hook-log.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/codex-tools-shim": "./src/mcp/codex-tools-shim.ts",
     "./mcp/process-registry": "./src/mcp/process-registry.ts",

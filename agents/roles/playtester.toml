@@ -137,3 +137,19 @@ enabled = false
 [[skills.config]]
 name = "game-playtesting"
 enabled = true
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = false
+
+[[skills.config]]
+name = "playtest-analysis"
+enabled = false
+
+[[skills.config]]
+name = "source-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "writing-agent-skills"
+enabled = false

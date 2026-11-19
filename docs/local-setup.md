@@ -788,13 +788,13 @@ file was loaded. Observed on 2026-11-17 with `codex-cli 0.154.0` (standalone)
 and `codex-cli 0.169.0-alpha.11.1` (the Codex app bundle), identically on
 both:
 
-| `$CODEX_HOME/rules/default.rules` | resolves to | Codex loads it |
-| --- | --- | --- |
-| regular file | `.../rules/default.rules` | yes, the rule is enforced |
-| symlink to a file in the same directory | `.../rules/source.rules` | yes, the rule is enforced |
-| symlink to a file in `$CODEX_HOME` outside `rules/` | `.../source.rules` | no, skipped silently |
-| symlink to a file in a subdirectory of `rules/` | `.../rules/sub/source.rules` | no, skipped silently |
-| symlink to the repository checkout | `<repo>/agents/rules/default.rules` | no, skipped silently |
+| `$CODEX_HOME/rules/default.rules`                   | resolves to                         | Codex loads it            |
+| --------------------------------------------------- | ----------------------------------- | ------------------------- |
+| regular file                                        | `.../rules/default.rules`           | yes, the rule is enforced |
+| symlink to a file in the same directory             | `.../rules/source.rules`            | yes, the rule is enforced |
+| symlink to a file in `$CODEX_HOME` outside `rules/` | `.../source.rules`                  | no, skipped silently      |
+| symlink to a file in a subdirectory of `rules/`     | `.../rules/sub/source.rules`        | no, skipped silently      |
+| symlink to the repository checkout                  | `<repo>/agents/rules/default.rules` | no, skipped silently      |
 
 The `allow` direction was reproduced the same way: with the shipped
 `agents/rules/default.rules` copied into the isolated `CODEX_HOME`, the
@@ -820,7 +820,13 @@ rules file must be a regular file with the tracked content.
   resolved: its own Node when that is native to the machine, otherwise the
   newest native nvm or Homebrew Node. launchd's `PATH` alone finds
   `/usr/local/bin/node` first, which on many Apple Silicon Macs is an Intel
-  build that Rosetta translates on every cold start. The launchers fall back to
+  build that Rosetta translates on every cold start. On macOS hosts where an
+  Intel `/usr/local/bin/node` shadows a native nvm/Homebrew Node, the installer
+  also maintains a bounded `# >>> AutoDev native node >>>` block at the end of
+  `~/.zprofile` (after `/etc/zprofile`'s `path_helper`) so non-interactive
+  login shells such as Codex's `zsh -lc` resolve the native `arm64` `node`
+  binary instead of failing native-addon loads like
+  `@rolldown/binding-darwin-arm64`. The launchers fall back to
   `PATH` only when that binary no longer exists; reinstall after changing Node
   installations. `bash scripts/install.sh --check` reports the drift.
 - Keep OAuth/PAT/API credentials outside the repository. Background services
@@ -1073,7 +1079,7 @@ three places, and each one is live at a different moment:
 - In your own Chrome, the **daemon** (opencli's Browser Bridge session, shared
   machine-wide on one port) also holds the adapter it loaded. A patch keeps the
   package version, so the daemon cannot tell it is stale and the bridge's
-  stale-daemon recovery (which replaces a daemon of another *version*) never
+  stale-daemon recovery (which replaces a daemon of another _version_) never
   fires: run `opencli daemon stop` after a patch. The dedicated browser has no
   daemon.
 - The **bridge and browser owner** (`runtime/src/providers/opencli*.ts`) runs

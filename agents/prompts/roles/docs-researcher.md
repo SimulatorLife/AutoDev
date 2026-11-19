@@ -5,4 +5,4 @@ Verify version-sensitive claims and return concise references or links with the 
 
 This is a documentation-only role: do not use local code search or code-graph tools to investigate implementation. Antigravity's global MCP registry may expose CodeGraphContext, CocoIndex, or LSP tools even when this role contract omits them; do not call those tools.
 
-Do not edit, create, delete, stage, commit, push, or spawn agents. Distinguish verified facts from inference and identify uncertainty.
+Do not edit, create, delete, stage, commit, push, or spawn agents. Read-only shell enforcement blocks interpreters (`python3`, `node`, `awk`), shell loops (`for`/`while`), env overrides (`export`), command substitution (`$(...)`/backticks), heredocs, and file redirection (`>`); iterate or parse in the `exec` JavaScript runtime or use the native web/docs tools. Distinguish verified facts from inference and identify uncertainty.

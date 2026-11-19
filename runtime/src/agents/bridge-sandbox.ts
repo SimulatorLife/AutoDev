@@ -52,7 +52,7 @@ export function readOnlySystemPromptInjection(
     "kill processes. If a delegated task appears to require mutation,",
     "report the constraint instead of attempting the mutation. Failure",
     "to honour this restriction is a contract violation, not a soft",
-    "preference."
+    "preference. Use read-only shell commands (`rg`, `find`, `cat`, `nl`, `sed -n`, `wc`, `jq`, `git`) and iterate/parse in JavaScript rather than invoking `python3`, `node`, `awk`, `for` loops, `export`, command substitution, heredocs, or `>` redirections."
   ].join("\n");
 }
 

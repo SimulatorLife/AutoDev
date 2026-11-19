@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync
 } from "node:fs";
@@ -100,7 +102,12 @@ function runInstalledHook(
     const output = execFileSync(
       process.execPath,
       [path.join(codexHome, "src/hooks/role-sandbox.ts")],
-      { input: payload, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      {
+        input: payload,
+        env: { ...process.env, CODEX_HOME: codexHome },
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }
     );
     return { status: 0, output };
   } catch (error) {
@@ -144,10 +151,40 @@ test("the installed hook lets a read-only role read", () => {
 
 test("the installed hook leaves a write-capable role to the session's sandbox", () => {
   const codexHome = installedCodexHome();
-  const outcome = runInstalledHook(codexHome, {
-    agentType: "worker",
-    toolName: "exec_command",
-    toolInput: { cmd: "rm -rf build" }
-  });
-  assert.equal(outcome.status, 0);
+  try {
+    const outcome = runInstalledHook(codexHome, {
+      agentType: "worker",
+      toolName: "exec_command",
+      toolInput: { cmd: "rm -rf build" }
+    });
+    assert.equal(outcome.status, 0);
+    assert.equal(existsSync(path.join(codexHome, "hooks", "hooks.log")), false);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("the installed hook logs structured PreToolUse denials to CODEX_HOME/hooks/hooks.log", () => {
+  const codexHome = installedCodexHome();
+  try {
+    const outcome = runInstalledHook(codexHome, {
+      agentType: "explorer",
+      toolName: "exec_command",
+      toolInput: { cmd: "python3 -c 'print(1)'" }
+    });
+    assert.equal(outcome.status, 2);
+    const logContent = readFileSync(
+      path.join(codexHome, "hooks", "hooks.log"),
+      "utf8"
+    ).trim();
+    const record = JSON.parse(logContent) as Record<string, unknown>;
+    assert.equal(record.event, "PreToolUse");
+    assert.equal(record.hook, "role-sandbox");
+    assert.equal(record.decision, "deny");
+    assert.equal(record.policy, "read-only");
+    assert.equal(record.role, "explorer");
+    assert.equal(record.commandHead, "python3 -c 'print(1)'");
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
 });

@@ -75,3 +75,11 @@ test("Copilot deny rules name the same history subcommands", () => {
     GIT_HISTORY_SUBCOMMANDS.map((s) => `--deny-tool=shell(git ${s})`)
   );
 });
+
+test("denial message directs the root to current-state git alternatives", () => {
+  const decision = shell("git log --oneline -n 5");
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason ?? "", /git status/u);
+  assert.match(decision.reason ?? "", /git diff/u);
+  assert.match(decision.reason ?? "", /git rev-parse --short HEAD/u);
+});

@@ -33,6 +33,7 @@ const BROWSER_TESTER_TOOL_ALLOWLIST = [
   "browser_navigate",
   "browser_tabs",
   "browser_snapshot",
+  "browser_evaluate",
   "browser_take_screenshot",
   "browser_click",
   "browser_type",

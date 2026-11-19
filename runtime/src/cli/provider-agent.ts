@@ -897,6 +897,7 @@ const BROWSER_TESTER_ENABLED_TOOLS = [
   "browser_navigate",
   "browser_tabs",
   "browser_snapshot",
+  "browser_evaluate",
   "browser_take_screenshot",
   "browser_click",
   "browser_type",

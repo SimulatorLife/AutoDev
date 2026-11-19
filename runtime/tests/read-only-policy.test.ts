@@ -411,3 +411,52 @@ test("refused command message interpolates the actual command name rather than l
     /and the command redirects output into a file/u
   );
 });
+
+test("uname, spaced /dev/null redirects, and bounded read-only xargs targets are allowed while unsafe targets fail closed", () => {
+  for (const allowed of [
+    "uname -m",
+    "rg foo src 2> /dev/null || true",
+    "git branch > /dev/null",
+    "rg foo src &> /dev/null",
+    "find runtime/src core/src -maxdepth 3 -name '*.ts' | sort | xargs wc -l",
+    "rg -l foo src | xargs -n 20 head -n 5",
+    String.raw`printf 'a\0b' | xargs -0 -r stat`
+  ]) {
+    assertAllowed(allowed);
+  }
+
+  for (const refused of [
+    "find . -name '*.ts' | xargs rm",
+    "find . -name '*.ts' | xargs sh -c 'ls'",
+    "rg -l a src | xargs rg --pre=evil foo",
+    "rg -l a src | xargs sort -o /tmp/out",
+    "rg -l a src | xargs find . -delete",
+    "rg -l a src | xargs -I{} echo {}",
+    "rg foo src > /dev/nullfile",
+    "rg foo src >> /dev/null",
+    "rg foo src 2> &1"
+  ]) {
+    assertRefused(refused);
+  }
+});
+
+test("disallowed heredoc commands report the disallowed command rather than a redirect or substitution inside the body", () => {
+  const py = evaluateReadOnlyCommand(
+    "python3 - <<'EOF'\nif 2 > 1:\n  print('x')\nEOF"
+  );
+  assert.equal(py.allowed, false);
+  assert.match(py.reason ?? "", /`python3`/u);
+  assert.doesNotMatch(py.reason ?? "", /redirects output into a file/u);
+
+  const nodeHeredoc = evaluateReadOnlyCommand(
+    "node - <<'EOF'\nconst f = () => `$(echo hi)`;\nEOF"
+  );
+  assert.equal(nodeHeredoc.allowed, false);
+  assert.match(nodeHeredoc.reason ?? "", /`node`/u);
+  assert.doesNotMatch(nodeHeredoc.reason ?? "", /substitutes the output/u);
+
+  // Even a read-only command still fails closed on heredocs, while quoted `<<` passes.
+  const catHeredoc = evaluateReadOnlyCommand("cat <<'EOF'\nhello\nEOF");
+  assert.equal(catHeredoc.allowed, false);
+  assertAllowed('rg "a << b" src');
+});

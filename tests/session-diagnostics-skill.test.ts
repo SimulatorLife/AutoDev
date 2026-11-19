@@ -25,7 +25,10 @@ import {
   findSessionRollouts,
   hasOpenTurn,
   recentSessions,
+  renderHookDenials,
   renderReport,
+  scanRecentSessions,
+  summarizeHookDenials,
   summarizeRouter,
   traceThread
 } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
@@ -1266,4 +1269,621 @@ test("summarizeRouter keeps matchedBy=thread when router daemon lifecycle events
   assert.equal(summary.matchedBy, "thread");
   assert.equal(summary.requests, 1);
   assert.equal(summary.events?.length, 2);
+});
+
+test("traceThread measures token usage, cache drops, compaction images, prompt overhead, and skill telemetry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-thread-eff-"));
+  try {
+    const threadId = "01a1eff0-0000-7000-8000-000000000010";
+    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
+    const telemetryDir = join(dir, "run", "skill-read-telemetry");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(telemetryDir, { recursive: true });
+
+    const devSkillsPrompt = [
+      "<app-context>desktop</app-context>",
+      "<skills_instructions>",
+      "- alpha-skill: Alpha help. (file: /tmp/demo-repo/.agents/skills/alpha-skill/SKILL.md)",
+      `- orch-skill: Orch help. (file: ${join(process.env.HOME ?? "/Users/test", ".agents/skills/orch-skill/SKILL.md")})`,
+      "</skills_instructions>"
+    ].join("\n");
+
+    const rolloutFile = join(
+      sessionsDir,
+      `rollout-2026-11-18T10-00-00-${threadId}.jsonl`
+    );
+    writeFileSync(
+      rolloutFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            session_id: threadId,
+            cwd: "/tmp/demo-repo"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: devSkillsPrompt }]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 50_000,
+                cached_input_tokens: 45_000,
+                output_tokens: 1000,
+                reasoning_output_tokens: 600,
+                total_tokens: 51_000
+              },
+              last_token_usage: {
+                input_tokens: 50_000,
+                cached_input_tokens: 45_000
+              }
+            }
+          }
+        }),
+        // Duplicate snapshot: must be ignored
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:02.500Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 50_000,
+                cached_input_tokens: 45_000,
+                output_tokens: 1000,
+                reasoning_output_tokens: 600,
+                total_tokens: 51_000
+              },
+              last_token_usage: {
+                input_tokens: 50_000,
+                cached_input_tokens: 45_000
+              }
+            }
+          }
+        }),
+        // Cache drop (>50% drop from 50k input -> 5k cached) + higher total
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 120_000,
+                cached_input_tokens: 50_000,
+                output_tokens: 2000,
+                reasoning_output_tokens: 1500,
+                total_tokens: 122_000
+              },
+              last_token_usage: {
+                input_tokens: 70_000,
+                cached_input_tokens: 5000
+              }
+            }
+          }
+        }),
+        // Compaction record retaining 2 image objects
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:04.000Z",
+          type: "compacted",
+          payload: {
+            replacement_history: [
+              {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_image",
+                    image_url: "data:image/png;base64,AA"
+                  },
+                  { type: "input_image", image_url: "data:image/png;base64,BB" }
+                ]
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:04.500Z",
+          type: "event_msg",
+          payload: { type: "context_compacted" }
+        }),
+        // Reset token counter in new window
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 30_000,
+                cached_input_tokens: 20_000,
+                output_tokens: 500,
+                reasoning_output_tokens: 250,
+                total_tokens: 30_500
+              },
+              last_token_usage: {
+                input_tokens: 30_000,
+                cached_input_tokens: 20_000
+              }
+            }
+          }
+        }),
+        // Tool call reading SKILL.md and response image item (string mention in text must not double-count image objects)
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:06.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec_command",
+            call_id: "call_skill_1",
+            input: "cat /tmp/demo-repo/.agents/skills/alpha-skill/SKILL.md"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-18T10:00:07.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_image", image_url: "data:image/png;base64,CC" }
+            ]
+          }
+        })
+      ].join("\n") + "\n"
+    );
+
+    writeFileSync(
+      join(telemetryDir, `${threadId}.json`),
+      JSON.stringify({
+        turns: {
+          "turn-1": { has: ["hash_a", "hash_b"], tool: "Bash" },
+          "turn-2": { has: ["hash_b"], tool: "Bash" }
+        }
+      })
+    );
+
+    const trace = traceThread(rolloutFile, false, dir);
+    assert.ok(trace.efficiency);
+    assert.deepEqual(trace.efficiency.tokens, {
+      observed: true,
+      samples: 3,
+      inputTokens: 150_000,
+      cachedInputTokens: 70_000,
+      outputTokens: 2500,
+      reasoningOutputTokens: 1750,
+      totalTokens: 152_500,
+      cacheHitPct: 46.7,
+      reasoningPct: 70,
+      peakInputTokens: 70_000,
+      cacheDrops: 1
+    });
+    assert.equal(trace.efficiency.compaction.count, 1);
+    assert.equal(trace.efficiency.compaction.contextCompactedEvents, 1);
+    assert.equal(trace.efficiency.compaction.maxReplacementItems, 1);
+    assert.equal(trace.efficiency.compaction.maxReplacementImages, 2);
+    assert.equal(trace.efficiency.compaction.responseImageItems, 1);
+    assert.ok(trace.efficiency.prompt.initialDeveloperBytes > 0);
+    assert.ok(trace.efficiency.prompt.skillsCatalogBytes > 0);
+    assert.equal(trace.efficiency.prompt.skillsLoaded, 2);
+    assert.equal(
+      trace.efficiency.prompt.skillsByRoot["<repo>/.agents/skills"],
+      1
+    );
+    assert.equal(trace.efficiency.prompt.skillsByRoot["~/.agents/skills"], 1);
+    assert.deepEqual(trace.efficiency.prompt.skillsRead, ["alpha-skill"]);
+    assert.equal(trace.efficiency.prompt.skillTelemetryReads, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("summarizeRouter surfaces skipped, retry, exhaustion_wait, and transport_error events", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-router-skips-"));
+  try {
+    const threadId = "01a1eff1-0000-7000-8000-000000000020";
+    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
+    const runDir = join(dir, "run");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, `rollout-2026-11-18T10-00-00-${threadId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: "2026-11-18T10:00:00.000Z",
+        type: "session_meta",
+        payload: { id: threadId, session_id: threadId }
+      })}\n`
+    );
+    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
+    writeFileSync(
+      routerLog,
+      [
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:01.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "skipped",
+          provider: "claude",
+          failureClass: "probe_unavailable"
+        }),
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:02.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "selected",
+          provider: "minimax"
+        }),
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:03.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "transport_error",
+          provider: "minimax",
+          errorCode: "ECONNRESET"
+        }),
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:04.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "retry",
+          provider: "minimax"
+        }),
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:05.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "exhaustion_wait",
+          provider: "minimax",
+          elapsedMs: 4000
+        }),
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: "2026-11-18T10:00:06.000Z",
+          requestId: "req-skip-1",
+          thread: threadId,
+          phase: "result",
+          provider: "minimax",
+          outcome: "success",
+          elapsedMs: 1000,
+          toolCalls: 1
+        })
+      ].join("\n") + "\n"
+    );
+
+    const report = await buildReport({
+      id: threadId,
+      codexHome: dir,
+      routerLog,
+      items: false,
+      events: true,
+      efficiency: true,
+      offline: true
+    });
+    const summary = report.router[0];
+    assert.equal(summary?.skipped?.length, 1);
+    assert.equal(summary?.skipped?.[0]?.reason, "probe_unavailable");
+    assert.equal(summary?.retries, 1);
+    assert.equal(summary?.transportErrors, 1);
+    assert.deepEqual(summary?.exhaustionWaits, { count: 1, totalMs: 4000 });
+
+    const rendered = renderReport(report, { efficiency: true });
+    assert.match(rendered, /ROUTER SKIPPED 1 \(claude:probe_unavailable=1\)/);
+    assert.match(
+      rendered,
+      /ROUTER RETRIES retries=1 transport_errors=1 exhaustion_waits=1 \(4s\)/
+    );
+    assert.match(rendered, /err=ECONNRESET/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("renderReport categorizes tool failures, caps repetitive failures by default, and respects --all-failures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-fail-cap-"));
+  try {
+    const threadId = "01a1eff2-0000-7000-8000-000000000030";
+    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
+    mkdirSync(sessionsDir, { recursive: true });
+    const lines: string[] = [
+      JSON.stringify({
+        timestamp: "2026-11-18T10:00:00.000Z",
+        type: "session_meta",
+        payload: { id: threadId, session_id: threadId }
+      })
+    ];
+    for (let i = 1; i <= 5; i += 1) {
+      lines.push(
+        JSON.stringify({
+          timestamp: `2026-11-18T10:00:0${i}.000Z`,
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec_command",
+            call_id: `call_wrap_${i}`,
+            input: JSON.stringify({ cmd: `echo ${i}` })
+          }
+        }),
+        JSON.stringify({
+          timestamp: `2026-11-18T10:00:0${i}.500Z`,
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: `call_wrap_${i}`,
+            output: "Script error: SyntaxError: Unexpected token ':'"
+          }
+        })
+      );
+    }
+    lines.push(
+      JSON.stringify({
+        timestamp: "2026-11-18T10:00:08.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec_command",
+          call_id: "call_hook_1",
+          input: "git log -n 5"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-18T10:00:08.500Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call_hook_1",
+          output:
+            "Script error: Command blocked by PreToolUse hook: The root orchestrator does not read git history (`git log`)."
+        }
+      })
+    );
+    writeFileSync(
+      join(sessionsDir, `rollout-2026-11-18T10-00-00-${threadId}.jsonl`),
+      `${lines.join("\n")}\n`
+    );
+
+    const report = await buildReport({
+      id: threadId,
+      codexHome: dir,
+      routerLog: join(dir, "run", "missing.log"),
+      items: false,
+      offline: true
+    });
+    assert.equal(report.threads[0]?.toolFailures.length, 6);
+    assert.equal(
+      report.threads[0]?.toolFailures[0]?.category,
+      "json-wrap-syntax"
+    );
+    assert.equal(
+      report.threads[0]?.toolFailures[5]?.category,
+      "pretooluse-hook"
+    );
+
+    const capped = renderReport(report, { failures: true });
+    assert.match(
+      capped,
+      /TOOL FAILURES total=6 \(json-wrap-syntax=5 pretooluse-hook=1\)/
+    );
+    assert.match(
+      capped,
+      /\(\+3 more json-wrap-syntax failures; pass --all-failures to list all\)/
+    );
+    assert.equal(capped.match(/TOOL FAILED/gu)?.length, 3);
+
+    const uncapped = renderReport(report, {
+      failures: true,
+      allFailures: true
+    });
+    assert.doesNotMatch(uncapped, /pass --all-failures/);
+    assert.equal(uncapped.match(/TOOL FAILED/gu)?.length, 6);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("summarizeHookDenials and CLI --hooks aggregate PreToolUse denials within window", () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-hooks-summary-"));
+  try {
+    const hooksDir = join(dir, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    const nowMs = Date.parse("2026-11-19T12:00:00.000Z");
+    const emptyText = renderHookDenials(summarizeHookDenials(dir, 7, nowMs));
+    assert.match(emptyText, /no structured PreToolUse denial entries/);
+
+    writeFileSync(
+      join(hooksDir, "hooks.log"),
+      [
+        // Outside 7d window
+        JSON.stringify({
+          time: "2026-11-01T12:00:00.000Z",
+          event: "PreToolUse",
+          decision: "deny",
+          policy: "read-only",
+          role: "explorer",
+          reason: "old",
+          commandHead: "python3 old.py"
+        }),
+        JSON.stringify({
+          time: "2026-11-18T12:00:00.000Z",
+          event: "UserPromptSubmit",
+          model: "autodev/orchestrator"
+        }),
+        JSON.stringify({
+          time: "2026-11-18T13:00:00.000Z",
+          event: "PreToolUse",
+          decision: "deny",
+          policy: "read-only",
+          role: "explorer",
+          reason: "Command `python3` is not allowed",
+          commandHead: "python3 a.py"
+        }),
+        JSON.stringify({
+          time: "2026-11-18T14:00:00.000Z",
+          event: "PreToolUse",
+          decision: "deny",
+          policy: "orchestrator-git-history",
+          role: "root",
+          reason: "The root orchestrator does not read git history",
+          commandHead: "git log -n 5"
+        })
+      ].join("\n") + "\n"
+    );
+
+    const summary = summarizeHookDenials(dir, 7, nowMs);
+    assert.equal(summary.userPromptSubmits, 1);
+    assert.equal(summary.preToolUseDenials, 2);
+    assert.deepEqual(summary.byPolicy, {
+      "read-only": 1,
+      "orchestrator-git-history": 1
+    });
+    assert.deepEqual(summary.byRole, { explorer: 1, root: 1 });
+
+    const rendered = renderHookDenials(summary);
+    assert.match(rendered, /top blocked commands:/);
+    assert.match(rendered, /\[read-only\] python3 a\.py/);
+
+    const cli = spawnSync(
+      process.execPath,
+      [SCRIPT, "--hooks", "--since", "36500", "--json", "--codex-home", dir],
+      { encoding: "utf8" }
+    );
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(JSON.parse(cli.stdout).preToolUseDenials, 3);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("scanRecentSessions and CLI --scan-recent aggregate metrics across active and archived sessions", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-fleet-scan-"));
+  try {
+    const s1 = "01a1eff3-0000-7000-8000-000000000001";
+    const s2 = "01a1eff3-0000-7000-8000-000000000002";
+    const activeDir = join(dir, "sessions", "2026", "11", "18");
+    const archivedDir = join(dir, "archived_sessions");
+    const runDir = join(dir, "run");
+    mkdirSync(activeDir, { recursive: true });
+    mkdirSync(archivedDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+
+    writeFileSync(
+      join(activeDir, `rollout-2026-11-18T12-00-00-${s1}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: "2026-11-18T12:00:00.000Z",
+          type: "session_meta",
+          payload: { id: s1, session_id: s1, cwd: "/tmp/repo-a" }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-18T12:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 100_000,
+                cached_input_tokens: 80_000,
+                output_tokens: 1000,
+                reasoning_output_tokens: 500,
+                total_tokens: 101_000
+              }
+            }
+          }
+        })
+      ].join("\n") + "\n"
+    );
+    writeFileSync(
+      join(archivedDir, `rollout-2026-11-17T12-00-00-${s2}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: "2026-11-17T12:00:00.000Z",
+          type: "session_meta",
+          payload: { id: s2, session_id: s2, cwd: "/tmp/repo-b" }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-17T12:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec_command",
+            call_id: "c_blk",
+            input: "python3 x.py"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-17T12:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "c_blk",
+            output:
+              "Script error: Command blocked by PreToolUse hook: This role runs in a read-only sandbox."
+          }
+        })
+      ].join("\n") + "\n"
+    );
+
+    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
+    writeFileSync(
+      routerLog,
+      `${JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: "2026-11-18T12:00:02.000Z",
+        requestId: "req-fleet-1",
+        thread: s1,
+        phase: "skipped",
+        provider: "claude",
+        failureClass: "probe_unavailable"
+      })}\n`
+    );
+
+    const scan = await scanRecentSessions({
+      codexHome: dir,
+      routerLog,
+      limit: 5
+    });
+    assert.equal(scan.totals.sessions, 2);
+    assert.equal(scan.totals.totalTokens, 101_000);
+    assert.equal(scan.totals.cacheHitPct, 80);
+    assert.equal(scan.totals.toolFailuresByCategory["pretooluse-hook"], 1);
+    assert.deepEqual(scan.totals.routerSkippedByReason, [
+      { key: "claude:probe_unavailable", count: 1 }
+    ]);
+
+    const cli = spawnSync(
+      process.execPath,
+      [
+        SCRIPT,
+        "--scan-recent",
+        "5",
+        "--codex-home",
+        dir,
+        "--router-log",
+        routerLog
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /== fleet scan \(2 sessions, 2 threads\)/);
+    assert.match(cli.stdout, /top pretooluse blocks in rollouts:/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

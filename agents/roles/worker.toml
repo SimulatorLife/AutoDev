@@ -89,3 +89,19 @@ enabled = true
 [[skills.config]]
 name = "resolve-merge-conflicts"
 enabled = true
+
+[[skills.config]]
+name = "game-playtesting"
+enabled = false
+
+[[skills.config]]
+name = "playtest-analysis"
+enabled = false
+
+[[skills.config]]
+name = "source-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "writing-agent-skills"
+enabled = false

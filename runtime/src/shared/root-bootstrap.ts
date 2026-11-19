@@ -60,7 +60,7 @@ function buildPostCompactionContent({
     "Trust verified facts, measurements, modified files, and active/parked child agent IDs from the compaction summary instead of re-reading files or re-viewing screenshots.\n\n" +
     '- Delegate substantive discovery, implementation, and validation via `tools.multi_agent_v1__spawn_agent`/`wait_agent` inside `exec` (or the bridge tool if declared under "Delegation on this provider").\n' +
     "- Close unneeded parked children with `close_agent` before spawning a new wave at the concurrency cap.\n" +
-    "- Root must not read git history (`git log`, `git show`, `git blame`); delegate scoped regression history to a child.\n" +
+    "- Root must not read git history (`git log`, `git show`, `git blame`, `git reflog` — `PreToolUse` blocks the whole command even when chained); use `git rev-parse --short HEAD` / `git status --short` instead, or delegate scoped history to a child.\n" +
     '- Batch independent calls with `Promise.all` inside one `exec` script, bound outputs (`max_output_tokens <= 2000`), and wait with `// @exec: {"yield_time_ms": 330000}`.';
   return body + buildRecoveryContext(parentId);
 }

@@ -202,6 +202,7 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "tr",
   "tsort",
   "type",
+  "uname",
   "uniq",
   "uptime",
   "vm_stat",
@@ -1240,6 +1241,166 @@ export function sedCommandIsReadOnly(args: readonly string[]): boolean {
   return script !== null;
 }
 
+const XARGS_SAFE_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  "-0",
+  "--null",
+  "-r",
+  "--no-run-if-empty",
+  "-t",
+  "--verbose",
+  "-x",
+  "--exit"
+]);
+
+const XARGS_SAFE_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "-n",
+  "--max-args",
+  "-L",
+  "--max-lines",
+  "-P",
+  "--max-procs",
+  "-d",
+  "--delimiter",
+  "-s",
+  "--max-chars"
+]);
+
+// Commands safe as xargs targets: strictly read-only inspection utilities with
+// no write, execution, or output-file flags regardless of stdin arguments.
+const XARGS_SAFE_TARGET_COMMANDS: ReadonlySet<string> = new Set([
+  "basename",
+  "b2sum",
+  "cat",
+  "cksum",
+  "cut",
+  "dirname",
+  "du",
+  "echo",
+  "egrep",
+  "fgrep",
+  "file",
+  "fold",
+  "grep",
+  "head",
+  "ls",
+  "md5",
+  "md5sum",
+  "nl",
+  "od",
+  "printf",
+  "readlink",
+  "realpath",
+  "rev",
+  "sha1",
+  "sha1sum",
+  "sha256",
+  "sha256sum",
+  "sha512sum",
+  "shasum",
+  "stat",
+  "strings",
+  "tail",
+  "tr",
+  "uniq",
+  "wc",
+  "xxd"
+]);
+
+type CommandEvaluator = (args: readonly string[]) => {
+  ok: boolean;
+  why: string;
+};
+
+function consumeXargsFlag(
+  args: readonly string[],
+  index: number
+): { nextIndex: number; error: string | null; done: boolean } {
+  const arg = args[index]!;
+  if (arg === "--") return { nextIndex: index + 1, error: null, done: true };
+  if (!arg.startsWith("-") || arg.length === 1) {
+    return { nextIndex: index, error: null, done: true };
+  }
+  if (XARGS_SAFE_BOOLEAN_FLAGS.has(arg)) {
+    return { nextIndex: index + 1, error: null, done: false };
+  }
+  const eqIdx = arg.indexOf("=");
+  const flagName = eqIdx === -1 ? arg : arg.slice(0, eqIdx);
+  if (!XARGS_SAFE_VALUE_FLAGS.has(flagName)) {
+    return {
+      nextIndex: index,
+      error: `\`xargs\` option \`${arg}\` is not allowed in a read-only role`,
+      done: true
+    };
+  }
+  if (eqIdx === -1 && args[index + 1] === undefined) {
+    return {
+      nextIndex: index,
+      error: "`xargs` was given a flag without its value",
+      done: true
+    };
+  }
+  return {
+    nextIndex: index + (eqIdx === -1 ? 2 : 1),
+    error: null,
+    done: false
+  };
+}
+
+function xargsTargetIsReadOnly(target: string | undefined): {
+  ok: boolean;
+  why: string;
+} {
+  if (target === undefined) return { ok: true, why: "" };
+  if (ENVIRONMENT_ASSIGNMENT.test(target)) {
+    return {
+      ok: false,
+      why: "it sets an environment variable, which can change what `xargs` runs"
+    };
+  }
+  if (!commandPathIsTrusted(target)) {
+    return { ok: false, why: "it runs a program by path from `xargs`" };
+  }
+  const targetName = target.slice(target.lastIndexOf("/") + 1);
+  if (!XARGS_SAFE_TARGET_COMMANDS.has(targetName)) {
+    return {
+      ok: false,
+      why: `\`xargs ${targetName}\` is not allowed in a read-only role`
+    };
+  }
+  return { ok: true, why: "" };
+}
+
+function xargsCommandIsReadOnly(args: readonly string[]): {
+  ok: boolean;
+  why: string;
+} {
+  let index = 0;
+  while (index < args.length) {
+    const step = consumeXargsFlag(args, index);
+    if (step.error !== null) return { ok: false, why: step.error };
+    index = step.nextIndex;
+    if (step.done) break;
+  }
+  return xargsTargetIsReadOnly(args[index]);
+}
+
+const SPECIALIZED_COMMAND_EVALUATORS: Readonly<
+  Record<string, CommandEvaluator>
+> = {
+  git: (args) => ({ ok: gitCommandIsReadOnly(args), why: "git writes" }),
+  gh: (args) => ({ ok: ghCommandIsReadOnly(args), why: "gh writes" }),
+  curl: (args) => ({ ok: curlCommandIsReadOnly(args), why: "curl writes" }),
+  sed: (args) => ({
+    ok: sedCommandIsReadOnly(args),
+    why: "sed can write or execute commands unless restricted to line-range printing"
+  }),
+  npm: (args) => ({
+    ok: npmCommandIsReadOnly(args),
+    why: "npm writes or executes scripts unless restricted to read-only package inspection"
+  }),
+  xargs: xargsCommandIsReadOnly
+};
+
 /**
  * Whether one shell segment is read-only.
  */
@@ -1288,21 +1449,8 @@ function segmentIsReadOnly(
     return evaluateCommandSegments(script, depth + 1);
   }
 
-  if (name === "git")
-    return { ok: gitCommandIsReadOnly(args), why: "git writes" };
-  if (name === "gh") return { ok: ghCommandIsReadOnly(args), why: "gh writes" };
-  if (name === "curl")
-    return { ok: curlCommandIsReadOnly(args), why: "curl writes" };
-  if (name === "sed")
-    return {
-      ok: sedCommandIsReadOnly(args),
-      why: "sed can write or execute commands unless restricted to line-range printing"
-    };
-  if (name === "npm")
-    return {
-      ok: npmCommandIsReadOnly(args),
-      why: "npm writes or executes scripts unless restricted to read-only package inspection"
-    };
+  const evaluator = SPECIALIZED_COMMAND_EVALUATORS[name];
+  if (evaluator) return evaluator(args);
 
   const flagged = FLAGGED_COMMANDS[name];
   if (flagged) {
@@ -1324,7 +1472,7 @@ function segmentIsReadOnly(
   };
 }
 
-const SAFE_NULL_REDIRECT = /^>(?:\/dev\/null|&[12-])(?=$|[\s;|&])/u;
+const SAFE_NULL_REDIRECT = /^>(?:\s*\/dev\/null|&[12-])(?=$|[\s;|&])/u;
 const SAFE_REDIRECT_BOUNDARY = /[\s;|&]/u;
 
 function isCommandSubstitutionStart(command: string, index: number): boolean {
@@ -1341,8 +1489,9 @@ function consumeSafeRedirect(
   if (!match) return null;
   const prev = cleaned.at(-1) ?? "";
   const beforePrev = cleaned.at(-2) ?? "";
+  const redirectsToNull = match[0].trimEnd().endsWith("/dev/null");
   const hasFdPrefix =
-    prev === "1" || prev === "2" || (prev === "&" && match[0].startsWith(">/"));
+    prev === "1" || prev === "2" || (prev === "&" && redirectsToNull);
   const atBoundary =
     cleaned.length === 1 || SAFE_REDIRECT_BOUNDARY.test(beforePrev);
   const nextCleaned =
@@ -1363,55 +1512,104 @@ function consumeRedirectEscape(
   };
 }
 
+interface RedirectScanState {
+  quote: '"' | "'" | null;
+  cleaned: string;
+}
+
+interface RedirectScanResult {
+  why: string | null;
+  cleaned: string;
+  hasHeredoc: boolean;
+}
+
+function advanceUnquotedRedirectChar(
+  command: string,
+  index: number,
+  state: RedirectScanState
+): { nextIndex: number; stop?: RedirectScanResult } {
+  const ch = command[index]!;
+  if (ch === '"' || ch === "'") {
+    state.quote = ch;
+    state.cleaned += ch;
+    return { nextIndex: index };
+  }
+  if (ch === "<" && command[index + 1] === "<") {
+    return {
+      nextIndex: index,
+      stop: {
+        why: "it uses a heredoc redirection",
+        cleaned: state.cleaned,
+        hasHeredoc: true
+      }
+    };
+  }
+  if (ch === ">") {
+    const consumed = consumeSafeRedirect(command, index, state.cleaned);
+    if (!consumed) {
+      return {
+        nextIndex: index,
+        stop: {
+          why: "it redirects output into a file",
+          cleaned: state.cleaned,
+          hasHeredoc: false
+        }
+      };
+    }
+    state.cleaned = consumed.cleaned;
+    return { nextIndex: consumed.nextIndex };
+  }
+  state.cleaned += ch;
+  return { nextIndex: index };
+}
+
 /**
  * Scan unquoted/quoted shell syntax for write-capable redirections and command
  * substitutions, while stripping benign null/fd redirections (`2>/dev/null`,
- * `2>&1`, `&>/dev/null`) so downstream `splitSegments` does not split on `&`.
+ * `2> /dev/null`, `2>&1`, `&>/dev/null`, `&> /dev/null`) so downstream
+ * `splitSegments` does not split on `&`.
  */
-function inspectAndCleanRedirects(command: string): {
-  why: string | null;
-  cleaned: string;
-} {
-  let quote: '"' | "'" | null = null;
-  let cleaned = "";
+function inspectAndCleanRedirects(command: string): RedirectScanResult {
+  const state: RedirectScanState = { quote: null, cleaned: "" };
   for (let index = 0; index < command.length; index += 1) {
-    const escaped = consumeRedirectEscape(command, index, quote);
+    const escaped = consumeRedirectEscape(command, index, state.quote);
     if (escaped) {
-      cleaned += escaped.text;
+      state.cleaned += escaped.text;
       index = escaped.nextIndex;
       continue;
     }
     const ch = command[index]!;
-    if (quote !== "'" && isCommandSubstitutionStart(command, index)) {
-      return { why: "it substitutes the output of another command", cleaned };
+    if (state.quote !== "'" && isCommandSubstitutionStart(command, index)) {
+      return {
+        why: "it substitutes the output of another command",
+        cleaned: state.cleaned,
+        hasHeredoc: false
+      };
     }
-    if (quote !== null) {
-      cleaned += ch;
-      if (ch === quote) quote = null;
+    if (state.quote !== null) {
+      state.cleaned += ch;
+      if (ch === state.quote) state.quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      cleaned += ch;
-      continue;
-    }
-    if (ch === ">") {
-      const consumed = consumeSafeRedirect(command, index, cleaned);
-      if (!consumed) return { why: "it redirects output into a file", cleaned };
-      cleaned = consumed.cleaned;
-      index = consumed.nextIndex;
-      continue;
-    }
-    cleaned += ch;
+    const step = advanceUnquotedRedirectChar(command, index, state);
+    if (step.stop) return step.stop;
+    index = step.nextIndex;
   }
-  return { why: null, cleaned };
+  return { why: null, cleaned: state.cleaned, hasHeredoc: false };
 }
 
 function evaluateCommandSegments(
   command: string,
   depth: number
 ): { ok: boolean; why: string } {
-  const { why, cleaned } = inspectAndCleanRedirects(command);
+  const { why, cleaned, hasHeredoc } = inspectAndCleanRedirects(command);
+  if (hasHeredoc) {
+    for (const segment of splitSegments(cleaned)) {
+      const verdict = segmentIsReadOnly(segment, depth);
+      if (!verdict.ok) return verdict;
+    }
+    return { ok: false, why: why ?? "it uses a heredoc redirection" };
+  }
   if (why !== null) return { ok: false, why };
 
   for (const segment of splitSegments(cleaned)) {
@@ -1438,7 +1636,7 @@ export function evaluateReadOnlyCommand(command: string): ReadOnlyDecision {
       : verdict.why;
     return {
       allowed: false,
-      reason: `This role runs in a read-only sandbox, and the command ${reasonClause}. Report what you needed instead of running it.`
+      reason: `This role runs in a read-only sandbox, and the command ${reasonClause}. Use allowlisted read-only commands (\`rg\`, \`find\`, \`cat\`, \`head\`, \`tail\`, \`nl\`, \`sed -n\`, \`wc\`, \`jq\`, \`git\`) or do loops, JSON parsing, and filtering in the \`exec\` JavaScript runtime, or report what you needed instead of running it.`
     };
   }
   return ALLOWED;

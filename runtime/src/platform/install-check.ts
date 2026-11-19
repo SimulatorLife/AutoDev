@@ -38,6 +38,7 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
+import { nativeNodeLoginProfileMatches } from "./host-arch.ts";
 import {
   CATALOGS,
   checkHookTrust,
@@ -1158,6 +1159,13 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       failures
     );
     checkLaunchAgents(paths, failures);
+    if (process.platform === "darwin") {
+      check(
+        "native node login profile",
+        nativeNodeLoginProfileMatches(paths.home),
+        failures
+      );
+    }
     return failures.value;
   } finally {
     rmSync(projection.root, { recursive: true, force: true });

@@ -545,6 +545,7 @@ test("all hooks are Runtime-owned and installed at canonical RuleSync paths", ()
 
   const hookSources = [
     "block-ccc-cli.ts",
+    "hook-log.ts",
     "hook-roots.ts",
     "lifecycle.ts",
     "memory-session-end.ts",
@@ -555,6 +556,7 @@ test("all hooks are Runtime-owned and installed at canonical RuleSync paths", ()
   ];
   const materializedHookSources = new Set([
     "block-ccc-cli.ts",
+    "hook-log.ts",
     "hook-roots.ts",
     "memory-session-end.ts",
     "root-delegation.ts",

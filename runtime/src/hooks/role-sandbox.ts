@@ -42,11 +42,35 @@ import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution
 import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { type HookDenialPolicy, logPreToolUseDenial } from "./hook-log.ts";
+
 interface HookPayload {
   readonly agent_type?: unknown;
   readonly model?: unknown;
+  readonly session_id?: unknown;
+  readonly sessionId?: unknown;
+  readonly turn_id?: unknown;
+  readonly turnId?: unknown;
   readonly tool_name?: unknown;
   readonly tool_input?: unknown;
+}
+
+interface RoleSandboxEvaluation {
+  readonly denied: boolean;
+  readonly reason: string | null;
+  readonly policy: HookDenialPolicy | null;
+  readonly role: string | null;
+  readonly model: string | null;
+  readonly session: string | null;
+  readonly turn: string | null;
+  readonly tool: string | null;
+  readonly toolInput: unknown;
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -57,53 +81,106 @@ interface HookPayload {
  * sandbox narrows it.
  */
 function roleOf(payload: HookPayload): string | null {
-  const role = payload.agent_type;
-  if (typeof role !== "string") return null;
-  const trimmed = role.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return stringOrNull(payload.agent_type);
+}
+
+function emptyEvaluation(): RoleSandboxEvaluation {
+  return {
+    denied: false,
+    reason: null,
+    policy: null,
+    role: null,
+    model: null,
+    session: null,
+    turn: null,
+    tool: null,
+    toolInput: undefined
+  };
+}
+
+function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
+  let payload: HookPayload;
+  try {
+    const parsed: unknown = JSON.parse(rawInput);
+    if (!isRecord(parsed)) return emptyEvaluation();
+    payload = parsed as HookPayload;
+  } catch {
+    // A payload that cannot be read is not a decision this hook can make. The
+    // session's own sandbox still governs the call, so the call is left alone
+    // rather than refused for a reason nobody can read.
+    return emptyEvaluation();
+  }
+
+  const toolName =
+    typeof payload.tool_name === "string" ? payload.tool_name : "";
+  const model = stringOrNull(payload.model);
+  const session =
+    stringOrNull(payload.session_id) ?? stringOrNull(payload.sessionId);
+  const turn = stringOrNull(payload.turn_id) ?? stringOrNull(payload.turnId);
+  const tool = stringOrNull(payload.tool_name);
+  const call = { toolName, toolInput: payload.tool_input };
+  const role = roleOf(payload);
+  if (role === null) {
+    if (!isRootOrchestratorModel(model ?? "")) return emptyEvaluation();
+    const decision = evaluateOrchestratorToolCall(call);
+    return decision.allowed
+      ? emptyEvaluation()
+      : {
+          denied: true,
+          reason: decision.reason ?? null,
+          policy: "orchestrator-git-history",
+          role: "root",
+          model,
+          session,
+          turn,
+          tool,
+          toolInput: payload.tool_input
+        };
+  }
+
+  const declared = roleSandboxMode(role);
+  if (declared !== "read-only") return emptyEvaluation();
+
+  const decision = evaluateReadOnlyToolCall(call);
+  if (decision.allowed) return emptyEvaluation();
+  return {
+    denied: true,
+    reason: decision.reason ?? null,
+    policy: "read-only",
+    role,
+    model,
+    session,
+    turn,
+    tool,
+    toolInput: payload.tool_input
+  };
 }
 
 export function evaluateRoleSandboxHook(rawInput: string): {
   readonly denied: boolean;
   readonly reason: string | null;
 } {
-  let payload: HookPayload;
-  try {
-    const parsed: unknown = JSON.parse(rawInput);
-    if (!isRecord(parsed)) return { denied: false, reason: null };
-    payload = parsed as HookPayload;
-  } catch {
-    // A payload that cannot be read is not a decision this hook can make. The
-    // session's own sandbox still governs the call, so the call is left alone
-    // rather than refused for a reason nobody can read.
-    return { denied: false, reason: null };
-  }
-
-  const toolName =
-    typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const call = { toolName, toolInput: payload.tool_input };
-  const role = roleOf(payload);
-  if (role === null) {
-    const model = typeof payload.model === "string" ? payload.model : "";
-    if (!isRootOrchestratorModel(model)) return { denied: false, reason: null };
-    const decision = evaluateOrchestratorToolCall(call);
-    return decision.allowed
-      ? { denied: false, reason: null }
-      : { denied: true, reason: decision.reason };
-  }
-
-  const declared = roleSandboxMode(role);
-  if (declared !== "read-only") return { denied: false, reason: null };
-
-  const decision = evaluateReadOnlyToolCall(call);
-  if (decision.allowed) return { denied: false, reason: null };
-  return { denied: true, reason: decision.reason };
+  const { denied, reason } = evaluateRoleSandboxDetailed(rawInput);
+  return { denied, reason };
 }
 
 export function runRoleSandboxHook(raw = readFileSync(0, "utf8")): number {
-  const outcome = evaluateRoleSandboxHook(raw);
+  const outcome = evaluateRoleSandboxDetailed(raw);
   if (!outcome.denied) return 0;
   const reason = outcome.reason ?? "This role runs in a read-only sandbox.";
+  if (outcome.policy) {
+    logPreToolUseDenial({
+      hook: "role-sandbox",
+      policy: outcome.policy,
+      role: outcome.role,
+      model: outcome.model,
+      session: outcome.session,
+      turn: outcome.turn,
+      tool: outcome.tool,
+      reason,
+      toolInput: outcome.toolInput
+    });
+  }
   writeErrorLine(reason);
   process.stdout.write(
     `${JSON.stringify({

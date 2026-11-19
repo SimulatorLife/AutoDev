@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import {
-  appendFileSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync
-} from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +13,7 @@ import {
   readRootBootstrapMarker
 } from "@simulatorlife/autodev-runtime/shared/root-bootstrap";
 
+import { appendHookLogRecord } from "./hook-log.ts";
 import { codexHome, repositoryRoot } from "./hook-roots.ts";
 
 type HookInput = {
@@ -222,22 +217,12 @@ function parseInput(raw: string): HookInput {
 }
 
 function logInput(input: HookInput): void {
-  try {
-    const logFile = path.join(codexHome(), "hooks", "hooks.log");
-    mkdirSync(path.dirname(logFile), { recursive: true });
-    appendFileSync(
-      logFile,
-      `${JSON.stringify({
-        time: new Date().toISOString(),
-        event: input.hook_event_name,
-        model: input.model,
-        session: input.session_id,
-        turn: input.turn_id ?? null
-      })}\n`
-    );
-  } catch {
-    // Hook logging is best effort; policy evaluation remains fail-closed below.
-  }
+  appendHookLogRecord({
+    event: input.hook_event_name,
+    model: input.model,
+    session: input.session_id,
+    turn: input.turn_id ?? null
+  });
 }
 
 export function runRootDelegation(raw = readFileSync(0, "utf8")): number {

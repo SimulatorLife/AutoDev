@@ -133,6 +133,15 @@ Differences from a role request:
   bridges select their role instructions from it, so an orchestrator turn that
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
+- **Compaction-boundary Priority-1 re-probe**: `proxyOrchestratorResponse`
+  keeps a session pinned to its active provider across normal turns so prompt
+  caching stays intact, but when the first turn immediately after a context
+  compaction arrives (`isFreshPostCompactionTurn` in
+  `runtime/src/shared/compaction.ts`, with no assistant/tool/reasoning items
+  after the compacted summary and no pending `TOOL_CALL_OWNERSHIP`), it clears
+  the sticky session preference so Priority 1 is re-probed while the prompt
+  cache is already cold. Whichever provider serves that post-compaction turn
+  becomes the session's newly pinned provider for subsequent turns.
 
 #### Active-subagent routing protection
 

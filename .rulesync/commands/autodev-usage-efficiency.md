@@ -23,14 +23,33 @@ description: Evaluate AutoDev and recent sessions to improve usage/token/model e
 12. **Model switching:** Unnecessary model switching, which causes the agent to re-read the whole session on the next message, which uses more usage and invalidates the context cache.
 13. **Multiple system prompts:** Since AutoDev supports dynamic routing and multiple model providers/CLIs, multiple system prompts could end up being injected into a session, which is unnecessary, confusing, wasteful, and can cause the model to behave inconsistently.
 
-## 2. Procedure
+## 2. Evidence & Tooling Workflow
 
-1. **Inspect:** Analyze representative recent sessions, traces, metrics, code, and configurations.
+Start every efficiency audit with AutoDev's bundled diagnostics before writing ad-hoc log parsers:
+
+1. **Single-session efficiency trace:**
+   ```bash
+   node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts <session-or-thread-id> --efficiency --failures
+   ```
+   - `--efficiency` includes per-thread cumulative token usage (input, cached %, output, reasoning %, peak input, >50% cache drops), compaction count & retained image/payload sizes, initial developer-prompt byte size, loaded skills grouped by source root vs `SKILL.md` reads & `$CODEX_HOME/run/skill-read-telemetry`, router `ROUTER SKIPPED` / `ROUTER RETRIES` events, and categorized `TOOL FAILURES` (capped at 2 samples per category by default; add `--all-failures` for full inputs and every occurrence, `--json` for scripting).
+2. **Cross-session sizing & hook friction:**
+   ```bash
+   node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts --scan-recent 15
+   node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts --hooks --since 7
+   ```
+   - `--scan-recent [N]` aggregates token usage, cache hit rate, cache drops, compactions, skill counts, tool-failure categories, `PreToolUse` blocks, and router skips across the newest `N` active + archived sessions in one pass.
+   - `--hooks [--since DAYS]` summarizes structured `PreToolUse` denials logged in `$CODEX_HOME/hooks/hooks.log`.
+3. **Live router status:** `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status | jq`). If `session-trace.ts` prints `router /status unreachable` right after a router restart, retry once after a few seconds.
+4. **Handoff for request-shape reproduction:** Use `autodev-session-diagnostics` for deeper provider/MCP/rule probes, and `autodev-codex-request-capture` when inspecting exact Codex-to-provider wire requests offline.
+
+## 3. Procedure
+
+1. **Inspect:** Run the session and fleet commands above, then inspect targeted rollout/config/runtime files only for gaps not already surfaced.
 2. **Diagnose:** Identify inefficiencies, root causes, recurring patterns, and measurable overhead.
 3. **Prioritize:** Rank opportunities by expected savings, frequency, effort, and risk.
 4. **Fix:** Implement simple, maintainable, systemic improvements using existing tooling where practical.
 5. **Test:** Add regression tests and validate correctness, reliability, and task quality.
-6. **Measure:** Compare before/after token usage, context size, tool calls, retries, latency, and costs.
+6. **Measure:** Compare before/after token usage, context size, tool calls, retries, latency, and costs. When live launchd services are not reinstalled/restarted yet, validate deltas by running **offline rollout/log replay** against the updated checkout logic (and clearly label offline replay vs live post-reinstall measurements).
 7. **Report:** Summarize findings, fixes, verified savings, test results, and remaining opportunities.
 
 ## Requirements

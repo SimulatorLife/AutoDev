@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -111,16 +114,43 @@ test("evaluatePreToolUse handles malformed or empty inputs gracefully", () => {
   assert.equal(evaluatePreToolUse("{}").blocked, false);
 });
 
-test("runBlockCccCli exits with code 2 on ccc command and 0 on allowed command", () => {
-  const blockedPayload = JSON.stringify({
-    tool_name: "exec_command",
-    arguments: { cmd: "ccc index" }
-  });
-  assert.equal(runBlockCccCli(blockedPayload), 2);
+test("runBlockCccCli exits with code 2 on ccc command and logs denial without logging allowed commands", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "autodev-block-ccc-"));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    const allowedPayload = JSON.stringify({
+      session_id: "sess-1",
+      turn_id: "turn-1",
+      tool_name: "exec_command",
+      arguments: { cmd: "pnpm test" }
+    });
+    assert.equal(runBlockCccCli(allowedPayload), 0);
+    const logPath = path.join(home, "hooks", "hooks.log");
+    assert.equal(existsSync(logPath), false);
 
-  const allowedPayload = JSON.stringify({
-    tool_name: "exec_command",
-    arguments: { cmd: "pnpm test" }
-  });
-  assert.equal(runBlockCccCli(allowedPayload), 0);
+    const blockedPayload = JSON.stringify({
+      session_id: "sess-1",
+      turn_id: "turn-2",
+      agent_type: "explorer",
+      model: "autodev/explorer",
+      tool_name: "exec_command",
+      arguments: { cmd: "ccc index" }
+    });
+    assert.equal(runBlockCccCli(blockedPayload), 2);
+    const record = JSON.parse(readFileSync(logPath, "utf8").trim()) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(record.event, "PreToolUse");
+    assert.equal(record.hook, "block-ccc-cli");
+    assert.equal(record.decision, "deny");
+    assert.equal(record.policy, "block-ccc-cli");
+    assert.equal(record.role, "explorer");
+    assert.equal(record.commandHead, "ccc index");
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    rmSync(home, { recursive: true, force: true });
+  }
 });

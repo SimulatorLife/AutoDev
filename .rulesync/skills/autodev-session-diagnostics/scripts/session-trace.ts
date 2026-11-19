@@ -12,9 +12,11 @@
  * never prints credentials, and truncates every prompt/output excerpt.
  *
  *   node session-trace.ts <session-or-thread-id> [--items] [--events]
- *        [--failures] [--efficiency] [--json] [--codex-home DIR]
- *        [--router-log FILE] [--offline]
- *   node session-trace.ts --recent [N]            # when no id was given
+ *        [--failures] [--all-failures] [--efficiency] [--json]
+ *        [--codex-home DIR] [--router-log FILE] [--offline]
+ *   node session-trace.ts --recent [N]
+ *   node session-trace.ts --scan-recent [N]
+ *   node session-trace.ts --hooks [--since DAYS]
  */
 
 import { execFileSync } from "node:child_process";
@@ -156,11 +158,14 @@ interface RouterEventFields {
   outcome?: string;
   status?: number;
   failureClass?: string;
+  reason?: string;
   spawnFailureReason?: string;
   denialReason?: string;
   elapsedMs?: number;
   toolCalls?: number;
   selection?: string;
+  errorName?: string;
+  errorCode?: string;
   [key: string]: unknown;
 }
 
@@ -409,6 +414,7 @@ function parseRouterEvent(raw: unknown): RouterEventFields | null {
   if (typeof raw.status === "number") result.status = raw.status;
   if (typeof raw.failureClass === "string")
     result.failureClass = raw.failureClass;
+  if (typeof raw.reason === "string") result.reason = raw.reason;
   if (typeof raw.spawnFailureReason === "string")
     result.spawnFailureReason = raw.spawnFailureReason;
   if (typeof raw.denialReason === "string")
@@ -416,6 +422,8 @@ function parseRouterEvent(raw: unknown): RouterEventFields | null {
   if (typeof raw.elapsedMs === "number") result.elapsedMs = raw.elapsedMs;
   if (typeof raw.toolCalls === "number") result.toolCalls = raw.toolCalls;
   if (typeof raw.selection === "string") result.selection = raw.selection;
+  if (typeof raw.errorName === "string") result.errorName = raw.errorName;
+  if (typeof raw.errorCode === "string") result.errorCode = raw.errorCode;
   return result;
 }
 
@@ -475,6 +483,18 @@ const SERVICE_PROCESS_REGEX =
   /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+\S*node\S*\s+(\S*(?:router\/server|providers\/\w+)\.ts)/;
 const DIGITS_ONLY_REGEX = /^\d+$/;
 
+export type ToolFailureCategory =
+  | "pretooluse-hook"
+  | "json-wrap-syntax"
+  | "syntax-error"
+  | "apply-patch"
+  | "spawn-limit"
+  | "delegation-unavailable"
+  | "missing-tool"
+  | "transport-closed"
+  | "aborted"
+  | "other";
+
 export interface TraceOptions {
   id: string;
   codexHome: string;
@@ -482,6 +502,7 @@ export interface TraceOptions {
   items: boolean;
   events?: boolean;
   failures?: boolean;
+  allFailures?: boolean;
   efficiency?: boolean;
   /** Skip everything that reads live state: processes, the router, deployed files. */
   offline: boolean;
@@ -494,12 +515,51 @@ export interface ToolFailure {
   tool: string;
   callId: string;
   detail: string;
+  category?: ToolFailureCategory;
   input?: string;
 }
 
 export interface ThreadAnomalies {
   tagOnlyMessages: number;
   samples: string[];
+}
+
+export interface ThreadTokenUsage {
+  observed: boolean;
+  samples: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  cacheHitPct: number | null;
+  reasoningPct: number | null;
+  peakInputTokens: number;
+  cacheDrops: number;
+}
+
+export interface ThreadCompactionSummary {
+  count: number;
+  contextCompactedEvents: number;
+  maxReplacementItems: number;
+  maxReplacementBytes: number;
+  maxReplacementImages: number;
+  responseImageItems: number;
+}
+
+export interface ThreadPromptOverhead {
+  initialDeveloperBytes: number;
+  skillsCatalogBytes: number;
+  skillsLoaded: number;
+  skillsByRoot: Record<string, number>;
+  skillsRead: string[];
+  skillTelemetryReads: number | null;
+}
+
+export interface ThreadEfficiency {
+  tokens: ThreadTokenUsage;
+  compaction: ThreadCompactionSummary;
+  prompt: ThreadPromptOverhead;
 }
 
 export interface ThreadTrace {
@@ -528,6 +588,7 @@ export interface ThreadTrace {
   tools: Record<string, number>;
   toolFailures: ToolFailure[];
   anomalies?: ThreadAnomalies;
+  efficiency?: ThreadEfficiency;
   investigation: Investigation;
   items?: Array<{ at: string; kind: string; detail: string }>;
 }
@@ -565,11 +626,22 @@ export interface RouterEventRow {
   outcome: string | null;
   status: number | null;
   failureClass: string | null;
+  reason?: string | null;
   spawnFailureReason: string | null;
   denialReason: string | null;
   elapsedMs: number | null;
   toolCalls: number | null;
   selection: string | null;
+  errorName?: string | null;
+  errorCode?: string | null;
+}
+
+export interface RouterSkippedEvent {
+  at: string;
+  requestId: string;
+  provider: string | null;
+  reason: string;
+  elapsedMs: number | null;
 }
 
 export interface RouterSummary {
@@ -593,7 +665,64 @@ export interface RouterSummary {
   }>;
   /** Providers in request order, collapsed: a turn that hops providers shows more than one. */
   providerSequence: string[];
+  skipped?: RouterSkippedEvent[];
+  retries?: number;
+  exhaustionWaits?: { count: number; totalMs: number };
+  transportErrors?: number;
   events?: RouterEventRow[];
+}
+
+export interface HookDenialSummary {
+  logFile: string;
+  sinceDays: number;
+  cutoff: string;
+  totalLines: number;
+  userPromptSubmits: number;
+  preToolUseDenials: number;
+  byPolicy: Record<string, number>;
+  byRole: Record<string, number>;
+  byReason: Array<{ reason: string; count: number }>;
+  topCommands: Array<{ commandHead: string; policy: string; count: number }>;
+}
+
+export interface FleetSessionRow {
+  id: string;
+  started: string;
+  lastWrite: string;
+  cwd: string | null;
+  threads: number;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheHitPct: number | null;
+  cacheDrops: number;
+  compactions: number;
+  maxSkillsLoaded: number;
+  toolFailures: number;
+  preToolUseBlocks: number;
+  topFailureCategory: ToolFailureCategory | null;
+  routerRequests: number;
+  routerFailures: number;
+  routerSkipped: Record<string, number>;
+  providers: Record<string, number>;
+}
+
+export interface FleetScanReport {
+  limit: number;
+  sessions: FleetSessionRow[];
+  totals: {
+    sessions: number;
+    threads: number;
+    totalTokens: number;
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheHitPct: number | null;
+    cacheDrops: number;
+    compactions: number;
+    toolFailuresByCategory: Record<string, number>;
+    preToolUseReasons: Array<{ reason: string; count: number }>;
+    routerSkippedByReason: Array<{ key: string; count: number }>;
+  };
 }
 
 export interface LiveReport {
@@ -648,6 +777,11 @@ export interface TraceReport {
 
 const EXCERPT = 160;
 const FAILURE_EXCERPT = 400;
+const FAILURE_PREVIEW_INPUT_EXCERPT = 180;
+const FAILURE_CAP_PER_CATEGORY = 2;
+const CACHE_DROP_MIN_INPUT = 10_000;
+const CACHE_DROP_THRESHOLD = 0.5;
+const MS_PER_DAY = 86_400_000;
 /** Codebase-context MCP servers, as the target state names them. */
 const CONTEXT_SERVERS: Record<string, keyof Investigation["context"]> = {
   "cocoindex-code": "ccc",
@@ -666,12 +800,22 @@ const WRITING_WINDOW_MS = 10 * 60 * 1000;
 // Outputs that mean the call did not do its job. `Transport closed` is an MCP
 // server process that died; `aborted` is Codex cutting the call short.
 const TOOL_FAILURE =
-  /Encountered error in tool execution|Delegation is unavailable|tool call failed|Transport closed|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/im;
+  /Encountered error in tool execution|Delegation is unavailable|tool call failed|Transport closed|Command blocked by PreToolUse hook|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/im;
 const BRIDGE_LOG_ALERT_REGEX =
   /spawn rejected|missing session header|invalid model selection|Delegation is unavailable|ERR_PACKAGE_PATH_NOT_EXPORTED|earlier message\(s\) left out/;
 const TAG_ONLY_ASSISTANT_MESSAGE_REGEX =
   /^<([a-z][a-z0-9_-]*)>\s*<\/([a-z][a-z0-9_-]*)>$/iu;
+const SKILLS_INSTRUCTIONS_REGEX =
+  /<skills_instructions>[\s\S]*?<\/skills_instructions>/u;
+const SKILL_CATALOG_LINE_REGEX =
+  /^- ([A-Za-z0-9_.-]+): [^\n]*\(file:[ \t]*(\S[^)\n]*\/SKILL\.md)\)[ \t]*$/gmu;
+const SKILL_READ_FILE_REGEX = /([A-Za-z0-9_.-]+)\/SKILL\.md\b/gu;
+const PRETOOLUSE_MARKER = "Command blocked by PreToolUse hook:";
+const PRETOOLUSE_HINT_SUFFIX_REGEX =
+  /[ \t]+(?:Work from|Use |Delegate |Call |Allowed:|Tip:)/u;
 const BRIDGE_LOG_TAIL_BYTES = 64 * 1024;
+const UNKNOWN_LABEL = "unknown";
+const BYTES_PER_MIB = 1_048_576;
 
 function excerpt(value: unknown, maxLen = EXCERPT): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
@@ -840,13 +984,18 @@ function addRecentSession(
   sessions.set(sessionId, entry);
 }
 
-/** The newest root sessions, for when the user names none. */
+/** The newest root sessions across one or more rollout roots, for when the user names none. */
 export function recentSessions(
-  sessionsRoot: string,
+  sessionsRoot: string | string[],
   limit: number
 ): RecentSession[] {
+  const roots = Array.isArray(sessionsRoot) ? sessionsRoot : [sessionsRoot];
+  const files = roots
+    .flatMap((root) => rolloutFiles(root))
+    .sort((a, b) => COLLATOR.compare(path.basename(b), path.basename(a)))
+    .slice(0, 600);
   const sessions = new Map<string, RecentSession>();
-  for (const file of rolloutFiles(sessionsRoot).reverse().slice(0, 400)) {
+  for (const file of files) {
     const meta = firstLine(file)?.payload;
     if (meta) addRecentSession(sessions, file, meta);
   }
@@ -926,6 +1075,42 @@ function toolsOfCall(payload: ResponseItemPayload): string[] {
   return [name];
 }
 
+interface TokenAccumulatorState {
+  observed: boolean;
+  samples: number;
+  offsetIn: number;
+  offsetCached: number;
+  offsetOut: number;
+  offsetReas: number;
+  offsetTotal: number;
+  prevRawIn: number | null;
+  prevRawCached: number;
+  prevRawOut: number;
+  prevRawReas: number;
+  prevRawTotal: number | null;
+  peakInputTokens: number;
+  prevLastInput: number;
+  cacheDrops: number;
+}
+
+interface CompactionAccumulatorState {
+  compactedRecords: number;
+  contextCompactedEvents: number;
+  maxReplacementItems: number;
+  maxReplacementBytes: number;
+  maxReplacementImages: number;
+  responseImageItems: number;
+}
+
+interface PromptAccumulatorState {
+  seenAgentOutput: boolean;
+  initialDeveloperBytes: number;
+  skillsCatalogBytes: number;
+  loadedSkills: Set<string>;
+  skillsByRoot: Record<string, number>;
+  skillsRead: Set<string>;
+}
+
 interface ThreadTraceAccumulator {
   counts: Record<string, number>;
   turns: ThreadTrace["turns"];
@@ -940,6 +1125,9 @@ interface ThreadTraceAccumulator {
   tagOnlySamples: string[];
   previous: { at: string; label: string } | null;
   investigation: Investigation;
+  tokenState: TokenAccumulatorState;
+  compaction: CompactionAccumulatorState;
+  prompt: PromptAccumulatorState;
   cwd: string;
   reads: Set<string>;
   searchKeys: Set<string>;
@@ -1021,6 +1209,36 @@ function recordTagOnlyAssistantMessage(
   }
 }
 
+const SYNTAX_COLON_REGEX = /SyntaxError: Unexpected token ':'/i;
+
+const FAILURE_CATEGORY_RULES: ReadonlyArray<
+  readonly [ToolFailureCategory, RegExp]
+> = [
+  ["pretooluse-hook", /Command blocked by PreToolUse hook:/i],
+  ["delegation-unavailable", /Delegation is unavailable/i],
+  ["spawn-limit", /agent thread limit reached|collab spawn failed/i],
+  ["apply-patch", /apply_patch verification failed/i],
+  ["syntax-error", /SyntaxError:/i],
+  ["missing-tool", /is not a function|No such tool|not found in ALL_TOOLS/i],
+  ["transport-closed", /Transport closed/i],
+  ["aborted", /^aborted/i]
+];
+
+function classifyToolFailure(
+  detail: string,
+  input: string | undefined
+): ToolFailureCategory {
+  if (SYNTAX_COLON_REGEX.test(detail)) {
+    return input?.trimStart().startsWith("{")
+      ? "json-wrap-syntax"
+      : "syntax-error";
+  }
+  for (const [category, pattern] of FAILURE_CATEGORY_RULES) {
+    if (pattern.test(detail)) return category;
+  }
+  return "other";
+}
+
 function recordToolCallOutput(
   at: string | null,
   payload: Extract<
@@ -1034,13 +1252,102 @@ function recordToolCallOutput(
   if (!failure) return;
   const callId = typeof payload.call_id === "string" ? payload.call_id : "";
   const input = callId ? acc.callInputs.get(callId) : undefined;
+  const detail = excerpt(text.slice(Math.max(0, failure.index - 40)));
   acc.toolFailures.push({
     at: at ?? "",
     tool: (callId && acc.callTools.get(callId)) || "?",
     callId,
-    detail: excerpt(text.slice(Math.max(0, failure.index - 40))),
+    detail,
+    category: classifyToolFailure(detail, input),
     ...(input ? { input } : {})
   });
+}
+
+function rawCallArgumentText(
+  payload: Extract<
+    ResponseItemPayload,
+    { type: "custom_tool_call" | "function_call" }
+  >
+): string {
+  const raw = payload.input ?? payload.arguments;
+  if (typeof raw === "string") return raw;
+  return raw === undefined || raw === null ? "" : JSON.stringify(raw);
+}
+
+function recordPromptSkillReads(
+  payload: Extract<
+    ResponseItemPayload,
+    { type: "custom_tool_call" | "function_call" }
+  >,
+  acc: ThreadTraceAccumulator
+): void {
+  const raw = rawCallArgumentText(payload);
+  if (!raw.includes("SKILL.md")) return;
+  for (const match of raw.matchAll(SKILL_READ_FILE_REGEX)) {
+    if (match[1]) acc.prompt.skillsRead.add(match[1]);
+  }
+}
+
+function countImageObjects(root: unknown): number {
+  let count = 0;
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    if (!isRecord(current)) continue;
+    if (
+      current.type === "input_image" ||
+      ("image_url" in current &&
+        current.image_url !== null &&
+        current.image_url !== undefined)
+    ) {
+      count += 1;
+    }
+    for (const value of Object.values(current)) {
+      if (typeof value === "object" && value !== null) stack.push(value);
+    }
+  }
+  return count;
+}
+
+function normalizeSkillRoot(skillFilePath: string, cwd: string): string {
+  const rootDir = path.dirname(path.dirname(skillFilePath));
+  if (
+    cwd !== "/" &&
+    (rootDir === cwd || rootDir.startsWith(`${cwd}${path.sep}`))
+  )
+    return `<repo>${rootDir.slice(cwd.length)}`;
+  const home = homedir();
+  if (home && (rootDir === home || rootDir.startsWith(`${home}${path.sep}`)))
+    return `~${rootDir.slice(home.length)}`;
+  return rootDir;
+}
+
+function recordInitialDeveloperPrompt(
+  payload: Extract<ResponseItemPayload, { type: "message" }>,
+  acc: ThreadTraceAccumulator
+): void {
+  if (acc.prompt.seenAgentOutput || payload.role !== "developer") return;
+  const text = (payload.content ?? [])
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("\n");
+  if (!text) return;
+  acc.prompt.initialDeveloperBytes += Buffer.byteLength(text, "utf8");
+  const skillsBlock = SKILLS_INSTRUCTIONS_REGEX.exec(text);
+  if (skillsBlock) {
+    acc.prompt.skillsCatalogBytes += Buffer.byteLength(skillsBlock[0], "utf8");
+  }
+  for (const match of text.matchAll(SKILL_CATALOG_LINE_REGEX)) {
+    const name = match[1];
+    const skillPath = match[2];
+    if (!name || !skillPath || acc.prompt.loadedSkills.has(name)) continue;
+    acc.prompt.loadedSkills.add(name);
+    const root = normalizeSkillRoot(skillPath, acc.cwd);
+    acc.prompt.skillsByRoot[root] = (acc.prompt.skillsByRoot[root] ?? 0) + 1;
+  }
 }
 
 function recordToolUsage(
@@ -1049,9 +1356,20 @@ function recordToolUsage(
   payload: ResponseItemPayload | undefined,
   acc: ThreadTraceAccumulator
 ): void {
-  if (record.type !== "response_item" || !payload) return;
-  recordTagOnlyAssistantMessage(payload, acc);
+  if (record.type !== "response_item") return;
+  if (record.payload && countImageObjects(record.payload) > 0) {
+    acc.compaction.responseImageItems += 1;
+  }
+  if (!payload) return;
+  if (payload.type === "message") {
+    recordInitialDeveloperPrompt(payload, acc);
+    if (payload.role === "assistant") acc.prompt.seenAgentOutput = true;
+    recordTagOnlyAssistantMessage(payload, acc);
+    return;
+  }
   if (payload.type === "custom_tool_call" || payload.type === "function_call") {
+    acc.prompt.seenAgentOutput = true;
+    recordPromptSkillReads(payload, acc);
     const reached = toolsOfCall(payload);
     for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
     if (typeof payload.call_id !== "string") return;
@@ -1224,6 +1542,104 @@ function traceMetadata(records: RolloutPayload[]): {
   return { meta: meta ?? {}, context: context ?? {} };
 }
 
+function finiteNonNegative(record: JsonRecord | null, key: string): number {
+  if (!record) return 0;
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function recordTokenEfficiency(
+  payload: JsonRecord,
+  acc: ThreadTraceAccumulator
+): void {
+  if (payload.type !== "token_count" || !isRecord(payload.info)) return;
+  const total = isRecord(payload.info.total_token_usage)
+    ? payload.info.total_token_usage
+    : null;
+  const rawTotal = finiteNonNegative(total, "total_tokens");
+  if (rawTotal <= 0) return;
+
+  const rawIn = finiteNonNegative(total, "input_tokens");
+  const rawCached = finiteNonNegative(total, "cached_input_tokens");
+  const rawOut = finiteNonNegative(total, "output_tokens");
+  const rawReas = finiteNonNegative(total, "reasoning_output_tokens");
+  const t = acc.tokenState;
+  if (t.prevRawTotal === rawTotal && t.prevRawIn === rawIn) return;
+  if (t.prevRawTotal !== null && rawTotal < t.prevRawTotal) {
+    t.offsetIn += t.prevRawIn ?? 0;
+    t.offsetCached += t.prevRawCached;
+    t.offsetOut += t.prevRawOut;
+    t.offsetReas += t.prevRawReas;
+    t.offsetTotal += t.prevRawTotal;
+    t.prevLastInput = 0;
+  }
+  t.prevRawIn = rawIn;
+  t.prevRawCached = rawCached;
+  t.prevRawOut = rawOut;
+  t.prevRawReas = rawReas;
+  t.prevRawTotal = rawTotal;
+  t.observed = true;
+  t.samples += 1;
+
+  const last = isRecord(payload.info.last_token_usage)
+    ? payload.info.last_token_usage
+    : null;
+  const lastIn = finiteNonNegative(last, "input_tokens");
+  const lastCached = finiteNonNegative(last, "cached_input_tokens");
+  if (lastIn > t.peakInputTokens) t.peakInputTokens = lastIn;
+  if (
+    t.prevLastInput >= CACHE_DROP_MIN_INPUT &&
+    lastIn >= CACHE_DROP_MIN_INPUT &&
+    lastCached < Math.min(t.prevLastInput, lastIn) * CACHE_DROP_THRESHOLD
+  ) {
+    t.cacheDrops += 1;
+  }
+  if (lastIn > 0) t.prevLastInput = lastIn;
+}
+
+function recordCompactionRecord(
+  record: RolloutPayload,
+  acc: ThreadTraceAccumulator
+): void {
+  if (record.type === "compacted") {
+    acc.compaction.compactedRecords += 1;
+    const rh =
+      isRecord(record.payload) &&
+      Array.isArray(record.payload.replacement_history)
+        ? record.payload.replacement_history
+        : null;
+    if (!rh) return;
+    const serializedBytes = Buffer.byteLength(JSON.stringify(rh), "utf8");
+    const imageCount = countImageObjects(rh);
+    acc.compaction.maxReplacementItems = Math.max(
+      acc.compaction.maxReplacementItems,
+      rh.length
+    );
+    acc.compaction.maxReplacementBytes = Math.max(
+      acc.compaction.maxReplacementBytes,
+      serializedBytes
+    );
+    acc.compaction.maxReplacementImages = Math.max(
+      acc.compaction.maxReplacementImages,
+      imageCount
+    );
+    return;
+  }
+  if (
+    record.type === "event_msg" &&
+    isRecord(record.payload) &&
+    record.payload.type === "context_compacted"
+  ) {
+    acc.compaction.contextCompactedEvents += 1;
+  }
+}
+
 function createTraceAccumulator(
   meta: SessionMetaPayload
 ): ThreadTraceAccumulator {
@@ -1251,6 +1667,39 @@ function createTraceAccumulator(
       repeatedSearches: 0,
       context: { ccc: 0, cgc: 0, lsp: 0 }
     },
+    tokenState: {
+      observed: false,
+      samples: 0,
+      offsetIn: 0,
+      offsetCached: 0,
+      offsetOut: 0,
+      offsetReas: 0,
+      offsetTotal: 0,
+      prevRawIn: null,
+      prevRawCached: 0,
+      prevRawOut: 0,
+      prevRawReas: 0,
+      prevRawTotal: null,
+      peakInputTokens: 0,
+      prevLastInput: 0,
+      cacheDrops: 0
+    },
+    compaction: {
+      compactedRecords: 0,
+      contextCompactedEvents: 0,
+      maxReplacementItems: 0,
+      maxReplacementBytes: 0,
+      maxReplacementImages: 0,
+      responseImageItems: 0
+    },
+    prompt: {
+      seenAgentOutput: false,
+      initialDeveloperBytes: 0,
+      skillsCatalogBytes: 0,
+      loadedSkills: new Set(),
+      skillsByRoot: {},
+      skillsRead: new Set()
+    },
     cwd: typeof meta.cwd === "string" ? meta.cwd : "/",
     reads: new Set(),
     searchKeys: new Set()
@@ -1267,6 +1716,7 @@ function accumulateTraceRecord(
   acc: ThreadTraceAccumulator
 ): void {
   const at = typeof record.timestamp === "string" ? record.timestamp : null;
+  recordCompactionRecord(record, acc);
   if (record.type === "response_item") {
     const payload = isResponseItemPayload(record.payload)
       ? record.payload
@@ -1283,10 +1733,126 @@ function accumulateTraceRecord(
     incrementCount(acc, `event_msg:${payload?.type ?? ""}`);
     recordGapAndItems(record, at, payload, withItems, acc);
     recordTurnEvent(record, at, payload, acc);
-    if (payload) recordInvestigation(record, at, payload, acc);
+    if (payload) {
+      recordTokenEfficiency(payload, acc);
+      recordInvestigation(record, at, payload, acc);
+    }
     return;
   }
   incrementCount(acc, record.type);
+}
+
+function inferCodexHomeFromRolloutPath(file: string): string | null {
+  const resolved = path.resolve(file);
+  const parts = resolved.split(path.sep);
+  const rootIndex = parts.findIndex(
+    (segment) => segment === "sessions" || segment === "archived_sessions"
+  );
+  if (rootIndex <= 0) return null;
+  return parts.slice(0, rootIndex).join(path.sep) || path.sep;
+}
+
+function collectTelemetryTurnHashes(
+  turns: JsonRecord,
+  allowedTurnIds: Set<string> | null
+): number {
+  const hashes = new Set<string>();
+  for (const [turnId, rawEntry] of Object.entries(turns)) {
+    if (allowedTurnIds && !allowedTurnIds.has(turnId)) continue;
+    if (!isRecord(rawEntry) || !Array.isArray(rawEntry.has)) continue;
+    for (const hash of rawEntry.has) {
+      if (typeof hash === "string" && hash.length > 0) hashes.add(hash);
+    }
+  }
+  return hashes.size;
+}
+
+function readSkillTelemetryCount(
+  codexHome: string | null,
+  threadId: string,
+  sessionId: string | null,
+  turnIds: string[]
+): number | null {
+  if (!codexHome) return null;
+  const dir = path.join(codexHome, "run", "skill-read-telemetry");
+  const candidates: Array<{ file: string; filter: Set<string> | null }> = [
+    { file: path.join(dir, `${threadId}.json`), filter: null }
+  ];
+  if (sessionId && sessionId !== threadId && turnIds.length > 0) {
+    candidates.push({
+      file: path.join(dir, `${sessionId}.json`),
+      filter: new Set(turnIds)
+    });
+  }
+  for (const candidate of candidates) {
+    if (!existsSync(candidate.file)) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(candidate.file, "utf8"));
+      if (!isRecord(parsed) || !isRecord(parsed.turns)) continue;
+      return collectTelemetryTurnHashes(parsed.turns, candidate.filter);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function buildThreadEfficiency(
+  acc: ThreadTraceAccumulator,
+  codexHome: string | null,
+  threadId: string,
+  sessionId: string | null
+): ThreadEfficiency {
+  const t = acc.tokenState;
+  const inputTokens = t.offsetIn + (t.prevRawIn ?? 0);
+  const cachedInputTokens = t.offsetCached + t.prevRawCached;
+  const outputTokens = t.offsetOut + t.prevRawOut;
+  const reasoningOutputTokens = t.offsetReas + t.prevRawReas;
+  const totalTokens = t.offsetTotal + (t.prevRawTotal ?? 0);
+  const c = acc.compaction;
+  const p = acc.prompt;
+  return {
+    tokens: {
+      observed: t.observed,
+      samples: t.samples,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningOutputTokens,
+      totalTokens,
+      cacheHitPct:
+        inputTokens > 0
+          ? round1((cachedInputTokens / inputTokens) * 100)
+          : null,
+      reasoningPct:
+        outputTokens > 0
+          ? round1((reasoningOutputTokens / outputTokens) * 100)
+          : null,
+      peakInputTokens: t.peakInputTokens,
+      cacheDrops: t.cacheDrops
+    },
+    compaction: {
+      count: Math.max(c.compactedRecords, c.contextCompactedEvents),
+      contextCompactedEvents: c.contextCompactedEvents,
+      maxReplacementItems: c.maxReplacementItems,
+      maxReplacementBytes: c.maxReplacementBytes,
+      maxReplacementImages: c.maxReplacementImages,
+      responseImageItems: c.responseImageItems
+    },
+    prompt: {
+      initialDeveloperBytes: p.initialDeveloperBytes,
+      skillsCatalogBytes: p.skillsCatalogBytes,
+      skillsLoaded: p.loadedSkills.size,
+      skillsByRoot: p.skillsByRoot,
+      skillsRead: [...p.skillsRead].sort(),
+      skillTelemetryReads: readSkillTelemetryCount(
+        codexHome,
+        threadId,
+        sessionId,
+        acc.turns.map((turn) => turn.turnId).filter(Boolean)
+      )
+    }
+  };
 }
 
 function timestampBounds(records: RolloutPayload[]): {
@@ -1306,7 +1872,7 @@ function buildThreadTrace(
   meta: SessionMetaPayload,
   context: TurnContextPayload,
   acc: ThreadTraceAccumulator,
-  withItems: boolean
+  options: { withItems: boolean; codexHome?: string }
 ): ThreadTrace {
   const {
     counts,
@@ -1320,9 +1886,13 @@ function buildThreadTrace(
     investigation
   } = acc;
   const { start, end } = timestampBounds(records);
+  const id = typeof meta.id === "string" ? meta.id : file;
+  const sessionId =
+    typeof meta.session_id === "string" ? meta.session_id : null;
+  const resolvedHome = options.codexHome ?? inferCodexHomeFromRolloutPath(file);
   return {
-    id: typeof meta.id === "string" ? meta.id : file,
-    sessionId: typeof meta.session_id === "string" ? meta.session_id : null,
+    id,
+    sessionId,
     parentId:
       typeof meta.parent_thread_id === "string" ? meta.parent_thread_id : null,
     nickname:
@@ -1354,17 +1924,33 @@ function buildThreadTrace(
           }
         }
       : {}),
+    efficiency: buildThreadEfficiency(acc, resolvedHome, id, sessionId),
     investigation,
-    ...(withItems ? { items } : {})
+    ...(options.withItems ? { items } : {})
   };
 }
 
-export function traceThread(file: string, withItems: boolean): ThreadTrace {
+export function traceThread(
+  file: string,
+  withItems: boolean,
+  codexHome?: string
+): ThreadTrace {
   const records = readJsonl(file);
   const { meta, context } = traceMetadata(records);
   const acc = createTraceAccumulator(meta);
   for (const record of records) accumulateTraceRecord(record, withItems, acc);
-  return buildThreadTrace(file, records, meta, context, acc, withItems);
+  return buildThreadTrace(file, records, meta, context, acc, {
+    withItems,
+    ...(codexHome ? { codexHome } : {})
+  });
+}
+
+function strOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function numOrNull(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
 }
 
 /** Every router event in a time window, read in one pass over the (large) log. */
@@ -1391,27 +1977,28 @@ function routerEventFromLine(
   if (!event) return null;
   return {
     at: stamp,
-    requestId: typeof event.requestId === "string" ? event.requestId : "",
-    thread: typeof event.thread === "string" ? event.thread : null,
-    phase: typeof event.phase === "string" ? event.phase : "",
-    role: typeof event.role === "string" ? event.role : null,
-    requestedModel:
-      typeof event.requestedModel === "string" ? event.requestedModel : null,
-    provider: typeof event.provider === "string" ? event.provider : null,
-    model: typeof event.model === "string" ? event.model : null,
-    outcome: typeof event.outcome === "string" ? event.outcome : null,
-    status: typeof event.status === "number" ? event.status : null,
-    failureClass:
-      typeof event.failureClass === "string" ? event.failureClass : null,
-    spawnFailureReason:
-      typeof event.spawnFailureReason === "string"
-        ? event.spawnFailureReason
-        : null,
-    denialReason:
-      typeof event.denialReason === "string" ? event.denialReason : null,
-    elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : null,
-    toolCalls: typeof event.toolCalls === "number" ? event.toolCalls : null,
-    selection: typeof event.selection === "string" ? event.selection : null
+    requestId: strOrNull(event.requestId) ?? "",
+    thread: strOrNull(event.thread),
+    phase: strOrNull(event.phase) ?? "",
+    role: strOrNull(event.role),
+    requestedModel: strOrNull(event.requestedModel),
+    provider: strOrNull(event.provider),
+    model: strOrNull(event.model),
+    outcome: strOrNull(event.outcome),
+    status: numOrNull(event.status),
+    failureClass: strOrNull(event.failureClass),
+    ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+    spawnFailureReason: strOrNull(event.spawnFailureReason),
+    denialReason: strOrNull(event.denialReason),
+    elapsedMs: numOrNull(event.elapsedMs),
+    toolCalls: numOrNull(event.toolCalls),
+    selection: strOrNull(event.selection),
+    ...(typeof event.errorName === "string"
+      ? { errorName: event.errorName }
+      : {}),
+    ...(typeof event.errorCode === "string"
+      ? { errorCode: event.errorCode }
+      : {})
   };
 }
 
@@ -1461,36 +2048,23 @@ export async function routerEvents(
   return rows;
 }
 
-function recordRouterEvent(
+interface RouterSummaryAccumulator {
+  requests: Set<string>;
+  providerSequence: string[];
+  byProvider: RouterSummary["byProvider"];
+  failures: RouterSummary["failures"];
+  skipped: RouterSkippedEvent[];
+  retries: number;
+  exhaustionWaitCount: number;
+  exhaustionWaitMs: number;
+  transportErrors: number;
+}
+
+function recordRouterResult(
   row: RouterEventRow,
-  requests: Set<string>,
-  providerSequence: string[],
-  byProvider: RouterSummary["byProvider"],
-  failures: RouterSummary["failures"]
+  acc: RouterSummaryAccumulator
 ): void {
-  if (row.phase === "selected") {
-    requests.add(row.requestId);
-    const provider = row.provider ?? "?";
-    if (providerSequence.at(-1) !== provider) providerSequence.push(provider);
-    return;
-  }
-  if (row.phase === "spawn_failed") {
-    failures.push({
-      at: row.at,
-      requestId: row.requestId,
-      provider: row.provider,
-      status: row.status,
-      failureClass:
-        row.failureClass ?? row.spawnFailureReason ?? "spawn_failed",
-      elapsedMs: row.elapsedMs,
-      ...(row.spawnFailureReason
-        ? { spawnFailureReason: row.spawnFailureReason }
-        : {})
-    });
-    return;
-  }
-  if (row.phase !== "result") return;
-  const entry = (byProvider[row.provider ?? "?"] ??= {
+  const entry = (acc.byProvider[row.provider ?? "?"] ??= {
     requests: 0,
     failures: 0,
     elapsedMs: 0,
@@ -1501,7 +2075,7 @@ function recordRouterEvent(
   entry.toolCalls += row.toolCalls ?? 0;
   if (row.outcome === "failure") {
     entry.failures += 1;
-    failures.push({
+    acc.failures.push({
       at: row.at,
       requestId: row.requestId,
       provider: row.provider,
@@ -1509,6 +2083,67 @@ function recordRouterEvent(
       failureClass: row.failureClass ?? row.denialReason ?? null,
       elapsedMs: row.elapsedMs
     });
+  }
+}
+
+function recordRouterEvent(
+  row: RouterEventRow,
+  acc: RouterSummaryAccumulator
+): void {
+  switch (row.phase) {
+    case "selected": {
+      acc.requests.add(row.requestId);
+      const provider = row.provider ?? "?";
+      if (acc.providerSequence.at(-1) !== provider)
+        acc.providerSequence.push(provider);
+      return;
+    }
+    case "spawn_failed": {
+      acc.failures.push({
+        at: row.at,
+        requestId: row.requestId,
+        provider: row.provider,
+        status: row.status,
+        failureClass:
+          row.failureClass ?? row.spawnFailureReason ?? "spawn_failed",
+        elapsedMs: row.elapsedMs,
+        ...(row.spawnFailureReason
+          ? { spawnFailureReason: row.spawnFailureReason }
+          : {})
+      });
+      return;
+    }
+    case "skipped": {
+      acc.skipped.push({
+        at: row.at,
+        requestId: row.requestId,
+        provider: row.provider,
+        reason:
+          row.failureClass ?? row.reason ?? row.denialReason ?? UNKNOWN_LABEL,
+        elapsedMs: row.elapsedMs
+      });
+      return;
+    }
+    case "retry": {
+      acc.retries += 1;
+      return;
+    }
+    case "exhaustion_wait": {
+      acc.exhaustionWaitCount += 1;
+      acc.exhaustionWaitMs += row.elapsedMs ?? 0;
+      return;
+    }
+    case "transport_error": {
+      acc.transportErrors += 1;
+      return;
+    }
+    case "result": {
+      recordRouterResult(row, acc);
+      break;
+    }
+    default: {
+      break;
+    }
   }
 }
 
@@ -1532,21 +2167,39 @@ export function summarizeRouter(
       : row.thread === thread.id
   );
   const guessed = mine.some((row) => row.thread === null);
-  const byProvider: RouterSummary["byProvider"] = {};
-  const failures: RouterSummary["failures"] = [];
-  const providerSequence: string[] = [];
-  const requests = new Set<string>();
-  for (const row of mine) {
-    recordRouterEvent(row, requests, providerSequence, byProvider, failures);
-  }
+  const acc: RouterSummaryAccumulator = {
+    requests: new Set<string>(),
+    providerSequence: [],
+    byProvider: {},
+    failures: [],
+    skipped: [],
+    retries: 0,
+    exhaustionWaitCount: 0,
+    exhaustionWaitMs: 0,
+    transportErrors: 0
+  };
+  for (const row of mine) recordRouterEvent(row, acc);
   return {
     thread: thread.id,
     model: thread.model,
     matchedBy: guessed ? "model-window" : "thread",
-    requests: requests.size,
-    byProvider,
-    failures,
-    providerSequence,
+    requests: acc.requests.size,
+    byProvider: acc.byProvider,
+    failures: acc.failures,
+    providerSequence: acc.providerSequence,
+    ...(acc.skipped.length > 0 ? { skipped: acc.skipped } : {}),
+    ...(acc.retries > 0 ? { retries: acc.retries } : {}),
+    ...(acc.exhaustionWaitCount > 0
+      ? {
+          exhaustionWaits: {
+            count: acc.exhaustionWaitCount,
+            totalMs: acc.exhaustionWaitMs
+          }
+        }
+      : {}),
+    ...(acc.transportErrors > 0
+      ? { transportErrors: acc.transportErrors }
+      : {}),
     ...(withEvents ? { events: mine } : {})
   };
 }
@@ -1918,7 +2571,7 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
   const threads = findSessionRollouts(
     rolloutRoots(options.codexHome),
     options.id
-  ).map((file) => traceThread(file, options.items));
+  ).map((file) => traceThread(file, options.items, options.codexHome));
   const stamps = threads
     .flatMap((thread) => [thread.start, thread.end])
     .filter(Boolean)
@@ -1950,6 +2603,72 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
   };
 }
 
+function formatCompactNumber(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= BYTES_PER_MIB) return `${(bytes / BYTES_PER_MIB).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function renderSkippedRouterSummary(skipped: RouterSkippedEvent[]): string {
+  const counts = new Map<string, number>();
+  for (const entry of skipped) {
+    const key = `${entry.provider ?? "?"}:${entry.reason}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const summary = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => `${key}=${count}`)
+    .join(", ");
+  const first = skipped[0]!;
+  return `   ROUTER SKIPPED ${skipped.length} (${summary}) first=${first.at.slice(11, 23)} ${first.requestId.slice(0, 8)}`;
+}
+
+function renderRouterRetries(router: RouterSummary): string | null {
+  const parts: string[] = [];
+  if (router.retries) parts.push(`retries=${router.retries}`);
+  if (router.transportErrors)
+    parts.push(`transport_errors=${router.transportErrors}`);
+  if (router.exhaustionWaits) {
+    parts.push(
+      `exhaustion_waits=${router.exhaustionWaits.count} (${Math.round(router.exhaustionWaits.totalMs / 1000)}s)`
+    );
+  }
+  return parts.length > 0 ? `   ROUTER RETRIES ${parts.join(" ")}` : null;
+}
+
+function renderRouterEventLine(event: RouterEventRow): string {
+  const reasonPart =
+    event.reason && event.reason !== event.failureClass
+      ? ` reason=${event.reason}`
+      : "";
+  const errorPart = event.errorCode ? ` err=${event.errorCode}` : "";
+  const elapsedPart = event.elapsedMs === null ? "" : ` ${event.elapsedMs}ms`;
+  const toolsPart =
+    event.phase === "result" ? ` tools=${event.toolCalls ?? 0}` : "";
+  return (
+    `   ${event.at.slice(11, 23)} ${event.requestId.slice(0, 8)} ${event.phase} ${event.provider ?? "-"}/${event.model ?? "-"}` +
+    `${event.outcome ? ` ${event.outcome}` : ""}${event.status ? ` ${event.status}` : ""}${event.failureClass ? ` ${event.failureClass}` : ""}` +
+    `${reasonPart}${errorPart}${elapsedPart}${toolsPart}`
+  );
+}
+
+function renderRouterFailureLine(
+  failure: RouterSummary["failures"][number]
+): string {
+  const reasonSuffix =
+    failure.spawnFailureReason &&
+    failure.spawnFailureReason !== failure.failureClass
+      ? ` (${failure.spawnFailureReason})`
+      : "";
+  return `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"}${reasonSuffix} ${failure.elapsedMs ?? "-"}ms`;
+}
+
 function renderRouterDetails(router: RouterSummary): string[] {
   const lines: string[] = [];
   const providers = Object.entries(router.byProvider).map(
@@ -1961,21 +2680,89 @@ function renderRouterDetails(router: RouterSummary): string[] {
   );
   if (router.providerSequence.length > 1)
     lines.push(`   PROVIDER HOPS ${router.providerSequence.join(" → ")}`);
-  for (const failure of router.failures) {
-    const reasonSuffix =
-      failure.spawnFailureReason &&
-      failure.spawnFailureReason !== failure.failureClass
-        ? ` (${failure.spawnFailureReason})`
-        : "";
-    lines.push(
-      `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"}${reasonSuffix} ${failure.elapsedMs ?? "-"}ms`
-    );
+  if (router.skipped && router.skipped.length > 0)
+    lines.push(renderSkippedRouterSummary(router.skipped));
+  const retryLine = renderRouterRetries(router);
+  if (retryLine) lines.push(retryLine);
+  for (const failure of router.failures)
+    lines.push(renderRouterFailureLine(failure));
+  for (const event of router.events ?? [])
+    lines.push(renderRouterEventLine(event));
+  return lines;
+}
+
+function renderThreadEfficiency(eff: ThreadEfficiency): string[] {
+  const { tokens, compaction, prompt } = eff;
+  const tokenLine = tokens.observed
+    ? `   efficiency tokens=${formatCompactNumber(tokens.totalTokens)} ` +
+      `(in=${formatCompactNumber(tokens.inputTokens)} cached=${formatCompactNumber(tokens.cachedInputTokens)} ` +
+      `[${tokens.cacheHitPct ?? "?"}%] out=${formatCompactNumber(tokens.outputTokens)} ` +
+      `reasoning=${formatCompactNumber(tokens.reasoningOutputTokens)} [${tokens.reasoningPct ?? "?"}%]) ` +
+      `peak-in=${formatCompactNumber(tokens.peakInputTokens)} cache-drops=${tokens.cacheDrops}`
+    : "   efficiency tokens=unreported (0 non-zero samples)";
+  const compLine =
+    `   compactions=${compaction.count} (context_compacted=${compaction.contextCompactedEvents}) ` +
+    `max-replacement=${compaction.maxReplacementItems} items/${formatBytes(compaction.maxReplacementBytes)}/imgs=${compaction.maxReplacementImages} ` +
+    `response-images=${compaction.responseImageItems}`;
+  const roots = Object.entries(prompt.skillsByRoot)
+    .sort((a, b) => b[1] - a[1])
+    .map(([root, count]) => `${root}=${count}`)
+    .join(" ");
+  const readPreview =
+    prompt.skillsRead.length > 0
+      ? ` [${prompt.skillsRead.slice(0, 8).join(", ")}${prompt.skillsRead.length > 8 ? ", …" : ""}]`
+      : "";
+  const promptLine =
+    `   prompt dev=${formatBytes(prompt.initialDeveloperBytes)} skills-block=${formatBytes(prompt.skillsCatalogBytes)} ` +
+    `loaded=${prompt.skillsLoaded} (${roots || "none"}) read=${prompt.skillsRead.length}${readPreview} ` +
+    `telemetry-reads=${prompt.skillTelemetryReads ?? "?"}`;
+  return [tokenLine, compLine, promptLine];
+}
+
+function renderThreadFailures(
+  toolFailures: ToolFailure[],
+  includeInput: boolean,
+  allFailures: boolean
+): string[] {
+  if (toolFailures.length === 0) return [];
+  const lines: string[] = [];
+  const counts = new Map<ToolFailureCategory, number>();
+  for (const failure of toolFailures) {
+    const category =
+      failure.category ?? classifyToolFailure(failure.detail, failure.input);
+    counts.set(category, (counts.get(category) ?? 0) + 1);
   }
-  for (const event of router.events ?? []) {
+  if (toolFailures.length > 1) {
+    const summary = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, count]) => `${cat}=${count}`)
+      .join(" ");
+    lines.push(`   TOOL FAILURES total=${toolFailures.length} (${summary})`);
+  }
+  const shown = new Map<ToolFailureCategory, number>();
+  const omitted = new Map<ToolFailureCategory, number>();
+  for (const failure of toolFailures) {
+    const category =
+      failure.category ?? classifyToolFailure(failure.detail, failure.input);
+    const seen = shown.get(category) ?? 0;
+    if (allFailures || seen < FAILURE_CAP_PER_CATEGORY) {
+      shown.set(category, seen + 1);
+      lines.push(
+        `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`
+      );
+      if (includeInput && failure.input) {
+        const renderedInput = allFailures
+          ? failure.input
+          : excerpt(failure.input, FAILURE_PREVIEW_INPUT_EXCERPT);
+        lines.push(`     input=${renderedInput}`);
+      }
+    } else {
+      omitted.set(category, (omitted.get(category) ?? 0) + 1);
+    }
+  }
+  for (const [category, hidden] of omitted.entries()) {
     lines.push(
-      `   ${event.at.slice(11, 23)} ${event.requestId.slice(0, 8)} ${event.phase} ${event.provider ?? "-"}/${event.model ?? "-"}` +
-        `${event.outcome ? ` ${event.outcome}` : ""}${event.status ? ` ${event.status}` : ""}${event.failureClass ? ` ${event.failureClass}` : ""}` +
-        `${event.elapsedMs === null ? "" : ` ${event.elapsedMs}ms`}${event.phase === "result" ? ` tools=${event.toolCalls ?? 0}` : ""}`
+      `   ... (+${hidden} more ${category} failures; pass --all-failures to list all)`
     );
   }
   return lines;
@@ -2003,7 +2790,11 @@ function renderInvestigation(investigation: Investigation): string {
 function renderThreadSection(
   thread: ThreadTrace,
   router?: RouterSummary,
-  { failures = false }: { failures?: boolean } = {}
+  {
+    failures = false,
+    allFailures = false,
+    efficiency = false
+  }: { failures?: boolean; allFailures?: boolean; efficiency?: boolean } = {}
 ): string[] {
   const lines: string[] = [
     `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`,
@@ -2024,19 +2815,17 @@ function renderThreadSection(
       `   tools ${tools.map(([tool, count]) => `${tool}=${count}`).join(" ")}`
     );
   lines.push(renderInvestigation(thread.investigation));
+  if (efficiency && thread.efficiency) {
+    lines.push(...renderThreadEfficiency(thread.efficiency));
+  }
   if (thread.anomalies && thread.anomalies.tagOnlyMessages > 0) {
     lines.push(
       `   ANOMALY tag-only assistant messages: ${thread.anomalies.tagOnlyMessages} (${thread.anomalies.samples.join(", ")})`
     );
   }
-  for (const failure of thread.toolFailures) {
-    lines.push(
-      `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`
-    );
-    if (failures && failure.input) {
-      lines.push(`     input=${failure.input}`);
-    }
-  }
+  lines.push(
+    ...renderThreadFailures(thread.toolFailures, failures, allFailures)
+  );
   if (router) {
     lines.push(...renderRouterDetails(router));
   }
@@ -2113,16 +2902,26 @@ function renderEfficiencySection(efficiency: EfficiencySummary): string[] {
 
 export function renderReport(
   report: TraceReport,
-  options: { failures?: boolean } = {}
+  options: {
+    failures?: boolean;
+    allFailures?: boolean;
+    efficiency?: boolean;
+  } = {}
 ): string {
+  const showEfficiency = options.efficiency ?? Boolean(report.efficiency);
   const out: string[] = [];
   if (report.threads.length === 0)
     out.push(
-      "No rollout found for that id under <codex-home>/sessions. Try --recent."
+      "No rollout found for that id under <codex-home>/sessions or archived_sessions. Try --recent."
     );
   for (const thread of report.threads) {
     const router = report.router.find((entry) => entry.thread === thread.id);
-    out.push(...renderThreadSection(thread, router, options));
+    out.push(
+      ...renderThreadSection(thread, router, {
+        ...options,
+        efficiency: showEfficiency
+      })
+    );
   }
   if (report.live) {
     out.push(...renderLiveSection(report.live));
@@ -2156,6 +2955,390 @@ export function renderRecent(sessions: RecentSession[]): string {
     .join("\n");
 }
 
+interface HookDenialAccumulator {
+  totalLines: number;
+  userPromptSubmits: number;
+  preToolUseDenials: number;
+  byPolicy: Record<string, number>;
+  byRole: Record<string, number>;
+  reasonCounts: Map<string, number>;
+  commandCounts: Map<
+    string,
+    { commandHead: string; policy: string; count: number }
+  >;
+}
+
+function recordHookLogLine(
+  line: string,
+  cutoff: string,
+  acc: HookDenialAccumulator
+): void {
+  if (!line) return;
+  acc.totalLines += 1;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(parsed) || typeof parsed.time !== "string") return;
+  if (parsed.time < cutoff) return;
+  if (parsed.event === "UserPromptSubmit") {
+    acc.userPromptSubmits += 1;
+    return;
+  }
+  if (parsed.event !== "PreToolUse" || parsed.decision !== "deny") return;
+  acc.preToolUseDenials += 1;
+  const policy =
+    typeof parsed.policy === "string" ? parsed.policy : UNKNOWN_LABEL;
+  const role = typeof parsed.role === "string" ? parsed.role : UNKNOWN_LABEL;
+  const reason =
+    typeof parsed.reason === "string" ? parsed.reason : UNKNOWN_LABEL;
+  acc.byPolicy[policy] = (acc.byPolicy[policy] ?? 0) + 1;
+  acc.byRole[role] = (acc.byRole[role] ?? 0) + 1;
+  acc.reasonCounts.set(reason, (acc.reasonCounts.get(reason) ?? 0) + 1);
+  if (typeof parsed.commandHead !== "string" || !parsed.commandHead) return;
+  const key = `${policy}\0${parsed.commandHead}`;
+  const prev = acc.commandCounts.get(key);
+  if (prev) prev.count += 1;
+  else {
+    acc.commandCounts.set(key, {
+      commandHead: parsed.commandHead,
+      policy,
+      count: 1
+    });
+  }
+}
+
+/** Aggregate structured `PreToolUse` denial entries recorded in `$CODEX_HOME/hooks/hooks.log`. */
+export function summarizeHookDenials(
+  codexHome: string,
+  sinceDays = 7,
+  nowMs = Date.now()
+): HookDenialSummary {
+  const logFile = path.join(codexHome, "hooks", "hooks.log");
+  const cutoff = new Date(nowMs - sinceDays * MS_PER_DAY).toISOString();
+  const acc: HookDenialAccumulator = {
+    totalLines: 0,
+    userPromptSubmits: 0,
+    preToolUseDenials: 0,
+    byPolicy: {},
+    byRole: {},
+    reasonCounts: new Map(),
+    commandCounts: new Map()
+  };
+
+  if (existsSync(logFile)) {
+    for (const line of readFileSync(logFile, "utf8").split("\n")) {
+      recordHookLogLine(line, cutoff, acc);
+    }
+  }
+
+  return {
+    logFile,
+    sinceDays,
+    cutoff,
+    totalLines: acc.totalLines,
+    userPromptSubmits: acc.userPromptSubmits,
+    preToolUseDenials: acc.preToolUseDenials,
+    byPolicy: acc.byPolicy,
+    byRole: acc.byRole,
+    byReason: [...acc.reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([reason, count]) => ({ reason, count })),
+    topCommands: [...acc.commandCounts.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15)
+  };
+}
+
+export function renderHookDenials(summary: HookDenialSummary): string {
+  const lines = [
+    `== hook denials (${summary.logFile}) since=${summary.cutoff} (${summary.sinceDays}d)`,
+    `   lines=${summary.totalLines} userPromptSubmits=${summary.userPromptSubmits} preToolUseDenials=${summary.preToolUseDenials}`
+  ];
+  if (summary.preToolUseDenials === 0) {
+    lines.push(
+      "   no structured PreToolUse denial entries in window (reinstall hooks to enable hooks.log capture, or use --scan-recent to aggregate historical rollout blocks)"
+    );
+    return lines.join("\n");
+  }
+  const policyText = Object.entries(summary.byPolicy)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  const roleText = Object.entries(summary.byRole)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  lines.push(`   byPolicy: ${policyText}`, `   byRole: ${roleText}`);
+  if (summary.byReason.length > 0) {
+    lines.push("   top reasons:");
+    for (const item of summary.byReason)
+      lines.push(`     ${String(item.count).padStart(4)}  ${item.reason}`);
+  }
+  if (summary.topCommands.length > 0) {
+    lines.push("   top blocked commands:");
+    for (const item of summary.topCommands)
+      lines.push(
+        `     ${String(item.count).padStart(4)}  [${item.policy}] ${item.commandHead}`
+      );
+  }
+  return lines.join("\n");
+}
+
+function extractPreToolUseReason(detail: string): string | null {
+  const markerIndex = detail.indexOf(PRETOOLUSE_MARKER);
+  if (markerIndex === -1) return null;
+  const afterMarker = detail
+    .slice(markerIndex + PRETOOLUSE_MARKER.length)
+    .trimStart();
+  const newlineIndex = afterMarker.indexOf("\n");
+  const reasonLine =
+    newlineIndex === -1 ? afterMarker : afterMarker.slice(0, newlineIndex);
+  const suffixAt = reasonLine.search(PRETOOLUSE_HINT_SUFFIX_REGEX);
+  const clipped = suffixAt === -1 ? reasonLine : reasonLine.slice(0, suffixAt);
+  const trimmed = clipped.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function rolloutsForSelectedSessions(
+  codexHome: string,
+  selectedIds: Set<string>
+): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  const files = rolloutRoots(codexHome)
+    .flatMap((root) => rolloutFiles(root))
+    .sort((a, b) => COLLATOR.compare(path.basename(b), path.basename(a)));
+  for (const file of files) {
+    const meta = firstLine(file)?.payload;
+    if (!meta) continue;
+    const owner =
+      typeof meta.session_id === "string" && selectedIds.has(meta.session_id)
+        ? meta.session_id
+        : typeof meta.id === "string" && selectedIds.has(meta.id)
+          ? meta.id
+          : typeof meta.parent_thread_id === "string" &&
+              selectedIds.has(meta.parent_thread_id)
+            ? meta.parent_thread_id
+            : null;
+    if (!owner) continue;
+    const list = grouped.get(owner) ?? [];
+    list.push(file);
+    grouped.set(owner, list);
+  }
+  return grouped;
+}
+
+interface SessionFleetAccumulator {
+  row: FleetSessionRow;
+  failureCounts: Map<ToolFailureCategory, number>;
+}
+
+function accumulateFleetThread(
+  thread: ThreadTrace,
+  router: RouterSummary,
+  acc: SessionFleetAccumulator,
+  totals: FleetScanReport["totals"],
+  preToolReasons: Map<string, number>,
+  skippedReasons: Map<string, number>
+): void {
+  const eff = thread.efficiency;
+  if (eff) {
+    acc.row.totalTokens += eff.tokens.totalTokens;
+    acc.row.inputTokens += eff.tokens.inputTokens;
+    acc.row.cachedInputTokens += eff.tokens.cachedInputTokens;
+    acc.row.cacheDrops += eff.tokens.cacheDrops;
+    acc.row.compactions += eff.compaction.count;
+    if (eff.prompt.skillsLoaded > acc.row.maxSkillsLoaded)
+      acc.row.maxSkillsLoaded = eff.prompt.skillsLoaded;
+    totals.totalTokens += eff.tokens.totalTokens;
+    totals.inputTokens += eff.tokens.inputTokens;
+    totals.cachedInputTokens += eff.tokens.cachedInputTokens;
+    totals.cacheDrops += eff.tokens.cacheDrops;
+    totals.compactions += eff.compaction.count;
+  }
+  for (const failure of thread.toolFailures) {
+    acc.row.toolFailures += 1;
+    const cat =
+      failure.category ?? classifyToolFailure(failure.detail, failure.input);
+    acc.failureCounts.set(cat, (acc.failureCounts.get(cat) ?? 0) + 1);
+    totals.toolFailuresByCategory[cat] =
+      (totals.toolFailuresByCategory[cat] ?? 0) + 1;
+    if (cat === "pretooluse-hook") {
+      acc.row.preToolUseBlocks += 1;
+      const reason = extractPreToolUseReason(failure.detail) ?? failure.detail;
+      preToolReasons.set(reason, (preToolReasons.get(reason) ?? 0) + 1);
+    }
+  }
+  acc.row.routerRequests += router.requests;
+  acc.row.routerFailures += router.failures.length;
+  for (const [provider, stats] of Object.entries(router.byProvider)) {
+    acc.row.providers[provider] =
+      (acc.row.providers[provider] ?? 0) + stats.requests;
+  }
+  for (const skipped of router.skipped ?? []) {
+    const key = `${skipped.provider ?? "?"}:${skipped.reason}`;
+    acc.row.routerSkipped[key] = (acc.row.routerSkipped[key] ?? 0) + 1;
+    skippedReasons.set(key, (skippedReasons.get(key) ?? 0) + 1);
+  }
+}
+
+/** Summarize efficiency, failures, PreToolUse blocks, and router skips across the N newest sessions. */
+export async function scanRecentSessions(options: {
+  codexHome: string;
+  routerLog: string;
+  limit: number;
+}): Promise<FleetScanReport> {
+  const recent = recentSessions(rolloutRoots(options.codexHome), options.limit);
+  const bySession = rolloutsForSelectedSessions(
+    options.codexHome,
+    new Set(recent.map((s) => s.id))
+  );
+  const tracedBySession = new Map<string, ThreadTrace[]>();
+  const stamps: string[] = [];
+  let totalThreads = 0;
+
+  for (const session of recent) {
+    const traces = (bySession.get(session.id) ?? []).map((file) =>
+      traceThread(file, false, options.codexHome)
+    );
+    tracedBySession.set(session.id, traces);
+    totalThreads += traces.length;
+    for (const t of traces) {
+      if (t.start) stamps.push(t.start);
+      if (t.end) stamps.push(t.end);
+    }
+  }
+  stamps.sort();
+  const rows =
+    stamps.length > 0
+      ? await routerEvents(
+          options.routerLog,
+          shift(stamps[0]!, -5),
+          shift(stamps.at(-1)!, 60)
+        )
+      : [];
+
+  const totals: FleetScanReport["totals"] = {
+    sessions: recent.length,
+    threads: totalThreads,
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheHitPct: null,
+    cacheDrops: 0,
+    compactions: 0,
+    toolFailuresByCategory: {},
+    preToolUseReasons: [],
+    routerSkippedByReason: []
+  };
+  const preToolReasons = new Map<string, number>();
+  const skippedReasons = new Map<string, number>();
+  const sessionRows: FleetSessionRow[] = [];
+
+  for (const session of recent) {
+    const traces = tracedBySession.get(session.id) ?? [];
+    const acc: SessionFleetAccumulator = {
+      failureCounts: new Map(),
+      row: {
+        id: session.id,
+        started: session.started,
+        lastWrite: session.lastWrite,
+        cwd: session.cwd,
+        threads: traces.length > 0 ? traces.length : session.threads,
+        totalTokens: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        cacheHitPct: null,
+        cacheDrops: 0,
+        compactions: 0,
+        maxSkillsLoaded: 0,
+        toolFailures: 0,
+        preToolUseBlocks: 0,
+        topFailureCategory: null,
+        routerRequests: 0,
+        routerFailures: 0,
+        routerSkipped: {},
+        providers: {}
+      }
+    };
+    for (const trace of traces) {
+      accumulateFleetThread(
+        trace,
+        summarizeRouter(trace, rows, false),
+        acc,
+        totals,
+        preToolReasons,
+        skippedReasons
+      );
+    }
+    acc.row.cacheHitPct =
+      acc.row.inputTokens > 0
+        ? round1((acc.row.cachedInputTokens / acc.row.inputTokens) * 100)
+        : null;
+    const topFailure = [...acc.failureCounts.entries()].sort(
+      (a, b) => b[1] - a[1]
+    )[0];
+    acc.row.topFailureCategory = topFailure?.[0] ?? null;
+    sessionRows.push(acc.row);
+  }
+
+  totals.cacheHitPct =
+    totals.inputTokens > 0
+      ? round1((totals.cachedInputTokens / totals.inputTokens) * 100)
+      : null;
+  totals.preToolUseReasons = [...preToolReasons.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([reason, count]) => ({ reason, count }));
+  totals.routerSkippedByReason = [...skippedReasons.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([key, count]) => ({ key, count }));
+
+  return { limit: options.limit, sessions: sessionRows, totals };
+}
+
+export function renderFleetScan(report: FleetScanReport): string {
+  const t = report.totals;
+  const lines = [
+    `== fleet scan (${t.sessions} sessions, ${t.threads} threads)`,
+    `   totals: tokens=${formatCompactNumber(t.totalTokens)} cache=${t.cacheHitPct ?? "?"}% cache-drops=${t.cacheDrops} compactions=${t.compactions}`
+  ];
+  for (const s of report.sessions) {
+    const repo = s.cwd ? path.basename(s.cwd) : "-";
+    const topFail = s.topFailureCategory ? ` (${s.topFailureCategory})` : "";
+    const provSummary = Object.entries(s.providers)
+      .sort((a, b) => b[1] - a[1])
+      .map(([p, c]) => `${p}:${c}`)
+      .join(",");
+    const skipCount = Object.values(s.routerSkipped).reduce((a, b) => a + b, 0);
+    lines.push(
+      `   ${s.lastWrite.slice(0, 16)} ${s.id} [${repo}] th=${s.threads} tok=${formatCompactNumber(s.totalTokens)} ` +
+        `cache=${s.cacheHitPct ?? "?"}% drops=${s.cacheDrops} comp=${s.compactions} skills<=${s.maxSkillsLoaded} ` +
+        `fail=${s.toolFailures}${topFail} hooks=${s.preToolUseBlocks} skip=${skipCount} req=${provSummary || "-"}`
+    );
+  }
+  const catSummary = Object.entries(t.toolFailuresByCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  if (catSummary) lines.push(`   failures-by-category: ${catSummary}`);
+  if (t.routerSkippedByReason.length > 0) {
+    lines.push(
+      `   router-skipped: ${t.routerSkippedByReason.map((x) => `${x.key}=${x.count}`).join(" ")}`
+    );
+  }
+  if (t.preToolUseReasons.length > 0) {
+    lines.push("   top pretooluse blocks in rollouts:");
+    for (const item of t.preToolUseReasons)
+      lines.push(`     ${String(item.count).padStart(4)}  ${item.reason}`);
+  }
+  return lines.join("\n");
+}
+
 function repoRootFromScript(): string | null {
   const fromEnv = process.env.AUTODEV_REPO_ROOT;
   if (fromEnv) return fromEnv;
@@ -2168,51 +3351,99 @@ function repoRootFromScript(): string | null {
   return top || null;
 }
 
-function parseArgs(
-  argv: string[]
-): (TraceOptions & { json: boolean; recent: number | null }) | null {
+interface ParsedCliOptions extends TraceOptions {
+  json: boolean;
+  recent: number | null;
+  scanRecent: number | null;
+  hooks: boolean;
+  sinceDays: number;
+}
+
+type BooleanCliFlag =
+  | "items"
+  | "events"
+  | "failures"
+  | "allFailures"
+  | "efficiency"
+  | "json"
+  | "offline"
+  | "hooks";
+
+const CLI_BOOLEAN_FLAGS: Record<string, BooleanCliFlag> = {
+  "--items": "items",
+  "--events": "events",
+  "--failures": "failures",
+  "--all-failures": "allFailures",
+  "--efficiency": "efficiency",
+  "--json": "json",
+  "--offline": "offline",
+  "--hooks": "hooks"
+};
+
+function parsePositiveNumber(raw: string, fallback: number): number {
+  const parsed = Number(raw.trim());
+  return raw.trim().length > 0 && Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : fallback;
+}
+
+function parseArgs(argv: string[]): ParsedCliOptions | null {
   const codexHomeDefault =
     process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
   let id = "";
   let codexHome = codexHomeDefault;
   let routerLog = "";
-  let items = false;
-  let events = false;
-  let failures = false;
-  let efficiency = false;
-  let json = false;
-  let offline = false;
+  let sinceDays = 7;
   let recent: number | null = null;
+  let scanRecent: number | null = null;
+  const flags: Record<BooleanCliFlag, boolean> = {
+    items: false,
+    events: false,
+    failures: false,
+    allFailures: false,
+    efficiency: false,
+    json: false,
+    offline: false,
+    hooks: false
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
-    if (arg === "--items") items = true;
-    else if (arg === "--events") events = true;
-    else if (arg === "--failures") failures = true;
-    else if (arg === "--efficiency") efficiency = true;
-    else if (arg === "--json") json = true;
-    else if (arg === "--offline") offline = true;
-    else if (arg === "--codex-home") codexHome = argv[++index] ?? codexHome;
-    else if (arg === "--router-log") routerLog = argv[++index] ?? "";
-    else if (arg === "--recent")
+    const flagKey = CLI_BOOLEAN_FLAGS[arg];
+    if (flagKey) {
+      flags[flagKey] = true;
+      continue;
+    }
+    if (arg === "--since") {
+      sinceDays = parsePositiveNumber(argv[++index] ?? "", 7);
+    } else if (arg === "--codex-home") {
+      codexHome = argv[++index] ?? codexHome;
+    } else if (arg === "--router-log") {
+      routerLog = argv[++index] ?? "";
+    } else if (arg === "--recent") {
       recent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "")
         ? Number(argv[++index])
         : 10;
-    else if (!arg.startsWith("--")) id = arg;
+    } else if (arg === "--scan-recent") {
+      scanRecent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "")
+        ? Number(argv[++index])
+        : 10;
+    } else if (!arg.startsWith("--")) {
+      id = arg;
+    }
   }
-  if (!id && recent === null) return null;
+  if (!id && recent === null && scanRecent === null && !flags.hooks)
+    return null;
   return {
     id,
     codexHome,
     routerLog:
       routerLog ||
       path.join(codexHome, "run", "codex-model-router.launchd.err.log"),
-    items,
-    events,
-    failures,
-    efficiency,
-    json,
-    offline,
+    ...flags,
+    failures: flags.failures || flags.allFailures,
     recent,
+    scanRecent,
+    sinceDays,
     repoRoot: repoRootFromScript()
   };
 }
@@ -2224,18 +3455,35 @@ if (
   const options = parseArgs(process.argv.slice(2));
   if (!options) {
     process.stderr.write(
-      "usage: session-trace.ts <session-or-thread-id> [--items] [--events] [--failures] [--efficiency] [--json] [--codex-home DIR] [--router-log FILE] [--offline]\n       session-trace.ts --recent [N]\n"
+      "usage: session-trace.ts <session-or-thread-id> [--items] [--events] [--failures] [--all-failures] [--efficiency] [--json] [--codex-home DIR] [--router-log FILE] [--offline]\n" +
+        "       session-trace.ts --recent [N] [--json] [--codex-home DIR]\n" +
+        "       session-trace.ts --scan-recent [N] [--json] [--codex-home DIR] [--router-log FILE]\n" +
+        "       session-trace.ts --hooks [--since DAYS] [--json] [--codex-home DIR]\n"
     );
     process.exit(2);
   }
-  if (options.recent === null) {
+  if (options.hooks) {
+    const summary = summarizeHookDenials(options.codexHome, options.sinceDays);
+    process.stdout.write(
+      `${options.json ? JSON.stringify(summary, null, 2) : renderHookDenials(summary)}\n`
+    );
+  } else if (options.scanRecent !== null) {
+    const scan = await scanRecentSessions({
+      codexHome: options.codexHome,
+      routerLog: options.routerLog,
+      limit: options.scanRecent
+    });
+    process.stdout.write(
+      `${options.json ? JSON.stringify(scan, null, 2) : renderFleetScan(scan)}\n`
+    );
+  } else if (options.recent === null) {
     const report = await buildReport(options);
     process.stdout.write(
-      `${options.json ? JSON.stringify(report, null, 2) : renderReport(report, { failures: Boolean(options.failures) })}\n`
+      `${options.json ? JSON.stringify(report, null, 2) : renderReport(report, { failures: Boolean(options.failures), allFailures: Boolean(options.allFailures), efficiency: Boolean(options.efficiency) })}\n`
     );
   } else {
     const sessions = recentSessions(
-      path.join(options.codexHome, "sessions"),
+      rolloutRoots(options.codexHome),
       options.recent
     );
     process.stdout.write(

@@ -52,3 +52,43 @@ enabled = true
 
 [mcp_servers.context7]
 enabled = false
+
+[[skills.config]]
+name = "code-simplification"
+enabled = false
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = false
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "game-playtesting"
+enabled = false
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = false
+
+[[skills.config]]
+name = "playtest-analysis"
+enabled = false
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = false
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = false
+
+[[skills.config]]
+name = "source-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "writing-agent-skills"
+enabled = false

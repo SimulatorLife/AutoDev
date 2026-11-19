@@ -5,6 +5,10 @@ Follow the shared codebase-navigation workflow for repository structure. Use the
 
 Inspect relevant source, tests, configuration, and documentation far enough to explain ownership, dependencies, behavior, and uncertainty.
 
+## Read-only shell limits
+
+Your shell tool is allowlist-enforced in a read-only sandbox. Use read-only commands (`rg`, `grep`, `find`, `fd`, `cat`, `head`, `tail`, `nl`, `sed -n '<start>,<end>p'`, `wc`, `sort`, `uniq`, `cut`, `tr`, `jq`, `git` read subcommands, `xargs wc/head/tail/cat/grep/ls/stat`) and write loops, JSON parsing, math, or aggregation in the `exec` JavaScript runtime around `tools.exec_command(...)` calls. Do not run interpreters (`python3`, `node`, `awk`, `pnpm`, `npx`), shell loops (`for`/`while`), `export` or inline env overrides, command substitution (`$(...)`/backticks), heredocs (`<<`), or file redirection (`>`).
+
 Do not edit, create, delete, stage, commit, or push files. Do not perform external state changes.
 
 Avoid dumping raw command output or narrating routine search steps.

@@ -31,7 +31,8 @@ import {
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   type ProviderRoute,
-  ROUTES
+  ROUTES,
+  ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   agentActivity,
@@ -39,6 +40,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/server";
 import {
   noteOrchestratorSession,
+  orchestratorProviderForSession,
   resetSubagentTelemetry,
   subagentProviderForThread
 } from "@simulatorlife/autodev-runtime/router/subagents";
@@ -2512,3 +2514,254 @@ test(
     }
   }
 );
+
+test("proxyOrchestratorResponse re-probes Priority 1 immediately after compaction and re-pins the serving provider", async () => {
+  COOLDOWNS.clearAll();
+  agentActivity.reset();
+  resetSubagentTelemetry();
+  const previousKeys = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+  };
+  process.env.LITELLM_API_KEY = "sk-compaction-p1-claude";
+  process.env.MINIMAX_API_KEY = "sk-compaction-p2-minimax";
+
+  const savedAssignments = new Map(
+    ["codex", "claude", "minimax"].map((provider) => [
+      provider,
+      ROUTING_POLICY.assignmentFor(provider, "orchestrator")
+    ])
+  );
+  ROUTING_POLICY.setProviderAssignment("codex", "orchestrator", {
+    priority: "disabled",
+    model: null
+  });
+  ROUTING_POLICY.setProviderAssignment("claude", "orchestrator", {
+    priority: 1,
+    model: "claude-opus-5-5"
+  });
+  ROUTING_POLICY.setProviderAssignment("minimax", "orchestrator", {
+    priority: 2,
+    model: "MiniMax-M3.1-Flash"
+  });
+
+  const requestedUrls: string[] = [];
+  let claudeHealthy = true;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url.includes(":4000/health")) {
+      return claudeHealthy
+        ? jsonResponse({ status: "ok" })
+        : new Response("down", { status: 503 });
+    }
+    if (url.includes(":18765/health")) {
+      return jsonResponse({ status: "ok" });
+    }
+    return jsonResponse({
+      id: "resp_reprobe",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          id: "msg_reprobe",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }]
+        }
+      ]
+    });
+  }) as typeof fetch;
+
+  const session = {
+    key: "sess-compaction-reprobe",
+    scope: "identified" as const,
+    thread: "sess-compaction-reprobe"
+  };
+
+  try {
+    // 1. Mid-window turn while pinned to fallback (minimax) stays on minimax.
+    noteOrchestratorSession(session.key, "minimax", {
+      model: "MiniMax-M3.1-Flash"
+    });
+    const normalTurn = responseRecorder();
+    await proxyOrchestratorResponse(
+      normalTurn,
+      {
+        model: "autodev/orchestrator",
+        input: [{ type: "message", role: "user", content: "next step" }],
+        stream: false
+      },
+      false,
+      "req-reprobe-1",
+      null,
+      null,
+      null,
+      session
+    );
+    assert.equal(normalTurn.statusCode, 200);
+    assert.equal(orchestratorProviderForSession(session.key), "minimax");
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":18765/v1/responses")),
+      "mid-window turn must stay cache-pinned on fallback minimax"
+    );
+
+    // 2. First turn immediately after compaction re-probes P1 (claude) and switches.
+    requestedUrls.length = 0;
+    const compactedFreshInput = [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "Another language model started to solve this problem\nSummary"
+          }
+        ]
+      }
+    ];
+    const postCompactTurn = responseRecorder();
+    await proxyOrchestratorResponse(
+      postCompactTurn,
+      {
+        model: "autodev/orchestrator",
+        input: compactedFreshInput,
+        stream: false
+      },
+      false,
+      "req-reprobe-2",
+      null,
+      null,
+      null,
+      session
+    );
+    assert.equal(postCompactTurn.statusCode, 200);
+    assert.equal(orchestratorProviderForSession(session.key), "claude");
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":4000/v1/responses")),
+      "fresh post-compaction turn must re-probe and recover to Priority-1 claude"
+    );
+
+    // 3. Subsequent turn in the same compacted window has assistant history -> stays pinned on claude
+    // even if minimax were remembered (here claude is remembered and checked).
+    noteOrchestratorSession(session.key, "minimax", {
+      model: "MiniMax-M3.1-Flash"
+    });
+    requestedUrls.length = 0;
+    const midWindowTurn = responseRecorder();
+    await proxyOrchestratorResponse(
+      midWindowTurn,
+      {
+        model: "autodev/orchestrator",
+        input: [
+          ...compactedFreshInput,
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "step 1 done" }]
+          },
+          { type: "message", role: "user", content: "step 2" }
+        ],
+        stream: false
+      },
+      false,
+      "req-reprobe-3",
+      null,
+      null,
+      null,
+      session
+    );
+    assert.equal(midWindowTurn.statusCode, 200);
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":18765/v1/responses")),
+      "turn with assistant history after compaction must keep session cache pinning"
+    );
+
+    // 4. If P1 is down at compaction boundary, fall back cleanly to P2 and keep P2 pinned.
+    claudeHealthy = false;
+    noteOrchestratorSession(session.key, "minimax", {
+      model: "MiniMax-M3.1-Flash"
+    });
+    requestedUrls.length = 0;
+    const postCompactDownTurn = responseRecorder();
+    await proxyOrchestratorResponse(
+      postCompactDownTurn,
+      {
+        model: "autodev/orchestrator",
+        input: compactedFreshInput,
+        stream: false
+      },
+      false,
+      "req-reprobe-4",
+      null,
+      null,
+      null,
+      session
+    );
+    assert.equal(postCompactDownTurn.statusCode, 200);
+    assert.equal(orchestratorProviderForSession(session.key), "minimax");
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":4000/health")),
+      "fresh post-compaction turn probes P1 first before falling back to P2"
+    );
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":18765/v1/responses")),
+      "unavailable P1 falls back to P2 minimax"
+    );
+
+    // 5. Pending TOOL_CALL_OWNERSHIP still beats compaction re-probing.
+    claudeHealthy = true;
+    TOOL_CALL_OWNERSHIP.record(["call_compact_owned"], "minimax");
+    requestedUrls.length = 0;
+    const ownedTurn = responseRecorder();
+    await proxyOrchestratorResponse(
+      ownedTurn,
+      {
+        model: "autodev/orchestrator",
+        input: [
+          ...compactedFreshInput,
+          {
+            type: "function_call_output",
+            call_id: "call_compact_owned",
+            output: "ok"
+          }
+        ],
+        stream: false
+      },
+      false,
+      "req-reprobe-5",
+      null,
+      null,
+      null,
+      session
+    );
+    assert.equal(ownedTurn.statusCode, 200);
+    assert.ok(
+      requestedUrls.some((url) => url.includes(":18765/v1/responses")),
+      "owned tool call output must stay with the tool call issuer"
+    );
+  } finally {
+    TOOL_CALL_OWNERSHIP.clear();
+    globalThis.fetch = originalFetch;
+    for (const [provider, previous] of savedAssignments) {
+      if (previous) {
+        ROUTING_POLICY.setProviderAssignment(
+          provider,
+          "orchestrator",
+          previous
+        );
+      } else {
+        ROUTING_POLICY.clearProviderAssignment(provider, "orchestrator");
+      }
+    }
+    if (previousKeys.LITELLM_API_KEY === undefined)
+      delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previousKeys.LITELLM_API_KEY;
+    if (previousKeys.MINIMAX_API_KEY === undefined)
+      delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = previousKeys.MINIMAX_API_KEY;
+    agentActivity.reset();
+    COOLDOWNS.clearAll();
+  }
+});

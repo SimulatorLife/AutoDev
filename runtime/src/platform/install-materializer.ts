@@ -39,6 +39,7 @@ import {
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
+import { syncNativeNodeLoginProfile } from "./host-arch.ts";
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
@@ -241,6 +242,7 @@ export const RUNTIME_MODULES = [
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
   "agents/prompts/orchestrator.md",
+  "runtime/src/hooks/hook-log.ts",
   "runtime/src/hooks/hook-roots.ts",
   "runtime/src/hooks/skill-read-telemetry.ts",
   "runtime/src/hooks/session-start.ts",
@@ -2298,6 +2300,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
     home: options.home,
     codexHome: options.codexHome
   });
+  if (process.platform === "darwin") syncNativeNodeLoginProfile(options.home);
   prepareRunLogs(options.codexHome);
 }
 function exists(filePath: string): boolean {

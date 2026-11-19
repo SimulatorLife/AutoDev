@@ -171,7 +171,8 @@ export function evaluateOrchestratorToolCall(input: {
       "Work from the code as it is now. If the task is a regression whose cause " +
       "needs history, delegate that investigation to one child with a scoped " +
       "brief (the symptom, the files, a commit range) and have it report the " +
-      "finding, not the raw history."
+      "finding, not the raw history. For current state or HEAD verification, use " +
+      "`git status`, `git diff`, or `git rev-parse --short HEAD`."
   };
 }
 

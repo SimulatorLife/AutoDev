@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { logPreToolUseDenial } from "./hook-log.ts";
+
 export const REDIRECTION_MESSAGE = `Direct CLI execution of 'ccc' is blocked by policy.
 Do NOT run 'ccc' commands in bash or terminal.
 Instead:
@@ -102,18 +104,23 @@ function extractCommandString(payload: JsonObject): string {
   return "";
 }
 
+function parsePayload(rawInput: string): JsonObject | null {
+  try {
+    const parsed: unknown = JSON.parse(rawInput);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null;
+    return parsed as JsonObject;
+  } catch {
+    return null;
+  }
+}
+
 export function evaluatePreToolUse(rawInput: string): {
   blocked: boolean;
   reason?: string;
 } {
-  let parsed: JsonObject;
-  try {
-    parsed = JSON.parse(rawInput);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return { blocked: false };
-  } catch {
-    return { blocked: false };
-  }
+  const parsed = parsePayload(rawInput);
+  if (!parsed) return { blocked: false };
 
   const cmd = extractCommandString(parsed);
   if (cmd && isCccInvocation(cmd)) {
@@ -125,12 +132,28 @@ export function evaluatePreToolUse(rawInput: string): {
 export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
   const result = evaluatePreToolUse(raw);
   if (result.blocked) {
-    writeErrorLine(result.reason ?? REDIRECTION_MESSAGE);
+    const reason = result.reason ?? REDIRECTION_MESSAGE;
+    const parsed = parsePayload(raw);
+    if (parsed) {
+      const cmd = extractCommandString(parsed);
+      logPreToolUseDenial({
+        hook: "block-ccc-cli",
+        policy: "block-ccc-cli",
+        role: pickString(parsed, ["agent_type", "agentType"]),
+        model: pickString(parsed, ["model"]),
+        session: pickString(parsed, ["session_id", "sessionId"]),
+        turn: pickString(parsed, ["turn_id", "turnId"]),
+        tool: pickString(parsed, ["tool_name", "toolName", "name"]),
+        reason,
+        toolInput: cmd ? { cmd } : undefined
+      });
+    }
+    writeErrorLine(reason);
     const output = {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: result.reason ?? REDIRECTION_MESSAGE
+        permissionDecisionReason: reason
       }
     };
     process.stdout.write(`${JSON.stringify(output)}\n`);

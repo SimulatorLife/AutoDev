@@ -1076,7 +1076,7 @@ const parsed = JSON.parse(res.text);
 assert.deepEqual(parsed.servers, ["playwright"]);
 assert.equal(parsed.hasAutodevSpawn, false);
 assert.equal(parsed.hasBroadPlaywright, false);
-assert.equal(parsed.playwrightAllowsCount, 18);
+assert.equal(parsed.playwrightAllowsCount, ${roleMcpToolList("browser-tester", "playwright").length});
 `;
 
   try {

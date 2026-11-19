@@ -32,6 +32,14 @@ const COMPACTED_ITEM_TYPES = new Set([
   "compaction_summary"
 ]);
 
+const POST_COMPACTION_MODEL_TURN_TYPES = new Set([
+  "function_call",
+  "custom_tool_call",
+  "function_call_output",
+  "custom_tool_call_output",
+  "reasoning"
+]);
+
 /** Collect visible text from a message/content value without throwing on odd shapes. */
 export function extractItemText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -161,6 +169,41 @@ export function needsPostCompactionBootstrap(payload: unknown): boolean {
   return (
     hasCompactedHistorySummary(payload.input) && !hasRootBootstrap(payload)
   );
+}
+
+/**
+ * True only on the first orchestrator request immediately after a context
+ * compaction (a compacted summary is present with no assistant/tool/reasoning
+ * items after it). At that boundary prompt cache is already invalidated, so the
+ * router can re-probe from Priority 1 without breaking prompt cache mid-window.
+ */
+export function isFreshPostCompactionTurn(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  if (isCompactionRequest(payload)) return false;
+  if (!Array.isArray(payload.input)) return false;
+  let compactedIndex = -1;
+  for (let index = payload.input.length - 1; index >= 0; index -= 1) {
+    if (hasCompactedHistorySummary([payload.input[index]])) {
+      compactedIndex = index;
+      break;
+    }
+  }
+  if (compactedIndex === -1) return false;
+  for (
+    let index = compactedIndex + 1;
+    index < payload.input.length;
+    index += 1
+  ) {
+    const item = payload.input[index];
+    if (!isRecord(item)) continue;
+    if (
+      item.role === "assistant" ||
+      POST_COMPACTION_MODEL_TURN_TYPES.has(String(item.type ?? ""))
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

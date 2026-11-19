@@ -41,6 +41,7 @@ import {
 import {
   injectRootBootstrapIntoPayload,
   isCompactionRequest,
+  isFreshPostCompactionTurn,
   isInvalidCompactionResponse,
   needsPostCompactionBootstrap,
   responseOutputText
@@ -5499,11 +5500,18 @@ export function proxyOrchestratorResponse(
   session: RouterSession | null = null
 ): Promise<void> {
   const sessionKey = session?.key ?? null;
+  const toolOwner = TOOL_CALL_OWNERSHIP.ownerFor(payload);
+  // Prompt cache is already invalidated immediately after compaction, so
+  // re-evaluate from Priority 1 instead of staying pinned to a fallback
+  // provider for the rest of a multi-hour session.
+  const reevaluatePriority =
+    toolOwner === null && isFreshPostCompactionTurn(payload);
   // The provider that issued the calls being answered comes first; otherwise
-  // an orchestrator mid-session stays with the provider it started on.
+  // an orchestrator mid-session stays with the provider it started on until a
+  // compaction boundary resets the context window.
   const preferred =
-    TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
-    orchestratorProviderForSession(sessionKey);
+    toolOwner ??
+    (reevaluatePriority ? null : orchestratorProviderForSession(sessionKey));
   return proxyFallbackChain(
     response,
     {
