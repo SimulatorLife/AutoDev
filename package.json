@@ -27,7 +27,7 @@
     "format": "prettier --cache --write --ignore-path .gitignore \"{tests,core,data,console,runtime}/**/*.{ts,tsx}\" \".rulesync/**/*.ts\" \"*.{js,ts}\"",
     "format:check": "prettier --check --ignore-path .gitignore \"{tests,core,data,console,runtime}/**/*.{ts,tsx}\" \".rulesync/**/*.ts\" \"*.{js,ts}\""
   },
-  "packageManager": "pnpm@10.34.9",
+  "packageManager": "pnpm@12.21.0",
   "devDependencies": {
     "@e18e/eslint-plugin": "^0.8.1",
     "@eslint/compat": "^1.4.1",
