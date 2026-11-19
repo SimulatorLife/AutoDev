@@ -32,24 +32,19 @@ export function findExecutable(
 }
 
 /**
- * Look for a CLI installed under nvm's Node versions directory, newest version first.
- *
- * The bridges that run version-managed CLIs are often supervised by launchd or run
- * in subshells whose PATH carries no nvm bin directory. A CLI installed by npm under
- * nvm is therefore invisible to a standard PATH lookup there.
+ * Find a CLI installed globally by pnpm even under launchd's minimal PATH.
+ * PNPM_HOME can override the platform default without depending on a shell profile.
  */
-export function findNvmBinary(name: string, home = homedir()): string | null {
-  const nvmRoot = path.join(home, ".nvm", "versions", "node");
-  if (!existsSync(nvmRoot)) return null;
-  const versions = readdirSync(nvmRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
-  for (const version of versions) {
-    const candidate = path.join(nvmRoot, version, "bin", name);
-    if (isExecutable(candidate)) return candidate;
-  }
-  return null;
+export function findPnpmGlobalBinary(
+  name: string,
+  home = homedir(),
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const pnpmHome =
+    env.PNPM_HOME?.trim() ||
+    path.join(home, process.platform === "darwin" ? "Library/pnpm" : ".local/share/pnpm");
+  const candidate = path.join(pnpmHome, "bin", name);
+  return isExecutable(candidate) ? candidate : null;
 }
 
 /** Resolve the Codex CLI from its explicit setting, PATH, or version-managed install. */
@@ -68,8 +63,8 @@ export function resolveCodexBinary(
   const fromPath = findExecutable("codex", env.PATH ?? "");
   if (fromPath) return fromPath;
 
-  const fromNvm = findNvmBinary("codex", home);
-  if (fromNvm) return fromNvm;
+  const fromPnpm = findPnpmGlobalBinary("codex", home, env);
+  if (fromPnpm) return fromPnpm;
 
   throw new Error(
     "Codex CLI not found; set CODEX_BIN to the current codex executable."
@@ -90,14 +85,10 @@ export function findCodexBinary(
 
 /**
  * The Copilot CLI: `COPILOT_BIN` as given, else the first executable on PATH,
- * else the newest version-managed install.
+ * else the pnpm global bin directory.
  *
- * The bridge that runs the Copilot CLI is supervised by launchd, whose PATH
- * is the launchd default and names no version manager's bin directory. A CLI
- * installed by npm under nvm is therefore invisible to a PATH lookup there:
- * the bridge resolves nothing to spawn, and every turn fails with `spawn
- * copilot ENOENT` while its own health endpoint still reports it ready. The
- * Codex CLI is looked for the same way, for the same reason.
+ * A launchd bridge may lack PNPM_HOME in PATH, so the pnpm-managed global
+ * executable is checked explicitly after the requested PATH.
  */
 export function resolveCopilotBinary(
   env: NodeJS.ProcessEnv = process.env,
@@ -116,8 +107,8 @@ export function resolveCopilotBinary(
   const fromPath = findExecutable("copilot", env.PATH ?? "");
   if (fromPath) return fromPath;
 
-  const fromNvm = findNvmBinary("copilot", home);
-  if (fromNvm) return fromNvm;
+  const fromPnpm = findPnpmGlobalBinary("copilot", home, env);
+  if (fromPnpm) return fromPnpm;
   const local = path.join(home, ".local", "bin", "copilot");
   if (isExecutable(local)) return local;
   throw new Error(
@@ -271,8 +262,8 @@ export function findMiniMaxBinary(
   }
   const fromPath = findExecutable("mmx", env.PATH ?? "");
   if (fromPath) return fromPath;
-  const fromNvm = findNvmBinary("mmx", home);
-  if (fromNvm) return fromNvm;
+  const fromPnpm = findPnpmGlobalBinary("mmx", home, env);
+  if (fromPnpm) return fromPnpm;
   if (home === homedir()) {
     const nodeDirCandidate = path.join(path.dirname(process.execPath), "mmx");
     if (isExecutable(nodeDirCandidate)) return nodeDirCandidate;

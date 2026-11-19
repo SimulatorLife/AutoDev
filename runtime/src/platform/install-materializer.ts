@@ -39,7 +39,6 @@ import {
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
-import { syncNativeNodeLoginProfile } from "./host-arch.ts";
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
@@ -545,7 +544,7 @@ function commandAvailable(command: string): boolean {
  * Whether a provider's CLI is installed, asked the way that provider's bridge
  * asks it. The Copilot CLI is found by the shared lookup -- an explicit
  * setting, then PATH, then the newest version-managed install -- because a
- * PATH lookup alone misses a CLI installed under nvm, and the user-level MCP
+ * PATH lookup alone misses a CLI installed in PNPM_HOME, and the user-level MCP
  * config written for a provider whose bridge cannot start is a config for
  * nothing.
  */
@@ -2313,7 +2312,6 @@ export function materializeInstallation(options: MaterializeOptions): void {
     home: options.home,
     codexHome: options.codexHome
   });
-  if (process.platform === "darwin") syncNativeNodeLoginProfile(options.home);
   prepareRunLogs(options.codexHome);
 }
 function exists(filePath: string): boolean {
