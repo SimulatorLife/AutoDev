@@ -10,7 +10,7 @@ index aca385ff8f1d39a2d508a4ebbd52a72288043228..c579d6da316e9df91a17e14477fadbfd
 -	NormalizedSpan,
 -	OpenLITQuery,
 -} from "@/lib/platform/connectors/datasource/types";
-+import type { NormalizedSpan } from "@/lib/platform/connectors/datasource/types";
++import type { NormalizedFilter, NormalizedSpan } from "@/lib/platform/connectors/datasource/types";
  import {
  	isUsageServiceRequestAuthorized,
  	parseUsageSelection,
@@ -212,7 +212,7 @@ index aca385ff8f1d39a2d508a4ebbd52a72288043228..c579d6da316e9df91a17e14477fadbfd
 -		const frame = await runUsageQuery(() => adapter.listSpans(query));
 -		if (!Array.isArray(frame.rows)) return unavailable();
 -		let partial = Boolean(frame.meta?.truncated) || frame.rows.length >= SESSION_SPAN_LIMIT;
-+		const filters = [
++		const filters: NormalizedFilter[] = [
 +			{
 +				target: "attribute",
 +				scope: "resource",

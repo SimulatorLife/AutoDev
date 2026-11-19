@@ -402,6 +402,11 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   assert.match(usageSessionRoute, /runUsageQuery\(\(\) =>\s*adapter\.aggregateSpans/u);
   assert.match(
     usageSessionRoute,
+    /const filters: NormalizedFilter\[\] = \[/u,
+    "the shared session filters must be typed before passing them to listSpans and aggregateSpans"
+  );
+  assert.match(
+    usageSessionRoute,
     /key: "autodev\.session\.id"[\s\S]*?value: sessionId/u
   );
   assert.match(usageSessionRoute, /limit: limit \+ 1/u);
