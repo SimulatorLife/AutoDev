@@ -1274,6 +1274,15 @@ function callBody(raw: string): string {
   return fenced?.[1] ?? body;
 }
 
+/** Strip transcript-only wrappers from prose between tool-call spans. */
+function cleanText(value: string): string {
+  return value
+    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
+    .replaceAll(ESCAPE_TAG_PATTERN, "")
+    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
+    .trim();
+}
+
 /** Split a site reply into its prose and the tool calls it requests. */
 export function parseOpencliReply(response: string): ParsedReply {
   const calls: ParsedToolCall[] = [];
@@ -1293,12 +1302,6 @@ export function parseOpencliReply(response: string): ParsedReply {
   // output are real requests; nothing from it on is.
   const invented = TOOL_OUTPUT_OPENING.exec(source);
   const usable = invented ? source.slice(0, invented.index) : source;
-  const cleanText = (value: string): string =>
-    value
-      .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
-      .replaceAll(ESCAPE_TAG_PATTERN, "")
-      .replaceAll(BLANK_RUN_PATTERN, "\n\n")
-      .trim();
   const segments: ParsedReplySegment[] = [];
   let offset = 0;
   for (const match of usable.matchAll(TOOL_CALL_PATTERN)) {
