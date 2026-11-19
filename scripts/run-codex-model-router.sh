@@ -88,27 +88,19 @@ if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
     echo "run-codex-model-router: could not publish OpenLIT ingress marker to launchd" >&2
 fi
 
-# launchd starts us with a minimal PATH that lacks nvm/homebrew node.
-# Resolve a real node binary robustly before exec.
+# launchd uses a minimal PATH; resolve the pnpm-managed Node directly.
+# Resolve the pnpm-managed Node before exec.
 resolve_node() {
-  # launchd passes the native Node the installer resolved; PATH order alone
-  # can pick an Intel build that Rosetta translates on every cold start.
-  if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then printf '%s\n' "$AUTODEV_NODE_BIN"; return 0; fi
-  if command -v node >/dev/null 2>&1; then
-    command -v node
+  # LaunchAgents carry the installer's selected binary; direct starts use pnpm's Node shim.
+  if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then
+    printf '%s\n' "$AUTODEV_NODE_BIN"
     return 0
   fi
-  local candidate
-  # Newest nvm-installed node, then common homebrew locations.
-  for candidate in \
-    "$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" \
-    /opt/homebrew/bin/node \
-    /usr/local/bin/node; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
+  local pnpm_home="${PNPM_HOME:-$HOME/Library/pnpm}"
+  if [[ -x "$pnpm_home/bin/node" ]]; then
+    printf '%s\n' "$pnpm_home/bin/node"
+    return 0
+  fi
   return 1
 }
 
