@@ -717,11 +717,13 @@ export function processRunner(
  * Gemini reports its structured turn; ChatGPT reports the stored reply rather
  * than its lossy HTML rendering. The bridge never trusts another chat's text.
  */
+const CHATGPT_CONVERSATION_PATH = /\/c\/([\w-]+)/u;
+
 function chatgptConversationId(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (parsed.hostname !== "chatgpt.com") return null;
-    return /\/c\/([\w-]+)/u.exec(parsed.pathname)?.[1] ?? null;
+    return CHATGPT_CONVERSATION_PATH.exec(parsed.pathname)?.[1] ?? null;
   } catch {
     return null;
   }
