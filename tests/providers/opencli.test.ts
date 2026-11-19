@@ -127,6 +127,52 @@ test("with the dedicated browser off, the process runner uses the extension's ta
   }
 });
 
+test("process runner force-kills a subprocess that ignores SIGTERM", async () => {
+  const live = new Set<import("node:child_process").ChildProcess>();
+  const runner = processRunner(
+    () => ({
+      command: process.execPath,
+      args: ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);"]
+    }),
+    ONE_TAB_PER_SITE,
+    () => false,
+    live
+  );
+  const controller = new AbortController();
+  const started = Date.now();
+  try {
+    const pending = runner({ args: ["chatgpt", "ask-file"], signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort();
+    await assert.rejects(pending, /turn cancelled/u);
+    assert.ok(Date.now() - started < 4500, "the request must settle after SIGKILL");
+    assert.equal(live.size, 0);
+  } finally {
+    controller.abort();
+    await runner.close();
+  }
+});
+
+test("a pre-aborted runner request never starts a child process", async () => {
+  let commands = 0;
+  const runner = processRunner(
+    () => { commands += 1; return ECHO_OPENCLI(); },
+    ONE_TAB_PER_SITE,
+    () => false
+  );
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await assert.rejects(
+      runner({ args: ["chatgpt", "ask-file"], signal: controller.signal }),
+      /turn cancelled/u
+    );
+    assert.equal(commands, 0);
+  } finally {
+    await runner.close();
+  }
+});
+
 test("the process runner follows the setting from one command to the next", async () => {
   let dedicated = false;
   const sites: string[] = [];
@@ -724,9 +770,21 @@ test("a reply splits into prose and tool calls, unwrapping a fenced body", () =>
   assert.deepEqual(parseOpencliReply("All done."), {
     text: "All done.",
     calls: [],
+    segments: [{ type: "message", text: "All done." }],
     unparsedCall: false,
     inventedOutput: false
   });
+});
+
+test("OpenCLI preserves the original message/tool/message order", () => {
+  const parsed = parseOpencliReply(
+    'Before.<tool_call name="exec">text(1)</tool_call>After.'
+  );
+  assert.deepEqual(parsed.segments, [
+    { type: "message", text: "Before." },
+    { type: "tool_call", call: { name: "exec", input: "text(1)" } },
+    { type: "message", text: "After." }
+  ]);
 });
 
 test("a reply that writes its own tool output keeps only what came before it", () => {
@@ -1726,6 +1784,80 @@ test("a tool call goes to Codex and its output continues the same site conversat
       assert.match(runs.prompts[1]!, /- `exec`/u);
       assert.ok(runs.prompts[1]!.length < runs.prompts[0]!.length);
       assert.doesNotMatch(runs.prompts[1]!, /Which directory is this\?/u);
+    }
+  );
+});
+
+test("ChatGPT streams stored prose before browser completion without displaying tool markup", async () => {
+  let finish: () => void = () => {};
+  const chatUrl = "https://chatgpt.com/c/12345678-abcd-12ab-12ab-123456789abc";
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      request.onProgress?.({ text: "Checking.\\nStill wri", url: chatUrl });
+      request.onProgress?.({
+        text: 'Checking.\\nWorking.\\n<tool_call name="exec">text(',
+        url: chatUrl
+      });
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return [{
+        response: 'Checking.\\nWorking.\\n<tool_call name="exec">text(1)</tool_call>',
+        conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
+      }];
+    }
+  });
+  const server = createServer((request, response) => { void bridge.handle(request, response); });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const response = await post(`http://127.0.0.1:${port}`, {
+      model: "opencli-chatgpt-balanced",
+      stream: true,
+      input: "inspect",
+      tools: [EXEC_TOOL]
+    });
+    const reader = response.body!.getReader();
+    const seen = { text: "" };
+    await readUntil(reader, seen, (text) => text.includes('"delta":"Checking."'));
+    assert.doesNotMatch(seen.text, /response.completed/u);
+    assert.doesNotMatch(seen.text, /custom_tool_call/u);
+    finish();
+    await readUntil(reader, seen, () => false);
+    const events = sseEvents(seen.text);
+    const completed = events.find((entry) => entry.event === "response.completed")!
+      .data.response as { output: JsonRecord[] };
+    assert.deepEqual(completed.output.map((item) => item.type), [
+      "message",
+      "custom_tool_call"
+    ]);
+    assert.equal(events.at(-1)?.event, "response.completed");
+  } finally {
+    finish();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a streamed response keeps prose on both sides of a tool call", async () => {
+  await withBridge(
+    [{
+      response: 'Before.<tool_call name="exec">text(1)</tool_call>After.',
+      conversationId: "ordered-chat"
+    }],
+    async (baseUrl) => {
+      const body = (await (await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [EXEC_TOOL],
+        input: "inspect"
+      })).json()) as { output: JsonRecord[] };
+      assert.deepEqual(body.output.map((item) => item.type), [
+        "message", "custom_tool_call", "message"
+      ]);
+      assert.equal((body.output[0]!.content as JsonRecord[])[0]!.text, "Before.");
+      assert.equal((body.output[2]!.content as JsonRecord[])[0]!.text, "After.");
     }
   );
 });
