@@ -713,19 +713,32 @@ export function processRunner(
  *
  * A reading from a chat other than the one the turn continues is not the
  * turn's reply and is dropped. A turn in a new chat has no chat to compare
- * with: its reading is the reply to the submitted prompt, which the command
- * anchors on its own turn. Only Gemini reports a reading; ChatGPT's page
- * renders a reply differently from the text it stores, so its reply is only
- * ever read once it has ended.
+ * with: each reading is tied to the chat that received the prompt.
+ * Gemini reports its structured turn; ChatGPT reports the stored reply rather
+ * than its lossy HTML rendering. The bridge never trusts another chat's text.
  */
+function chatgptConversationId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "chatgpt.com") return null;
+    return /\\/c\\/([\\w-]+)/u.exec(parsed.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function showReading(
   stream: TurnStream,
   record: JsonRecord,
-  conversationId: string | null
+  conversationId: string | null,
+  site: OpencliSite
 ): void {
   const { text, url } = record;
   if (typeof text !== "string" || typeof url !== "string") return;
-  if (conversationId !== null && geminiConversationId(url) !== conversationId)
+  const shownChat = site === "gemini"
+    ? geminiConversationId(url)
+    : chatgptConversationId(url);
+  if (!shownChat || (conversationId !== null && shownChat !== conversationId))
     return;
   stream.showReply(text);
 }
@@ -742,7 +755,9 @@ function unusableReply(
 ): string | null {
   if (parsed.unparsedCall)
     return `the ${site} reply holds a tool call the bridge could not read`;
-  if (stream && !parsed.text.startsWith(stream.shownText))
+  const firstMessage = parsed.segments.find((segment) => segment.type === "message");
+  if (stream?.shownText && (firstMessage?.type !== "message" ||
+    !firstMessage.text.startsWith(stream.shownText)))
     return `the ${site} reply changed after part of it was shown`;
   return null;
 }
@@ -2116,7 +2131,7 @@ export function createOpencliBridge(
                 signal,
                 deadline,
                 stream
-                  ? (record) => showReading(stream, record, conversationId)
+                  ? (record) => showReading(stream, record, conversationId, turn.site)
                   : undefined
               )
             )
@@ -2250,15 +2265,21 @@ export function createOpencliBridge(
     messageId: string
   ): { output: JsonRecord[]; calls: number } {
     const output: JsonRecord[] = [];
-    if (parsed.text || parsed.calls.length === 0)
-      output.push(messageItem(parsed.text, messageId));
-    for (const call of parsed.calls)
-      output.push(
-        opencliToolCallItem(call, turn.tools, {
+    let messageCount = 0;
+    for (const segment of parsed.segments) {
+      if (segment.type === "message") {
+        output.push(messageItem(
+          segment.text,
+          messageCount++ === 0 ? messageId : `msg_${turnId(10)}`
+        ));
+      } else {
+        output.push(opencliToolCallItem(segment.call, turn.tools, {
           itemId: `fc_${turnId(10)}`,
           callId: `call_${turnId(12)}`
-        })
-      );
+        }));
+      }
+    }
+    if (output.length === 0) output.push(messageItem(parsed.text, messageId));
     if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
     if (reply.conversationId) {
       const last = prefixDigests([
