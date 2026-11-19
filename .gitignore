@@ -81,3 +81,5 @@ playwright-report/
 
 # TypeScript incremental build caches
 *.tsbuildinfo
+
+!.cgcignore

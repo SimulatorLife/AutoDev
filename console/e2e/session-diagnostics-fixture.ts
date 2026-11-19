@@ -18,13 +18,13 @@ export const DIAGNOSTICS_WORKER_THREAD_ID =
   "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
 
 /** The worker's model, as the router recorded it. */
-const WORKER_MODEL = WORKER_MODEL;
+const WORKER_MODEL = "gemini-2.5-pro";
 /** When the session started. */
-const SESSION_START = SESSION_START;
+const SESSION_START = "2026-11-10T12:00:00.000Z";
 /** When the worker thread started. */
-const WORKER_START = WORKER_START;
+const WORKER_START = "2026-11-10T12:00:01.000Z";
 /** When the session's last write landed. */
-const SESSION_END = SESSION_END;
+const SESSION_END = "2026-11-10T12:00:18.000Z";
 
 const ROUTER_EVENTS = [
   {

@@ -692,6 +692,8 @@ function ensureBootstrapScript(options: MaterializeOptions): void {
   }
 }
 
+const CGC_IGNORE_FILE = ".cgcignore";
+
 export const UNIVERSAL_GIT_EXCLUDES = [
   ".codegraphcontext/",
   ".cgc/",

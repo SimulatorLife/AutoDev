@@ -1,0 +1,53 @@
+# General/standard ignores
+node_modules/
+venv/
+.venv/
+env/
+.env/
+dist/
+build/
+target/
+out/
+.git/
+tmp/
+.tmp/
+.pnpm-store/
+
+# Python/test artifacts
+__pycache__/
+.pytest_cache
+*.py[cod]
+console/test-results/
+
+# Images, logs, etc.
+.DS_Store
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.mp3
+*.zip
+*.tar
+*.gz
+*.lock
+*.bak
+*.log
+*.tmp.*
+
+# Generated files
+playwright-report/
+.playwright-mcp/
+/.cocoindex_code/
+.eslintcache
+
+# Rulesync-generated projections; `.rulesync` is the only tracked source
+/.codex/hooks.json
+/.claude/settings.json
+/.github/hooks/
+/.github/prompts/
+/.github/skills/
+/.agents/hooks.json
+/.agents/skills/
+/.claude/
