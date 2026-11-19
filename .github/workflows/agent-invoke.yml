@@ -68,11 +68,11 @@ jobs:
 
       # The catalog owner is TypeScript, so the Node that runs it has to be
       # able to strip types. The runner's default Node is not a promise; the
-      # repository's own .nvmrc is.
+      # repository's own .node-version is.
       - name: Setup AutoDev Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .autodev/.nvmrc
+          node-version-file: .autodev/.node-version
 
       - name: Validate target workspace against canonical catalog
         shell: bash
@@ -195,7 +195,7 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" --body "${MESSAGE}" --repo "${REPOSITORY}"
 
       - name: Stage AutoDev Node version
-        run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
+        run: cp .autodev/.node-version "$RUNNER_TEMP/autodev.node-version"
 
       - name: Load pinned AutoDev provider tools
         shell: bash
@@ -317,13 +317,8 @@ jobs:
             configured_package_manager="$(node -p "require('./package.json').packageManager || ''")"
             case "${configured_package_manager}" in
               pnpm@*) package_manager=pnpm ;;
-              npm@*) package_manager=npm ;;
+              *) echo "Target JavaScript projects must declare packageManager pnpm@<version>; got '${configured_package_manager}'." >&2; exit 1 ;;
             esac
-          fi
-          if [ "${package_manager}" = "none" ] && [ -f pnpm-lock.yaml ]; then
-            package_manager=pnpm
-          elif [ "${package_manager}" = "none" ] && { [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f package.json ]; }; then
-            package_manager=npm
           fi
           echo "package_manager=${package_manager}" >> "$GITHUB_OUTPUT"
           echo "Detected target package manager: ${package_manager}"
@@ -344,7 +339,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v6
         with:
-          node-version-file: ../../_temp/autodev.nvmrc
+          node-version-file: ../../_temp/autodev.node-version
 
       - name: Install dependencies
         if: ${{ steps.toolchain.outputs.package_manager != 'none' }}
@@ -353,16 +348,10 @@ jobs:
           PACKAGE_MANAGER: ${{ steps.toolchain.outputs.package_manager }}
         run: |
           set -euo pipefail
-          if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
-            if [ -f pnpm-lock.yaml ]; then
-              pnpm install --frozen-lockfile --recursive
-            else
-              pnpm install --recursive
-            fi
-          elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            npm ci
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile --recursive
           else
-            npm install --no-package-lock
+            pnpm install --recursive
           fi
 
       - name: Build target TypeScript (best effort)
@@ -376,11 +365,7 @@ jobs:
             echo "No build:ts script is defined; skipping target TypeScript build."
             exit 0
           fi
-          if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
-            pnpm run build:ts
-          else
-            npm run build:ts
-          fi
+          pnpm run build:ts
         continue-on-error: true
 
       - name: Start and validate local OpenAI-compatible endpoint
