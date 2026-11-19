@@ -127,28 +127,39 @@ test("with the dedicated browser off, the process runner uses the extension's ta
   }
 });
 
-test("process runner force-kills a subprocess that ignores SIGTERM", async () => {
+test("an aborted command that ignores SIGTERM is killed and its turn settles", async () => {
+  // `child.killed` is true once SIGTERM is delivered, so the SIGKILL fallback
+  // was never sent and a command that ignored SIGTERM held its turn open.
+  const script = [
+    'process.on("SIGTERM", () => {});',
+    'process.stdout.write("ready");',
+    "setInterval(() => {}, 1000);"
+  ].join("");
   const live = new Set<import("node:child_process").ChildProcess>();
   const runner = processRunner(
-    () => ({
-      command: process.execPath,
-      args: ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);"]
-    }),
-    ONE_TAB_PER_SITE,
+    () => ({ command: process.execPath, args: ["-e", script] }),
+    { chatgpt: 1, gemini: 1 },
     () => false,
     live
   );
   const controller = new AbortController();
-  const started = Date.now();
   try {
-    const pending = runner({ args: ["chatgpt", "ask-file"], signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const turn = runner({
+      args: ["chatgpt", "ask", "x"],
+      signal: controller.signal
+    });
+    const [child] = live;
+    assert.ok(child, "the command was started");
+    await new Promise<void>((resolve) =>
+      child.stdout!.once("data", () => resolve())
+    );
     controller.abort();
-    await assert.rejects(pending, /turn cancelled/u);
-    assert.ok(Date.now() - started < 4500, "the request must settle after SIGKILL");
-    assert.equal(live.size, 0);
+    const started = Date.now();
+    await assert.rejects(turn, /turn cancelled/u);
+    assert.ok(Date.now() - started < 5000, "the turn settled after the grace period");
+    assert.equal(child.signalCode, "SIGKILL");
   } finally {
-    controller.abort();
+    for (const child of live) child.kill("SIGKILL");
     await runner.close();
   }
 });
