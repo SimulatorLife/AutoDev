@@ -13,11 +13,11 @@
  * the 2.0.2 -- so the patch AutoDev wrote was not the code that served turns,
  * and the CLI reported the daemon it found as a stale version of itself.
  *
- * This module is the one place the version is written down and the one place
- * the repository is judged against it. Run as a command, `--write` puts the
- * manifest, the workspace patch key and the patch file name on the pinned
- * version, and `--check` refuses to leave them, the lockfile or the installed
- * package apart: a version bump that updates the manifest and forgets the
+ * The Runtime manifest is the one place the version is written down; this
+ * module reads it from there and is the one place the repository is judged
+ * against it. Run as a command, `--write` puts the workspace patch key and the
+ * patch file name on the manifest's version, and `--check` refuses to leave
+ * them, the lockfile or the installed package apart: a version bump that updates the manifest and forgets the
  * patch key installs a package the patch no longer applies to, and the bridge
  * then runs code AutoDev never patched. `opencliRepositoryDrift` is that check
  * as a function, which the test guarding the repository asserts is empty.
@@ -44,20 +44,38 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 export const OPENCLI_PACKAGE = "@jackwener/opencli";
 
 /**
- * The one opencli version this repository pins.
+ * The opencli version a Runtime manifest pins, or null when it pins none.
  *
- * Bumping it means: this constant, `runtime/package.json`, the
- * `patchedDependencies` key in `pnpm-workspace.yaml`, the patch file's name,
- * the lockfile, and the patch itself rebased onto the new release. The
- * `opencli-version` command does the first four and refuses to leave any of
- * them out of step with this one.
+ * `runtime/package.json` is, and must remain, the single and only source of
+ * truth for this version. Never copy it into a constant, a config file or
+ * another module: every other statement of it (the workspace patch key, the
+ * patch file name, the lockfile) is derived from the manifest and checked
+ * against it, and code that needs the version reads it through this function.
+ *
+ * Bumping the version means: `runtime/package.json`, then the
+ * `opencli-version --write` command for the `patchedDependencies` key in
+ * `pnpm-workspace.yaml` and the patch file's name, then the lockfile and the
+ * patch itself rebased onto the new release. A patch applies to one exact
+ * release, so a range or tag is not a pin.
  */
-// TODO: This version should NOT be pinned here; we should have ONE source of truth for the opencli version, and it should be in the package.json file
-// The opencli-version.ts file should read the version from package.json instead of having it hardcoded here.
-export const OPENCLI_VERSION = "2.0.3";
+export function pinnedOpencliVersion(manifest: string): string | null {
+  let parsed: { dependencies?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(manifest) as typeof parsed;
+  } catch {
+    return null;
+  }
+  const declared = parsed.dependencies?.[OPENCLI_PACKAGE];
+  return typeof declared === "string" && EXACT_VERSION.test(declared)
+    ? declared
+    : null;
+}
+
+/** An exact release: no range operator, tag or wildcard. */
+const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
 
 /** The key pnpm patches a package version under. */
-export function opencliPatchKey(version: string = OPENCLI_VERSION): string {
+export function opencliPatchKey(version: string): string {
   return `${OPENCLI_PACKAGE}@${version}`;
 }
 
@@ -68,9 +86,7 @@ export function opencliPatchKey(version: string = OPENCLI_VERSION): string {
  * in the repository's `patches/` directory, and the workspace's key points at
  * it by path, so the name and the key carry the same version twice.
  */
-export function opencliPatchFileName(
-  version: string = OPENCLI_VERSION
-): string {
+export function opencliPatchFileName(version: string): string {
   return `patches/${OPENCLI_PACKAGE.replace("/", "__")}@${version}.patch`;
 }
 
@@ -181,34 +197,23 @@ export function opencliVersionDrift(input: {
   /** The sha256 of the patch file the repository holds. */
   readonly patchHash?: string;
 }): OpencliVersionDrift[] {
+  const version = pinnedOpencliVersion(input.manifest);
+  if (version === null)
+    return [
+      {
+        file: MANIFEST_FILE,
+        expected: `an exact ${OPENCLI_PACKAGE} version`,
+        found: "unpinned",
+        reason: `the Runtime manifest does not pin ${OPENCLI_PACKAGE} to one exact version`
+      }
+    ];
   const drift: OpencliVersionDrift[] = [];
-  let manifest: { dependencies?: Record<string, unknown> } = {};
-  try {
-    manifest = JSON.parse(input.manifest) as {
-      dependencies?: Record<string, unknown>;
-    };
-  } catch {
-    drift.push({
-      file: MANIFEST_FILE,
-      expected: OPENCLI_VERSION,
-      found: "unreadable",
-      reason: "the Runtime manifest is not valid JSON"
-    });
-  }
-  const declared = manifest.dependencies?.[OPENCLI_PACKAGE];
-  if (declared !== OPENCLI_VERSION)
-    drift.push({
-      file: MANIFEST_FILE,
-      expected: OPENCLI_VERSION,
-      found: typeof declared === "string" ? declared : "unset",
-      reason: `the Runtime depends on a different ${OPENCLI_PACKAGE} version`
-    });
 
   const patched = parsePatchedDependencies(input.workspace);
   const opencliEntries = [...patched.entries()].filter(([key]) =>
     key.startsWith(`${OPENCLI_PACKAGE}@`)
   );
-  const expectedKey = opencliPatchKey();
+  const expectedKey = opencliPatchKey(version);
   if (opencliEntries.length === 0)
     drift.push({
       file: WORKSPACE_FILE,
@@ -224,7 +229,7 @@ export function opencliVersionDrift(input: {
         found: key,
         reason: "the workspace patches a different opencli version"
       });
-  const expectedPath = opencliPatchFileName();
+  const expectedPath = opencliPatchFileName(version);
   const patchPath = patched.get(expectedKey);
   if (patchPath !== undefined && patchPath !== expectedPath)
     drift.push({
@@ -242,8 +247,7 @@ export function opencliVersionDrift(input: {
     ...lockfilePatchDrift({
       ...(input.lockfile === undefined ? {} : { lockfile: input.lockfile }),
       ...(input.patchHash === undefined ? {} : { patchHash: input.patchHash }),
-      key: expectedKey,
-      path: expectedPath
+      key: expectedKey
     })
   );
   return drift;
@@ -260,12 +264,10 @@ function lockfilePatchDrift(input: {
   readonly lockfile?: string;
   readonly patchHash?: string;
   readonly key: string;
-  readonly path: string;
 }): OpencliVersionDrift[] {
   if (input.lockfile === undefined || input.patchHash === undefined) return [];
-  const drift: OpencliVersionDrift[] = [];
-  const entry = parseLockfilePatchedDependencies(input.lockfile).get(input.key);
-  if (entry === undefined)
+  const hash = parseLockfilePatchedDependencies(input.lockfile).get(input.key);
+  if (hash === undefined)
     return [
       {
         file: LOCKFILE_FILE,
@@ -274,78 +276,43 @@ function lockfilePatchDrift(input: {
         reason: "the lockfile installs no patch for the pinned version"
       }
     ];
-  if (entry.hash !== input.patchHash)
-    drift.push({
+  if (hash === input.patchHash) return [];
+  return [
+    {
       file: LOCKFILE_FILE,
       expected: input.patchHash,
-      found: entry.hash,
+      found: hash,
       reason:
         "the lockfile installs a different patch than the repository holds"
-    });
-  if (entry.path !== input.path)
-    drift.push({
-      file: LOCKFILE_FILE,
-      expected: input.path,
-      found: entry.path,
-      reason: "the lockfile points at another patch file"
-    });
-  return drift;
+    }
+  ];
 }
 
-/** One `patchedDependencies` entry of a pnpm lockfile. */
-export interface LockfilePatchEntry {
-  /** The sha256 pnpm recorded for the patch file. */
-  readonly hash: string;
-  /** The path the workspace's patch is at. */
-  readonly path: string;
-}
-
-/** One entry of the lockfile's block: an indented key and nothing else. */
-const LOCKFILE_PATCHED_ENTRY = /^[ \t]+['"]?([^'":\s]+)['"]?:[ \t]*$/u;
-/** One field of that entry: its hash or the path it is at. */
-const LOCKFILE_PATCHED_FIELD = /^[ \t]+(hash|path):[ \t]*(\S+)[ \t]*$/u;
+/** One entry of the lockfile's block: an indented key and the patch's hash. */
+const LOCKFILE_PATCHED_ENTRY =
+  /^[ \t]+['"]?([^'":\s]+)['"]?:[ \t]*(\S+)[ \t]*$/u;
 
 /**
- * The `patchedDependencies` entries of a pnpm lockfile.
+ * The `patchedDependencies` entries of a pnpm lockfile, as key to the sha256
+ * of the patch file pnpm installed.
  *
- * The lockfile keeps the hash of the patch file it installed, which is the
- * sha256 of that file's bytes: it says which patch the running code came
- * from, so the patch in the repository can be checked against it.
+ * The hash is the sha256 of that file's bytes: it says which patch the running
+ * code came from, so the patch in the repository can be checked against it.
  */
 export function parseLockfilePatchedDependencies(
   lockfile: string
-): Map<string, LockfilePatchEntry> {
-  const entries = new Map<string, LockfilePatchEntry>();
-  const lines = lockfile.split("\n");
+): Map<string, string> {
+  const entries = new Map<string, string>();
   let inBlock = false;
-  let key: string | null = null;
-  let hash: string | null = null;
-  let patchPath: string | null = null;
-  const flush = (): void => {
-    if (key !== null && hash !== null && patchPath !== null)
-      entries.set(key, { hash, path: patchPath });
-    key = null;
-    hash = null;
-    patchPath = null;
-  };
-  for (const line of lines) {
+  for (const line of lockfile.split("\n")) {
     if (!inBlock) {
       if (PATCHED_DEPENDENCIES_BLOCK.test(line)) inBlock = true;
       continue;
     }
     if (TOP_LEVEL_LINE.test(line)) break;
     const entry = LOCKFILE_PATCHED_ENTRY.exec(line);
-    if (entry?.[1]) {
-      flush();
-      key = entry[1].trim();
-      continue;
-    }
-    const field = LOCKFILE_PATCHED_FIELD.exec(line);
-    if (!field?.[1] || !field[2]) continue;
-    if (field[1] === "hash") hash = field[2].trim();
-    else patchPath = field[2].trim();
+    if (entry?.[1] && entry[2]) entries.set(entry[1].trim(), entry[2].trim());
   }
-  flush();
   return entries;
 }
 
@@ -369,8 +336,8 @@ function readLockfile(root: string): string | undefined {
  * the lockfile: the two together say whether the code the bridge runs is the
  * patch in this repository. A repository without the patch file has no hash.
  */
-function patchHash(root: string): string {
-  const file = path.join(root, opencliPatchFileName());
+function patchHash(root: string, version: string): string {
+  const file = path.join(root, opencliPatchFileName(version));
   if (!existsSync(file)) return "";
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -403,24 +370,24 @@ function installedVersion(root: string): string | null {
 }
 
 function write(root: string): void {
-  const parsed = JSON.parse(readFileSync(manifestPath(root), "utf8")) as {
-    dependencies?: Record<string, string>;
-  };
-  parsed.dependencies = parsed.dependencies ?? {};
-  parsed.dependencies[OPENCLI_PACKAGE] = OPENCLI_VERSION;
-  writeFileSync(manifestPath(root), `${JSON.stringify(parsed, null, 2)}\n`);
-
+  const version = pinnedOpencliVersion(
+    readFileSync(manifestPath(root), "utf8")
+  );
+  if (version === null)
+    throw new Error(
+      `${MANIFEST_FILE} does not pin ${OPENCLI_PACKAGE} to one exact version`
+    );
   const workspace = withOpencliPatchEntry(
     readFileSync(workspacePath(root), "utf8"),
-    opencliPatchKey(),
-    opencliPatchFileName()
+    opencliPatchKey(version),
+    opencliPatchFileName(version)
   );
   writeFileSync(workspacePath(root), workspace);
 
   // The patch file carries the version in its name, so a version bump moves
   // it: the patch's content is rebased by hand, its name by this command.
   const patches = path.join(root, "patches");
-  const canonical = path.join(root, opencliPatchFileName());
+  const canonical = path.join(root, opencliPatchFileName(version));
   if (existsSync(patches))
     for (const entry of readdirSync(patches))
       if (
@@ -429,7 +396,7 @@ function write(root: string): void {
       )
         // Moves the existing patch file; there are no new bytes to write.
         renameSync(path.join(patches, entry), canonical);
-  writeLine(`opencli pinned at ${OPENCLI_VERSION}`);
+  writeLine(`opencli pinned at ${version}`);
 }
 
 /**
@@ -442,26 +409,29 @@ function write(root: string): void {
  * An empty list is a repository whose bridge runs the code AutoDev patched.
  */
 export function opencliRepositoryDrift(root: string): OpencliVersionDrift[] {
+  const manifest = readFileSync(manifestPath(root), "utf8");
+  const version = pinnedOpencliVersion(manifest);
+  if (version === null) return opencliVersionDrift({ manifest, workspace: "" });
   const lockfile = readLockfile(root);
-  const hash = patchHash(root);
+  const hash = patchHash(root, version);
   const drift = opencliVersionDrift({
-    manifest: readFileSync(manifestPath(root), "utf8"),
+    manifest,
     workspace: readFileSync(workspacePath(root), "utf8"),
     ...(lockfile === undefined ? {} : { lockfile }),
     ...(hash === "" ? {} : { patchHash: hash })
   });
-  if (!existsSync(path.join(root, opencliPatchFileName())))
+  if (!existsSync(path.join(root, opencliPatchFileName(version))))
     drift.push({
-      file: opencliPatchFileName(),
+      file: opencliPatchFileName(version),
       expected: "present",
       found: "missing",
       reason: "the patch for the pinned version is not in the repository"
     });
   const installed = installedVersion(root);
-  if (installed !== null && installed !== OPENCLI_VERSION)
+  if (installed !== null && installed !== version)
     drift.push({
       file: `runtime/node_modules/${OPENCLI_PACKAGE}`,
-      expected: OPENCLI_VERSION,
+      expected: version,
       found: installed,
       reason: "the installed package is not the pinned version"
     });
@@ -470,9 +440,12 @@ export function opencliRepositoryDrift(root: string): OpencliVersionDrift[] {
 
 function check(root: string): boolean {
   const drift = opencliRepositoryDrift(root);
+  const version =
+    pinnedOpencliVersion(readFileSync(manifestPath(root), "utf8")) ??
+    "(unpinned)";
   if (drift.length === 0) {
     writeLine(
-      `opencli ${OPENCLI_VERSION}: manifest, patch key, patch file and lockfile agree`
+      `opencli ${version}: manifest, patch key, patch file and lockfile agree`
     );
     return true;
   }
@@ -481,7 +454,7 @@ function check(root: string): boolean {
       `${entry.file}: ${entry.reason} (expected ${entry.expected}, found ${entry.found})`
     );
   writeErrorLine(
-    `opencli ${OPENCLI_VERSION} is not consistent; run: node runtime/src/cli/opencli-version.ts --write`
+    `opencli ${version} is not consistent; run: node runtime/src/cli/opencli-version.ts --write`
   );
   return false;
 }

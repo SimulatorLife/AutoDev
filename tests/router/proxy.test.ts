@@ -2526,16 +2526,21 @@ test("proxyOrchestratorResponse re-probes Priority 1 immediately after compactio
   process.env.LITELLM_API_KEY = "sk-compaction-p1-claude";
   process.env.MINIMAX_API_KEY = "sk-compaction-p2-minimax";
 
+  // The tier under test is exactly Priority-1 claude and Priority-2 minimax.
+  // The configured orchestrator groups also rank antigravity-claude-gpt
+  // second, and providers sharing a rank are shuffled, so leaving it enabled
+  // made the Priority-2 fallback below a coin flip.
   const savedAssignments = new Map(
-    ["codex", "claude", "minimax"].map((provider) => [
+    ["codex", "claude", "antigravity-claude-gpt", "minimax"].map((provider) => [
       provider,
       ROUTING_POLICY.assignmentFor(provider, "orchestrator")
     ])
   );
-  ROUTING_POLICY.setProviderAssignment("codex", "orchestrator", {
-    priority: "disabled",
-    model: null
-  });
+  for (const provider of ["codex", "antigravity-claude-gpt"])
+    ROUTING_POLICY.setProviderAssignment(provider, "orchestrator", {
+      priority: "disabled",
+      model: null
+    });
   ROUTING_POLICY.setProviderAssignment("claude", "orchestrator", {
     priority: 1,
     model: "claude-opus-5-5"

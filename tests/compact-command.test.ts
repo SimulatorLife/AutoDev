@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(
-  new URL("../.rulesync/commands/context-compaction.md", import.meta.url),
+  new URL("../.rulesync/commands/compact.md", import.meta.url),
   "utf8"
 );
 const match = /^---\n([\s\S]*?)\n---\n/u.exec(source);
@@ -16,18 +16,11 @@ const closeTags = [...prompt.matchAll(/^<\/compacted-summary>$/gmu)];
 const template =
   /^<compacted-summary>\n([\s\S]*?)\n<\/compacted-summary>$/mu.exec(prompt);
 
-test("command sources are metadata, not injected prompt text", () => {
+test("command metadata targets every agent and stays out of the prompt", () => {
   assert.match(metadata, /^targets: \["\*"\]$/mu);
   assert.match(metadata, /^description: Generate a handoff summary/mu);
-  for (const sourceName of [
-    "openai/codex",
-    "anomalyco/opencode",
-    "google-gemini/gemini-cli",
-    "deepseek-ai/deepseek-harness"
-  ]) {
-    assert.ok(metadata.includes(sourceName));
-    assert.ok(!prompt.includes(sourceName));
-  }
+  assert.ok(!prompt.includes("targets:"));
+  assert.ok(!prompt.includes("description:"));
 });
 
 test("checkpoint wrapper and sections are stable", () => {
@@ -92,7 +85,7 @@ const policyCases: Record<string, RegExp[]> = {
 
 const fixtures = JSON.parse(
   readFileSync(
-    new URL("fixtures/context-compaction-evaluations.json", import.meta.url),
+    new URL("fixtures/compact-evaluations.json", import.meta.url),
     "utf8"
   )
 ) as Array<{

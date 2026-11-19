@@ -47,7 +47,6 @@
       "network_access": true,
       "writable_roots": [
         "~/Library/pnpm/store",
-        "~/.npm",
         "~/Library/Caches/ms-playwright"
       ]
     },

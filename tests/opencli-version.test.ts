@@ -14,13 +14,13 @@ import { describe, test, type TestContext } from "node:test";
 
 import {
   OPENCLI_PACKAGE,
-  OPENCLI_VERSION,
   opencliPatchFileName,
   opencliPatchKey,
   opencliRepositoryDrift,
   opencliVersionDrift,
   parseLockfilePatchedDependencies,
   parsePatchedDependencies,
+  pinnedOpencliVersion,
   withOpencliPatchEntry
 } from "@simulatorlife/autodev-runtime/cli/opencli-version";
 
@@ -34,6 +34,9 @@ function readWorkspace(): string {
   return readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
 }
 
+/** The version the repository's own manifest pins. */
+const OPENCLI_VERSION = pinnedOpencliVersion(readManifest())!;
+
 const FIXTURE_PATCH = "--- a/dist/index.js\n+++ b/dist/index.js\n";
 
 /** The lockfile block pnpm writes for the pinned patch recorded as \`hash\`. */
@@ -41,9 +44,7 @@ function lockfileWithPatchHash(hash: string): string {
   return [
     "lockfileVersion: '9.0'",
     "patchedDependencies:",
-    `  '${opencliPatchKey()}':`,
-    `    hash: ${hash}`,
-    `    path: ${opencliPatchFileName()}`,
+    `  '${opencliPatchKey(OPENCLI_VERSION)}': ${hash}`,
     "importers:",
     ""
   ].join("\n");
@@ -81,12 +82,15 @@ function consistentRepository(t: TestContext): string {
       "packages:",
       "  - runtime",
       "patchedDependencies:",
-      `  '${opencliPatchKey()}': ${opencliPatchFileName()}`,
+      `  '${opencliPatchKey(OPENCLI_VERSION)}': ${opencliPatchFileName(OPENCLI_VERSION)}`,
       ""
     ].join("\n")
   );
   mkdirSync(path.join(dir, "patches"));
-  writeFileSync(path.join(dir, opencliPatchFileName()), FIXTURE_PATCH);
+  writeFileSync(
+    path.join(dir, opencliPatchFileName(OPENCLI_VERSION)),
+    FIXTURE_PATCH
+  );
   writeFileSync(
     path.join(dir, "pnpm-lock.yaml"),
     lockfileWithPatchHash(
@@ -102,12 +106,15 @@ describe("the pinned opencli version", () => {
     assert.deepEqual(
       opencliRepositoryDrift(root),
       [],
-      `the repository pins ${OPENCLI_VERSION} in ${opencliPatchKey()}, but the files disagree`
+      `the repository pins ${OPENCLI_VERSION} in ${opencliPatchKey(OPENCLI_VERSION)}, but the files disagree`
     );
   });
 
   test("every file the patch touches is one the installed package has", () => {
-    const patch = readFileSync(path.join(root, opencliPatchFileName()), "utf8");
+    const patch = readFileSync(
+      path.join(root, opencliPatchFileName(OPENCLI_VERSION)),
+      "utf8"
+    );
     const targets = Array.from(
       patch.matchAll(/^\+\+\+ b\/(.+)$/gmu),
       (match) => match[1]!
@@ -135,14 +142,14 @@ describe("the repository drift check", () => {
 
   test("a repository without the patch file is drift", (t) => {
     const dir = consistentRepository(t);
-    rmSync(path.join(dir, opencliPatchFileName()));
+    rmSync(path.join(dir, opencliPatchFileName(OPENCLI_VERSION)));
     assert.deepEqual(
       opencliRepositoryDrift(dir).map((entry) => [
         entry.file,
         entry.expected,
         entry.found
       ]),
-      [[opencliPatchFileName(), "present", "missing"]]
+      [[opencliPatchFileName(OPENCLI_VERSION), "present", "missing"]]
     );
   });
 
@@ -190,31 +197,37 @@ describe("the drift check", () => {
       lockfileWithPatchHash("abc123")
     );
     assert.equal(entries.size, 1);
-    assert.deepEqual(entries.get(opencliPatchKey()), {
-      hash: "abc123",
-      path: opencliPatchFileName()
-    });
+    assert.equal(entries.get(opencliPatchKey(OPENCLI_VERSION)), "abc123");
   });
 
-  test("a manifest on another version is drift", () => {
-    const manifest = JSON.parse(readManifest()) as {
-      dependencies: Record<string, string>;
-    };
-    manifest.dependencies[OPENCLI_PACKAGE] = "0.0.1";
-    const drift = opencliVersionDrift({
-      manifest: JSON.stringify(manifest),
-      workspace: readWorkspace()
-    });
-    assert.equal(drift.length, 1);
-    assert.equal(drift[0]!.file, "runtime/package.json");
-    assert.equal(drift[0]!.found, "0.0.1");
+  test("the pinned version is read from the manifest", () => {
+    assert.equal(
+      pinnedOpencliVersion(
+        JSON.stringify({ dependencies: { [OPENCLI_PACKAGE]: "9.8.7" } })
+      ),
+      "9.8.7"
+    );
+  });
+
+  test("a manifest that does not pin one exact version is drift", () => {
+    for (const declared of ["^2.0.3", "latest", undefined]) {
+      const drift = opencliVersionDrift({
+        manifest: JSON.stringify({
+          dependencies: declared ? { [OPENCLI_PACKAGE]: declared } : {}
+        }),
+        workspace: readWorkspace()
+      });
+      assert.equal(drift.length, 1);
+      assert.equal(drift[0]!.file, "runtime/package.json");
+      assert.equal(drift[0]!.found, "unpinned");
+    }
   });
 
   test("a workspace that patches another version is drift", () => {
     const drift = opencliVersionDrift({
       manifest: readManifest(),
       workspace: readWorkspace().replace(
-        opencliPatchKey(),
+        opencliPatchKey(OPENCLI_VERSION),
         `${OPENCLI_PACKAGE}@0.0.1`
       )
     });
@@ -225,7 +238,7 @@ describe("the drift check", () => {
   test("a workspace that patches no version at all is drift", () => {
     const workspace = readWorkspace()
       .split("\n")
-      .filter((line) => !line.startsWith("  '@jackwener/opencli@"))
+      .filter((line) => !line.includes(`${OPENCLI_PACKAGE}@`))
       .join("\n");
     const drift = opencliVersionDrift({
       manifest: readManifest(),
@@ -238,14 +251,17 @@ describe("the drift check", () => {
   test("writing the entry puts the pinned version back", () => {
     const workspace = withOpencliPatchEntry(
       readWorkspace(),
-      opencliPatchKey(),
-      opencliPatchFileName()
+      opencliPatchKey(OPENCLI_VERSION),
+      opencliPatchFileName(OPENCLI_VERSION)
     );
     const patched = parsePatchedDependencies(workspace);
-    assert.equal(patched.get(opencliPatchKey()), opencliPatchFileName());
+    assert.equal(
+      patched.get(opencliPatchKey(OPENCLI_VERSION)),
+      opencliPatchFileName(OPENCLI_VERSION)
+    );
     assert.deepEqual(
       [...patched.keys()].filter((key) => key.startsWith(OPENCLI_PACKAGE)),
-      [opencliPatchKey()]
+      [opencliPatchKey(OPENCLI_VERSION)]
     );
   });
 });

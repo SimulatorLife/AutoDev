@@ -3329,9 +3329,11 @@ single list; the route patterns and the site registry in
   delegation tools as unavailable.
 - **One version.** opencli is patched, so the version appears in the Runtime
   manifest, the pnpm workspace's `patchedDependencies` key, the patch file's
-  name and the lockfile. `runtime/src/cli/opencli-version.ts` is the one place
-  it is written down and checked; `node runtime/src/cli/opencli-version.ts --check`
-  refuses to leave the four apart (`--write` puts them back together), and
+  name and the lockfile. The Runtime manifest is the one place it is written
+  down; `runtime/src/cli/opencli-version.ts` reads it from there and checks the
+  rest: `node runtime/src/cli/opencli-version.ts --check` refuses to leave the
+  four apart (`--write` moves the patch key and patch file to the manifest's
+  version), and
   `tests/opencli-version.test.ts` asserts the repository agrees, including
   that the installed package is the pinned one.
 - **Sites.** MiniMax is not served: opencli 2.0.3's `minimax` adapter has only

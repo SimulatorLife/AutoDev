@@ -31,7 +31,7 @@ interface EvaluationResult {
 
 /**
  * Optional behavioral runner:
- * Set AUTODEV_SELF_IMPROVEMENT_EVAL_RUNNER to an executable path, then run
+ * Set AUTODEV_RETROSPECTIVE_EVAL_RUNNER to an executable path, then run
  * pnpm run test:root.
  * The executable receives JSON {prompt, scenario, guidance, authorization} on
  * stdin and returns the normalized EvaluationResult as JSON on stdout.
@@ -39,19 +39,16 @@ interface EvaluationResult {
  * verify writes; self-reported model claims do not count as verified writes.
  * If unset, only structural/fixture tests run; no model quality is claimed.
  */
-const runner = process.env.AUTODEV_SELF_IMPROVEMENT_EVAL_RUNNER;
+const runner = process.env.AUTODEV_RETROSPECTIVE_EVAL_RUNNER;
 const source = readFileSync(
-  new URL("../.rulesync/commands/self-improvement-review.md", import.meta.url),
+  new URL("../.rulesync/commands/retrospective.md", import.meta.url),
   "utf8"
 );
-const command = parseRuleSyncCommand("self-improvement-review", source);
+const command = parseRuleSyncCommand("retrospective", source);
 
 const cases = JSON.parse(
   readFileSync(
-    new URL(
-      "fixtures/self-improvement-review-evaluations.json",
-      import.meta.url
-    ),
+    new URL("fixtures/retrospective-evaluations.json", import.meta.url),
     "utf8"
   )
 ) as EvaluationCase[];
@@ -64,27 +61,26 @@ const statuses = new Set<ReviewStatus>([
   "BLOCKED"
 ]);
 
-test("RuleSync parser accepts the command and hides source metadata", () => {
+test("RuleSync parser accepts the command and keeps its metadata out of the prompt", () => {
   assert.deepEqual(command.targets, ["*"]);
-  assert.match(command.description ?? "", /Review completed agent work/u);
-  assert.ok(command.prompt.length > 0);
-  const metadata = source.slice(0, source.indexOf("\n---\n"));
-  const references = Array.from(
-    metadata.matchAll(/^# (https:\/\/github\.com\/\S+)$/gmu),
-    (match) => match[1]!
+  assert.match(
+    command.description ?? "",
+    /^Evaluate completed agent outcomes and execution/u
   );
-  assert.equal(references.length, 10);
-  assert.equal(new Set(references).size, references.length);
-  for (const reference of references) {
-    assert.ok(!command.prompt.includes(reference), reference);
-  }
-  assert.match(source, /Reflexio: historical\/inactive/u);
+  assert.ok(command.prompt.length > 0);
+  assert.ok(!command.prompt.includes(command.description ?? ""));
 });
 
 test("command stages and outcome statuses are defined", () => {
   assert.deepEqual(
     Array.from(command.prompt.matchAll(/^## (.+)$/gmu), (match) => match[1]),
-    ["Inspect", "Qualify", "Route and authorize", "Validate and report"]
+    [
+      "Scope and evidence",
+      "Assess",
+      "Identify and qualify improvements",
+      "Route and authorize",
+      "Validate and report"
+    ]
   );
   for (const status of statuses) {
     assert.ok(command.prompt.includes(status), status);
@@ -134,7 +130,7 @@ test("behavioral scenarios cover conflicting decisions", () => {
 for (const item of cases) {
   test(
     `behavioral evaluation: ${item.id}`,
-    { skip: runner ? false : "configure AUTODEV_SELF_IMPROVEMENT_EVAL_RUNNER" },
+    { skip: runner ? false : "configure AUTODEV_RETROSPECTIVE_EVAL_RUNNER" },
     () => {
       assert.ok(runner);
       const execution = spawnSync(runner, [], {

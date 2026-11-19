@@ -51,9 +51,11 @@ function trackedRuntimeTexts(): RuntimeTexts {
   );
   const texts: RuntimeTexts = {};
   for (const path of listed.split("\n").filter(Boolean)) {
+    // Tests are not runtime: the root suite and every workspace package's
+    // own suite (`runtime/tests/`, `data/tests/`, ...) set fake credentials.
     if (
       path.startsWith("docs/") ||
-      path.startsWith("tests/") ||
+      /(?:^|\/)tests\//u.test(path) ||
       path.endsWith(".md")
     )
       continue;

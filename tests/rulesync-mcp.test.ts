@@ -24,7 +24,13 @@ const sourceRoot = join(repositoryRoot, ".rulesync");
 const mcpSource = join(sourceRoot, "mcp.jsonc");
 const portableConfig = join(repositoryRoot, "config/config.autodev.toml");
 const packageJson = join(repositoryRoot, "package.json");
-const rulesync = join(repositoryRoot, "node_modules/.bin/rulesync");
+// The CLI entry run with this test's own Node, as the installer runs rulesync
+// in-process: the `.bin` shim finds `node` on PATH, and a pnpm-managed Node
+// there cannot locate its store once HOME is isolated.
+const rulesyncCli = join(
+  repositoryRoot,
+  "node_modules/rulesync/dist/cli/index.js"
+);
 const launchCommand =
   'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" ';
 const userLevelFiles: Record<string, string> = {
@@ -63,8 +69,9 @@ function declared(target: string): Record<string, McpServer> {
 }
 function runRulesync(args: readonly string[], home?: string): RunResult {
   return spawnSync(
-    rulesync,
+    process.execPath,
     [
+      rulesyncCli,
       "generate",
       "--input-roots",
       sourceRoot,

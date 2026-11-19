@@ -24,7 +24,17 @@ import {
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const catalogRoot = join(repositoryRoot, ".rulesync", "commands");
 const rulesyncConfigPath = join(repositoryRoot, "rulesync.jsonc");
-const rulesyncBin = join(repositoryRoot, "node_modules", ".bin", "rulesync");
+// The CLI entry run with this test's own Node, as the installer runs rulesync
+// in-process: the `.bin` shim finds `node` on PATH, and a pnpm-managed Node
+// there cannot locate its store once HOME is isolated.
+const rulesyncCli = join(
+  repositoryRoot,
+  "node_modules",
+  "rulesync",
+  "dist",
+  "cli",
+  "index.js"
+);
 const driftWorkflowPath = join(
   repositoryRoot,
   ".github",
@@ -97,8 +107,9 @@ function readConfig(): {
 
 function generateGlobal(outputHome: string): void {
   const result = spawnSync(
-    rulesyncBin,
+    process.execPath,
     [
+      rulesyncCli,
       "generate",
       "--global",
       "--input-roots",
@@ -238,8 +249,9 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
   );
   try {
     const result = spawnSync(
-      rulesyncBin,
+      process.execPath,
       [
+        rulesyncCli,
         "generate",
         "--config",
         rulesyncConfigPath,
