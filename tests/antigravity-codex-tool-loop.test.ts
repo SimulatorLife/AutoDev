@@ -362,6 +362,23 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
     assert.ok(call, `the bridge must owe Codex the call: ${first.body}`);
     assert.equal(call.item.name, "read_file");
     assert.deepEqual(JSON.parse(call.item.arguments), { path: "README.md" });
+    assert.equal(
+      parked.response.output.at(-1)?.type,
+      "function_call",
+      `parked response must not append a trailing empty assistant message after the tool call: ${JSON.stringify(parked.response.output)}`
+    );
+    const trailingMessages = sseEvents(first.body).filter(
+      (event) =>
+        (event.type === "response.output_item.added" ||
+          event.type === "response.output_item.done") &&
+        event.item?.type === "message" &&
+        event.output_index > added.output_index
+    );
+    assert.equal(
+      trailingMessages.length,
+      0,
+      "emitToolCall must not eagerly open an empty assistant message when parking"
+    );
 
     // Second request: Codex answers the call, and the turn continues.
     const second = await post(

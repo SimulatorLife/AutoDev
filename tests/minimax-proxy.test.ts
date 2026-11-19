@@ -1408,3 +1408,248 @@ test("MiniMax HTTP error limit detection emits reported quota_exhausted for HTTP
   );
   assert.equal(plainServerError, null);
 });
+
+test("compactMinimaxInputItems weights inline images without amputating text history and elides reviewed tool images over maxWireBytes", async () => {
+  const { compactMinimaxInputItems } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+
+  const bigImageUrl = `data:image/png;base64,${"A".repeat(1_400_000)}`;
+  const items: Array<Record<string, unknown>> = [
+    {
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: "System prompt" }]
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Inspect screenshots" }]
+    },
+    {
+      type: "custom_tool_call",
+      call_id: "call_img_1",
+      name: "exec",
+      input: "tools.view_image({ path: '/tmp/a.png' })"
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_img_1",
+      output: [{ type: "input_image", image_url: bigImageUrl }]
+    },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Reviewed image 1." }]
+    },
+    {
+      type: "custom_tool_call",
+      call_id: "call_img_2",
+      name: "exec",
+      input: "tools.view_image({ path: '/tmp/b.png' })"
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_img_2",
+      output: [{ type: "input_image", image_url: bigImageUrl }]
+    }
+  ];
+
+  // Under default 3MB text budget and 8MB wire budget, two 1.4MB images + text
+  // (~2.8MB raw) must NOT trigger text omission or strip either image.
+  const underWire = compactMinimaxInputItems(items) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(underWire.length, items.length);
+  assert.equal(
+    JSON.stringify(underWire).includes("Context window guard: omitted"),
+    false
+  );
+
+  // Add a third 1.4MB image and a trailing reviewed text turn under a 3.5MB wire cap:
+  // reviewed tool-output images before the latest model turn are elided in one sweep,
+  // while the unreviewed latest tool-output image (call_img_3) and all text remain intact.
+  const itemsOverWire: Array<Record<string, unknown>> = [
+    ...items,
+    {
+      type: "reasoning",
+      id: "06f8b0803f8f804f65cab7da91194351_rs",
+      summary: [{ type: "summary_text", text: "Reviewed image 2." }]
+    },
+    {
+      type: "custom_tool_call",
+      call_id: "call_img_3",
+      name: "exec",
+      input: "tools.view_image({ path: '/tmp/c.png' })"
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_img_3",
+      output: [{ type: "input_image", image_url: bigImageUrl }]
+    }
+  ];
+  const elided = compactMinimaxInputItems(
+    itemsOverWire,
+    3_000_000,
+    3_500_000
+  ) as Array<Record<string, unknown>>;
+  assert.equal(elided.length, itemsOverWire.length);
+  assert.equal(
+    JSON.stringify(elided).includes("Context window guard: omitted"),
+    false,
+    "text history must not be omitted when image wire elision brings payload under budget"
+  );
+  const out1 = (elided[3] as { output: Array<{ type: string; text?: string }> })
+    .output;
+  const out2 = (elided[6] as { output: Array<{ type: string; text?: string }> })
+    .output;
+  const out3 = (
+    elided[9] as { output: Array<{ type: string; image_url?: string }> }
+  ).output;
+  assert.equal(out1[0]?.type, "input_text");
+  assert.match(out1[0]?.text ?? "", /Earlier tool-output image omitted/);
+  assert.equal(out2[0]?.type, "input_text");
+  assert.equal(out3[0]?.type, "input_image");
+  assert.equal(
+    out3[0]?.image_url,
+    bigImageUrl,
+    "the unreviewed current-turn image must stay intact"
+  );
+});
+
+test("freeform coercion unwraps JSON-wrapped custom_tool_call payloads and repairs a missing closing brace", async () => {
+  assert.equal(
+    freeformInputFromArguments(String.raw`{"input":"const r = 1;\ntext(r);\n"`),
+    "const r = 1;\ntext(r);\n"
+  );
+  assert.equal(
+    freeformInputFromArguments('{"input":"const r = 1'),
+    null,
+    "truncated mid-string JSON wrapper must not pass through as broken JS"
+  );
+  assert.match(
+    unrecognisedFreeformFeedback("exec", '{"input":"const r = 1'),
+    /truncated JSON-wrapped arguments/
+  );
+
+  // Non-streaming custom_tool_call unwrapping + valid raw JS passthrough
+  const nonStreaming = coerceResponseBody(
+    {
+      output: [
+        {
+          type: "custom_tool_call",
+          id: "ctc_wrapped",
+          call_id: "call_wrapped",
+          name: "exec",
+          input: String.raw`{"input":"text(\"ok\");\n"`
+        },
+        {
+          type: "custom_tool_call",
+          id: "ctc_raw",
+          call_id: "call_raw",
+          name: "exec",
+          input: 'text("raw");'
+        }
+      ]
+    },
+    new Set(["exec"])
+  ) as { output: Array<{ type: string; input: string }> };
+  assert.equal(nonStreaming.output[0]?.type, "custom_tool_call");
+  assert.equal(nonStreaming.output[0]?.input, 'text("ok");\n');
+  assert.equal(nonStreaming.output[1]?.input, 'text("raw");');
+
+  // Streaming SSE custom_tool_call with JSON-wrapped missing-brace input
+  const wrappedInput = String.raw`{"input":"text(\"streamed\");\n"`;
+  const item = {
+    id: "074d6b_custom_0",
+    type: "custom_tool_call",
+    status: "completed",
+    name: "exec",
+    call_id: "call_custom_stream",
+    input: wrappedInput
+  };
+  const events = [
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...item, status: "in_progress", input: "" }
+    },
+    {
+      type: "response.custom_tool_call_input.delta",
+      output_index: 0,
+      item_id: item.id,
+      delta: wrappedInput
+    },
+    {
+      type: "response.custom_tool_call_input.done",
+      output_index: 0,
+      item_id: item.id,
+      input: wrappedInput
+    },
+    { type: "response.output_item.done", output_index: 0, item },
+    {
+      type: "response.completed",
+      response: { id: "resp_ctc", status: "completed", output: [item] }
+    }
+  ];
+  let streamed = "";
+  await withProxy(
+    (request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          events
+            .map(
+              (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+            )
+            .join("")
+        );
+      });
+    },
+    async (proxyPort) => {
+      const response = await fetch(
+        `http://127.0.0.1:${proxyPort}/v1/responses`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "MiniMax-M3",
+            stream: true,
+            input: "go",
+            tools: [{ type: "custom", name: "exec" }]
+          })
+        }
+      );
+      streamed = await response.text();
+    }
+  );
+  const received = streamed
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map(
+      (line) =>
+        JSON.parse(line.slice(6)) as {
+          type: string;
+          input?: string;
+          item?: { input?: string };
+          response?: { output: Array<{ input: string }> };
+        }
+    );
+  assert.equal(
+    received.find(
+      (event) => event.type === "response.custom_tool_call_input.done"
+    )?.input,
+    'text("streamed");\n'
+  );
+  assert.equal(
+    received.find((event) => event.type === "response.output_item.done")?.item
+      ?.input,
+    'text("streamed");\n'
+  );
+  assert.equal(
+    received.find((event) => event.type === "response.completed")?.response
+      ?.output[0]?.input,
+    'text("streamed");\n'
+  );
+});

@@ -5480,7 +5480,8 @@ function recoverOrchestratorBootstrap(
   );
   const bootstrap = buildRootOrchestratorBootstrap({
     repoRoot,
-    parentSessionId: session?.thread ?? null
+    parentSessionId: session?.thread ?? null,
+    postCompaction: true
   });
   return bootstrap
     ? injectRootBootstrapIntoPayload(payload, bootstrap.content)

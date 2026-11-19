@@ -228,6 +228,7 @@
     "tier": "orchestrator",
     "reasoningEffort": {
       "claude": "high",
+      "minimax": "high",
       "antigravity-gemini": "high",
       "antigravity-claude-gpt": "high",
       "antigravity-argon": "high"

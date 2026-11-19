@@ -1,4 +1,5 @@
 import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { MAX_INLINE_IMAGE_CHAR_ESTIMATE } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
@@ -282,7 +283,6 @@ function replaceModelFieldsSharing(
 }
 
 const CHARS_PER_WIRE_TOKEN_ESTIMATE = 5;
-const MAX_INLINE_IMAGE_CHAR_ESTIMATE = 4000;
 
 function estimateJsonValueChars(value: unknown): number {
   if (value === null || value === undefined) return 4;

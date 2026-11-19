@@ -185,7 +185,12 @@ export function codexToolReference(tools: readonly CodexTool[]): string {
         nested.length > 0
           ? `\n\nFunctions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.`
           : "";
-      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}${functions}`;
+      const patchHint =
+        nested.includes("apply_patch") &&
+        !tool.description.includes("*** Begin Patch")
+          ? "\n\n`apply_patch` format (never use unified-diff line numbers like `@@ -10,5 +10,5 @@`): wrap edits in `*** Begin Patch` ... `*** End Patch` using `*** Update File: <path>` / `*** Add File: <path>` / `*** Delete File: <path>`, optional `@@ <context anchor>` headers, and ` ` / `-` / `+` lines."
+          : "";
+      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}${functions}${patchHint}`;
     })
     .join("\n\n");
 }

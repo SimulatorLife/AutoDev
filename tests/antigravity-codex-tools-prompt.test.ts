@@ -333,3 +333,33 @@ test("a streaming compaction request completes cleanly without crashing the Anti
   assert.match(prompt, /initial answer/);
   assert.match(prompt, /# Context Compaction/);
 });
+
+test("codexToolReference includes apply_patch format hint only when apply_patch is exposed on exec", async () => {
+  const { codexToolReference } =
+    await import("@simulatorlife/autodev-runtime/providers/claude-codex-tools");
+
+  const withPatch = codexToolReference([
+    {
+      kind: "custom",
+      name: "exec",
+      namespace: null,
+      parameters: null,
+      description:
+        "declare const tools: { exec_command(args: unknown): Promise<unknown>; apply_patch(input: string): Promise<unknown>; };"
+    }
+  ]);
+  assert.match(withPatch, /\*\*\* Begin Patch/);
+  assert.match(withPatch, /never use unified-diff line numbers/);
+
+  const readOnly = codexToolReference([
+    {
+      kind: "custom",
+      name: "exec",
+      namespace: null,
+      parameters: null,
+      description:
+        "declare const tools: { exec_command(args: unknown): Promise<unknown>; };"
+    }
+  ]);
+  assert.doesNotMatch(readOnly, /\*\*\* Begin Patch/);
+});

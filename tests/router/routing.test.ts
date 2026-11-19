@@ -825,3 +825,21 @@ test("a configured model the provider refuses is left to the cooldown", () => {
     configured
   );
 });
+
+test("minimax orchestrator candidates default to high reasoningEffort instead of inheriting xhigh/max", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  policy.setProviderAssignment("minimax", "orchestrator", {
+    priority: 2,
+    model: "MiniMax-M3.1-Flash"
+  });
+  const candidates = policy.orchestratorCandidates(seeded(1), "minimax");
+  const minimax = candidates.find(
+    (candidate) => candidate.provider === "minimax"
+  );
+  assert.ok(minimax, "minimax must be present in orchestrator candidates");
+  assert.equal(minimax.reasoningEffort, "high");
+});

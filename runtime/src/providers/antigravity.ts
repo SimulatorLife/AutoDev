@@ -3999,6 +3999,7 @@ class ResponseEventStream {
   }
 
   emitTextDelta(text: string): void {
+    if (!this.messageOpen) this.openMessage();
     this.sentText += text;
     this.segmentText += text;
     this.emit("response.output_text.delta", {
@@ -4156,8 +4157,6 @@ class ResponseEventStream {
     this.output[index] = item;
     for (const [eventName, body] of codexToolCallEvents(item, index))
       this.emit(eventName, body);
-    // Whatever the model says after the call belongs to a new message item.
-    this.openMessage();
   }
 
   /** Closes both output items and returns the completed response payload. */

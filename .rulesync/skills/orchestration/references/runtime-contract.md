@@ -76,15 +76,20 @@ rather than closing it.
 ### Capacity-driven eviction
 
 Completed and parked child sessions occupy concurrency slots in the session
-thread pool. Close parked child handles with `close_agent` only when necessary:
-1. when the assignment is fully complete and no follow-up tasks will occur, or
-2. under capacity pressure, when new roles must be dispatched and the session
+thread pool. Close parked child handles with `close_agent` when:
+1. the assignment is fully complete and no follow-up tasks will occur, or
+2. transitioning to a new wave requiring different roles while at the session's
+   concurrency limit (e.g., closing unneeded parked `explorer` handles whose
+   findings are already integrated before spawning `worker` children, rather
+   than hitting `agent thread limit reached` first), or
+3. under capacity pressure, when new roles must be dispatched and the session
    has reached its concurrency limit.
 
 When evicting under capacity pressure, evict (close) only the oldest
 parked/terminal children owned by this parent. Never evict, terminate, or
 interrupt active (running) children, and never touch foreign children owned
-by other parents. Never invoke `close_agent` as a cleanup step in wait or spawn scripts.
+by other parents. Never invoke `close_agent` inside a wait or spawn script on
+children that may still be reused or are still running.
 ### Terminal result handling and partial results
 
 Treat `agent_id` as an opaque handle and pass the complete value from

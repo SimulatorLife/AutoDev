@@ -41,6 +41,7 @@ import {
   type ProviderLimit,
   readResetAtFromHeaders
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { MAX_INLINE_IMAGE_CHAR_ESTIMATE } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   type AgentEventReporter,
   resolveAgentEventReporter
@@ -93,6 +94,12 @@ function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
 }
 
 export const DEFAULT_MAX_MINIMAX_INPUT_CHARS = 3_000_000;
+export const DEFAULT_MAX_MINIMAX_WIRE_BYTES = 8_000_000;
+
+const ELIDED_IMAGE_PLACEHOLDER: JsonRecord = {
+  type: "input_text",
+  text: "[Earlier tool-output image omitted after review to keep payload within wire budget.]"
+};
 
 class MinimaxInputContextExceeded extends Error {
   constructor(maxInputChars: number) {
@@ -103,11 +110,31 @@ class MinimaxInputContextExceeded extends Error {
   }
 }
 
+/**
+ * Measure serialized UTF-8 byte weight while capping inline `data:image/` URLs
+ * so screenshot attachments cannot inflate context accounting and falsely
+ * amputate conversation history.
+ */
+function itemContextByteLength(value: unknown): number {
+  const serialized = JSON.stringify(value);
+  if (!serialized.includes("data:image/")) {
+    return Buffer.byteLength(serialized, "utf8");
+  }
+  const imageCapped = JSON.stringify(value, (_key, entry: unknown) =>
+    typeof entry === "string" &&
+    entry.startsWith("data:image/") &&
+    entry.length > MAX_INLINE_IMAGE_CHAR_ESTIMATE
+      ? entry.slice(0, MAX_INLINE_IMAGE_CHAR_ESTIMATE)
+      : entry
+  );
+  return Buffer.byteLength(imageCapped, "utf8");
+}
+
 function enforceMinimaxInputBudget(
   input: unknown,
   maxInputChars: number
 ): unknown {
-  if (Buffer.byteLength(JSON.stringify(input), "utf8") > maxInputChars) {
+  if (itemContextByteLength(input) > maxInputChars) {
     throw new MinimaxInputContextExceeded(maxInputChars);
   }
   return input;
@@ -118,6 +145,11 @@ function configuredMaxMinimaxInputChars(): number {
   return Number.isFinite(raw) && raw > 0
     ? raw
     : DEFAULT_MAX_MINIMAX_INPUT_CHARS;
+}
+
+function configuredMaxMinimaxWireBytes(): number {
+  const raw = Number.parseInt(process.env.MINIMAX_MAX_WIRE_BYTES ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_MINIMAX_WIRE_BYTES;
 }
 
 function isJsonRecord(value: unknown): value is JsonRecord {
@@ -211,31 +243,84 @@ function minimaxSetupPrefix(
   return { prefixEnd, prefixChars };
 }
 
-export function compactMinimaxInputItems(
-  input: unknown,
-  maxInputChars: number = configuredMaxMinimaxInputChars()
-): unknown {
-  if (!Array.isArray(input)) return input;
-  if (input.length <= 1) return enforceMinimaxInputBudget(input, maxInputChars);
-  const filtered = input.filter(
-    (item) =>
-      !isSyntheticBridgeReasoningItem(item) &&
-      !isEmptyAssistantMessageItem(item)
+function isDataImagePart(part: unknown): boolean {
+  if (!isJsonRecord(part)) return false;
+  if (part.type !== "input_image" && part.type !== "image") return false;
+  return (
+    typeof part.image_url === "string" &&
+    part.image_url.startsWith("data:image/")
   );
-  const working = filtered.length > 0 ? filtered : input;
-  const changedByFilter = working.length !== input.length;
+}
 
-  const sizes = working.map(
-    (item) => Buffer.byteLength(JSON.stringify(item), "utf8") + 1
-  );
-  const totalChars = sizes.reduce((sum, n) => sum + n, 1);
-  if (totalChars <= maxInputChars) {
-    return enforceMinimaxInputBudget(
-      changedByFilter ? working : input,
-      maxInputChars
-    );
+function elideToolOutputImagesInItem(item: unknown): {
+  item: unknown;
+  changed: boolean;
+} {
+  if (!isToolOutputItem(item) || !Array.isArray(item.output)) {
+    return { item, changed: false };
   }
+  let changed = false;
+  const nextOutput = item.output.map((part) => {
+    if (!isDataImagePart(part)) return part;
+    changed = true;
+    return ELIDED_IMAGE_PLACEHOLDER;
+  });
+  return changed
+    ? { item: { ...item, output: nextOutput }, changed: true }
+    : { item, changed: false };
+}
 
+function lastModelTurnIndex(items: unknown[]): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!isJsonRecord(item)) continue;
+    if (
+      item.type === "reasoning" ||
+      (item.type === "message" && item.role === "assistant") ||
+      isToolCallItem(item)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function sweepToolOutputImagesBefore(
+  items: unknown[],
+  cutoff: number
+): { items: unknown[]; changed: boolean } {
+  if (cutoff <= 0) return { items, changed: false };
+  let changed = false;
+  const next = items.map((item, index) => {
+    if (index >= cutoff) return item;
+    const res = elideToolOutputImagesInItem(item);
+    if (res.changed) changed = true;
+    return res.item;
+  });
+  return { items: changed ? next : items, changed };
+}
+
+/**
+ * Once raw serialized wire payload exceeds `maxWireBytes`, replace already-reviewed
+ * tool-output `data:image/` blobs (before the latest model turn) with a compact
+ * placeholder in one sweep so later turns stay cache-hot and unreviewed current-turn
+ * images remain intact.
+ */
+function elideReviewedToolImages(
+  items: unknown[],
+  maxWireBytes: number
+): { items: unknown[]; changed: boolean } {
+  if (Buffer.byteLength(JSON.stringify(items), "utf8") <= maxWireBytes) {
+    return { items, changed: false };
+  }
+  return sweepToolOutputImagesBefore(items, lastModelTurnIndex(items));
+}
+
+function compactOversizedMinimaxItems(
+  working: unknown[],
+  sizes: number[],
+  maxInputChars: number
+): unknown {
   const { prefixEnd, prefixChars } = minimaxSetupPrefix(
     working,
     sizes,
@@ -262,7 +347,7 @@ export function compactMinimaxInputItems(
     const size =
       candidate === working[i]
         ? (sizes[i] ?? 0)
-        : Buffer.byteLength(JSON.stringify(candidate), "utf8") + 1;
+        : itemContextByteLength(candidate) + 1;
     if (suffixStart < working.length && suffixChars + size > remainingBudget) {
       break;
     }
@@ -270,8 +355,6 @@ export function compactMinimaxInputItems(
     suffixStart = i;
   }
 
-  // Include any preceding tool calls that pair with tool outputs near the start
-  // of the suffix when they sit immediately before suffixStart and fit.
   const prefixItems = working.slice(0, prefixEnd);
   const middleAdditionalTools = working
     .slice(prefixEnd, suffixStart)
@@ -318,6 +401,48 @@ export function compactMinimaxInputItems(
     [...prefixItems, ...middleAdditionalTools, guardNotice, ...pairedSuffix],
     maxInputChars
   );
+}
+
+export function compactMinimaxInputItems(
+  input: unknown,
+  maxInputChars: number = configuredMaxMinimaxInputChars(),
+  maxWireBytes: number = configuredMaxMinimaxWireBytes()
+): unknown {
+  if (!Array.isArray(input)) return input;
+  if (input.length <= 1) return enforceMinimaxInputBudget(input, maxInputChars);
+  const filtered = input.filter(
+    (item) =>
+      !isSyntheticBridgeReasoningItem(item) &&
+      !isEmptyAssistantMessageItem(item)
+  );
+  const working = filtered.length > 0 ? filtered : input;
+  const changedByFilter = working.length !== input.length;
+
+  const elided = elideReviewedToolImages(working, maxWireBytes);
+  const current = elided.items;
+  const changed = changedByFilter || elided.changed;
+
+  let sizes = current.map((item) => itemContextByteLength(item) + 1);
+  let totalChars = sizes.reduce((sum, n) => sum + n, 1);
+  if (totalChars <= maxInputChars) {
+    return enforceMinimaxInputBudget(changed ? current : input, maxInputChars);
+  }
+
+  // Before discarding text history under budget pressure, sweep all reviewed
+  // tool-output images so stale base64 blobs do not consume text budget.
+  const swept = elided.changed
+    ? { items: current, changed: false }
+    : sweepToolOutputImagesBefore(current, lastModelTurnIndex(current));
+  const compactSource = swept.items;
+  if (swept.changed) {
+    sizes = compactSource.map((item) => itemContextByteLength(item) + 1);
+    totalChars = sizes.reduce((sum, n) => sum + n, 1);
+    if (totalChars <= maxInputChars) {
+      return enforceMinimaxInputBudget(compactSource, maxInputChars);
+    }
+  }
+
+  return compactOversizedMinimaxItems(compactSource, sizes, maxInputChars);
 }
 
 // Codex duplicates its turn metadata -- absolute workspace paths, git remote
@@ -411,6 +536,24 @@ function synthesizeExecCommandScript(
   ].join("\n");
 }
 
+const FREEFORM_JSON_WRAPPER_PREFIX =
+  /^\{\s*"(?:input|code|script|source|js|javascript|cmd|command)"\s*:/u;
+
+function parseWrappedJsonRepairingClosingBrace(
+  raw: string
+): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    if (!FREEFORM_JSON_WRAPPER_PREFIX.test(raw)) return { ok: false };
+    try {
+      return { ok: true, value: JSON.parse(`${raw}}`) };
+    } catch {
+      return { ok: false };
+    }
+  }
+}
+
 // JavaScript equivalent to the JSON arguments MiniMax produced, or null when
 // the intent is not clear enough to rewrite. Guessing wrong would swap one
 // broken call for a different broken call, so an unrecognised shape is never
@@ -419,14 +562,14 @@ function freeformInputFromArguments(argumentsText: unknown): string | null {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   if (!raw) return null;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // Not JSON at all: the model wrote the script directly, which is exactly
-    // what the tool wants.
-    return raw;
+  const parsedResult = parseWrappedJsonRepairingClosingBrace(raw);
+  if (!parsedResult.ok) {
+    // Valid raw JavaScript passes through directly; truncated JSON-wrapped calls
+    // must fall through to unrecognisedFreeformFeedback instead of throwing a
+    // top-level JS SyntaxError.
+    return FREEFORM_JSON_WRAPPER_PREFIX.test(raw) ? null : raw;
   }
+  const parsed = parsedResult.value;
   if (typeof parsed === "string") return parsed;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return null;
@@ -452,7 +595,9 @@ function describeArgumentsShape(raw: string): string {
         : typeof parsed;
     return `a JSON ${kind}`;
   } catch {
-    return "arguments that are not JSON";
+    return FREEFORM_JSON_WRAPPER_PREFIX.test(raw)
+      ? "truncated JSON-wrapped arguments"
+      : "arguments that are not JSON";
   }
 }
 
@@ -480,6 +625,31 @@ function freeformSourceFor(toolName: string, argumentsText: unknown): string {
   );
 }
 
+function isFreeformToolCallItem(
+  item: unknown,
+  freeformNames: Set<string>
+): item is JsonRecord {
+  if (!item || typeof item !== "object") return false;
+  const rec = item as JsonRecord;
+  return (
+    (rec.type === "function_call" || rec.type === "custom_tool_call") &&
+    typeof rec.name === "string" &&
+    freeformNames.has(rec.name) &&
+    !isWebResearchTool(rec)
+  );
+}
+
+function rawFreeformPayload(item: JsonRecord): string {
+  if (typeof item.arguments === "string") return item.arguments;
+  if (typeof item.input === "string") return item.input;
+  return "";
+}
+
+function coerceFreeformItem(item: JsonRecord, source: string): JsonRecord {
+  const { arguments: _arguments, namespace: _namespace, ...rest } = item;
+  return { ...rest, type: "custom_tool_call", input: source };
+}
+
 /**
  * Per-response coercion of freeform tool calls.
  *
@@ -498,10 +668,11 @@ function handleFunctionCallArgumentsDone(
   >
 ): JsonRecord[] {
   const entry = coerced.get(eventItemId);
-  const source = freeformSourceFor(
-    entry?.name ?? "",
-    String(event.arguments ?? "")
-  );
+  const rawPayload =
+    typeof event.arguments === "string"
+      ? event.arguments
+      : String(event.input ?? "");
+  const source = freeformSourceFor(entry?.name ?? "", rawPayload);
   if (entry) {
     coerced.set(eventItemId, { ...entry, source });
   }
@@ -539,11 +710,10 @@ function coerceResponseSnapshot(
       coerced.get(itemId)?.source ??
       freeformSourceFor(
         String(rawItem.name ?? ""),
-        String(rawItem.arguments ?? "")
+        rawFreeformPayload(rawItem)
       );
     changed = true;
-    const { arguments: _arguments, namespace: _namespace, ...rest } = rawItem;
-    return { ...rest, type: "custom_tool_call", input: source };
+    return coerceFreeformItem(rawItem, source);
   });
   if (changed) return { ...event, response: { ...responseObj, output } };
   return event;
@@ -555,16 +725,8 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
     { name: string; source: string | null; closed?: boolean }
   >();
 
-  const isFreeform = (item: unknown): item is JsonRecord => {
-    if (!item || typeof item !== "object") return false;
-    const rec = item as JsonRecord;
-    return (
-      rec.type === "function_call" &&
-      typeof rec.name === "string" &&
-      freeformNames.has(rec.name) &&
-      !isWebResearchTool(rec)
-    );
-  };
+  const isFreeform = (item: unknown): item is JsonRecord =>
+    isFreeformToolCallItem(item, freeformNames);
 
   return function coerce(event: JsonRecord): JsonRecord | JsonRecord[] | null {
     if (!event || typeof event !== "object") return event;
@@ -574,24 +736,25 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
       const itemId = String(item.id ?? "");
       const itemName = String(item.name ?? "");
       coerced.set(itemId, { name: itemName, source: null });
-      const { arguments: _arguments, namespace: _namespace, ...rest } = item;
       return {
         ...event,
-        item: { ...rest, type: "custom_tool_call", input: "" }
+        item: coerceFreeformItem(item, "")
       };
     }
 
     const eventItemId = typeof event.item_id === "string" ? event.item_id : "";
 
     if (
-      event.type === "response.function_call_arguments.delta" &&
+      (event.type === "response.function_call_arguments.delta" ||
+        event.type === "response.custom_tool_call_input.delta") &&
       coerced.has(eventItemId)
     ) {
       return null; // Partial JSON cannot be translated; the full source follows.
     }
 
     if (
-      event.type === "response.function_call_arguments.done" &&
+      (event.type === "response.function_call_arguments.done" ||
+        event.type === "response.custom_tool_call_input.done") &&
       coerced.has(eventItemId)
     ) {
       return handleFunctionCallArgumentsDone(event, eventItemId, coerced);
@@ -609,7 +772,7 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
         entry?.source ??
         freeformSourceFor(
           String(eventItem?.name ?? ""),
-          String(eventItem?.arguments ?? "")
+          rawFreeformPayload(eventItem ?? {})
         );
       // Keep the entry: the terminal snapshot below still has to find its
       // source, and `response.completed` arrives after this.
@@ -617,14 +780,9 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
         coerced.set(doneItemId, { ...entry, source, closed: true });
       }
       if (eventItem) {
-        const {
-          arguments: _arguments,
-          namespace: _namespace,
-          ...rest
-        } = eventItem;
         return {
           ...event,
-          item: { ...rest, type: "custom_tool_call", input: source }
+          item: coerceFreeformItem(eventItem, source)
         };
       }
     }
@@ -654,19 +812,14 @@ function coerceResponseBody(
 
   let changed = false;
   const coercedOutput = output.map((rawItem) => {
-    if (!rawItem || typeof rawItem !== "object") return rawItem;
-    const item = rawItem as JsonRecord;
-    if (
-      item.type !== "function_call" ||
-      typeof item.name !== "string" ||
-      !freeformNames.has(item.name) ||
-      isWebResearchTool(item)
-    )
-      return item;
-    const source = freeformSourceFor(item.name, String(item.arguments ?? ""));
+    if (!isFreeformToolCallItem(rawItem, freeformNames)) return rawItem;
+    const rawPayload = rawFreeformPayload(rawItem);
+    const source = freeformSourceFor(String(rawItem.name ?? ""), rawPayload);
+    if (rawItem.type === "custom_tool_call" && source === rawPayload.trim()) {
+      return rawItem;
+    }
     changed = true;
-    const { arguments: _arguments, namespace: _namespace, ...rest } = item;
-    return { ...rest, type: "custom_tool_call", input: source };
+    return coerceFreeformItem(rawItem, source);
   });
   if (!changed) return body;
 

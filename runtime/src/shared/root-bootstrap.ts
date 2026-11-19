@@ -39,6 +39,32 @@ export function readRootBootstrapMarker(repoRoot: string): string | null {
   return marker || ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER;
 }
 
+function buildPostCompactionContent({
+  marker,
+  skillFile,
+  skillDirectory,
+  parentId
+}: {
+  marker: string;
+  skillFile: string;
+  skillDirectory: string;
+  parentId: string | null;
+}): string {
+  const skillFallback = existsSync(skillFile)
+    ? `Only read ${skillFile} (or \`references/\` under ${skillDirectory}) if an actual delegation or recovery error requires it.`
+    : `If a delegation error occurs and ${skillFile} is missing, report that capability failure instead of guessing.`;
+  const body =
+    `${marker} (post-compaction continuation)\n\n` +
+    "This session already compacted. Do NOT re-read `orchestration/SKILL.md`, its `references/*.md`, or re-probe `ALL_TOOLS` unless an actual delegation/recovery error occurs. " +
+    `${skillFallback}\n\n` +
+    "Trust verified facts, measurements, modified files, and active/parked child agent IDs from the compaction summary instead of re-reading files or re-viewing screenshots.\n\n" +
+    '- Delegate substantive discovery, implementation, and validation via `tools.multi_agent_v1__spawn_agent`/`wait_agent` inside `exec` (or the bridge tool if declared under "Delegation on this provider").\n' +
+    "- Close unneeded parked children with `close_agent` before spawning a new wave at the concurrency cap.\n" +
+    "- Root must not read git history (`git log`, `git show`, `git blame`); delegate scoped regression history to a child.\n" +
+    '- Batch independent calls with `Promise.all` inside one `exec` script, bound outputs (`max_output_tokens <= 2000`), and wait with `// @exec: {"yield_time_ms": 330000}`.';
+  return body + buildRecoveryContext(parentId);
+}
+
 /**
  * Build the canonical AutoDev root-orchestrator bootstrap block shared between
  * the `UserPromptSubmit` hook and router post-compaction recovery.
@@ -46,11 +72,13 @@ export function readRootBootstrapMarker(repoRoot: string): string | null {
 export function buildRootOrchestratorBootstrap({
   repoRoot,
   skillsHome,
-  parentSessionId = null
+  parentSessionId = null,
+  postCompaction = false
 }: {
   repoRoot: string;
   skillsHome?: string;
   parentSessionId?: string | null;
+  postCompaction?: boolean;
 }): RootOrchestratorBootstrap | null {
   const promptFile = path.join(
     repoRoot,
@@ -62,12 +90,7 @@ export function buildRootOrchestratorBootstrap({
 
   const skillDirectory = installedSkillDirectory("orchestration", skillsHome);
   const skillFile = path.join(skillDirectory, "SKILL.md");
-  const codeSearchFile = path.join(
-    repoRoot,
-    "agents",
-    "prompts",
-    "code-search.md"
-  );
+  const normalizedParent = parentSessionId?.trim() || null;
 
   const prompt = readFileSync(promptFile, "utf8").trim();
   const firstLineEnd = prompt.indexOf("\n");
@@ -75,13 +98,31 @@ export function buildRootOrchestratorBootstrap({
     (firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd)) ||
     ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER;
 
+  if (postCompaction) {
+    return {
+      marker,
+      content: buildPostCompactionContent({
+        marker,
+        skillFile,
+        skillDirectory,
+        parentId: normalizedParent
+      })
+    };
+  }
+
+  const codeSearchFile = path.join(
+    repoRoot,
+    "agents",
+    "prompts",
+    "code-search.md"
+  );
+
   const skill = existsSync(skillFile)
     ? `\n\n## Canonical orchestration skill\n\nRead the installed \`orchestration\` skill before your first spawn, and only the references it names for your situation. Source: ${skillFile}; resolve its relative \`references/\` paths against ${skillDirectory}.`
     : `\n\nCanonical orchestration skill is unavailable at ${skillFile}; report that capability failure instead of silently substituting a workflow.`;
   const codeSearch = existsSync(codeSearchFile)
     ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
     : "\n\nShared codebase navigation prompt is unavailable; report that capability failure instead of silently substituting a workflow.";
-  const normalizedParent = parentSessionId?.trim() || null;
   const recoveryContext = buildRecoveryContext(normalizedParent);
 
   return {

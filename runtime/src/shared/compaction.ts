@@ -18,7 +18,7 @@ export const COMPACTED_SUMMARY_PREFIX =
   "Another language model started to solve this problem";
 
 export const COMPACTION_SYSTEM_PROMPT =
-  "You are performing context compaction for an ongoing engineering session. Produce a concise, structured plain-text handoff summary covering progress, key decisions, constraints, modified files, test results, blockers, and next steps. Do not call tools or continue executing the task.";
+  "You are performing context compaction for an ongoing engineering session. Produce a concise, structured plain-text handoff summary covering progress, key decisions, constraints, modified files, test results, blockers, and next steps. Preserve active/parked child agent IDs (with roles and statuses), the confirmed delegation/tool surface, and verified file paths or numeric measurements so the resumed session does not re-read orchestration docs, re-probe ALL_TOOLS, or re-open already-analyzed files or screenshots. Do not call tools or continue executing the task.";
 
 const LOCAL_COMPACTION_PROMPT_MARKERS = [
   "You are performing a CONTEXT CHECKPOINT COMPACTION",

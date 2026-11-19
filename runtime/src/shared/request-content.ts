@@ -13,6 +13,12 @@ import { isRecord } from "./object-guards.ts";
 
 const DATA_URL_PATTERN = /^data:([^;,]+);base64,(.*)$/su;
 
+/**
+ * Character-budget weight assigned to each inline `data:image/` URL so token and
+ * context guards reflect image presence without counting megabytes of base64 text.
+ */
+export const MAX_INLINE_IMAGE_CHAR_ESTIMATE = 4000;
+
 /** An image the request carries. */
 export type RequestImage =
   /** The request carries the image's bytes, inline. */

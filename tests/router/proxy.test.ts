@@ -2375,9 +2375,13 @@ test("proxyOrchestratorResponse restores compact root bootstrap after compaction
     }>;
     assert.equal(firstItems.length, 3);
     assert.equal(firstItems[1]?.role, "developer");
-    assert.match(
-      firstItems[1]?.content?.[0]?.text ?? "",
-      /# Root orchestrator bootstrap/
+    const injectedText = firstItems[1]?.content?.[0]?.text ?? "";
+    assert.match(injectedText, /# Root orchestrator bootstrap/);
+    assert.match(injectedText, /Do NOT re-read `orchestration\/SKILL\.md`/);
+    assert.match(injectedText, /re-probe `ALL_TOOLS`/);
+    assert.ok(
+      injectedText.length < 2500,
+      `post-compaction bootstrap should stay compact, got ${injectedText.length} chars`
     );
 
     const responseAlreadyBootstrapped = responseRecorder();
