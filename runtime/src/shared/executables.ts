@@ -42,7 +42,10 @@ export function findPnpmGlobalBinary(
 ): string | null {
   const pnpmHome =
     env.PNPM_HOME?.trim() ||
-    path.join(home, process.platform === "darwin" ? "Library/pnpm" : ".local/share/pnpm");
+    path.join(
+      home,
+      process.platform === "darwin" ? "Library/pnpm" : ".local/share/pnpm"
+    );
   const candidate = path.join(pnpmHome, "bin", name);
   return isExecutable(candidate) ? candidate : null;
 }

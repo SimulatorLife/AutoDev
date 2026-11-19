@@ -9,7 +9,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { findExecutable, findPnpmGlobalBinary } from "../shared/executables.ts";
+import {
+  findExecutable,
+  findPnpmGlobalBinary
+} from "../shared/executables.ts";
 
 export type HostArch = "arm64" | "amd64";
 export type ExecutableArch = HostArch | "universal";
@@ -105,7 +108,11 @@ export function resolveServiceNode(
   home: string,
   host: HostArch = hostArch(),
   candidates: readonly (string | null)[] = [
-    path.join(process.env.PNPM_HOME?.trim() || path.join(home, "Library", "pnpm"), "bin", "node"),
+    path.join(
+      process.env.PNPM_HOME?.trim() || path.join(home, "Library", "pnpm"),
+      "bin",
+      "node"
+    ),
     process.execPath
   ]
 ): string {

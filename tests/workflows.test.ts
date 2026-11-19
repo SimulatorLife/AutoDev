@@ -326,8 +326,13 @@ test("target-aware reusable workflows use the PAT checkout", async () => {
   assert.match(invoke, /Detect target repository toolchain/);
   assert.match(invoke, /Read AutoDev package manager version/);
   assert.match(invoke, /Setup pnpm for provider tooling/);
-  assert.ok(invoke.includes("node-version-file: ../../_temp/autodev.node-version"));
-  assert.match(invoke, /Target JavaScript projects must declare packageManager pnpm@<version>/);
+  assert.ok(
+    invoke.includes("node-version-file: ../../_temp/autodev.node-version")
+  );
+  assert.match(
+    invoke,
+    /Target JavaScript projects must declare packageManager pnpm@<version>/
+  );
   assert.doesNotMatch(invoke, /\bnpm (?:ci|install|run)\b/u);
   assert.match(
     await readWorkflow("target-validation.yml"),
@@ -1155,7 +1160,11 @@ test("AutoDev shell launchers resolve pnpm-managed Node without nvm or npm", asy
   ]) {
     const source = await readFile(path.join(root, "scripts", script), "utf8");
     assert.match(source, /PNPM_HOME/u, script);
-    assert.doesNotMatch(source, /\/\.nvm\/|\bnpm (?:ci|install|run)\b/u, script);
+    assert.doesNotMatch(
+      source,
+      /\/\.nvm\/|\bnpm (?:ci|install|run)\b/u,
+      script
+    );
   }
 });
 
