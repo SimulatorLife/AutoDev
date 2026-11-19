@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -135,7 +135,7 @@ test("an aborted command that ignores SIGTERM is killed and its turn settles", a
     'process.stdout.write("ready");',
     "setInterval(() => {}, 1000);"
   ].join("");
-  const live = new Set<import("node:child_process").ChildProcess>();
+  const live = new Set<ChildProcess>();
   const runner = processRunner(
     () => ({ command: process.execPath, args: ["-e", script] }),
     { chatgpt: 1, gemini: 1 },
