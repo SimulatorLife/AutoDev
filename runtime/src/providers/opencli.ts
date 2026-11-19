@@ -721,7 +721,7 @@ function chatgptConversationId(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (parsed.hostname !== "chatgpt.com") return null;
-    return /\\/c\\/([\\w-]+)/u.exec(parsed.pathname)?.[1] ?? null;
+    return /\/c\/([\w-]+)/u.exec(parsed.pathname)?.[1] ?? null;
   } catch {
     return null;
   }
