@@ -957,6 +957,11 @@ interface ChatGPTReplyUtils {
   chatgptReplyFromConversation: (
     conversation: unknown
   ) => { text: string; finished: boolean } | null;
+  chatgptReplyCanFinish: (
+    stored: { text: string; finished: boolean },
+    stableMs: number,
+    isGeneratingNow: boolean
+  ) => boolean;
 }
 
 async function chatgptReplyUtils(): Promise<ChatGPTReplyUtils | null> {
@@ -1122,6 +1127,53 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
     utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
     null
   );
+});
+
+test("ChatGPT's missing completion marker requires a settled reply and stopped generation", async () => {
+  const utils = await chatgptReplyUtils();
+  if (utils === null) return;
+  const stored = { text: "Done-looking reply", finished: false };
+  assert.equal(utils.chatgptReplyCanFinish(stored, 11_999, false), false);
+  assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, true), false);
+  assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, false), true);
+  assert.equal(utils.chatgptReplyCanFinish({ ...stored, finished: true }, 0, true), true);
+});
+
+test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
+  const utils = await chatgptReplyUtils();
+  if (utils === null) return;
+  const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-progress-"));
+  const file = resolve(directory, "progress");
+  const fd = openSync(file, "w");
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  let storedReads = 0;
+  process.env.OPENCLI_PROGRESS_FD = String(fd);
+  try {
+    const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
+      Response.json(storedConversation(++storedReads > 2))
+    );
+    const reply = await utils.waitForChatGPTResponse(
+      chat.page,
+      0,
+      CHATGPT_PROMPT,
+      30,
+      { baselinePairCounts: new Map() }
+    );
+    assert.equal(reply, CHATGPT_STORED_REPLY);
+  } finally {
+    if (saved === undefined) delete process.env.OPENCLI_PROGRESS_FD;
+    else process.env.OPENCLI_PROGRESS_FD = saved;
+    closeSync(fd);
+  }
+  const records = readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { text: string; url: string });
+  rmSync(directory, { recursive: true, force: true });
+  assert.deepEqual(records, [{
+    text: CHATGPT_STORED_REPLY,
+    url: `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
+  }]);
 });
 
 test("a Gemini reply keeps the line breaks the page shows inside a paragraph", async () => {
