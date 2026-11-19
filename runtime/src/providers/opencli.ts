@@ -586,6 +586,10 @@ export function processRunner(
     onProgress: OpencliRunRequest["onProgress"]
   ): Promise<JsonRecord[]> =>
     new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
+        return;
+      }
       const command = resolveCommand();
       // The fourth pipe is the progress descriptor (fd 3); the command writes
       // to it only when OPENCLI_PROGRESS_FD names it.
@@ -619,28 +623,57 @@ export function processRunner(
           }
         });
       }
-      const onAbort = () => {
-        child.kill("SIGTERM");
-        const killTimer = setTimeout(() => {
-          if (!child.killed) {
+      let closed = false;
+      let killTimer: ReturnType<typeof setTimeout> | null = null;
+      let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = (): void => {
+        closed = true;
+        live.delete(child);
+        signal.removeEventListener("abort", onAbort);
+        if (killTimer) clearTimeout(killTimer);
+        if (settleTimer) clearTimeout(settleTimer);
+      };
+      const onAbort = (): void => {
+        if (closed) return;
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // The child already exited between request cancellation and signal.
+        }
+        // child.killed indicates a signal was sent, NOT that the child exited.
+        killTimer = setTimeout(() => {
+          if (!closed) {
             try {
               child.kill("SIGKILL");
             } catch {
-              /* the process is already gone */
+              // The child already exited.
             }
           }
         }, 2000);
-        if (typeof killTimer.unref === "function") killTimer.unref();
+        // A process that never emits close cannot hold a Codex turn indefinitely.
+        settleTimer = setTimeout(() => {
+          if (!closed) {
+            cleanup();
+            reject(new OpencliCommandError(
+              "turn cancelled: opencli did not exit after SIGKILL",
+              "CANCELLED",
+              null
+            ));
+          }
+        }, 5000);
+        killTimer.unref?.();
+        settleTimer.unref?.();
       };
       signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
       child.once("error", (error) => {
-        live.delete(child);
-        signal.removeEventListener("abort", onAbort);
+        if (closed) return;
+        cleanup();
         reject(error);
       });
       child.once("close", (code) => {
-        live.delete(child);
-        signal.removeEventListener("abort", onAbort);
+        if (closed) return;
+        cleanup();
         if (signal.aborted) {
           reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
           return;
