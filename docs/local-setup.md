@@ -1,6 +1,12 @@
 # Local AI and provider setup
 
-> This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md). Where this file describes native role TOMLs or other transitional inputs, do not treat them as a competing long-term source of truth; RuleSync is the target canonical source for every agent-facing configuration surface it natively supports.
+> This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
+
+**JavaScript prerequisite:** install standalone pnpm (v12.21.0 for this
+checkout), then use `pnpm runtime set node 24.12.0 -g` to provision Node
+without npm, npx, NVM, or Corepack. The repository's `.node-version` is
+understood by pnpm's `node` shim. Keep `PNPM_HOME/bin` on PATH
+(`~/Library/pnpm/bin` on macOS). The installer does not edit `.zprofile`. Where this file describes native role TOMLs or other transitional inputs, do not treat them as a competing long-term source of truth; RuleSync is the target canonical source for every agent-facing configuration surface it natively supports.
 
 The `scripts/` tree is the tracked home for the local-PC setup previously kept in RacingGame. It includes provider proxies/routers, Codex role and model configuration, launch agents, installation/ensure scripts, and provider health checks.
 
@@ -732,10 +738,10 @@ pins each decision.
 
 Package-manager caches outside the workspace are writable roots instead:
 `sandbox_workspace_write.writable_roots` in `config/config.autodev.toml` lists
-`~/Library/pnpm/store`, `~/.npm` and `~/Library/Caches/ms-playwright`, so a
-sandboxed `pnpm install`, `npm view` or `pnpm exec playwright install` uses the
+`~/Library/pnpm/store` and `~/Library/Caches/ms-playwright`, so a
+sandboxed `pnpm install`, `pnpm view` or `pnpm exec playwright install` uses the
 operator's normal store and browser cache rather than a throwaway one in
-`/tmp`. Without them each fails with `EPERM` (npm reports it as "root-owned
+`/tmp`. Without them each may fail with `EPERM` (some tools report "root-owned
 files", which is wrong). A writable root rather than an `allow` rule keeps
 package lifecycle scripts sandboxed; the trade-off is that sandboxed commands
 can write the shared pnpm store other projects link from. Codex 0.154.0
@@ -816,19 +822,13 @@ rules file must be a regular file with the tracked content.
   `ExitTimeOut` large enough for the router's drain timeout before launchd
   SIGKILLs it. Inspect the other provider plists independently; they may have
   different lifecycle and log-path contracts.
-- Every service LaunchAgent sets `AUTODEV_NODE_BIN` to the Node the installer
-  resolved: its own Node when that is native to the machine, otherwise the
-  newest native nvm or Homebrew Node. launchd's `PATH` alone finds
-  `/usr/local/bin/node` first, which on many Apple Silicon Macs is an Intel
-  build that Rosetta translates on every cold start. On macOS hosts where an
-  Intel `/usr/local/bin/node` shadows a native nvm/Homebrew Node, the installer
-  also maintains a bounded `# >>> AutoDev native node >>>` block at the end of
-  `~/.zprofile` (after `/etc/zprofile`'s `path_helper`) so non-interactive
-  login shells such as Codex's `zsh -lc` resolve the native `arm64` `node`
-  binary instead of failing native-addon loads like
-  `@rolldown/binding-darwin-arm64`. The launchers fall back to
-  `PATH` only when that binary no longer exists; reinstall after changing Node
-  installations. `bash scripts/install.sh --check` reports the drift.
+- Every service LaunchAgent sets `AUTODEV_NODE_BIN` to the installer's
+  chosen native Node. A direct launch or hook under launchd's minimal `PATH`
+  resolves `${PNPM_HOME:-$HOME/Library/pnpm}/bin/node` instead. There is no
+  fallback to NVM, npm or Homebrew-managed Node, and the installer never
+  creates or rewrites `~/.zprofile` to modify the login shell's PATH.
+  If Node is missing, provision it with `pnpm runtime set node 24.12.0 -g`
+  and rerun the installer.
 - Keep OAuth/PAT/API credentials outside the repository. Background services
   load provider credentials from `~/.codex/.env`; for MiniMax this means a
   private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
@@ -1003,14 +1003,10 @@ serve routed tasks with that key.
 
 The Copilot CLI itself is found the way the Codex CLI is found, by one lookup
 in `runtime/src/shared/executables.ts`: `COPILOT_BIN` when it is set, then the
-first `copilot` on `PATH`, then the newest version-managed install under
-`~/.nvm/versions/node/*/bin`, then `~/.local/bin/copilot`. The bridge, the
-installer's dependency check, and the Router's ensure hook all use that one
-lookup, so they cannot disagree about whether Copilot is installed. It matters
-because the bridge runs under launchd, whose `PATH` names no version manager's
-bin directory: a CLI installed by npm under nvm is invisible to a `PATH` lookup
-there, and the provider then fails every turn with `spawn copilot ENOENT` while
-its own health endpoint still reports it ready. The Copilot CLI's launcher is a
+first `copilot` on `PATH`, then `PNPM_HOME/bin/copilot`, then
+`~/.local/bin/copilot`. The bridge, installer dependency check, and Router
+ensure hook all share that lookup. The explicit pnpm-global fallback works
+under launchd even when its minimal `PATH` omits pnpm's bin directory. The Copilot CLI's launcher is a
 `#!/usr/bin/env node` script, so the bridge puts its own Node first on the
 CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 

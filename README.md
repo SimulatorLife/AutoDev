@@ -32,19 +32,22 @@ in sync.
 
 ## Local validation toolchain
 
-AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
-`package.json` and locked in `pnpm-lock.yaml`. The local runtime baseline is
-Node 24.12+, declared by `.nvmrc` and the package engine constraint. Use
+AutoDev is managed exclusively with standalone pnpm `12.21.0`, declared by
+`packageManager` in `package.json` and locked in `pnpm-lock.yaml`. pnpm also
+manages Node.js. The project pins Node `24.12.0` in `.node-version` (which
+pnpm's Node shim honors) and requires Node `>=24.12.0` in `engines`.
+Bootstrap pnpm itself using its standalone installer, then run
+`pnpm runtime set node 24.12.0 -g` if Node is not already provisioned.
+npm, npx, NVM, and Corepack are not installation prerequisites. Use
 `pnpm install --frozen-lockfile` before running the checks. The typed command
 boundary is available as `pnpm autodev -- <command>` (or
 `node runtime/src/cli/autodev.ts <command>`); native TypeScript is executed directly by
 Node and checked with `pnpm run typecheck`. The root TypeScript project excludes
 Console-owned sources: the Console workspace typechecks them with Next.js route
 type generation and its bundler resolver. The aggregate command still checks
-all workspaces. The target-aware runner
-intentionally retains an npm compatibility branch for organization repositories
-that have not migrated their own package manager; that branch is not used to
-validate AutoDev. Run `pnpm autodev -- --help` to list the typed CLI commands;
+all workspaces. The target-aware runner requires pnpm for JavaScript target repositories
+and refuses a target without a `pnpm@<version>` package-manager declaration
+instead of falling back to npm. Run `pnpm autodev -- --help` to list the typed CLI commands;
 the help output uses this canonical pnpm invocation. Native Codex role MCP
 entries must use a complete stdio or streamable-HTTP transport shape; see
 [`docs/local-setup.md`](docs/local-setup.md) for the role and installer contract.
