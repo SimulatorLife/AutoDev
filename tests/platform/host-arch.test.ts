@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -13,19 +11,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  applyNativeNodeLoginProfileContent,
   codexCliVersion,
   executableArch,
-  foreignArchSystemNodePath,
   hostArch,
-  NATIVE_NODE_PROFILE_BEGIN,
-  NATIVE_NODE_PROFILE_END,
-  nativeNodeLoginProfileDir,
-  nativeNodeLoginProfileMatches,
   resolveServiceCodex,
   resolveServiceNode,
-  runsNatively,
-  syncNativeNodeLoginProfile
+  runsNatively
 } from "@simulatorlife/autodev-runtime/platform/host-arch";
 
 import { executableHeader } from "./executable-header.ts";
@@ -171,106 +162,4 @@ test("the Codex CLI version is read from the binary itself", () =>
     chmodSync(binary, 0o755);
     assert.equal(codexCliVersion(binary), "0.154.0");
     assert.equal(codexCliVersion(join(directory, "missing")), null);
-  }));
-
-test("nativeNodeLoginProfileDir detects Rosetta system node shadowing a native node", () =>
-  withTempDir((directory) => {
-    const home = join(directory, "home");
-    const sysDir = join(directory, "usr-local-bin");
-    const nvmDir = join(directory, "nvm-arm64-bin");
-    mkdirSync(home, { recursive: true });
-    mkdirSync(sysDir, { recursive: true });
-    mkdirSync(nvmDir, { recursive: true });
-
-    const intel = writeExecutable(sysDir, "node", executableHeader("amd64"));
-    const native = writeExecutable(nvmDir, "node", executableHeader("arm64"));
-
-    assert.equal(foreignArchSystemNodePath("arm64", [intel]), intel);
-    assert.equal(foreignArchSystemNodePath("amd64", [intel]), null);
-    assert.equal(
-      nativeNodeLoginProfileDir(home, {
-        host: "arm64",
-        systemCandidates: [intel],
-        nodeCandidates: [native]
-      }),
-      nvmDir
-    );
-    assert.equal(
-      nativeNodeLoginProfileDir(home, {
-        host: "arm64",
-        systemCandidates: [native],
-        nodeCandidates: [native]
-      }),
-      null,
-      "no login profile rewrite is needed when system node already runs natively"
-    );
-    assert.equal(
-      nativeNodeLoginProfileDir(home, {
-        host: "arm64",
-        systemCandidates: [intel],
-        nodeCandidates: [intel]
-      }),
-      null,
-      "no rewrite when no native node is installed"
-    );
-  }));
-
-test("syncNativeNodeLoginProfile idempotently maintains .zprofile and preserves operator lines", () =>
-  withTempDir((directory) => {
-    const home = join(directory, "home");
-    const sysDir = join(directory, "usr-local-bin");
-    const nvmDir = join(directory, "nvm-arm64-bin");
-    mkdirSync(home, { recursive: true });
-    mkdirSync(sysDir, { recursive: true });
-    mkdirSync(nvmDir, { recursive: true });
-
-    const intel = writeExecutable(sysDir, "node", executableHeader("amd64"));
-    const native = writeExecutable(nvmDir, "node", executableHeader("arm64"));
-    const options = {
-      host: "arm64" as const,
-      systemCandidates: [intel],
-      nodeCandidates: [native]
-    };
-
-    const profilePath = join(home, ".zprofile");
-    writeFileSync(profilePath, 'eval "$(/opt/homebrew/bin/brew shellenv)"\n\n');
-    assert.equal(nativeNodeLoginProfileMatches(home, options), false);
-
-    const first = syncNativeNodeLoginProfile(home, options);
-    assert.equal(first.changed, true);
-    assert.equal(first.nodeDir, nvmDir);
-    assert.equal(nativeNodeLoginProfileMatches(home, options), true);
-
-    const content = readFileSync(profilePath, "utf8");
-    assert.ok(content.startsWith('eval "$(/opt/homebrew/bin/brew shellenv)"'));
-    assert.ok(content.includes(NATIVE_NODE_PROFILE_BEGIN));
-    assert.ok(content.includes(`export PATH="${nvmDir}:$PATH"`));
-    assert.ok(content.includes(NATIVE_NODE_PROFILE_END));
-
-    const second = syncNativeNodeLoginProfile(home, options);
-    assert.equal(second.changed, false);
-
-    const removed = applyNativeNodeLoginProfileContent(content, null);
-    assert.equal(removed, 'eval "$(/opt/homebrew/bin/brew shellenv)"\n');
-
-    const cleaned = syncNativeNodeLoginProfile(home, {
-      host: "arm64",
-      systemCandidates: [native],
-      nodeCandidates: [native]
-    });
-    assert.equal(cleaned.changed, true);
-    assert.equal(
-      readFileSync(profilePath, "utf8"),
-      'eval "$(/opt/homebrew/bin/brew shellenv)"\n'
-    );
-
-    const emptyHome = join(directory, "empty-home");
-    mkdirSync(emptyHome, { recursive: true });
-    const noop = syncNativeNodeLoginProfile(emptyHome, {
-      host: "arm64",
-      systemCandidates: [native],
-      nodeCandidates: [native]
-    });
-    assert.equal(noop.changed, false);
-    assert.equal(existsSync(join(emptyHome, ".zprofile")), false);
   }));
