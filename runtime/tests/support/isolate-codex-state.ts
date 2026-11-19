@@ -35,3 +35,10 @@ if (process.env.OPENCLI_BROWSER_SETTING_FILE === undefined) {
     "opencli-browser.json"
   );
 }
+
+// The live router's bearer token, exported by an operator's shell profile so
+// the installed router and bridges share it. A test process that inherits it
+// turns on request authentication for every router handler it imports, so
+// a request the test builds without credentials is refused with 401. Tests
+// that exercise authentication set their own token.
+delete process.env.CODEX_ROUTER_AUTH_TOKEN;

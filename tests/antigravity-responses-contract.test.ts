@@ -25,6 +25,8 @@ import {
   limitPayload
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/antigravity.ts");
 const CONTRACT_PATH = join(
@@ -204,7 +206,7 @@ for (const event of fixture.events ?? []) process.stdout.write(JSON.stringify(ev
 if (fixture.stderr) process.stderr.write(fixture.stderr);
 process.exitCode = fixture.exitCode ?? 0;
 `;
-  await writeFile(fakeAgy, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await writeFile(fakeAgy, `${NODE_SHEBANG}\n${fakeSource}`, "utf8");
   await chmod(fakeAgy, 0o755);
   const child = spawn(process.execPath, [PROXY], {
     cwd: REPO_ROOT,
@@ -426,7 +428,7 @@ const fixture = JSON.parse(process.env.AGY_CONTRACT_CASE);
 if (fixture.marker) writeFileSync(fixture.marker, "started");
 for (const event of fixture.events ?? []) process.stdout.write(JSON.stringify(event) + "\n");
 `;
-  await writeFile(fakeAgy, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await writeFile(fakeAgy, `${NODE_SHEBANG}\n${fakeSource}`, "utf8");
   await chmod(fakeAgy, 0o755);
   const child = spawn(process.execPath, [PROXY], {
     cwd: REPO_ROOT,

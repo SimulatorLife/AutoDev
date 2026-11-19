@@ -60,9 +60,25 @@ test("no Console module re-exports a symbol owned by another module", () => {
     /^export \{[^}]*\} from ["'](?:\.\.?\/|@simulatorlife\/)/mu;
   const aggregator = path.join("console", "src", "index.ts");
 
+  // A feature's `index.ts` that re-exports only its own directory's modules is
+  // that feature's one entrypoint (`features/playtesting/active-runs/`), not a
+  // second home: its boundary test keeps callers from reaching past it. Only
+  // a re-export that leaves the file's directory is a pass-through.
+  const reExports =
+    /^export \{[^}]*\} from ["']((?:\.\.?\/|@simulatorlife\/)[^"']*)["']/gmu;
+  const passesThrough = (file: string): boolean => {
+    const targets = Array.from(
+      source(file).matchAll(reExports),
+      (match) => match[1]!
+    );
+    if (path.basename(file) !== "index.ts") return targets.length > 0;
+    return targets.some((target) => !target.startsWith("./"));
+  };
+
   const offenders = sourceFiles(path.join(repositoryRoot, "console", "src"))
     .filter((file) => !file.endsWith(aggregator))
-    .filter((file) => oneOffAlias.test(source(file)));
+    .filter((file) => oneOffAlias.test(source(file)))
+    .filter(passesThrough);
 
   assert.deepEqual(offenders, []);
 });

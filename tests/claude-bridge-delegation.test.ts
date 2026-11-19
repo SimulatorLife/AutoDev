@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const BRIDGE = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 const BRIDGE_TOKEN = "claude-bridge-token";
@@ -120,7 +122,7 @@ async function runTurn(headers: Record<string, string>): Promise<BridgeTurn> {
   const stdinFile = join(temp, "stdin.txt");
   const spawnResultFile = join(temp, "spawn-result.json");
   const port = await freePort();
-  await writeFile(cliPath, `#!/usr/bin/env node\n${STUB_CLI}`, "utf8");
+  await writeFile(cliPath, `${NODE_SHEBANG}\n${STUB_CLI}`, "utf8");
   await chmod(cliPath, 0o755);
   const child = spawn(process.execPath, [BRIDGE], {
     cwd: REPO_ROOT,

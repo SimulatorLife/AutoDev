@@ -150,43 +150,10 @@ function count(value: number | null): string {
   return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
 }
 
-/**
- * Prompt and skill measurements the Data engine does not supply yet.
- *
- * Core's SessionThreadPromptOverhead carries initialDeveloperBytes only, and
- * skillsRead as a deduplicated name list. The session view reads the fields
- * below so that the day Core/Data add them the Console shows them with no
- * further change here -- and, until then, shows "Not observed" rather than a
- * number it made up. Required additions to SessionThreadPromptOverhead:
- *
- * - initialDeveloperChars: number | null -- the developer prompt's length in
- *   characters (code points).
- * - initialDeveloperTokens: number | null -- its token count, by one named
- *   tokenizer the Data engine documents.
- * - skillReadCounts: Record<string, number> -- SKILL.md reads per skill name
- *   for the thread (the keys are skillsRead).
- *
- * When Core adds them, delete this interface and read the fields directly.
- */
-interface PendingPromptMeasurements extends SessionThreadPromptOverhead {
-  readonly initialDeveloperChars?: number | null;
-  readonly initialDeveloperTokens?: number | null;
-  readonly skillReadCounts?: Readonly<Record<string, number>>;
-}
-
-function pendingMeasurements(
-  prompt: SessionThreadPromptOverhead | undefined
-): Partial<PendingPromptMeasurements> {
-  // Core's type has none of these fields; an object that carries them is read
-  // through the interface that names them.
-  return prompt ?? {};
-}
-
 /** The units the initial developer prompt can be read in. */
 function promptSizeUnits(
   prompt: SessionThreadPromptOverhead | undefined
 ): readonly InlineDisplayUnit[] {
-  const pending = pendingMeasurements(prompt);
   return [
     {
       id: "bytes",
@@ -198,13 +165,13 @@ function promptSizeUnits(
       id: "characters",
       singular: "character",
       plural: "characters",
-      value: pending.initialDeveloperChars ?? null
+      value: prompt?.initialDeveloperChars ?? null
     },
     {
       id: "tokens",
       singular: "token",
       plural: "tokens",
-      value: pending.initialDeveloperTokens ?? null
+      value: prompt?.initialDeveloperTokens ?? null
     }
   ];
 }
@@ -217,10 +184,9 @@ interface ThreadSkillRead {
 
 function threadSkillReads(thread: SessionThreadTrace): ThreadSkillRead[] {
   const prompt = thread.efficiency?.prompt;
-  const counts = pendingMeasurements(prompt).skillReadCounts;
   return (prompt?.skillsRead ?? []).map((skill) => ({
     skill,
-    reads: counts?.[skill] ?? null
+    reads: prompt?.skillReadCounts[skill] ?? null
   }));
 }
 

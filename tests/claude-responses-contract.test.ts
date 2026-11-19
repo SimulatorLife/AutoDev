@@ -10,6 +10,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
+import { NODE_SHEBANG } from "./node-shebang.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/claude.ts");
@@ -235,7 +236,7 @@ async function stop(child: any): Promise<void> {
  * the process off before a piped stdout finished flushing.
  */
 function buildFakeCliSource(): string {
-  return String.raw`#!/usr/bin/env node
+  return String.raw`${NODE_SHEBANG}
 const fs = require("node:fs");
 const fixture = JSON.parse(process.env.CLAUDE_CONTRACT_CASE || "{}");
 if (fixture.marker) fs.writeFileSync(fixture.marker, "started");

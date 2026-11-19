@@ -197,10 +197,13 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
           },
           prompt: {
             initialDeveloperBytes: 1200,
+            initialDeveloperChars: 1188,
+            initialDeveloperTokens: null,
             skillsCatalogBytes: 800,
             skillsLoaded: 2,
             skillsByRoot: { "/repo/.agents/skills": 2 },
             skillsRead: ["autodev-session-diagnostics"],
+            skillReadCounts: { "autodev-session-diagnostics": 1 },
             skillTelemetryReads: 1
           }
         }
@@ -272,10 +275,13 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
       maxReplacementImages: 0,
       responseImageItems: 0,
       maxInitialDeveloperBytes: 1200,
+      maxInitialDeveloperChars: 1188,
+      maxInitialDeveloperTokens: null,
       maxSkillsCatalogBytes: 800,
       maxSkillsLoaded: 2,
       skillsByRoot: { "/repo/.agents/skills": 2 },
       uniqueSkillsRead: 1,
+      skillReadCounts: { "autodev-session-diagnostics": 1 },
       skillTelemetryReads: 1,
       turnsTotal: 2,
       turnsByOutcome: { completed: 2 },

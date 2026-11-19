@@ -79,25 +79,22 @@ test("resolver derives the Copilot launchd and typed-runtime paths", (t) => {
   assert.equal(result.copilotBin, binary);
 });
 
-test("the Copilot CLI is found when only a version-managed install has it", (t) => {
-  const home = mkdtempSync(join(tmpdir(), "autodev-copilot-nvm-"));
+test("the Copilot CLI is found when only a pnpm global install has it", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "autodev-copilot-pnpm-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
-  const binary = join(
+  const pnpmBin = join(
     home,
-    ".nvm",
-    "versions",
-    "node",
-    "v25.0.0",
-    "bin",
-    "copilot"
+    ...(process.platform === "darwin"
+      ? ["Library", "pnpm"]
+      : [".local", "share", "pnpm"]),
+    "bin"
   );
-  mkdirSync(join(home, ".nvm", "versions", "node", "v25.0.0", "bin"), {
-    recursive: true
-  });
+  mkdirSync(pnpmBin, { recursive: true });
+  const binary = join(pnpmBin, "copilot");
   writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   chmodSync(binary, 0o755);
-  // The launchd PATH the router and the bridge run with: it names no version
-  // manager's bin directory, so a PATH lookup alone finds nothing to start.
+  // The launchd PATH the router and the bridge run with: it names neither
+  // PNPM_HOME nor its bin directory, so a PATH lookup alone finds nothing.
   const result = resolveCopilotEnsureOptions({
     HOME: home,
     PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"

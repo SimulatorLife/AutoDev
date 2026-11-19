@@ -37,6 +37,33 @@ const validEvent = {
   reason: "completed"
 };
 
+/** A Runtime module and the Runtime modules it imports, transitively. */
+function runtimeImportClosure(
+  repositoryRoot: string,
+  runtimePackage: { name: string; exports: Record<string, string> },
+  entry: string
+): string[] {
+  const packageName = runtimePackage.name.replaceAll("/", String.raw`\/`);
+  const specifier = new RegExp(
+    String.raw`from "${packageName}(\/[^"]+)"`,
+    "gu"
+  );
+  const seen = new Set<string>();
+  const pending = [entry];
+  while (pending.length > 0) {
+    const module = pending.pop()!;
+    if (seen.has(module)) continue;
+    seen.add(module);
+    const text = readFileSync(path.join(repositoryRoot, module), "utf8");
+    for (const [, subpath] of text.matchAll(specifier)) {
+      const target = runtimePackage.exports[`.${subpath}`];
+      assert.ok(target, `${module} imports an unexported subpath .${subpath}`);
+      pending.push(path.join("runtime", target.slice(2)));
+    }
+  }
+  return [...seen];
+}
+
 test("SessionEnd capture accepts only bounded session identity and local paths", () => {
   assert.deepEqual(sessionEndCapture(validEvent), {
     sessionId: "codex-session-1",
@@ -242,13 +269,18 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
     const runtimePackage = JSON.parse(
       readFileSync(path.join(repositoryRoot, "runtime/package.json"), "utf8")
     ) as { name: string; exports: Record<string, string> };
+    // The hook and every Runtime module it imports, transitively, as the
+    // installer ships them: a hand-picked list went stale the moment the hook
+    // gained an import, and the installed hook then failed to resolve it.
+    const hookModules = runtimeImportClosure(
+      repositoryRoot,
+      runtimePackage,
+      "runtime/src/hooks/memory-session-end.ts"
+    );
     materializeRuntimeContent(
       renderRuntimeMirrorPackage({
         runtimePackage,
-        materialized: new Set([
-          "runtime/src/hooks/memory-session-end.ts",
-          "runtime/src/router/routing.ts"
-        ])
+        materialized: new Set([...hookModules, "runtime/src/router/routing.ts"])
       }),
       installedModulePackage,
       0o644
@@ -271,6 +303,13 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
       "runtime/src/hooks/memory-session-end.ts",
       codexHome
     );
+    for (const module of hookModules)
+      if (module !== "runtime/src/hooks/memory-session-end.ts")
+        materializeRuntimeFile(
+          path.join(repositoryRoot, module),
+          runtimeTarget(module, codexHome),
+          0o644
+        );
     materializeRuntimeFile(source, installed, 0o755);
     assert.equal(runtimeFileMatches(source, installed), true);
     assert.equal(

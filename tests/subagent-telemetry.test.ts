@@ -1716,7 +1716,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       const run = (customInput: unknown = input) =>
         new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
           const child = execFile(
-            "node",
+            process.execPath,
             [scriptPath],
             { env: process.env },
             (error, stdout, stderr) => {

@@ -345,11 +345,13 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
     await readFile(path.join(root, "package.json"), "utf8")
   );
   assert.equal(packageJson.packageManager, "pnpm@12.21.0");
-  assert.ok(
-    (await readFile(path.join(root, "pnpm-lock.yaml"), "utf8")).startsWith(
-      "lockfileVersion:"
-    )
-  );
+  // pnpm 12 writes the lockfile as YAML documents (the package-manager
+  // environment, then the project), each opening with its lockfileVersion.
+  const lockfile = await readFile(path.join(root, "pnpm-lock.yaml"), "utf8");
+  const documents = lockfile.split(/^---\n/mu).filter(Boolean);
+  assert.ok(documents.length > 0);
+  for (const document of documents)
+    assert.match(document, /^lockfileVersion: /u);
   const profiles = JSON.parse(
     await readFile(
       path.join(root, ".github", "ci", "validation-profiles.json"),

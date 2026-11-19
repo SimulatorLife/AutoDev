@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PERMISSION_DIAGNOSTIC =
   'jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied. private target: /private/workspace/source.ts';
@@ -109,7 +111,7 @@ async function startBridge(
     join(codexRuntime, "mcp-servers.json"),
     JSON.stringify({ playwright: { command: process.execPath, args: [] } })
   );
-  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${fakeAgyBody}`, {
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${fakeAgyBody}`, {
     mode: 0o755
   });
 

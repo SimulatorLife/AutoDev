@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/antigravity.ts");
 
@@ -77,7 +79,7 @@ import { writeFileSync } from "node:fs";
 writeFileSync(process.env.AGY_ARGV_FILE, JSON.stringify(process.argv));
 process.stdout.write(JSON.stringify({ type: "result", text: "done" }) + "\n");
 `;
-  await writeFile(fakeAgy, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await writeFile(fakeAgy, `${NODE_SHEBANG}\n${fakeSource}`, "utf8");
   await chmod(fakeAgy, 0o755);
   const isolatedCodexHome = join(temp, "codex");
   const isolatedUserHome = join(temp, "user");

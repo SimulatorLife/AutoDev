@@ -15,13 +15,18 @@ import { runCopilot } from "@simulatorlife/autodev-runtime/providers/copilot";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 /**
- * A Copilot CLI installed by npm under nvm -- where the GitHub installer puts
- * it, and where no launchd PATH names it. The launcher is a `#!/usr/bin/env
- * node` script, so the Node that runs it is whichever `node` its PATH names
- * first.
+ * A Copilot CLI installed globally by pnpm -- in PNPM_HOME's bin directory,
+ * which no launchd PATH names. The launcher is a `#!/usr/bin/env node`
+ * script, so the Node that runs it is whichever `node` its PATH names first.
  */
-function versionManagedCli(home: string, capture: string): string {
-  const directory = join(home, ".nvm", "versions", "node", "v25.0.0", "bin");
+function pnpmGlobalCli(home: string, capture: string): string {
+  const directory = join(
+    home,
+    ...(process.platform === "darwin"
+      ? ["Library", "pnpm"]
+      : [".local", "share", "pnpm"]),
+    "bin"
+  );
   mkdirSync(directory, { recursive: true });
   const binary = join(directory, "copilot");
   writeFileSync(
@@ -54,8 +59,8 @@ console.log(JSON.stringify({ type: "result", data: { exitCode: 0 } }));
 
 /**
  * The environment the managed runtime runs the bridge in: launchd's PATH,
- * which names no version manager's bin directory and no Node of its own on
- * Apple Silicon.
+ * which names no pnpm bin directory and no Node of its own on Apple Silicon,
+ * and the fixture home's own Codex home.
  */
 function launchdEnvironment(
   home: string,
@@ -63,7 +68,8 @@ function launchdEnvironment(
 ): NodeJS.ProcessEnv {
   // The bridge fails closed without its MCP catalogue, so the fixture home
   // carries one holding every server the default role is granted.
-  const catalogue = join(home, ".codex", "provider-runtime");
+  const codexHome = join(home, ".codex");
+  const catalogue = join(codexHome, "provider-runtime");
   mkdirSync(catalogue, { recursive: true });
   const servers: Record<string, unknown> = {};
   for (const name of roleContract(null).mcp)
@@ -71,6 +77,7 @@ function launchdEnvironment(
   writeFileSync(join(catalogue, "mcp-servers.json"), JSON.stringify(servers));
   return {
     HOME: home,
+    CODEX_HOME: codexHome,
     PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
     ...overrides
   };
@@ -83,8 +90,11 @@ function withEnvironment(
   const previous = {
     HOME: process.env.HOME,
     PATH: process.env.PATH,
+    CODEX_HOME: process.env.CODEX_HOME,
+    PNPM_HOME: process.env.PNPM_HOME,
     COPILOT_BIN: process.env.COPILOT_BIN
   };
+  delete process.env.PNPM_HOME;
   Object.assign(process.env, env);
   return run().finally(() => {
     for (const [key, value] of Object.entries(previous)) {
@@ -98,7 +108,7 @@ test("the Copilot bridge runs a CLI that no PATH names", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "autodev-copilot-cli-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const capture = join(home, "capture.json");
-  versionManagedCli(home, capture);
+  pnpmGlobalCli(home, capture);
 
   let answer = "";
   await withEnvironment(launchdEnvironment(home), async () => {

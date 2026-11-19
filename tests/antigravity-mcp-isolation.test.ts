@@ -23,6 +23,8 @@ import {
 } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -768,7 +770,7 @@ test("isolated HOME is cleaned after successful CLI completion", async () => {
 
   writeFileSync(
     fakeAgy,
-    String.raw`#!/usr/bin/env node
+    String.raw`${NODE_SHEBANG}
 import { writeFileSync } from "node:fs";
 if (process.env.SENTINEL_FILE) {
   writeFileSync(process.env.SENTINEL_FILE, process.env.HOME || "");
@@ -820,7 +822,7 @@ test("isolated HOME is cleaned after CLI failure", async () => {
 
   writeFileSync(
     fakeAgy,
-    String.raw`#!/usr/bin/env node
+    String.raw`${NODE_SHEBANG}
 import { writeFileSync } from "node:fs";
 if (process.env.SENTINEL_FILE) {
   writeFileSync(process.env.SENTINEL_FILE, process.env.HOME || "");
@@ -1018,7 +1020,7 @@ test("browser-tester role is accepted and receives Playwright-only isolated HOME
 
   writeFileSync(
     fakeAgy,
-    String.raw`#!/usr/bin/env node
+    String.raw`${NODE_SHEBANG}
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -1123,7 +1125,7 @@ test("proxy server accepts browser-tester request and does not reject with 400",
   const fakeAgy = join(temp, "fake-agy.mjs");
   writeFileSync(
     fakeAgy,
-    String.raw`#!/usr/bin/env node
+    String.raw`${NODE_SHEBANG}
 process.stdout.write(JSON.stringify({
   event: "result",
   result: { status: "SUCCESS", response: "browser-test-complete" }

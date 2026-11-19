@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 test("Claude stream processing remains iterative across a long incremental stream", async () => {
   const lineCount = 2048;
   const expectedText = "x".repeat(lineCount);
@@ -11,7 +13,7 @@ test("Claude stream processing remains iterative across a long incremental strea
   const fakeCli = join(temp, "fake-claude.mjs");
   await writeFile(
     fakeCli,
-    String.raw`#!/usr/bin/env node
+    String.raw`${NODE_SHEBANG}
 for await (const _chunk of process.stdin) {}
 const lineCount = Number(process.env.CLAUDE_STREAM_TEST_LINES);
 for (let index = 0; index < lineCount; index++) {

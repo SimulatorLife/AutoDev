@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 
 /**
@@ -276,7 +278,7 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
       playwright: { command: process.execPath, args: [] }
     })
   );
-  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${FAKE_AGY}`, { mode: 0o755 });
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${FAKE_AGY}`, { mode: 0o755 });
   writeFileSync(agyLog, "");
 
   const bridge = spawn(
@@ -548,7 +550,7 @@ test("a second tool call made while the turn is parked still reaches Codex", asy
       playwright: { command: process.execPath, args: [] }
     })
   );
-  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${PARALLEL_AGY}`, {
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${PARALLEL_AGY}`, {
     mode: 0o755
   });
   writeFileSync(agyLog, "");
@@ -716,7 +718,7 @@ test("a continuation for a call no live turn owns starts a turn instead of hangi
   writeFileSync(
     fakeAgy,
     [
-      "#!/usr/bin/env node",
+      NODE_SHEBANG,
       'import { appendFileSync } from "node:fs";',
       `appendFileSync(${JSON.stringify(agyLog)}, process.pid + ${JSON.stringify("\n")});`,
       String.raw`process.stdout.write(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "fresh turn" } }) + "\n");`,
@@ -822,7 +824,7 @@ test("an image the user attached is written where agy can open it, and named in 
       playwright: { command: process.execPath, args: [] }
     })
   );
-  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${FAKE_AGY}`, { mode: 0o755 });
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${FAKE_AGY}`, { mode: 0o755 });
   writeFileSync(agyLog, "");
 
   const bridge = spawn(
@@ -1061,7 +1063,7 @@ test("orchestrator spawn session survives orphaned turn cleanup, leaf burst, and
       playwright: { command: process.execPath, args: [] }
     })
   );
-  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${OVERLAP_ORCH_AGY}`, {
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${OVERLAP_ORCH_AGY}`, {
     mode: 0o755
   });
   writeFileSync(agyLog, "");

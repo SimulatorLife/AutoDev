@@ -10,6 +10,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 // The Claude bridge serves Claude as the model behind a Codex turn: every
 // action is a Codex tool call Codex executes and the app renders. These tests
 // drive the real bridge and the real MCP shim with a fake Claude CLI that
@@ -23,7 +25,7 @@ type JsonRecord = Record<string, any>;
 // stream-json`: reads the turn's user message on stdin, starts the MCP server
 // named in --mcp-config, and follows the script in CLAUDE_FAKE_SCRIPT. `call`
 // blocks on a real MCP tools/call.
-const FAKE_CLI = String.raw`#!/usr/bin/env node
+const FAKE_CLI = String.raw`${NODE_SHEBANG}
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const args = process.argv.slice(2);

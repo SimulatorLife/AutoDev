@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
 
+import { NODE_SHEBANG } from "./node-shebang.ts";
+
 /**
  * The Claude bridge's token reporting.
  *
@@ -16,7 +18,7 @@ import test, { after, before } from "node:test";
  * so the fake CLI is installed before that import and every case tells it
  * which events to emit through the environment.
  */
-const FAKE_CLI = String.raw`#!/usr/bin/env node
+const FAKE_CLI = String.raw`${NODE_SHEBANG}
 import fs from "node:fs";
 const fixture = JSON.parse(fs.readFileSync(process.env.CLAUDE_USAGE_FIXTURE, "utf8"));
 for (const event of fixture.events || []) process.stdout.write(JSON.stringify(event) + "\n");
