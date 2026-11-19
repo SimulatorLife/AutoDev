@@ -1136,7 +1136,10 @@ test("ChatGPT's missing completion marker requires a settled reply and stopped g
   assert.equal(utils.chatgptReplyCanFinish(stored, 11_999, false), false);
   assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, true), false);
   assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, false), true);
-  assert.equal(utils.chatgptReplyCanFinish({ ...stored, finished: true }, 0, true), true);
+  assert.equal(
+    utils.chatgptReplyCanFinish({ ...stored, finished: true }, 0, true),
+    true
+  );
 });
 
 test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
@@ -1170,10 +1173,12 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
     .split("\n")
     .map((line) => JSON.parse(line) as { text: string; url: string });
   rmSync(directory, { recursive: true, force: true });
-  assert.deepEqual(records, [{
-    text: CHATGPT_STORED_REPLY,
-    url: `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
-  }]);
+  assert.deepEqual(records, [
+    {
+      text: CHATGPT_STORED_REPLY,
+      url: `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
+    }
+  ]);
 });
 
 test("a Gemini reply keeps the line breaks the page shows inside a paragraph", async () => {
