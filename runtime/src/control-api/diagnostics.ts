@@ -71,9 +71,7 @@ export function setControlApiDiagnosticsRouterStatusSource(
 }
 
 /** The registered in-process router status, if any. */
-export function controlApiDiagnosticsRouterStatusSource():
-  | ControlApiDiagnosticsRouterStatusSource
-  | null {
+export function controlApiDiagnosticsRouterStatusSource(): ControlApiDiagnosticsRouterStatusSource | null {
   return routerStatusSource;
 }
 
@@ -88,9 +86,7 @@ export function diagnosticsRouterLog(codexHome: string): string {
   return path.join(codexHome, "run", DEFAULT_ROUTER_LOG);
 }
 
-function resolvedCodexHome(
-  options: ControlApiDiagnosticsOptions
-): string {
+function resolvedCodexHome(options: ControlApiDiagnosticsOptions): string {
   const explicit = options.codexHome?.trim();
   if (explicit) return explicit;
   const fromEnv = process.env.CODEX_HOME?.trim();
@@ -416,4 +412,3 @@ async function handleSessionRoute(
   }
   sendJsonBody(response, report);
 }
-

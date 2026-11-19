@@ -39,6 +39,7 @@ import {
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
   OpencliConversationLedger,
+  OpencliReplyPreview,
   opencliToolCallItem,
   parseOpencliOutput,
   parseOpencliReply,
@@ -986,6 +987,324 @@ test("a streamed turn opens at once, keeps alive, and reports a failure in the s
     assert.match(events, /ChatGPT reply could not be read/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+const GEMINI_CHAT = "https://gemini.google.com/app/conv9";
+
+/** The events of an SSE body, in order. */
+function sseEvents(body: string): Array<{ event: string; data: JsonRecord }> {
+  return body
+    .split("\n\n")
+    .filter((block) => block.startsWith("event: "))
+    .map((block) => {
+      const [head, data] = block.split("\n");
+      return {
+        event: String(head).slice("event: ".length),
+        data: JSON.parse(String(data).slice("data: ".length)) as JsonRecord
+      };
+    });
+}
+
+/** Reads a streamed response until its text satisfies the condition. */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  seen: { text: string },
+  done: (text: string) => boolean
+): Promise<void> {
+  const decoder = new TextDecoder();
+  while (!done(seen.text)) {
+    const chunk = await reader.read();
+    if (chunk.done) return;
+    seen.text += decoder.decode(chunk.value, { stream: true });
+  }
+}
+
+/**
+ * A bridge whose Gemini turn tells its progress descriptor how the reply reads
+ * ("readings"), then waits for the test to release the finished reply.
+ */
+async function withGeminiProgress(
+  readings: readonly JsonRecord[],
+  body: (
+    baseUrl: string,
+    finish: (row: JsonRecord | Error) => void,
+    asks: OpencliRunRequest[]
+  ) => Promise<void>
+): Promise<void> {
+  let finish: (row: JsonRecord | Error) => void = () => {};
+  const asks: OpencliRunRequest[] = [];
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      asks.push(request);
+      for (const reading of readings) request.onProgress?.(reading);
+      const row = await new Promise<JsonRecord | Error>((resolve) => {
+        finish = resolve;
+      });
+      if (row instanceof Error) throw row;
+      return [row];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    await body("http://127.0.0.1:" + port, (row) => finish(row), asks);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+const reading = (text: string, url = GEMINI_CHAT): JsonRecord => ({
+  text,
+  url
+});
+
+test("a Gemini reply's settled prose reaches Codex before the command ends, and the final item is exact", async () => {
+  const call = '<tool_call name="exec">\ntext(1)\n</tool_call>';
+  await withGeminiProgress(
+    [
+      reading("Hello there.\nSecond li"),
+      reading('Hello there.\nSecond line.\n<tool_call name="exec">\ntext('),
+      reading('Hello there.\nSecond line.\n<tool_call name="exec">\ntext(')
+    ],
+    async (baseUrl, finish) => {
+      const response = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        stream: true,
+        tools: [EXEC_TOOL],
+        input: "hi"
+      });
+      const reader = response.body!.getReader();
+      const seen = { text: "" };
+      await readUntil(reader, seen, (text) => text.includes("Second line."));
+      // The command has not returned, yet the prose is already in the stream,
+      // and nothing of the call being written is.
+      assert.doesNotMatch(seen.text, /response\.completed/u);
+      assert.doesNotMatch(seen.text, /tool_call/u);
+      finish({
+        response: "💬 Hello there.\nSecond line.\n" + call,
+        url: GEMINI_CHAT
+      });
+      await readUntil(reader, seen, () => false);
+      const events = sseEvents(seen.text);
+      const deltas = events
+        .filter((entry) => entry.event === "response.output_text.delta")
+        .map((entry) => entry.data.delta);
+      // Appended, never repeated: the finished reply adds nothing to the text.
+      assert.deepEqual(deltas, ["Hello there.", "\nSecond line."]);
+      assert.equal(
+        events.filter((entry) => entry.event === "response.output_item.added")
+          .length,
+        2
+      );
+      const completed = events.find(
+        (entry) => entry.event === "response.completed"
+      )!.data.response as { output: JsonRecord[]; output_text: string };
+      assert.deepEqual(
+        completed.output.map((item) => item.type),
+        ["message", "custom_tool_call"]
+      );
+      assert.equal(completed.output_text, "Hello there.\nSecond line.");
+      const done = events.find(
+        (entry) => entry.event === "response.output_text.done"
+      )!;
+      assert.equal(done.data.text, "Hello there.\nSecond line.");
+      // One message item, id and index unchanged from its first event to its last.
+      const messageIds = new Set(
+        events
+          .filter((entry) => entry.event.startsWith("response.output_text"))
+          .map((entry) => entry.data.item_id)
+      );
+      assert.equal(messageIds.size, 1);
+      assert.equal(events.at(-1)!.event, "response.completed");
+    }
+  );
+});
+
+test("a Gemini reply that no longer begins with what was shown fails instead of being revised", async () => {
+  await withGeminiProgress(
+    [
+      reading("Alpha one.\nAlpha two.\nx"),
+      reading("Alpha one.\nAlpha two.\ny")
+    ],
+    async (baseUrl, finish, asks) => {
+      const response = await post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        stream: true,
+        input: "hi"
+      });
+      const reader = response.body!.getReader();
+      const seen = { text: "" };
+      await readUntil(reader, seen, (text) => text.includes("Alpha two."));
+      finish({ response: "💬 Beta.", url: GEMINI_CHAT });
+      await readUntil(reader, seen, () => false);
+      const events = sseEvents(seen.text);
+      assert.equal(events.at(-1)!.event, "response.failed");
+      assert.doesNotMatch(seen.text, /response\.completed/u);
+      assert.match(seen.text, /changed after part of it was shown/u);
+      // Nothing was run a second time to make up for it.
+      assert.equal(asks.length, 1);
+    }
+  );
+});
+
+test("a reading from another Gemini chat, or a malformed one, is not shown", async () => {
+  // The continued turn: a reading must come from the chat it continues.
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      const asked = request.args.includes("--conversation");
+      const other = reading(
+        "Stranger one.\nStranger two.\n",
+        "https://gemini.google.com/app/other"
+      );
+      request.onProgress?.(other);
+      request.onProgress?.(other);
+      request.onProgress?.({ text: 7, url: GEMINI_CHAT });
+      request.onProgress?.(reading("No url.\nNo url.\n", ""));
+      return [
+        asked
+          ? { response: "💬 Done.", url: GEMINI_CHAT }
+          : {
+              response:
+                '💬 Hm.\n<tool_call name="exec">\ntext(1)\n</tool_call>',
+              url: GEMINI_CHAT
+            }
+      ];
+    }
+  });
+  const server: Server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const baseUrl = "http://127.0.0.1:" + port;
+    const input: JsonRecord[] = [userMessage("go")];
+    const payload = {
+      model: "opencli-gemini-3.1-pro",
+      tools: [EXEC_TOOL],
+      instructions: "x"
+    };
+    const first = (await (
+      await post(baseUrl, { ...payload, input })
+    ).json()) as { output: JsonRecord[] };
+    const call = first.output.find((item) => item.type === "custom_tool_call")!;
+    const second = await post(baseUrl, {
+      ...payload,
+      stream: true,
+      input: [
+        ...input,
+        ...first.output,
+        { type: "custom_tool_call_output", call_id: call.call_id, output: "1" }
+      ]
+    });
+    const events = sseEvents(await second.text());
+    const deltas = events.filter(
+      (entry) => entry.event === "response.output_text.delta"
+    );
+    // Only the finished reply, in the one delta a reply that was not
+    // previewed has always had.
+    assert.deepEqual(
+      deltas.map((entry) => entry.data.delta),
+      ["Done."]
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a request that is not streamed is not given a progress channel", async () => {
+  await withGeminiProgress(
+    [reading("Hello there.\nSecond line.\n")],
+    async (baseUrl, finish, asks) => {
+      const pending = post(baseUrl, {
+        model: "opencli-gemini-3.1-pro",
+        input: "hi"
+      });
+      while (asks.length === 0)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(asks[0]!.onProgress, undefined);
+      finish({ response: "💬 Whole.", url: GEMINI_CHAT });
+      const body = (await (await pending).json()) as { output_text: string };
+      assert.equal(body.output_text, "Whole.");
+    }
+  );
+});
+
+test("the process runner hears progress on its own descriptor, apart from the result and diagnostics", async () => {
+  const script = [
+    'const fs = require("node:fs");',
+    String.raw`fs.writeSync(3, JSON.stringify({ text: "one" }) + "\n");`,
+    String.raw`fs.writeSync(3, "not json\n");`,
+    String.raw`fs.writeSync(3, JSON.stringify({ text: "two" }) + "\n");`,
+    "process.stdout.write(JSON.stringify({ ok: true, data: [{ fd: process.env.OPENCLI_PROGRESS_FD ?? null }] }));"
+  ].join("");
+  const runner = processRunner(
+    () => ({ command: process.execPath, args: ["-e", script] }),
+    { chatgpt: 1, gemini: 1 },
+    () => false
+  );
+  try {
+    const heard: JsonRecord[] = [];
+    const result = await runner({
+      args: ["gemini", "ask", "x"],
+      signal: AbortSignal.timeout(5000),
+      onProgress: (record) => heard.push(record)
+    });
+    assert.deepEqual(heard, [{ text: "one" }, { text: "two" }]);
+    assert.deepEqual(result, [{ fd: "3" }]);
+    // A command given no one to tell is not told of the descriptor either.
+    const silent = await runner({
+      args: ["gemini", "ask", "x"],
+      signal: AbortSignal.timeout(5000)
+    });
+    assert.deepEqual(silent, [{ fd: null }]);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("a reply being written is previewed only as whole, agreed, tool-free prose", () => {
+  const preview = new OpencliReplyPreview();
+  // A line still being written is not shown, nor is one reading's word.
+  assert.equal(preview.next("Hello wor"), null);
+  assert.equal(preview.next("Hello world.\nNext li"), null);
+  // Two readings agree on the first line.
+  assert.equal(preview.next("Hello world.\nNext line.\nThird"), "Hello world.");
+  assert.equal(
+    preview.next("Hello world.\nNext line.\nThird part\n"),
+    "\nNext line."
+  );
+  // A page that rewrites what was shown adds nothing and revises nothing.
+  assert.equal(preview.next("Changed.\nNext line.\nThird part\n"), null);
+  assert.equal(preview.next("Changed.\nNext line.\nThird part\n"), null);
+  assert.equal(preview.shown, "Hello world.\nNext line.");
+  // A call being written, in any of its spellings, is never shown.
+  for (const marker of [
+    '<tool_call name="exec">',
+    "<tool_call",
+    "<tool_output>",
+    "&lt;tool_call",
+    "a &amp; b"
+  ]) {
+    const guarded = new OpencliReplyPreview();
+    const text = "Fine.\n" + marker + "\nsecret\n";
+    guarded.next(text);
+    guarded.next(text);
+    assert.equal(guarded.shown, "Fine.", marker);
   }
 });
 

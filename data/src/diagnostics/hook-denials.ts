@@ -11,8 +11,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  SESSION_HOOK_DENIALS_SCHEMA,
   type HookDenialSummary,
+  SESSION_HOOK_DENIALS_SCHEMA,
   type SessionHookDenialsResponse
 } from "@simulatorlife/autodev-core";
 

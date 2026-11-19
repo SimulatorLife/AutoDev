@@ -112,10 +112,7 @@ function fleetHref(
   return `/usage?${params.toString()}`;
 }
 
-function panel(
-  title: string,
-  children: React.ReactNode
-): React.JSX.Element {
+function panel(title: string, children: React.ReactNode): React.JSX.Element {
   return React.createElement(
     "section",
     { className: "flex flex-col gap-3" },
@@ -293,7 +290,10 @@ function renderHookDenials(
       { className: "flex flex-col gap-3" },
       React.createElement(
         "nav",
-        { "aria-label": "Hook denial window", className: "flex flex-wrap gap-3" },
+        {
+          "aria-label": "Hook denial window",
+          className: "flex flex-wrap gap-3"
+        },
         ...windowLinks
       ),
       React.createElement(

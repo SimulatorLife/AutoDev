@@ -47,7 +47,9 @@ interface DiagnosticsFixture {
 }
 
 function fixture(): DiagnosticsFixture {
-  const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-control-diagnostics-"));
+  const codexHome = mkdtempSync(
+    path.join(tmpdir(), "autodev-control-diagnostics-")
+  );
   const day = path.join(codexHome, "sessions", "2026", "09", "18");
   mkdirSync(day, { recursive: true });
   const line = (timestamp: string, type: string, payload: unknown) =>
@@ -171,10 +173,7 @@ test("the session route publishes one session's diagnostics", async () => {
   const { codexHome, cleanup } = fixture();
   try {
     const response = await withToken(() =>
-      call(
-        `/control/diagnostics/sessions/${SESSION_ID}?offline=1`,
-        codexHome
-      )
+      call(`/control/diagnostics/sessions/${SESSION_ID}?offline=1`, codexHome)
     );
     assert.equal(response.statusCode, 200);
     const body = responseBody(response);
@@ -309,7 +308,10 @@ test("the hook denials and the fleet scan answer their own routes", async () => 
       call("/control/diagnostics/hooks?sinceDays=7", codexHome)
     );
     assert.equal(hooks.statusCode, 200);
-    assert.equal(responseBody(hooks)?.schema, "autodev-session-hook-denials-v1");
+    assert.equal(
+      responseBody(hooks)?.schema,
+      "autodev-session-hook-denials-v1"
+    );
 
     const scan = await withToken(() =>
       call("/control/diagnostics/sessions/scan?limit=5", codexHome)

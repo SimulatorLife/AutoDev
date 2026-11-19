@@ -19,6 +19,7 @@ import {
   type SessionRouterEventRow,
   type SessionRouterSummary,
   type SessionThreadItem,
+  type SessionThreadPromptOverhead,
   type SessionThreadTrace,
   TOOL_FAILURE_CATEGORIES,
   type ToolFailureCategory,
@@ -54,6 +55,10 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
+import {
+  InlineDisplayToggle,
+  type InlineDisplayUnit
+} from "../../components/ui/InlineDisplayToggle.ts";
 import { instantLabel } from "../../components/ui/instant.ts";
 import {
   ACTION_LINK_CLASS,
@@ -137,13 +142,169 @@ const NO_FAILURES_MESSAGE =
   "No tool call failed in this session's observed rollouts.";
 const NO_EVENTS_MESSAGE =
   "No router event was observed for this session in the router logs.";
-const NO_ITEMS_MESSAGE =
-  "No rollout item was observed for this session.";
+const NO_ITEMS_MESSAGE = "No rollout item was observed for this session.";
 const NO_SPANS_MESSAGE =
   "No span was observed for this session in the telemetry store.";
 
 function count(value: number | null): string {
   return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
+}
+
+/**
+ * Prompt and skill measurements the Data engine does not supply yet.
+ *
+ * Core's SessionThreadPromptOverhead carries initialDeveloperBytes only, and
+ * skillsRead as a deduplicated name list. The session view reads the fields
+ * below so that the day Core/Data add them the Console shows them with no
+ * further change here -- and, until then, shows "Not observed" rather than a
+ * number it made up. Required additions to SessionThreadPromptOverhead:
+ *
+ * - initialDeveloperChars: number | null -- the developer prompt's length in
+ *   characters (code points).
+ * - initialDeveloperTokens: number | null -- its token count, by one named
+ *   tokenizer the Data engine documents.
+ * - skillReadCounts: Record<string, number> -- SKILL.md reads per skill name
+ *   for the thread (the keys are skillsRead).
+ *
+ * When Core adds them, delete this interface and read the fields directly.
+ */
+interface PendingPromptMeasurements extends SessionThreadPromptOverhead {
+  readonly initialDeveloperChars?: number | null;
+  readonly initialDeveloperTokens?: number | null;
+  readonly skillReadCounts?: Readonly<Record<string, number>>;
+}
+
+function pendingMeasurements(
+  prompt: SessionThreadPromptOverhead | undefined
+): Partial<PendingPromptMeasurements> {
+  // Core's type has none of these fields; an object that carries them is read
+  // through the interface that names them.
+  return prompt ?? {};
+}
+
+/** The units the initial developer prompt can be read in. */
+function promptSizeUnits(
+  prompt: SessionThreadPromptOverhead | undefined
+): readonly InlineDisplayUnit[] {
+  const pending = pendingMeasurements(prompt);
+  return [
+    {
+      id: "bytes",
+      singular: "byte",
+      plural: "bytes",
+      value: prompt?.initialDeveloperBytes ?? 0
+    },
+    {
+      id: "characters",
+      singular: "character",
+      plural: "characters",
+      value: pending.initialDeveloperChars ?? null
+    },
+    {
+      id: "tokens",
+      singular: "token",
+      plural: "tokens",
+      value: pending.initialDeveloperTokens ?? null
+    }
+  ];
+}
+
+/** One skill a thread read, with its read count when the engine supplies it. */
+interface ThreadSkillRead {
+  readonly skill: string;
+  readonly reads: number | null;
+}
+
+function threadSkillReads(thread: SessionThreadTrace): ThreadSkillRead[] {
+  const prompt = thread.efficiency?.prompt;
+  const counts = pendingMeasurements(prompt).skillReadCounts;
+  return (prompt?.skillsRead ?? []).map((skill) => ({
+    skill,
+    reads: counts?.[skill] ?? null
+  }));
+}
+
+/** "skill", or "skill ×N" when the count was observed. */
+function skillReadLabel(read: ThreadSkillRead): string {
+  return read.reads === null ? read.skill : read.skill + " ×" + read.reads;
+}
+
+const SKILL_NAME_COLLATOR = new Intl.Collator("en-US");
+
+/** One skill read in the session and the threads that read it. */
+interface SessionSkillUsage {
+  readonly skill: string;
+  readonly threads: readonly SessionThreadTrace[];
+  readonly reads: number | null;
+}
+
+function sessionSkillUsage(
+  report: SessionDiagnosticsReport
+): SessionSkillUsage[] {
+  const bySkill = new Map<
+    string,
+    { threads: SessionThreadTrace[]; reads: number | null }
+  >();
+  for (const thread of report.threads) {
+    for (const read of threadSkillReads(thread)) {
+      const entry = bySkill.get(read.skill) ?? { threads: [], reads: null };
+      entry.threads.push(thread);
+      if (read.reads !== null) entry.reads = (entry.reads ?? 0) + read.reads;
+      bySkill.set(read.skill, entry);
+    }
+  }
+  return Array.from(bySkill.entries(), ([skill, entry]) => ({
+    skill,
+    ...entry
+  })).sort(
+    (a, b) =>
+      b.threads.length - a.threads.length ||
+      SKILL_NAME_COLLATOR.compare(a.skill, b.skill)
+  );
+}
+
+function skillUsageColumns(
+  state: SessionDiagnosticsViewState
+): readonly ColumnDef<SessionSkillUsage, unknown>[] {
+  return [
+    {
+      id: "skill",
+      header: "Skill",
+      cell: ({ row: { original: usage } }) => usage.skill,
+      meta: { weight: 220, align: "tokens" }
+    },
+    {
+      id: "threads",
+      header: "Threads",
+      cell: ({ row: { original: usage } }) =>
+        React.createElement(
+          "span",
+          { className: "flex flex-wrap gap-x-3 gap-y-1" },
+          ...usage.threads.map((thread) =>
+            React.createElement(
+              NavigationLink,
+              {
+                key: thread.id,
+                href: sessionViewHref(state, {
+                  tab: "threads",
+                  threadId: thread.id,
+                  itemsOffset: 0
+                }),
+                className: ACTION_LINK_CLASS
+              },
+              thread.nickname ?? thread.role ?? thread.id
+            )
+          )
+        ),
+      meta: { weight: 320, align: "tokens" }
+    },
+    {
+      id: "reads",
+      header: "Reads",
+      cell: ({ row: { original: usage } }) => count(usage.reads),
+      meta: { weight: 90, align: "tokens" }
+    }
+  ];
 }
 
 function tokens(value: number | null): string {
@@ -198,18 +359,11 @@ export function sessionViewHref(
   return `/usage?${params.toString()}`;
 }
 
-function panel(
-  title: string,
-  children: React.ReactNode
-): React.JSX.Element {
+function panel(title: string, children: React.ReactNode): React.JSX.Element {
   return React.createElement(
     "section",
     { className: PANEL_CONTENT_STACK_CLASS },
-    React.createElement(
-      "h3",
-      { className: SECTION_HEADING_CLASS },
-      title
-    ),
+    React.createElement("h3", { className: SECTION_HEADING_CLASS }, title),
     React.createElement("div", { className: LIST_PANEL_CLASS }, children)
   );
 }
@@ -363,13 +517,22 @@ function threadColumns(
     {
       id: "role",
       header: "Role",
-      cell: ({ row: { original: thread } }) => thread.role ?? NOT_OBSERVED_LABEL,
+      cell: ({ row: { original: thread } }) =>
+        thread.role ?? NOT_OBSERVED_LABEL,
       meta: { weight: 90, align: "tokens" }
+    },
+    {
+      id: "provider",
+      header: "Model provider",
+      cell: ({ row: { original: thread } }) =>
+        thread.modelProvider ?? NOT_OBSERVED_LABEL,
+      meta: { weight: 120, align: "tokens" }
     },
     {
       id: "model",
       header: "Model",
-      cell: ({ row: { original: thread } }) => thread.model ?? NOT_OBSERVED_LABEL,
+      cell: ({ row: { original: thread } }) =>
+        thread.model ?? NOT_OBSERVED_LABEL,
       meta: { weight: 130, align: "tokens" }
     },
     {
@@ -409,11 +572,26 @@ function threadColumns(
     {
       id: "skills",
       header: "Skills",
-      cell: ({ row: { original: thread } }) =>
-        `${thread.efficiency?.prompt.skillsLoaded ?? 0} loaded / ${
-          thread.efficiency?.prompt.skillsRead.length ?? 0
-        } read`,
-      meta: { weight: 150, align: "tokens" }
+      cell: ({ row: { original: thread } }) => {
+        const reads = threadSkillReads(thread);
+        return React.createElement(
+          "span",
+          { className: "flex flex-col gap-0.5" },
+          React.createElement(
+            "span",
+            null,
+            `${thread.efficiency?.prompt.skillsLoaded ?? 0} loaded / ${reads.length} read`
+          ),
+          reads.length > 0
+            ? React.createElement(
+                "span",
+                { className: MUTED_META_CLASS },
+                reads.map(skillReadLabel).join(", ")
+              )
+            : null
+        );
+      },
+      meta: { weight: 220, align: "tokens" }
     }
   ];
 }
@@ -533,7 +711,8 @@ function renderOverview(
         React.createElement(BarChart, {
           data: byProvider,
           label: "Requests by provider",
-          notObservedMessage: "The router logs reported no request for this session.",
+          notObservedMessage:
+            "The router logs reported no request for this session.",
           emptyMessage: "The router logs reported no request for this session.",
           barClass: CHART_PALETTE.series1.bar
         })
@@ -588,6 +767,16 @@ function renderOverview(
           keyExtractor: (thread) => thread.id,
           emptyMessage: "No thread was observed for this session.",
           label: "Session threads"
+        })
+      ),
+      panel(
+        "Skill usage",
+        React.createElement<DataTableProps<SessionSkillUsage>>(DataTable, {
+          data: sessionSkillUsage(report),
+          columns: skillUsageColumns(state),
+          keyExtractor: (usage) => usage.skill,
+          emptyMessage: "No thread read a SKILL.md in this session.",
+          label: "Session skill usage"
         })
       )
     )
@@ -693,9 +882,7 @@ function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
   ];
 }
 
-function renderThreadDetail(
-  thread: SessionThreadTrace
-): React.JSX.Element {
+function renderThreadDetail(thread: SessionThreadTrace): React.JSX.Element {
   const efficiency = thread.efficiency;
   return React.createElement(
     DetailGrid,
@@ -713,7 +900,11 @@ function renderThreadDetail(
     React.createElement(
       DetailValue,
       { label: "Initial developer prompt" },
-      `${count(efficiency?.prompt.initialDeveloperBytes ?? 0)} bytes`
+      React.createElement(InlineDisplayToggle, {
+        label: "Initial developer prompt size",
+        units: promptSizeUnits(efficiency?.prompt),
+        dataAttribute: "initial-developer-prompt"
+      })
     ),
     React.createElement(
       DetailValue,
@@ -725,7 +916,15 @@ function renderThreadDetail(
     React.createElement(
       DetailValue,
       { label: "SKILL.md reads" },
-      (efficiency?.prompt.skillsRead ?? []).join(", ") || NOT_OBSERVED_LABEL
+      threadSkillReads(thread).map(skillReadLabel).join(", ") ||
+        NOT_OBSERVED_LABEL
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Skills loaded by root" },
+      Object.entries(efficiency?.prompt.skillsByRoot ?? {})
+        .map(([root, loaded]) => `${root}: ${loaded}`)
+        .join(" · ") || NOT_OBSERVED_LABEL
     ),
     React.createElement(
       DetailValue,
@@ -816,30 +1015,28 @@ function renderThreads(
           panel("Thread detail", renderThreadDetail(thread)),
           panel(
             "Turns",
-            React.createElement<DataTableProps<SessionThreadTrace["turns"][number]>>(
-                DataTable,
-                {
-                  data: thread.turns,
-                  columns: turnColumns(),
-                  keyExtractor: (turn) =>
-                    `${thread.id}:${turn.turnId}:${turn.started ?? ""}`,
-                  emptyMessage: "No turn was observed for this thread.",
-                  label: "Thread turns"
-                }
-              )
+            React.createElement<
+              DataTableProps<SessionThreadTrace["turns"][number]>
+            >(DataTable, {
+              data: thread.turns,
+              columns: turnColumns(),
+              keyExtractor: (turn) =>
+                `${thread.id}:${turn.turnId}:${turn.started ?? ""}`,
+              emptyMessage: "No turn was observed for this thread.",
+              label: "Thread turns"
+            })
           ),
           panel(
             "Silences of a minute or more",
-            React.createElement<DataTableProps<SessionThreadTrace["gaps"][number]>>(
-                DataTable,
-                {
-                  data: thread.gaps,
-                  columns: gapColumns(),
-                  keyExtractor: (gap) => `${thread.id}:${gap.at}:${gap.before}`,
-                  emptyMessage: "No silence of a minute or more was observed.",
-                  label: "Thread gaps"
-                }
-              )
+            React.createElement<
+              DataTableProps<SessionThreadTrace["gaps"][number]>
+            >(DataTable, {
+              data: thread.gaps,
+              columns: gapColumns(),
+              keyExtractor: (gap) => `${thread.id}:${gap.at}:${gap.before}`,
+              emptyMessage: "No silence of a minute or more was observed.",
+              label: "Thread gaps"
+            })
           ),
           state.threadId === undefined
             ? React.createElement("div")
@@ -848,13 +1045,17 @@ function renderThreads(
                 React.createElement(
                   "div",
                   { className: PANEL_CONTENT_STACK_CLASS },
-                  React.createElement<DataTableProps<SessionThreadItem>>(DataTable, {
-                    data: report.itemsPage.items,
-                    columns: itemColumns(),
-                    keyExtractor: (item) => `${item.threadId}:${item.at}:${item.kind}`,
-                    emptyMessage: NO_ITEMS_MESSAGE,
-                    label: "Rollout items"
-                  }),
+                  React.createElement<DataTableProps<SessionThreadItem>>(
+                    DataTable,
+                    {
+                      data: report.itemsPage.items,
+                      columns: itemColumns(),
+                      keyExtractor: (item) =>
+                        `${item.threadId}:${item.at}:${item.kind}`,
+                      emptyMessage: NO_ITEMS_MESSAGE,
+                      label: "Rollout items"
+                    }
+                  ),
                   React.createElement(Pagination, {
                     label: "Rollout items",
                     offset: report.itemsPage.offset,
@@ -1002,7 +1203,10 @@ function renderFailures(
     { className: PAGE_SECTION_STACK_CLASS },
     React.createElement(
       "nav",
-      { "aria-label": "Failure category filter", className: "flex flex-wrap gap-3" },
+      {
+        "aria-label": "Failure category filter",
+        className: "flex flex-wrap gap-3"
+      },
       ...categoryLinks
     ),
     panel(
@@ -1080,7 +1284,10 @@ function renderFailures(
                 ...alert.samples.map((sample, index) =>
                   React.createElement(
                     "p",
-                    { key: `${alert.file}:${index}`, className: MUTED_BODY_CLASS },
+                    {
+                      key: `${alert.file}:${index}`,
+                      className: MUTED_BODY_CLASS
+                    },
                     sample
                   )
                 )
@@ -1295,7 +1502,9 @@ function spanColumns(): readonly ColumnDef<UsageSessionSpanSummary, unknown>[] {
       id: "cost",
       header: "Cost",
       cell: ({ row: { original: span } }) =>
-        span.costUsd === null ? NOT_OBSERVED_LABEL : COST_FORMATTER.format(span.costUsd),
+        span.costUsd === null
+          ? NOT_OBSERVED_LABEL
+          : COST_FORMATTER.format(span.costUsd),
       meta: { weight: 100, align: "tokens" }
     }
   ];
@@ -1348,11 +1557,7 @@ function renderSpans(
           String(size)
         )
       ),
-      React.createElement(
-        "span",
-        { className: MUTED_META_CLASS },
-        "Sort:"
-      ),
+      React.createElement("span", { className: MUTED_META_CLASS }, "Sort:"),
       ...(["desc", "asc"] as const).map((sort) =>
         React.createElement(
           NavigationLink,

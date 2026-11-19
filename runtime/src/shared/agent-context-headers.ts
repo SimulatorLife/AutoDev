@@ -17,13 +17,14 @@ export const CODEX_SESSION_HEADER = "x-autodev-codex-session";
  * element.
  */
 export function readContextHeader(headers: unknown, name: string): unknown {
-  if (!headers || typeof headers !== "object") return undefined;
-  const record = headers as Record<string, unknown>;
+  const record =
+    headers && typeof headers === "object"
+      ? (headers as Record<string, unknown>)
+      : {};
   const key = Object.keys(record).find(
     (candidate) => candidate.toLowerCase() === name
   );
-  if (key === undefined) return undefined;
-  const value = record[key];
+  const value = key === undefined ? undefined : record[key];
   return Array.isArray(value) ? value[0] : value;
 }
 

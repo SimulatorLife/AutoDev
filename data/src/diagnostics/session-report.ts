@@ -16,7 +16,9 @@ import {
   type SessionRouterEventRow,
   type SessionRouterProviderStats,
   type SessionRouterSummary,
+  type SessionThreadEfficiency,
   type SessionThreadItem,
+  type SessionThreadPromptOverhead,
   type SessionThreadTrace
 } from "@simulatorlife/autodev-core";
 
@@ -26,14 +28,16 @@ import {
   readBridgeLogAlerts,
   readLogSummaries
 } from "./live-context.ts";
+import { findSessionRollouts, rolloutRoots } from "./rollout-discovery.ts";
 import {
   readRouterEvents,
   routerEventsForThread,
   shift,
   summarizeRouter
 } from "./router-events.ts";
-import { findSessionRollouts, rolloutRoots } from "./rollout-discovery.ts";
 import { traceThread } from "./thread-tracer.ts";
+
+const COLLATOR = new Intl.Collator();
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
@@ -43,180 +47,306 @@ function addCount(target: Record<string, number>, key: string): void {
   target[key] = (target[key] ?? 0) + 1;
 }
 
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+type ThreadActivityTotals = Pick<
+  SessionDiagnosticsAggregates,
+  | "turnsTotal"
+  | "turnsByOutcome"
+  | "gapsCount"
+  | "toolCallsTotal"
+  | "toolCallsByName"
+  | "toolFailuresTotal"
+  | "toolFailuresByCategory"
+  | "preToolUseBlocks"
+>;
+
+type TokenAndCompactionTotals = Pick<
+  SessionDiagnosticsAggregates,
+  | "totalTokens"
+  | "inputTokens"
+  | "cachedInputTokens"
+  | "outputTokens"
+  | "reasoningOutputTokens"
+  | "peakInputTokens"
+  | "cacheDrops"
+  | "compactions"
+  | "contextCompactedEvents"
+  | "maxReplacementItems"
+  | "maxReplacementBytes"
+  | "maxReplacementImages"
+  | "responseImageItems"
+>;
+
+type PromptTotals = Pick<
+  SessionDiagnosticsAggregates,
+  | "maxInitialDeveloperBytes"
+  | "maxInitialDeveloperChars"
+  | "maxInitialDeveloperTokens"
+  | "maxSkillsCatalogBytes"
+  | "maxSkillsLoaded"
+  | "skillsByRoot"
+  | "uniqueSkillsRead"
+  | "skillReadCounts"
+  | "skillTelemetryReads"
+>;
+
+type RouterTotals = Pick<
+  SessionDiagnosticsAggregates,
+  | "routerRequests"
+  | "routerFailures"
+  | "routerSkippedTotal"
+  | "routerSkippedByReason"
+  | "routerRetries"
+  | "exhaustionWaits"
+  | "transportErrors"
+  | "providerHops"
+  | "byProvider"
+>;
+
+/** Add every count of `source` into `target`. */
+function addCounts(
+  target: Record<string, number>,
+  source: Readonly<Record<string, number>>
+): void {
+  for (const [key, count] of Object.entries(source))
+    target[key] = (target[key] ?? 0) + count;
+}
+
+/** The larger of two optional measurements; null only when both are absent. */
+function maxOrNull(current: number | null, next: number | null): number | null {
+  if (next === null) return current;
+  return current === null ? next : Math.max(current, next);
+}
+
+/** The sum of two optional counts; null only when both are absent. */
+function sumOrNull(current: number | null, next: number | null): number | null {
+  if (next === null) return current;
+  return (current ?? 0) + next;
+}
+
+/** Turns, gaps, tool calls and tool failures across every thread. */
+function threadActivityTotals(
+  threads: readonly SessionThreadTrace[]
+): ThreadActivityTotals {
+  const totals: Mutable<ThreadActivityTotals> = {
+    turnsTotal: 0,
+    turnsByOutcome: {},
+    gapsCount: 0,
+    toolCallsTotal: 0,
+    toolCallsByName: {},
+    toolFailuresTotal: 0,
+    toolFailuresByCategory: {},
+    preToolUseBlocks: 0
+  };
+  const turnsByOutcome: Record<string, number> = {};
+  const toolCallsByName: Record<string, number> = {};
+  const toolFailuresByCategory: Record<string, number> = {};
+  for (const thread of threads) {
+    totals.turnsTotal += thread.turns.length;
+    totals.gapsCount += thread.gaps.length;
+    for (const turn of thread.turns) addCount(turnsByOutcome, turn.outcome);
+    addCounts(toolCallsByName, thread.tools);
+    for (const count of Object.values(thread.tools))
+      totals.toolCallsTotal += count;
+    for (const failure of thread.toolFailures) {
+      const category =
+        failure.category ?? classifyToolFailure(failure.detail, failure.input);
+      addCount(toolFailuresByCategory, category);
+      totals.toolFailuresTotal += 1;
+      if (category === "pretooluse-hook") totals.preToolUseBlocks += 1;
+    }
+  }
+  return { ...totals, turnsByOutcome, toolCallsByName, toolFailuresByCategory };
+}
+
+/** Token usage and compaction across every measured thread. */
+function tokenAndCompactionTotals(
+  efficiencies: readonly SessionThreadEfficiency[]
+): TokenAndCompactionTotals {
+  const totals: Mutable<TokenAndCompactionTotals> = {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    peakInputTokens: 0,
+    cacheDrops: 0,
+    compactions: 0,
+    contextCompactedEvents: 0,
+    maxReplacementItems: 0,
+    maxReplacementBytes: 0,
+    maxReplacementImages: 0,
+    responseImageItems: 0
+  };
+  for (const { tokens, compaction } of efficiencies) {
+    totals.totalTokens += tokens.totalTokens;
+    totals.inputTokens += tokens.inputTokens;
+    totals.cachedInputTokens += tokens.cachedInputTokens;
+    totals.outputTokens += tokens.outputTokens;
+    totals.reasoningOutputTokens += tokens.reasoningOutputTokens;
+    totals.peakInputTokens = Math.max(
+      totals.peakInputTokens,
+      tokens.peakInputTokens
+    );
+    totals.cacheDrops += tokens.cacheDrops;
+    totals.compactions += compaction.count;
+    totals.contextCompactedEvents += compaction.contextCompactedEvents;
+    totals.maxReplacementItems = Math.max(
+      totals.maxReplacementItems,
+      compaction.maxReplacementItems
+    );
+    totals.maxReplacementBytes = Math.max(
+      totals.maxReplacementBytes,
+      compaction.maxReplacementBytes
+    );
+    totals.maxReplacementImages = Math.max(
+      totals.maxReplacementImages,
+      compaction.maxReplacementImages
+    );
+    totals.responseImageItems += compaction.responseImageItems;
+  }
+  return totals;
+}
+
+/** The skill read counts of a session, keyed in the same order as a thread's. */
+function sortedCounts(
+  counts: Readonly<Record<string, number>>
+): Record<string, number> {
+  const sorted: Record<string, number> = {};
+  for (const key of Object.keys(counts).sort()) sorted[key] = counts[key] ?? 0;
+  return sorted;
+}
+
+/**
+ * Prompt overhead across every measured thread.
+ *
+ * Sizes are maxima, because every thread carries its own copy of the prompt.
+ * Skill reads are summed, because every read of a thread is a real read: the
+ * session count of a skill is the number of times any thread read it.
+ */
+function promptTotals(
+  prompts: readonly SessionThreadPromptOverhead[]
+): PromptTotals {
+  const totals: Mutable<PromptTotals> = {
+    maxInitialDeveloperBytes: 0,
+    maxInitialDeveloperChars: 0,
+    maxInitialDeveloperTokens: null,
+    maxSkillsCatalogBytes: 0,
+    maxSkillsLoaded: 0,
+    skillsByRoot: {},
+    uniqueSkillsRead: 0,
+    skillReadCounts: {},
+    skillTelemetryReads: null
+  };
+  const skillsByRoot: Record<string, number> = {};
+  const skillReadCounts: Record<string, number> = {};
+  for (const prompt of prompts) {
+    totals.maxInitialDeveloperBytes = Math.max(
+      totals.maxInitialDeveloperBytes,
+      prompt.initialDeveloperBytes
+    );
+    totals.maxInitialDeveloperChars = Math.max(
+      totals.maxInitialDeveloperChars,
+      prompt.initialDeveloperChars
+    );
+    totals.maxInitialDeveloperTokens = maxOrNull(
+      totals.maxInitialDeveloperTokens,
+      prompt.initialDeveloperTokens
+    );
+    totals.maxSkillsCatalogBytes = Math.max(
+      totals.maxSkillsCatalogBytes,
+      prompt.skillsCatalogBytes
+    );
+    totals.maxSkillsLoaded = Math.max(
+      totals.maxSkillsLoaded,
+      prompt.skillsLoaded
+    );
+    addCounts(skillsByRoot, prompt.skillsByRoot);
+    addCounts(skillReadCounts, prompt.skillReadCounts);
+    totals.skillTelemetryReads = sumOrNull(
+      totals.skillTelemetryReads,
+      prompt.skillTelemetryReads
+    );
+  }
+  const sortedReadCounts = sortedCounts(skillReadCounts);
+  return {
+    ...totals,
+    skillsByRoot,
+    uniqueSkillsRead: Object.keys(sortedReadCounts).length,
+    skillReadCounts: sortedReadCounts
+  };
+}
+
+function addProviderStats(
+  target: Record<string, SessionRouterProviderStats>,
+  source: Readonly<Record<string, SessionRouterProviderStats>>
+): void {
+  for (const [provider, stats] of Object.entries(source)) {
+    const existing = target[provider];
+    target[provider] = {
+      requests: (existing?.requests ?? 0) + stats.requests,
+      failures: (existing?.failures ?? 0) + stats.failures,
+      elapsedMs: (existing?.elapsedMs ?? 0) + stats.elapsedMs,
+      toolCalls: (existing?.toolCalls ?? 0) + stats.toolCalls
+    };
+  }
+}
+
+/** Router requests, failures, retries and provider hops across the session. */
+function routerTotals(router: readonly SessionRouterSummary[]): RouterTotals {
+  const totals: Mutable<RouterTotals> = {
+    routerRequests: 0,
+    routerFailures: 0,
+    routerSkippedTotal: 0,
+    routerSkippedByReason: {},
+    routerRetries: 0,
+    exhaustionWaits: 0,
+    transportErrors: 0,
+    providerHops: 0,
+    byProvider: {}
+  };
+  const routerSkippedByReason: Record<string, number> = {};
+  const byProvider: Record<string, SessionRouterProviderStats> = {};
+  for (const summary of router) {
+    totals.routerRequests += summary.requests;
+    totals.routerFailures += summary.failures.length;
+    totals.routerRetries += summary.retries ?? 0;
+    totals.transportErrors += summary.transportErrors ?? 0;
+    totals.exhaustionWaits += summary.exhaustionWaits?.count ?? 0;
+    totals.providerHops += Math.max(0, summary.providerSequence.length - 1);
+    addProviderStats(byProvider, summary.byProvider);
+    for (const skipped of summary.skipped ?? []) {
+      totals.routerSkippedTotal += 1;
+      addCount(routerSkippedByReason, skipped.reason);
+    }
+  }
+  return { ...totals, routerSkippedByReason, byProvider };
+}
+
 /** The session-wide rollups every surface shows first. */
 export function computeAggregates(
   threads: readonly SessionThreadTrace[],
   router: readonly SessionRouterSummary[]
 ): SessionDiagnosticsAggregates {
-  let totalTokens = 0;
-  let inputTokens = 0;
-  let cachedInputTokens = 0;
-  let outputTokens = 0;
-  let reasoningOutputTokens = 0;
-  let peakInputTokens = 0;
-  let cacheDrops = 0;
-  let compactions = 0;
-  let contextCompactedEvents = 0;
-  let maxReplacementItems = 0;
-  let maxReplacementBytes = 0;
-  let maxReplacementImages = 0;
-  let responseImageItems = 0;
-  let maxInitialDeveloperBytes = 0;
-  let maxSkillsCatalogBytes = 0;
-  let maxSkillsLoaded = 0;
-  let turnsTotal = 0;
-  let gapsCount = 0;
-  let toolCallsTotal = 0;
-  let toolFailuresTotal = 0;
-  let preToolUseBlocks = 0;
-  let routerRequests = 0;
-  let routerFailures = 0;
-  let routerSkippedTotal = 0;
-  let routerRetries = 0;
-  let exhaustionWaits = 0;
-  let transportErrors = 0;
-  let providerHops = 0;
-  let skillTelemetryReads: number | null = null;
-
-  const skillsByRoot: Record<string, number> = {};
-  const turnsByOutcome: Record<string, number> = {};
-  const toolCallsByName: Record<string, number> = {};
-  const toolFailuresByCategory: Record<string, number> = {};
-  const routerSkippedByReason: Record<string, number> = {};
-  const byProvider: Record<string, SessionRouterProviderStats> = {};
-  const uniqueSkillsRead = new Set<string>();
-
-  for (const thread of threads) {
-    turnsTotal += thread.turns.length;
-    gapsCount += thread.gaps.length;
-    for (const turn of thread.turns) addCount(turnsByOutcome, turn.outcome);
-    for (const [tool, count] of Object.entries(thread.tools)) {
-      toolCallsByName[tool] = (toolCallsByName[tool] ?? 0) + count;
-      toolCallsTotal += count;
-    }
-    for (const failure of thread.toolFailures) {
-      const category =
-        failure.category ?? classifyToolFailure(failure.detail, failure.input);
-      addCount(toolFailuresByCategory, category);
-      toolFailuresTotal += 1;
-      if (category === "pretooluse-hook") preToolUseBlocks += 1;
-    }
-    const efficiency = thread.efficiency;
-    if (!efficiency) continue;
-    totalTokens += efficiency.tokens.totalTokens;
-    inputTokens += efficiency.tokens.inputTokens;
-    cachedInputTokens += efficiency.tokens.cachedInputTokens;
-    outputTokens += efficiency.tokens.outputTokens;
-    reasoningOutputTokens += efficiency.tokens.reasoningOutputTokens;
-    peakInputTokens = Math.max(
-      peakInputTokens,
-      efficiency.tokens.peakInputTokens
-    );
-    cacheDrops += efficiency.tokens.cacheDrops;
-    compactions += efficiency.compaction.count;
-    contextCompactedEvents += efficiency.compaction.contextCompactedEvents;
-    maxReplacementItems = Math.max(
-      maxReplacementItems,
-      efficiency.compaction.maxReplacementItems
-    );
-    maxReplacementBytes = Math.max(
-      maxReplacementBytes,
-      efficiency.compaction.maxReplacementBytes
-    );
-    maxReplacementImages = Math.max(
-      maxReplacementImages,
-      efficiency.compaction.maxReplacementImages
-    );
-    responseImageItems += efficiency.compaction.responseImageItems;
-    maxInitialDeveloperBytes = Math.max(
-      maxInitialDeveloperBytes,
-      efficiency.prompt.initialDeveloperBytes
-    );
-    maxSkillsCatalogBytes = Math.max(
-      maxSkillsCatalogBytes,
-      efficiency.prompt.skillsCatalogBytes
-    );
-    maxSkillsLoaded = Math.max(
-      maxSkillsLoaded,
-      efficiency.prompt.skillsLoaded
-    );
-    for (const [root, count] of Object.entries(efficiency.prompt.skillsByRoot))
-      skillsByRoot[root] = (skillsByRoot[root] ?? 0) + count;
-    for (const skill of efficiency.prompt.skillsRead) uniqueSkillsRead.add(skill);
-    if (efficiency.prompt.skillTelemetryReads !== null)
-      skillTelemetryReads =
-        (skillTelemetryReads ?? 0) + efficiency.prompt.skillTelemetryReads;
-  }
-
-  for (const summary of router) {
-    routerRequests += summary.requests;
-    routerFailures += summary.failures.length;
-    routerRetries += summary.retries ?? 0;
-    transportErrors += summary.transportErrors ?? 0;
-    exhaustionWaits += summary.exhaustionWaits?.count ?? 0;
-    providerHops += Math.max(0, summary.providerSequence.length - 1);
-    for (const [provider, stats] of Object.entries(summary.byProvider)) {
-      const existing = byProvider[provider] ?? {
-        requests: 0,
-        failures: 0,
-        elapsedMs: 0,
-        toolCalls: 0
-      };
-      byProvider[provider] = {
-        requests: existing.requests + stats.requests,
-        failures: existing.failures + stats.failures,
-        elapsedMs: existing.elapsedMs + stats.elapsedMs,
-        toolCalls: existing.toolCalls + stats.toolCalls
-      };
-    }
-    for (const skipped of summary.skipped ?? []) {
-      routerSkippedTotal += 1;
-      addCount(routerSkippedByReason, skipped.reason);
-    }
-  }
-
+  const efficiencies = threads.flatMap((thread) =>
+    thread.efficiency ? [thread.efficiency] : []
+  );
+  const tokens = tokenAndCompactionTotals(efficiencies);
   return {
     threadCount: threads.length,
-    totalTokens,
-    inputTokens,
-    cachedInputTokens,
-    outputTokens,
-    reasoningOutputTokens,
+    ...tokens,
     cacheHitPct:
-      inputTokens > 0 ? round1((cachedInputTokens / inputTokens) * 100) : null,
+      tokens.inputTokens > 0
+        ? round1((tokens.cachedInputTokens / tokens.inputTokens) * 100)
+        : null,
     reasoningPct:
-      outputTokens > 0 ? round1((reasoningOutputTokens / outputTokens) * 100) : null,
-    peakInputTokens,
-    cacheDrops,
-    compactions,
-    contextCompactedEvents,
-    maxReplacementItems,
-    maxReplacementBytes,
-    maxReplacementImages,
-    responseImageItems,
-    maxInitialDeveloperBytes,
-    maxSkillsCatalogBytes,
-    maxSkillsLoaded,
-    skillsByRoot,
-    uniqueSkillsRead: uniqueSkillsRead.size,
-    skillTelemetryReads,
-    turnsTotal,
-    turnsByOutcome,
-    gapsCount,
-    toolCallsTotal,
-    toolCallsByName,
-    toolFailuresTotal,
-    toolFailuresByCategory,
-    preToolUseBlocks,
-    routerRequests,
-    routerFailures,
-    routerSkippedTotal,
-    routerSkippedByReason,
-    routerRetries,
-    exhaustionWaits,
-    transportErrors,
-    providerHops,
-    byProvider
+      tokens.outputTokens > 0
+        ? round1((tokens.reasoningOutputTokens / tokens.outputTokens) * 100)
+        : null,
+    ...promptTotals(efficiencies.map((efficiency) => efficiency.prompt)),
+    ...threadActivityTotals(threads),
+    ...routerTotals(router)
   };
 }
 
@@ -274,7 +404,7 @@ function sessionRouterEvents(
       events.push(event);
     }
   }
-  return events.sort((a, b) => a.at.localeCompare(b.at));
+  return events.sort((a, b) => COLLATOR.compare(a.at, b.at));
 }
 
 /**
@@ -357,9 +487,21 @@ export async function buildSessionDiagnosticsReport(
     aggregates: computeAggregates(threads, router),
     eventsPage: options.includeEvents
       ? paginate(events, options.eventsLimit, options.eventsOffset)
-      : { items: [], total: 0, limit: options.eventsLimit, offset: options.eventsOffset, hasMore: false },
+      : {
+          items: [],
+          total: 0,
+          limit: options.eventsLimit,
+          offset: options.eventsOffset,
+          hasMore: false
+        },
     itemsPage: options.includeItems
       ? paginate(items, options.itemsLimit, options.itemsOffset)
-      : { items: [], total: 0, limit: options.itemsLimit, offset: options.itemsOffset, hasMore: false }
+      : {
+          items: [],
+          total: 0,
+          limit: options.itemsLimit,
+          offset: options.itemsOffset,
+          hasMore: false
+        }
   };
 }

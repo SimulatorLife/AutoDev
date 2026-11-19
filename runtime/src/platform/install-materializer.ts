@@ -566,6 +566,7 @@ export function materializeRuleSyncSkillProjections(
   generateRepositoryRulesync(repositoryRoot, { features: ["skills"] });
 }
 
+const PER_REPO_MODE_PATTERN = /mode:\s*per_repo/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const IGNORE_DIRS_LINE_PATTERN = /^\s*IGNORE_DIRS\s*=/iu;
@@ -658,7 +659,7 @@ function repoNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
     try {
       const content = readFileSync(cgcConfigPath, "utf8");
       if (
-        /mode:\s*per_repo/u.test(content) ||
+        PER_REPO_MODE_PATTERN.test(content) ||
         content.includes(options.repositoryRoot)
       ) {
         return true;
@@ -1850,30 +1851,30 @@ export function materializeCurrentCommandProjections(options: {
 const STALE_ORCHESTRATOR_DEFAULTS: Record<
   string,
   {
-    readonly match: (entry: Record<string, unknown>) => boolean;
+    readonly applies: (entry: Record<string, unknown>) => boolean;
     readonly patch: Record<string, unknown>;
   }
 > = {
   claude: {
-    match: (entry) =>
+    applies: (entry) =>
       entry.priority === 2 &&
       entry.model === "claude-opus-5-5" &&
       entry.reasoningEffort === "medium",
     patch: { reasoningEffort: "high" }
   },
   "antigravity-claude-gpt": {
-    match: (entry) =>
+    applies: (entry) =>
       entry.priority === 2 && entry.model === "claude-opus-5-5-medium",
     patch: { model: "claude-opus-5-5-high" }
   },
   "antigravity-gemini": {
-    match: (entry) =>
+    applies: (entry) =>
       entry.priority === 2 &&
       (entry.model === null || entry.model === "gemini-3.8-flash-high"),
     patch: { priority: 3 }
   },
   "antigravity-argon": {
-    match: (entry) =>
+    applies: (entry) =>
       entry.priority === 2 &&
       (entry.model === "gemini-4-argon-medium" || entry.model === null),
     patch: {
@@ -1920,7 +1921,7 @@ export function reconcileStaleOrchestratorState(codexHome: string): boolean {
     )
       continue;
     const current = orchestrator as Record<string, unknown>;
-    if (!rule.match(current)) continue;
+    if (!rule.applies(current)) continue;
     providerEntry.orchestrator = { ...current, ...rule.patch };
     changed = true;
   }

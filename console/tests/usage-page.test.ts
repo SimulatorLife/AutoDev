@@ -425,7 +425,10 @@ test("an invalid session id is refused before anything is read", async () => {
 
     const markup = renderToStaticMarkup(
       await UsagePage({
-        searchParams: Promise.resolve({ range: "24H", sessionId: "process-fallback" })
+        searchParams: Promise.resolve({
+          range: "24H",
+          sessionId: "process-fallback"
+        })
       })
     );
 

@@ -23,7 +23,9 @@ import {
   type SessionFleetScanResponse,
   type SessionHookDenialsResponse,
   type SessionRecentListResponse,
-  TOOL_FAILURE_CATEGORIES} from "../src/diagnostics/index.ts";
+  type SessionThreadEfficiency,
+  TOOL_FAILURE_CATEGORIES
+} from "../src/diagnostics/index.ts";
 
 const SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
 const THREAD_ID = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
@@ -47,10 +49,13 @@ function aggregates(): SessionDiagnosticsAggregates {
     maxReplacementImages: 0,
     responseImageItems: 0,
     maxInitialDeveloperBytes: 0,
+    maxInitialDeveloperChars: 0,
+    maxInitialDeveloperTokens: null,
     maxSkillsCatalogBytes: 0,
     maxSkillsLoaded: 0,
     skillsByRoot: {},
     uniqueSkillsRead: 0,
+    skillReadCounts: {},
     skillTelemetryReads: null,
     turnsTotal: 1,
     turnsByOutcome: { completed: 1 },
@@ -114,7 +119,7 @@ function report(): SessionDiagnosticsReport {
             callId: "c1",
             detail: "Command blocked by PreToolUse hook: no secrets",
             category: "pretooluse-hook",
-            input: "read_file {path:\"README.md\"}"
+            input: 'read_file {path:"README.md"}'
           }
         ],
         investigation: {
@@ -156,6 +161,87 @@ function report(): SessionDiagnosticsReport {
     aggregates: aggregates(),
     eventsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false },
     itemsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false }
+  };
+}
+
+function threadEfficiency(): SessionThreadEfficiency {
+  return {
+    tokens: {
+      observed: true,
+      samples: 1,
+      inputTokens: 800,
+      cachedInputTokens: 400,
+      outputTokens: 100,
+      reasoningOutputTokens: 50,
+      totalTokens: 1000,
+      cacheHitPct: 50,
+      reasoningPct: 50,
+      peakInputTokens: 800,
+      cacheDrops: 0
+    },
+    compaction: {
+      count: 0,
+      contextCompactedEvents: 0,
+      maxReplacementItems: 0,
+      maxReplacementBytes: 0,
+      maxReplacementImages: 0,
+      responseImageItems: 0
+    },
+    prompt: {
+      initialDeveloperBytes: 2048,
+      initialDeveloperChars: 2000,
+      initialDeveloperTokens: null,
+      skillsCatalogBytes: 512,
+      skillsLoaded: 2,
+      skillsByRoot: { r2: 2 },
+      skillsRead: ["bug-fix", "kiss"],
+      skillReadCounts: { "bug-fix": 3, kiss: 1 },
+      skillTelemetryReads: null
+    }
+  };
+}
+
+/** A report whose one thread carries efficiency evidence. */
+function measuredReport(
+  prompt: Partial<SessionThreadEfficiency["prompt"]> = {},
+  aggregateOverrides: Partial<SessionDiagnosticsAggregates> = {}
+): SessionDiagnosticsReport {
+  const base = report();
+  const efficiency = threadEfficiency();
+  return {
+    ...base,
+    threads: [
+      {
+        ...base.threads[0]!,
+        efficiency: {
+          ...efficiency,
+          prompt: { ...efficiency.prompt, ...prompt }
+        }
+      }
+    ],
+    aggregates: {
+      ...aggregates(),
+      maxInitialDeveloperBytes: 2048,
+      maxInitialDeveloperChars: 2000,
+      maxSkillsCatalogBytes: 512,
+      maxSkillsLoaded: 2,
+      skillsByRoot: { r2: 2 },
+      uniqueSkillsRead: 2,
+      skillReadCounts: { "bug-fix": 3, kiss: 1 },
+      ...aggregateOverrides
+    }
+  };
+}
+
+/** A measured report whose prompt lacks its character count. */
+function withoutPromptChars(): unknown {
+  const base = measuredReport();
+  const thread = base.threads[0]!;
+  const efficiency = thread.efficiency!;
+  const { initialDeveloperChars: _omitted, ...prompt } = efficiency.prompt;
+  return {
+    ...base,
+    threads: [{ ...thread, efficiency: { ...efficiency, prompt } }]
   };
 }
 
@@ -233,9 +319,7 @@ function hookSummary(): HookDenialSummary {
     byPolicy: { "no-secrets": 2 },
     byRole: { worker: 2 },
     byReason: [{ reason: "no secrets", count: 2 }],
-    topCommands: [
-      { commandHead: "cat .env", policy: "no-secrets", count: 2 }
-    ]
+    topCommands: [{ commandHead: "cat .env", policy: "no-secrets", count: 2 }]
   };
 }
 
@@ -260,10 +344,7 @@ test("tool failures are categorized by the first rule that matches", () => {
     classifyToolFailure("apply_patch verification failed"),
     "apply-patch"
   );
-  assert.equal(
-    classifyToolFailure("Transport closed"),
-    "transport-closed"
-  );
+  assert.equal(classifyToolFailure("Transport closed"), "transport-closed");
   assert.equal(classifyToolFailure("aborted by user"), "aborted");
   assert.equal(classifyToolFailure("something else entirely"), "other");
 });
@@ -321,14 +402,93 @@ test("the diagnostics report validator accepts a report and rejects a broken one
   );
 });
 
+test("the prompt measurements validate characters, tokens and skill read counts", () => {
+  assert.equal(isSessionDiagnosticsReport(measuredReport()), true);
+  assert.equal(
+    isSessionDiagnosticsReport(
+      measuredReport(
+        { initialDeveloperTokens: 512 },
+        { maxInitialDeveloperTokens: 512 }
+      )
+    ),
+    true,
+    "a token count is accepted when a tokenizer measured it"
+  );
+
+  const rejected: Record<string, SessionDiagnosticsReport | unknown> = {
+    "missing chars": withoutPromptChars(),
+    "negative tokens": measuredReport({ initialDeveloperTokens: -1 }),
+    "fractional chars": measuredReport({ initialDeveloperChars: 1.5 }),
+    "string tokens": measuredReport({
+      initialDeveloperTokens: "512" as unknown as number
+    }),
+    "count for an unread skill": measuredReport({
+      skillReadCounts: { "bug-fix": 3, kiss: 1, dry: 1 }
+    }),
+    "read skill without a count": measuredReport({
+      skillReadCounts: { "bug-fix": 3 }
+    }),
+    "zero count": measuredReport({
+      skillReadCounts: { "bug-fix": 0, kiss: 1 }
+    }),
+    "fractional count": measuredReport({
+      skillReadCounts: { "bug-fix": 1.5, kiss: 1 }
+    }),
+    "duplicate skill": measuredReport({
+      skillsRead: ["kiss", "kiss"],
+      skillReadCounts: { kiss: 2 }
+    }),
+    "aggregate unique mismatch": measuredReport({}, { uniqueSkillsRead: 3 }),
+    "aggregate missing counts": {
+      ...measuredReport(),
+      aggregates: { ...measuredReport().aggregates, skillReadCounts: undefined }
+    },
+    "aggregate string tokens": measuredReport(
+      {},
+      { maxInitialDeveloperTokens: "1" as unknown as number }
+    )
+  };
+  for (const [name, payload] of Object.entries(rejected))
+    assert.equal(isSessionDiagnosticsReport(payload), false, name);
+});
+
+test("the efficiency text shows prompt characters, unknown tokens and repeated skill reads", () => {
+  const text = renderSessionDiagnosticsReport(measuredReport(), {
+    failures: false,
+    efficiency: true,
+    items: false,
+    events: false
+  });
+  assert.match(text, /prompt dev=2\.0 KB\/2000 chars\/\? tokens /u);
+  assert.match(text, /read=2 \[bug-fix×3, kiss\]/u);
+
+  const tokenized = renderSessionDiagnosticsReport(
+    measuredReport(
+      { initialDeveloperTokens: 512 },
+      { maxInitialDeveloperTokens: 512 }
+    ),
+    { failures: false, efficiency: true, items: false, events: false }
+  );
+  assert.match(tokenized, /\/2000 chars\/512 tokens /u);
+});
+
 test("the other diagnostics validators fail closed on a malformed payload", () => {
   assert.equal(isSessionRecentListResponse(recentList()), true);
-  assert.equal(isSessionRecentListResponse({ ...recentList(), limit: "10" }), false);
-  assert.equal(isSessionRecentListResponse({ ...recentList(), sessions: {} }), false);
+  assert.equal(
+    isSessionRecentListResponse({ ...recentList(), limit: "10" }),
+    false
+  );
+  assert.equal(
+    isSessionRecentListResponse({ ...recentList(), sessions: {} }),
+    false
+  );
 
   assert.equal(isSessionFleetScanResponse(fleetScan()), true);
   assert.equal(
-    isSessionFleetScanResponse({ ...fleetScan(), totals: { ...fleetTotals(), cacheHitPct: "50" } }),
+    isSessionFleetScanResponse({
+      ...fleetScan(),
+      totals: { ...fleetTotals(), cacheHitPct: "50" }
+    }),
     false
   );
 

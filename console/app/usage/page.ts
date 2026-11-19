@@ -26,7 +26,8 @@ import {
   type ControlApiResult,
   fetchFleetSessionScan,
   fetchHookDenials,
-  fetchSessionDiagnostics} from "../../src/lib/server/control-api.ts";
+  fetchSessionDiagnostics
+} from "../../src/lib/server/control-api.ts";
 import {
   type ConsoleSessionUsageResult,
   type ConsoleUsageResult,
@@ -533,15 +534,11 @@ async function renderSessionScopedPage(
             ? { kind: "ok" as const, report: result.data }
             : { kind: "failed" as const, failure: controlApiFailure(result) }
         ),
-    loadOpenLITSessionUsage(
-      sessionId,
-      sessionQuerySelection(state.selection),
-      {
-        limit: viewState.spanLimit,
-        offset: viewState.spanOffset,
-        sortDirection: viewState.spanSort
-      }
-    ),
+    loadOpenLITSessionUsage(sessionId, sessionQuerySelection(state.selection), {
+      limit: viewState.spanLimit,
+      offset: viewState.spanOffset,
+      sortDirection: viewState.spanSort
+    }),
     selectedSpanId === undefined
       ? Promise.resolve(undefined)
       : loadOpenLITTrace(selectedSpanId)

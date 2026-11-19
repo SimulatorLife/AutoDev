@@ -37,7 +37,10 @@ export type MutableGap = Mutable<SessionThreadGap>;
 export type MutableItem = Mutable<SessionThreadItem>;
 export type MutableFailure = Mutable<SessionToolFailure>;
 export type MutableProviderStats = Mutable<SessionRouterProviderStats>;
-export type MutableFleetRow = Omit<Mutable<FleetSessionRow>, "routerSkipped" | "providers"> & {
+export type MutableFleetRow = Omit<
+  Mutable<FleetSessionRow>,
+  "routerSkipped" | "providers"
+> & {
   routerSkipped: Record<string, number>;
   providers: Record<string, number>;
 };

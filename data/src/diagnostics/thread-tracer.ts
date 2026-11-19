@@ -26,8 +26,8 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import {
-  type SessionMetaPayload,
-  parseSessionMetaPayload
+  parseSessionMetaPayload,
+  type SessionMetaPayload
 } from "./rollout-discovery.ts";
 import type {
   MutableFailure,
@@ -363,7 +363,9 @@ function readJsonl(file: string): RolloutPayload[] {
     });
 }
 
-function itemDetail(payload: ResponseItemPayload | Record<string, unknown>): string {
+function itemDetail(
+  payload: ResponseItemPayload | Record<string, unknown>
+): string {
   switch (payload.type) {
     case "message": {
       const content = Array.isArray(payload.content) ? payload.content : [];
@@ -479,10 +481,12 @@ interface CompactionAccumulatorState {
 interface PromptAccumulatorState {
   seenAgentOutput: boolean;
   initialDeveloperBytes: number;
+  initialDeveloperChars: number;
   skillsCatalogBytes: number;
   loadedSkills: Set<string>;
   skillsByRoot: Record<string, number>;
-  skillsRead: Set<string>;
+  /** SKILL.md reads per skill name: one per tool call that names it. */
+  skillReadCounts: Map<string, number>;
 }
 
 interface ThreadTraceAccumulator {
@@ -562,10 +566,11 @@ function createTraceAccumulator(
     prompt: {
       seenAgentOutput: false,
       initialDeveloperBytes: 0,
+      initialDeveloperChars: 0,
       skillsCatalogBytes: 0,
       loadedSkills: new Set(),
       skillsByRoot: {},
-      skillsRead: new Set()
+      skillReadCounts: new Map()
     },
     cwd: typeof meta.cwd === "string" ? meta.cwd : "/",
     reads: new Set(),
@@ -621,7 +626,12 @@ function recordGapAndItems(
   const label = traceItemLabel(payload, isResponse);
   recordTraceGap(at, label, acc);
   if (withItems && isResponse && at && payload)
-    acc.items.push({ at, kind: payload.type, detail: itemDetail(payload), threadId: "" });
+    acc.items.push({
+      at,
+      kind: payload.type,
+      detail: itemDetail(payload),
+      threadId: ""
+    });
 }
 
 function callInputText(payload: ResponseItemPayload): string | null {
@@ -695,9 +705,35 @@ function recordPromptSkillReads(
 ): void {
   const raw = rawCallArgumentText(payload);
   if (!raw.includes("SKILL.md")) return;
+  // One call that names a SKILL.md twice (a cat, then a sed of the same file)
+  // read it once; a later call that names it again read it again.
+  const skillsInCall = new Set<string>();
   for (const match of raw.matchAll(SKILL_READ_FILE_REGEX)) {
-    if (match[1]) acc.prompt.skillsRead.add(match[1]);
+    if (match[1]) skillsInCall.add(match[1]);
   }
+  const counts = acc.prompt.skillReadCounts;
+  for (const skill of skillsInCall)
+    counts.set(skill, (counts.get(skill) ?? 0) + 1);
+}
+
+/**
+ * A string's length in Unicode code points.
+ *
+ * A surrogate pair is one code point and an unpaired surrogate is one; this
+ * is the length `Array.from(text)` reports, without building the array.
+ */
+export function countCodePoints(text: string): number {
+  let pairs = 0;
+  for (let index = 0; index < text.length - 1; index += 1) {
+    const high = text.charCodeAt(index);
+    if (high < 0xd8_00 || high > 0xdb_ff) continue;
+    const low = text.charCodeAt(index + 1);
+    if (low >= 0xdc_00 && low <= 0xdf_ff) {
+      pairs += 1;
+      index += 1;
+    }
+  }
+  return text.length - pairs;
 }
 
 function countImageObjects(root: unknown): number {
@@ -748,6 +784,7 @@ function recordInitialDeveloperPrompt(
     .join("\n");
   if (!text) return;
   acc.prompt.initialDeveloperBytes += Buffer.byteLength(text, "utf8");
+  acc.prompt.initialDeveloperChars += countCodePoints(text);
   const skillsBlock = SKILLS_INSTRUCTIONS_REGEX.exec(text);
   if (skillsBlock) {
     acc.prompt.skillsCatalogBytes += Buffer.byteLength(skillsBlock[0], "utf8");
@@ -1146,6 +1183,17 @@ function readSkillTelemetryCount(
   return null;
 }
 
+function skillReadSummary(counts: ReadonlyMap<string, number>): {
+  skillsRead: string[];
+  skillReadCounts: Record<string, number>;
+} {
+  const skillsRead = [...counts.keys()].sort();
+  const skillReadCounts: Record<string, number> = {};
+  for (const skill of skillsRead)
+    skillReadCounts[skill] = counts.get(skill) ?? 0;
+  return { skillsRead, skillReadCounts };
+}
+
 function buildThreadEfficiency(
   acc: ThreadTraceAccumulator,
   codexHome: string | null,
@@ -1181,7 +1229,10 @@ function buildThreadEfficiency(
       cacheDrops: state.cacheDrops
     },
     compaction: {
-      count: Math.max(compaction.compactedRecords, compaction.contextCompactedEvents),
+      count: Math.max(
+        compaction.compactedRecords,
+        compaction.contextCompactedEvents
+      ),
       contextCompactedEvents: compaction.contextCompactedEvents,
       maxReplacementItems: compaction.maxReplacementItems,
       maxReplacementBytes: compaction.maxReplacementBytes,
@@ -1190,10 +1241,14 @@ function buildThreadEfficiency(
     },
     prompt: {
       initialDeveloperBytes: prompt.initialDeveloperBytes,
+      initialDeveloperChars: prompt.initialDeveloperChars,
+      // No tokenizer for the thread's provider model ships with the engine,
+      // and a rollout's token usage is per request, not per message.
+      initialDeveloperTokens: null,
       skillsCatalogBytes: prompt.skillsCatalogBytes,
       skillsLoaded: prompt.loadedSkills.size,
       skillsByRoot: prompt.skillsByRoot,
-      skillsRead: [...prompt.skillsRead].sort(),
+      ...skillReadSummary(prompt.skillReadCounts),
       skillTelemetryReads: readSkillTelemetryCount(
         codexHome,
         threadId,

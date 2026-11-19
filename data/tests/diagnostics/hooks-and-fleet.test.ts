@@ -8,7 +8,6 @@ import {
   hookDenialsResponse,
   summarizeHookDenials
 } from "../../src/diagnostics/hook-denials.ts";
-
 import { fixture, hookLine } from "./fixture.ts";
 
 const NOW = Date.parse("2026-09-19T12:00:00.000Z");
@@ -63,7 +62,9 @@ test("the PreToolUse denials in the window are aggregated by policy, role and re
     assert.equal(summary.userPromptSubmits, 1);
     assert.equal(summary.byPolicy["no-secrets"], 2);
     assert.equal(summary.byRole.worker, 2);
-    assert.deepEqual(summary.byReason, [{ reason: "reads a .env file", count: 2 }]);
+    assert.deepEqual(summary.byReason, [
+      { reason: "reads a .env file", count: 2 }
+    ]);
     assert.deepEqual(summary.topCommands, [
       { commandHead: "cat .env", policy: "no-secrets", count: 2 }
     ]);
@@ -104,8 +105,8 @@ test("the fleet scan aggregates the newest sessions into one row each", async ()
     });
     assert.equal(scan.schema, "autodev-session-fleet-scan-v1");
     assert.ok(scan.totals.sessions >= 2);
-    const root = scan.sessions.find((session) =>
-      session.id === "01a0b662-0000-7000-8000-000000000001"
+    const root = scan.sessions.find(
+      (session) => session.id === "01a0b662-0000-7000-8000-000000000001"
     );
     assert.ok(root);
     assert.equal(root.threads, 2);

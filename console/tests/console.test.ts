@@ -23156,6 +23156,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Next.js route-level error boundary rendering the shared dark-mode error view with in-place retry."
     ],
     [
+      join("src", "components", "ui", "InlineDisplayToggle.ts"),
+      "Cycles the display units of a server-supplied measurement in a small accessible client island, without treating unavailable measurements as observed."
+    ],
+    [
       join("src", "features", "usage", "use-usage-telemetry.ts"),
       "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
     ],

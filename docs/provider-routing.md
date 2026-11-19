@@ -1074,6 +1074,9 @@ results. How it says so depends on whether its stream is already open:
   minutes later), so it reports the same failure inside the stream: one
   `response.failed` whose `response.error` carries the failure `type` and,
   for a site limit, the declared `limit` -- the case this section exists for.
+  A Gemini turn may already have streamed prose (see "Gemini prose is
+  streamed" under opencli); a failure after that is output the router cannot
+  take back, so it ends the turn instead of falling back.
 - **MiniMax** is a pass-through to MiniMax's own Responses API: it forwards
   the upstream's status and events unchanged and adds no epilogue of its own.
 
@@ -2834,6 +2837,28 @@ single list; the route patterns and the site registry in
   an older chat holding other sessions' turns, which it then answered from
   (session `01a1b8ef-0797-73d2-82bd-a887418caf2b`). `ask` also prefixes every reply with `💬 `,
   which the spec strips.
+- **Gemini prose is streamed as the site writes it; nothing else is.**
+  While `gemini ask` waits, the patched `waitForGeminiResponse` writes each
+  new reading of the reply from the chat's structured turns, as one JSON line
+  `{text, url}`, to the descriptor `OPENCLI_PROGRESS_FD` names -- not stdout
+  (the command's one result) and not stderr (diagnostics). The bridge opens
+  that descriptor as a fourth pipe only for a streamed turn and shows Codex
+  the prose of those readings that is settled: whole lines only, only what two
+  readings in a row agree on, nothing from the first `<tool_call`,
+  `<tool_output` or HTML entity on, and nothing from a chat other than the one
+  the turn continues. Shown text only ever grows, in one message item that the
+  finished reply closes with its full text; a finished reply that no longer
+  begins with what was shown fails the turn rather than revising it, and a
+  turn that has shown text is never re-run in a new chat. Limits: a tool call
+  is read only from the finished reply, and the model's next turn needs the
+  call's result, so nothing after a call starts earlier -- only the prose
+  before it is shown sooner. Once text is shown the router cannot fall back to
+  another provider for that turn. ChatGPT streams nothing: its page renders a
+  reply differently from the text it stores (it drops anything that looks like
+  a tag and can stop partway), and a reply still being written is not stored
+  yet, so there is no interim text that is the reply's own. Non-streamed
+  requests are unchanged. Applying the patch needs `pnpm install` (the
+  patch hash in `pnpm-lock.yaml` changes).
 - **A Gemini first prompt names MCP tools instead of documenting them when
   it would not fit.** `exec`'s description documents every nested tool, and a
   root orchestrator in the Codex app carries enough connector and MCP tools

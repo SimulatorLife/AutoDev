@@ -55,7 +55,6 @@ import {
   unsupportedProviderModels
 } from "./provider-model-discovery.ts";
 import { CredentialBadge, ProviderStatusBadge } from "./provider-status.ts";
-import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 import { ProviderBrowserControls } from "./ProviderBrowserControls.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
@@ -63,6 +62,7 @@ import {
   ProviderModelAvailabilityBadge,
   ProviderModelDiscoveryBadge
 } from "./ProviderModelAvailabilityBadge.ts";
+import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export interface ProviderDetailViewProps {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -179,7 +179,7 @@ function fixture(): { home: string; cleanup: () => void } {
 function runWrapper(
   args: string[],
   env: NodeJS.ProcessEnv = {}
-): ReturnType<typeof spawnSync<string>> {
+): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
     env: { ...process.env, ...env }
@@ -194,10 +194,10 @@ test("observed investigations with an omitted metric count as metric-missing", (
     ],
     [{ investigation: { observed: true, toolCalls: 5 } }]
   );
-  assert.equal(result.after.metrics.toolCalls.mean, 5);
-  assert.equal(result.after.metrics.toolCalls.missing, 0);
+  assert.equal(result.after.metrics.toolCalls?.mean, 5);
+  assert.equal(result.after.metrics.toolCalls?.missing, 0);
   assert.equal(
-    result.before.metrics.toolCalls.missing,
+    result.before.metrics.toolCalls?.missing,
     2,
     "a metric no thread reported is missing on every thread, including the unobserved one"
   );
@@ -269,10 +269,10 @@ test("investigation comparison aggregates observed values and preserves missingn
       { investigation: { observed: true } }
     ]
   );
-  assert.equal(result.before.metrics.toolCalls.mean, 5);
-  assert.equal(result.after.metrics.toolCalls.mean, 10);
-  assert.equal(result.deltas.toolCalls.mean, 5);
-  assert.equal(result.before.metrics.filesRead.missing, 2);
+  assert.equal(result.before.metrics.toolCalls?.mean, 5);
+  assert.equal(result.after.metrics.toolCalls?.mean, 10);
+  assert.equal(result.deltas.toolCalls?.mean, 5);
+  assert.equal(result.before.metrics.filesRead?.missing, 2);
   assert.equal(result.before.unavailableThreads, 1);
 });
 
@@ -321,7 +321,14 @@ test("the wrapper carries the flags the route needs into the query", async () =>
   const api = await fakeControlApi("report\n");
   try {
     const run = runWrapper(
-      [ROOT, "--efficiency", "--failures", "--all-failures", "--items", "--events"],
+      [
+        ROOT,
+        "--efficiency",
+        "--failures",
+        "--all-failures",
+        "--items",
+        "--events"
+      ],
       {
         AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
         AUTODEV_CONTROL_API_BASE_URL: api.url
@@ -347,7 +354,10 @@ test("the wrapper asks for the fleet routes with their own parameters", async ()
       AUTODEV_CONTROL_API_BASE_URL: api.url
     });
     assert.equal(recent.status, 0, recent.stderr);
-    assert.match(api.requests()[0]!.url, /^\/control\/diagnostics\/sessions\/recent/u);
+    assert.match(
+      api.requests()[0]!.url,
+      /^\/control\/diagnostics\/sessions\/recent/u
+    );
     assert.match(api.requests()[0]!.url, /limit=3/u);
 
     const hooks = runWrapper(["--hooks", "--since", "14"], {
@@ -363,7 +373,10 @@ test("the wrapper asks for the fleet routes with their own parameters", async ()
       AUTODEV_CONTROL_API_BASE_URL: api.url
     });
     assert.equal(scan.status, 0, scan.stderr);
-    assert.match(api.requests()[2]!.url, /^\/control\/diagnostics\/sessions\/scan/u);
+    assert.match(
+      api.requests()[2]!.url,
+      /^\/control\/diagnostics\/sessions\/scan/u
+    );
     assert.match(api.requests()[2]!.url, /limit=5/u);
   } finally {
     api.close();
@@ -418,10 +431,13 @@ test("the wrapper never prints the credential it used", async () => {
 test("an offline run reads the machine directly, through the same engine", () => {
   const { home, cleanup } = fixture();
   try {
-    const run = runWrapper([ROOT, "--json", "--offline", "--codex-home", home], {
-      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
-      AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:1"
-    });
+    const run = runWrapper(
+      [ROOT, "--json", "--offline", "--codex-home", home],
+      {
+        AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+        AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:1"
+      }
+    );
     assert.equal(run.status, 0, run.stderr);
     const report = JSON.parse(run.stdout);
     assert.equal(report.schema, "autodev-session-diagnostics-v1");
@@ -456,11 +472,19 @@ test("a run against a Control API that is not there falls back to the engine", (
 test("the wrapper and the CLI produce the same report", () => {
   const { home, cleanup } = fixture();
   try {
-    const wrapper = runWrapper([ROOT, "--json", "--offline", "--codex-home", home]);
+    const wrapper = runWrapper([
+      ROOT,
+      "--json",
+      "--offline",
+      "--codex-home",
+      home
+    ]);
     const cli = spawnSync(
       process.execPath,
       [
-        fileURLToPath(new URL("../runtime/src/cli/autodev.ts", import.meta.url)),
+        fileURLToPath(
+          new URL("../runtime/src/cli/autodev.ts", import.meta.url)
+        ),
         "diagnostics",
         ROOT,
         "--json",
@@ -504,10 +528,7 @@ test("the wrapper's JSON report is readable by the investigation comparison", ()
 test("the wrapper documents its usage and exits 2 when it is asked for nothing", () => {
   const usage = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" });
   assert.equal(usage.status, 2);
-  assert.match(
-    usage.stderr,
-    /usage: session-trace\.ts <session-or-thread-id>/
-  );
+  assert.match(usage.stderr, /usage: session-trace\.ts <session-or-thread-id>/);
   assert.match(usage.stderr, /--scan-recent/u);
   assert.match(usage.stderr, /--hooks/u);
 });

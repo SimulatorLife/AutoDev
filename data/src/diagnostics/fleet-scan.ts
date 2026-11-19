@@ -10,22 +10,22 @@
 
 import {
   classifyToolFailure,
-  SESSION_FLEET_SCAN_SCHEMA,
   type FleetScanTotals,
   type FleetSessionRow,
+  SESSION_FLEET_SCAN_SCHEMA,
   type SessionFleetScanResponse,
   type SessionRouterSummary,
   type SessionThreadTrace,
   type ToolFailureCategory
 } from "@simulatorlife/autodev-core";
 
-import { readRouterEvents, shift, summarizeRouter } from "./router-events.ts";
 import {
   listRecentSessions,
   readHeadMeta,
   rolloutFiles,
   rolloutRoots
 } from "./rollout-discovery.ts";
+import { readRouterEvents, shift, summarizeRouter } from "./router-events.ts";
 import { traceThread } from "./thread-tracer.ts";
 import type { MutableFleetRow } from "./working-shapes.ts";
 
@@ -175,7 +175,10 @@ export interface FleetScanOptions {
 export async function scanRecentSessions(
   options: FleetScanOptions
 ): Promise<SessionFleetScanResponse> {
-  const recent = listRecentSessions(rolloutRoots(options.codexHome), options.limit);
+  const recent = listRecentSessions(
+    rolloutRoots(options.codexHome),
+    options.limit
+  );
   const bySession = rolloutsForSelectedSessions(
     options.codexHome,
     new Set(recent.map((session) => session.id))

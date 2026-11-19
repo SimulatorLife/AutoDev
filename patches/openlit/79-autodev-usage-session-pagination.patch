@@ -298,9 +298,9 @@ index aca385ff8f1d39a2d508a4ebbd52a72288043228..c579d6da316e9df91a17e14477fadbfd
  			)
 -			.slice(0, SESSION_SPAN_LIMIT);
 +			.slice(0, limit);
-+		const hasMore =
-+			rawRows.length > limit ||
-+			(total !== null && offset + spans.length < total);
++		const hasMore = total !== null
++			? offset + pageRows.length < total
++			: rawRows.length > limit;
  		return response(200, {
  			schema: SESSION_USAGE_SCHEMA,
  			status: "observed",
@@ -443,7 +443,7 @@ index 2158e6cd2ce20c84681b3cbd83ddc385fb55afd6..76419fb7d75c8cee0b1020a777818539
 +			meta: { truncated: false },
 +		});
 +		mockListSpans.mockResolvedValueOnce({
-+			rows: Array.from({ length: 51 }, (_, index) => span(index)),
++			rows: Array.from({ length: 50 }, (_, index) => span(index)),
 +			meta: { truncated: false },
 +		});
 +		const page = await POST(
@@ -462,7 +462,7 @@ index 2158e6cd2ce20c84681b3cbd83ddc385fb55afd6..76419fb7d75c8cee0b1020a777818539
 +		expect(body.total).toBe(250);
 +		expect(body.estimatedCostUsd).toBe(1.25);
 +		expect(body.spans).toHaveLength(50);
-+		expect(body.hasMore).toBe(true);
++		expect(body.hasMore).toBe(false);
 +		expect(body.partial).toBe(false);
 +		expect(mockListSpans).toHaveBeenCalledWith(
 +			expect.objectContaining({

@@ -75,6 +75,41 @@ test("the session's tabs keep the session scope and show that tab's evidence", a
   await expect(page.getByText("probe_unavailable").first()).toBeVisible();
 });
 
+test("the threads tab shows role, provider and model, and the prompt size toggles units", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    "/usage?range=24H&sessionId=" +
+      SESSION_ID +
+      "&tab=threads&threadId=" +
+      WORKER_THREAD_ID
+  );
+  await waitForPageContent(page);
+
+  const threads = page.getByRole("table", { name: "Session threads" });
+  for (const header of ["Role", "Model provider", "Model"]) {
+    await expect(
+      threads.getByRole("columnheader", { name: header, exact: true })
+    ).toBeVisible();
+  }
+
+  const toggle = page.locator(
+    '[data-inline-display-toggle="initial-developer-prompt"]'
+  );
+  await expect(toggle).toHaveCSS("cursor", "pointer");
+  await expect(toggle).toHaveCSS("text-decoration-style", "dotted");
+  await expect(toggle).toHaveText("1,200 bytes");
+  // The engine reports bytes only, so the other units say so rather than guess.
+  await toggle.click();
+  await expect(toggle).toHaveText("Not observed (characters)");
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveText("Not observed (tokens)");
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveText("1,200 bytes");
+});
+
 test("the spans tab pages through a session longer than one page", async ({
   page
 }) => {
@@ -136,10 +171,7 @@ test("the fleet's recent sessions link into a session's diagnostics", async ({
   await waitForPageContent(page);
 
   await expect(page.locator('[data-fleet-diagnostics="true"]')).toHaveCount(1);
-  const sessionLink = page
-    .locator("a")
-    .filter({ hasText: SESSION_ID })
-    .first();
+  const sessionLink = page.locator("a").filter({ hasText: SESSION_ID }).first();
   await expect(sessionLink).toBeVisible();
   await sessionLink.click();
   await page.waitForURL(/sessionId=/u);

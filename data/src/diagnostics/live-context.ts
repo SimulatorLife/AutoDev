@@ -18,9 +18,9 @@ import {
   closeSync,
   existsSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
-  readdirSync,
   statSync
 } from "node:fs";
 import path from "node:path";
@@ -60,7 +60,6 @@ const BRIDGE_LOG_ALERT_REGEX =
 const BRIDGE_LOG_TAIL_BYTES = 64 * 1024;
 const WRITING_WINDOW_MS = 10 * 60 * 1000;
 const OPEN_THREAD_SCAN_LIMIT = 200;
-const DRIFT_FILE_LIMIT = 15;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -241,7 +240,9 @@ export function readLogSummaries(codexHome: string): SessionLogFileSummary[] {
 }
 
 /** The bridge-log lines that report a problem worth surfacing. */
-export function readBridgeLogAlerts(codexHome: string): SessionBridgeLogAlert[] {
+export function readBridgeLogAlerts(
+  codexHome: string
+): SessionBridgeLogAlert[] {
   const hooksDir = path.join(codexHome, "hooks");
   if (!existsSync(hooksDir)) return [];
   const alerts: SessionBridgeLogAlert[] = [];
@@ -258,9 +259,9 @@ export function readBridgeLogAlerts(codexHome: string): SessionBridgeLogAlert[] 
       alerts.push({
         file: name,
         count: matched.length,
-        samples: matched.slice(-3).map((line) =>
-          line.replaceAll(/\s+/gu, " ").trim().slice(0, 160)
-        )
+        samples: matched
+          .slice(-3)
+          .map((line) => line.replaceAll(/\s+/gu, " ").trim().slice(0, 160))
       });
     }
   }
@@ -279,8 +280,8 @@ function readRouterStateFields(codexHome: string): {
     const raw: unknown = JSON.parse(readFileSync(stateFile, "utf8"));
     if (!isRecord(raw)) return { disabledProviders: [], nullRoleModels: [] };
     const disabledProviders = Array.isArray(raw.disabledProviders)
-      ? raw.disabledProviders.filter((value): value is string =>
-          typeof value === "string"
+      ? raw.disabledProviders.filter(
+          (value): value is string => typeof value === "string"
         )
       : [];
     const nullRoleModels: string[] = [];
@@ -376,8 +377,7 @@ function readProviderFailuresSummary(
     const lastFailure = isRecord(info.lastFailure) ? info.lastFailure : null;
     const cooldownKind =
       typeof info.cooldownKind === "string" ? info.cooldownKind : null;
-    const providerStatus =
-      typeof info.status === "string" ? info.status : null;
+    const providerStatus = typeof info.status === "string" ? info.status : null;
     if (!cooldownKind && !lastFailure && providerStatus === "ready") continue;
     rows.push({
       provider,

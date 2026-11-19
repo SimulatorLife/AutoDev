@@ -165,11 +165,7 @@ export type UsageFleetView = "overview" | "sessions" | "hooks";
 
 /** The session-scoped Usage tabs. */
 export type UsageSessionTab =
-  | "overview"
-  | "threads"
-  | "failures"
-  | "requests"
-  | "spans";
+  "overview" | "threads" | "failures" | "requests" | "spans";
 
 /** Everything the Usage page reads out of its own URL. */
 export interface UsageViewState {
@@ -205,9 +201,15 @@ const SMALL_PAGE_LIMITS = [50, 100] as const;
 const HOOK_WINDOWS = [1, 7, 30] as const;
 const WHOLE_NUMBER_PATTERN = /^\d+$/u;
 
-function oneOf<T extends number>(value: string, allowed: readonly T[], fallback: T): T {
+function oneOf<T extends number>(
+  value: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
   const parsed = Number(value);
-  return (allowed as readonly number[]).includes(parsed) ? (parsed as T) : fallback;
+  return (allowed as readonly number[]).includes(parsed)
+    ? (parsed as T)
+    : fallback;
 }
 
 function offsetValue(value: string): number {

@@ -17,7 +17,6 @@ import { createInterface } from "node:readline";
 import type {
   SessionRouterEventRow,
   SessionRouterFailure,
-  SessionRouterProviderStats,
   SessionRouterSkippedEvent,
   SessionRouterSummary,
   SessionThreadTrace
@@ -134,7 +133,9 @@ function routerEventFromLine(
     ...(typeof event.errorName === "string"
       ? { errorName: event.errorName }
       : {}),
-    ...(typeof event.errorCode === "string" ? { errorCode: event.errorCode } : {})
+    ...(typeof event.errorCode === "string"
+      ? { errorCode: event.errorCode }
+      : {})
   };
 }
 

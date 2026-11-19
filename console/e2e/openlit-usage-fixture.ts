@@ -434,9 +434,9 @@ function respondSessionUsage(body: string, response: ServerResponse): void {
   try {
     request = JSON.parse(body) as typeof request;
   } catch {
-    response.writeHead(400, { "content-type": "application/json" }).end(
-      JSON.stringify({ error: { code: "invalid_request" } })
-    );
+    response
+      .writeHead(400, { "content-type": "application/json" })
+      .end(JSON.stringify({ error: { code: "invalid_request" } }));
     return;
   }
   const limit = Number(request.limit ?? 50);
@@ -448,9 +448,9 @@ function respondSessionUsage(body: string, response: ServerResponse): void {
     !Number.isInteger(offset) ||
     offset < 0
   ) {
-    response.writeHead(400, { "content-type": "application/json" }).end(
-      JSON.stringify({ error: { code: "invalid_page" } })
-    );
+    response
+      .writeHead(400, { "content-type": "application/json" })
+      .end(JSON.stringify({ error: { code: "invalid_page" } }));
     return;
   }
   const ordered = Array.from({ length: SESSION_SPAN_COUNT }, (_, index) =>

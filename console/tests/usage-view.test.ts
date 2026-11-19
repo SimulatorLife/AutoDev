@@ -184,7 +184,13 @@ test("Usage carries the session scope in the top bar, not in a metric filter", (
   // The session is a scope, not a filter option: no select offers it, and the
   // bounded filter dimensions stay the ones the telemetry source knows.
   assert.doesNotMatch(markup, /<select[^>]*name="session/u);
-  for (const dimension of ["workspace", "provider", "model", "agent", "skill"]) {
+  for (const dimension of [
+    "workspace",
+    "provider",
+    "model",
+    "agent",
+    "skill"
+  ]) {
     assert.match(markup, new RegExp(`name="${dimension}[^"]*"`, "u"));
   }
 });

@@ -12,13 +12,13 @@
  * head is all the join needs.
  */
 
-import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
+  type RecentSessionSummary,
   safeAutoDevSessionId,
   SESSION_RECENT_LIST_SCHEMA,
-  type RecentSessionSummary,
   type SessionRecentListResponse
 } from "@simulatorlife/autodev-core";
 
@@ -126,7 +126,7 @@ export function readHeadMeta(file: string): SessionMetaPayload | null {
   try {
     const chunks: Buffer[] = [];
     const buffer = Buffer.alloc(HEAD_CHUNK_BYTES);
-    for (let total = 0; total < HEAD_READ_LIMIT; ) {
+    for (let total = 0; total < HEAD_READ_LIMIT;) {
       const read = readSync(fd, buffer, 0, buffer.length, total);
       if (read === 0) break;
       const newline = buffer.subarray(0, read).indexOf(10);

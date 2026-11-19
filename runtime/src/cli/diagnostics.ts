@@ -144,7 +144,10 @@ export function parseDiagnosticsArgs(
         break;
       }
       case "--since": {
-        sinceDays = parsePositiveNumber(argv[++index] ?? "", DEFAULT_HOOK_WINDOW_DAYS);
+        sinceDays = parsePositiveNumber(
+          argv[++index] ?? "",
+          DEFAULT_HOOK_WINDOW_DAYS
+        );
         break;
       }
       case "--codex-home": {
@@ -183,8 +186,7 @@ export function parseDiagnosticsArgs(
   return {
     id,
     codexHome,
-    routerLog:
-      routerLog || `${codexHome}/run/${DEFAULT_ROUTER_LOG}`,
+    routerLog: routerLog || `${codexHome}/run/${DEFAULT_ROUTER_LOG}`,
     offline,
     json,
     failures: failures || allFailures,
@@ -314,8 +316,7 @@ async function runLocalEngine(options: DiagnosticsCliOptions): Promise<string> {
     itemsOffset: 0,
     // The Runtime owns the router, so the CLI reads its status and hands it
     // to the engine rather than the engine reaching for it.
-    routerStatus: () =>
-      fetchRouterStatus().catch(() => null)
+    routerStatus: () => fetchRouterStatus().catch(() => null)
   });
   return options.json
     ? JSON.stringify(report, null, 2)

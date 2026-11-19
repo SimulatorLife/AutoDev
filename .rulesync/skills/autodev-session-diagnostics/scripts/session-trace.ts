@@ -136,7 +136,10 @@ function parseArgs(
       continue;
     }
     if (arg === "--since") {
-      sinceDays = parsePositiveNumber(argv[++index] ?? "", DEFAULT_HOOK_WINDOW_DAYS);
+      sinceDays = parsePositiveNumber(
+        argv[++index] ?? "",
+        DEFAULT_HOOK_WINDOW_DAYS
+      );
     } else if (arg === "--codex-home") {
       codexHome = argv[++index] ?? codexHome;
       customPaths = true;
@@ -158,7 +161,8 @@ function parseArgs(
     }
   }
 
-  if (!id && recent === null && scanRecent === null && !flags.hooks) return null;
+  if (!id && recent === null && scanRecent === null && !flags.hooks)
+    return null;
   return {
     id,
     codexHome,
@@ -201,9 +205,7 @@ function readControlApiToken(
   for (const rawLine of content.split(LINE_BREAK)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
-    const assignment = line.startsWith("export ")
-      ? line.slice(7).trim()
-      : line;
+    const assignment = line.startsWith("export ") ? line.slice(7).trim() : line;
     const separator = assignment.indexOf("=");
     if (separator < 1) continue;
     if (assignment.slice(0, separator).trim() !== "AUTODEV_CONTROL_API_TOKEN")
@@ -277,7 +279,8 @@ async function readControlApi(
  */
 function findRepoRoot(env: NodeJS.ProcessEnv): string | null {
   const fromEnv = env.AUTODEV_REPO_ROOT?.trim();
-  if (fromEnv && existsSync(path.join(fromEnv, CLI_RELATIVE_PATH))) return fromEnv;
+  if (fromEnv && existsSync(path.join(fromEnv, CLI_RELATIVE_PATH)))
+    return fromEnv;
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < 8; depth += 1) {
     if (existsSync(path.join(dir, CLI_RELATIVE_PATH))) return dir;

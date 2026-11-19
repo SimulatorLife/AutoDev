@@ -159,7 +159,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
             callId: "call-1",
             detail: "Command blocked by PreToolUse hook: no secrets",
             category: "pretooluse-hook",
-            input: "read_file {path:\".env\"}"
+            input: 'read_file {path:".env"}'
           }
         ],
         investigation: {
@@ -172,6 +172,37 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
           searches: 1,
           repeatedSearches: 0,
           context: { ccc: 0, cgc: 1, lsp: 0 }
+        },
+        efficiency: {
+          tokens: {
+            observed: true,
+            samples: 2,
+            inputTokens: 6000,
+            cachedInputTokens: 2400,
+            outputTokens: 1200,
+            reasoningOutputTokens: 780,
+            totalTokens: 7200,
+            cacheHitPct: 40,
+            reasoningPct: 65,
+            peakInputTokens: 6000,
+            cacheDrops: 0
+          },
+          compaction: {
+            count: 0,
+            contextCompactedEvents: 0,
+            maxReplacementItems: 0,
+            maxReplacementBytes: 0,
+            maxReplacementImages: 0,
+            responseImageItems: 0
+          },
+          prompt: {
+            initialDeveloperBytes: 1200,
+            skillsCatalogBytes: 800,
+            skillsLoaded: 2,
+            skillsByRoot: { "/repo/.agents/skills": 2 },
+            skillsRead: ["autodev-session-diagnostics"],
+            skillTelemetryReads: 1
+          }
         }
       }
     ],
@@ -182,7 +213,12 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
         matchedBy: "thread",
         requests: 1,
         byProvider: {
-          antigravity: { requests: 1, failures: 0, elapsedMs: 8400, toolCalls: 0 },
+          antigravity: {
+            requests: 1,
+            failures: 0,
+            elapsedMs: 8400,
+            toolCalls: 0
+          },
           claude: { requests: 1, failures: 0, elapsedMs: 8400, toolCalls: 12 }
         },
         failures: [],
@@ -258,7 +294,12 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
       transportErrors: 0,
       providerHops: 1,
       byProvider: {
-        antigravity: { requests: 1, failures: 0, elapsedMs: 8400, toolCalls: 0 },
+        antigravity: {
+          requests: 1,
+          failures: 0,
+          elapsedMs: 8400,
+          toolCalls: 0
+        },
         claude: { requests: 1, failures: 0, elapsedMs: 8400, toolCalls: 12 }
       }
     },

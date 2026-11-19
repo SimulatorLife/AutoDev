@@ -9054,4 +9054,9 @@ export async function handleControlApiRequest(
   );
   return true;
 }
+export {
+  clearGithubSnapshotCacheForTests,
+  githubWorkflowsView,
+  setGithubActionsAdapterForTests
+} from "./github.ts";
 export { warmupDefaultPlaytestingRepository } from "./playtesting.ts";

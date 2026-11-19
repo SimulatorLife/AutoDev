@@ -179,10 +179,8 @@ export class RouterIngress {
     }
   }
 
-  private async probeReadiness(
-    endpoint: RouterGenerationEndpoint
-  ): Promise<boolean> {
-    return await new Promise<boolean>((resolve) => {
+  private probeReadiness(endpoint: RouterGenerationEndpoint): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
       const probe = httpRequest(
         {
           hostname: endpoint.host,

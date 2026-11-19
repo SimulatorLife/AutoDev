@@ -104,11 +104,37 @@ export interface SessionThreadCompactionSummary {
 
 /** One thread's prompt and skill-catalog overhead. */
 export interface SessionThreadPromptOverhead {
+  /**
+   * The initial developer prompt's size in UTF-8 bytes. The initial developer
+   * prompt is the text of every developer message the thread received before
+   * its first agent output, each message's text parts joined with a newline.
+   */
   readonly initialDeveloperBytes: number;
+  /**
+   * The same text's length in Unicode code points: a character outside the
+   * Basic Multilingual Plane (a surrogate pair) counts once, an unpaired
+   * surrogate counts once, and combining marks count separately (this is not a
+   * grapheme count).
+   */
+  readonly initialDeveloperChars: number;
+  /**
+   * The same text's length in tokens, or null when no tokenizer for the
+   * thread's provider model is available to count it. A rollout records token
+   * usage only per request, never per message, so the engine reports null
+   * rather than an estimate.
+   */
+  readonly initialDeveloperTokens: number | null;
   readonly skillsCatalogBytes: number;
   readonly skillsLoaded: number;
   readonly skillsByRoot: Readonly<Record<string, number>>;
+  /** The distinct skills whose SKILL.md this thread read, sorted by name. */
   readonly skillsRead: readonly string[];
+  /**
+   * How many tool calls of this thread read each skill's SKILL.md, keyed by
+   * exactly the names in skillsRead. A call that names the same SKILL.md more
+   * than once is one read; each further call is another.
+   */
+  readonly skillReadCounts: Readonly<Record<string, number>>;
   readonly skillTelemetryReads: number | null;
 }
 
@@ -159,7 +185,11 @@ export interface SessionInvestigation {
   readonly repeatedReads: number;
   readonly searches: number;
   readonly repeatedSearches: number;
-  readonly context: { readonly ccc: number; readonly cgc: number; readonly lsp: number };
+  readonly context: {
+    readonly ccc: number;
+    readonly cgc: number;
+    readonly lsp: number;
+  };
 }
 
 /** One thread of a session: the root turn and every subagent under it. */
@@ -255,7 +285,10 @@ export interface SessionRouterSummary {
   readonly providerSequence: readonly string[];
   readonly skipped?: readonly SessionRouterSkippedEvent[];
   readonly retries?: number;
-  readonly exhaustionWaits?: { readonly count: number; readonly totalMs: number };
+  readonly exhaustionWaits?: {
+    readonly count: number;
+    readonly totalMs: number;
+  };
   readonly transportErrors?: number;
   readonly events?: readonly SessionRouterEventRow[];
 }
@@ -284,7 +317,10 @@ export interface SessionLiveReport {
     readonly startedAt: string | null;
   };
   /** Recently written threads whose latest turn has not ended. */
-  readonly openThreads: readonly { readonly id: string; readonly modified: string }[];
+  readonly openThreads: readonly {
+    readonly id: string;
+    readonly modified: string;
+  }[];
   readonly processes: readonly string[];
   readonly services: readonly {
     readonly pid: string;
@@ -352,10 +388,17 @@ export interface SessionDiagnosticsAggregates {
   readonly maxReplacementImages: number;
   readonly responseImageItems: number;
   readonly maxInitialDeveloperBytes: number;
+  /** The largest thread initial developer prompt, in code points. */
+  readonly maxInitialDeveloperChars: number;
+  /** The largest counted thread prompt in tokens; null when none was counted. */
+  readonly maxInitialDeveloperTokens: number | null;
   readonly maxSkillsCatalogBytes: number;
   readonly maxSkillsLoaded: number;
   readonly skillsByRoot: Readonly<Record<string, number>>;
+  /** The number of keys of skillReadCounts. */
   readonly uniqueSkillsRead: number;
+  /** SKILL.md reads per skill, summed over every thread of the session. */
+  readonly skillReadCounts: Readonly<Record<string, number>>;
   readonly skillTelemetryReads: number | null;
   readonly turnsTotal: number;
   readonly turnsByOutcome: Readonly<Record<string, number>>;
@@ -475,7 +518,10 @@ export interface HookDenialSummary {
   readonly preToolUseDenials: number;
   readonly byPolicy: Readonly<Record<string, number>>;
   readonly byRole: Readonly<Record<string, number>>;
-  readonly byReason: readonly { readonly reason: string; readonly count: number }[];
+  readonly byReason: readonly {
+    readonly reason: string;
+    readonly count: number;
+  }[];
   readonly topCommands: readonly {
     readonly commandHead: string;
     readonly policy: string;
@@ -557,6 +603,15 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || isNumber(value);
 }
 
+/** A whole, non-negative measurement such as a character or token count. */
+function isCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isNullableCount(value: unknown): value is number | null {
+  return value === null || isCount(value);
+}
+
 function isCountMap(value: unknown): value is Record<string, number> {
   if (!isRecord(value)) return false;
   return Object.values(value).every((entry) => isNumber(entry));
@@ -635,94 +690,155 @@ function isSessionInvestigation(value: unknown): value is SessionInvestigation {
   );
 }
 
+function isListOf<T>(
+  value: unknown,
+  guard: (entry: unknown) => entry is T
+): value is readonly T[] {
+  return Array.isArray(value) && value.every((entry) => guard(entry));
+}
+
+/** Whether an optional field is absent or passes its guard. */
+function isAbsentOr(
+  value: unknown,
+  guard: (entry: unknown) => boolean
+): boolean {
+  return value === undefined || guard(value);
+}
+
+function isSessionThreadTokenUsage(
+  value: unknown
+): value is SessionThreadTokenUsage {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.observed === "boolean" &&
+    isNumber(value.samples) &&
+    isNumber(value.inputTokens) &&
+    isNumber(value.cachedInputTokens) &&
+    isNumber(value.outputTokens) &&
+    isNumber(value.reasoningOutputTokens) &&
+    isNumber(value.totalTokens) &&
+    isNullableNumber(value.cacheHitPct) &&
+    isNullableNumber(value.reasoningPct) &&
+    isNumber(value.peakInputTokens) &&
+    isNumber(value.cacheDrops)
+  );
+}
+
+function isSessionThreadCompactionSummary(
+  value: unknown
+): value is SessionThreadCompactionSummary {
+  if (!isRecord(value)) return false;
+  return (
+    isNumber(value.count) &&
+    isNumber(value.contextCompactedEvents) &&
+    isNumber(value.maxReplacementItems) &&
+    isNumber(value.maxReplacementBytes) &&
+    isNumber(value.maxReplacementImages) &&
+    isNumber(value.responseImageItems)
+  );
+}
+
+/**
+ * Whether per-skill read counts are keyed by exactly the skills read.
+ *
+ * Every key of the map names a skill in the list and every skill in the list
+ * has a whole, positive count: a skill counted but not listed, or listed but
+ * never counted, means the two fields came from different reads.
+ */
+function isSkillReadCounts(
+  value: unknown,
+  skillsRead: readonly string[]
+): value is Record<string, number> {
+  if (!isCountMap(value)) return false;
+  const listed = new Set(skillsRead);
+  if (listed.size !== skillsRead.length) return false;
+  if (Object.keys(value).length !== listed.size) return false;
+  return skillsRead.every((skill) => {
+    const count = value[skill];
+    return count !== undefined && Number.isInteger(count) && count >= 1;
+  });
+}
+
+function isSessionThreadPromptOverhead(
+  value: unknown
+): value is SessionThreadPromptOverhead {
+  if (!isRecord(value)) return false;
+  if (!isStringList(value.skillsRead)) return false;
+  return (
+    isNumber(value.initialDeveloperBytes) &&
+    isCount(value.initialDeveloperChars) &&
+    isNullableCount(value.initialDeveloperTokens) &&
+    isNumber(value.skillsCatalogBytes) &&
+    isNumber(value.skillsLoaded) &&
+    isCountMap(value.skillsByRoot) &&
+    isSkillReadCounts(value.skillReadCounts, value.skillsRead) &&
+    isNullableNumber(value.skillTelemetryReads)
+  );
+}
+
 function isSessionThreadEfficiency(
   value: unknown
 ): value is SessionThreadEfficiency {
   if (!isRecord(value)) return false;
-  if (!isRecord(value.tokens) || !isRecord(value.compaction))
-    return false;
-  if (!isRecord(value.prompt)) return false;
-  const { tokens, compaction, prompt } = value;
   return (
-    typeof tokens.observed === "boolean" &&
-    isNumber(tokens.samples) &&
-    isNumber(tokens.inputTokens) &&
-    isNumber(tokens.cachedInputTokens) &&
-    isNumber(tokens.outputTokens) &&
-    isNumber(tokens.reasoningOutputTokens) &&
-    isNumber(tokens.totalTokens) &&
-    isNullableNumber(tokens.cacheHitPct) &&
-    isNullableNumber(tokens.reasoningPct) &&
-    isNumber(tokens.peakInputTokens) &&
-    isNumber(tokens.cacheDrops) &&
-    isNumber(compaction.count) &&
-    isNumber(compaction.contextCompactedEvents) &&
-    isNumber(compaction.maxReplacementItems) &&
-    isNumber(compaction.maxReplacementBytes) &&
-    isNumber(compaction.maxReplacementImages) &&
-    isNumber(compaction.responseImageItems) &&
-    isNumber(prompt.initialDeveloperBytes) &&
-    isNumber(prompt.skillsCatalogBytes) &&
-    isNumber(prompt.skillsLoaded) &&
-    isCountMap(prompt.skillsByRoot) &&
-    isStringList(prompt.skillsRead) &&
-    isNullableNumber(prompt.skillTelemetryReads)
+    isSessionThreadTokenUsage(value.tokens) &&
+    isSessionThreadCompactionSummary(value.compaction) &&
+    isSessionThreadPromptOverhead(value.prompt)
+  );
+}
+
+function hasSessionThreadIdentity(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.id === "string" &&
+    isNullableString(value.sessionId) &&
+    isNullableString(value.parentId) &&
+    isNullableString(value.nickname) &&
+    isNullableString(value.role) &&
+    isNullableString(value.model) &&
+    isNullableString(value.modelProvider) &&
+    isNullableString(value.cliVersion) &&
+    isNullableString(value.cwd) &&
+    typeof value.file === "string" &&
+    isNullableString(value.start) &&
+    isNullableString(value.end)
+  );
+}
+
+function isSessionThreadAnomalies(
+  value: unknown
+): value is SessionThreadAnomalies {
+  if (!isRecord(value)) return false;
+  return isNumber(value.tagOnlyMessages) && isStringList(value.samples);
+}
+
+function isSessionThreadItem(value: unknown): value is SessionThreadItem {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.at === "string" &&
+    typeof value.kind === "string" &&
+    typeof value.detail === "string" &&
+    typeof value.threadId === "string"
   );
 }
 
 function isSessionThreadTrace(value: unknown): value is SessionThreadTrace {
-  if (!isRecord(value)) return false;
-  if (
-    typeof value.id !== "string" ||
-    !isNullableString(value.sessionId) ||
-    !isNullableString(value.parentId) ||
-    !isNullableString(value.nickname) ||
-    !isNullableString(value.role) ||
-    !isNullableString(value.model) ||
-    !isNullableString(value.modelProvider) ||
-    !isNullableString(value.cliVersion) ||
-    !isNullableString(value.cwd) ||
-    typeof value.file !== "string" ||
-    !isNullableString(value.start) ||
-    !isNullableString(value.end)
-  )
-    return false;
-  if (!isCountMap(value.counts) || !isCountMap(value.tools))
-    return false;
-  if (!Array.isArray(value.turns) || !value.turns.every(isSessionThreadTurn))
-    return false;
-  if (!Array.isArray(value.gaps) || !value.gaps.every(isSessionThreadGap))
-    return false;
-  if (
-    !Array.isArray(value.toolFailures) ||
-    !value.toolFailures.every(isSessionToolFailure)
-  )
-    return false;
-  if (!isSessionInvestigation(value.investigation)) return false;
-  if (value.efficiency !== undefined && !isSessionThreadEfficiency(value.efficiency))
-    return false;
-  if (value.anomalies !== undefined) {
-    if (!isRecord(value.anomalies)) return false;
-    if (!isNumber(value.anomalies.tagOnlyMessages)) return false;
-    if (!isStringList(value.anomalies.samples)) return false;
-  }
-  if (value.items !== undefined) {
-    if (!Array.isArray(value.items)) return false;
-    for (const item of value.items) {
-      if (!isRecord(item)) return false;
-      if (
-        typeof item.at !== "string" ||
-        typeof item.kind !== "string" ||
-        typeof item.detail !== "string" ||
-        typeof item.threadId !== "string"
-      )
-        return false;
-    }
-  }
-  return true;
+  if (!isRecord(value) || !hasSessionThreadIdentity(value)) return false;
+  return (
+    isCountMap(value.counts) &&
+    isCountMap(value.tools) &&
+    isListOf(value.turns, isSessionThreadTurn) &&
+    isListOf(value.gaps, isSessionThreadGap) &&
+    isListOf(value.toolFailures, isSessionToolFailure) &&
+    isSessionInvestigation(value.investigation) &&
+    isAbsentOr(value.efficiency, isSessionThreadEfficiency) &&
+    isAbsentOr(value.anomalies, isSessionThreadAnomalies) &&
+    isAbsentOr(value.items, (items) => isListOf(items, isSessionThreadItem))
+  );
 }
 
-function isSessionRouterEventRow(value: unknown): value is SessionRouterEventRow {
+function isSessionRouterEventRow(
+  value: unknown
+): value is SessionRouterEventRow {
   if (!isRecord(value)) return false;
   return (
     typeof value.at === "string" &&
@@ -756,145 +872,171 @@ function isSessionRouterProviderStats(
   );
 }
 
+function isProviderStatsMap(
+  value: unknown
+): value is Record<string, SessionRouterProviderStats> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((stats) => isSessionRouterProviderStats(stats))
+  );
+}
+
+function isSessionRouterFailure(value: unknown): value is SessionRouterFailure {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.at === "string" &&
+    typeof value.requestId === "string" &&
+    isNullableString(value.provider) &&
+    isNullableNumber(value.status) &&
+    isNullableString(value.failureClass) &&
+    isNullableNumber(value.elapsedMs)
+  );
+}
+
+function isSessionRouterSkippedEvent(
+  value: unknown
+): value is SessionRouterSkippedEvent {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.at === "string" &&
+    typeof value.requestId === "string" &&
+    isNullableString(value.provider) &&
+    typeof value.reason === "string" &&
+    isNullableNumber(value.elapsedMs)
+  );
+}
+
+function isExhaustionWaits(value: unknown): boolean {
+  return isRecord(value) && isNumber(value.count) && isNumber(value.totalMs);
+}
+
 function isSessionRouterSummary(value: unknown): value is SessionRouterSummary {
   if (!isRecord(value)) return false;
-  if (
-    typeof value.thread !== "string" ||
-    !isNullableString(value.model) ||
-    (value.matchedBy !== "thread" && value.matchedBy !== "model-window")
-  )
+  if (value.matchedBy !== "thread" && value.matchedBy !== "model-window")
     return false;
-  if (!isNumber(value.requests)) return false;
-  if (!isRecord(value.byProvider)) return false;
-  if (!Object.values(value.byProvider).every(isSessionRouterProviderStats))
-    return false;
-  if (!Array.isArray(value.failures)) return false;
-  for (const failure of value.failures) {
-    if (!isRecord(failure)) return false;
-    if (
-      typeof failure.at !== "string" ||
-      typeof failure.requestId !== "string" ||
-      !isNullableString(failure.provider) ||
-      !isNullableNumber(failure.status) ||
-      !isNullableString(failure.failureClass) ||
-      !isNullableNumber(failure.elapsedMs)
+  return (
+    typeof value.thread === "string" &&
+    isNullableString(value.model) &&
+    isNumber(value.requests) &&
+    isProviderStatsMap(value.byProvider) &&
+    isListOf(value.failures, isSessionRouterFailure) &&
+    isStringList(value.providerSequence) &&
+    isAbsentOr(value.skipped, (skipped) =>
+      isListOf(skipped, isSessionRouterSkippedEvent)
+    ) &&
+    isAbsentOr(value.retries, isNumber) &&
+    isAbsentOr(value.exhaustionWaits, isExhaustionWaits) &&
+    isAbsentOr(value.transportErrors, isNumber) &&
+    isAbsentOr(value.events, (events) =>
+      isListOf(events, isSessionRouterEventRow)
     )
-      return false;
-  }
-  if (!isStringList(value.providerSequence)) return false;
-  if (value.skipped !== undefined) {
-    if (!Array.isArray(value.skipped)) return false;
-    for (const skipped of value.skipped) {
-      if (!isRecord(skipped)) return false;
-      if (
-        typeof skipped.at !== "string" ||
-        typeof skipped.requestId !== "string" ||
-        !isNullableString(skipped.provider) ||
-        typeof skipped.reason !== "string" ||
-        !isNullableNumber(skipped.elapsedMs)
-      )
-        return false;
-    }
-  }
-  if (value.retries !== undefined && !isNumber(value.retries)) return false;
-  if (value.exhaustionWaits !== undefined) {
-    if (!isRecord(value.exhaustionWaits)) return false;
-    if (
-      !isNumber(value.exhaustionWaits.count) ||
-      !isNumber(value.exhaustionWaits.totalMs)
-    )
-      return false;
-  }
-  if (value.transportErrors !== undefined && !isNumber(value.transportErrors))
-    return false;
-  if (value.events !== undefined) {
-    if (!Array.isArray(value.events)) return false;
-    if (!value.events.every(isSessionRouterEventRow)) return false;
-  }
-  return true;
+  );
+}
+
+function isLiveRouterState(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.reachable === "boolean" &&
+    isNullableNumber(value.canonicalLiveCount) &&
+    isNullableCountMap(value.byState) &&
+    isNullableCountMap(value.liveByRole) &&
+    isNullableString(value.startedAt)
+  );
+}
+
+function isLiveOpenThread(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.modified === "string"
+  );
+}
+
+function isLiveService(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.pid === "string" &&
+    typeof value.started === "string" &&
+    typeof value.script === "string"
+  );
+}
+
+function isDeploymentDrift(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isNumber(value.checked) &&
+    isStringList(value.differing) &&
+    isStringList(value.missing)
+  );
+}
+
+function isEveryEntry(
+  value: unknown,
+  guard: (entry: unknown) => boolean
+): boolean {
+  return Array.isArray(value) && value.every((entry) => guard(entry));
 }
 
 function isSessionLiveReport(value: unknown): value is SessionLiveReport {
   if (!isRecord(value)) return false;
-  if (!isRecord(value.router)) return false;
-  const { router } = value;
-  if (
-    typeof router.reachable !== "boolean" ||
-    !isNullableNumber(router.canonicalLiveCount) ||
-    !isNullableCountMap(router.byState) ||
-    !isNullableCountMap(router.liveByRole) ||
-    !isNullableString(router.startedAt)
-  )
-    return false;
-  if (!Array.isArray(value.openThreads)) return false;
-  for (const thread of value.openThreads) {
-    if (!isRecord(thread)) return false;
-    if (typeof thread.id !== "string" || typeof thread.modified !== "string")
-      return false;
-  }
-  if (!isStringList(value.processes)) return false;
-  if (!Array.isArray(value.services)) return false;
-  for (const service of value.services) {
-    if (!isRecord(service)) return false;
-    if (
-      typeof service.pid !== "string" ||
-      typeof service.started !== "string" ||
-      typeof service.script !== "string"
-    )
-      return false;
-  }
-  if (value.drift !== null) {
-    if (!isRecord(value.drift)) return false;
-    if (!isNumber(value.drift.checked)) return false;
-    if (!isStringList(value.drift.differing)) return false;
-    if (!isStringList(value.drift.missing)) return false;
-  }
-  return true;
+  return (
+    isLiveRouterState(value.router) &&
+    isEveryEntry(value.openThreads, isLiveOpenThread) &&
+    isStringList(value.processes) &&
+    isEveryEntry(value.services, isLiveService) &&
+    (value.drift === null || isDeploymentDrift(value.drift))
+  );
+}
+
+function isProviderLastFailure(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.provider === "string" &&
+    isNullableString(value.status) &&
+    isNullableString(value.cooldownKind) &&
+    isNullableString(value.lastFailureClass) &&
+    isNullableNumber(value.lastFailureStatus)
+  );
+}
+
+function isWorkspaceTopTool(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.tool === "string" &&
+    isNumber(value.ok) &&
+    isNumber(value.error)
+  );
+}
+
+function isWorkspaceMcpSummary(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.workspace === "string" &&
+    isCountMap(value.exposed) &&
+    isCountMap(value.used) &&
+    isEveryEntry(value.topTools, isWorkspaceTopTool)
+  );
 }
 
 function isSessionEfficiencySummary(
   value: unknown
 ): value is SessionEfficiencySummary {
   if (!isRecord(value)) return false;
-  if (!isStringList(value.disabledProviders)) return false;
-  if (!isStringList(value.nullRoleModels)) return false;
-  if (value.providerLastFailures !== undefined) {
-    if (!Array.isArray(value.providerLastFailures)) return false;
-    for (const failure of value.providerLastFailures) {
-      if (!isRecord(failure)) return false;
-      if (
-        typeof failure.provider !== "string" ||
-        !isNullableString(failure.status) ||
-        !isNullableString(failure.cooldownKind) ||
-        !isNullableString(failure.lastFailureClass) ||
-        !isNullableNumber(failure.lastFailureStatus)
-      )
-        return false;
-    }
-  }
-  if (value.workspaces !== undefined) {
-    if (!Array.isArray(value.workspaces)) return false;
-    for (const workspace of value.workspaces) {
-      if (!isRecord(workspace)) return false;
-      if (typeof workspace.workspace !== "string") return false;
-      if (!isCountMap(workspace.exposed) || !isCountMap(workspace.used))
-        return false;
-      if (!Array.isArray(workspace.topTools)) return false;
-      for (const tool of workspace.topTools) {
-        if (!isRecord(tool)) return false;
-        if (
-          typeof tool.tool !== "string" ||
-          !isNumber(tool.ok) ||
-          !isNumber(tool.error)
-        )
-          return false;
-      }
-    }
-  }
-  return true;
+  return (
+    isStringList(value.disabledProviders) &&
+    isStringList(value.nullRoleModels) &&
+    isAbsentOr(value.providerLastFailures, (failures) =>
+      isEveryEntry(failures, isProviderLastFailure)
+    ) &&
+    isAbsentOr(value.workspaces, (workspaces) =>
+      isEveryEntry(workspaces, isWorkspaceMcpSummary)
+    )
+  );
 }
 
-function isSessionPagedSlice(value: unknown): value is SessionPagedSlice<unknown> {
+function isSessionPagedSlice(
+  value: unknown
+): value is SessionPagedSlice<unknown> {
   if (!isRecord(value)) return false;
   return (
     Array.isArray(value.items) &&
@@ -905,98 +1047,136 @@ function isSessionPagedSlice(value: unknown): value is SessionPagedSlice<unknown
   );
 }
 
+const AGGREGATE_NUMERIC_KEYS: readonly string[] = [
+  "threadCount",
+  "totalTokens",
+  "inputTokens",
+  "cachedInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "peakInputTokens",
+  "cacheDrops",
+  "compactions",
+  "contextCompactedEvents",
+  "maxReplacementItems",
+  "maxReplacementBytes",
+  "maxReplacementImages",
+  "responseImageItems",
+  "maxInitialDeveloperBytes",
+  "maxInitialDeveloperChars",
+  "maxSkillsCatalogBytes",
+  "maxSkillsLoaded",
+  "uniqueSkillsRead",
+  "turnsTotal",
+  "gapsCount",
+  "toolCallsTotal",
+  "toolFailuresTotal",
+  "preToolUseBlocks",
+  "routerRequests",
+  "routerFailures",
+  "routerSkippedTotal",
+  "routerRetries",
+  "exhaustionWaits",
+  "transportErrors",
+  "providerHops"
+];
+
+const AGGREGATE_NULLABLE_NUMERIC_KEYS: readonly string[] = [
+  "cacheHitPct",
+  "reasoningPct",
+  "maxInitialDeveloperTokens",
+  "skillTelemetryReads"
+];
+
+const AGGREGATE_COUNT_MAP_KEYS: readonly string[] = [
+  "skillsByRoot",
+  "skillReadCounts",
+  "turnsByOutcome",
+  "toolCallsByName",
+  "toolFailuresByCategory",
+  "routerSkippedByReason"
+];
+
 function isSessionDiagnosticsAggregates(
   value: unknown
 ): value is SessionDiagnosticsAggregates {
   if (!isRecord(value)) return false;
-  const numeric: readonly string[] = [
-    "threadCount",
-    "totalTokens",
-    "inputTokens",
-    "cachedInputTokens",
-    "outputTokens",
-    "reasoningOutputTokens",
-    "peakInputTokens",
-    "cacheDrops",
-    "compactions",
-    "contextCompactedEvents",
-    "maxReplacementItems",
-    "maxReplacementBytes",
-    "maxReplacementImages",
-    "responseImageItems",
-    "maxInitialDeveloperBytes",
-    "maxSkillsCatalogBytes",
-    "maxSkillsLoaded",
-    "uniqueSkillsRead",
-    "turnsTotal",
-    "gapsCount",
-    "toolCallsTotal",
-    "toolFailuresTotal",
-    "preToolUseBlocks",
-    "routerRequests",
-    "routerFailures",
-    "routerSkippedTotal",
-    "routerRetries",
-    "exhaustionWaits",
-    "transportErrors",
-    "providerHops"
-  ];
-  for (const key of numeric) {
-    if (!isNumber(value[key])) return false;
-  }
-  if (!isNullableNumber(value.cacheHitPct)) return false;
-  if (!isNullableNumber(value.reasoningPct)) return false;
-  if (!isNullableNumber(value.skillTelemetryReads)) return false;
-  if (!isCountMap(value.skillsByRoot)) return false;
-  if (!isCountMap(value.turnsByOutcome)) return false;
-  if (!isCountMap(value.toolCallsByName)) return false;
-  if (!isCountMap(value.toolFailuresByCategory)) return false;
-  if (!isCountMap(value.routerSkippedByReason)) return false;
-  if (!isRecord(value.byProvider)) return false;
-  return Object.values(value.byProvider).every(isSessionRouterProviderStats);
+  if (!AGGREGATE_NUMERIC_KEYS.every((key) => isNumber(value[key])))
+    return false;
+  if (
+    !AGGREGATE_NULLABLE_NUMERIC_KEYS.every((key) =>
+      isNullableNumber(value[key])
+    )
+  )
+    return false;
+  if (!AGGREGATE_COUNT_MAP_KEYS.every((key) => isCountMap(value[key])))
+    return false;
+  // uniqueSkillsRead counts the keys of skillReadCounts; disagreement means
+  // the two rollups were built from different reads.
+  if (
+    Object.keys(value.skillReadCounts as Record<string, number>).length !==
+    value.uniqueSkillsRead
+  )
+    return false;
+  return isProviderStatsMap(value.byProvider);
+}
+
+function isSessionLogFileSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.file === "string" &&
+    typeof value.modified === "string" &&
+    isNumber(value.bytes)
+  );
+}
+
+function isSessionBridgeLogAlert(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.file === "string" &&
+    isNumber(value.count) &&
+    isStringList(value.samples)
+  );
+}
+
+function hasSessionReportIdentity(value: Record<string, unknown>): boolean {
+  return (
+    value.schema === SESSION_DIAGNOSTICS_SCHEMA &&
+    typeof value.found === "boolean" &&
+    typeof value.requestedId === "string" &&
+    isNullableString(value.rootSessionId) &&
+    typeof value.matchedByThreadId === "boolean"
+  );
 }
 
 /** Whether a payload is a usable session diagnostics report. */
 export function isSessionDiagnosticsReport(
   value: unknown
 ): value is SessionDiagnosticsReport {
+  if (!isRecord(value) || !hasSessionReportIdentity(value)) return false;
+  return (
+    isListOf(value.threads, isSessionThreadTrace) &&
+    isListOf(value.router, isSessionRouterSummary) &&
+    isEveryEntry(value.logs, isSessionLogFileSummary) &&
+    isEveryEntry(value.bridgeAlerts, isSessionBridgeLogAlert) &&
+    (value.live === null || isSessionLiveReport(value.live)) &&
+    (value.efficiency === null ||
+      isSessionEfficiencySummary(value.efficiency)) &&
+    isSessionDiagnosticsAggregates(value.aggregates) &&
+    isSessionPagedSlice(value.eventsPage) &&
+    isSessionPagedSlice(value.itemsPage)
+  );
+}
+
+function isRecentSessionSummary(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.schema !== SESSION_DIAGNOSTICS_SCHEMA) return false;
-  if (typeof value.found !== "boolean") return false;
-  if (typeof value.requestedId !== "string") return false;
-  if (!isNullableString(value.rootSessionId)) return false;
-  if (typeof value.matchedByThreadId !== "boolean") return false;
-  if (!Array.isArray(value.threads) || !value.threads.every(isSessionThreadTrace))
-    return false;
-  if (!Array.isArray(value.router) || !value.router.every(isSessionRouterSummary))
-    return false;
-  if (!Array.isArray(value.logs)) return false;
-  for (const log of value.logs) {
-    if (!isRecord(log)) return false;
-    if (
-      typeof log.file !== "string" ||
-      typeof log.modified !== "string" ||
-      !isNumber(log.bytes)
-    )
-      return false;
-  }
-  if (!Array.isArray(value.bridgeAlerts)) return false;
-  for (const alert of value.bridgeAlerts) {
-    if (!isRecord(alert)) return false;
-    if (
-      typeof alert.file !== "string" ||
-      !isNumber(alert.count) ||
-      !isStringList(alert.samples)
-    )
-      return false;
-  }
-  if (value.live !== null && !isSessionLiveReport(value.live)) return false;
-  if (value.efficiency !== null && !isSessionEfficiencySummary(value.efficiency))
-    return false;
-  if (!isSessionDiagnosticsAggregates(value.aggregates)) return false;
-  if (!isSessionPagedSlice(value.eventsPage)) return false;
-  if (!isSessionPagedSlice(value.itemsPage)) return false;
-  return true;
+  return (
+    typeof value.id === "string" &&
+    typeof value.started === "string" &&
+    typeof value.lastWrite === "string" &&
+    isNumber(value.threads) &&
+    isNullableString(value.cwd)
+  );
 }
 
 /** Whether a payload is a usable recent-sessions listing. */
@@ -1004,21 +1184,71 @@ export function isSessionRecentListResponse(
   value: unknown
 ): value is SessionRecentListResponse {
   if (!isRecord(value)) return false;
-  if (value.schema !== SESSION_RECENT_LIST_SCHEMA) return false;
-  if (!isNumber(value.limit)) return false;
-  if (!Array.isArray(value.sessions)) return false;
-  for (const session of value.sessions) {
-    if (!isRecord(session)) return false;
-    if (
-      typeof session.id !== "string" ||
-      typeof session.started !== "string" ||
-      typeof session.lastWrite !== "string" ||
-      !isNumber(session.threads) ||
-      !isNullableString(session.cwd)
-    )
-      return false;
-  }
-  return true;
+  return (
+    value.schema === SESSION_RECENT_LIST_SCHEMA &&
+    isNumber(value.limit) &&
+    isEveryEntry(value.sessions, isRecentSessionSummary)
+  );
+}
+
+function hasFleetSessionTokenFields(value: Record<string, unknown>): boolean {
+  return (
+    isNumber(value.threads) &&
+    isNumber(value.totalTokens) &&
+    isNumber(value.inputTokens) &&
+    isNumber(value.cachedInputTokens) &&
+    isNullableNumber(value.cacheHitPct) &&
+    isNumber(value.cacheDrops) &&
+    isNumber(value.compactions) &&
+    isNumber(value.maxSkillsLoaded)
+  );
+}
+
+function isFleetSessionRow(value: unknown): boolean {
+  if (!isRecord(value) || !hasFleetSessionTokenFields(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.started === "string" &&
+    typeof value.lastWrite === "string" &&
+    isNullableString(value.cwd) &&
+    isNumber(value.toolFailures) &&
+    isNumber(value.preToolUseBlocks) &&
+    (value.topFailureCategory === null ||
+      isToolFailureCategory(value.topFailureCategory)) &&
+    isNumber(value.routerRequests) &&
+    isNumber(value.routerFailures) &&
+    isCountMap(value.routerSkipped) &&
+    isCountMap(value.providers)
+  );
+}
+
+function isReasonCount(value: unknown): boolean {
+  return (
+    isRecord(value) && typeof value.reason === "string" && isNumber(value.count)
+  );
+}
+
+function isKeyCount(value: unknown): boolean {
+  return (
+    isRecord(value) && typeof value.key === "string" && isNumber(value.count)
+  );
+}
+
+function isFleetScanTotals(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    isNumber(value.sessions) &&
+    isNumber(value.threads) &&
+    isNumber(value.totalTokens) &&
+    isNumber(value.inputTokens) &&
+    isNumber(value.cachedInputTokens) &&
+    isNullableNumber(value.cacheHitPct) &&
+    isNumber(value.cacheDrops) &&
+    isNumber(value.compactions) &&
+    isCountMap(value.toolFailuresByCategory) &&
+    isEveryEntry(value.preToolUseReasons, isReasonCount) &&
+    isEveryEntry(value.routerSkippedByReason, isKeyCount)
+  );
 }
 
 /** Whether a payload is a usable fleet scan. */
@@ -1026,61 +1256,12 @@ export function isSessionFleetScanResponse(
   value: unknown
 ): value is SessionFleetScanResponse {
   if (!isRecord(value)) return false;
-  if (value.schema !== SESSION_FLEET_SCAN_SCHEMA) return false;
-  if (!isNumber(value.limit)) return false;
-  if (!Array.isArray(value.sessions)) return false;
-  for (const row of value.sessions) {
-    if (!isRecord(row)) return false;
-    if (
-      typeof row.id !== "string" ||
-      typeof row.started !== "string" ||
-      typeof row.lastWrite !== "string" ||
-      !isNullableString(row.cwd) ||
-      !isNumber(row.threads) ||
-      !isNumber(row.totalTokens) ||
-      !isNumber(row.inputTokens) ||
-      !isNumber(row.cachedInputTokens) ||
-      !isNullableNumber(row.cacheHitPct) ||
-      !isNumber(row.cacheDrops) ||
-      !isNumber(row.compactions) ||
-      !isNumber(row.maxSkillsLoaded) ||
-      !isNumber(row.toolFailures) ||
-      !isNumber(row.preToolUseBlocks) ||
-      (row.topFailureCategory !== null &&
-        !isToolFailureCategory(row.topFailureCategory)) ||
-      !isNumber(row.routerRequests) ||
-      !isNumber(row.routerFailures) ||
-      !isCountMap(row.routerSkipped) ||
-      !isCountMap(row.providers)
-    )
-      return false;
-  }
-  if (!isRecord(value.totals)) return false;
-  const { totals } = value;
-  if (
-    !isNumber(totals.sessions) ||
-    !isNumber(totals.threads) ||
-    !isNumber(totals.totalTokens) ||
-    !isNumber(totals.inputTokens) ||
-    !isNumber(totals.cachedInputTokens) ||
-    !isNullableNumber(totals.cacheHitPct) ||
-    !isNumber(totals.cacheDrops) ||
-    !isNumber(totals.compactions) ||
-    !isCountMap(totals.toolFailuresByCategory)
-  )
-    return false;
-  if (!Array.isArray(totals.preToolUseReasons)) return false;
-  for (const entry of totals.preToolUseReasons) {
-    if (!isRecord(entry)) return false;
-    if (typeof entry.reason !== "string" || !isNumber(entry.count))
-      return false;
-  }
-  if (!Array.isArray(totals.routerSkippedByReason)) return false;
-  for (const entry of totals.routerSkippedByReason) {
-    if (!isRecord(entry)) return false;
-    if (typeof entry.key !== "string" || !isNumber(entry.count)) return false;
-  }
-  return true;
+  return (
+    value.schema === SESSION_FLEET_SCAN_SCHEMA &&
+    isNumber(value.limit) &&
+    isEveryEntry(value.sessions, isFleetSessionRow) &&
+    isFleetScanTotals(value.totals)
+  );
 }
 
 /** Whether a payload is a usable hook-denial summary. */
@@ -1100,12 +1281,9 @@ export function isSessionHookDenialsResponse(
     !isNumber(summary.preToolUseDenials)
   )
     return false;
-  if (!isCountMap(summary.byPolicy) || !isCountMap(summary.byRole)) return false;
-  if (!Array.isArray(summary.byReason)) return false;
-  for (const entry of summary.byReason) {
-    if (!isRecord(entry)) return false;
-    if (typeof entry.reason !== "string" || !isNumber(entry.count)) return false;
-  }
+  if (!isCountMap(summary.byPolicy) || !isCountMap(summary.byRole))
+    return false;
+  if (!isEveryEntry(summary.byReason, isReasonCount)) return false;
   if (!Array.isArray(summary.topCommands)) return false;
   for (const entry of summary.topCommands) {
     if (!isRecord(entry)) return false;
@@ -1120,6 +1298,8 @@ export function isSessionHookDenialsResponse(
 }
 
 /** Whether a payload is a plain map of strings, used by the Console's checks. */
-export function isStringRecord(value: unknown): value is Record<string, string> {
+export function isStringRecord(
+  value: unknown
+): value is Record<string, string> {
   return isStringMap(value);
 }

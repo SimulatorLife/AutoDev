@@ -3,14 +3,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { redactSecrets, traceThread } from "../../src/diagnostics/thread-tracer.ts";
-
+import {
+  countCodePoints,
+  redactSecrets,
+  traceThread
+} from "../../src/diagnostics/thread-tracer.ts";
 import { CHILD, fixture, rolloutLine, ROOT } from "./fixture.ts";
 
 function childRollout(home: string): string {
   const dir = path.join(home, "sessions", "2026", "09", "18");
-  const file = path.join(dir, `rollout-2026-09-18T17-00-00-${CHILD}.jsonl`);
-  return file;
+  return path.join(dir, `rollout-2026-09-18T17-00-00-${CHILD}.jsonl`);
 }
 
 test("a thread's turns, gaps and tool calls are read from its rollout", () => {
@@ -25,7 +27,7 @@ test("a thread's turns, gaps and tool calls are read from its rollout", () => {
     assert.equal(trace.model, "autodev/worker");
     assert.equal(trace.turns.length, 1);
     assert.equal(trace.turns[0]?.outcome, "aborted:interrupted");
-    assert.equal(trace.tools["mcp__lsp__lsp_index_files"], 1);
+    assert.equal(trace.tools.mcp__lsp__lsp_index_files, 1);
     assert.equal(trace.toolFailures.length, 1);
     assert.equal(trace.toolFailures[0]?.category, "transport-closed");
   } finally {
@@ -37,7 +39,7 @@ test("a silence of a minute or more inside a turn is a gap", () => {
   const { home, cleanup } = fixture();
   try {
     const trace = traceThread(childRollout(home), { items: false });
-    assert.ok(trace.gaps.length >= 1);
+    assert.ok(trace.gaps.length > 0);
     assert.ok(trace.gaps.every((gap) => gap.seconds >= 60));
   } finally {
     cleanup();
@@ -193,7 +195,7 @@ test("a malformed rollout line is skipped instead of aborting the read", () => {
           type: "custom_tool_call",
           name: "exec",
           call_id: "c1",
-          input: "await tools.read_file({path:\"README.md\"})"
+          input: 'await tools.read_file({path:"README.md"})'
         })
       ].join("\n")
     );
@@ -229,7 +231,7 @@ test("a quoted tool failure keeps the secret out of the report", () => {
           type: "custom_tool_call",
           name: "exec",
           call_id: "c1",
-          input: "await tools.read_file({path:\".env\"})"
+          input: 'await tools.read_file({path:".env"})'
         }),
         rolloutLine("2026-09-18T21:20:02.000Z", "response_item", {
           type: "custom_tool_call_output",
@@ -251,4 +253,118 @@ test("a quoted tool failure keeps the secret out of the report", () => {
   } finally {
     cleanup();
   }
+});
+
+function promptRollout(home: string, lines: string[]): string {
+  const file = childRollout(home);
+  writeFileSync(
+    file,
+    [
+      rolloutLine("2026-09-18T21:20:00.000Z", "session_meta", {
+        id: CHILD,
+        session_id: ROOT,
+        cwd: "/tmp/repo"
+      }),
+      ...lines
+    ].join("\n")
+  );
+  return file;
+}
+
+function developerMessage(at: string, ...texts: string[]): string {
+  return rolloutLine(at, "response_item", {
+    type: "message",
+    role: "developer",
+    content: texts.map((text) => ({ type: "input_text", text }))
+  });
+}
+
+function execCall(at: string, callId: string, input: string): string {
+  return rolloutLine(at, "response_item", {
+    type: "custom_tool_call",
+    name: "exec",
+    call_id: callId,
+    input
+  });
+}
+
+test("the initial developer prompt is measured in bytes and code points, not tokens", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const file = promptRollout(home, [
+      // "rules 😀\nok": 11 UTF-16 units, 10 code points, 13 UTF-8 bytes.
+      developerMessage("2026-09-18T21:20:01.000Z", "rules 😀", "ok"),
+      // "é": 1 code point, 2 UTF-8 bytes.
+      developerMessage("2026-09-18T21:20:02.000Z", "é"),
+      rolloutLine("2026-09-18T21:20:03.000Z", "response_item", {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "working" }]
+      }),
+      developerMessage("2026-09-18T21:20:04.000Z", "a later developer message")
+    ]);
+    const prompt = traceThread(file, { items: false }).efficiency?.prompt;
+    assert.ok(prompt);
+    assert.equal(prompt.initialDeveloperBytes, 15);
+    assert.equal(prompt.initialDeveloperChars, 11);
+    assert.equal(prompt.initialDeveloperTokens, null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("every tool call that reads a SKILL.md counts once per skill it names", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const file = promptRollout(home, [
+      execCall(
+        "2026-09-18T21:20:01.000Z",
+        "c1",
+        "cat /x/.agents/skills/kiss/SKILL.md && sed -n 1,5p /x/.agents/skills/kiss/SKILL.md"
+      ),
+      execCall(
+        "2026-09-18T21:20:02.000Z",
+        "c2",
+        "cat /x/.agents/skills/kiss/SKILL.md /x/.agents/skills/dry/SKILL.md"
+      ),
+      rolloutLine("2026-09-18T21:20:03.000Z", "response_item", {
+        type: "function_call",
+        name: "read_file",
+        call_id: "c3",
+        arguments: JSON.stringify({ path: "/x/skills/bug-fix/SKILL.md" })
+      }),
+      execCall("2026-09-18T21:20:04.000Z", "c4", "ls /x/.agents/skills")
+    ]);
+    const prompt = traceThread(file, { items: false }).efficiency?.prompt;
+    assert.ok(prompt);
+    assert.deepEqual(prompt.skillsRead, ["bug-fix", "dry", "kiss"]);
+    assert.deepEqual(prompt.skillReadCounts, {
+      "bug-fix": 1,
+      dry: 1,
+      kiss: 2
+    });
+    assert.deepEqual(
+      Object.keys(prompt.skillReadCounts),
+      prompt.skillsRead,
+      "the counts are keyed by exactly the names in skillsRead"
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("a code point count treats a surrogate pair as one and an unpaired surrogate as one", () => {
+  const samples = [
+    "",
+    "plain",
+    "😀",
+    "a\uD800b",
+    "\uDC00\uD83D\uDE00",
+    "trailing\uD83D",
+    "e\u0301"
+  ];
+  for (const sample of samples)
+    assert.equal(countCodePoints(sample), Array.from(sample).length, sample);
+  assert.equal(countCodePoints("a\uD800b"), 3);
+  assert.equal(countCodePoints("e\u0301"), 2, "not a grapheme count");
 });

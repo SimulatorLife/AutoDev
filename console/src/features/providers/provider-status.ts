@@ -10,7 +10,6 @@ import { Button } from "../../components/forms/Button.ts";
 import { Icon } from "../../components/icons/Icon.ts";
 import {
   NOT_OBSERVED_LABEL,
-  NOT_OBSERVED_STATUS,
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";

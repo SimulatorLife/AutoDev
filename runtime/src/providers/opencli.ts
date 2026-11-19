@@ -20,7 +20,11 @@
  * sites run in parallel.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import {
+  type ChildProcess,
+  type ChildProcessByStdio,
+  spawn
+} from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -38,6 +42,7 @@ import {
 } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
@@ -106,12 +111,14 @@ import {
   compactTranscript,
   describeTranscriptBytes,
   GEMINI_THINKING_LEVELS,
+  geminiConversationId,
   OPENCLI_SITE_SPECS,
   type OpencliChatScope,
   OpencliCommandError,
   OpencliConversationLedger,
   type OpencliExec,
   type OpencliReply,
+  OpencliReplyPreview,
   type OpencliSiteSpec,
   opencliToolCallItem,
   type ParsedReply,
@@ -267,6 +274,13 @@ function firstPromptForSite(
 export interface OpencliRunRequest {
   readonly args: readonly string[];
   readonly signal: AbortSignal;
+  /**
+   * Hears of the reply while the command is still waiting for it: each record
+   * is one line the command wrote to the progress descriptor
+   * (`OPENCLI_PROGRESS_FD`), which is neither its result on stdout nor its
+   * diagnostics on stderr. The command's result is still its stdout alone.
+   */
+  readonly onProgress?: (record: Record<string, unknown>) => void;
 }
 
 /** Runs one opencli command to completion and returns its result rows. */
@@ -568,14 +582,17 @@ export function processRunner(
   const spawnOpencli = (
     args: readonly string[],
     env: NodeJS.ProcessEnv,
-    signal: AbortSignal
+    signal: AbortSignal,
+    onProgress: OpencliRunRequest["onProgress"]
   ): Promise<JsonRecord[]> =>
     new Promise((resolve, reject) => {
       const command = resolveCommand();
+      // The fourth pipe is the progress descriptor (fd 3); the command writes
+      // to it only when OPENCLI_PROGRESS_FD names it.
       const child = spawn(command.command, [...command.args, ...args], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env
-      });
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+        env: { ...env, OPENCLI_PROGRESS_FD: onProgress ? "3" : undefined }
+      }) as ChildProcessByStdio<null, Readable, Readable>;
       live.add(child);
       let stdout = "";
       let stderr = "";
@@ -587,6 +604,21 @@ export function processRunner(
       child.stderr.on("data", (chunk: string) => {
         stderr = (stderr + chunk).slice(-4000);
       });
+      const progress = child.stdio[3] as Readable | null | undefined;
+      if (onProgress && progress) {
+        progress.setEncoding("utf8");
+        let pending = "";
+        progress.on("data", (chunk: string) => {
+          pending += chunk;
+          const lines = pending.split("\n");
+          pending = lines.pop() ?? "";
+          for (const line of lines) {
+            if (signal.aborted) return;
+            const record = progressRecord(line);
+            if (record) onProgress(record);
+          }
+        });
+      }
       const onAbort = () => {
         child.kill("SIGTERM");
         const killTimer = setTimeout(() => {
@@ -622,10 +654,10 @@ export function processRunner(
         }
       });
     });
-  const run: OpencliRunner = ({ args, signal }) => {
+  const run: OpencliRunner = ({ args, signal, onProgress }) => {
     const site = args[0] as OpencliSite;
     if (!dedicated() || !OPENCLI_SITES.includes(site))
-      return spawnOpencli(args, extensionEnv, signal);
+      return spawnOpencli(args, extensionEnv, signal, onProgress);
     return browser.run(site, signal, (endpoint) =>
       spawnOpencli(
         [...args, "--site-session", "ephemeral"],
@@ -634,11 +666,62 @@ export function processRunner(
           OPENCLI_CDP_ENDPOINT: endpoint,
           OPENCLI_SITE_SLOTS: undefined
         },
-        signal
+        signal,
+        onProgress
       )
     );
   };
   return Object.assign(run, { browser, close: () => browser.close() });
+}
+
+/**
+ * Show one progress record -- how the reply reads now, and the page it was
+ * read from -- on the turn's stream.
+ *
+ * A reading from a chat other than the one the turn continues is not the
+ * turn's reply and is dropped. A turn in a new chat has no chat to compare
+ * with: its reading is the reply to the submitted prompt, which the command
+ * anchors on its own turn. Only Gemini reports a reading; ChatGPT's page
+ * renders a reply differently from the text it stores, so its reply is only
+ * ever read once it has ended.
+ */
+function showReading(
+  stream: TurnStream,
+  record: JsonRecord,
+  conversationId: string | null
+): void {
+  const { text, url } = record;
+  if (typeof text !== "string" || typeof url !== "string") return;
+  if (conversationId !== null && geminiConversationId(url) !== conversationId)
+    return;
+  stream.showReply(text);
+}
+
+/**
+ * Why a finished reply cannot be delivered, or null if it can: it holds a call
+ * the bridge could not read, or -- the prose having been streamed already --
+ * it no longer begins with what Codex was shown, and shown text is not revised.
+ */
+function unusableReply(
+  site: OpencliSite,
+  parsed: ParsedReply,
+  stream: TurnStream | null
+): string | null {
+  if (parsed.unparsedCall)
+    return `the ${site} reply holds a tool call the bridge could not read`;
+  if (stream && !parsed.text.startsWith(stream.shownText))
+    return `the ${site} reply changed after part of it was shown`;
+  return null;
+}
+
+/** One line of a command's progress descriptor, or null if it is not a record. */
+function progressRecord(line: string): JsonRecord | null {
+  try {
+    const record: unknown = JSON.parse(line);
+    return isRecord(record) ? record : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -875,14 +958,25 @@ function messageEvents(
   item: JsonRecord,
   outputIndex: number
 ): Array<[string, JsonRecord]> {
-  const itemId = String(item.id);
   const content = (item.content as JsonRecord[])[0] ?? {
     type: "output_text",
     text: "",
     annotations: []
   };
   const text = String(content.text ?? "");
-  const part = { type: "output_text", text: "", annotations: [] };
+  return [
+    ...messageOpenEvents(item, outputIndex),
+    messageDeltaEvent(String(item.id), outputIndex, text),
+    ...messageCloseEvents(item, outputIndex)
+  ];
+}
+
+/** A message item starting: the item and its empty text part. */
+function messageOpenEvents(
+  item: JsonRecord,
+  outputIndex: number
+): Array<[string, JsonRecord]> {
+  const itemId = String(item.id);
   return [
     [
       OUTPUT_ITEM_ADDED,
@@ -899,19 +993,41 @@ function messageEvents(
         item_id: itemId,
         output_index: outputIndex,
         content_index: 0,
-        part
+        part: { type: "output_text", text: "", annotations: [] }
       }
-    ],
-    [
-      "response.output_text.delta",
-      {
-        type: "response.output_text.delta",
-        item_id: itemId,
-        output_index: outputIndex,
-        content_index: 0,
-        delta: text
-      }
-    ],
+    ]
+  ];
+}
+
+function messageDeltaEvent(
+  itemId: string,
+  outputIndex: number,
+  delta: string
+): [string, JsonRecord] {
+  return [
+    "response.output_text.delta",
+    {
+      type: "response.output_text.delta",
+      item_id: itemId,
+      output_index: outputIndex,
+      content_index: 0,
+      delta
+    }
+  ];
+}
+
+/** A message item ending, with its whole text as it finally stands. */
+function messageCloseEvents(
+  item: JsonRecord,
+  outputIndex: number
+): Array<[string, JsonRecord]> {
+  const itemId = String(item.id);
+  const content = (item.content as JsonRecord[])[0] ?? {
+    type: "output_text",
+    text: "",
+    annotations: []
+  };
+  return [
     [
       "response.output_text.done",
       {
@@ -919,7 +1035,7 @@ function messageEvents(
         item_id: itemId,
         output_index: outputIndex,
         content_index: 0,
-        text
+        text: String(content.text ?? "")
       }
     ],
     [
@@ -987,14 +1103,25 @@ function sseEvent(event: string, body: JsonRecord, sequence: number): string {
  * started a fresh chat with the whole transcript, and the model -- handed one
  * huge attachment -- told the user its delegation tools did not exist. A
  * response whose headers went out at once never hits that timeout.
+ *
+ * A site that can say how a reply reads while it is still being written
+ * (`showReply`) has the settled prose of it streamed as it comes: one message
+ * item opened by the first text, grown by deltas, and closed by `complete`
+ * with the finished reply's text. That is as early as anything can be shown:
+ * a tool call is only read from the finished reply, and the model's next turn
+ * needs the call's result, so it cannot start before the call has run.
  */
 class TurnStream {
   private sequence = 0;
   private readonly keepAlive: NodeJS.Timeout;
+  private readonly preview = new OpencliReplyPreview();
+  private opened = false;
 
   private readonly response: ServerResponse;
   private readonly responseId: string;
   private readonly model: string;
+  /** The id of the turn's message item, whether it opens early or at the end. */
+  readonly messageId = `msg_${turnId(10)}`;
 
   constructor(
     response: ServerResponse,
@@ -1027,12 +1154,53 @@ class TurnStream {
     }, keepAliveMs);
   }
 
+  /** The prose of the reply shown so far; empty until something was shown. */
+  get shownText(): string {
+    return this.preview.shown;
+  }
+
+  /**
+   * Show the settled prose of the reply, given how it reads now. Text that is
+   * not yet settled, or that a later reading does not keep, is not shown (see
+   * OpencliReplyPreview).
+   */
+  showReply(reading: string): void {
+    const added = this.preview.next(reading);
+    if (added === null) return;
+    if (!this.opened) {
+      this.opened = true;
+      for (const [event, body] of messageOpenEvents(
+        messageItem("", this.messageId),
+        0
+      ))
+        this.emit(event, body);
+    }
+    this.emit(...messageDeltaEvent(this.messageId, 0, added));
+  }
+
+  /**
+   * The turn's output. A message item already opened by `showReply` is
+   * finished -- the rest of its text, then its closing events -- not started
+   * again; the caller has checked that its text begins with what was shown.
+   */
   complete(output: JsonRecord[], phases: ProviderPhaseTiming): void {
     output.forEach((item, index) => {
-      const events =
-        item.type === "message"
-          ? messageEvents(item, index)
-          : codexToolCallEvents(item, index);
+      if (item.type !== "message") {
+        for (const [event, body] of codexToolCallEvents(item, index))
+          this.emit(event, body);
+        return;
+      }
+      let events: Array<[string, JsonRecord]>;
+      if (this.opened && item.id === this.messageId) {
+        const text = String(
+          ((item.content as JsonRecord[])[0] ?? {}).text ?? ""
+        );
+        const rest = text.slice(this.preview.shown.length);
+        events = [
+          ...(rest ? [messageDeltaEvent(this.messageId, index, rest)] : []),
+          ...messageCloseEvents(item, index)
+        ];
+      } else events = messageEvents(item, index);
       for (const [event, body] of events) this.emit(event, body);
     });
     this.emit("response.completed", {
@@ -1049,9 +1217,11 @@ class TurnStream {
   }
 
   /**
-   * A failed turn is a `response.failed`, always before any output: a site's
-   * reply arrives whole, so nothing has been streamed when a turn fails.
-   * That is what lets the router ask its next candidate on the same stream.
+   * A failed turn is a `response.failed`. Before any output -- always, for a
+   * site that reports no reply in progress -- that lets the router ask its next
+   * candidate on the same stream. Once `showReply` has shown text the router
+   * has output it cannot take back, so it ends the turn with this failure
+   * instead of trying another provider.
    *
    * The failure says what kind it is. A site limit carries the declared
    * limit, which the router reads to cool the provider down for as long as
@@ -1574,8 +1744,16 @@ export function createOpencliBridge(
    * The deadline is the *turn's* budget, not this command's: a turn that
    * continues a chat in a new one runs two commands, and both draw on the same
    * budget, so a turn can never hold the browser tab longer than it was given.
+   *
+   * `onProgress` hears of the reply while the command waits for it. A retry
+   * here only follows a failure before anything was sent, so it never repeats
+   * what `onProgress` was told.
    */
-  function execFor(signal: AbortSignal, deadline: number): OpencliExec {
+  function execFor(
+    signal: AbortSignal,
+    deadline: number,
+    onProgress?: OpencliRunRequest["onProgress"]
+  ): OpencliExec {
     const retryMs = options.sessionBusyRetryMs ?? DEFAULT_SESSION_BUSY_RETRY_MS;
     const unsentRetryMs = options.unsentRetryMs ?? DEFAULT_UNSENT_RETRY_MS;
     // One daemon belongs to one version: a command that met a daemon of
@@ -1608,7 +1786,8 @@ export function createOpencliBridge(
       try {
         return await options.run({
           args: timed,
-          signal: AbortSignal.any([signal, hardLimit])
+          signal: AbortSignal.any([signal, hardLimit]),
+          ...(onProgress ? { onProgress } : {})
         });
       } catch (error_) {
         const error =
@@ -1841,7 +2020,8 @@ export function createOpencliBridge(
     conversationId: string | null,
     signal: AbortSignal,
     budget: TurnBudget,
-    timing: ProviderPhaseTiming
+    timing: ProviderPhaseTiming,
+    stream: TurnStream | null
   ): Promise<OpencliReply> {
     const promptBytes = Buffer.byteLength(prompt);
     // A prompt that fits is typed; only one too long to type is uploaded.
@@ -1899,7 +2079,13 @@ export function createOpencliBridge(
                 // timeout longer than the turn itself.
                 timeoutSeconds: remainingSeconds(deadline)
               },
-              execFor(signal, deadline)
+              execFor(
+                signal,
+                deadline,
+                stream
+                  ? (record) => showReading(stream, record, conversationId)
+                  : undefined
+              )
             )
             .catch((error: unknown) => {
               if (!(error instanceof OpencliCommandError)) throw error;
@@ -1961,7 +2147,8 @@ export function createOpencliBridge(
    */
   async function runTurn(
     turn: PreparedTurn,
-    signal: AbortSignal
+    signal: AbortSignal,
+    stream: TurnStream | null
   ): Promise<TurnRun> {
     const budget = turnBudget();
     const timing: ProviderPhaseTiming = { queuedMs: 0, onSiteMs: 0 };
@@ -1972,7 +2159,8 @@ export function createOpencliBridge(
         turn.conversationId,
         signal,
         budget,
-        timing
+        timing,
+        stream
       );
       return {
         reply,
@@ -1985,6 +2173,9 @@ export function createOpencliBridge(
         turn.conversationId === null ||
         turn.resumedFrom === null ||
         signal.aborted ||
+        // Text already shown cannot be taken back, and a new chat's reply
+        // would start the turn's text over.
+        stream?.shownText ||
         !(error instanceof OpencliCommandError) ||
         (!worthRunningAgain(error) && error.code !== EMPTY_RESULT)
       )
@@ -2007,7 +2198,8 @@ export function createOpencliBridge(
         null,
         signal,
         budget,
-        timing
+        timing,
+        stream
       );
       return { reply, prompt: freshPrompt, continued: false, timing };
     }
@@ -2021,11 +2213,12 @@ export function createOpencliBridge(
   function finishTurn(
     turn: PreparedTurn,
     reply: OpencliReply,
-    parsed: ParsedReply
+    parsed: ParsedReply,
+    messageId: string
   ): { output: JsonRecord[]; calls: number } {
     const output: JsonRecord[] = [];
     if (parsed.text || parsed.calls.length === 0)
-      output.push(messageItem(parsed.text, `msg_${turnId(10)}`));
+      output.push(messageItem(parsed.text, messageId));
     for (const call of parsed.calls)
       output.push(
         opencliToolCallItem(call, turn.tools, {
@@ -2094,22 +2287,19 @@ export function createOpencliBridge(
     let run: TurnRun;
     let parsed: ParsedReply;
     try {
-      run = await runTurn(turn, controller.signal);
+      run = await runTurn(turn, controller.signal, stream);
       signedOut.delete(turn.site);
       parsed = parseOpencliReply(run.reply.response);
       if (parsed.inventedOutput)
         writeErrorLine(
           `opencli ${turn.site} reply wrote a <tool_output> of its own; it and everything after it were dropped`
         );
-      if (parsed.unparsedCall) {
+      const unusable = unusableReply(turn.site, parsed, stream);
+      if (unusable !== null) {
         // The site's chat now holds a reply Codex never saw, so it is not
         // continued: the next turn starts a new chat.
         if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
-        throw new OpencliCommandError(
-          `the ${turn.site} reply holds a tool call the bridge could not read`,
-          UNUSABLE_REPLY,
-          null
-        );
+        throw new OpencliCommandError(unusable, UNUSABLE_REPLY, null);
       }
     } catch (error) {
       observeSignIn(turn.site, error);
@@ -2123,7 +2313,12 @@ export function createOpencliBridge(
       response.removeListener("close", onClose);
     }
 
-    const { output, calls } = finishTurn(turn, run.reply, parsed);
+    const { output, calls } = finishTurn(
+      turn,
+      run.reply,
+      parsed,
+      stream?.messageId ?? `msg_${turnId(10)}`
+    );
     writeErrorLine(opencliTurnLogLine(turn, run, calls));
     if (stream) stream.complete(output, run.timing);
     else

@@ -4949,8 +4949,7 @@ function diagnosticsQueryString(query: SessionDiagnosticsQuery): string {
     params.set("itemsLimit", String(query.itemsLimit));
   if (query.itemsOffset !== undefined)
     params.set("itemsOffset", String(query.itemsOffset));
-  if (query.threadId !== undefined)
-    params.set("threadId", query.threadId);
+  if (query.threadId !== undefined) params.set("threadId", query.threadId);
   return params.toString();
 }
 

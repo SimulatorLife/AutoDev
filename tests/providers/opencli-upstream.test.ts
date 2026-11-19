@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -782,6 +790,86 @@ test("a Gemini reply still coming is waited for, not read from the page around i
     60
   );
   assert.equal(response, reply);
+});
+
+test("a Gemini reply being written is reported on the progress descriptor, not on the result", async () => {
+  // The bridge shows prose as it is written. Each new reading of the reply
+  // while Gemini is still generating is one JSON line on the descriptor
+  // OPENCLI_PROGRESS_FD names; the result stays the finished reply alone.
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  const user = { Role: "User", Text: GEMINI_PROMPT };
+  const asked = geminiSnapshot([user], [GEMINI_PROMPT]);
+  const writing = (text: string): GeminiSnapshot => ({
+    ...geminiSnapshot([user, { Role: "Assistant", Text: text }], []),
+    isGenerating: true
+  });
+  const done = geminiSnapshot(
+    [user, { Role: "Assistant", Text: "First line.\nSecond line." }],
+    []
+  );
+  const chat = geminiChat([
+    geminiSnapshot([user], []),
+    writing("First"),
+    writing("First"),
+    writing("First line.\nSec"),
+    done,
+    done
+  ]);
+  const directory = mkdtempSync(resolve(tmpdir(), "autodev-opencli-progress-"));
+  const file = resolve(directory, "progress");
+  const fd = openSync(file, "w");
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  process.env.OPENCLI_PROGRESS_FD = String(fd);
+  try {
+    const response = await utils.waitForGeminiResponse(
+      chat.page,
+      { snapshot: asked, userAnchorTurn: user },
+      GEMINI_PROMPT,
+      60
+    );
+    assert.equal(response, "First line.\nSecond line.");
+  } finally {
+    if (saved === undefined) delete process.env.OPENCLI_PROGRESS_FD;
+    else process.env.OPENCLI_PROGRESS_FD = saved;
+    closeSync(fd);
+  }
+  const lines = readFileSync(file, "utf8").trim().split("\n");
+  rmSync(directory, { recursive: true, force: true });
+  // A reading is reported once, when it changes; the finished reply is the
+  // result, not progress.
+  assert.deepEqual(
+    lines.map((line) => (JSON.parse(line) as { text: string }).text),
+    ["First", "First line.\nSec"]
+  );
+  assert.equal(
+    (JSON.parse(lines[0] ?? "{}") as { url: string }).url,
+    GEMINI_CHAT_URL
+  );
+});
+
+test("a Gemini reply is not reported when no progress descriptor is named", async () => {
+  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
+  if (utils === null) return;
+  const user = { Role: "User", Text: GEMINI_PROMPT };
+  const writing: GeminiSnapshot = {
+    ...geminiSnapshot([user, { Role: "Assistant", Text: "Part" }], []),
+    isGenerating: true
+  };
+  const done = geminiSnapshot([user, { Role: "Assistant", Text: "Whole" }], []);
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  delete process.env.OPENCLI_PROGRESS_FD;
+  try {
+    const response = await utils.waitForGeminiResponse(
+      geminiChat([writing, done, done]).page,
+      { snapshot: geminiSnapshot([user], []), userAnchorTurn: user },
+      GEMINI_PROMPT,
+      60
+    );
+    assert.equal(response, "Whole");
+  } finally {
+    if (saved !== undefined) process.env.OPENCLI_PROGRESS_FD = saved;
+  }
 });
 
 test("a Gemini chat's changing sidebar is not taken for the prompt being sent", async () => {

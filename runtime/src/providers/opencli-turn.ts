@@ -1307,6 +1307,68 @@ export function parseOpencliReply(response: string): ParsedReply {
 }
 
 /**
+ * The prose of a reply that is still being written, as far as it is settled
+ * enough to show Codex before the reply ends.
+ *
+ * A reply shown cannot be taken back, so a line is shown only once it is
+ * certain to be part of the finished reply's text:
+ *
+ * - Only whole lines: the last line is still being written.
+ * - Only what two readings in a row agree on: the page can rewrite what it
+ *   shows. A reading that no longer starts with what was shown adds nothing,
+ *   and what was shown is never revised.
+ * - Nothing from the first `<tool_call`, `<tool_output` or HTML entity on:
+ *   a call is run only from the finished reply, read whole, and a call being
+ *   written is not prose; an entity is where a site that escapes its replies
+ *   would have the finished text read differently.
+ *
+ * The text is normalized as parseOpencliReply does, so what was shown is a
+ * prefix of the finished reply's text.
+ */
+export class OpencliReplyPreview {
+  private previous = "";
+  private shownText = "";
+
+  /** Everything shown so far. */
+  get shown(): string {
+    return this.shownText;
+  }
+
+  /** The text to add to what is shown for this reading of the reply, if any. */
+  next(reading: string): string | null {
+    const settled = settledProse(reading);
+    const agreed = commonPrefix(this.previous, settled);
+    this.previous = settled;
+    const stable = agreed.slice(0, agreed.lastIndexOf("\n") + 1).trimEnd();
+    if (stable.length <= this.shownText.length) return null;
+    if (!stable.startsWith(this.shownText)) return null;
+    const added = stable.slice(this.shownText.length);
+    this.shownText = stable;
+    return added;
+  }
+}
+
+const PREVIEW_STOP_PATTERN =
+  /<tool_call\b|<tool_output\b|&(?:lt|gt|quot|#39|amp);/u;
+
+/** The reply's prose before any call, output or entity, normalized for display. */
+function settledProse(reading: string): string {
+  const stop = PREVIEW_STOP_PATTERN.exec(reading);
+  return (stop ? reading.slice(0, stop.index) : reading)
+    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
+    .replaceAll(ESCAPE_TAG_PATTERN, "")
+    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
+    .trimStart();
+}
+
+function commonPrefix(left: string, right: string): string {
+  let length = 0;
+  const limit = Math.min(left.length, right.length);
+  while (length < limit && left[length] === right[length]) length += 1;
+  return left.slice(0, length);
+}
+
+/**
  * The Responses item for one parsed call.
  *
  * A call to a tool Codex did not offer is still sent as a `function_call`:

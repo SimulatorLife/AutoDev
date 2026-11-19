@@ -1,11 +1,20 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { chmod, realpath, stat } from "node:fs/promises";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse
+} from "node:http";
 import path from "node:path";
 
-import type { RouterIngress } from "./ingress.ts";
-import { type RouterGenerationEndpoint } from "./ingress.ts";
+import type { RouterGenerationEndpoint, RouterIngress } from "./ingress.ts";
+
+const WORKER_ENTRY_PATTERN = /\.[cm]?[jt]s$/u;
+const GENERATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
+const GENERATION_RETIREMENT_PATH_PATTERN =
+  /^\/v1\/generations\/([a-zA-Z0-9._-]+)\/retirement$/u;
 
 export interface RouterIngressSupervisorOptions {
   ingress: RouterIngress;
@@ -116,11 +125,7 @@ export class RouterIngressSupervisor {
     );
   }
 
-  private json(
-    response: import("node:http").ServerResponse,
-    status: number,
-    body: unknown
-  ): void {
+  private json(response: ServerResponse, status: number, body: unknown): void {
     response.writeHead(status, {
       "content-type": "application/json",
       "cache-control": "no-store"
@@ -152,7 +157,8 @@ export class RouterIngressSupervisor {
         "Worker entry must be inside the immutable releases directory"
       );
     }
-    if (!(await stat(resolved)).isFile() || !/\.[cm]?[jt]s$/.test(resolved)) {
+    const entryStat = await stat(resolved);
+    if (!entryStat.isFile() || !WORKER_ENTRY_PATTERN.test(resolved)) {
       throw new Error("Worker entry must be a JavaScript or TypeScript file");
     }
     return resolved;
@@ -230,7 +236,7 @@ export class RouterIngressSupervisor {
   }> {
     const operation = this.activationQueue.then(async () => {
       if (
-        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id) ||
+        !GENERATION_ID_PATTERN.test(id) ||
         this.workers.has(id) ||
         this.ingress
           .getStatus()
@@ -267,7 +273,7 @@ export class RouterIngressSupervisor {
 
   private async handle(
     request: IncomingMessage,
-    response: import("node:http").ServerResponse
+    response: ServerResponse
   ): Promise<void> {
     if (!this.authorized(request)) {
       this.json(response, 401, { error: "unauthorized" });
@@ -278,8 +284,7 @@ export class RouterIngressSupervisor {
       this.json(response, 200, this.ingress.getStatus());
       return;
     }
-    const retirement =
-      /^\/v1\/generations\/([a-zA-Z0-9._-]+)\/retirement$/.exec(pathname);
+    const retirement = GENERATION_RETIREMENT_PATH_PATTERN.exec(pathname);
     if (request.method === "GET" && retirement) {
       const generation = this.ingress
         .getStatus()

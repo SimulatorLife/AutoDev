@@ -6336,9 +6336,7 @@ function respondSessionDiagnostics(
     sendJson(response, hookDenialsResponse());
     return true;
   }
-  const sessionMatch = url.pathname.match(
-    DIAGNOSTICS_SESSION_PATH_PATTERN
-  );
+  const sessionMatch = url.pathname.match(DIAGNOSTICS_SESSION_PATH_PATTERN);
   if (sessionMatch?.[1]) {
     const report = sessionDiagnosticsReport();
     const requested = decodeURIComponent(sessionMatch[1]);

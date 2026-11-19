@@ -933,11 +933,12 @@ index 061c38c58d59b2b68e2ef56e1c0a96349f64f6d6..8c1ccd83c5fa92f4e2d0999a4c9a332f
          // Step 3: Read model entries from the open menu.
          const raw = await page.evaluate(readMenuModelsScript());
 diff --git a/clis/gemini/utils.js b/clis/gemini/utils.js
-index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952989bbce5 100644
+index 46bb5561dda401bf0a4446cbe3e4d555ea074260..35eea770ac87a41c4141327b70041c84be6fb35a 100644
 --- a/clis/gemini/utils.js
 +++ b/clis/gemini/utils.js
-@@ -1,6 +1,34 @@
+@@ -1,6 +1,35 @@
 -import { CommandExecutionError, TimeoutError } from '@jackwener/opencli/errors';
++import { writeSync } from 'node:fs';
 +import { AuthRequiredError, CliError, CommandExecutionError, EmptyResultError, EXIT_CODES, TimeoutError } from '@jackwener/opencli/errors';
 +import { GOOGLE_ACCOUNT_PROBE } from '../_shared/google-account.js';
  export const GEMINI_DOMAIN = 'gemini.google.com';
@@ -972,7 +973,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  export const GEMINI_DEEP_RESEARCH_DEFAULT_TOOL_LABELS = ['Deep Research', 'Deep research', '\u6df1\u5ea6\u7814\u7a76'];
  export const GEMINI_DEEP_RESEARCH_DEFAULT_CONFIRM_LABELS = [
      'Start research',
-@@ -347,18 +375,105 @@ function isGeminiConversationUrl(url) {
+@@ -347,18 +376,105 @@ function isGeminiConversationUrl(url) {
          return false;
      }
  }
@@ -1082,7 +1083,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          'button',
          'nav',
          'header',
-@@ -413,7 +528,7 @@ function getTranscriptLinesScript() {
+@@ -413,7 +529,7 @@ function getTranscriptLinesScript() {
          /^Tools$/,
        ];
  
@@ -1091,7 +1092,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          .split('\\n')
          .map((line) => clean(line))
          .filter((line) => line
-@@ -426,54 +541,7 @@ function getTranscriptLinesScript() {
+@@ -426,54 +542,7 @@ function getTranscriptLinesScript() {
  function getTurnsScript() {
      return `
      (() => {
@@ -1147,7 +1148,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  
        // Current Gemini web DOM groups each exchange in a conversation-container,
        // with the prompt under user-query-container (query-text-line per line) and
-@@ -1149,22 +1217,53 @@ function clickGeminiConversationByTitleScript(query) {
+@@ -1149,22 +1218,53 @@ function clickGeminiConversationByTitleScript(query) {
  function currentUrlScript() {
      return 'window.location.href';
  }
@@ -1206,7 +1207,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
      }
      // Reused adapter tabs can be inactive after another site ran. Gemini's
      // response animation then stays pending even when the model has finished.
-@@ -1225,7 +1324,7 @@ export async function startNewGeminiChat(page) {
+@@ -1225,7 +1325,7 @@ export async function startNewGeminiChat(page) {
      await ensureGeminiPage(page);
      const action = await page.evaluate(clickNewChatScript());
      if (action === 'navigate') {
@@ -1215,7 +1216,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
      }
      await page.wait(1);
      return action;
-@@ -1367,7 +1466,10 @@ export async function waitForGeminiSubmission(page, before, timeoutSeconds) {
+@@ -1367,7 +1467,10 @@ export async function waitForGeminiSubmission(page, before, timeoutSeconds) {
          // trust this signal only after Gemini has navigated into a concrete
          // conversation URL. (Keep backwards compatibility for mocked snapshots
          // that don't carry url.)
@@ -1227,7 +1228,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          if (!current.composerHasText && transcriptDelta.length > 0 && transcriptSubmissionAllowed) {
              return {
                  snapshot: current,
-@@ -1969,6 +2071,7 @@ function openModelPickerForThinkingScript() {
+@@ -1969,6 +2072,7 @@ function openModelPickerForThinkingScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -1235,7 +1236,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -1983,6 +2086,18 @@ function openModelPickerForThinkingScript() {
+@@ -1983,6 +2087,18 @@ function openModelPickerForThinkingScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -1254,7 +1255,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2072,10 +2187,18 @@ function clickThinkingToggleInMenuScript() {
+@@ -2072,10 +2188,18 @@ function clickThinkingToggleInMenuScript() {
          'GEM-MENU-ITEM',
        ];
  
@@ -1275,7 +1276,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
        }
  
        if (menuItems.length === 0) {
-@@ -2109,21 +2232,93 @@ function clickThinkingToggleInMenuScript() {
+@@ -2109,21 +2233,93 @@ function clickThinkingToggleInMenuScript() {
   * already-open model-picker menu (after the thinking section has been
   * expanded).  Closes the menu after selection (or on failure).
   *
@@ -1374,7 +1375,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  
        const isVisible = (el) => {
          if (!(el instanceof HTMLElement)) return false;
-@@ -2151,7 +2346,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2151,7 +2347,7 @@ function selectThinkingInMenuScript(thinkingValue) {
        const matchesThinking = (node) => {
          const combined = normalize(textOf(node));
          if (!combined) return false;
@@ -1383,7 +1384,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
        };
  
        // Search inside visible menu containers first.
-@@ -2191,8 +2386,8 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2191,8 +2387,8 @@ function selectThinkingInMenuScript(thinkingValue) {
        candidates.sort((a, b) => {
          const aText = normalize(textOf(a));
          const bText = normalize(textOf(b));
@@ -1394,7 +1395,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          if (aExact && !bExact) return -1;
          if (!aExact && bExact) return 1;
          return 0;
-@@ -2228,7 +2423,7 @@ function selectThinkingInMenuScript(thinkingValue) {
+@@ -2228,7 +2424,7 @@ function selectThinkingInMenuScript(thinkingValue) {
   *  6. Close the menu.
   *
   * @param {object} page - Puppeteer page object
@@ -1403,7 +1404,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
   * @returns {Promise<string>} matched label text, or empty string on failure
   */
  export async function selectGeminiThinking(page, thinkingValue) {
-@@ -2248,7 +2443,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2248,7 +2444,22 @@ export async function selectGeminiThinking(page, thinkingValue) {
  
      if (toggleClicked) {
          // Step 4: Wait for the expanded thinking items to render.
@@ -1427,7 +1428,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
      }
  
      // Step 5: Select the requested thinking level (also closes the menu).
-@@ -2260,7 +2470,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2260,7 +2471,73 @@ export async function selectGeminiThinking(page, thinkingValue) {
          return matched;
      }
  
@@ -1502,7 +1503,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  }
  
  // ── Current model detection ─────────────────────────────────────────
-@@ -2269,8 +2545,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
+@@ -2269,8 +2546,9 @@ export async function selectGeminiThinking(page, thinkingValue) {
   * Browser evaluate script that reads the currently selected model from the
   * Gemini model-picker button and returns its canonical model ID.
   *
@@ -1514,7 +1515,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
   *
   * @returns a function string for page.evaluate()
   */
-@@ -2299,6 +2576,7 @@ function getCurrentGeminiModelScript() {
+@@ -2299,6 +2577,7 @@ function getCurrentGeminiModelScript() {
          /mode[\\s-]*selector/i,
          /model[\\s-]*selector/i,
          /model[\\s-]*picker/i,
@@ -1522,7 +1523,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          /选择模型/i,
          /select[\\s-]+model/i,
          /choose[\\s-]+model/i,
-@@ -2313,6 +2591,18 @@ function getCurrentGeminiModelScript() {
+@@ -2313,6 +2592,18 @@ function getCurrentGeminiModelScript() {
            document.querySelectorAll('button, [role="button"]')
          ).filter(isVisible);
  
@@ -1541,7 +1542,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          // Method 1: Detect model/mode selector via aria-label patterns.
          for (const button of buttons) {
            const aria = normalize(button.getAttribute('aria-label') || '');
-@@ -2355,35 +2645,13 @@ function getCurrentGeminiModelScript() {
+@@ -2355,35 +2646,13 @@ function getCurrentGeminiModelScript() {
          return null;
        };
  
@@ -1580,21 +1581,48 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
      })()
      `;
  }
-@@ -2604,7 +2872,11 @@ export async function exportGeminiImages(page, urls) {
+@@ -2604,7 +2873,34 @@ export async function exportGeminiImages(page, urls) {
      }
      return assets;
  }
 -export async function waitForGeminiResponse(page, baseline, promptText, timeoutSeconds) {
 +/**
++ * Tells the caller of this command how the reply reads so far, while it is
++ * still being written: one JSON line `{ text, url }` on the file descriptor
++ * OPENCLI_PROGRESS_FD names. stdout stays the command's single result and
++ * stderr stays diagnostics, so neither carries progress. A caller that set no
++ * descriptor hears nothing; one that went away costs the command nothing,
++ * since the reply still arrives as the result.
++ */
++function reportGeminiProgress(text, url) {
++    const fd = Number(process.env.OPENCLI_PROGRESS_FD);
++    if (!Number.isInteger(fd) || fd < 3)
++        return;
++    try {
++        writeSync(fd, `${JSON.stringify({ text, url })}\n`);
++    }
++    catch {
++        // The reader is gone; the reply is still returned as the result.
++    }
++}
++/**
 + * `observed.url`, when given, receives the URL of the snapshot the reply was
 + * read from: the chat the reply is in, from the same read as its text.
++ *
++ * While the reply is still being written, each new reading of it from the
++ * structured turns is reported with reportGeminiProgress. Only that reading
++ * is: the transcript fallback is whatever else the page shows, not a reply.
 + */
 +export async function waitForGeminiResponse(page, baseline, promptText, timeoutSeconds, observed = null) {
      if (timeoutSeconds <= 0)
          return '';
      // Reply ownership must survive Gemini prepending older history later.
-@@ -2657,10 +2929,20 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2655,12 +2951,24 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+             else {
+                 lastStructured = structuredCandidate;
                  structuredStableCount = 1;
++                if (current.isGenerating)
++                    reportGeminiProgress(structuredCandidate, current.url);
              }
              if (!current.isGenerating && structuredStableCount >= 2) {
 +                if (observed)
@@ -1614,7 +1642,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          transcriptMissCount += 1;
          if (transcriptMissCount < 2)
              continue;
-@@ -2674,6 +2956,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
+@@ -2674,6 +2982,8 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
              transcriptStableCount = 1;
          }
          if (!current.isGenerating && transcriptStableCount >= 2) {
@@ -1623,7 +1651,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
              return transcriptCandidate;
          }
      }
-@@ -2712,29 +2996,7 @@ function selectModelInMenuScript(modelId) {
+@@ -2712,29 +3022,7 @@ function selectModelInMenuScript(modelId) {
  
        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
  
@@ -1654,7 +1682,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  
        const MENU_SELECTORS = [
          '[role="menu"] [role="menuitem"]',
-@@ -2771,10 +3033,12 @@ function selectModelInMenuScript(modelId) {
+@@ -2771,10 +3059,12 @@ function selectModelInMenuScript(modelId) {
        }
  
        let matched = null;
@@ -1669,7 +1697,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
            break;
          }
        }
-@@ -2783,6 +3047,10 @@ function selectModelInMenuScript(modelId) {
+@@ -2783,6 +3073,10 @@ function selectModelInMenuScript(modelId) {
          try { document.body.click(); } catch (_) {}
          return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
        }
@@ -1680,7 +1708,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
  
        try {
          matched.click();
-@@ -2829,6 +3097,7 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2829,6 +3123,7 @@ export async function selectGeminiModel(page, modelId) {
      // Find and click the matching menu item.
      const raw = await page.evaluate(selectModelInMenuScript(modelId));
      const result = unwrapGeminiEvaluateResult(raw, 'Gemini model selection');
@@ -1688,7 +1716,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
      if (!result || !result.ok) {
          throw new CommandExecutionError(
              result?.reason || 'Failed to select Gemini model "' + modelId + '"'
-@@ -2837,7 +3106,11 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2837,7 +3132,11 @@ export async function selectGeminiModel(page, modelId) {
  
      await page.wait(0.5);
      const selectedModelId = await getCurrentGeminiModel(page);
@@ -1701,7 +1729,7 @@ index 46bb5561dda401bf0a4446cbe3e4d555ea074260..f90f5f7e4789a99639e301cc079cd952
          throw new CommandExecutionError(
              selectedModelId
                  ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
-@@ -2845,3 +3118,77 @@ export async function selectGeminiModel(page, modelId) {
+@@ -2845,3 +3144,77 @@ export async function selectGeminiModel(page, modelId) {
          );
      }
  }

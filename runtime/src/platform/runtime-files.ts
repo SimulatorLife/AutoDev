@@ -148,6 +148,8 @@ parentPort.on("message", async ({ rulesyncUrl, cwd, home, options, port, signal 
 });
 `;
 
+const DIRECTORY_ENTRY_COLLATOR = new Intl.Collator();
+
 let sharedRulesyncWorker: Worker | null = null;
 
 function getRulesyncWorker(): Worker {
@@ -272,7 +274,7 @@ function hashTreePath(
   if (stat.isDirectory()) {
     hash.update(`dir:${logicalName}\0`);
     const entries = readdirSync(absolutePath, { withFileTypes: true }).sort(
-      (a, b) => a.name.localeCompare(b.name)
+      (a, b) => DIRECTORY_ENTRY_COLLATOR.compare(a.name, b.name)
     );
     for (const entry of entries) {
       hashTreePath(

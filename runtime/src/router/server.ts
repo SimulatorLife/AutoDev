@@ -487,6 +487,7 @@ export {
   AGENT_ACTIVITY_TTL_MS,
   agentActivity,
   agentsStatus,
+  getRouterStatus,
   handle,
   handleRequest,
   ingestAgentEvents,

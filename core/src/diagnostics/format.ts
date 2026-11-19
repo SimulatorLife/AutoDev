@@ -20,10 +20,11 @@ import {
   type SessionLiveReport,
   type SessionRecentListResponse,
   type SessionRouterEventRow,
-  type SessionRouterSummary,
   type SessionRouterSkippedEvent,
+  type SessionRouterSummary,
   type SessionThreadEfficiency,
   type SessionThreadItem,
+  type SessionThreadPromptOverhead,
   type SessionThreadTrace,
   type SessionToolFailure,
   type ToolFailureCategory
@@ -44,13 +45,13 @@ export interface SessionDiagnosticsTextOptions {
 }
 
 const EXCERPT = 160;
-const FAILURE_EXCERPT = 400;
 const FAILURE_PREVIEW_INPUT_EXCERPT = 180;
 const FAILURE_CAP_PER_CATEGORY = 2;
 const BYTES_PER_MIB = 1_048_576;
 const INDENT = "   ";
-const UNKNOWN_LABEL = "unknown";
 const DASH = "-";
+const SKILL_READ_PREVIEW_LIMIT = 8;
+const TRAILING_SEPARATORS_REGEX = /[\\/]+$/u;
 const QUESTION = "?";
 const PERCENT = "%";
 const THREAD_HEADING = "== thread ";
@@ -69,7 +70,7 @@ const BRIDGE_HEADING = "== bridge log alerts (tail 64 KB)";
  */
 function lastSegment(value: string | null): string {
   if (value === null || value === "") return DASH;
-  const normalized = value.replace(/[\\/]+$/u, "");
+  const normalized = value.replace(TRAILING_SEPARATORS_REGEX, "");
   const index = normalized.lastIndexOf("/");
   return index === -1 ? normalized : normalized.slice(index + 1);
 }
@@ -96,7 +97,8 @@ function countBy(
   entries: Iterable<readonly [string, number]>
 ): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const [key, count] of entries) counts.set(key, (counts.get(key) ?? 0) + count);
+  for (const [key, count] of entries)
+    counts.set(key, (counts.get(key) ?? 0) + count);
   return counts;
 }
 
@@ -107,7 +109,9 @@ function topCounts(counts: Map<string, number>): string {
     .join(" ");
 }
 
-function renderSkippedRouterSummary(skipped: readonly SessionRouterSkippedEvent[]): string {
+function renderSkippedRouterSummary(
+  skipped: readonly SessionRouterSkippedEvent[]
+): string {
   const counts = countBy(
     skipped.map((entry) => [`${entry.provider ?? QUESTION}:${entry.reason}`, 1])
   );
@@ -176,7 +180,8 @@ function renderRouterDetails(router: SessionRouterSummary): string[] {
   if (retryLine) lines.push(retryLine);
   for (const failure of router.failures)
     lines.push(renderRouterFailureLine(failure));
-  for (const event of router.events ?? []) lines.push(renderRouterEventLine(event));
+  for (const event of router.events ?? [])
+    lines.push(renderRouterEventLine(event));
   return lines;
 }
 
@@ -197,15 +202,25 @@ function renderThreadEfficiency(efficiency: SessionThreadEfficiency): string[] {
     .sort((a, b) => b[1] - a[1])
     .map(([root, count]) => `${root}=${count}`)
     .join(" ");
-  const readPreview =
-    prompt.skillsRead.length > 0
-      ? ` [${prompt.skillsRead.slice(0, 8).join(", ")}${prompt.skillsRead.length > 8 ? ", …" : ""}]`
-      : "";
   const promptLine =
-    `${INDENT}prompt dev=${formatBytes(prompt.initialDeveloperBytes)} skills-block=${formatBytes(prompt.skillsCatalogBytes)} ` +
-    `loaded=${prompt.skillsLoaded} (${roots || "none"}) read=${prompt.skillsRead.length}${readPreview} ` +
+    `${INDENT}prompt dev=${formatBytes(prompt.initialDeveloperBytes)}/${prompt.initialDeveloperChars} chars/` +
+    `${prompt.initialDeveloperTokens ?? QUESTION} tokens skills-block=${formatBytes(prompt.skillsCatalogBytes)} ` +
+    `loaded=${prompt.skillsLoaded} (${roots || "none"}) read=${prompt.skillsRead.length}${skillReadPreview(prompt)} ` +
     `telemetry-reads=${prompt.skillTelemetryReads ?? QUESTION}`;
   return [tokenLine, compLine, promptLine];
+}
+
+/** The first skills a thread read, each with its read count when repeated. */
+function skillReadPreview(prompt: SessionThreadPromptOverhead): string {
+  if (prompt.skillsRead.length === 0) return "";
+  const shown = prompt.skillsRead
+    .slice(0, SKILL_READ_PREVIEW_LIMIT)
+    .map((skill) => {
+      const count = prompt.skillReadCounts[skill] ?? 1;
+      return count > 1 ? `${skill}×${count}` : skill;
+    });
+  const more = prompt.skillsRead.length > SKILL_READ_PREVIEW_LIMIT ? ", …" : "";
+  return ` [${shown.join(", ")}${more}]`;
 }
 
 function renderThreadFailures(
@@ -347,7 +362,8 @@ function renderLiveSection(live: SessionLiveReport): string[] {
     lines.push(
       `${INDENT}deployed $CODEX_HOME/src vs checkout: ${drift.checked} files, ${drift.differing.length} differ, ${drift.missing.length} not in checkout`
     );
-    for (const file of drift.differing.slice(0, 15)) lines.push(`${INDENT}DRIFT ${file}`);
+    for (const file of drift.differing.slice(0, 15))
+      lines.push(`${INDENT}DRIFT ${file}`);
   }
   lines.push(
     `${INDENT}provider CLIs / MCP servers running: ${processes.length === 0 ? "none" : ""}`
@@ -356,7 +372,9 @@ function renderLiveSection(live: SessionLiveReport): string[] {
   return lines;
 }
 
-function renderEfficiencySection(efficiency: SessionEfficiencySummary): string[] {
+function renderEfficiencySection(
+  efficiency: SessionEfficiencySummary
+): string[] {
   const lines: string[] = [
     EFFICIENCY_HEADING,
     `${INDENT}disabledProviders=${JSON.stringify(efficiency.disabledProviders)} nullRoleModels=${JSON.stringify(efficiency.nullRoleModels)}`
@@ -373,7 +391,10 @@ function renderEfficiencySection(efficiency: SessionEfficiencySummary): string[]
     ]);
     const mcpPairs = [...servers]
       .sort()
-      .map((server) => `${server}:${workspace.used[server] ?? 0}/${workspace.exposed[server] ?? 0}`)
+      .map(
+        (server) =>
+          `${server}:${workspace.used[server] ?? 0}/${workspace.exposed[server] ?? 0}`
+      )
       .join(" ");
     lines.push(
       `${INDENT}workspace ${workspace.workspace} mcp(used/exposed): ${mcpPairs || "none"}`
@@ -426,7 +447,8 @@ export function renderSessionDiagnosticsReport(
     for (const item of report.itemsPage.items) out.push(renderItemLine(item));
   }
   if (report.live) out.push(...renderLiveSection(report.live));
-  if (report.efficiency) out.push(...renderEfficiencySection(report.efficiency));
+  if (report.efficiency)
+    out.push(...renderEfficiencySection(report.efficiency));
   out.push(LOG_HEADING);
   for (const log of report.logs.slice(0, 8))
     out.push(
@@ -482,7 +504,8 @@ export function renderFleetScanReport(
     `== fleet scan (${totals.sessions} sessions, ${totals.threads} threads)`,
     `${INDENT}totals: tokens=${formatCompactNumber(totals.totalTokens)} cache=${totals.cacheHitPct ?? QUESTION}${PERCENT} cache-drops=${totals.cacheDrops} compactions=${totals.compactions}`
   ];
-  for (const session of report.sessions) lines.push(renderFleetSessionRow(session));
+  for (const session of report.sessions)
+    lines.push(renderFleetSessionRow(session));
   const categorySummary = Object.entries(totals.toolFailuresByCategory)
     .sort((a, b) => b[1] - a[1])
     .map(([category, count]) => `${category}=${count}`)
@@ -497,7 +520,9 @@ export function renderFleetScanReport(
   if (totals.preToolUseReasons.length > 0) {
     lines.push(`${INDENT}top pretooluse blocks in rollouts:`);
     for (const item of totals.preToolUseReasons)
-      lines.push(`${INDENT}  ${String(item.count).padStart(4)}  ${item.reason}`);
+      lines.push(
+        `${INDENT}  ${String(item.count).padStart(4)}  ${item.reason}`
+      );
   }
   return lines.join("\n");
 }
@@ -522,11 +547,16 @@ export function renderHookDenialsReport(summary: HookDenialSummary): string {
     .sort((a, b) => b[1] - a[1])
     .map(([role, count]) => `${role}=${count}`)
     .join(" ");
-  lines.push(`${INDENT}byPolicy: ${policyText}`, `${INDENT}byRole: ${roleText}`);
+  lines.push(
+    `${INDENT}byPolicy: ${policyText}`,
+    `${INDENT}byRole: ${roleText}`
+  );
   if (summary.byReason.length > 0) {
     lines.push(`${INDENT}top reasons:`);
     for (const item of summary.byReason)
-      lines.push(`${INDENT}  ${String(item.count).padStart(4)}  ${item.reason}`);
+      lines.push(
+        `${INDENT}  ${String(item.count).padStart(4)}  ${item.reason}`
+      );
   }
   if (summary.topCommands.length > 0) {
     lines.push(`${INDENT}top blocked commands:`);

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import { isSessionDiagnosticsReport } from "@simulatorlife/autodev-core";
 
 import { buildSessionDiagnosticsReport } from "../../src/diagnostics/session-report.ts";
-
-import { CHILD, fixture, ROOT } from "./fixture.ts";
+import { CHILD, fixture, rolloutLine, ROOT } from "./fixture.ts";
 
 async function report(
   home: string,
@@ -144,9 +145,7 @@ test("the items of one thread are the items of that thread", async () => {
       threadId: CHILD
     });
     assert.ok(result.itemsPage.total > 0);
-    assert.ok(
-      result.itemsPage.items.every((item) => item.threadId === CHILD)
-    );
+    assert.ok(result.itemsPage.items.every((item) => item.threadId === CHILD));
   } finally {
     cleanup();
   }
@@ -188,6 +187,67 @@ test("an offline report does not read live state", async () => {
   try {
     const result = await report(home, routerLog, { offline: true });
     assert.equal(result.live, null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("the session aggregates sum each thread's skill reads and keep its prompt maxima", async () => {
+  const { home, routerLog, cleanup } = fixture();
+  try {
+    const dir = path.join(home, "sessions", "2026", "09", "18");
+    const rollout = (id: string, lines: string[]): void => {
+      writeFileSync(
+        path.join(dir, `rollout-2026-09-18T17-00-00-${id}.jsonl`),
+        [
+          rolloutLine("2026-09-18T21:20:00.000Z", "session_meta", {
+            id,
+            session_id: ROOT,
+            ...(id === CHILD ? { parent_thread_id: ROOT } : {}),
+            cwd: "/tmp/repo"
+          }),
+          ...lines
+        ].join("\n")
+      );
+    };
+    const developer = (text: string): string =>
+      rolloutLine("2026-09-18T21:20:01.000Z", "response_item", {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text }]
+      });
+    const read = (callId: string, input: string): string =>
+      rolloutLine("2026-09-18T21:20:02.000Z", "response_item", {
+        type: "custom_tool_call",
+        name: "exec",
+        call_id: callId,
+        input
+      });
+    rollout(ROOT, [
+      developer("root prompt 😀"),
+      read("r1", "cat /x/skills/kiss/SKILL.md")
+    ]);
+    rollout(CHILD, [
+      developer("child"),
+      read("c1", "cat /x/skills/kiss/SKILL.md"),
+      read("c2", "cat /x/skills/kiss/SKILL.md /x/skills/dry/SKILL.md")
+    ]);
+
+    const result = await report(home, routerLog, { includeEfficiency: true });
+    assert.equal(isSessionDiagnosticsReport(result), true);
+    const byId = new Map(result.threads.map((thread) => [thread.id, thread]));
+    assert.deepEqual(byId.get(ROOT)?.efficiency?.prompt.skillReadCounts, {
+      kiss: 1
+    });
+    assert.deepEqual(byId.get(CHILD)?.efficiency?.prompt.skillReadCounts, {
+      dry: 1,
+      kiss: 2
+    });
+    assert.deepEqual(result.aggregates.skillReadCounts, { dry: 1, kiss: 3 });
+    assert.equal(result.aggregates.uniqueSkillsRead, 2);
+    assert.equal(result.aggregates.maxInitialDeveloperChars, 13);
+    assert.equal(result.aggregates.maxInitialDeveloperBytes, 16);
+    assert.equal(result.aggregates.maxInitialDeveloperTokens, null);
   } finally {
     cleanup();
   }

@@ -337,7 +337,7 @@ export class OpenLITUsageClient {
           ? { kind: OPENLIT_INVALID_RESPONSE_KIND }
           : { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
       }
-      const parsed = parseOpenLITSessionUsage(body);
+      const parsed = parseOpenLITSessionUsage(body, page);
       if (parsed?.status === "unavailable") return { kind: "unavailable" };
       if (!response.ok)
         return { kind: OPENLIT_HTTP_ERROR_KIND, status: response.status };
@@ -492,12 +492,14 @@ export function normalizeSessionSpanPagination(
     requestedOffset >= 0
       ? Math.min(Math.floor(requestedOffset), MAX_SESSION_SPAN_OFFSET)
       : 0;
-  const sortDirection =
-    pagination?.sortDirection === "asc" ? "asc" : "desc";
+  const sortDirection = pagination?.sortDirection === "asc" ? "asc" : "desc";
   return { limit, offset, sortDirection };
 }
 
-function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
+function parseOpenLITSessionUsage(
+  value: unknown,
+  requestedPage: ReturnType<typeof normalizeSessionSpanPagination>
+): ParsedSessionUsage | null {
   if (
     !isRecord(value) ||
     value.schema !== SESSION_USAGE_SCHEMA ||
@@ -509,7 +511,13 @@ function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
   )
     return null;
   if (value.status === "unavailable") {
-    return value.spans.length === 0 && !value.partial
+    return value.spans.length === 0 &&
+      !value.partial &&
+      !value.hasMore &&
+      value.total === null &&
+      value.estimatedCostUsd === null &&
+      value.limit === requestedPage.limit &&
+      value.offset === requestedPage.offset
       ? { status: "unavailable" }
       : null;
   }
@@ -522,9 +530,19 @@ function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
     total === undefined ||
     limit === undefined ||
     limit === null ||
+    limit !== requestedPage.limit ||
+    limit < 1 ||
+    limit > MAX_SESSION_SPANS ||
     offset === undefined ||
     offset === null ||
-    estimatedCostUsd === undefined
+    offset !== requestedPage.offset ||
+    offset > MAX_SESSION_SPAN_OFFSET ||
+    estimatedCostUsd === undefined ||
+    value.spans.length > limit ||
+    (total !== null &&
+      (offset + value.spans.length > total ||
+        (!value.partial &&
+          value.hasMore !== offset + value.spans.length < total)))
   )
     return null;
 

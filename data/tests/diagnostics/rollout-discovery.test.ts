@@ -10,7 +10,6 @@ import {
   rolloutFiles,
   rolloutRoots
 } from "../../src/diagnostics/rollout-discovery.ts";
-
 import { CHILD, fixture, OTHER, ROOT } from "./fixture.ts";
 
 test("a thread id finds its whole session, and a session id finds its subagents", () => {
@@ -33,9 +32,15 @@ test("a thread id finds its whole session, and a session id finds its subagents"
 test("an archived session is found under the archived root", () => {
   const { sessionsRoot, archivedRoot, cleanup } = fixture();
   try {
-    const archived = findSessionRollouts(archivedRoot, "01a0b6aa-0000-7000-8000-000000000004");
+    const archived = findSessionRollouts(
+      archivedRoot,
+      "01a0b6aa-0000-7000-8000-000000000004"
+    );
     assert.equal(archived.length, 1);
-    const active = findSessionRollouts(sessionsRoot, "01a0b6aa-0000-7000-8000-000000000004");
+    const active = findSessionRollouts(
+      sessionsRoot,
+      "01a0b6aa-0000-7000-8000-000000000004"
+    );
     assert.deepEqual(active, []);
   } finally {
     cleanup();
@@ -45,7 +50,10 @@ test("an archived session is found under the archived root", () => {
 test("an id that matches no rollout finds nothing", () => {
   const { sessionsRoot, cleanup } = fixture();
   try {
-    assert.deepEqual(findSessionRollouts(sessionsRoot, "01a0b6ff-0000-7000-8000-000000000009"), []);
+    assert.deepEqual(
+      findSessionRollouts(sessionsRoot, "01a0b6ff-0000-7000-8000-000000000009"),
+      []
+    );
   } finally {
     cleanup();
   }
@@ -92,13 +100,13 @@ test("the head meta carries the join key without loading the whole rollout", () 
 });
 
 test("the recent-sessions listing groups the threads of one session", () => {
-  const { home, sessionsRoot, archivedRoot, cleanup } = fixture();
+  const { sessionsRoot, archivedRoot, cleanup } = fixture();
   try {
     const recent = listRecentSessions([sessionsRoot, archivedRoot], 10);
-    const ids = recent.map((session) => session.id);
-    assert.ok(ids.includes(ROOT));
-    assert.ok(ids.includes(OTHER));
-    assert.ok(ids.includes("01a0b6aa-0000-7000-8000-000000000004"));
+    const ids = new Set(recent.map((session) => session.id));
+    assert.ok(ids.has(ROOT));
+    assert.ok(ids.has(OTHER));
+    assert.ok(ids.has("01a0b6aa-0000-7000-8000-000000000004"));
     const root = recent.find((session) => session.id === ROOT);
     assert.equal(root?.threads, 2);
     assert.equal(root?.cwd, "/tmp/repo");
@@ -110,7 +118,10 @@ test("the recent-sessions listing groups the threads of one session", () => {
 test("the recent-sessions response carries the contract's schema and limit", () => {
   const { sessionsRoot, archivedRoot, cleanup } = fixture();
   try {
-    const response = listRecentSessionsResponse([sessionsRoot, archivedRoot], 2);
+    const response = listRecentSessionsResponse(
+      [sessionsRoot, archivedRoot],
+      2
+    );
     assert.equal(response.schema, "autodev-session-recent-v1");
     assert.equal(response.limit, 2);
     assert.equal(response.sessions.length, 2);

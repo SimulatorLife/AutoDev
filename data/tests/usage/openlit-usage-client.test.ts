@@ -29,6 +29,32 @@ function response(body: unknown, status = 200): Response {
   });
 }
 
+function sessionSpan(index: number) {
+  return {
+    spanId: (index + 1).toString(16).padStart(16, "0"),
+    traceId: "0123456789abcdef0123456789abcdef",
+    parentSpanId: null,
+    operationName: "chat",
+    timestamp: new Date(Date.UTC(2026, 10, 10, 12, 0, index)).toISOString(),
+    durationNs: 1_000_000,
+    statusCode: "OK",
+    provider: null,
+    requestedModel: null,
+    role: null,
+    workspace: null,
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadInputTokens: null,
+    costUsd: null,
+    requestKind: null,
+    compactionProvider: null,
+    hopRoute: null,
+    hopFrom: null,
+    hopTo: null,
+    hopReason: null
+  };
+}
+
 type UsageWidgetFixture = {
   key: string;
   querySucceeded: boolean;
@@ -1323,8 +1349,10 @@ test("OpenLITUsageClient asks for the requested page of a session's spans", asyn
         limit: 50,
         offset: 200,
         hasMore: false,
-        estimatedCostUsd: null,
-        spans: []
+        estimatedCostUsd: 1.25,
+        spans: Array.from({ length: 50 }, (_, index) =>
+          sessionSpan(200 + index)
+        )
       });
     }
   });
@@ -1345,7 +1373,61 @@ test("OpenLITUsageClient asks for the requested page of a session's spans", asyn
   if (result.kind === "ok") {
     assert.equal(result.data.total, 250);
     assert.equal(result.data.hasMore, false);
-    assert.equal(result.data.estimatedCostUsd, null);
+    assert.equal(result.data.estimatedCostUsd, 1.25);
+    assert.equal(result.data.spans.length, 50);
+    assert.equal(result.data.spans[0]?.spanId, sessionSpan(200).spanId);
+    assert.equal(result.data.spans.at(-1)?.spanId, sessionSpan(249).spanId);
+  }
+});
+
+test("OpenLITUsageClient rejects malformed or contradictory v2 session pages", async () => {
+  const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  const valid = {
+    schema: "autodev-openlit-session-usage-v2",
+    status: "observed",
+    partial: false,
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+    estimatedCostUsd: 0.001,
+    spans: [sessionSpan(0)]
+  };
+  const malformed: readonly Record<string, unknown>[] = [
+    { ...valid, schema: "autodev-openlit-session-usage-v1" },
+    { ...valid, limit: 0 },
+    { ...valid, limit: 51 },
+    { ...valid, offset: 1 },
+    { ...valid, offset: 100_001 },
+    { ...valid, total: -1 },
+    { ...valid, total: 0 },
+    { ...valid, total: 2, hasMore: false },
+    { ...valid, hasMore: true },
+    { ...valid, estimatedCostUsd: -0.5 },
+    { ...valid, estimatedCostUsd: "Infinity" },
+    {
+      ...valid,
+      spans: Array.from({ length: 51 }, (_, index) => sessionSpan(index))
+    },
+    { ...valid, spans: [{ ...sessionSpan(0), spanId: "invalid" }] },
+    {
+      ...valid,
+      spans: [{ ...sessionSpan(0), prompt: "private prompt content" }]
+    },
+    { ...valid, status: "unavailable" },
+    { ...valid, status: "unavailable", total: null, spans: [] }
+  ];
+  for (const body of malformed) {
+    const client = new OpenLITUsageClient({
+      baseUrl: "http://openlit.local",
+      serviceToken: "session-secret",
+      fetchImpl: async () => response(body)
+    });
+    assert.deepEqual(
+      await client.querySession(sessionId, { range: "24H" }),
+      { kind: "invalid-response" },
+      JSON.stringify(body).slice(0, 150)
+    );
   }
 });
 

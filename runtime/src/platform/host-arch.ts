@@ -9,10 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import {
-  findExecutable,
-  findPnpmGlobalBinary
-} from "../shared/executables.ts";
+import { findExecutable, findPnpmGlobalBinary } from "../shared/executables.ts";
 
 export type HostArch = "arm64" | "amd64";
 export type ExecutableArch = HostArch | "universal";

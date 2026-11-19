@@ -10,7 +10,6 @@ import {
   summarizeRouter
 } from "../../src/diagnostics/router-events.ts";
 import { traceThread } from "../../src/diagnostics/thread-tracer.ts";
-
 import { CHILD, fixture, routerEvent } from "./fixture.ts";
 
 function childTrace(home: string) {
@@ -29,11 +28,14 @@ test("the rotated logs are read with the live one, newest file first", () => {
   const { routerLog, cleanup } = fixture();
   try {
     const rotated = `${routerLog}.1`;
-    writeFileSync(rotated, `${routerEvent("2026-09-18T21:19:00.000Z", {
-      requestId: "req-old",
-      phase: "selected",
-      provider: "claude"
-    })}\n`);
+    writeFileSync(
+      rotated,
+      `${routerEvent("2026-09-18T21:19:00.000Z", {
+        requestId: "req-old",
+        phase: "selected",
+        provider: "claude"
+      })}\n`
+    );
     const files = routerLogFiles(routerLog);
     assert.equal(files.length, 2);
     assert.equal(files[0], routerLog);
@@ -44,7 +46,10 @@ test("the rotated logs are read with the live one, newest file first", () => {
 });
 
 test("a router log that does not exist is not an error", () => {
-  assert.deepEqual(routerLogFiles("/nowhere/codex-model-router.launchd.err.log"), []);
+  assert.deepEqual(
+    routerLogFiles("/nowhere/codex-model-router.launchd.err.log"),
+    []
+  );
 });
 
 test("the events of a window are read in the order they happened", async () => {
@@ -113,11 +118,18 @@ test("an event that names its thread matches exactly and never by window", async
     );
     const trace = childTrace(home);
     const named = rows.map((row) => ({ ...row, thread: trace.id }));
-    const summary = summarizeRouter({ ...trace, start: null, end: null }, named, false);
+    const summary = summarizeRouter(
+      { ...trace, start: null, end: null },
+      named,
+      false
+    );
     assert.equal(summary.matchedBy, "thread");
     assert.equal(summary.requests, 2);
 
-    const otherThread = rows.map((row) => ({ ...row, thread: "another-thread" }));
+    const otherThread = rows.map((row) => ({
+      ...row,
+      thread: "another-thread"
+    }));
     const exact = routerEventsForThread(
       { ...trace, start: null, end: null },
       otherThread
