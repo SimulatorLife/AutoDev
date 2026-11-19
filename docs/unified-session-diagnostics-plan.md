@@ -348,6 +348,12 @@ Update the Usage dashboard and Control API sections in place to document:
 - Paginated `POST /api/autodev/usage/session` (`autodev-openlit-session-usage-v2`) replacing the fixed 200-span cap.
 - Keep all required Active Sessions / Usage invariants verified by [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts) intact.
 
+## 7. Additional/Misc. Metrics/Data to Show/Include
+
+1. Skill usage (what skills were used, how many times, and which threads used them).
+2. For the "Threads" list, it should include the model provider that was used. As well as showing the "role" model (e.g. "autodev/orchestrator"), the "threads" list/table should also show the model provider model used for that thread (e.g. "gpt-4o", "claude-v1.3", etc.). This is important for debugging and understanding the behavior of the session.
+3. The "Initial developer prompt" should be shown with a dotted-underline and be clickable. Clicking on it should toggle between 3 units: (1) bytes, (2) characters, (3) tokens (should use our shared/common component "Inline display toggle").
+
 ---
 
 ## Verification Plan
@@ -417,4 +423,4 @@ Update the Usage dashboard and Control API sections in place to document:
 
 ## Documentation Updates
 
-This file itself (`docs/unified-session-diagnostics-plan.md`) will only exist until this feature is fully completed and validated/proven. Then, it will be deleted. So, the overall/high-level requirements/design should be preserved into the repo's target-state document, [docs/autodev-console-target-state.md](./autodev-console-target-state.md).
+This file itself (`docs/unified-session-diagnostics-plan.md`) will only exist until this feature is fully completed and validated/proven. Then, it will be removed. So, the overall/high-level requirements/design should be preserved into the repo's target-state document, [docs/autodev-console-target-state.md](./autodev-console-target-state.md).

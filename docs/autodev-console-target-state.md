@@ -239,10 +239,17 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 - Dynamic routes show the active Console shell and an accessible loading placeholder while server-owned page data is pending; the final page replaces it with Runtime-confirmed content and counts.
 - **A page that has its content is not yet a page that responds.** The Console's pages are server-rendered, so the markup arrives before the client does, and everything the operator does with the keyboard -- the palette's shortcut, the filters, the write controls -- belongs to the client. A key or a click in that gap goes nowhere, and a page measured in that gap answers every question about what it shows and fails every question about what it does. The page therefore publishes the difference: the loading placeholder says the content is not here yet, and a marker rendered with the page's own content says the client has taken the page over. The marker is rendered with the content and not with the shell, because the shell is also what the pending state is rendered with, and a marker the pending state set would report a client that had taken over a page that had not arrived. It is the last thing in the page's content, so it is set after everything the content is made of has mounted.
 
-### Misc.
+### UX/UI Component/Affordance "Inline display toggle"
 
-- **All timezones** in the console should be displayed in the local timezone, NOT UTC. The Console is a local operator-facing tool, and the operator's local timezone is the one that matters for their work. UTC is only used for timestamps in logs and telemetry, not for user-facing displays.
-- **All timestamps** in the console should be clickable and should have a dotted underline. Clicking on a timestamp should toggle it between a "time ago" format and the full date/time format. This allows operators to quickly see relative times while also having the option to view the exact timestamp when needed.
+>The "Inline Display Toggle" is a shared, interactive text component that lets operators switch between different representations of the same underlying value without navigating away or opening a separate control. Dotted underline and pointer-cursor indicate clickability. Clicking cycles through formats; keyboard interaction and accessible labels are required.
+
+### UX/UI: Inline Display Toggle
+
+A shared component for cycling between representations of the same value.
+
+- **Interaction:** Dotted underline indicates clickability. Clicking cycles through formats; keyboard interaction and accessible labels are required.
+- **Timestamps:** Toggle between relative time (`3 hours ago`) and full local date/time (`Nov 19, 2026, 10:30 AM`). All Console timestamps use the operator's local timezone; UTC is reserved for logs, telemetry, and storage.
+- **Bytes/characters/tokens:** Cycle between byte, character, and token counts. Values must represent the same content using actual measurements, not approximate conversions.
 
 ## 4. Repository and module architecture
 
