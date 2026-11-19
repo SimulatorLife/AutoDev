@@ -2837,28 +2837,33 @@ single list; the route patterns and the site registry in
   an older chat holding other sessions' turns, which it then answered from
   (session `01a1b8ef-0797-73d2-82bd-a887418caf2b`). `ask` also prefixes every reply with `💬 `,
   which the spec strips.
-- **Gemini prose is streamed as the site writes it; nothing else is.**
-  While `gemini ask` waits, the patched `waitForGeminiResponse` writes each
-  new reading of the reply from the chat's structured turns, as one JSON line
-  `{text, url}`, to the descriptor `OPENCLI_PROGRESS_FD` names -- not stdout
-  (the command's one result) and not stderr (diagnostics). The bridge opens
-  that descriptor as a fourth pipe only for a streamed turn and shows Codex
-  the prose of those readings that is settled: whole lines only, only what two
-  readings in a row agree on, nothing from the first `<tool_call`,
-  `<tool_output` or HTML entity on, and nothing from a chat other than the one
-  the turn continues. Shown text only ever grows, in one message item that the
-  finished reply closes with its full text; a finished reply that no longer
-  begins with what was shown fails the turn rather than revising it, and a
-  turn that has shown text is never re-run in a new chat. Limits: a tool call
-  is read only from the finished reply, and the model's next turn needs the
-  call's result, so nothing after a call starts earlier -- only the prose
-  before it is shown sooner. Once text is shown the router cannot fall back to
-  another provider for that turn. ChatGPT streams nothing: its page renders a
-  reply differently from the text it stores (it drops anything that looks like
-  a tag and can stop partway), and a reply still being written is not stored
-  yet, so there is no interim text that is the reply's own. Non-streamed
-  requests are unchanged. Applying the patch needs `pnpm install` (the
-  patch hash in `pnpm-lock.yaml` changes).
+- **ChatGPT and Gemini stream settled assistant prose before the turn ends.**
+  While `gemini ask` waits, patched `waitForGeminiResponse` reports snapshots
+  from the chat's structured turns. While `chatgpt ask-file` waits, the
+  patched ChatGPT adapter reads the *stored* conversation reply instead of
+  using its lossy rendered HTML, and reports that stored text as it becomes
+  available. Both adapters send newline-delimited `{text, url}` readings
+  through the private `OPENCLI_PROGRESS_FD` descriptor -- neither stdout
+  (the command's final JSON result) nor stderr (diagnostics). The bridge
+  opens FD 3 only for streamed turns and verifies that a reading belongs to
+  the expected chat before showing it in Codex.
+  The shared preview only emits append-only, settled prose: complete lines
+  seen consistently on successive readings, stopping before any
+  `<tool_call`, `<tool_output`, or HTML-escaped tool markup. The finished
+  reply closes the same message item; if it no longer begins with the emitted
+  prefix, the turn fails instead of silently changing already-shown text.
+  Neither an incomplete tool call nor its output is speculatively emitted:
+  Codex executes complete calls from the final reply and the model must await
+  any dependent results. Once text has been shown the router cannot fall
+  back to another provider or restart the turn in a new chat. Non-streamed
+  requests are unchanged; installing the patched adapter requires `pnpm
+  install` with the matching patch checksum in `pnpm-lock.yaml`.
+- **ChatGPT's missing terminal marker is not an indefinite wait.** The stored
+  reply normally has `end_turn=true`. If it does not, the adapter accepts
+  the stored answer only after it is unchanged for at least 12 seconds and
+  the site is no longer generating; a persistently unreadable stored reply
+  also fails after a bounded interval once generation has stopped. Neither
+  condition treats an actively generating response as complete.
 - **A Gemini first prompt names MCP tools instead of documenting them when
   it would not fit.** `exec`'s description documents every nested tool, and a
   root orchestrator in the Codex app carries enough connector and MCP tools
