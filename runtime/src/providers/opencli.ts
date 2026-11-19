@@ -2145,9 +2145,11 @@ export function createOpencliBridge(
               throw error;
             });
           if (uploading) recordUpload(turn.site);
+          // A refused switch did not change the browser's selected model.
+          // Keep the last observed value so other tabs at that model still run
+          // concurrently instead of waiting for the site to drain every turn.
           if (reply.modelSelected)
             selectedModels.set(turn.site, turn.siteModel);
-          else selectedModels.delete(turn.site);
           // The site reports the level it answered at. A turn that asked for
           // a level the site would not take answers at the level the site
           // had, so the bridge keeps what it knew: the site's level did not
