@@ -156,7 +156,10 @@ test("an aborted command that ignores SIGTERM is killed and its turn settles", a
     controller.abort();
     const started = Date.now();
     await assert.rejects(turn, /turn cancelled/u);
-    assert.ok(Date.now() - started < 5000, "the turn settled after the grace period");
+    assert.ok(
+      Date.now() - started < 5000,
+      "the turn settled after the grace period"
+    );
     assert.equal(child.signalCode, "SIGKILL");
   } finally {
     for (const child of live) child.kill("SIGKILL");
@@ -167,7 +170,10 @@ test("an aborted command that ignores SIGTERM is killed and its turn settles", a
 test("a pre-aborted runner request never starts a child process", async () => {
   let commands = 0;
   const runner = processRunner(
-    () => { commands += 1; return ECHO_OPENCLI(); },
+    () => {
+      commands += 1;
+      return ECHO_OPENCLI();
+    },
     ONE_TAB_PER_SITE,
     () => false
   );
@@ -1814,14 +1820,20 @@ test("ChatGPT streams stored prose before browser completion without displaying 
         text: 'Checking.\nWorking.\n<tool_call name="exec">text(',
         url: chatUrl
       });
-      await new Promise<void>((resolve) => { finish = resolve; });
-      return [{
-        response: 'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
-        conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
-      }];
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return [
+        {
+          response: 'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
+          conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
+        }
+      ];
     }
   });
-  const server = createServer((request, response) => { void bridge.handle(request, response); });
+  const server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   try {
@@ -1833,14 +1845,17 @@ test("ChatGPT streams stored prose before browser completion without displaying 
     });
     const reader = response.body!.getReader();
     const seen = { text: "" };
-    await readUntil(reader, seen, (text) => text.includes('"delta":"Checking."'));
+    await readUntil(reader, seen, (text) =>
+      text.includes('"delta":"Checking."')
+    );
     assert.doesNotMatch(seen.text, /response.completed/u);
     assert.doesNotMatch(seen.text, /custom_tool_call/u);
     finish();
     await readUntil(reader, seen, () => false);
     const events = sseEvents(seen.text);
-    const completed = events.find((entry) => entry.event === "response.completed")!
-      .data.response as { output: JsonRecord[] };
+    const completed = events.find(
+      (entry) => entry.event === "response.completed"
+    )!.data.response as { output: JsonRecord[] };
     assert.deepEqual(completed.output.map((item) => item.type), [
       "message",
       "custom_tool_call"
@@ -1854,21 +1869,32 @@ test("ChatGPT streams stored prose before browser completion without displaying 
 
 test("a streamed response keeps prose on both sides of a tool call", async () => {
   await withBridge(
-    [{
-      response: 'Before.<tool_call name="exec">text(1)</tool_call>After.',
-      conversationId: "ordered-chat"
-    }],
+    [
+      {
+        response: 'Before.<tool_call name="exec">text(1)</tool_call>After.',
+        conversationId: "ordered-chat"
+      }
+    ],
     async (baseUrl) => {
-      const body = (await (await post(baseUrl, {
-        model: "opencli-chatgpt-balanced",
-        tools: [EXEC_TOOL],
-        input: "inspect"
-      })).json()) as { output: JsonRecord[] };
-      assert.deepEqual(body.output.map((item) => item.type), [
-        "message", "custom_tool_call", "message"
-      ]);
-      assert.equal((body.output[0]!.content as JsonRecord[])[0]!.text, "Before.");
-      assert.equal((body.output[2]!.content as JsonRecord[])[0]!.text, "After.");
+      const body = (await (
+        await post(baseUrl, {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: "inspect"
+        })
+      ).json()) as { output: JsonRecord[] };
+      assert.deepEqual(
+        body.output.map((item) => item.type),
+        ["message", "custom_tool_call", "message"]
+      );
+      assert.equal(
+        (body.output[0]!.content as JsonRecord[])[0]!.text,
+        "Before."
+      );
+      assert.equal(
+        (body.output[2]!.content as JsonRecord[])[0]!.text,
+        "After."
+      );
     }
   );
 });
