@@ -541,9 +541,6 @@ const MODEL_LIST_TIMEOUT_MS = 60_000;
 /** How long a first listing waits for the site before answering unavailable. */
 const FIRST_MODEL_LIST_WAIT_MS = 5000;
 
-/** How long an aborted command has to exit after SIGTERM before SIGKILL. */
-const KILL_GRACE_MS = 2000;
-
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
  *
@@ -589,6 +586,10 @@ export function processRunner(
     onProgress: OpencliRunRequest["onProgress"]
   ): Promise<JsonRecord[]> =>
     new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
+        return;
+      }
       const command = resolveCommand();
       // The fourth pipe is the progress descriptor (fd 3); the command writes
       // to it only when OPENCLI_PROGRESS_FD names it.
@@ -622,26 +623,57 @@ export function processRunner(
           }
         });
       }
-      // `child.killed` only says a signal was delivered, so it is already true
-      // after the SIGTERM: a command that ignores it is still running and is
-      // killed outright once the grace period ends.
-      const onAbort = () => {
-        child.kill("SIGTERM");
-        const killTimer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null)
-            child.kill("SIGKILL");
-        }, KILL_GRACE_MS);
-        if (typeof killTimer.unref === "function") killTimer.unref();
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      child.once("error", (error) => {
+      let closed = false;
+      let killTimer: ReturnType<typeof setTimeout> | null = null;
+      let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = (): void => {
+        closed = true;
         live.delete(child);
         signal.removeEventListener("abort", onAbort);
+        if (killTimer) clearTimeout(killTimer);
+        if (settleTimer) clearTimeout(settleTimer);
+      };
+      const onAbort = (): void => {
+        if (closed) return;
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // The child already exited between request cancellation and signal.
+        }
+        // child.killed indicates a signal was sent, NOT that the child exited.
+        killTimer = setTimeout(() => {
+          if (!closed) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // The child already exited.
+            }
+          }
+        }, 2000);
+        // A process that never emits close cannot hold a Codex turn indefinitely.
+        settleTimer = setTimeout(() => {
+          if (!closed) {
+            cleanup();
+            reject(new OpencliCommandError(
+              "turn cancelled: opencli did not exit after SIGKILL",
+              "CANCELLED",
+              null
+            ));
+          }
+        }, 5000);
+        killTimer.unref?.();
+        settleTimer.unref?.();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      child.once("error", (error) => {
+        if (closed) return;
+        cleanup();
         reject(error);
       });
       child.once("close", (code) => {
-        live.delete(child);
-        signal.removeEventListener("abort", onAbort);
+        if (closed) return;
+        cleanup();
         if (signal.aborted) {
           reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
           return;
@@ -681,19 +713,32 @@ export function processRunner(
  *
  * A reading from a chat other than the one the turn continues is not the
  * turn's reply and is dropped. A turn in a new chat has no chat to compare
- * with: its reading is the reply to the submitted prompt, which the command
- * anchors on its own turn. Only Gemini reports a reading; ChatGPT's page
- * renders a reply differently from the text it stores, so its reply is only
- * ever read once it has ended.
+ * with: each reading is tied to the chat that received the prompt.
+ * Gemini reports its structured turn; ChatGPT reports the stored reply rather
+ * than its lossy HTML rendering. The bridge never trusts another chat's text.
  */
+function chatgptConversationId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "chatgpt.com") return null;
+    return /\/c\/([\w-]+)/u.exec(parsed.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function showReading(
   stream: TurnStream,
   record: JsonRecord,
-  conversationId: string | null
+  conversationId: string | null,
+  site: OpencliSite
 ): void {
   const { text, url } = record;
   if (typeof text !== "string" || typeof url !== "string") return;
-  if (conversationId !== null && geminiConversationId(url) !== conversationId)
+  const shownChat = site === "gemini"
+    ? geminiConversationId(url)
+    : chatgptConversationId(url);
+  if (!shownChat || (conversationId !== null && shownChat !== conversationId))
     return;
   stream.showReply(text);
 }
@@ -710,7 +755,9 @@ function unusableReply(
 ): string | null {
   if (parsed.unparsedCall)
     return `the ${site} reply holds a tool call the bridge could not read`;
-  if (stream && !parsed.text.startsWith(stream.shownText))
+  const firstMessage = parsed.segments.find((segment) => segment.type === "message");
+  if (stream?.shownText && (firstMessage?.type !== "message" ||
+    !firstMessage.text.startsWith(stream.shownText)))
     return `the ${site} reply changed after part of it was shown`;
   return null;
 }
@@ -2084,7 +2131,7 @@ export function createOpencliBridge(
                 signal,
                 deadline,
                 stream
-                  ? (record) => showReading(stream, record, conversationId)
+                  ? (record) => showReading(stream, record, conversationId, turn.site)
                   : undefined
               )
             )
@@ -2098,13 +2145,9 @@ export function createOpencliBridge(
               throw error;
             });
           if (uploading) recordUpload(turn.site);
-          // A switch that failed left the site on the model it had, which is
-          // what the bridge already knows; forgetting it made every later
-          // turn, at any model, wait for the site to drain and run alone
-          // (session 01a1f56a-5e8a-7232-abfb-d4d5e2104595: a ChatGPT site
-          // with three tabs ran one turn at a time, each queued minutes).
-          // The next turn that wants the model the switch failed to reach
-          // still differs from the recorded one, so it asks for it again.
+          // A refused switch did not change the browser's selected model.
+          // Keep the last observed value so other tabs at that model still run
+          // concurrently instead of waiting for the site to drain every turn.
           if (reply.modelSelected)
             selectedModels.set(turn.site, turn.siteModel);
           // The site reports the level it answered at. A turn that asked for
@@ -2224,15 +2267,21 @@ export function createOpencliBridge(
     messageId: string
   ): { output: JsonRecord[]; calls: number } {
     const output: JsonRecord[] = [];
-    if (parsed.text || parsed.calls.length === 0)
-      output.push(messageItem(parsed.text, messageId));
-    for (const call of parsed.calls)
-      output.push(
-        opencliToolCallItem(call, turn.tools, {
+    let messageCount = 0;
+    for (const segment of parsed.segments) {
+      if (segment.type === "message") {
+        output.push(messageItem(
+          segment.text,
+          messageCount++ === 0 ? messageId : `msg_${turnId(10)}`
+        ));
+      } else {
+        output.push(opencliToolCallItem(segment.call, turn.tools, {
           itemId: `fc_${turnId(10)}`,
           callId: `call_${turnId(12)}`
-        })
-      );
+        }));
+      }
+    }
+    if (output.length === 0) output.push(messageItem(parsed.text, messageId));
     if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
     if (reply.conversationId) {
       const last = prefixDigests([

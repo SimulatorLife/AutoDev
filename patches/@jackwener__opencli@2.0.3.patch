@@ -155,7 +155,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2340,10 +2352,81 @@ function findLatestNewAssistantResponse(messages, prompt, baselinePairCounts) {
+@@ -2340,10 +2352,93 @@ function findLatestNewAssistantResponse(messages, prompt, baselinePairCounts) {
      return '';
  }
  
@@ -199,6 +199,11 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
 +    const last = turn[turn.length - 1];
 +    return { text, finished: last?.author?.role === 'assistant' && last.end_turn === true };
 +}
+++
++/** Accept missing end_turn only when the site's stopped and the reply is stable. */
++export function chatgptReplyCanFinish(stored, stableMs, isGeneratingNow) {
++    return stored.finished === true || (stableMs >= 12000 && !isGeneratingNow);
++}
 +
 +/**
 + * The reply ChatGPT stored for the conversation's last prompt.
@@ -234,10 +239,17 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
      let lastText = '';
      let stableCount = 0;
 +    let storedError = '';
++    let storedErrorSince = 0;
++    let lastStoredText = '';
++    let lastStoredChange = Date.now();
++    let reportedText = '';
++    const progressFd = Number(process.env.OPENCLI_PROGRESS_FD);
++    const writeProgress = Number.isInteger(progressFd) && progressFd >= 3
++        ? (await import('node:fs')).writeSync : null;
      const baselinePairCounts = normalizeBaselinePairCounts(options);
  
      while (Date.now() - startTime < timeoutSeconds * 1000) {
-@@ -2367,13 +2450,31 @@ export async function waitForChatGPTResponse(page, baselineCount, prompt, timeou
+@@ -2367,13 +2462,52 @@ export async function waitForChatGPTResponse(page, baselineCount, prompt, timeou
  
          if (candidate === lastText) {
              stableCount += 1;
@@ -246,17 +258,38 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
 +            // The page says this prompt's reply has settled; the reply itself
 +            // is read from what ChatGPT stored, since the page's rendering of
 +            // it is lossy.
-+            const conversationId = conversationIdFromUrl(await currentChatGPTUrl(page));
++            const url = await currentChatGPTUrl(page);
++            const conversationId = conversationIdFromUrl(url);
 +            if (!conversationId) {
 +                throw new CommandExecutionError('ChatGPT answered in a page that names no conversation, so its stored reply cannot be read');
 +            }
 +            const stored = await readChatGPTStoredReply(page, conversationId);
 +            if (stored.error) {
-+                // A reply that is still being written is not stored yet.
 +                storedError = stored.error;
++                if (!storedErrorSince) storedErrorSince = Date.now();
++                if (Date.now() - storedErrorSince >= 12000 && !(await isGenerating(page))) break;
 +                continue;
 +            }
++            storedErrorSince = 0;
++            // fd 3 is owned by the bridge: stdout stays the final result and
++            // stderr stays diagnostics. No progress descriptor means no work.
++            if (writeProgress && stored.text !== reportedText
++                && stored.text.startsWith(reportedText)) {
++                try {
++                    writeProgress(progressFd, JSON.stringify({ text: stored.text, url }) + '\n');
++                } catch {
++                    // A disconnected progress reader does not fail the turn.
++                }
++                reportedText = stored.text;
++            }
 +            if (stored.finished) return stored.text;
++            if (stored.text !== lastStoredText) {
++                lastStoredText = stored.text;
++                lastStoredChange = Date.now();
++            } else if (Date.now() - lastStoredChange >= 12000
++                && chatgptReplyCanFinish(stored, Date.now() - lastStoredChange, await isGenerating(page))) {
++                return stored.text;
++            }
 +            storedError = 'the stored reply has not ended its turn';
          } else {
              lastText = candidate;
@@ -270,7 +303,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
      throw new TimeoutError(
          'chatgpt ask',
          timeoutSeconds,
-@@ -2670,6 +2771,97 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
+@@ -2670,6 +2804,97 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
      };
  `;
  
@@ -368,7 +401,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2869,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
+@@ -2677,30 +2902,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -400,7 +433,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3866,77 @@ export async function getChatGPTImageAssets(page, urls) {
+@@ -3697,3 +3899,77 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }

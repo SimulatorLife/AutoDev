@@ -1209,10 +1209,16 @@ export interface ParsedToolCall {
   readonly input: string;
 }
 
+export type ParsedReplySegment =
+  | { readonly type: "message"; readonly text: string }
+  | { readonly type: "tool_call"; readonly call: ParsedToolCall };
+
 export interface ParsedReply {
   /** The reply's prose, with every call removed. */
   readonly text: string;
   readonly calls: ParsedToolCall[];
+  /** Original reply order; prose on either side of a call is not moved across it. */
+  readonly segments: ParsedReplySegment[];
   /**
    * Whether the prose still holds a `<tool_call` the parser could not read.
    * Such a reply asked for a call it did not complete; sending it to Codex as
@@ -1286,21 +1292,34 @@ export function parseOpencliReply(response: string): ParsedReply {
   // 01a1e592-6349-73a2-8d2f-3d8bea217417). The calls before the invented
   // output are real requests; nothing from it on is.
   const invented = TOOL_OUTPUT_OPENING.exec(source);
-  const text = (invented ? source.slice(0, invented.index) : source)
-    .replaceAll(
-      TOOL_CALL_PATTERN,
-      (_match, _quote: string, name: string, body: string) => {
-        calls.push({ name, input: callBody(body) });
-        return "";
-      }
-    )
-    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
-    .replaceAll(ESCAPE_TAG_PATTERN, "")
-    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
-    .trim();
+  const usable = invented ? source.slice(0, invented.index) : source;
+  const cleanText = (value: string): string =>
+    value
+      .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
+      .replaceAll(ESCAPE_TAG_PATTERN, "")
+      .replaceAll(BLANK_RUN_PATTERN, "\n\n")
+      .trim();
+  const segments: ParsedReplySegment[] = [];
+  let offset = 0;
+  for (const match of usable.matchAll(TOOL_CALL_PATTERN)) {
+    const before = cleanText(usable.slice(offset, match.index));
+    if (before) segments.push({ type: "message", text: before });
+    const call: ParsedToolCall = {
+      name: match[2] ?? "",
+      input: callBody(match[3] ?? "")
+    };
+    calls.push(call);
+    segments.push({ type: "tool_call", call });
+    offset = match.index + match[0].length;
+  }
+  const after = cleanText(usable.slice(offset));
+  if (after) segments.push({ type: "message", text: after });
+  // Retain the original combined-text contract for diagnostics and tests.
+  const text = cleanText(usable.replaceAll(TOOL_CALL_PATTERN, ""));
   return {
     text,
     calls,
+    segments,
     unparsedCall: TOOL_CALL_OPENING.test(text),
     inventedOutput: invented !== null
   };
