@@ -199,7 +199,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..d19e984a14fa2433f63f881fb68c0542
 +    const last = turn[turn.length - 1];
 +    return { text, finished: last?.author?.role === 'assistant' && last.end_turn === true };
 +}
-++
++
 +/** Accept missing end_turn only when the site's stopped and the reply is stable. */
 +export function chatgptReplyCanFinish(stored, stableMs, isGeneratingNow) {
 +    return stored.finished === true || (stableMs >= 12000 && !isGeneratingNow);
