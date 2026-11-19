@@ -11,7 +11,7 @@ on:
       - "rulesync.jsonc"
       - "rulesync.lock"
       - "tests/rulesync-*.test.ts"
-      - ".nvmrc"
+      - ".node-version"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
@@ -22,7 +22,7 @@ on:
       - "rulesync.jsonc"
       - "rulesync.lock"
       - "tests/rulesync-*.test.ts"
-      - ".nvmrc"
+      - ".node-version"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
@@ -44,7 +44,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
