@@ -1800,12 +1800,12 @@ test("ChatGPT streams stored prose before browser completion without displaying 
         return [{ Status: "ok", Model: String(request.args[2]) }];
       request.onProgress?.({ text: "Checking.\nStill wri", url: chatUrl });
       request.onProgress?.({
-        text: 'Checking.\nWorking.\\n<tool_call name="exec">text(',
+        text: 'Checking.\nWorking.\n<tool_call name="exec">text(',
         url: chatUrl
       });
       await new Promise<void>((resolve) => { finish = resolve; });
       return [{
-        response: 'Checking.\nWorking.\\n<tool_call name="exec">text(1)</tool_call>',
+        response: 'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
         conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
       }];
     }
