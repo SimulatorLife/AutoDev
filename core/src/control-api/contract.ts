@@ -125,11 +125,18 @@
  * never leave the Runtime.
  * v34: `/control/providers` publishes the direct quota-axi report separately
  * from router health, with the provider package's identities and semantics.
+ * v35: `/control/diagnostics` publishes the unified session diagnostics: one
+ * session's report (`GET /control/diagnostics/sessions/{id}`), the recent
+ * sessions (`GET /control/diagnostics/sessions/recent`), the cross-session
+ * fleet scan (`GET /control/diagnostics/sessions/scan`), and the hook-denial
+ * summary (`GET /control/diagnostics/hooks`). Every route is read-only, so
+ * both the `viewer` and the `operator` role may read it, and each route
+ * answers `format=json` (the default) or `format=text`.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 34
+  version: 35
 } as const;
 
 export type ControlApiContractResponse = {

@@ -165,7 +165,7 @@ test("Usage splits attempt latency into the provider queue wait and the time on 
   assert.match(unreported, /P95 Provider Queue[\s\S]*?Not observed/u);
 });
 
-test("Usage keeps exact-session investigation outside URL filters and metric dimensions", () => {
+test("Usage carries the session scope in the top bar, not in a metric filter", () => {
   const markup = renderToStaticMarkup(
     React.createElement(UsageView, {
       metrics: observedMetrics,
@@ -173,11 +173,41 @@ test("Usage keeps exact-session investigation outside URL filters and metric dim
     })
   );
 
-  assert.match(markup, /data-feature="usage-session-lookup"/u);
-  assert.match(markup, /method="post"/u);
-  assert.match(markup, /action="\/api\/usage\/session"/u);
+  // The session id is a view scope carried by the page's own filter form, so
+  // the scope is addressable and the page's answer is server-rendered.
+  assert.match(markup, /data-text-field="usage-session-id"/u);
   assert.match(markup, /name="sessionId"/u);
-  assert.match(markup, /Session IDs are not listed as filter options/u);
+  assert.match(markup, /placeholder="Session or thread ID"/u);
+  assert.match(markup, /action="\/usage"/u);
+  assert.doesNotMatch(markup, /data-feature="usage-session-lookup"/u);
+  assert.doesNotMatch(markup, /action="\/api\/usage\/session"/u);
+  // The session is a scope, not a filter option: no select offers it, and the
+  // bounded filter dimensions stay the ones the telemetry source knows.
+  assert.doesNotMatch(markup, /<select[^>]*name="session/u);
+  for (const dimension of ["workspace", "provider", "model", "agent", "skill"]) {
+    assert.match(markup, new RegExp(`name="${dimension}[^"]*"`, "u"));
+  }
+});
+
+test("a session scope replaces the fleet body and offers a way back", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      selection: { range: "7D", values: {} },
+      sessionScope: {
+        sessionId: "01a0ba14-d54c-78f2-9367-3f80e9a8f75f",
+        invalid: false,
+        rawSessionId: "01a0ba14-d54c-78f2-9367-3f80e9a8f75f"
+      },
+      sessionView: React.createElement("p", null, "session diagnostics")
+    })
+  );
+
+  assert.match(markup, /data-usage-session-scoped="true"/u);
+  assert.match(markup, /session diagnostics/u);
+  assert.match(markup, /Clear session/u);
+  // The fleet's own metrics are a different question, and they are gone.
+  assert.doesNotMatch(markup, /Requests &amp; model usage/u);
 });
 
 test("Active Sessions does not present an historical session query", () => {
@@ -408,7 +438,12 @@ test("Usage active-session stats and detail use the shared section spacing", () 
   );
   assert.match(markup, /session-…re-a/u);
   assert.match(markup, /••••/u);
-  assert.doesNotMatch(markup, /session-fixture-a|>abc</u);
+  // The rendered identity stays masked; the link carries it, because the
+  // session scope is addressable and a link that cannot name its session
+  // cannot open it.
+  assert.doesNotMatch(markup, />session-fixture-a</u);
+  assert.doesNotMatch(markup, />abc</u);
+  assert.match(markup, /sessionId=session-fixture-a/u);
   assert.match(markup, /Live Runtime sessions/u);
 });
 

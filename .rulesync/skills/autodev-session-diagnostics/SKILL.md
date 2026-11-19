@@ -24,6 +24,13 @@ to reproduce a request shape.
 
 `$SKILL_DIR` is this skill's directory.
 
+Every diagnostics answer comes from **one** engine: AutoDev's diagnostics
+engine (`@simulatorlife/autodev-data/diagnostics`), which reads the Codex
+rollouts, the router's rotated logs, the bridge logs and the hook log. The
+Control API (`GET /control/diagnostics/*`), the `pnpm autodev -- diagnostics`
+CLI, this script and the Console's `/usage?sessionId=<id>` view are four
+faces of that one engine -- there is no second parser to keep in sync.
+
 ```bash
 node "$SKILL_DIR/scripts/session-trace.ts" --recent            # no id given: newest sessions (active + archived)
 node "$SKILL_DIR/scripts/session-trace.ts" --scan-recent [N]   # cross-session fleet efficiency & failure/skip scan
@@ -35,6 +42,22 @@ node "$SKILL_DIR/scripts/session-trace.ts" <id> --efficiency   # per-thread toke
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --items        # plus every item, truncated
 node "$SKILL_DIR/scripts/session-trace.ts" <id> --events       # plus every router event
 ```
+
+The same commands exist on the Runtime CLI, which needs no skill:
+
+```bash
+pnpm autodev -- diagnostics <id> --efficiency --failures
+pnpm autodev -- diagnostics --recent 10
+pnpm autodev -- diagnostics --scan-recent 15
+pnpm autodev -- diagnostics --hooks --since 7
+```
+
+This script asks the Control API (`http://127.0.0.1:4101/control/diagnostics/…`,
+read-only, `Authorization: Bearer <token>` + `X-AutoDev-Actor: autodev-local`)
+so it sees the live router state; with `--offline`, `--codex-home` or
+`--router-log` -- or when the API is not running -- it runs the same engine
+through the CLI in the checkout. `--control-api-url URL` points it at another
+Control API.
 
 A Codex App "Session" id is the root thread; a "Thread" id may be a subagent.
 Either finds the whole session. To compare investigation metrics across tool-surface changes, save two `--json` reports, then run `node "$SKILL_DIR/scripts/investigation-compare.ts" before.json after.json`. Inputs must be the JSON object emitted by `session-trace --json`, with a top-level `threads` array; every array entry must be an object with an `investigation` object containing boolean `observed`. Metric fields (`toolCalls`, `tokens`, `filesRead`, `repeatedReads`, `searches`, `repeatedSearches`, and `context.ccc`/`cgc`/`lsp`) may be omitted; present counts must be finite numbers, and `tokens` may also be null. The report gives per-period totals/means, metric-specific observed/missing counts, separate unavailable-thread counts, and after-minus-before deltas. It is descriptive only and does not establish causation. Each thread gets turn outcomes, `GAP`s of 60s+ inside a turn, tool calls by name (MCP tools called inside `exec` counted as `mcp__<server>__<tool>`), grouped `TOOL FAILURES` + `TOOL FAILED` lines (capped at 2 samples per failure category unless `--all-failures` is passed so noisy repeated errors do not truncate the report), and the router's requests: per-provider counts, `ROUTER SKIPPED` (`probe_unavailable`, `quota_exhausted`, etc.), `ROUTER RETRIES` (`retries`, `transport_errors`, `exhaustion_waits`), `ROUTER FAILURE`s, and `PROVIDER HOPS`. With `--efficiency` (and always in `--json`), each thread also reports cumulative `token_count` usage (`cached` %, `reasoning` %, peak input, >50% cache drops), compaction count & max `replacement_history` items/bytes/images, and initial developer-prompt bytes + loaded skills grouped by source root alongside observed `SKILL.md` reads and `$CODEX_HOME/run/skill-read-telemetry` counts.
@@ -61,6 +84,7 @@ every event and looked like "the router logged nothing".
 
 | Question | Source |
 | --- | --- |
+| What does the session look like overall? | `GET /control/diagnostics/sessions/<id>` on the Control API (`:4101`, read-only, contract v35), `pnpm autodev -- diagnostics <id>`, or the Console's `/usage?sessionId=<id>` -- all three run the same engine |
 | What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
 | Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside |
 | What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times; check `opencli-proxy.launchd.log` for `earlier message(s) left out` and `minimax-proxy.launchd.log` for startup errors) |

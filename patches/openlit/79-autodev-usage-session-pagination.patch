@@ -1,0 +1,576 @@
+diff --git a/src/client/src/app/api/autodev/usage/session/route.ts b/src/client/src/app/api/autodev/usage/session/route.ts
+index aca385ff8f1d39a2d508a4ebbd52a72288043228..c579d6da316e9df91a17e14477fadbfde7769000 100644
+--- a/src/client/src/app/api/autodev/usage/session/route.ts
++++ b/src/client/src/app/api/autodev/usage/session/route.ts
+@@ -2,10 +2,7 @@
+ 	getTelemetryAdapter,
+ 	resolveTelemetrySourceDescriptor,
+ } from "@/lib/telemetry-source";
+-import type {
+-	NormalizedSpan,
+-	OpenLITQuery,
+-} from "@/lib/platform/connectors/datasource/types";
++import type { NormalizedSpan } from "@/lib/platform/connectors/datasource/types";
+ import {
+ 	isUsageServiceRequestAuthorized,
+ 	parseUsageSelection,
+@@ -18,8 +15,10 @@
+ export const runtime = "nodejs";
+ 
+ const SERVICE_TOKEN = process.env.AUTODEV_OPENLIT_USAGE_TOKEN ?? "";
+-const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1" as const;
+-const SESSION_SPAN_LIMIT = 200;
++const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v2" as const;
++const MAX_SESSION_SPAN_LIMIT = 200;
++const DEFAULT_SESSION_SPAN_LIMIT = 50;
++const MAX_SESSION_SPAN_OFFSET = 100_000;
+ const MAX_REQUEST_BYTES = 16_384;
+ const MAX_LABEL_LENGTH = 128;
+ const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+@@ -29,8 +28,17 @@
+ 	"process-fallback",
+ 	"process-scope",
+ ]);
++const REQUEST_KEYS = [
++	"sessionId",
++	"range",
++	"customRange",
++	"limit",
++	"offset",
++	"sortDirection",
++] as const;
+ 
+ type UsageSpanStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
++type SessionSpanSortDirection = "desc" | "asc";
+ 
+ interface SessionSpanSummary {
+ 	readonly spanId: string;
+@@ -60,6 +68,13 @@
+ 	readonly schema: typeof SESSION_USAGE_SCHEMA;
+ 	readonly status: "observed" | "unavailable";
+ 	readonly partial: boolean;
++	/** Exact number of matching spans in the session, or null when not observed. */
++	readonly total: number | null;
++	readonly limit: number;
++	readonly offset: number;
++	readonly hasMore: boolean;
++	/** The whole session's cost estimate, not this page's. */
++	readonly estimatedCostUsd: number | null;
+ 	readonly spans: readonly SessionSpanSummary[];
+ }
+ 
+@@ -73,11 +88,16 @@
+ 	});
+ }
+ 
+-function unavailable(): Response {
++function unavailable(limit: number, offset: number): Response {
+ 	return response(503, {
+ 		schema: SESSION_USAGE_SCHEMA,
+ 		status: "unavailable",
+ 		partial: false,
++		total: null,
++		limit,
++		offset,
++		hasMore: false,
++		estimatedCostUsd: null,
+ 		spans: [],
+ 	});
+ }
+@@ -87,6 +107,37 @@
+ 	return RESERVED_SESSION_IDS.has(value.toLowerCase()) ? null : value;
+ }
+ 
++function parseLimit(value: unknown): number | null {
++	if (value === undefined) return DEFAULT_SESSION_SPAN_LIMIT;
++	if (
++		typeof value !== "number" ||
++		!Number.isSafeInteger(value) ||
++		value < 1 ||
++		value > MAX_SESSION_SPAN_LIMIT
++	) {
++		return null;
++	}
++	return value;
++}
++
++function parseOffset(value: unknown): number | null {
++	if (value === undefined) return 0;
++	if (
++		typeof value !== "number" ||
++		!Number.isSafeInteger(value) ||
++		value < 0 ||
++		value > MAX_SESSION_SPAN_OFFSET
++	) {
++		return null;
++	}
++	return value;
++}
++
++function parseSortDirection(value: unknown): SessionSpanSortDirection | null {
++	if (value === undefined) return "desc";
++	return value === "desc" || value === "asc" ? value : null;
++}
++
+ function safeLabel(value: unknown): string | null {
+ 	if (typeof value !== "string") return null;
+ 	const label = value.trim();
+@@ -106,6 +157,23 @@
+ 	return Number.isFinite(cost) && cost >= 0 ? cost : null;
+ }
+ 
++/** An aggregate column, read from the string or number the source returned. */
++function aggregateNumber(value: unknown): number | null {
++	if (typeof value === "number") {
++		return Number.isFinite(value) ? value : null;
++	}
++	if (typeof value !== "string" || !value.trim()) return null;
++	const parsed = Number(value);
++	return Number.isFinite(parsed) ? parsed : null;
++}
++
++function aggregateCount(value: unknown): number | null {
++	const count = aggregateNumber(value);
++	return count !== null && Number.isSafeInteger(count) && count >= 0
++		? count
++		: null;
++}
++
+ function spanSummary(
+ 	span: NormalizedSpan,
+ 	sessionId: string,
+@@ -165,7 +233,7 @@
+ }
+ 
+ export async function POST(request: Request): Promise<Response> {
+-	if (!SERVICE_TOKEN) return unavailable();
++	if (!SERVICE_TOKEN) return unavailable(DEFAULT_SESSION_SPAN_LIMIT, 0);
+ 	if (!isUsageServiceRequestAuthorized(request.headers.get("authorization"), SERVICE_TOKEN)) {
+ 		return response(401, { error: { code: "autodev_usage_unauthorized" } });
+ 	}
+@@ -184,9 +252,12 @@
+ 	} catch {
+ 		return response(400, { error: { code: "autodev_usage_request_invalid" } });
+ 	}
+-	if (!isRecord(body) || Object.keys(body).some((key) =>
+-		!(["sessionId", "range", "customRange"] as const).includes(key as "sessionId" | "range" | "customRange")
+-	)) {
++	if (
++		!isRecord(body) ||
++		Object.keys(body).some(
++			(key) => !(REQUEST_KEYS as readonly string[]).includes(key),
++		)
++	) {
+ 		return response(400, { error: { code: "autodev_usage_request_invalid" } });
+ 	}
+ 	const sessionId = parseSessionId(body.sessionId);
+@@ -195,42 +266,90 @@
+ 		values: {},
+ 		...(Object.hasOwn(body, "customRange") ? { customRange: body.customRange } : {}),
+ 	});
+-	if (!sessionId || !selection) {
++	const limit = parseLimit(body.limit);
++	const offset = parseOffset(body.offset);
++	const sortDirection = parseSortDirection(body.sortDirection);
++	if (
++		!sessionId ||
++		!selection ||
++		limit === null ||
++		offset === null ||
++		!sortDirection
++	) {
+ 		return response(400, { error: { code: "autodev_usage_session_request_invalid" } });
+ 	}
+ 
+ 	try {
+ 		const descriptor = await resolveTelemetrySourceDescriptor({ signal: "traces" });
+ 		const adapter = await getTelemetryAdapter({ signal: "traces", sourceId: descriptor.id });
+-		const query: OpenLITQuery = {
+-			signal: "traces",
+-			timeRange: usageTimeRange(selection),
+-			filters: [
+-				{
+-					target: "attribute",
+-					scope: "resource",
+-					key: "service.name",
+-					op: "eq",
+-					value: "autodev-router",
+-				},
+-				{
+-					target: "attribute",
+-					scope: "span",
+-					key: "autodev.session.id",
+-					op: "eq",
+-					value: sessionId,
+-				},
+-			],
+-			sort: [{ field: "Timestamp", direction: "desc" }],
+-			limit: SESSION_SPAN_LIMIT,
+-			offset: 0,
+-			aiSelector: false,
+-		};
+-		const frame = await runUsageQuery(() => adapter.listSpans(query));
+-		if (!Array.isArray(frame.rows)) return unavailable();
+-		let partial = Boolean(frame.meta?.truncated) || frame.rows.length >= SESSION_SPAN_LIMIT;
++		const filters = [
++			{
++				target: "attribute",
++				scope: "resource",
++				key: "service.name",
++				op: "eq",
++				value: "autodev-router",
++			},
++			{
++				target: "attribute",
++				scope: "span",
++				key: "autodev.session.id",
++				op: "eq",
++				value: sessionId,
++			},
++		];
++		const timeRange = usageTimeRange(selection);
++
++		// The exact count and the whole session's cost, over the same filters
++		// the page is read with. A source that cannot aggregate still serves
++		// the page: it reports an unobserved total rather than no evidence.
++		let total: number | null = null;
++		let estimatedCostUsd: number | null = null;
++		try {
++			const aggregateFrame = await runUsageQuery(() =>
++				adapter.aggregateSpans({
++					signal: "traces",
++					timeRange,
++					filters: [...filters],
++					aggregations: [
++						{ fn: "count", as: "total" },
++						{ fn: "sum", field: "gen_ai.usage.cost", as: "cost" },
++					],
++					aiSelector: false,
++				}),
++			);
++			const aggregateRow = Array.isArray(aggregateFrame.rows)
++				? aggregateFrame.rows[0]
++				: undefined;
++			if (isRecord(aggregateRow)) {
++				total = aggregateCount(aggregateRow.total);
++				const cost = aggregateNumber(aggregateRow.cost);
++				estimatedCostUsd = cost !== null && cost >= 0 ? cost : null;
++			}
++		} catch {
++			total = null;
++			estimatedCostUsd = null;
++		}
++
++		// One row past the page, so "is there another page" is answered by the
++		// read itself rather than by a second count.
++		const frame = await runUsageQuery(() =>
++			adapter.listSpans({
++				signal: "traces",
++				timeRange,
++				filters: [...filters],
++				sort: [{ field: "Timestamp", direction: sortDirection }],
++				limit: limit + 1,
++				offset,
++				aiSelector: false,
++			}),
++		);
++		if (!Array.isArray(frame.rows)) return unavailable(limit, offset);
++		const rawRows = frame.rows;
++		const pageRows = rawRows.slice(0, limit);
++		let partial = Boolean(frame.meta?.truncated);
+ 		const summaries = new Map<string, SessionSpanSummary>();
+-		for (const span of frame.rows) {
++		for (const span of pageRows) {
+ 			const summary = spanSummary(span, sessionId);
+ 			if (!summary) {
+ 				partial = true;
+@@ -241,18 +360,29 @@
+ 		}
+ 		const spans = Array.from(summaries.values())
+ 			.sort((a, b) =>
+-				Date.parse(b.timestamp) - Date.parse(a.timestamp) ||
+-				a.spanId.localeCompare(b.spanId),
++				sortDirection === "asc"
++					? Date.parse(a.timestamp) - Date.parse(b.timestamp) ||
++						a.spanId.localeCompare(b.spanId)
++					: Date.parse(b.timestamp) - Date.parse(a.timestamp) ||
++						a.spanId.localeCompare(b.spanId),
+ 			)
+-			.slice(0, SESSION_SPAN_LIMIT);
++			.slice(0, limit);
++		const hasMore =
++			rawRows.length > limit ||
++			(total !== null && offset + spans.length < total);
+ 		return response(200, {
+ 			schema: SESSION_USAGE_SCHEMA,
+ 			status: "observed",
+-			partial: partial || summaries.size > spans.length,
++			partial,
++			total,
++			limit,
++			offset,
++			hasMore,
++			estimatedCostUsd,
+ 			spans,
+ 		});
+ 	} catch {
+-		return unavailable();
++		return unavailable(limit, offset);
+ 	}
+ }
+ 
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts
+index 2158e6cd2ce20c84681b3cbd83ddc385fb55afd6..76419fb7d75c8cee0b1020a7778185395ed29b19 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/session/route.test.ts
+@@ -5,6 +5,7 @@
+ const mockResolveTelemetrySourceDescriptor = jest.fn();
+ const mockGetTelemetryAdapter = jest.fn();
+ const mockListSpans = jest.fn();
++const mockAggregateSpans = jest.fn();
+ 
+ jest.mock("@/lib/telemetry-source", () => ({
+ 	resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
+@@ -74,9 +75,17 @@
+ 	mockResolveTelemetrySourceDescriptor.mockReset();
+ 	mockResolveTelemetrySourceDescriptor.mockResolvedValue({ id: "source-1" });
+ 	mockGetTelemetryAdapter.mockReset();
+-	mockGetTelemetryAdapter.mockResolvedValue({ listSpans: mockListSpans });
++	mockGetTelemetryAdapter.mockResolvedValue({
++		listSpans: mockListSpans,
++		aggregateSpans: mockAggregateSpans,
++	});
+ 	mockListSpans.mockReset();
+ 	mockListSpans.mockResolvedValue({ rows: [span()], meta: { truncated: false } });
++	mockAggregateSpans.mockReset();
++	mockAggregateSpans.mockResolvedValue({
++		rows: [{ total: "1", cost: "0.00042" }],
++		meta: { truncated: false },
++	});
+ });
+ 
+ afterAll(() => {
+@@ -87,7 +96,7 @@
+ 	}
+ });
+ 
+-describe("fixed AutoDev historical session Usage endpoint", () => {
++describe("paginated AutoDev historical session Usage endpoint", () => {
+ 	it("requires the dedicated Usage bearer credential", async () => {
+ 		const response = await POST(
+ 			request({ sessionId: SESSION_ID, range: "24H" }, "wrong-token"),
+@@ -116,7 +125,7 @@
+ 		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
+ 	});
+ 
+-	it("queries only the exact router session attribute and returns the fixed redacted v1 summary", async () => {
++	it("queries only the exact router session attribute and returns the fixed redacted v2 summary", async () => {
+ 		const response = await POST(
+ 			request({ sessionId: SESSION_ID, range: "7D" }),
+ 		);
+@@ -124,9 +133,14 @@
+ 
+ 		expect(response.status).toBe(200);
+ 		expect(body).toEqual({
+-			schema: "autodev-openlit-session-usage-v1",
++			schema: "autodev-openlit-session-usage-v2",
+ 			status: "observed",
+ 			partial: false,
++			total: 1,
++			limit: 50,
++			offset: 0,
++			hasMore: false,
++			estimatedCostUsd: 0.00042,
+ 			spans: [
+ 				{
+ 					spanId: SPAN_ID,
+@@ -187,9 +201,40 @@
+ 			"traceId",
+ 			"workspace",
+ 		]);
++		expect(mockAggregateSpans).toHaveBeenCalledWith({
++			signal: "traces",
++			timeRange: expect.objectContaining({
++				start: expect.any(Date),
++				end: expect.any(Date),
++			}),
++			filters: [
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{
++					target: "attribute",
++					scope: "span",
++					key: "autodev.session.id",
++					op: "eq",
++					value: SESSION_ID,
++				},
++			],
++			aggregations: [
++				{ fn: "count", as: "total" },
++				{ fn: "sum", field: "gen_ai.usage.cost", as: "cost" },
++			],
++			aiSelector: false,
++		});
+ 		expect(mockListSpans).toHaveBeenCalledWith({
+ 			signal: "traces",
+-			timeRange: expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) }),
++			timeRange: expect.objectContaining({
++				start: expect.any(Date),
++				end: expect.any(Date),
++			}),
+ 			filters: [
+ 				{
+ 					target: "attribute",
+@@ -207,20 +252,79 @@
+ 				},
+ 			],
+ 			sort: [{ field: "Timestamp", direction: "desc" }],
+-			limit: 200,
++			limit: 51,
+ 			offset: 0,
+ 			aiSelector: false,
+ 		});
++	});
++
++	it("slices the requested page and reports the exact total and the session cost", async () => {
++		mockAggregateSpans.mockResolvedValueOnce({
++			rows: [{ total: "250", cost: "1.25" }],
++			meta: { truncated: false },
++		});
++		mockListSpans.mockResolvedValueOnce({
++			rows: Array.from({ length: 51 }, (_, index) => span(index)),
++			meta: { truncated: false },
++		});
++		const page = await POST(
++			request({
++				sessionId: SESSION_ID,
++				range: "3M",
++				limit: 50,
++				offset: 200,
++				sortDirection: "asc",
++			}),
++		);
++		const body = await page.json();
++		expect(page.status).toBe(200);
++		expect(body.limit).toBe(50);
++		expect(body.offset).toBe(200);
++		expect(body.total).toBe(250);
++		expect(body.estimatedCostUsd).toBe(1.25);
++		expect(body.spans).toHaveLength(50);
++		expect(body.hasMore).toBe(true);
++		expect(body.partial).toBe(false);
++		expect(mockListSpans).toHaveBeenCalledWith(
++			expect.objectContaining({
++				sort: [{ field: "Timestamp", direction: "asc" }],
++				limit: 51,
++				offset: 200,
++			}),
++		);
+ 	});
+ 
++	it("rejects an out-of-range page or an unknown sort direction before querying", async () => {
++		for (const body of [
++			{ sessionId: SESSION_ID, range: "24H", limit: 0 },
++			{ sessionId: SESSION_ID, range: "24H", limit: 201 },
++			{ sessionId: SESSION_ID, range: "24H", offset: -1 },
++			{ sessionId: SESSION_ID, range: "24H", offset: 100_001 },
++			{ sessionId: SESSION_ID, range: "24H", sortDirection: "sideways" },
++		]) {
++			const response = await POST(request(body));
++			expect(response.status).toBe(400);
++		}
++		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++	});
++
+ 	it("distinguishes an observed empty result from an unavailable query", async () => {
+ 		mockListSpans.mockResolvedValueOnce({ rows: [], meta: { truncated: false } });
++		mockAggregateSpans.mockResolvedValueOnce({
++			rows: [{ total: "0", cost: "0" }],
++			meta: { truncated: false },
++		});
+ 		const empty = await POST(request({ sessionId: SESSION_ID, range: "24H" }));
+ 		expect(empty.status).toBe(200);
+ 		expect(await empty.json()).toEqual({
+-			schema: "autodev-openlit-session-usage-v1",
++			schema: "autodev-openlit-session-usage-v2",
+ 			status: "observed",
+ 			partial: false,
++			total: 0,
++			limit: 50,
++			offset: 0,
++			hasMore: false,
++			estimatedCostUsd: 0,
+ 			spans: [],
+ 		});
+ 
+@@ -229,9 +333,14 @@
+ 		const failedBody = await failed.json();
+ 		expect(failed.status).toBe(503);
+ 		expect(failedBody).toEqual({
+-			schema: "autodev-openlit-session-usage-v1",
++			schema: "autodev-openlit-session-usage-v2",
+ 			status: "unavailable",
+ 			partial: false,
++			total: null,
++			limit: 50,
++			offset: 0,
++			hasMore: false,
++			estimatedCostUsd: null,
+ 			spans: [],
+ 		});
+ 		const failedText = JSON.stringify(failedBody);
+@@ -239,17 +348,17 @@
+ 		expect(failedText).not.toContain("private source failure");
+ 	});
+ 
+-	it("caps results at 200 and marks source and result truncation partial", async () => {
+-		mockListSpans.mockResolvedValueOnce({
+-			rows: Array.from({ length: 205 }, (_, index) => span(index)),
+-			meta: { truncated: false },
+-		});
+-		const overflow = await POST(request({ sessionId: SESSION_ID, range: "3M" }));
+-		const overflowBody = await overflow.json();
+-		expect(overflowBody.status).toBe("observed");
+-		expect(overflowBody.partial).toBe(true);
+-		expect(overflowBody.spans).toHaveLength(200);
++	it("serves the page when the source cannot aggregate, reporting an unobserved total", async () => {
++		mockAggregateSpans.mockRejectedValueOnce(new Error("no aggregate support"));
++		const response = await POST(request({ sessionId: SESSION_ID, range: "24H" }));
++		const body = await response.json();
++		expect(response.status).toBe(200);
++		expect(body.total).toBeNull();
++		expect(body.estimatedCostUsd).toBeNull();
++		expect(body.spans).toHaveLength(1);
++	});
+ 
++	it("marks source and result truncation partial without treating a long session as partial", async () => {
+ 		mockListSpans.mockResolvedValueOnce({
+ 			rows: [span()],
+ 			meta: { truncated: true },
+@@ -258,6 +367,21 @@
+ 			request({ sessionId: SESSION_ID, range: "24H" }),
+ 		);
+ 		expect((await sourceTruncated.json()).partial).toBe(true);
++
++		mockAggregateSpans.mockResolvedValueOnce({
++			rows: [{ total: "500", cost: "2" }],
++			meta: { truncated: false },
++		});
++		mockListSpans.mockResolvedValueOnce({
++			rows: [span()],
++			meta: { truncated: false },
++		});
++		const longSession = await POST(
++			request({ sessionId: SESSION_ID, range: "24H", limit: 50 }),
++		);
++		const longBody = await longSession.json();
++		expect(longBody.partial).toBe(false);
++		expect(longBody.hasMore).toBe(true);
+ 	});
+ 
+ 	it("rejects an invalid range before querying", async () => {

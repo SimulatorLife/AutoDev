@@ -50,6 +50,13 @@ import {
   moveCanonicalSource,
   resetCanonicalSources
 } from "./canonical-source-fixture.ts";
+import {
+  DIAGNOSTICS_SESSION_ID,
+  fleetScanResponse,
+  hookDenialsResponse,
+  recentSessionsResponse,
+  sessionDiagnosticsReport
+} from "./session-diagnostics-fixture.ts";
 
 /**
  * The vocabulary the fixture speaks in.
@@ -79,6 +86,8 @@ const FIXTURE_CONVERGED_EXPLANATION =
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const DIAGNOSTICS_SESSION_PATH_PATTERN =
+  /^\/control\/diagnostics\/sessions\/(.+)$/u;
 const SYNTHETIC_VISUAL_LAUNCH_KEYS = new Set([
   "schema",
   "mode",
@@ -6302,6 +6311,49 @@ async function handleSyntheticMutationRoutes(
   return configureAgentEnablementFixture(request, response, url);
 }
 
+/**
+ * The session-diagnostics routes.
+ *
+ * The Console's session-scoped Usage view reads them, so the stand-in answers
+ * them with the Core contract's own shapes. A session id that names no
+ * session answers with `found: false` rather than a 404: a session that does
+ * not exist is a fact about the machine, not a missing route.
+ */
+function respondSessionDiagnostics(
+  url: URL,
+  response: ServerResponse
+): boolean {
+  if (!url.pathname.startsWith("/control/diagnostics/")) return false;
+  if (url.pathname === "/control/diagnostics/sessions/recent") {
+    sendJson(response, recentSessionsResponse());
+    return true;
+  }
+  if (url.pathname === "/control/diagnostics/sessions/scan") {
+    sendJson(response, fleetScanResponse());
+    return true;
+  }
+  if (url.pathname === "/control/diagnostics/hooks") {
+    sendJson(response, hookDenialsResponse());
+    return true;
+  }
+  const sessionMatch = url.pathname.match(
+    DIAGNOSTICS_SESSION_PATH_PATTERN
+  );
+  if (sessionMatch?.[1]) {
+    const report = sessionDiagnosticsReport();
+    const requested = decodeURIComponent(sessionMatch[1]);
+    sendJson(
+      response,
+      requested === DIAGNOSTICS_SESSION_ID
+        ? report
+        : { ...report, found: false, requestedId: requested, threads: [] }
+    );
+    return true;
+  }
+  response.writeHead(404).end();
+  return true;
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -6321,6 +6373,7 @@ const server = createServer(
       response.writeHead(405).end();
       return;
     }
+    if (respondSessionDiagnostics(url, response)) return;
     if (url.pathname === "/control/workspaces") {
       sendJson(response, {
         schema: "autodev-control-workspaces-v3",

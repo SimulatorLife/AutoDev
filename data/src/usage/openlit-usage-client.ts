@@ -15,6 +15,8 @@ import {
   type UsageProviderHopUnsupportedFilter,
   type UsageSessionEvidence,
   type UsageSessionQuerySelection,
+  type UsageSessionSpanPagination,
+  type UsageSessionSpanSortDirection,
   type UsageSessionSpanSummary,
   type UsageSnapshot,
   type UsageTimeBucketCount,
@@ -33,8 +35,10 @@ const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
 const SESSION_USAGE_API_PATH = "/api/autodev/usage/session";
-const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1";
+const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v2";
 const MAX_SESSION_SPANS = 200;
+const DEFAULT_SESSION_SPAN_LIMIT = 50;
+const MAX_SESSION_SPAN_OFFSET = 100_000;
 const MAX_SESSION_LABEL_LENGTH = 128;
 const NOT_APPLICABLE_KIND = "not-applicable" as const;
 
@@ -281,13 +285,22 @@ export class OpenLITUsageClient {
     }
   }
 
+  /**
+   * Read one page of a session's spans.
+   *
+   * The page is a window onto the session's full span list: the response
+   * carries the exact `total`, the `hasMore` flag, and the session's whole
+   * cost estimate rather than this page's.
+   */
   async querySession(
     sessionId: unknown,
     selection: UsageSessionQuerySelection,
+    pagination?: UsageSessionSpanPagination,
     options?: OpenLITUsageRequestOptions
   ): Promise<OpenLITSessionResult> {
     const validatedSessionId = safeAutoDevSessionId(sessionId);
     if (!validatedSessionId) return { kind: "invalid-session-id" };
+    const page = normalizeSessionSpanPagination(pagination);
 
     try {
       const response = await this.fetchWithTimeout(
@@ -304,7 +317,10 @@ export class OpenLITUsageClient {
             range: selection.range,
             ...(selection.range === "CUSTOM"
               ? { customRange: selection.customRange }
-              : {})
+              : {}),
+            limit: page.limit,
+            offset: page.offset,
+            sortDirection: page.sortDirection
           }),
           cache: "no-store"
         },
@@ -449,12 +465,45 @@ function sessionNumber(
     : undefined;
 }
 
+/**
+ * Clamp a requested page into the bounds the endpoint accepts.
+ *
+ * The bounds are the endpoint's own, applied here as well so a caller cannot
+ * ask for a page the endpoint will refuse.
+ */
+export function normalizeSessionSpanPagination(
+  pagination: UsageSessionSpanPagination | undefined
+): {
+  readonly limit: number;
+  readonly offset: number;
+  readonly sortDirection: UsageSessionSpanSortDirection;
+} {
+  const requestedLimit = pagination?.limit;
+  const limit =
+    typeof requestedLimit === "number" &&
+    Number.isFinite(requestedLimit) &&
+    requestedLimit >= 1
+      ? Math.min(Math.floor(requestedLimit), MAX_SESSION_SPANS)
+      : DEFAULT_SESSION_SPAN_LIMIT;
+  const requestedOffset = pagination?.offset;
+  const offset =
+    typeof requestedOffset === "number" &&
+    Number.isFinite(requestedOffset) &&
+    requestedOffset >= 0
+      ? Math.min(Math.floor(requestedOffset), MAX_SESSION_SPAN_OFFSET)
+      : 0;
+  const sortDirection =
+    pagination?.sortDirection === "asc" ? "asc" : "desc";
+  return { limit, offset, sortDirection };
+}
+
 function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
   if (
     !isRecord(value) ||
     value.schema !== SESSION_USAGE_SCHEMA ||
     (value.status !== "observed" && value.status !== "unavailable") ||
     typeof value.partial !== "boolean" ||
+    typeof value.hasMore !== "boolean" ||
     !Array.isArray(value.spans) ||
     value.spans.length > MAX_SESSION_SPANS
   )
@@ -464,6 +513,20 @@ function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
       ? { status: "unavailable" }
       : null;
   }
+
+  const total = sessionNumber(value.total, true);
+  const limit = sessionNumber(value.limit, true);
+  const offset = sessionNumber(value.offset, true);
+  const estimatedCostUsd = sessionNumber(value.estimatedCostUsd, false);
+  if (
+    total === undefined ||
+    limit === undefined ||
+    limit === null ||
+    offset === undefined ||
+    offset === null ||
+    estimatedCostUsd === undefined
+  )
+    return null;
 
   const spans: UsageSessionSpanSummary[] = [];
   const spanIds = new Set<string>();
@@ -543,7 +606,18 @@ function parseOpenLITSessionUsage(value: unknown): ParsedSessionUsage | null {
       hopReason: labels.hopReason ?? null
     });
   }
-  return { status: "observed", data: { partial: value.partial, spans } };
+  return {
+    status: "observed",
+    data: {
+      total,
+      limit,
+      offset,
+      hasMore: value.hasMore,
+      partial: value.partial,
+      estimatedCostUsd,
+      spans
+    }
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

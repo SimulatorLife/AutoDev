@@ -23156,10 +23156,6 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Next.js route-level error boundary rendering the shared dark-mode error view with in-place retry."
     ],
     [
-      join("src", "features", "usage", "SessionUsageLookup.ts"),
-      "Keeps one exact session ID in component state and sends it only in a same-origin POST for a bounded historical trace read; the ID stays out of the URL and metrics."
-    ],
-    [
       join("src", "features", "usage", "use-usage-telemetry.ts"),
       "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
     ],

@@ -27,6 +27,7 @@ export {
   type WorkspaceCatalogWrite
 } from "./config/workspace-catalog.ts";
 export * from "./control-api/operation-history.ts";
+export * from "./diagnostics/index.ts";
 export * from "./evaluations/index.ts";
 export * from "./execution-contract.ts";
 export * from "./github/github-actions-adapter.ts";

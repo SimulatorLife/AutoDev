@@ -187,11 +187,49 @@ import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesti
 import { handleWorkspaceVisualPlaytestTargetRequest } from "./workspace-visual-playtesting.ts";
 
 export type { GithubWorkflowsViewOptions } from "./github.ts";
-export {
-  clearGithubSnapshotCacheForTests,
-  githubWorkflowsView,
-  setGithubActionsAdapterForTests
-} from "./github.ts";
+
+/**
+ * The session-diagnostics routes, as the dispatcher calls them.
+ *
+ * The diagnostics family owns its own routes; the dispatcher owns the routing
+ * table. The registration is how a family joins that table without the
+ * dispatcher importing every family -- the dispatcher's own dependency
+ * ceiling is what forces the arrangement.
+ */
+export type ControlApiDiagnosticsHandler = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  codexHome: string | undefined,
+  repositoryRoot: string | undefined
+) => Promise<boolean>;
+
+let diagnosticsHandler: ControlApiDiagnosticsHandler | null = null;
+
+/** Register the Control API's session-diagnostics routes. */
+export function setControlApiDiagnosticsHandler(
+  handler: ControlApiDiagnosticsHandler | null
+): void {
+  diagnosticsHandler = handler;
+}
+
+/** Answer a diagnostics request, when the family is registered. */
+function respondDiagnosticsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  const handler = diagnosticsHandler;
+  if (handler === null) return Promise.resolve(false);
+  return handler(
+    request,
+    response,
+    pathname,
+    options.codexHome,
+    options.repositoryRoot
+  );
+}
 
 export const CONTROL_API_BASE = "/control";
 export const CONTROL_API_PATHS = {
@@ -220,7 +258,8 @@ export const CONTROL_API_PATHS = {
   playtesting: "/control/playtesting",
   playtestingReadiness: "/control/playtesting/readiness",
   playtestingInitialization: "/control/playtesting/initialize",
-  concurrency: "/control/runtime/concurrency"
+  concurrency: "/control/runtime/concurrency",
+  diagnostics: "/control/diagnostics"
 } as const;
 
 const PLAYTESTING_CAPABILITIES_PATH = `${CONTROL_API_PATHS.playtesting}/capabilities`;
@@ -8995,6 +9034,9 @@ export async function handleControlApiRequest(
       pathname,
       options
     );
+  if (await respondDiagnosticsRoute(request, response, pathname, options)) {
+    return true;
+  }
   if (await readOnlyCollection(pathname, method, response, actor, options))
     return true;
   auditRejectedRequest(

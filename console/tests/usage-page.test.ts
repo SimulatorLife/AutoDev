@@ -215,3 +215,225 @@ test("UsagePage maps an unreachable OpenLIT source to the actionable unavailable
     restore();
   }
 });
+
+const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+const threadId = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
+const controlApiToken = "control-api-test-token";
+
+const diagnosticsReport = {
+  schema: "autodev-session-diagnostics-v1",
+  found: true,
+  requestedId: sessionId,
+  rootSessionId: sessionId,
+  matchedByThreadId: false,
+  threads: [
+    {
+      id: threadId,
+      sessionId,
+      parentId: null,
+      nickname: null,
+      role: "worker",
+      model: "autodev/worker",
+      modelProvider: "claude",
+      cliVersion: null,
+      cwd: "/repo",
+      file: "/repo/rollout.jsonl",
+      start: "2026-11-10T12:00:00.000Z",
+      end: "2026-11-10T12:00:10.000Z",
+      counts: { turns: 1 },
+      turns: [
+        {
+          turnId: "t1",
+          started: "2026-11-10T12:00:02.000Z",
+          ended: "2026-11-10T12:00:10.000Z",
+          outcome: "completed",
+          detail: null
+        }
+      ],
+      gaps: [],
+      tools: { read_file: 1 },
+      toolFailures: [],
+      investigation: {
+        observed: true,
+        firstEditAt: null,
+        toolCalls: 1,
+        tokens: 1000,
+        filesRead: 1,
+        repeatedReads: 0,
+        searches: 0,
+        repeatedSearches: 0,
+        context: { ccc: 0, cgc: 0, lsp: 0 }
+      }
+    }
+  ],
+  router: [],
+  logs: [],
+  bridgeAlerts: [],
+  live: null,
+  efficiency: null,
+  aggregates: {
+    threadCount: 1,
+    totalTokens: 1000,
+    inputTokens: 800,
+    cachedInputTokens: 400,
+    outputTokens: 100,
+    reasoningOutputTokens: 50,
+    cacheHitPct: 50,
+    reasoningPct: 50,
+    peakInputTokens: 800,
+    cacheDrops: 0,
+    compactions: 0,
+    contextCompactedEvents: 0,
+    maxReplacementItems: 0,
+    maxReplacementBytes: 0,
+    maxReplacementImages: 0,
+    responseImageItems: 0,
+    maxInitialDeveloperBytes: 0,
+    maxSkillsCatalogBytes: 0,
+    maxSkillsLoaded: 0,
+    skillsByRoot: {},
+    uniqueSkillsRead: 0,
+    skillTelemetryReads: null,
+    turnsTotal: 1,
+    turnsByOutcome: { completed: 1 },
+    gapsCount: 0,
+    toolCallsTotal: 1,
+    toolCallsByName: { read_file: 1 },
+    toolFailuresTotal: 0,
+    toolFailuresByCategory: {},
+    preToolUseBlocks: 0,
+    routerRequests: 0,
+    routerFailures: 0,
+    routerSkippedTotal: 0,
+    routerSkippedByReason: {},
+    routerRetries: 0,
+    exhaustionWaits: 0,
+    transportErrors: 0,
+    providerHops: 0,
+    byProvider: {}
+  },
+  eventsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false },
+  itemsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false }
+};
+
+const sessionUsageResponse = {
+  schema: "autodev-openlit-session-usage-v2",
+  status: "observed",
+  partial: false,
+  total: 1,
+  limit: 50,
+  offset: 0,
+  hasMore: false,
+  estimatedCostUsd: 0.01,
+  spans: [
+    {
+      spanId: traceSpanId,
+      traceId: "0123456789abcdef0123456789abcdef",
+      parentSpanId: null,
+      operationName: "chat",
+      timestamp: "2026-11-10T12:00:00.000Z",
+      durationNs: 1_000_000,
+      statusCode: "OK",
+      provider: "claude",
+      requestedModel: "autodev/worker",
+      role: "worker",
+      workspace: "SimulatorLife/AutoDev",
+      inputTokens: 12,
+      outputTokens: 3,
+      cacheReadInputTokens: 4,
+      costUsd: 0.001,
+      requestKind: null,
+      compactionProvider: null,
+      hopRoute: null,
+      hopFrom: null,
+      hopTo: null,
+      hopReason: null
+    }
+  ]
+};
+
+function withControlApiConfig(): () => void {
+  const oldToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const oldUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  process.env.AUTODEV_CONTROL_API_TOKEN = controlApiToken;
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://control.test";
+  return () => {
+    if (oldToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = oldToken;
+    if (oldUrl === undefined) delete process.env.AUTODEV_CONTROL_API_BASE_URL;
+    else process.env.AUTODEV_CONTROL_API_BASE_URL = oldUrl;
+  };
+}
+
+test("a session id in the top bar scopes the whole page to that session", async () => {
+  const restore = withUsageConfig();
+  const restoreControl = withControlApiConfig();
+  try {
+    const requests: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("http://control.test/control/diagnostics/sessions/")) {
+        return Response.json(diagnosticsReport);
+      }
+      if (url === "http://openlit.test/api/autodev/usage/session") {
+        return Response.json(sessionUsageResponse);
+      }
+      throw new Error(`Unexpected Usage request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await UsagePage({
+        searchParams: Promise.resolve({ range: "24H", sessionId })
+      })
+    );
+
+    assert.ok(
+      requests.some((url) =>
+        url.startsWith("http://control.test/control/diagnostics/sessions/")
+      ),
+      "the session's diagnostics are read from the Control API"
+    );
+    assert.ok(
+      requests.includes("http://openlit.test/api/autodev/usage/session"),
+      "the session's spans are read from the telemetry store"
+    );
+    assert.ok(
+      !requests.includes("http://openlit.test/api/autodev/usage"),
+      "a session-scoped page must not ask for the fleet-wide snapshot"
+    );
+    assert.match(markup, /data-usage-session-scoped="true"/);
+    assert.match(markup, /name="sessionId"/);
+    assert.match(markup, new RegExp(`value="${sessionId}"`));
+    assert.match(markup, /Clear session/);
+    assert.match(markup, /Overview/);
+  } finally {
+    restoreControl();
+    restore();
+  }
+});
+
+test("an invalid session id is refused before anything is read", async () => {
+  const restore = withUsageConfig();
+  const restoreControl = withControlApiConfig();
+  try {
+    const requests: string[] = [];
+    globalThis.fetch = async (input) => {
+      requests.push(String(input));
+      throw new Error("nothing should be read");
+    };
+
+    const markup = renderToStaticMarkup(
+      await UsagePage({
+        searchParams: Promise.resolve({ range: "24H", sessionId: "process-fallback" })
+      })
+    );
+
+    assert.deepEqual(requests, []);
+    assert.match(markup, /not a valid AutoDev session identity/u);
+    assert.match(markup, /data-usage-session-scoped="true"/);
+  } finally {
+    restoreControl();
+    restore();
+  }
+});

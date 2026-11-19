@@ -20,6 +20,7 @@ import {
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import { unsupportedChoice } from "./command-choice.ts";
+import { runDiagnosticsCommand } from "./diagnostics.ts";
 import {
   dispatchHookCommand,
   HOOK_NAMES,
@@ -221,6 +222,7 @@ const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["provider", PROVIDER_NAMES.join("|")],
   ["hook", HOOK_NAMES.join("|")],
   ["repo", REPO_SUBCOMMANDS.join("|")],
+  ["diagnostics", ""],
   ["playtest", PLAYTESTS_SUBCOMMANDS.join("|")],
   ["install", ""]
 ];
@@ -328,6 +330,13 @@ export function runMain(
       rest,
       backends.playtest ?? defaultPlaytestBackend
     );
+  }
+  if (command === "diagnostics") {
+    // The session id is positional, so it arrives as the subcommand slot.
+    const args = [subcommand, ...rest].filter(
+      (value): value is string => value !== undefined
+    );
+    return runDiagnosticsCommand(args);
   }
   if (command === "install") {
     const args = [subcommand, ...rest].filter(

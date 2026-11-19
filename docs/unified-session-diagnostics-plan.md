@@ -414,3 +414,7 @@ Update the Usage dashboard and Control API sections in place to document:
    - Once rebuilding/restarting Runtime, OpenLIT, and Console is explicitly authorized:
      - Run `session-trace.ts` **without** `--offline` and verify it reads cleanly from `http://127.0.0.1:4101/control/diagnostics/...`.
      - Open `/usage` in the Console, click a session from **Recent sessions** (or paste a session ID into the top **Session ID** field and click **Apply filters**), inspect all 5 tabs (`Overview`, `Threads & Turns`, `Failures & Hooks`, `Router Requests`, `OTel Spans`), and page past span 200 on a long session.
+
+## Documentation Updates
+
+This file itself (`docs/unified-session-diagnostics-plan.md`) will only exist until this feature is fully completed and validated/proven. Then, it will be deleted. So, the overall/high-level requirements/design should be preserved into the repo's target-state document, [docs/autodev-console-target-state.md](./autodev-console-target-state.md).

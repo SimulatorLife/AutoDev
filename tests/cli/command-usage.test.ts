@@ -168,7 +168,7 @@ test("an unknown command lists the families instead of blaming a migration", () 
     (error: unknown) => {
       assert.equal(
         messageOf(error),
-        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, playtest, or install)"
+        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, diagnostics, playtest, or install)"
       );
       return true;
     }
@@ -191,6 +191,7 @@ test("help advertises exactly what each command accepts", async () => {
       "provider",
       "hook",
       "repo",
+      "diagnostics",
       "playtest",
       "install"
     ]

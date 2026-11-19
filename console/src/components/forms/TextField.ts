@@ -45,6 +45,14 @@ export interface TextFieldProps {
    * governed revision.
    */
   readonly rows?: number | undefined;
+  /**
+   * The longest value the control accepts.
+   *
+   * Set where the value has a bounded shape the server will enforce anyway --
+   * a session id is validated against a bounded pattern, so a control that
+   * accepted more than that would collect a value the server refuses.
+   */
+  readonly maxLength?: number | undefined;
   readonly disabled?: boolean | undefined;
   readonly className?: string | undefined;
   /** Marks the control for tests and stable browser assertions. */
@@ -61,6 +69,7 @@ export function TextField({
   defaultValue,
   placeholder,
   rows,
+  maxLength,
   disabled,
   className,
   testId,
@@ -82,6 +91,7 @@ export function TextField({
       ...(defaultValue === undefined ? {} : { defaultValue }),
       ...(placeholder === undefined ? {} : { placeholder }),
       ...(rows === undefined ? {} : { rows }),
+      ...(maxLength === undefined ? {} : { maxLength }),
       ...(disabled === undefined ? {} : { disabled }),
       className: `${controlClass} w-full`,
       ...(testId === undefined ? {} : { "data-text-field": testId }),

@@ -25,22 +25,25 @@ description: Evaluate AutoDev and recent sessions to improve usage/token/model e
 
 ## 2. Evidence & Tooling Workflow
 
-Start every efficiency audit with AutoDev's bundled diagnostics before writing ad-hoc log parsers:
+Start every efficiency audit with AutoDev's bundled diagnostics before writing ad-hoc log parsers. Every diagnostics answer comes from **one** engine (`@simulatorlife/autodev-data/diagnostics`), reached through the Control API, the `autodev diagnostics` CLI, or the Console -- never through a second parser.
 
 1. **Single-session efficiency trace:**
    ```bash
+   pnpm autodev -- diagnostics <session-or-thread-id> --efficiency --failures
+   # or, through the skill's wrapper (identical output):
    node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts <session-or-thread-id> --efficiency --failures
    ```
    - `--efficiency` includes per-thread cumulative token usage (input, cached %, output, reasoning %, peak input, >50% cache drops), compaction count & retained image/payload sizes, initial developer-prompt byte size, loaded skills grouped by source root vs `SKILL.md` reads & `$CODEX_HOME/run/skill-read-telemetry`, router `ROUTER SKIPPED` / `ROUTER RETRIES` events, and categorized `TOOL FAILURES` (capped at 2 samples per category by default; add `--all-failures` for full inputs and every occurrence, `--json` for scripting).
 2. **Cross-session sizing & hook friction:**
    ```bash
-   node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts --scan-recent 15
-   node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts --hooks --since 7
+   pnpm autodev -- diagnostics --scan-recent 15
+   pnpm autodev -- diagnostics --hooks --since 7
    ```
    - `--scan-recent [N]` aggregates token usage, cache hit rate, cache drops, compactions, skill counts, tool-failure categories, `PreToolUse` blocks, and router skips across the newest `N` active + archived sessions in one pass.
    - `--hooks [--since DAYS]` summarizes structured `PreToolUse` denials logged in `$CODEX_HOME/hooks/hooks.log`.
 3. **Live router status:** `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status | jq`). If `session-trace.ts` prints `router /status unreachable` right after a router restart, retry once after a few seconds.
-4. **Handoff for request-shape reproduction:** Use `autodev-session-diagnostics` for deeper provider/MCP/rule probes, and `autodev-codex-request-capture` when inspecting exact Codex-to-provider wire requests offline.
+4. **Console view:** `/usage?range=24H&sessionId=<id>` renders the same diagnostics in the browser (`Overview`, `Threads & Turns`, `Failures & Hooks`, `Router Requests`, `OTel Spans`), with unscoped `Recent sessions` and `Hook denials` tabs for fleet sizing.
+5. **Handoff for request-shape reproduction:** Use `autodev-session-diagnostics` for deeper provider/MCP/rule probes, and `autodev-codex-request-capture` when inspecting exact Codex-to-provider wire requests offline.
 
 ## 3. Procedure
 

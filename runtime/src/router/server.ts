@@ -20,12 +20,17 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import type { QuotaAxiResponse } from "quota-axi";
 
 import {
+  handleControlApiDiagnosticsRequest,
+  setControlApiDiagnosticsRouterStatusSource
+} from "../control-api/diagnostics.ts";
+import {
   opencliProviderBrowser,
   setOpencliDedicatedBrowser
 } from "../control-api/opencli-browser.ts";
 import {
   getControlApiAvailability,
   handleControlApiRequest,
+  setControlApiDiagnosticsHandler,
   setControlApiLiveSessionsSource,
   setControlApiOpencliBrowserSource,
   setControlApiProviderCheckSource,
@@ -44,6 +49,7 @@ import {
   agentActivity,
   checkProvider,
   codexState,
+  getRouterStatus,
   handle,
   HOST,
   PORT,
@@ -307,6 +313,16 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     )
   );
   setControlApiLiveSessionsSource((now) => agentActivity.listLiveSessions(now));
+  // The Control API runs inside the router, so the diagnostics read the live
+  // status from this process rather than calling the router over loopback.
+  setControlApiDiagnosticsRouterStatusSource(() => getRouterStatus());
+  setControlApiDiagnosticsHandler(
+    (request, response, pathname, codexHome, repositoryRoot) =>
+      handleControlApiDiagnosticsRequest(request, response, pathname, {
+        ...(codexHome === undefined ? {} : { codexHome }),
+        ...(repositoryRoot === undefined ? {} : { repositoryRoot })
+      })
+  );
   const closePlaytestingSafely = (): Promise<void> => {
     if (playtestingShutdown !== null) return playtestingShutdown;
     playtestingShutdown = shutdownDefaultPlaytestRunControl().catch(() => {
@@ -369,6 +385,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     setControlApiProviderCheckSource(null);
     setControlApiOpencliBrowserSource(null);
     setControlApiLiveSessionsSource(null);
+    setControlApiDiagnosticsRouterStatusSource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);
@@ -470,7 +487,6 @@ export {
   AGENT_ACTIVITY_TTL_MS,
   agentActivity,
   agentsStatus,
-  getRouterStatus,
   handle,
   handleRequest,
   ingestAgentEvents,

@@ -86,6 +86,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/control-api/memory.ts",
   "runtime/src/control-api/claude-code-binding.ts",
   "runtime/src/control-api/body.ts",
+  "runtime/src/control-api/diagnostics.ts",
   "runtime/src/router/memory-reconstruction.ts",
   "runtime/src/router/memory-embedding.ts",
   "runtime/src/router/routing.ts",
@@ -235,6 +236,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/codex-tools-shim-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
   "runtime/src/mcp/process-registry.ts",
+  "runtime/src/cli/diagnostics.ts",
   "runtime/src/cli/router-status.ts",
   "runtime/src/cli/router-status-client.ts",
   "runtime/src/cli/provider-agent.ts",
@@ -582,15 +584,24 @@ function extractIgnoreDirs(line: string): string[] {
   return val ? val.split(",") : [];
 }
 
+/**
+ * Whether a path is a directory.
+ *
+ * A repository's `.git` may be a file (a worktree's link) or absent, and both
+ * mean the same thing here: there is no `info/exclude` to write, so the
+ * exclusion is materialized through `git rev-parse` instead.
+ */
+function isDirectory(target: string): boolean {
+  try {
+    return lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function ensureExclude(options: MaterializeOptions): void {
   const dotGitPath = path.join(options.repositoryRoot, ".git");
-  let isGitDir = false;
-  try {
-    isGitDir = lstatSync(dotGitPath).isDirectory();
-  } catch {
-    isGitDir = false;
-  }
-  const exclude = isGitDir
+  const exclude = isDirectory(dotGitPath)
     ? path.join(dotGitPath, "info", "exclude")
     : execFileSync(
         "git",
@@ -688,7 +699,7 @@ export const UNIVERSAL_GIT_EXCLUDES = [
   ".cgc-cache/",
   ".cgc-state/",
   ".cgc-state-*/",
-  ".cgcignore",
+  CGC_IGNORE_FILE,
   ".repograph/",
   ".repomix/",
   "repomix-output.*",
@@ -725,7 +736,7 @@ export const CGC_GLOBAL_PATTERNS = [
   ".cgc-cache/",
   ".cgc-state/",
   ".cgc-state-*/",
-  ".cgcignore",
+  CGC_IGNORE_FILE,
   ".repograph/",
   "repomix-output.*",
   ".repomix-output.*",

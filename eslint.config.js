@@ -275,6 +275,7 @@ const architecturePolicies = [
   // manifests; they do not reimplement those contracts.
   allowOnly("runtime-cli", [
     "core",
+    "data",
     "runtime-config",
     "runtime-platform",
     "runtime-router",

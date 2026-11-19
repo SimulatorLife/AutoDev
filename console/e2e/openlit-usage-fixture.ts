@@ -383,10 +383,114 @@ function respondTrace(spanId: string, response: ServerResponse): void {
   );
 }
 
+/**
+ * The spans one session holds.
+ *
+ * The session's span page is paginated, and the point of the pagination is
+ * that a long session is longer than one page: the fixture holds more spans
+ * than a single page holds, so the Console's pager has something to page.
+ */
+const SESSION_SPAN_COUNT = 250;
+
+/** One span of the fixture session, with a stable id and timestamp. */
+function sessionSpan(index: number): Record<string, unknown> {
+  const suffix = index.toString(16).padStart(16, "0");
+  return {
+    spanId: suffix,
+    traceId: `${suffix}${suffix}`,
+    parentSpanId: null,
+    operationName: index % 2 === 0 ? "chat" : "autodev.routed_request",
+    timestamp: new Date(
+      Date.parse("2026-11-10T12:00:00.000Z") + index * 1000
+    ).toISOString(),
+    durationNs: 1_000_000,
+    statusCode: "OK",
+    provider: index % 2 === 0 ? "claude" : null,
+    requestedModel: index % 2 === 0 ? "autodev/worker" : "autodev/orchestrator",
+    role: index % 2 === 0 ? "worker" : "orchestrator",
+    workspace: "SimulatorLife/AutoDev",
+    inputTokens: 12,
+    outputTokens: 3,
+    cacheReadInputTokens: 4,
+    costUsd: 0.001,
+    requestKind: null,
+    compactionProvider: null,
+    hopRoute: null,
+    hopFrom: null,
+    hopTo: null,
+    hopReason: null
+  };
+}
+
+/**
+ * The session's span page.
+ *
+ * The page is a window onto the session's whole span list: it carries the
+ * exact total, whether another page follows, and the session's whole cost
+ * estimate rather than this page's.
+ */
+function respondSessionUsage(body: string, response: ServerResponse): void {
+  let request: { limit?: unknown; offset?: unknown; sortDirection?: unknown };
+  try {
+    request = JSON.parse(body) as typeof request;
+  } catch {
+    response.writeHead(400, { "content-type": "application/json" }).end(
+      JSON.stringify({ error: { code: "invalid_request" } })
+    );
+    return;
+  }
+  const limit = Number(request.limit ?? 50);
+  const offset = Number(request.offset ?? 0);
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 200 ||
+    !Number.isInteger(offset) ||
+    offset < 0
+  ) {
+    response.writeHead(400, { "content-type": "application/json" }).end(
+      JSON.stringify({ error: { code: "invalid_page" } })
+    );
+    return;
+  }
+  const ordered = Array.from({ length: SESSION_SPAN_COUNT }, (_, index) =>
+    sessionSpan(index)
+  );
+  if (request.sortDirection !== "asc") ordered.reverse();
+  const page = ordered.slice(offset, offset + limit);
+  response.writeHead(200, { "content-type": "application/json" }).end(
+    JSON.stringify({
+      schema: "autodev-openlit-session-usage-v2",
+      status: "observed",
+      partial: false,
+      total: SESSION_SPAN_COUNT,
+      limit,
+      offset,
+      hasMore: offset + page.length < SESSION_SPAN_COUNT,
+      estimatedCostUsd: 0.25,
+      spans: page
+    })
+  );
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/health") {
     response.writeHead(200).end("ok");
+    return;
+  }
+  // The exact-session page is its own route: the Console posts the session id
+  // and the page it wants, and the source answers with that page.
+  if (url.pathname === "/api/autodev/usage/session") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      respondSessionUsage(Buffer.concat(chunks).toString("utf8"), response);
+    });
     return;
   }
   // The trace detail is a GET addressed by the span it is about, and it

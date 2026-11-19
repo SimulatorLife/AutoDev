@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -19,19 +20,6 @@ import {
   probeRuleLoading,
   ruleEntryLoads
 } from "../.rulesync/skills/autodev-session-diagnostics/scripts/rule-loading-probe.ts";
-import {
-  buildReport,
-  deploymentDrift,
-  findSessionRollouts,
-  hasOpenTurn,
-  recentSessions,
-  renderHookDenials,
-  renderReport,
-  scanRecentSessions,
-  summarizeHookDenials,
-  summarizeRouter,
-  traceThread
-} from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
 
 const COMPARE_SCRIPT = fileURLToPath(
   new URL(
@@ -45,151 +33,89 @@ const SCRIPT = fileURLToPath(
     import.meta.url
   )
 );
-const codexAvailable =
-  spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
 const ROOT = "01a0b662-0000-7000-8000-000000000001";
 const CHILD = "01a0b664-0000-7000-8000-000000000002";
 const OTHER = "01a0b699-0000-7000-8000-000000000003";
+const SERVICE_TOKEN = "control-api-service-token";
 
-test("observed investigations with an omitted metric count as metric-missing", () => {
-  const result = compareInvestigations(
-    [
-      { investigation: { observed: true } },
-      { investigation: { observed: false } }
-    ],
-    [{ investigation: { observed: true, toolCalls: 5 } }]
+interface RecordedRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly authorization: string | undefined;
+  readonly actor: string | undefined;
+}
+
+interface FakeControlApi {
+  readonly url: string;
+  /** The requests the wrapper made, read from the server's own log. */
+  readonly requests: () => RecordedRequest[];
+  readonly close: () => void;
+}
+
+const FAKE_CONTROL_API_SOURCE = String.raw`
+import { createServer } from "node:http";
+import { appendFileSync } from "node:fs";
+const [body, logFile] = process.argv.slice(2);
+const server = createServer((request, response) => {
+  appendFileSync(
+    logFile,
+    JSON.stringify({
+      url: request.url ?? "",
+      method: request.method ?? "",
+      authorization: request.headers.authorization,
+      actor: request.headers["x-autodev-actor"]
+    }) + "\n"
   );
-  assert.deepEqual(result.before.metrics.toolCalls, {
-    observed: 0,
-    missing: 2,
-    unavailableThreads: 1,
-    total: null,
-    mean: null
+  response.writeHead(200, {
+    "content-type": "text/plain; charset=utf-8",
+    connection: "close"
   });
-  assert.deepEqual(result.after.metrics.toolCalls, {
-    observed: 1,
-    missing: 0,
-    unavailableThreads: 0,
-    total: 5,
-    mean: 5
+  response.end(body);
+});
+server.listen(0, "127.0.0.1", () => {
+  process.stdout.write("PORT=" + server.address().port + "\n");
+});
+`;
+
+/**
+ * A Control API that answers one diagnostics route and records the request.
+ *
+ * The server runs in its own process: the wrapper is a child process too, and
+ * a child cannot always reach a socket this process opened.
+ */
+async function fakeControlApi(body: string): Promise<FakeControlApi> {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-fake-api-"));
+  const serverFile = join(directory, "server.mjs");
+  const logFile = join(directory, "requests.jsonl");
+  writeFileSync(serverFile, FAKE_CONTROL_API_SOURCE);
+  writeFileSync(logFile, "");
+  const server = spawn(process.execPath, [serverFile, body, logFile], {
+    stdio: ["ignore", "pipe", "inherit"]
   });
-});
-
-test("comparison rejects malformed thread records and investigation values", () => {
-  assert.throws(
-    () => compareInvestigations(null as never, []),
-    /before: expected a session-trace JSON object with a threads array/
-  );
-  assert.throws(() => compareInvestigations([{ nope: true } as never], []));
-  assert.throws(() =>
-    compareInvestigations(
-      [{ investigation: { observed: true, toolCalls: Number.NaN } }],
-      []
-    )
-  );
-});
-
-test("comparison CLI reads session-trace reports and gives useful malformed-input errors", () => {
-  const directory = mkdtempSync(
-    join(tmpdir(), "autodev-investigation-compare-")
-  );
-  try {
-    const before = join(directory, "before.json"),
-      after = join(directory, "after.json"),
-      bad = join(directory, "bad.json");
-    writeFileSync(
-      before,
-      JSON.stringify({
-        threads: [{ investigation: { observed: true, toolCalls: 2 } }]
-      })
-    );
-    writeFileSync(
-      after,
-      JSON.stringify({
-        threads: [{ investigation: { observed: true, toolCalls: 3 } }]
-      })
-    );
-    writeFileSync(bad, JSON.stringify({ threads: [null] }));
-    const good = spawnSync(process.execPath, [COMPARE_SCRIPT, before, after], {
-      encoding: "utf8"
+  const port = await new Promise<string>((resolve, reject) => {
+    let buffer = "";
+    server.stdout?.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const match = /PORT=(\d+)/u.exec(buffer);
+      if (match?.[1]) resolve(match[1]);
     });
-    assert.equal(good.status, 0, good.stderr);
-    assert.equal(JSON.parse(good.stdout).deltas.toolCalls.total, 1);
-    const invalid = spawnSync(process.execPath, [COMPARE_SCRIPT, before, bad], {
-      encoding: "utf8"
-    });
-    assert.equal(invalid.status, 1);
-    assert.match(invalid.stderr, /threads\[0\] must be an object/);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("investigation comparison aggregates observed values and preserves missingness", () => {
-  const result = compareInvestigations(
-    [
-      {
-        investigation: {
-          observed: true,
-          toolCalls: 8,
-          tokens: null,
-          filesRead: 3,
-          repeatedReads: 1,
-          searches: 2,
-          repeatedSearches: 0,
-          context: { ccc: 1, cgc: 2, lsp: 0 }
-        }
-      },
-      {
-        investigation: {
-          observed: false,
-          toolCalls: 0,
-          tokens: null,
-          filesRead: 0,
-          repeatedReads: 0,
-          searches: 0,
-          repeatedSearches: 0,
-          context: { ccc: 0, cgc: 0, lsp: 0 }
-        }
-      }
-    ],
-    [
-      {
-        investigation: {
-          observed: true,
-          toolCalls: 4,
-          tokens: 20,
-          filesRead: 1,
-          repeatedReads: 0,
-          searches: 1,
-          repeatedSearches: 0,
-          context: { ccc: 0, cgc: 1, lsp: 2 }
-        }
-      }
-    ]
-  );
-  assert.equal(result.before.observedThreads, 1);
-  assert.equal(result.before.unavailableThreads, 1);
-  assert.deepEqual(result.before.metrics.toolCalls, {
-    observed: 1,
-    missing: 1,
-    unavailableThreads: 1,
-    total: 8,
-    mean: 8
+    server.once("error", reject);
+    server.once("exit", () => reject(new Error("the fake Control API exited")));
   });
-  assert.deepEqual(result.before.metrics.tokens, {
-    observed: 0,
-    missing: 2,
-    unavailableThreads: 1,
-    total: null,
-    mean: null
-  });
-  assert.deepEqual(result.deltas.toolCalls, { total: -4, mean: -4 });
-  assert.match(result.note, /do not establish causation/);
-});
+  return {
+    url: `http://127.0.0.1:${port}`,
+    requests: () =>
+      readFileSync(logFile, "utf8")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as RecordedRequest),
+    close: () => {
+      server.kill();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  };
+}
 
-// A synthetic CODEX_HOME shaped like the 2026-09-18 incident: a worker that
-// went silent for five minutes, was interrupted, and hopped providers.
 function fixture(): { home: string; cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), "autodev-diagnostics-"));
   const day = join(home, "sessions", "2026", "09", "18");
@@ -217,12 +143,6 @@ function fixture(): { home: string; cleanup: () => void } {
       type: "task_started",
       turn_id: "t-root"
     }),
-    line("2026-09-18T21:18:05.000Z", "response_item", {
-      type: "custom_tool_call",
-      name: "exec",
-      call_id: "call_1",
-      input: "tools.multi_agent_v1__spawn_agent({})"
-    }),
     line("2026-09-18T21:18:06.000Z", "event_msg", {
       type: "task_complete",
       turn_id: "t-root",
@@ -236,48 +156,11 @@ function fixture(): { home: string; cleanup: () => void } {
       parent_thread_id: ROOT,
       thread_source: "subagent",
       agent_role: "worker",
-      agent_nickname: "ImplementationCoder"
+      agent_nickname: "ImplementationCoder",
+      cwd: "/tmp/repo"
     }),
     line("2026-09-18T21:20:00.100Z", "turn_context", {
       model: "autodev/worker"
-    }),
-    line("2026-09-18T21:20:00.200Z", "event_msg", {
-      type: "task_started",
-      turn_id: "t-child"
-    }),
-    line("2026-09-18T21:20:01.000Z", "response_item", {
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: "implement it" }]
-    }),
-    line("2026-09-18T21:25:03.000Z", "response_item", {
-      type: "reasoning",
-      id: "06fcdf5c2897fecf8516745cbeb71597_rs",
-      summary: [],
-      content: [{ type: "reasoning_text", text: "Let me start" }]
-    }),
-    line("2026-09-18T21:25:04.000Z", "response_item", {
-      type: "custom_tool_call",
-      name: "exec",
-      call_id: "call_lsp",
-      input:
-        "const r = await tools.mcp__lsp__lsp_index_files({ files: [] }); text(r);"
-    }),
-    line("2026-09-18T21:25:05.000Z", "response_item", {
-      type: "custom_tool_call_output",
-      call_id: "call_lsp",
-      output: [
-        { type: "input_text", text: "Script completed" },
-        {
-          type: "input_text",
-          text: "tool call error: tool call failed for `lsp/lsp_index_files`\n\nCaused by:\n Transport closed"
-        }
-      ]
-    }),
-    line("2026-09-18T21:32:48.000Z", "event_msg", {
-      type: "turn_aborted",
-      turn_id: "t-child",
-      reason: "interrupted"
     })
   ]);
   rollout(OTHER, [
@@ -287,246 +170,346 @@ function fixture(): { home: string; cleanup: () => void } {
       thread_source: "user"
     })
   ]);
-  const event = (timestamp: string, fields: Record<string, unknown>) =>
-    JSON.stringify({ schema: "autodev-router-event-v1", timestamp, ...fields });
-  writeFileSync(
-    join(home, "run", "codex-model-router.launchd.err.log"),
-    [
-      "router starting (plain text line)",
-      event("2026-09-18T21:20:00.500Z", {
-        requestId: "req-a",
-        phase: "selected",
-        role: "worker",
-        requestedModel: "autodev/worker",
-        provider: "antigravity",
-        model: "gemini"
-      }),
-      event("2026-09-18T21:25:01.000Z", {
-        requestId: "req-a",
-        phase: "result",
-        role: "worker",
-        requestedModel: "autodev/worker",
-        provider: "antigravity",
-        outcome: "failure",
-        status: 502,
-        failureClass: "unavailable",
-        elapsedMs: 300_500,
-        toolCalls: 0
-      }),
-      event("2026-09-18T21:25:02.000Z", {
-        requestId: "req-b",
-        phase: "selected",
-        role: "worker",
-        requestedModel: "autodev/worker",
-        provider: "claude",
-        model: "sonnet"
-      }),
-      event("2026-09-18T21:32:00.000Z", {
-        requestId: "req-b",
-        phase: "result",
-        role: "worker",
-        requestedModel: "autodev/worker",
-        provider: "claude",
-        outcome: "success",
-        status: 200,
-        elapsedMs: 418_000,
-        toolCalls: 0
-      }),
-      event("2026-09-18T21:25:02.000Z", {
-        requestId: "req-x",
-        phase: "selected",
-        role: "explorer",
-        requestedModel: "autodev/explorer",
-        provider: "minimax"
-      }),
-      event("2026-09-19T09:00:00.000Z", {
-        requestId: "req-late",
-        phase: "selected",
-        role: "worker",
-        requestedModel: "autodev/worker",
-        provider: "minimax"
-      })
-    ].join("\n")
-  );
   return {
     home,
     cleanup: () => rmSync(home, { recursive: true, force: true })
   };
 }
 
-test("a thread id finds its whole session, and a session id finds its subagents", () => {
-  const { home, cleanup } = fixture();
-  try {
-    const sessions = join(home, "sessions");
-    const fromChild = findSessionRollouts(sessions, CHILD).map((file) =>
-      file.includes(ROOT) ? "root" : file.includes(CHILD) ? "child" : "other"
-    );
-    assert.deepEqual(fromChild.sort(), ["child", "root"]);
-    const fromRoot = findSessionRollouts(sessions, ROOT);
-    assert.equal(fromRoot.length, 2);
-    assert.equal(
-      fromRoot.some((file) => file.includes(OTHER)),
-      false
-    );
-  } finally {
-    cleanup();
-  }
+function runWrapper(
+  args: string[],
+  env: NodeJS.ProcessEnv = {}
+): ReturnType<typeof spawnSync<string>> {
+  return spawnSync(process.execPath, [SCRIPT, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ...env }
+  });
+}
+
+test("observed investigations with an omitted metric count as metric-missing", () => {
+  const result = compareInvestigations(
+    [
+      { investigation: { observed: true } },
+      { investigation: { observed: false } }
+    ],
+    [{ investigation: { observed: true, toolCalls: 5 } }]
+  );
+  assert.equal(result.after.metrics.toolCalls.mean, 5);
+  assert.equal(result.after.metrics.toolCalls.missing, 0);
+  assert.equal(
+    result.before.metrics.toolCalls.missing,
+    2,
+    "a metric no thread reported is missing on every thread, including the unobserved one"
+  );
 });
 
-test("the report surfaces gaps, aborted turns, tool failures, and provider hops", async () => {
-  const { home, cleanup } = fixture();
-  try {
-    const report = await buildReport({
-      id: CHILD,
-      codexHome: home,
-      routerLog: join(home, "run", "codex-model-router.launchd.err.log"),
-      items: true,
-      events: true,
-      offline: true
-    });
-    const child = report.threads.find((thread) => thread.id === CHILD);
-    assert.ok(child);
-    assert.equal(child.role, "worker");
-    assert.equal(child.model, "autodev/worker");
-    assert.deepEqual(
-      child.turns.map((turn) => turn.outcome),
-      ["aborted:interrupted"]
-    );
-    assert.deepEqual(
-      child.gaps.map((gap) => gap.seconds),
-      [463, 302]
-    );
-    // A tool called inside `exec` is counted under its own MCP name, and its failure is surfaced.
-    assert.equal(child.tools.mcp__lsp__lsp_index_files, 1);
-    assert.equal(child.toolFailures.length, 1);
-    assert.equal(child.toolFailures[0]?.tool, "mcp__lsp__lsp_index_files");
-    assert.match(child.toolFailures[0]?.detail ?? "", /Transport closed/);
-    const router = report.router.find((entry) => entry.thread === CHILD);
-    assert.ok(router);
-    // Old events carry no thread: matched by model and window, so the explorer and the next-day request are excluded.
-    assert.equal(router.matchedBy, "model-window");
-    assert.equal(router.requests, 2);
-    assert.deepEqual(router.providerSequence, ["antigravity", "claude"]);
-    assert.deepEqual(
-      router.failures.map(
-        (failure) =>
-          `${failure.provider}:${failure.status}:${failure.failureClass}`
+test("comparison rejects malformed thread records and investigation values", () => {
+  assert.throws(
+    () =>
+      compareInvestigations(
+        [{ investigation: { observed: "yes" } } as never],
+        [{ investigation: { observed: true } }]
       ),
-      ["antigravity:502:unavailable"]
-    );
-    assert.deepEqual(
-      router.events?.map((row) => `${row.requestId}:${row.phase}`),
-      ["req-a:selected", "req-a:result", "req-b:selected", "req-b:result"]
-    );
-    assert.equal(report.live, null, "offline reads no live state");
-    const text = renderReport(report);
-    assert.match(
-      text,
-      /== thread 01a0b664-0000-7000-8000-000000000002 \(ImplementationCoder\) role=worker model=autodev\/worker/
-    );
-    assert.match(text, /GAP 463s after custom_tool_call_output/);
-    assert.match(
-      text,
-      /TOOL FAILED 21:25:05 mcp__lsp__lsp_index_files call=call_lsp :: .*Transport closed/
-    );
-    assert.match(text, /PROVIDER HOPS antigravity → claude/);
-    assert.match(
-      text,
-      /ROUTER FAILURE .* antigravity 502 unavailable 300500ms/
-    );
-  } finally {
-    cleanup();
-  }
+    /observed must be a boolean/u
+  );
+  assert.throws(
+    () =>
+      compareInvestigations(
+        [{ investigation: { observed: true, toolCalls: Number.NaN } } as never],
+        [{ investigation: { observed: true } }]
+      ),
+    /finite number/u
+  );
 });
 
-test("router events that name their thread are matched exactly, not by model and window", async () => {
-  const { home, cleanup } = fixture();
+test("comparison CLI reads session-trace reports and gives useful malformed-input errors", () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-compare-"));
   try {
-    const log = join(home, "run", "codex-model-router.launchd.err.log");
-    const event = (timestamp: string, fields: Record<string, unknown>) =>
+    const good = join(directory, "good.json");
+    writeFileSync(
+      good,
       JSON.stringify({
-        schema: "autodev-router-event-v1",
-        timestamp,
-        ...fields
-      });
-    // Two workers on the same model at once: only the thread field tells them apart.
-    writeFileSync(
-      log,
-      [
-        event("2026-09-18T21:21:00.000Z", {
-          requestId: "mine",
-          thread: CHILD,
-          phase: "selected",
-          requestedModel: "autodev/worker",
-          provider: "claude"
-        }),
-        event("2026-09-18T21:21:01.000Z", {
-          requestId: "theirs",
-          thread: "another-worker",
-          phase: "selected",
-          requestedModel: "autodev/worker",
-          provider: "minimax"
-        })
-      ].join("\n")
-    );
-    const report = await buildReport({
-      id: CHILD,
-      codexHome: home,
-      routerLog: log,
-      items: false,
-      offline: true
-    });
-    const router = report.router.find((entry) => entry.thread === CHILD);
-    assert.equal(router?.matchedBy, "thread");
-    assert.deepEqual(router?.providerSequence, ["claude"]);
-    assert.equal(router?.requests, 1);
-
-    // A log spanning a router upgrade: the older events have no thread and are still found.
-    writeFileSync(
-      log,
-      [
-        event("2026-09-18T21:20:30.000Z", {
-          requestId: "before-upgrade",
-          phase: "selected",
-          requestedModel: "autodev/worker",
-          provider: "antigravity"
-        }),
-        event("2026-09-18T21:21:00.000Z", {
-          requestId: "mine",
-          thread: CHILD,
-          phase: "selected",
-          requestedModel: "autodev/worker",
-          provider: "claude"
-        })
-      ].join("\n")
-    );
-    const mixed = (
-      await buildReport({
-        id: CHILD,
-        codexHome: home,
-        routerLog: log,
-        items: false,
-        offline: true
+        threads: [{ investigation: { observed: true, toolCalls: 2 } }]
       })
-    ).router.find((entry) => entry.thread === CHILD);
-    assert.equal(mixed?.matchedBy, "model-window");
-    assert.deepEqual(mixed?.providerSequence, ["antigravity", "claude"]);
+    );
+    const after = join(directory, "after.json");
+    writeFileSync(
+      after,
+      JSON.stringify({
+        threads: [{ investigation: { observed: true, toolCalls: 8 } }]
+      })
+    );
+    const run = spawnSync(process.execPath, [COMPARE_SCRIPT, good, after], {
+      encoding: "utf8"
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /toolCalls/u);
+
+    const bad = join(directory, "bad.json");
+    writeFileSync(bad, JSON.stringify({ threads: "not-an-array" }));
+    const failed = spawnSync(process.execPath, [COMPARE_SCRIPT, bad, after], {
+      encoding: "utf8"
+    });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /threads array/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("investigation comparison aggregates observed values and preserves missingness", () => {
+  const result = compareInvestigations(
+    [
+      { investigation: { observed: true, toolCalls: 4, filesRead: 2 } },
+      { investigation: { observed: true, toolCalls: 6 } },
+      { investigation: { observed: false } }
+    ],
+    [
+      { investigation: { observed: true, toolCalls: 10, filesRead: 4 } },
+      { investigation: { observed: true } }
+    ]
+  );
+  assert.equal(result.before.metrics.toolCalls.mean, 5);
+  assert.equal(result.after.metrics.toolCalls.mean, 10);
+  assert.equal(result.deltas.toolCalls.mean, 5);
+  assert.equal(result.before.metrics.filesRead.missing, 2);
+  assert.equal(result.before.unavailableThreads, 1);
+});
+
+test("the wrapper asks the Control API for the session report", async () => {
+  const api = await fakeControlApi("== thread report\n");
+  try {
+    const run = runWrapper([ROOT], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.trim(), "== thread report");
+    assert.equal(api.requests().length, 1);
+    const request = api.requests()[0]!;
+    assert.equal(request.method, "GET");
+    assert.equal(request.authorization, `Bearer ${SERVICE_TOKEN}`);
+    assert.equal(request.actor, "autodev-local");
+    assert.match(request.url, /^\/control\/diagnostics\/sessions\//u);
+    assert.match(request.url, /format=text/u);
+  } finally {
+    api.close();
+  }
+});
+
+test("the wrapper asks for JSON when it is told to", async () => {
+  const api = await fakeControlApi(
+    JSON.stringify({ schema: "autodev-session-diagnostics-v1" })
+  );
+  try {
+    const run = runWrapper([ROOT, "--json"], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(
+      JSON.parse(run.stdout).schema,
+      "autodev-session-diagnostics-v1"
+    );
+    assert.match(api.requests()[0]!.url, /format=json/u);
+  } finally {
+    api.close();
+  }
+});
+
+test("the wrapper carries the flags the route needs into the query", async () => {
+  const api = await fakeControlApi("report\n");
+  try {
+    const run = runWrapper(
+      [ROOT, "--efficiency", "--failures", "--all-failures", "--items", "--events"],
+      {
+        AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+        AUTODEV_CONTROL_API_BASE_URL: api.url
+      }
+    );
+    assert.equal(run.status, 0, run.stderr);
+    const url = api.requests()[0]!.url;
+    assert.match(url, /includeEfficiency=1/u);
+    assert.match(url, /includeFailures=1/u);
+    assert.match(url, /allFailures=1/u);
+    assert.match(url, /includeItems=1/u);
+    assert.match(url, /includeEvents=1/u);
+  } finally {
+    api.close();
+  }
+});
+
+test("the wrapper asks for the fleet routes with their own parameters", async () => {
+  const api = await fakeControlApi("fleet\n");
+  try {
+    const recent = runWrapper(["--recent", "3"], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(recent.status, 0, recent.stderr);
+    assert.match(api.requests()[0]!.url, /^\/control\/diagnostics\/sessions\/recent/u);
+    assert.match(api.requests()[0]!.url, /limit=3/u);
+
+    const hooks = runWrapper(["--hooks", "--since", "14"], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(hooks.status, 0, hooks.stderr);
+    assert.match(api.requests()[1]!.url, /^\/control\/diagnostics\/hooks/u);
+    assert.match(api.requests()[1]!.url, /sinceDays=14/u);
+
+    const scan = runWrapper(["--scan-recent", "5"], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(scan.status, 0, scan.stderr);
+    assert.match(api.requests()[2]!.url, /^\/control\/diagnostics\/sessions\/scan/u);
+    assert.match(api.requests()[2]!.url, /limit=5/u);
+  } finally {
+    api.close();
+  }
+});
+
+test("the wrapper reads the Control API token from the codex home's secrets file", async () => {
+  const api = await fakeControlApi("report\n");
+  const { home, cleanup } = fixture();
+  try {
+    writeFileSync(
+      join(home, "openlit-secrets.env"),
+      `# the control api credential\nAUTODEV_CONTROL_API_TOKEN="${SERVICE_TOKEN}"\n`
+    );
+    const run = runWrapper([ROOT, "--offline"], {
+      AUTODEV_CONTROL_API_BASE_URL: api.url,
+      CODEX_HOME: home,
+      AUTODEV_CONTROL_API_TOKEN: ""
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(api.requests().length, 0, "--offline must not call the API");
+
+    const online = runWrapper([ROOT], {
+      AUTODEV_CONTROL_API_BASE_URL: api.url,
+      CODEX_HOME: home,
+      AUTODEV_CONTROL_API_TOKEN: ""
+    });
+    assert.equal(online.status, 0, online.stderr);
+    assert.equal(api.requests().length, 1);
+    assert.equal(api.requests()[0]!.authorization, `Bearer ${SERVICE_TOKEN}`);
+  } finally {
+    api.close();
+    cleanup();
+  }
+});
+
+test("the wrapper never prints the credential it used", async () => {
+  const api = await fakeControlApi("report\n");
+  try {
+    const run = runWrapper([ROOT], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: api.url
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.doesNotMatch(run.stdout, new RegExp(SERVICE_TOKEN, "u"));
+    assert.doesNotMatch(run.stderr, new RegExp(SERVICE_TOKEN, "u"));
+  } finally {
+    api.close();
+  }
+});
+
+test("an offline run reads the machine directly, through the same engine", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const run = runWrapper([ROOT, "--json", "--offline", "--codex-home", home], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:1"
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const report = JSON.parse(run.stdout);
+    assert.equal(report.schema, "autodev-session-diagnostics-v1");
+    assert.equal(report.found, true);
+    assert.equal(report.threads.length, 2);
+    assert.equal(report.live, null);
   } finally {
     cleanup();
   }
 });
 
-test("--recent lists the newest sessions with their thread counts", () => {
+test("a run against a Control API that is not there falls back to the engine", () => {
   const { home, cleanup } = fixture();
   try {
-    const sessions = recentSessions(join(home, "sessions"), 5);
-    const root = sessions.find((session) => session.id === ROOT);
-    assert.equal(root?.threads, 2);
-    assert.equal(root?.cwd, "/tmp/repo");
-    assert.ok(sessions.some((session) => session.id === OTHER));
+    // No --offline and no --codex-home: the wrapper wants the live API, and the
+    // API is not there. The same engine answers from the machine instead.
+    const run = runWrapper([ROOT, "--json"], {
+      AUTODEV_CONTROL_API_TOKEN: SERVICE_TOKEN,
+      AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:1",
+      CODEX_HOME: home
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const report = JSON.parse(run.stdout);
+    assert.equal(report.schema, "autodev-session-diagnostics-v1");
+    assert.equal(report.found, true);
+    assert.equal(report.threads.length, 2);
   } finally {
     cleanup();
   }
+});
+
+test("the wrapper and the CLI produce the same report", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const wrapper = runWrapper([ROOT, "--json", "--offline", "--codex-home", home]);
+    const cli = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../runtime/src/cli/autodev.ts", import.meta.url)),
+        "diagnostics",
+        ROOT,
+        "--json",
+        "--offline",
+        "--codex-home",
+        home
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(wrapper.status, 0, wrapper.stderr);
+    assert.equal(cli.status, 0, cli.stderr);
+    const fromWrapper = JSON.parse(wrapper.stdout);
+    const fromCli = JSON.parse(cli.stdout);
+    assert.deepEqual(fromWrapper.threads, fromCli.threads);
+    assert.deepEqual(fromWrapper.aggregates, fromCli.aggregates);
+  } finally {
+    cleanup();
+  }
+});
+
+test("the wrapper's JSON report is readable by the investigation comparison", () => {
+  const { home, cleanup } = fixture();
+  const directory = mkdtempSync(join(tmpdir(), "autodev-compare-cli-"));
+  try {
+    const reportFile = join(directory, "report.json");
+    const run = runWrapper([ROOT, "--json", "--offline", "--codex-home", home]);
+    assert.equal(run.status, 0, run.stderr);
+    writeFileSync(reportFile, run.stdout);
+    const compared = spawnSync(
+      process.execPath,
+      [COMPARE_SCRIPT, reportFile, reportFile],
+      { encoding: "utf8" }
+    );
+    assert.equal(compared.status, 0, compared.stderr);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test("the wrapper documents its usage and exits 2 when it is asked for nothing", () => {
+  const usage = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" });
+  assert.equal(usage.status, 2);
+  assert.match(
+    usage.stderr,
+    /usage: session-trace\.ts <session-or-thread-id>/
+  );
+  assert.match(usage.stderr, /--scan-recent/u);
+  assert.match(usage.stderr, /--hooks/u);
 });
 
 test("the MCP probe reports the tools, each call, and the stderr of a server that dies", async () => {
@@ -579,1311 +562,35 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
 });
 
-test("the CLI documents its usage and emits JSON on request", () => {
-  const usage = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" });
-  assert.equal(usage.status, 2);
-  assert.match(usage.stderr, /usage: session-trace\.ts <session-or-thread-id>/);
-  const { home, cleanup } = fixture();
+test("a rules entry loads only when it resolves to a file directly in the rules directory", () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-rules-"));
   try {
-    const run = spawnSync(
-      process.execPath,
-      [SCRIPT, ROOT, "--json", "--offline", "--codex-home", home],
-      { encoding: "utf8" }
+    const rulesDir = join(directory, "rules");
+    const outside = join(directory, "outside.rules");
+    mkdirSync(rulesDir, { recursive: true });
+    mkdirSync(join(rulesDir, "nested"), { recursive: true });
+    writeFileSync(join(rulesDir, "default.rules"), "allow git\n");
+    writeFileSync(outside, "allow git\n");
+    symlinkSync(outside, join(rulesDir, "linked.rules"));
+    writeFileSync(join(rulesDir, "nested", "default.rules"), "allow git\n");
+
+    assert.equal(
+      ruleEntryLoads(rulesDir, join(rulesDir, "default.rules")).loads,
+      true,
+      "a regular file directly in the rules directory is loaded"
     );
-    assert.equal(run.status, 0, run.stderr);
-    const report = JSON.parse(run.stdout);
-    assert.equal(report.threads.length, 2);
-    assert.equal(report.live, null);
-    // The incident fixture predates item_completed records.
-    assert.equal(report.threads[0].investigation.observed, false);
-  } finally {
-    cleanup();
-  }
-});
-
-test("an open turn is one that started and has not completed or aborted", () => {
-  const { home, cleanup } = fixture();
-  try {
-    const [root, child] = findSessionRollouts(
-      join(home, "sessions"),
-      ROOT
-    ).sort((a, b) => (a.includes(ROOT) ? -1 : 1) - (b.includes(ROOT) ? -1 : 1));
-    assert.equal(hasOpenTurn(root!), false, "completed");
-    assert.equal(hasOpenTurn(child!), false, "aborted");
-    writeFileSync(
-      child!,
-      `${JSON.stringify({ timestamp: "2026-09-18T21:40:00.000Z", type: "event_msg", payload: { type: "task_started", turn_id: "t-next" } })}\n`,
-      { flag: "a" }
+    assert.equal(
+      ruleEntryLoads(rulesDir, join(rulesDir, "linked.rules")).loads,
+      false,
+      "a symlink is skipped by Codex, so the entry never lifts the sandbox"
     );
-    assert.equal(hasOpenTurn(child!), true, "a new turn started");
-    // A turn whose start lies beyond the tail that is read first (a long orchestrator turn).
-    const filler =
-      `${JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "x".repeat(4096) }] } })}\n`.repeat(
-        80
-      );
-    writeFileSync(child!, filler, { flag: "a" });
-    assert.equal(hasOpenTurn(child!), true, "still open after 300 KB of items");
-  } finally {
-    cleanup();
-  }
-});
-
-// Codex's structured item_completed records, as a thread writes them.
-function investigationRollout(records: Array<[string, string, unknown]>): {
-  file: string;
-  cleanup: () => void;
-} {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-investigation-"));
-  const file = join(directory, "rollout.jsonl");
-  writeFileSync(
-    file,
-    `${[
-      JSON.stringify({
-        timestamp: "2026-09-25T10:00:00.000Z",
-        type: "session_meta",
-        payload: { id: "thread-1", cwd: "/tmp/repo" }
-      }),
-      ...records.map(([timestamp, type, payload]) =>
-        JSON.stringify({ timestamp, type, payload })
-      )
-    ].join("\n")}\n`
-  );
-  return {
-    file,
-    cleanup: () => rmSync(directory, { recursive: true, force: true })
-  };
-}
-
-const item = (timestamp: string, value: Record<string, unknown>) =>
-  [timestamp, "event_msg", { type: "item_completed", item: value }] as [
-    string,
-    string,
-    unknown
-  ];
-const tokens = (timestamp: string, total: number) =>
-  [
-    timestamp,
-    "event_msg",
-    {
-      type: "token_count",
-      info: { total_token_usage: { total_tokens: total } }
-    }
-  ] as [string, string, unknown];
-const command = (timestamp: string, parsed: Record<string, unknown>[]) =>
-  item(timestamp, {
-    type: "CommandExecution",
-    cwd: "/tmp/repo",
-    parsed_cmd: parsed
-  });
-const mcp = (timestamp: string, server: string) =>
-  item(timestamp, { type: "McpToolCall", server, tool: "t" });
-
-test("investigation counts stop at the first file change", () => {
-  const { file, cleanup } = investigationRollout([
-    tokens("2026-09-25T10:00:01.000Z", 1000),
-    command("2026-09-25T10:00:02.000Z", [
-      { type: "read", path: "src/a.ts" },
-      { type: "search", query: "foo", path: "src" }
-    ]),
-    command("2026-09-25T10:00:03.000Z", [
-      { type: "read", path: "/tmp/repo/src/a.ts" },
-      { type: "read", path: "src/b.ts" },
-      { type: "search", query: "foo", path: "/tmp/repo/src" },
-      { type: "search", query: "bar", path: "src" }
-    ]),
-    mcp("2026-09-25T10:00:04.000Z", "cocoindex-code"),
-    mcp("2026-09-25T10:00:05.000Z", "codegraphcontext"),
-    mcp("2026-09-25T10:00:06.000Z", "codegraphcontext"),
-    mcp("2026-09-25T10:00:07.000Z", "lsp"),
-    mcp("2026-09-25T10:00:08.000Z", "codex_apps"),
-    item("2026-09-25T10:00:09.000Z", { type: "Reasoning" }),
-    tokens("2026-09-25T10:00:10.000Z", 2500),
-    item("2026-09-25T10:00:11.000Z", { type: "FileChange", changes: {} }),
-    command("2026-09-25T10:00:12.000Z", [{ type: "read", path: "src/c.ts" }]),
-    mcp("2026-09-25T10:00:13.000Z", "lsp"),
-    tokens("2026-09-25T10:00:14.000Z", 9000)
-  ]);
-  try {
-    const trace = traceThread(file, false);
-    assert.deepEqual(trace.investigation, {
-      observed: true,
-      firstEditAt: "2026-09-25T10:00:11.000Z",
-      toolCalls: 7,
-      tokens: 2500,
-      filesRead: 2,
-      repeatedReads: 1,
-      searches: 3,
-      repeatedSearches: 1,
-      context: { ccc: 1, cgc: 2, lsp: 1 }
-    });
-    const report = renderReport({
-      threads: [trace],
-      router: [],
-      logs: [],
-      live: null
-    });
-    assert.match(
-      report,
-      /investigation first-edit=10:00:11 calls=7 tokens=2500 files-read=2 repeated-reads=1 searches=3 repeated-searches=1 ccc=1 cgc=2 lsp=1/
+    assert.equal(
+      ruleEntryLoads(rulesDir, join(rulesDir, "nested", "default.rules")).loads,
+      false,
+      "a file below the rules directory is not an entry Codex resolves"
     );
-  } finally {
-    cleanup();
-  }
-});
-
-test("a thread that never edits counts its whole investigation", () => {
-  const { file, cleanup } = investigationRollout([
-    // A provider that reports no usage writes zero totals.
-    tokens("2026-09-25T10:00:00.500Z", 0),
-    mcp("2026-09-25T10:00:01.000Z", "codegraphcontext"),
-    command("2026-09-25T10:00:02.000Z", [{ type: "read", path: "a.ts" }])
-  ]);
-  try {
-    const { investigation } = traceThread(file, false);
-    assert.equal(investigation.firstEditAt, null);
-    assert.equal(investigation.toolCalls, 2);
-    assert.equal(investigation.tokens, null);
-    assert.equal(investigation.context.cgc, 1);
-    assert.match(
-      renderReport({
-        threads: [traceThread(file, false)],
-        router: [],
-        logs: [],
-        live: null
-      }),
-      /investigation first-edit=none calls=2 tokens=\?/
-    );
-  } finally {
-    cleanup();
-  }
-});
-
-test("a rollout without item events reports investigation as unavailable, not zero", () => {
-  const { file, cleanup } = investigationRollout([
-    tokens("2026-09-25T10:00:01.000Z", 500)
-  ]);
-  try {
-    const trace = traceThread(file, false);
-    assert.equal(trace.investigation.observed, false);
-    assert.match(
-      renderReport({ threads: [trace], router: [], logs: [], live: null }),
-      /investigation unavailable \(no item events\)/
-    );
-  } finally {
-    cleanup();
-  }
-});
-
-test("handles malformed and partial JSON records gracefully at source boundaries", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-boundary-test-"));
-  const sessions = join(directory, "sessions", "2026", "09", "18");
-  mkdirSync(sessions, { recursive: true });
-  mkdirSync(join(directory, "run"), { recursive: true });
-  const rolloutFile = join(
-    sessions,
-    "rollout-2026-09-18T17-00-00-boundary-thread.jsonl"
-  );
-  writeFileSync(
-    rolloutFile,
-    [
-      "not-valid-json",
-      JSON.stringify({ type: "session_meta", payload: "not-an-object" }),
-      JSON.stringify({
-        type: "response_item",
-        payload: { type: "message", role: 123, content: "not-an-array" }
-      }),
-      JSON.stringify({
-        type: "response_item",
-        payload: {
-          type: "reasoning",
-          summary: "not-an-array",
-          content: [{ text: 456 }]
-        }
-      }),
-      JSON.stringify({
-        type: "event_msg",
-        payload: { type: "task_started", turn_id: 12_345 }
-      }),
-      JSON.stringify({
-        type: "event_msg",
-        payload: {
-          type: "task_complete",
-          turn_id: 12_345,
-          error: { message: 789 }
-        }
-      }),
-      JSON.stringify({
-        type: "event_msg",
-        payload: {
-          type: "item_completed",
-          item: {
-            type: "CommandExecution",
-            parsed_cmd: [{ type: "read", path: 123 }]
-          }
-        }
-      })
-    ].join("\n") + "\n"
-  );
-  const routerLog = join(
-    directory,
-    "run",
-    "codex-model-router.launchd.err.log"
-  );
-  writeFileSync(
-    routerLog,
-    [
-      "router raw line",
-      JSON.stringify({
-        schema: "autodev-router-event-v1",
-        timestamp: "2026-09-18T21:20:00.000Z",
-        requestId: 123,
-        phase: 456,
-        status: "not-a-number",
-        elapsedMs: "not-a-number"
-      })
-    ].join("\n") + "\n"
-  );
-  try {
-    const trace = traceThread(rolloutFile, true);
-    assert.equal(typeof trace.id, "string");
-    assert.equal(trace.turns.length, 1);
-    assert.equal(trace.turns[0]?.outcome, "failed");
-
-    const report = await buildReport({
-      id: "boundary-thread",
-      codexHome: directory,
-      routerLog,
-      items: true,
-      events: true,
-      offline: true
-    });
-    assert.equal(report.threads.length, 1);
-    assert.equal(report.router.length, 1);
+    assert.equal(typeof probeRuleLoading, "function");
   } finally {
     rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("deploymentDrift resolves AutoDev monorepo runtime/src and falls back to legacy src", () => {
-  const root = mkdtempSync(join(tmpdir(), "autodev-drift-test-"));
-  try {
-    const codexHome = join(root, "codex-home");
-    const installed = join(codexHome, "src", "providers");
-    mkdirSync(installed, { recursive: true });
-    writeFileSync(join(installed, "antigravity.ts"), "// old\n");
-
-    const monorepo = join(root, "monorepo");
-    mkdirSync(join(monorepo, "runtime", "src", "providers"), {
-      recursive: true
-    });
-    writeFileSync(
-      join(monorepo, "runtime", "package.json"),
-      JSON.stringify({ name: "@simulatorlife/autodev-runtime" })
-    );
-    writeFileSync(
-      join(monorepo, "runtime", "src", "providers", "antigravity.ts"),
-      "// new\n"
-    );
-    const monorepoDrift = deploymentDrift(codexHome, monorepo);
-    assert.deepEqual(monorepoDrift, {
-      checked: 1,
-      differing: ["providers/antigravity.ts"],
-      missing: []
-    });
-
-    const legacy = join(root, "legacy");
-    mkdirSync(join(legacy, "src", "providers"), { recursive: true });
-    writeFileSync(
-      join(legacy, "src", "providers", "antigravity.ts"),
-      "// old\n"
-    );
-    const legacyDrift = deploymentDrift(codexHome, legacy);
-    assert.deepEqual(legacyDrift, {
-      checked: 1,
-      differing: [],
-      missing: []
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("session-trace captures delegation unavailability failures, spawn_failed router events, and bridge log alerts", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-delegation-diag-"));
-  try {
-    const sessionsDir = join(dir, "sessions", "2026", "11", "14");
-    const runDir = join(dir, "run");
-    const hooksDir = join(dir, "hooks");
-    mkdirSync(sessionsDir, { recursive: true });
-    mkdirSync(runDir, { recursive: true });
-    mkdirSync(hooksDir, { recursive: true });
-
-    const threadId = "01a1daea-0000-7000-8000-000000000099";
-    const rolloutFile = join(
-      sessionsDir,
-      `rollout-2026-11-14T20-00-00-${threadId}.jsonl`
-    );
-    writeFileSync(
-      rolloutFile,
-      [
-        JSON.stringify({
-          timestamp: "2026-11-14T20:00:00.000Z",
-          type: "session_meta",
-          payload: {
-            id: threadId,
-            session_id: threadId,
-            agent_role: "orchestrator"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-14T20:00:01.000Z",
-          type: "response_item",
-          payload: {
-            type: "function_call",
-            name: "autodev_spawn",
-            call_id: "call_spawn_1",
-            arguments: "{}"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-14T20:00:02.000Z",
-          type: "response_item",
-          payload: {
-            type: "function_call_output",
-            call_id: "call_spawn_1",
-            output:
-              "Encountered error in tool execution: Delegation is unavailable in this session; no child was created."
-          }
-        })
-      ].join("\n") + "\n"
-    );
-
-    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
-    writeFileSync(
-      routerLog,
-      `${JSON.stringify({
-        schema: "autodev-router-event-v1",
-        timestamp: "2026-11-14T20:00:01.500Z",
-        requestId: "req-spawn-1",
-        thread: threadId,
-        phase: "spawn_failed",
-        provider: "antigravity",
-        failureClass: "spawn_failure",
-        spawnFailureReason: "spawn_tool_unavailable",
-        elapsedMs: 15
-      })}\n`
-    );
-
-    writeFileSync(
-      join(hooksDir, "antigravity-proxy.launchd.log"),
-      [
-        "normal request line",
-        "agy spawn rejected session=01a1daea reason=expired",
-        "agy turn failed: invalid model selection (gemini-4-hydrogen-high)"
-      ].join("\n") + "\n"
-    );
-
-    const report = await buildReport({
-      id: threadId,
-      codexHome: dir,
-      routerLog,
-      items: false,
-      offline: true
-    });
-    assert.equal(report.threads[0]?.toolFailures.length, 1);
-    assert.match(
-      report.threads[0]?.toolFailures[0]?.detail ?? "",
-      /Delegation is unavailable in this session/
-    );
-    assert.equal(report.router[0]?.failures.length, 1);
-    assert.equal(
-      report.router[0]?.failures[0]?.spawnFailureReason,
-      "spawn_tool_unavailable"
-    );
-    assert.equal(report.bridgeAlerts?.[0]?.count, 2);
-
-    const rendered = renderReport(report);
-    assert.match(
-      rendered,
-      /TOOL FAILED .* autodev_spawn .* Delegation is unavailable/
-    );
-    const renderedFailures = renderReport(report, { failures: true });
-    assert.match(renderedFailures, /input=\{\}/);
-    assert.match(
-      rendered,
-      /ROUTER FAILURE .* spawn_failure \(spawn_tool_unavailable\)/
-    );
-    assert.match(rendered, /bridge log alerts/);
-    assert.match(
-      rendered,
-      /antigravity-proxy\.launchd\.log: 2 matching line\(s\)/
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("session-trace surfaces tool input on failures, tag-only assistant messages, proxy truncation alerts, and efficiency state", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-efficiency-diag-"));
-  try {
-    const sessionsDir = join(dir, "sessions", "2026", "11", "17");
-    const runDir = join(dir, "run");
-    const hooksDir = join(dir, "hooks");
-    mkdirSync(sessionsDir, { recursive: true });
-    mkdirSync(runDir, { recursive: true });
-    mkdirSync(hooksDir, { recursive: true });
-
-    const threadId = "01a1ec99-0000-7000-8000-000000000001";
-    const rolloutFile = join(
-      sessionsDir,
-      `rollout-2026-11-17T20-00-00-${threadId}.jsonl`
-    );
-    writeFileSync(
-      rolloutFile,
-      [
-        JSON.stringify({
-          timestamp: "2026-11-17T20:00:00.000Z",
-          type: "session_meta",
-          payload: {
-            id: threadId,
-            session_id: threadId,
-            agent_role: "explorer"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-17T20:00:01.000Z",
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "<escape></escape>" }]
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-17T20:00:02.000Z",
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call",
-            name: "exec_command",
-            call_id: "call_ro_1",
-            input: 'rg "foo" src 2>/dev/null'
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-17T20:00:03.000Z",
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call_output",
-            call_id: "call_ro_1",
-            output:
-              "Script error: Command blocked by PreToolUse hook: This role runs in a read-only sandbox."
-          }
-        })
-      ].join("\n") + "\n"
-    );
-
-    writeFileSync(
-      join(hooksDir, "opencli-proxy.launchd.log"),
-      "opencli chatgpt first prompt is 119524 bytes; 41 earlier message(s) left out to fit the site's limit\n"
-    );
-    writeFileSync(
-      join(hooksDir, "minimax-proxy.launchd.log"),
-      "Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './shared/compaction'\n"
-    );
-    writeFileSync(
-      join(dir, "codex-router-state.json"),
-      JSON.stringify({
-        disabledProviders: ["copilot"],
-        roleAssignments: {
-          "opencli-gemini": { subagent: { priority: 3, model: null } }
-        }
-      })
-    );
-
-    const report = await buildReport({
-      id: threadId,
-      codexHome: dir,
-      routerLog: join(runDir, "codex-model-router.launchd.err.log"),
-      items: false,
-      failures: true,
-      efficiency: true,
-      offline: true
-    });
-    assert.equal(report.threads[0]?.anomalies?.tagOnlyMessages, 1);
-    assert.deepEqual(report.threads[0]?.anomalies?.samples, [
-      "<escape></escape>"
-    ]);
-    assert.equal(
-      report.threads[0]?.toolFailures[0]?.input,
-      'rg "foo" src 2>/dev/null'
-    );
-    assert.ok(
-      report.bridgeAlerts?.some((a) => a.file === "opencli-proxy.launchd.log")
-    );
-    assert.ok(
-      report.bridgeAlerts?.some((a) => a.file === "minimax-proxy.launchd.log")
-    );
-    assert.deepEqual(report.efficiency?.disabledProviders, ["copilot"]);
-    assert.deepEqual(report.efficiency?.nullRoleModels, [
-      "opencli-gemini.subagent"
-    ]);
-
-    const rendered = renderReport(report, { failures: true });
-    assert.match(rendered, /ANOMALY tag-only assistant messages: 1/);
-    assert.match(rendered, /input=rg "foo" src 2>\/dev\/null/);
-    assert.match(rendered, /== efficiency & persisted router state/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("a rules entry loads only when it resolves to a file directly in the rules directory", () => {
-  const root = mkdtempSync(join(tmpdir(), "autodev-rule-entries-"));
-  try {
-    const rules = join(root, "rules");
-    const nested = join(rules, "nested");
-    const outside = join(root, "outside.rules");
-    mkdirSync(nested, { recursive: true });
-    writeFileSync(outside, "prefix_rule()\n");
-    writeFileSync(join(rules, "source.rules"), "prefix_rule()\n");
-    writeFileSync(join(nested, "source.rules"), "prefix_rule()\n");
-
-    const regular = join(rules, "default.rules");
-    writeFileSync(regular, "prefix_rule()\n");
-    assert.equal(ruleEntryLoads(rules, regular).loads, true);
-
-    const sameDirectory = join(rules, "same-directory.rules");
-    symlinkSync(join(rules, "source.rules"), sameDirectory);
-    assert.equal(ruleEntryLoads(rules, sameDirectory).loads, true);
-
-    const escaping = join(rules, "escaping.rules");
-    symlinkSync(outside, escaping);
-    assert.equal(ruleEntryLoads(rules, escaping).loads, false);
-
-    const subdirectory = join(rules, "subdirectory.rules");
-    symlinkSync(join(nested, "source.rules"), subdirectory);
-    assert.equal(ruleEntryLoads(rules, subdirectory).loads, false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test(
-  "Codex enforces a rules file only when it resolves inside the rules directory",
-  { skip: codexAvailable ? false : "codex CLI not installed" },
-  async () => {
-    const results = await probeRuleLoading({ codex: "codex", keep: false });
-    const regular = results.find((result) => result.case === "regular");
-    const symlink = results.find((result) => result.case === "symlink");
-    assert.equal(regular?.enforced, true, regular?.detail);
-    assert.equal(symlink?.enforced, false, symlink?.detail);
-  }
-);
-
-test("summarizeRouter keeps matchedBy=thread when router daemon lifecycle events occur during the thread window", () => {
-  const thread = traceThread("/dev/null", false);
-  thread.id = "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0";
-  thread.model = "autodev/orchestrator";
-  thread.start = "2026-11-18T01:15:36.835Z";
-  thread.end = "2026-11-18T03:26:51.690Z";
-
-  const summary = summarizeRouter(
-    thread,
-    [
-      {
-        at: "2026-11-18T03:08:13.063Z",
-        requestId: "",
-        thread: null,
-        phase: "shutdown_started",
-        role: null,
-        requestedModel: null,
-        provider: null,
-        model: null,
-        outcome: null,
-        status: null,
-        failureClass: null,
-        spawnFailureReason: null,
-        denialReason: null,
-        elapsedMs: null,
-        toolCalls: null,
-        selection: null
-      },
-      {
-        at: "2026-11-18T03:08:14.076Z",
-        requestId: "",
-        thread: null,
-        phase: "startup",
-        role: null,
-        requestedModel: null,
-        provider: null,
-        model: null,
-        outcome: null,
-        status: null,
-        failureClass: null,
-        spawnFailureReason: null,
-        denialReason: null,
-        elapsedMs: null,
-        toolCalls: null,
-        selection: null
-      },
-      {
-        at: "2026-11-18T03:20:00.000Z",
-        requestId: "req-1",
-        thread: "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0",
-        phase: "selected",
-        role: "orchestrator",
-        requestedModel: "autodev/orchestrator",
-        provider: "claude",
-        model: "claude-opus-5-5",
-        outcome: null,
-        status: null,
-        failureClass: null,
-        spawnFailureReason: null,
-        denialReason: null,
-        elapsedMs: null,
-        toolCalls: null,
-        selection: "primary"
-      },
-      {
-        at: "2026-11-18T03:20:10.000Z",
-        requestId: "req-1",
-        thread: "01a1ec39-3a72-78d3-9c2b-cee4e28d88c0",
-        phase: "result",
-        role: "orchestrator",
-        requestedModel: "autodev/orchestrator",
-        provider: "claude",
-        model: "claude-opus-5-5",
-        outcome: "success",
-        status: 200,
-        failureClass: null,
-        spawnFailureReason: null,
-        denialReason: null,
-        elapsedMs: 10_000,
-        toolCalls: 1,
-        selection: null
-      }
-    ],
-    true
-  );
-
-  assert.equal(summary.matchedBy, "thread");
-  assert.equal(summary.requests, 1);
-  assert.equal(summary.events?.length, 2);
-});
-
-test("traceThread measures token usage, cache drops, compaction images, prompt overhead, and skill telemetry", () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-thread-eff-"));
-  try {
-    const threadId = "01a1eff0-0000-7000-8000-000000000010";
-    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
-    const telemetryDir = join(dir, "run", "skill-read-telemetry");
-    mkdirSync(sessionsDir, { recursive: true });
-    mkdirSync(telemetryDir, { recursive: true });
-
-    const devSkillsPrompt = [
-      "<app-context>desktop</app-context>",
-      "<skills_instructions>",
-      "- alpha-skill: Alpha help. (file: /tmp/demo-repo/.agents/skills/alpha-skill/SKILL.md)",
-      `- orch-skill: Orch help. (file: ${join(process.env.HOME ?? "/Users/test", ".agents/skills/orch-skill/SKILL.md")})`,
-      "</skills_instructions>"
-    ].join("\n");
-
-    const rolloutFile = join(
-      sessionsDir,
-      `rollout-2026-11-18T10-00-00-${threadId}.jsonl`
-    );
-    writeFileSync(
-      rolloutFile,
-      [
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:00.000Z",
-          type: "session_meta",
-          payload: {
-            id: threadId,
-            session_id: threadId,
-            cwd: "/tmp/demo-repo"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:01.000Z",
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "developer",
-            content: [{ type: "input_text", text: devSkillsPrompt }]
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:02.000Z",
-          type: "event_msg",
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 50_000,
-                cached_input_tokens: 45_000,
-                output_tokens: 1000,
-                reasoning_output_tokens: 600,
-                total_tokens: 51_000
-              },
-              last_token_usage: {
-                input_tokens: 50_000,
-                cached_input_tokens: 45_000
-              }
-            }
-          }
-        }),
-        // Duplicate snapshot: must be ignored
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:02.500Z",
-          type: "event_msg",
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 50_000,
-                cached_input_tokens: 45_000,
-                output_tokens: 1000,
-                reasoning_output_tokens: 600,
-                total_tokens: 51_000
-              },
-              last_token_usage: {
-                input_tokens: 50_000,
-                cached_input_tokens: 45_000
-              }
-            }
-          }
-        }),
-        // Cache drop (>50% drop from 50k input -> 5k cached) + higher total
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:03.000Z",
-          type: "event_msg",
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 120_000,
-                cached_input_tokens: 50_000,
-                output_tokens: 2000,
-                reasoning_output_tokens: 1500,
-                total_tokens: 122_000
-              },
-              last_token_usage: {
-                input_tokens: 70_000,
-                cached_input_tokens: 5000
-              }
-            }
-          }
-        }),
-        // Compaction record retaining 2 image objects
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:04.000Z",
-          type: "compacted",
-          payload: {
-            replacement_history: [
-              {
-                type: "message",
-                role: "user",
-                content: [
-                  {
-                    type: "input_image",
-                    image_url: "data:image/png;base64,AA"
-                  },
-                  { type: "input_image", image_url: "data:image/png;base64,BB" }
-                ]
-              }
-            ]
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:04.500Z",
-          type: "event_msg",
-          payload: { type: "context_compacted" }
-        }),
-        // Reset token counter in new window
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:05.000Z",
-          type: "event_msg",
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 30_000,
-                cached_input_tokens: 20_000,
-                output_tokens: 500,
-                reasoning_output_tokens: 250,
-                total_tokens: 30_500
-              },
-              last_token_usage: {
-                input_tokens: 30_000,
-                cached_input_tokens: 20_000
-              }
-            }
-          }
-        }),
-        // Tool call reading SKILL.md and response image item (string mention in text must not double-count image objects)
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:06.000Z",
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call",
-            name: "exec_command",
-            call_id: "call_skill_1",
-            input: "cat /tmp/demo-repo/.agents/skills/alpha-skill/SKILL.md"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-18T10:00:07.000Z",
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            content: [
-              { type: "input_image", image_url: "data:image/png;base64,CC" }
-            ]
-          }
-        })
-      ].join("\n") + "\n"
-    );
-
-    writeFileSync(
-      join(telemetryDir, `${threadId}.json`),
-      JSON.stringify({
-        turns: {
-          "turn-1": { has: ["hash_a", "hash_b"], tool: "Bash" },
-          "turn-2": { has: ["hash_b"], tool: "Bash" }
-        }
-      })
-    );
-
-    const trace = traceThread(rolloutFile, false, dir);
-    assert.ok(trace.efficiency);
-    assert.deepEqual(trace.efficiency.tokens, {
-      observed: true,
-      samples: 3,
-      inputTokens: 150_000,
-      cachedInputTokens: 70_000,
-      outputTokens: 2500,
-      reasoningOutputTokens: 1750,
-      totalTokens: 152_500,
-      cacheHitPct: 46.7,
-      reasoningPct: 70,
-      peakInputTokens: 70_000,
-      cacheDrops: 1
-    });
-    assert.equal(trace.efficiency.compaction.count, 1);
-    assert.equal(trace.efficiency.compaction.contextCompactedEvents, 1);
-    assert.equal(trace.efficiency.compaction.maxReplacementItems, 1);
-    assert.equal(trace.efficiency.compaction.maxReplacementImages, 2);
-    assert.equal(trace.efficiency.compaction.responseImageItems, 1);
-    assert.ok(trace.efficiency.prompt.initialDeveloperBytes > 0);
-    assert.ok(trace.efficiency.prompt.skillsCatalogBytes > 0);
-    assert.equal(trace.efficiency.prompt.skillsLoaded, 2);
-    assert.equal(
-      trace.efficiency.prompt.skillsByRoot["<repo>/.agents/skills"],
-      1
-    );
-    assert.equal(trace.efficiency.prompt.skillsByRoot["~/.agents/skills"], 1);
-    assert.deepEqual(trace.efficiency.prompt.skillsRead, ["alpha-skill"]);
-    assert.equal(trace.efficiency.prompt.skillTelemetryReads, 2);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("summarizeRouter surfaces skipped, retry, exhaustion_wait, and transport_error events", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-router-skips-"));
-  try {
-    const threadId = "01a1eff1-0000-7000-8000-000000000020";
-    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
-    const runDir = join(dir, "run");
-    mkdirSync(sessionsDir, { recursive: true });
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(
-      join(sessionsDir, `rollout-2026-11-18T10-00-00-${threadId}.jsonl`),
-      `${JSON.stringify({
-        timestamp: "2026-11-18T10:00:00.000Z",
-        type: "session_meta",
-        payload: { id: threadId, session_id: threadId }
-      })}\n`
-    );
-    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
-    writeFileSync(
-      routerLog,
-      [
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:01.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "skipped",
-          provider: "claude",
-          failureClass: "probe_unavailable"
-        }),
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:02.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "selected",
-          provider: "minimax"
-        }),
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:03.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "transport_error",
-          provider: "minimax",
-          errorCode: "ECONNRESET"
-        }),
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:04.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "retry",
-          provider: "minimax"
-        }),
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:05.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "exhaustion_wait",
-          provider: "minimax",
-          elapsedMs: 4000
-        }),
-        JSON.stringify({
-          schema: "autodev-router-event-v1",
-          timestamp: "2026-11-18T10:00:06.000Z",
-          requestId: "req-skip-1",
-          thread: threadId,
-          phase: "result",
-          provider: "minimax",
-          outcome: "success",
-          elapsedMs: 1000,
-          toolCalls: 1
-        })
-      ].join("\n") + "\n"
-    );
-
-    const report = await buildReport({
-      id: threadId,
-      codexHome: dir,
-      routerLog,
-      items: false,
-      events: true,
-      efficiency: true,
-      offline: true
-    });
-    const summary = report.router[0];
-    assert.equal(summary?.skipped?.length, 1);
-    assert.equal(summary?.skipped?.[0]?.reason, "probe_unavailable");
-    assert.equal(summary?.retries, 1);
-    assert.equal(summary?.transportErrors, 1);
-    assert.deepEqual(summary?.exhaustionWaits, { count: 1, totalMs: 4000 });
-
-    const rendered = renderReport(report, { efficiency: true });
-    assert.match(rendered, /ROUTER SKIPPED 1 \(claude:probe_unavailable=1\)/);
-    assert.match(
-      rendered,
-      /ROUTER RETRIES retries=1 transport_errors=1 exhaustion_waits=1 \(4s\)/
-    );
-    assert.match(rendered, /err=ECONNRESET/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("renderReport categorizes tool failures, caps repetitive failures by default, and respects --all-failures", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-fail-cap-"));
-  try {
-    const threadId = "01a1eff2-0000-7000-8000-000000000030";
-    const sessionsDir = join(dir, "sessions", "2026", "11", "18");
-    mkdirSync(sessionsDir, { recursive: true });
-    const lines: string[] = [
-      JSON.stringify({
-        timestamp: "2026-11-18T10:00:00.000Z",
-        type: "session_meta",
-        payload: { id: threadId, session_id: threadId }
-      })
-    ];
-    for (let i = 1; i <= 5; i += 1) {
-      lines.push(
-        JSON.stringify({
-          timestamp: `2026-11-18T10:00:0${i}.000Z`,
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call",
-            name: "exec_command",
-            call_id: `call_wrap_${i}`,
-            input: JSON.stringify({ cmd: `echo ${i}` })
-          }
-        }),
-        JSON.stringify({
-          timestamp: `2026-11-18T10:00:0${i}.500Z`,
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call_output",
-            call_id: `call_wrap_${i}`,
-            output: "Script error: SyntaxError: Unexpected token ':'"
-          }
-        })
-      );
-    }
-    lines.push(
-      JSON.stringify({
-        timestamp: "2026-11-18T10:00:08.000Z",
-        type: "response_item",
-        payload: {
-          type: "custom_tool_call",
-          name: "exec_command",
-          call_id: "call_hook_1",
-          input: "git log -n 5"
-        }
-      }),
-      JSON.stringify({
-        timestamp: "2026-11-18T10:00:08.500Z",
-        type: "response_item",
-        payload: {
-          type: "custom_tool_call_output",
-          call_id: "call_hook_1",
-          output:
-            "Script error: Command blocked by PreToolUse hook: The root orchestrator does not read git history (`git log`)."
-        }
-      })
-    );
-    writeFileSync(
-      join(sessionsDir, `rollout-2026-11-18T10-00-00-${threadId}.jsonl`),
-      `${lines.join("\n")}\n`
-    );
-
-    const report = await buildReport({
-      id: threadId,
-      codexHome: dir,
-      routerLog: join(dir, "run", "missing.log"),
-      items: false,
-      offline: true
-    });
-    assert.equal(report.threads[0]?.toolFailures.length, 6);
-    assert.equal(
-      report.threads[0]?.toolFailures[0]?.category,
-      "json-wrap-syntax"
-    );
-    assert.equal(
-      report.threads[0]?.toolFailures[5]?.category,
-      "pretooluse-hook"
-    );
-
-    const capped = renderReport(report, { failures: true });
-    assert.match(
-      capped,
-      /TOOL FAILURES total=6 \(json-wrap-syntax=5 pretooluse-hook=1\)/
-    );
-    assert.match(
-      capped,
-      /\(\+3 more json-wrap-syntax failures; pass --all-failures to list all\)/
-    );
-    assert.equal(capped.match(/TOOL FAILED/gu)?.length, 3);
-
-    const uncapped = renderReport(report, {
-      failures: true,
-      allFailures: true
-    });
-    assert.doesNotMatch(uncapped, /pass --all-failures/);
-    assert.equal(uncapped.match(/TOOL FAILED/gu)?.length, 6);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("summarizeHookDenials and CLI --hooks aggregate PreToolUse denials within window", () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-hooks-summary-"));
-  try {
-    const hooksDir = join(dir, "hooks");
-    mkdirSync(hooksDir, { recursive: true });
-    const nowMs = Date.parse("2026-11-19T12:00:00.000Z");
-    const emptyText = renderHookDenials(summarizeHookDenials(dir, 7, nowMs));
-    assert.match(emptyText, /no structured PreToolUse denial entries/);
-
-    writeFileSync(
-      join(hooksDir, "hooks.log"),
-      [
-        // Outside 7d window
-        JSON.stringify({
-          time: "2026-11-01T12:00:00.000Z",
-          event: "PreToolUse",
-          decision: "deny",
-          policy: "read-only",
-          role: "explorer",
-          reason: "old",
-          commandHead: "python3 old.py"
-        }),
-        JSON.stringify({
-          time: "2026-11-18T12:00:00.000Z",
-          event: "UserPromptSubmit",
-          model: "autodev/orchestrator"
-        }),
-        JSON.stringify({
-          time: "2026-11-18T13:00:00.000Z",
-          event: "PreToolUse",
-          decision: "deny",
-          policy: "read-only",
-          role: "explorer",
-          reason: "Command `python3` is not allowed",
-          commandHead: "python3 a.py"
-        }),
-        JSON.stringify({
-          time: "2026-11-18T14:00:00.000Z",
-          event: "PreToolUse",
-          decision: "deny",
-          policy: "orchestrator-git-history",
-          role: "root",
-          reason: "The root orchestrator does not read git history",
-          commandHead: "git log -n 5"
-        })
-      ].join("\n") + "\n"
-    );
-
-    const summary = summarizeHookDenials(dir, 7, nowMs);
-    assert.equal(summary.userPromptSubmits, 1);
-    assert.equal(summary.preToolUseDenials, 2);
-    assert.deepEqual(summary.byPolicy, {
-      "read-only": 1,
-      "orchestrator-git-history": 1
-    });
-    assert.deepEqual(summary.byRole, { explorer: 1, root: 1 });
-
-    const rendered = renderHookDenials(summary);
-    assert.match(rendered, /top blocked commands:/);
-    assert.match(rendered, /\[read-only\] python3 a\.py/);
-
-    const cli = spawnSync(
-      process.execPath,
-      [SCRIPT, "--hooks", "--since", "36500", "--json", "--codex-home", dir],
-      { encoding: "utf8" }
-    );
-    assert.equal(cli.status, 0, cli.stderr);
-    assert.equal(JSON.parse(cli.stdout).preToolUseDenials, 3);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("scanRecentSessions and CLI --scan-recent aggregate metrics across active and archived sessions", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "autodev-fleet-scan-"));
-  try {
-    const s1 = "01a1eff3-0000-7000-8000-000000000001";
-    const s2 = "01a1eff3-0000-7000-8000-000000000002";
-    const activeDir = join(dir, "sessions", "2026", "11", "18");
-    const archivedDir = join(dir, "archived_sessions");
-    const runDir = join(dir, "run");
-    mkdirSync(activeDir, { recursive: true });
-    mkdirSync(archivedDir, { recursive: true });
-    mkdirSync(runDir, { recursive: true });
-
-    writeFileSync(
-      join(activeDir, `rollout-2026-11-18T12-00-00-${s1}.jsonl`),
-      [
-        JSON.stringify({
-          timestamp: "2026-11-18T12:00:00.000Z",
-          type: "session_meta",
-          payload: { id: s1, session_id: s1, cwd: "/tmp/repo-a" }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-18T12:00:01.000Z",
-          type: "event_msg",
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 100_000,
-                cached_input_tokens: 80_000,
-                output_tokens: 1000,
-                reasoning_output_tokens: 500,
-                total_tokens: 101_000
-              }
-            }
-          }
-        })
-      ].join("\n") + "\n"
-    );
-    writeFileSync(
-      join(archivedDir, `rollout-2026-11-17T12-00-00-${s2}.jsonl`),
-      [
-        JSON.stringify({
-          timestamp: "2026-11-17T12:00:00.000Z",
-          type: "session_meta",
-          payload: { id: s2, session_id: s2, cwd: "/tmp/repo-b" }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-17T12:00:01.000Z",
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call",
-            name: "exec_command",
-            call_id: "c_blk",
-            input: "python3 x.py"
-          }
-        }),
-        JSON.stringify({
-          timestamp: "2026-11-17T12:00:02.000Z",
-          type: "response_item",
-          payload: {
-            type: "custom_tool_call_output",
-            call_id: "c_blk",
-            output:
-              "Script error: Command blocked by PreToolUse hook: This role runs in a read-only sandbox."
-          }
-        })
-      ].join("\n") + "\n"
-    );
-
-    const routerLog = join(runDir, "codex-model-router.launchd.err.log");
-    writeFileSync(
-      routerLog,
-      `${JSON.stringify({
-        schema: "autodev-router-event-v1",
-        timestamp: "2026-11-18T12:00:02.000Z",
-        requestId: "req-fleet-1",
-        thread: s1,
-        phase: "skipped",
-        provider: "claude",
-        failureClass: "probe_unavailable"
-      })}\n`
-    );
-
-    const scan = await scanRecentSessions({
-      codexHome: dir,
-      routerLog,
-      limit: 5
-    });
-    assert.equal(scan.totals.sessions, 2);
-    assert.equal(scan.totals.totalTokens, 101_000);
-    assert.equal(scan.totals.cacheHitPct, 80);
-    assert.equal(scan.totals.toolFailuresByCategory["pretooluse-hook"], 1);
-    assert.deepEqual(scan.totals.routerSkippedByReason, [
-      { key: "claude:probe_unavailable", count: 1 }
-    ]);
-
-    const cli = spawnSync(
-      process.execPath,
-      [
-        SCRIPT,
-        "--scan-recent",
-        "5",
-        "--codex-home",
-        dir,
-        "--router-log",
-        routerLog
-      ],
-      { encoding: "utf8" }
-    );
-    assert.equal(cli.status, 0, cli.stderr);
-    assert.match(cli.stdout, /== fleet scan \(2 sessions, 2 threads\)/);
-    assert.match(cli.stdout, /top pretooluse blocks in rollouts:/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
 });

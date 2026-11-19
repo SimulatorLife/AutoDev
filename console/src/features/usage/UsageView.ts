@@ -19,6 +19,7 @@ import { BarChart } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
+import { TextField } from "../../components/forms/TextField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
@@ -48,7 +49,6 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import { SessionUsageLookup } from "./SessionUsageLookup.ts";
 
 /**
  * Observability Usage view.
@@ -75,6 +75,23 @@ export interface UsageViewProps {
    * that as unavailable rather than as an empty scope.
    */
   readonly activeSessions?: UsageActiveSessions | undefined;
+  /**
+   * The session scope the page is narrowed to, when the operator typed one.
+   *
+   * `sessionId` is the validated identity; `invalid` says the typed value was
+   * not one, which is a different fact from "no session was typed".
+   */
+  readonly sessionScope?:
+    | {
+        readonly sessionId: string | null;
+        readonly invalid: boolean;
+        readonly rawSessionId: string;
+      }
+    | undefined;
+  /** The session-scoped body, rendered instead of the fleet body. */
+  readonly sessionView?: React.ReactNode | undefined;
+  /** The unscoped fleet diagnostics view, rendered above the historical body. */
+  readonly fleetView?: React.ReactNode | undefined;
 }
 
 export type UsageTraceLookup =
@@ -194,12 +211,27 @@ function redactedSessionLabel(sessionId: string): string {
   return `${sessionId.slice(0, prefixLength)}…${sessionId.slice(-suffixLength)}`;
 }
 
+/**
+ * The live session rows link straight into the session-scoped Usage view.
+ *
+ * The link carries the session id in the URL, so the target page can read the
+ * whole session's diagnostics without a second click. The label stays
+ * redacted: the id is in the link, and a link's own href is not the same as a
+ * table cell that prints an identity in full.
+ */
 const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
   {
     id: "session",
     header: "Session",
     cell: ({ row: { original: session } }) =>
-      redactedSessionLabel(session.sessionId),
+      React.createElement(
+        NavigationLink,
+        {
+          href: `/usage?range=24H&sessionId=${encodeURIComponent(session.sessionId)}`,
+          className: ACTION_LINK_CLASS
+        },
+        redactedSessionLabel(session.sessionId)
+      ),
     meta: {
       weight: 120,
       align: "tokens"
@@ -1887,7 +1919,10 @@ export function UsageView({
   traceList,
   traceLookup,
   selection = DEFAULT_SELECTION,
-  activeSessions
+  activeSessions,
+  sessionScope,
+  sessionView,
+  fleetView
 }: UsageViewProps): React.JSX.Element {
   const selectedValues = selection.values;
   const todayUtc = new Date().toISOString().slice(0, 10);
@@ -1896,12 +1931,22 @@ export function UsageView({
   // affect the reading in front of them.
   const isActiveSessions = selection.range === "ACTIVE_SESSIONS";
   const observed = usageMetricsObserved(metrics);
+  // A session scope replaces the fleet body entirely: the page is about one
+  // session, and the fleet-wide metrics would be a different question answered
+  // beside it.
+  const isSessionScoped = sessionScope !== undefined;
+  const leftoverFleetFilters = Object.entries(selectedValues).filter(
+    ([, values]) => (values ?? []).length > 0
+  );
 
   return React.createElement(
     PageBody,
     {
       feature: "usage",
-      attributes: { "data-usage-observed": observed ? "true" : "false" }
+      attributes: {
+        "data-usage-observed": observed ? "true" : "false",
+        "data-usage-session-scoped": isSessionScoped ? "true" : "false"
+      }
     },
     React.createElement(
       FilterBar,
@@ -1939,23 +1984,60 @@ export function UsageView({
         ),
         renderScopeMeta(selection, isActiveSessions, todayUtc)
       ),
-      renderFilterControls(isActiveSessions, filterOptions, selectedValues)
-    ),
-    isActiveSessions
-      ? null
-      : React.createElement(SessionUsageLookup, { selection }),
-    !isActiveSessions && traceLookup
-      ? renderTraceLookup(traceLookup, selection)
-      : null,
-    isActiveSessions
-      ? renderActiveSessionsScope(activeSessions)
-      : metrics === undefined
-        ? null
-        : React.createElement(
-            React.Fragment,
-            null,
-            renderHistoricalMetrics(metrics),
-            renderRecentAttempts(traceList, selection)
+      React.createElement(TextField, {
+        id: "usage-session-id",
+        name: "sessionId",
+        label: "Session ID:",
+        hideLabel: true,
+        defaultValue: sessionScope?.rawSessionId ?? "",
+        placeholder: "Session or thread ID",
+        maxLength: 128,
+        className: "min-w-48 basis-56",
+        testId: "usage-session-id"
+      }),
+      isSessionScoped
+        ? React.createElement(
+            NavigationLink,
+            {
+              href: usageHref(selection),
+              className: ACTION_LINK_CLASS,
+              dataAttributes: { "data-usage-clear-session": "true" }
+            },
+            "Clear session"
           )
+        : null,
+      isSessionScoped
+        ? null
+        : renderFilterControls(isActiveSessions, filterOptions, selectedValues)
+    ),
+    isSessionScoped && leftoverFleetFilters.length > 0
+      ? React.createElement(
+          "p",
+          { className: CALLOUT_WARNING_CLASS, role: "status" },
+          `This page is scoped to one session, so the fleet filters (${leftoverFleetFilters
+            .map(([name]) => name)
+            .join(", ")}) are not applied. Clear the session to use them.`
+        )
+      : null,
+    isSessionScoped
+      ? sessionView
+      : React.createElement(
+          React.Fragment,
+          null,
+          fleetView,
+          !isActiveSessions && traceLookup
+            ? renderTraceLookup(traceLookup, selection)
+            : null,
+          isActiveSessions
+            ? renderActiveSessionsScope(activeSessions)
+            : metrics === undefined
+              ? null
+              : React.createElement(
+                  React.Fragment,
+                  null,
+                  renderHistoricalMetrics(metrics),
+                  renderRecentAttempts(traceList, selection)
+                )
+        )
   );
 }

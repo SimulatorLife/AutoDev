@@ -4,6 +4,7 @@ import test from "node:test";
 import type { UsageFilterSelection } from "@simulatorlife/autodev-core";
 
 import {
+  normalizeSessionSpanPagination,
   OPENLIT_QUERY_TIMEOUT_MS,
   OpenLITUsageClient,
   REQUEST_TIMEOUT_MS
@@ -1240,9 +1241,14 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
       requestUrl = String(input);
       requestInit = init;
       return response({
-        schema: "autodev-openlit-session-usage-v1",
+        schema: "autodev-openlit-session-usage-v2",
         status: "observed",
         partial: false,
+        total: 438,
+        limit: 50,
+        offset: 0,
+        hasMore: true,
+        estimatedCostUsd: 1.25,
         spans: [
           {
             spanId: "0123456789abcdef",
@@ -1278,7 +1284,10 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
   assert.equal(requestInit?.method, "POST");
   assert.deepEqual(JSON.parse(String(requestInit?.body)), {
     sessionId,
-    range: "7D"
+    range: "7D",
+    limit: 50,
+    offset: 0,
+    sortDirection: "desc"
   });
   assert.deepEqual(requestInit?.headers, {
     Authorization: "Bearer session-secret",
@@ -1290,7 +1299,78 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
     assert.equal(result.data.spans[0]?.role, "orchestrator");
     assert.equal(result.data.spans[0]?.hopRoute, null);
     assert.equal(Object.hasOwn(result.data, "sessionId"), false);
+    assert.equal(result.data.total, 438);
+    assert.equal(result.data.limit, 50);
+    assert.equal(result.data.offset, 0);
+    assert.equal(result.data.hasMore, true);
+    assert.equal(result.data.estimatedCostUsd, 1.25);
   }
+});
+
+test("OpenLITUsageClient asks for the requested page of a session's spans", async () => {
+  const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  let requestInit: RequestInit | undefined;
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async (_input, init) => {
+      requestInit = init;
+      return response({
+        schema: "autodev-openlit-session-usage-v2",
+        status: "observed",
+        partial: false,
+        total: 250,
+        limit: 50,
+        offset: 200,
+        hasMore: false,
+        estimatedCostUsd: null,
+        spans: []
+      });
+    }
+  });
+
+  const result = await client.querySession(
+    sessionId,
+    { range: "7D" },
+    { limit: 50, offset: 200, sortDirection: "asc" }
+  );
+  assert.equal(result.kind, "ok");
+  assert.deepEqual(JSON.parse(String(requestInit?.body)), {
+    sessionId,
+    range: "7D",
+    limit: 50,
+    offset: 200,
+    sortDirection: "asc"
+  });
+  if (result.kind === "ok") {
+    assert.equal(result.data.total, 250);
+    assert.equal(result.data.hasMore, false);
+    assert.equal(result.data.estimatedCostUsd, null);
+  }
+});
+
+test("the session page is bounded, so an oversized page is clamped to the endpoint's own bound", () => {
+  assert.deepEqual(normalizeSessionSpanPagination(undefined), {
+    limit: 50,
+    offset: 0,
+    sortDirection: "desc"
+  });
+  assert.deepEqual(
+    normalizeSessionSpanPagination({
+      limit: 500,
+      offset: -1,
+      sortDirection: "desc"
+    }),
+    { limit: 200, offset: 0, sortDirection: "desc" }
+  );
+  assert.deepEqual(
+    normalizeSessionSpanPagination({
+      limit: 200,
+      offset: 100,
+      sortDirection: "asc"
+    }),
+    { limit: 200, offset: 100, sortDirection: "asc" }
+  );
 });
 
 test("OpenLITUsageClient rejects invalid session identities before network access", async () => {
@@ -1317,15 +1397,24 @@ test("OpenLITUsageClient distinguishes an observed empty session from an unavail
     serviceToken: "session-secret",
     fetchImpl: async () =>
       response({
-        schema: "autodev-openlit-session-usage-v1",
+        schema: "autodev-openlit-session-usage-v2",
         status: "observed",
         partial: false,
+        total: 0,
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        estimatedCostUsd: null,
         spans: []
       })
   });
   const empty = await emptyClient.querySession(sessionId, { range: "24H" });
   assert.equal(empty.kind, "ok");
-  if (empty.kind === "ok") assert.deepEqual(empty.data.spans, []);
+  if (empty.kind === "ok") {
+    assert.deepEqual(empty.data.spans, []);
+    assert.equal(empty.data.total, 0);
+    assert.equal(empty.data.hasMore, false);
+  }
 
   const unavailableClient = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
@@ -1333,9 +1422,14 @@ test("OpenLITUsageClient distinguishes an observed empty session from an unavail
     fetchImpl: async () =>
       response(
         {
-          schema: "autodev-openlit-session-usage-v1",
+          schema: "autodev-openlit-session-usage-v2",
           status: "unavailable",
           partial: false,
+          total: null,
+          limit: 50,
+          offset: 0,
+          hasMore: false,
+          estimatedCostUsd: null,
           spans: []
         },
         503

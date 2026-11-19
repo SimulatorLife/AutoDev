@@ -110,6 +110,10 @@ import {
   isMemoryOutcomeReportReasonCode,
   isMemoryUseKind,
   isSandboxMode,
+  isSessionDiagnosticsReport,
+  isSessionFleetScanResponse,
+  isSessionHookDenialsResponse,
+  isSessionRecentListResponse,
   LOCAL_CONTROL_API_ACTOR,
   MEMORY_STATUSES,
   type MemoryExperiencePurgeReason,
@@ -120,6 +124,10 @@ import {
   type ReconciliationDiff,
   type ReconciliationStatus,
   safeAutoDevSessionId,
+  type SessionDiagnosticsReport,
+  type SessionFleetScanResponse,
+  type SessionHookDenialsResponse,
+  type SessionRecentListResponse,
   type WorkspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
@@ -709,7 +717,8 @@ export const CONTROL_API_PATHS = {
   memorySessionCohorts: "/control/memory/session-cohorts",
   memoryUseCohorts: "/control/memory/use-cohorts",
   memoryStatus: "/control/memory/status",
-  memoryPromoteSkill: "/control/memory/promote-skill"
+  memoryPromoteSkill: "/control/memory/promote-skill",
+  diagnostics: "/control/diagnostics"
 } as const;
 
 export function controlApiFailureCode(
@@ -4894,4 +4903,152 @@ export function promoteMemoryProcedureToSkill(
     config,
     options
   );
+}
+
+/**
+ * The diagnostics routes are read-only and read the whole machine's session
+ * evidence: a session's rollouts, the router's rotated logs, the bridge logs,
+ * the hook log and the live runtime. They are slower than a configuration read
+ * and they are read on every scoped page view, so they carry their own budget
+ * rather than the generic five seconds.
+ */
+export const DIAGNOSTICS_CONTROL_API_TIMEOUT_MS = 20_000;
+
+/** The bounded query a session's diagnostics read accepts. */
+export interface SessionDiagnosticsQuery {
+  readonly includeEfficiency?: boolean;
+  readonly includeFailures?: boolean;
+  readonly allFailures?: boolean;
+  readonly includeEvents?: boolean;
+  readonly eventsLimit?: number;
+  readonly eventsOffset?: number;
+  readonly includeItems?: boolean;
+  readonly itemsLimit?: number;
+  readonly itemsOffset?: number;
+  readonly threadId?: string | undefined;
+  readonly offline?: boolean;
+}
+
+function diagnosticsQueryString(query: SessionDiagnosticsQuery): string {
+  const params = new URLSearchParams();
+  const flag = (name: string, value: boolean | undefined): void => {
+    if (value === undefined) return;
+    params.set(name, value ? "1" : "0");
+  };
+  flag("includeEfficiency", query.includeEfficiency);
+  flag("includeFailures", query.includeFailures);
+  flag("allFailures", query.allFailures);
+  flag("includeEvents", query.includeEvents);
+  flag("includeItems", query.includeItems);
+  flag("offline", query.offline);
+  if (query.eventsLimit !== undefined)
+    params.set("eventsLimit", String(query.eventsLimit));
+  if (query.eventsOffset !== undefined)
+    params.set("eventsOffset", String(query.eventsOffset));
+  if (query.itemsLimit !== undefined)
+    params.set("itemsLimit", String(query.itemsLimit));
+  if (query.itemsOffset !== undefined)
+    params.set("itemsOffset", String(query.itemsOffset));
+  if (query.threadId !== undefined)
+    params.set("threadId", query.threadId);
+  return params.toString();
+}
+
+/**
+ * Read one session's unified diagnostics.
+ *
+ * The payload is validated against the Core schema before it is handed on: a
+ * malformed report would render as though it were evidence.
+ */
+export async function fetchSessionDiagnostics(
+  sessionId: string,
+  query: SessionDiagnosticsQuery,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<SessionDiagnosticsReport>> {
+  const params = diagnosticsQueryString(query);
+  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/${encodeURIComponent(sessionId)}${params.length > 0 ? `?${params}` : ""}`;
+  const result = await fetchControlApi<unknown>(path, config, {
+    timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
+    ...options
+  });
+  if (result.kind !== "ok") return result;
+  if (isSessionDiagnosticsReport(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_diagnostics_response",
+    message:
+      "AutoDev Control API returned an incompatible session diagnostics response; the Console requires the v1 diagnostics contract."
+  };
+}
+
+/** Read the newest sessions, for the fleet's recent-sessions view. */
+export async function fetchRecentSessions(
+  limit: number,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<SessionRecentListResponse>> {
+  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/recent?limit=${encodeURIComponent(String(limit))}`;
+  const result = await fetchControlApi<unknown>(path, config, {
+    timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
+    ...options
+  });
+  if (result.kind !== "ok") return result;
+  if (isSessionRecentListResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_recent_sessions_response",
+    message:
+      "AutoDev Control API returned an incompatible recent-sessions response; the Console requires the v1 recent-sessions contract."
+  };
+}
+
+/** Read the cross-session fleet scan. */
+export async function fetchFleetSessionScan(
+  limit: number,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<SessionFleetScanResponse>> {
+  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/scan?limit=${encodeURIComponent(String(limit))}`;
+  const result = await fetchControlApi<unknown>(path, config, {
+    timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
+    ...options
+  });
+  if (result.kind !== "ok") return result;
+  if (isSessionFleetScanResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_fleet_scan_response",
+    message:
+      "AutoDev Control API returned an incompatible fleet-scan response; the Console requires the v1 fleet-scan contract."
+  };
+}
+
+/** Read the hook-denial summary. */
+export async function fetchHookDenials(
+  sinceDays: number,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<SessionHookDenialsResponse>> {
+  const path = `${CONTROL_API_PATHS.diagnostics}/hooks?sinceDays=${encodeURIComponent(String(sinceDays))}`;
+  const result = await fetchControlApi<unknown>(path, config, {
+    timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
+    ...options
+  });
+  if (result.kind !== "ok") return result;
+  if (isSessionHookDenialsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_hook_denials_response",
+    message:
+      "AutoDev Control API returned an incompatible hook-denial response; the Console requires the v1 hook-denials contract."
+  };
 }

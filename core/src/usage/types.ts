@@ -407,9 +407,32 @@ export interface UsageSessionSpanSummary {
   readonly hopReason: string | null;
 }
 
+/** The order a session's spans are returned in. */
+export type UsageSessionSpanSortDirection = "desc" | "asc";
+
+/**
+ * Which page of one session's spans to read.
+ *
+ * The page is a window onto the session's full span list, not the list
+ * itself: `total` is the exact number of spans the session has, and `hasMore`
+ * says whether anything follows this page.
+ */
+export interface UsageSessionSpanPagination {
+  readonly limit: number;
+  readonly offset: number;
+  readonly sortDirection?: UsageSessionSpanSortDirection;
+}
+
 /** A bounded, privacy-filtered trace view for one exact session, not a metric series. */
 export interface UsageSessionEvidence {
+  /** The exact number of spans the session has, or null when the source did not report one. */
+  readonly total: number | null;
+  readonly limit: number;
+  readonly offset: number;
+  readonly hasMore: boolean;
   readonly partial: boolean;
+  /** The full-session cost estimate, over every span rather than this page. */
+  readonly estimatedCostUsd: number | null;
   readonly spans: readonly UsageSessionSpanSummary[];
 }
 

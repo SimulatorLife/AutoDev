@@ -4,6 +4,7 @@ export * from "./control-api/contract.ts";
 export * from "./control-api/provider-health.ts";
 export * from "./control-api/provider-limits.ts";
 export * from "./control-api/types.ts";
+export * from "./diagnostics/index.ts";
 export * from "./evaluations/types.ts";
 export * from "./github/types.ts";
 export * from "./hooks/types.ts";

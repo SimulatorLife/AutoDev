@@ -1,19 +1,39 @@
 import {
   isHistoricalUsageSelection,
-  type UsageFilterSelection
+  type UsageFilterSelection,
+  type UsageHistoricalTimeRange,
+  type UsageSessionQuerySelection
 } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
 import {
+  type SessionDiagnosticsFailure,
+  SessionDiagnosticsView,
+  type SessionDiagnosticsViewState
+} from "../../src/features/usage/SessionDiagnosticsView.ts";
+import {
+  UsageFleetDiagnosticsView,
+  type UsageFleetFailure
+} from "../../src/features/usage/UsageFleetDiagnosticsView.ts";
+import {
   type UsageTraceLookup,
   UsageView
 } from "../../src/features/usage/UsageView.ts";
 import {
+  type ControlApiConfig,
+  controlApiFailureCode,
+  type ControlApiResult,
+  fetchFleetSessionScan,
+  fetchHookDenials,
+  fetchSessionDiagnostics} from "../../src/lib/server/control-api.ts";
+import {
+  type ConsoleSessionUsageResult,
   type ConsoleUsageResult,
+  loadOpenLITSessionUsage,
   loadOpenLITTrace,
   type UsageSearchParams,
-  usageSelectionFromSearchParams
+  usageViewStateFromSearchParams
 } from "../../src/lib/server/openlit-usage.ts";
 import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
 import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
@@ -25,6 +45,8 @@ import {
 
 export const dynamic = "force-dynamic";
 const NOT_CONFIGURED = "not-configured";
+const HTTP_ERROR = "http-error";
+const FLEET_SCAN_LIMIT = 20;
 
 interface UsagePageProps {
   readonly searchParams: Promise<UsageSearchParams>;
@@ -67,7 +89,7 @@ function unavailableUsageState(result: UsageEndpointFailure) {
         hint: "Verify the dedicated server-side Usage credential; it is never sent to the browser."
       };
     }
-    case "http-error": {
+    case HTTP_ERROR: {
       return {
         title: "Usage query failed",
         code: `autodev_openlit_usage_http_${result.status}`,
@@ -98,8 +120,8 @@ function usageTraceLookup(
     case "unauthorized": {
       return { kind: "unauthorized" };
     }
-    case "http-error": {
-      return { kind: "http-error", status: result.status };
+    case HTTP_ERROR: {
+      return { kind: HTTP_ERROR, status: result.status };
     }
     case "unreachable": {
       return { kind: "unavailable" };
@@ -110,13 +132,155 @@ function usageTraceLookup(
   }
 }
 
+function diagnosticsFailure(
+  code: string,
+  message: string
+): SessionDiagnosticsFailure {
+  return { code, message };
+}
+
+/**
+ * The span read's refusal, as the failure the view renders.
+ *
+ * Every refusal is named: an unreachable telemetry store and a credential the
+ * store rejected are different problems with different next steps, and a
+ * generic "could not be read" would hide which one happened.
+ */
+function spansFailureFor(
+  result: Exclude<ConsoleSessionUsageResult, { readonly kind: "ok" }>
+): SessionDiagnosticsFailure {
+  switch (result.kind) {
+    case "unauthorized": {
+      return diagnosticsFailure(
+        "autodev_usage_unauthorized",
+        `The Usage endpoint returned HTTP ${result.status}; the server-side Usage credential was rejected.`
+      );
+    }
+    case HTTP_ERROR: {
+      return diagnosticsFailure(
+        `autodev_usage_http_${result.status}`,
+        `The Usage endpoint returned HTTP ${result.status}.`
+      );
+    }
+    case "invalid-response": {
+      return diagnosticsFailure(
+        "autodev_openlit_usage_invalid_response",
+        "The telemetry store's span evidence did not match the validated AutoDev session-usage schema."
+      );
+    }
+    case "invalid-session-id": {
+      return diagnosticsFailure(
+        "autodev_usage_invalid_session_id",
+        "That session id is not a valid AutoDev session identity."
+      );
+    }
+    case NOT_CONFIGURED: {
+      return diagnosticsFailure(
+        "autodev_usage_credentials_disabled",
+        "Set AUTODEV_OPENLIT_USAGE_TOKEN in the Next.js server environment to read span evidence."
+      );
+    }
+    default: {
+      return diagnosticsFailure(
+        "autodev_usage_unavailable",
+        "The telemetry store could not be reached for this session's span evidence."
+      );
+    }
+  }
+}
+
+/**
+ * A Control API refusal, as the failure the view renders.
+ *
+ * The unreachable case has no `code` of its own -- it has a deadline flag --
+ * so the shared failure-code mapping answers for it.
+ */
+function controlApiFailure(
+  result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
+): SessionDiagnosticsFailure {
+  if (result.kind === "unreachable") {
+    return {
+      code: controlApiFailureCode(result),
+      message: result.message
+    };
+  }
+  return { code: result.code, message: result.message };
+}
+
+function fleetFailure(code: string, message: string): UsageFleetFailure {
+  return { code, message };
+}
+
+/**
+ * The historical range a session-scoped page queries.
+ *
+ * The live-session scope has no interval, so a session scope over it falls
+ * back to the shortest historical window: the span store is queried over a
+ * window, and there has to be one.
+ */
+function sessionRange(
+  selection: UsageFilterSelection
+): UsageHistoricalTimeRange | "CUSTOM" {
+  if (selection.range === "CUSTOM") return "CUSTOM";
+  if (selection.range === "ACTIVE_SESSIONS") return "24H";
+  return selection.range;
+}
+
+function sessionQuerySelection(
+  selection: UsageFilterSelection
+): UsageSessionQuerySelection {
+  const range = sessionRange(selection);
+  if (range === "CUSTOM") {
+    return {
+      range: "CUSTOM",
+      customRange: selection.customRange ?? {
+        startDate: "1970-01-01",
+        endDate: "1970-01-01"
+      }
+    };
+  }
+  return { range };
+}
+
+function sessionViewState(
+  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  sessionId: string
+): SessionDiagnosticsViewState {
+  return {
+    sessionId,
+    range: sessionRange(state.selection),
+    tab: state.tab,
+    spanOffset: state.spanOffset,
+    spanLimit: state.spanLimit,
+    spanSort: state.spanSort,
+    eventsOffset: state.eventsOffset,
+    eventsLimit: state.eventsLimit,
+    itemsOffset: state.itemsOffset,
+    itemsLimit: state.itemsLimit,
+    threadId: state.threadId,
+    failureCategory: state.failureCategory
+  };
+}
+
 export default async function UsagePage({
   searchParams
 }: UsagePageProps): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/usage");
   const params = await searchParams;
-  const selection: UsageFilterSelection =
-    usageSelectionFromSearchParams(params);
+  const state = usageViewStateFromSearchParams(params);
+  const selection: UsageFilterSelection = state.selection;
+
+  // A session id in the top bar scopes the whole page to one session. The
+  // fleet-wide telemetry query is not run at all in that case: it answers a
+  // different question, and running it would put a fleet total beside a
+  // session's own evidence.
+  if (state.rawSessionId.length > 0) {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      await renderSessionScopedPage(params, state, config ?? null)
+    );
+  }
 
   // The live-session scope has no interval, so it is served by the Runtime's
   // read-only control-plane projection rather than by a Usage telemetry query.
@@ -212,6 +376,8 @@ export default async function UsagePage({
     );
   }
 
+  const fleetView = await renderFleetView(state, config ?? null);
+
   return React.createElement(
     ConsolePageShell,
     {
@@ -222,7 +388,203 @@ export default async function UsagePage({
       filterOptions: result.data.filterOptions,
       traceList: result.data.traceList,
       selection,
+      fleetView,
       ...(traceLookup === undefined ? {} : { traceLookup })
     })
   );
+}
+
+/**
+ * The unscoped fleet diagnostics view.
+ *
+ * Only the selected view is read: the fleet scan walks every recent session's
+ * rollout, and the hook summary reads the whole hook log, so neither is worth
+ * reading for a page that will not show it.
+ */
+async function renderFleetView(
+  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  config: ControlApiConfig | null
+): Promise<React.JSX.Element> {
+  if (state.view === "overview") {
+    return React.createElement(UsageFleetDiagnosticsView, {
+      view: "overview",
+      range: sessionRange(state.selection),
+      scan: null,
+      scanFailure: null,
+      hooks: null,
+      hooksFailure: null,
+      hooksSinceDays: state.hooksSinceDays
+    });
+  }
+  if (config === null) {
+    return React.createElement(UsageFleetDiagnosticsView, {
+      view: state.view,
+      range: sessionRange(state.selection),
+      scan: null,
+      scanFailure: fleetFailure(
+        "autodev_control_api_not_configured",
+        "The Control API credential is not configured, so the fleet diagnostics cannot be read."
+      ),
+      hooks: null,
+      hooksFailure: fleetFailure(
+        "autodev_control_api_not_configured",
+        "The Control API credential is not configured, so the fleet diagnostics cannot be read."
+      ),
+      hooksSinceDays: state.hooksSinceDays
+    });
+  }
+  if (state.view === "sessions") {
+    const scan = await fetchFleetSessionScan(FLEET_SCAN_LIMIT, config);
+    return React.createElement(UsageFleetDiagnosticsView, {
+      view: "sessions",
+      range: sessionRange(state.selection),
+      scan: scan.kind === "ok" ? scan.data : null,
+      scanFailure:
+        scan.kind === "ok"
+          ? null
+          : fleetFailure(controlApiFailureCode(scan), scan.message),
+      hooks: null,
+      hooksFailure: null,
+      hooksSinceDays: state.hooksSinceDays
+    });
+  }
+  const hooks = await fetchHookDenials(state.hooksSinceDays, config);
+  return React.createElement(UsageFleetDiagnosticsView, {
+    view: "hooks",
+    range: sessionRange(state.selection),
+    scan: null,
+    scanFailure: null,
+    hooks: hooks.kind === "ok" ? hooks.data : null,
+    hooksFailure:
+      hooks.kind === "ok"
+        ? null
+        : fleetFailure(controlApiFailureCode(hooks), hooks.message),
+    hooksSinceDays: state.hooksSinceDays
+  });
+}
+
+/**
+ * The session-scoped page.
+ *
+ * The Control API's diagnostics read and the OpenLIT span page are read in
+ * parallel and degrade independently: a session whose spans the telemetry
+ * store does not have still shows its rollouts, its router requests and its
+ * failures.
+ */
+async function renderSessionScopedPage(
+  params: UsageSearchParams,
+  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  config: ControlApiConfig | null
+): Promise<React.JSX.Element> {
+  if (state.sessionId === null) {
+    return React.createElement(UsageView, {
+      selection: state.selection,
+      sessionScope: {
+        sessionId: null,
+        invalid: true,
+        rawSessionId: state.rawSessionId
+      },
+      sessionView: React.createElement(
+        "p",
+        { className: "text-sm text-warning", role: "status" },
+        "That session id is not a valid AutoDev session identity. It must start with a letter or digit and may contain letters, digits, dots, colons, dashes and underscores."
+      )
+    });
+  }
+  const sessionId = state.sessionId;
+  const viewState = sessionViewState(state, sessionId);
+  const rawSpanId = params.spanId;
+  const selectedSpanId =
+    typeof rawSpanId === "string"
+      ? rawSpanId
+      : rawSpanId?.length === 1
+        ? rawSpanId[0]
+        : undefined;
+
+  // The three reads are started together and awaited together: the page's
+  // answer arrives in one piece, and each source degrades on its own.
+  const [diagnosticsResult, spansResult, traceResult] = await Promise.all([
+    config === null
+      ? Promise.resolve({
+          kind: "failed" as const,
+          failure: diagnosticsFailure(
+            "autodev_control_api_not_configured",
+            "The Control API credential is not configured, so the session diagnostics cannot be read."
+          )
+        })
+      : fetchSessionDiagnostics(
+          sessionId,
+          {
+            includeEfficiency: true,
+            includeFailures: true,
+            includeEvents: true,
+            eventsLimit: viewState.eventsLimit,
+            eventsOffset: viewState.eventsOffset,
+            includeItems: true,
+            itemsLimit: viewState.itemsLimit,
+            itemsOffset: viewState.itemsOffset,
+            ...(viewState.threadId === undefined
+              ? {}
+              : { threadId: viewState.threadId })
+          },
+          config
+        ).then((result) =>
+          result.kind === "ok"
+            ? { kind: "ok" as const, report: result.data }
+            : { kind: "failed" as const, failure: controlApiFailure(result) }
+        ),
+    loadOpenLITSessionUsage(
+      sessionId,
+      sessionQuerySelection(state.selection),
+      {
+        limit: viewState.spanLimit,
+        offset: viewState.spanOffset,
+        sortDirection: viewState.spanSort
+      }
+    ),
+    selectedSpanId === undefined
+      ? Promise.resolve(undefined)
+      : loadOpenLITTrace(selectedSpanId)
+  ]);
+
+  const report =
+    diagnosticsResult.kind === "ok" ? diagnosticsResult.report : null;
+  const diagnosticsFailureValue =
+    diagnosticsResult.kind === "ok" ? null : diagnosticsResult.failure;
+  const spansEvidence = spansResult.kind === "ok" ? spansResult.data : null;
+  const spansFailureValue =
+    spansResult.kind === "ok" ? null : spansFailureFor(spansResult);
+
+  const spanHrefFor = (offset: number): string => {
+    const params2 = new URLSearchParams({
+      range: viewState.range,
+      sessionId,
+      tab: "spans",
+      spanLimit: String(viewState.spanLimit),
+      spanSort: viewState.spanSort,
+      spanOffset: String(offset)
+    });
+    if (selectedSpanId !== undefined) params2.set("spanId", selectedSpanId);
+    return `/usage?${params2.toString()}`;
+  };
+
+  return React.createElement(UsageView, {
+    selection: state.selection,
+    sessionScope: {
+      sessionId,
+      invalid: false,
+      rawSessionId: state.rawSessionId
+    },
+    sessionView: React.createElement(SessionDiagnosticsView, {
+      state: viewState,
+      report,
+      diagnosticsFailure: diagnosticsFailureValue,
+      spans: spansEvidence,
+      spansFailure: spansFailureValue,
+      spanHrefFor
+    }),
+    ...(traceResult === undefined
+      ? {}
+      : { traceLookup: usageTraceLookup(traceResult) })
+  });
 }

@@ -396,15 +396,21 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(
     usageSessionRoute,
-    /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v1"/u
+    /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v2"/u
   );
-  assert.match(usageSessionRoute, /runUsageQuery\(\(\) => adapter\.listSpans/u);
+  assert.match(usageSessionRoute, /runUsageQuery\(\(\) =>\s*adapter\.listSpans/u);
+  assert.match(usageSessionRoute, /runUsageQuery\(\(\) =>\s*adapter\.aggregateSpans/u);
   assert.match(
     usageSessionRoute,
     /key: "autodev\.session\.id"[\s\S]*?value: sessionId/u
   );
-  assert.match(usageSessionRoute, /limit: SESSION_SPAN_LIMIT/u);
-  assert.match(usageSessionRoute, /SESSION_SPAN_LIMIT = 200/u);
+  assert.match(usageSessionRoute, /limit: limit \+ 1/u);
+  assert.match(usageSessionRoute, /MAX_SESSION_SPAN_LIMIT = 200/u);
+  assert.match(usageSessionRoute, /DEFAULT_SESSION_SPAN_LIMIT = 50/u);
+  assert.match(usageSessionRoute, /sort: \[\{ field: "Timestamp", direction: sortDirection \}\]/u);
+  assert.match(usageSessionRoute, /hasMore/u);
+  assert.match(usageSessionRoute, /estimatedCostUsd/u);
+  assert.match(usageSessionRoute, /fn: "count", as: "total"/u);
   assert.doesNotMatch(
     usageSessionRoute,
     /SELECT\s|sessionId\s*[:,]\s*sessionId|spanAttributes\s*:/u,
@@ -434,11 +440,13 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     ),
     "utf8"
   );
-  assert.match(usageSessionTests, /autodev-openlit-session-usage-v1/u);
+  assert.match(usageSessionTests, /autodev-openlit-session-usage-v2/u);
   assert.match(usageSessionTests, /autodev\.session\.id/u);
   assert.match(usageSessionTests, /private prompt content/u);
   assert.match(usageSessionTests, /status: "unavailable"/u);
-  assert.match(usageSessionTests, /meta: \{ truncated: true \}/u);
+  assert.match(usageSessionTests, /hasMore/u);
+  assert.match(usageSessionTests, /estimatedCostUsd/u);
+  assert.match(usageSessionTests, /body\.total/u);
   const middlewareAuth = readFileSync(
     join(dir, "src/client/src/middleware/check-auth.ts"),
     "utf8"

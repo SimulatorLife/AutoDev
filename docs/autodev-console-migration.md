@@ -1179,6 +1179,7 @@ Current collection GETs (read-only unless an item detail is noted below):
 /control/runtime
 /control/evaluations
 /control/github
+/control/diagnostics
 ```
 
 Current GET detail routes include Agent, Prompt, and committed Prompt version detail. Agent detail also supports the typed enablement PATCH; Prompt version history is a read-only collection subresource. General collection resources reject non-GET methods, and the two collections that are written -- the workspace catalog and the permission policy -- are named exceptions: each answers GET with the canonical source's revision and PATCH with the write the operator made.
@@ -1302,6 +1303,28 @@ The verified Usage board currently contains:
 | Context compactions by provider | grouped by autodev.compaction.provider                   |
 
 Provider does not filter logical-request count because a logical route can touch multiple providers. Provider filters apply to attempt-level widgets. Context compactions are emitted by the router producer, and Usage now has structured trace-backed count, time-series, workspace/model/role/provider breakdown, and scope-compatible rate widgets; the provider breakdown is trace-backed because the router publishes the serving provider on the compaction's own span, and live ingestion/browser acceptance of it remain open. Provider and Skill filters fail closed for this signal.
+
+## Unified session diagnostics
+
+Session investigation used to have two implementations. The `autodev-session-diagnostics` skill parsed the Codex rollouts, the router's rotated logs, the bridge logs, `hooks.log` and the live router state in a ~3,493-line script, while the Console's Usage page had a mid-page **Session activity** client island that posted a session ID to OpenLIT and returned at most 200 span summaries with none of the rollout, router or efficiency evidence. Two parsers meant two answers to the same question.
+
+They are now one engine with four faces:
+
+| Surface                                  | How it reaches the engine                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GET /control/diagnostics/*` (`:4101`)  | Read-only, authenticated, contract revision 35; serves the live router state in-process    |
+| `pnpm autodev -- diagnostics`           | Asks the Control API online; runs the engine directly with `--offline`/`--codex-home`/`--router-log` |
+| `session-trace.ts` (skill wrapper)      | A thin standalone script over the same two paths; it parses nothing itself                 |
+| Console `/usage?sessionId=<id>`         | Server-rendered tabs over the Control API's diagnostics and OpenLIT's paginated spans       |
+
+The engine lives in `@simulatorlife/autodev-data/diagnostics`; its contract, validators and text formatters live in `@simulatorlife/autodev-core`. The Console's **Session ID** is now a top-bar view scope (`GET /usage?range=24H&sessionId=<id>`) instead of a POST body, so the whole page -- `Overview`, `Threads & Turns`, `Failures & Hooks`, `Router Requests`, `OTel Spans` -- is scoped to that session, and the unscoped page keeps `Aggregate usage` alongside `Recent sessions` and `Hook denials`. The session ID remains excluded from OTel metric dimensions and `USAGE_VARIABLE_IDS`, and is always validated with `safeAutoDevSessionId`.
+
+What is source-complete and what is not:
+
+- **Source-complete.** Core's diagnostics contract and formatters; the Data engine (rollout discovery across active and archived roots, thread tracing, rotated router logs, hook denials, fleet scan, live context, secret redaction); the Control API routes; the CLI command; the Console views and the `?sessionId=` scope; OpenLIT patch 79 (`autodev-openlit-session-usage-v2` with `limit`/`offset`/`sortDirection`, exact `total`, `hasMore` and `estimatedCostUsd`).
+- **Pending live deployment** (requires an authorized reinstall/restart, which this change does not perform): the OpenLIT patch image, the Control API's contract 35, and the rebuilt Console. Until those are deployed, the Console's session-scoped span tab cannot read the `v2` endpoint, and the skill wrapper's online mode cannot reach contract 35. The offline paths -- `pnpm autodev -- diagnostics --offline` and the skill wrapper's `--offline`/`--codex-home` fallback -- run entirely from the checkout and need no deployment.
+
+The old `POST /api/usage/session` Console proxy route, the `SessionUsageLookup` client island and the fixed 200-span wall are deleted rather than deprecated; there is no `v1` compatibility shim.
 
 ## Remaining work by dependency
 
