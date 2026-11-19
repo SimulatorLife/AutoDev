@@ -654,11 +654,13 @@ export function processRunner(
         settleTimer = setTimeout(() => {
           if (!closed) {
             cleanup();
-            reject(new OpencliCommandError(
-              "turn cancelled: opencli did not exit after SIGKILL",
-              "CANCELLED",
-              null
-            ));
+            reject(
+              new OpencliCommandError(
+                "turn cancelled: opencli did not exit after SIGKILL",
+                "CANCELLED",
+                null
+              )
+            );
           }
         }, 5000);
         killTimer.unref?.();
@@ -737,9 +739,10 @@ function showReading(
 ): void {
   const { text, url } = record;
   if (typeof text !== "string" || typeof url !== "string") return;
-  const shownChat = site === "gemini"
-    ? geminiConversationId(url)
-    : chatgptConversationId(url);
+  const shownChat =
+    site === "gemini"
+      ? geminiConversationId(url)
+      : chatgptConversationId(url);
   if (!shownChat || (conversationId !== null && shownChat !== conversationId))
     return;
   stream.showReply(text);
@@ -757,9 +760,14 @@ function unusableReply(
 ): string | null {
   if (parsed.unparsedCall)
     return `the ${site} reply holds a tool call the bridge could not read`;
-  const firstMessage = parsed.segments.find((segment) => segment.type === "message");
-  if (stream?.shownText && (firstMessage?.type !== "message" ||
-    !firstMessage.text.startsWith(stream.shownText)))
+  const firstMessage = parsed.segments.find(
+    (segment) => segment.type === "message"
+  );
+  if (
+    stream?.shownText &&
+    (firstMessage?.type !== "message" ||
+      !firstMessage.text.startsWith(stream.shownText))
+  )
     return `the ${site} reply changed after part of it was shown`;
   return null;
 }
@@ -2272,15 +2280,19 @@ export function createOpencliBridge(
     let messageCount = 0;
     for (const segment of parsed.segments) {
       if (segment.type === "message") {
-        output.push(messageItem(
-          segment.text,
-          messageCount++ === 0 ? messageId : `msg_${turnId(10)}`
-        ));
+        output.push(
+          messageItem(
+            segment.text,
+            messageCount++ === 0 ? messageId : `msg_${turnId(10)}`
+          )
+        );
       } else {
-        output.push(opencliToolCallItem(segment.call, turn.tools, {
-          itemId: `fc_${turnId(10)}`,
-          callId: `call_${turnId(12)}`
-        }));
+        output.push(
+          opencliToolCallItem(segment.call, turn.tools, {
+            itemId: `fc_${turnId(10)}`,
+            callId: `call_${turnId(12)}`
+          })
+        );
       }
     }
     if (output.length === 0) output.push(messageItem(parsed.text, messageId));
