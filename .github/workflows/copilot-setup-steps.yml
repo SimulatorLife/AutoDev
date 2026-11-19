@@ -8,7 +8,7 @@ on:
       - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
-      - ".nvmrc"
+      - ".node-version"
       - "package.json"
       - "pnpm-lock.yaml"
       - "rulesync.jsonc"
@@ -20,7 +20,7 @@ on:
       - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
-      - ".nvmrc"
+      - ".node-version"
       - "package.json"
       - "pnpm-lock.yaml"
       - "rulesync.jsonc"
@@ -43,7 +43,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 

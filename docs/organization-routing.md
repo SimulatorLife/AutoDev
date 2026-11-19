@@ -34,10 +34,11 @@ The provider workflows are also dispatchable from AutoDev. A new PR's provider r
 
 ## AutoDev toolchain
 
-AutoDev's own checks and validation profile use pnpm `10.32.1` with the committed
-`pnpm-lock.yaml`. The generic target runner may still invoke npm when a different
-SimulatorLife target explicitly declares npm or has an npm lockfile; that is a
-target-repository compatibility path, not an AutoDev dependency.
+AutoDev's checks and validation profile use standalone pnpm `12.21.0` with the
+committed `pnpm-lock.yaml` and a pnpm-managed Node runtime. The generic target
+runner also uses pnpm exclusively: JavaScript targets must declare
+`packageManager: pnpm@<version>`; targets configured for npm are rejected
+before dependency installation instead of silently switching package managers.
 
 ## CI provider tool versions
 

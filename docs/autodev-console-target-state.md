@@ -246,6 +246,34 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 
 ## 4. Repository and module architecture
 
+### Exclusive pnpm and Node.js runtime toolchain
+
+AutoDev-owned JavaScript installation, local checks, CI, launch scripts, provider
+bridges, and service reconciliation use **standalone pnpm as the only package
+manager**. pnpm manages the Node.js runtime as well: the root `package.json`
+pins `packageManager: pnpm@12.21.0`, `.node-version` pins Node `24.12.0`
+for pnpm's project-aware `node` shim and CI, and `engines.node` defines the
+minimum supported runtime. Provision Node with `pnpm runtime set node`; do
+not require an npm, npx, NVM, or Corepack executable, or use them as a fallback
+in first-party install, build, test, provider bootstrap, or validation paths.
+
+Launchd and hook subprocesses must resolve the installer's explicit
+`AUTODEV_NODE_BIN` or the pnpm-managed `PNPM_HOME/bin/node` even under a
+minimal PATH. Global CLIs may be found under `PNPM_HOME/bin`. Missing pnpm
+tooling is a visible prerequisite failure, never an implicit switch to a
+different package or runtime manager. Installation must not create or rewrite
+the operator's `.zprofile` to select Node. JavaScript target repositories
+run by AutoDev's generic workflows must declare `packageManager: pnpm@<version>`;
+an npm-only target is refused rather than installed with npm. Upstream
+third-party container builds (such as OpenLIT's own Docker build) may use
+their upstream package manager *inside the container*: that does not add
+a local npm prerequisite or authorize npm in AutoDev-owned code.
+
+**Acceptance:** an installation on macOS with standalone pnpm and its
+managed Node, but no npm/npx/NVM/Corepack on PATH, passes the install
+preflight, local scripts, hooks, service launch, validation and CI;
+no first-party script silently falls back to another toolchain.
+
 AutoDev is a **small, flat pnpm TypeScript monorepo** with isolated, independently testable workspaces. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
 
 | Monorepo benefit | Architectural consequence |

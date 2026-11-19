@@ -38,7 +38,6 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
-import { nativeNodeLoginProfileMatches } from "./host-arch.ts";
 import {
   CATALOGS,
   checkHookTrust,
@@ -129,7 +128,7 @@ function commandAvailable(command: string): boolean {
  * Whether a provider's CLI is installed, asked the way that provider's bridge
  * asks it. The Copilot CLI is found by the shared lookup -- an explicit
  * setting, then PATH, then the newest version-managed install -- because a
- * PATH lookup alone misses a CLI installed under nvm, and the user-level MCP
+ * PATH lookup alone misses a CLI installed in PNPM_HOME, and the user-level MCP
  * config written for a provider whose bridge cannot start is a config for
  * nothing.
  */
@@ -1159,13 +1158,6 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       failures
     );
     checkLaunchAgents(paths, failures);
-    if (process.platform === "darwin") {
-      check(
-        "native node login profile",
-        nativeNodeLoginProfileMatches(paths.home),
-        failures
-      );
-    }
     return failures.value;
   } finally {
     rmSync(projection.root, { recursive: true, force: true });

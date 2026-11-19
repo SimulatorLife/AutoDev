@@ -326,14 +326,17 @@ test("target-aware reusable workflows use the PAT checkout", async () => {
   assert.match(invoke, /Detect target repository toolchain/);
   assert.match(invoke, /Read AutoDev package manager version/);
   assert.match(invoke, /Setup pnpm for provider tooling/);
-  assert.ok(invoke.includes("node-version-file: ../../_temp/autodev.nvmrc"));
-  assert.match(
-    invoke,
-    /elif \[ -f package-lock\.json \] \|\| \[ -f npm-shrinkwrap\.json \]/
+  assert.ok(
+    invoke.includes("node-version-file: ../../_temp/autodev.node-version")
   );
   assert.match(
+    invoke,
+    /Target JavaScript projects must declare packageManager pnpm@<version>/
+  );
+  assert.doesNotMatch(invoke, /\bnpm (?:ci|install|run)\b/u);
+  assert.match(
     await readWorkflow("target-validation.yml"),
-    /node-version-file: \.\.\/\.\.\/_temp\/autodev\.nvmrc/
+    /node-version-file: \.\.\/\.\.\/_temp\/autodev\.node-version/
   );
 });
 
@@ -341,7 +344,7 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   );
-  assert.equal(packageJson.packageManager, "pnpm@10.32.1");
+  assert.equal(packageJson.packageManager, "pnpm@12.21.0");
   assert.ok(
     (await readFile(path.join(root, "pnpm-lock.yaml"), "utf8")).startsWith(
       "lockfileVersion:"
@@ -375,7 +378,7 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
   assert.match(source, /pnpm test/);
   assert.doesNotMatch(source, /test:python/);
   assert.doesNotMatch(source, /\bnpm\b/);
-  assert.match(source, /node-version-file: \.nvmrc/);
+  assert.match(source, /node-version-file: \.node-version/);
 });
 
 test("AutoDev CI makes actionlint and ShellCheck mandatory", async () => {
@@ -1143,9 +1146,32 @@ test("agent-invoke.yml run: blocks are syntactically valid bash", async () => {
   }
 });
 
-test("Node actions use the AutoDev root .nvmrc", async () => {
-  const nvmrc = await readFile(path.join(root, ".nvmrc"), "utf8");
-  assert.equal(nvmrc.trim(), "24.12");
+test("AutoDev shell launchers resolve pnpm-managed Node without nvm or npm", async () => {
+  for (const script of [
+    "run-codex-console.sh",
+    "run-codex-model-router.sh",
+    "run-codex-claude-bridge.sh",
+    "run-codex-opencli-proxy.sh",
+    "run-codex-antigravity-proxy.sh",
+    "run-codex-copilot-cli-responses-proxy.sh",
+    "ensure-codex-antigravity-proxy.sh",
+    "ensure-codex-minimax-proxy.sh",
+    "run-autodev-hook.sh"
+  ]) {
+    const source = await readFile(path.join(root, "scripts", script), "utf8");
+    assert.match(source, /PNPM_HOME/u, script);
+    assert.doesNotMatch(
+      source,
+      /\/\.nvm\/|\bnpm (?:ci|install|run)\b/u,
+      script
+    );
+  }
+});
+
+test("Node actions use the pnpm-compatible .node-version pin", async () => {
+  const version = await readFile(path.join(root, ".node-version"), "utf8");
+  assert.equal(version.trim(), "24.12.0");
+  assert.equal(existsSync(path.join(root, ".nvmrc")), false);
   for (const name of [
     "copilot-setup-steps.yml",
     "agent-invoke.yml",

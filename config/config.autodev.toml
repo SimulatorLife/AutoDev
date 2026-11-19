@@ -24,13 +24,10 @@ background_terminal_max_timeout = 600000
 [sandbox_workspace_write]
 # Permit diagnostics against localhost services from workspace-write sessions.
 network_access = true
-# Shared package-manager caches outside the workspace: the pnpm store, the npm
-# cache, and Playwright's browser downloads. Without them a sandboxed
-# `pnpm install`, `npm view` or `playwright install` fails with EPERM (npm
-# misreports it as "root-owned files"). Codex expands `~` in these entries.
+# Allow pnpm's shared store and Playwright browser downloads in the sandbox.
+# Neither npm nor NVM is part of AutoDev's supported local toolchain.
 writable_roots = [
   "~/Library/pnpm/store",
-  "~/.npm",
   "~/Library/Caches/ms-playwright",
 ]
 

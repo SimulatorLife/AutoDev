@@ -9,7 +9,7 @@
 # readiness, restart, and build-orchestration decisions live in the typed
 # Runtime platform owner; this shell layer only:
 #
-#   1. Resolves a real Node binary (AUTODEV_NODE_BIN → PATH → nvm → homebrew).
+#   1. Resolves a real Node binary (AUTODEV_NODE_BIN → pnpm-managed Node).
 #   2. Confirms console/.next/BUILD_ID exists (the Runtime installer builds
 #      console/ first; this script never invokes a build).
 #   3. Reads only the two Console-required tokens from
@@ -115,26 +115,16 @@ fi
 # Node resolution (matches the installer's typed resolver behavior)
 # ---------------------------------------------------------------------------
 resolve_node() {
-  # launchd passes the native Node the installer resolved; PATH order alone
-  # can pick an Intel build that Rosetta translates on every cold start.
+  # LaunchAgents carry the installer's selected binary; direct starts use pnpm's Node shim.
   if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then
     printf '%s\n' "$AUTODEV_NODE_BIN"
     return 0
   fi
-  if command -v node >/dev/null 2>&1; then
-    command -v node
+  local pnpm_home="${PNPM_HOME:-$HOME/Library/pnpm}"
+  if [[ -x "$pnpm_home/bin/node" ]]; then
+    printf '%s\n' "$pnpm_home/bin/node"
     return 0
   fi
-  local candidate
-  for candidate in \
-    "$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" \
-    /opt/homebrew/bin/node \
-    /usr/local/bin/node; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
   return 1
 }
 

@@ -14,7 +14,7 @@ import {
   findCodexBinary,
   findCopilotBinary,
   findMiniMaxBinary,
-  findNvmBinary,
+  findPnpmGlobalBinary,
   resolveCodexBinary,
   resolveCopilotBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
@@ -85,22 +85,19 @@ test("the first Copilot CLI on PATH is used", (t) => {
   assert.equal(resolveCopilotBinary({ PATH: directory }, fixture.home), binary);
 });
 
-test("a version-managed Copilot CLI is found when PATH carries no nvm", (t) => {
+test("a pnpm-global Copilot CLI is found without a login-shell PATH", (t) => {
   const fixture = homeFixture();
   t.after(fixture.cleanup);
-  const older = installExecutable(
-    join(fixture.home, ".nvm", "versions", "node", "v24.11.0", "bin", "copilot")
-  );
-  const newer = installExecutable(
+  const pnpmHome = join(fixture.home, "pnpm-home");
+  const binary = installExecutable(join(pnpmHome, "bin", "copilot"));
+  const legacy = installExecutable(
     join(fixture.home, ".nvm", "versions", "node", "v25.0.0", "bin", "copilot")
   );
-  // The launchd PATH the bridge runs with: no version manager's bin
-  // directory, so a PATH lookup alone finds nothing to spawn.
   assert.equal(
-    resolveCopilotBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
-    newer
+    resolveCopilotBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
+    binary
   );
-  assert.notEqual(newer, older);
+  assert.notEqual(binary, legacy);
 });
 
 test("a Copilot CLI in ~/.local/bin is found when nothing else is installed", (t) => {
@@ -137,25 +134,23 @@ test("an explicit Codex CLI named as a command is resolved on PATH", (t) => {
   );
 });
 
-test("a version-managed Codex CLI is found when PATH carries no nvm", (t) => {
+test("a pnpm-global Codex CLI is found without a login-shell PATH", (t) => {
   const fixture = homeFixture();
   t.after(fixture.cleanup);
-  const older = installExecutable(
-    join(fixture.home, ".nvm", "versions", "node", "v24.11.0", "bin", "codex")
-  );
-  const newer = installExecutable(
-    join(fixture.home, ".nvm", "versions", "node", "v25.0.0", "bin", "codex")
+  const pnpmHome = join(fixture.home, "pnpm-home");
+  const binary = installExecutable(join(pnpmHome, "bin", "codex"));
+  assert.equal(
+    resolveCodexBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
+    binary
   );
   assert.equal(
-    resolveCodexBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
-    newer
+    findCodexBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
+    binary
   );
   assert.equal(
-    findCodexBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
-    newer
+    findPnpmGlobalBinary("codex", fixture.home, { PNPM_HOME: pnpmHome }),
+    binary
   );
-  assert.equal(findNvmBinary("codex", fixture.home), newer);
-  assert.notEqual(newer, older);
 });
 
 test("a missing Codex CLI is reported as absent rather than guessed", (t) => {
@@ -188,11 +183,10 @@ test("a MiniMax CLI is found in the home it was asked about", (t) => {
     findMiniMaxBinary({ PATH: "", HOME: fixture.home }, fixture.home),
     binary
   );
-  const versionManaged = installExecutable(
-    join(fixture.home, ".nvm", "versions", "node", "v25.0.0", "bin", "mmx")
-  );
+  const pnpmHome = join(fixture.home, "pnpm-home");
+  const versionManaged = installExecutable(join(pnpmHome, "bin", "mmx"));
   assert.equal(
-    findMiniMaxBinary({ PATH: join(fixture.home, "empty") }, fixture.home),
+    findMiniMaxBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
     versionManaged
   );
 });

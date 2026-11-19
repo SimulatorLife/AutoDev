@@ -3662,9 +3662,9 @@ installer is the only supported materialization path into
 
 ### Operational notes
 
-- `run-provider-agent.sh` prefers the newest executable matching
-  `$HOME/.nvm/versions/node/*/bin/codex`; set `CODEX_BIN` to override that
-  selection.
+- The shared Codex resolver checks `CODEX_BIN`, `PATH`, and the pnpm-global
+  `PNPM_HOME/bin/codex`; the service resolver ranks installed CLI versions.
+  It no longer searches NVM directories.
 - Profile names are configuration files selected with `codex --profile`, not
   `[profiles.*]` tables.
 - After changing registry or profile configuration, run `codex doctor --json`

@@ -98,11 +98,11 @@ jobs:
 
       # The catalog owner is TypeScript, so the Node that runs it has to be
       # able to strip types. The runner's default Node is not a promise; the
-      # repository's own .nvmrc is.
+      # repository's own .node-version is.
       - name: Setup AutoDev Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .autodev/.nvmrc
+          node-version-file: .autodev/.node-version
 
       - name: Resolve target and prompt workspaces
         id: workspace_catalog
