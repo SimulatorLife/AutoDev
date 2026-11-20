@@ -63,6 +63,8 @@ export class OpencliBrowser {
   private readonly fetcher: typeof fetch;
   private readonly slots = new Map<OpencliSite, string[]>();
   private readonly busy = new Set<string>();
+  /** A command settled without process close; its target must not be leased. */
+  private readonly quarantined = new Set<string>();
   private child: ChildProcess | null = null;
   private port: number | null = null;
   private starting: Promise<void> | null = null;
@@ -125,9 +127,23 @@ export class OpencliBrowser {
     try {
       return await command(endpoint);
     } finally {
-      this.busy.delete(endpoint);
+      // Keep the lease held if the CLI outlives its caller's cancellation.
+      if (!this.quarantined.has(endpoint)) this.busy.delete(endpoint);
       if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
     }
+  }
+
+  /** A cancelled CLI has not emitted close; isolate only its own CDP target. */
+  quarantine(endpoint: string): void {
+    this.quarantined.add(endpoint);
+    this.busy.add(endpoint);
+  }
+
+  /** The CLI has now closed, so its CDP target can be leased again. */
+  releaseQuarantine(endpoint: string): void {
+    this.quarantined.delete(endpoint);
+    this.busy.delete(endpoint);
+    if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
   }
 
   /**
@@ -178,6 +194,8 @@ export class OpencliBrowser {
     this.child = null;
     this.port = null;
     this.slots.clear();
+    this.busy.clear();
+    this.quarantined.clear();
   }
 
   private async ensureReady(): Promise<void> {
