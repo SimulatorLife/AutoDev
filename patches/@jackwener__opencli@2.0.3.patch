@@ -164,7 +164,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2340,40 +2352,164 @@
+@@ -2340,40 +2352,168 @@
      return '';
  }
  
@@ -300,7 +300,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +            if (!storedErrorSince) storedErrorSince = Date.now();
 +            // A not-yet-persisted partial answer is expected during generation.
 +            if (!generatingNow && Date.now() - storedErrorSince >= 12000) {
-+                throw new CommandExecutionError('ChatGPT stored reply could not be read: ' + storedError);
++                throw new CommandExecutionError("ChatGPT's reply is shown, but its stored text could not be read: " + storedError);
              }
 +            continue;
          }
@@ -348,11 +348,15 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +        }
      }
  
++    // A persistently unreadable stored answer is not a valid, unfinished turn.
++    if (storedError) {
++        throw new CommandExecutionError("ChatGPT's reply is shown, but its stored text could not be read: " + storedError);
++    }
 +    // A valid unfinished reply is a timeout (408), not a storage error (503).
      throw new TimeoutError(
          'chatgpt ask',
          timeoutSeconds,
-@@ -2670,6 +2806,97 @@
+@@ -2670,6 +2810,97 @@
      };
  `;
  
@@ -450,7 +454,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2904,7 @@
+@@ -2677,30 +2908,7 @@
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -482,7 +486,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3901,79 @@
+@@ -3697,3 +3905,79 @@
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
