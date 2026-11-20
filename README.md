@@ -101,3 +101,8 @@ GITHUB_TOKEN="$(gh auth token)" \
 
 pnpm exec rulesync generate
 ```
+
+## Launching Chrome without OpenCLI Debug Banner
+```shell
+open -a "Google Chrome" --args --silent-debugger-extension-api
+```

@@ -1044,6 +1044,23 @@ restart.
   Chrome extension and sign in to each site once in your Chrome; turns run in
   the extension's "OpenCLI" tab group. Confirm the extension with the
   commands below.
+  The extension drives its tabs through Chrome's `chrome.debugger` API, so
+  Chrome shows an _"OpenCLI" started debugging this browser_ banner while it
+  is attached. AutoDev does not start your Chrome and cannot pass it flags;
+  to hide the banner, quit Chrome completely (Cmd-Q) and start it yourself
+  with `--silent-debugger-extension-api`:
+
+  ```bash
+  open -a "Google Chrome" --args --silent-debugger-extension-api
+  ```
+
+  The flag is ignored if Chrome is already running, and applies only to that
+  launch: Chrome started later from the Dock or Spotlight shows the banner
+  again. `chrome://version` lists it under "Command Line" when it took
+  effect. It silences the banner for every extension with the `debugger`
+  permission, not only OpenCLI, so Chrome no longer tells you when any
+  extension attaches to your pages. The dedicated browser below never shows
+  the banner: it is driven over loopback CDP, not through the extension.
 - **On: a dedicated Chrome for Testing.** The normal typed installer always
   installs the pinned headed build into
   `$CODEX_HOME/provider-runtime/opencli/browsers`, without using or altering
