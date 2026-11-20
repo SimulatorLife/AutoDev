@@ -2846,7 +2846,8 @@ single list; the route patterns and the site registry in
   during generation, the bridge forwards it incrementally. This is
   best-effort, not a guarantee that the site persists partial text:
   deterministic adapter tests exercise growing mid-generation snapshots,
-  but a live signed-in-browser acceptance test is still required. Both adapters send newline-delimited `{text, url}` readings
+  but a live signed-in-browser acceptance test is still required. Both
+  adapters send newline-delimited `{text, url}` readings
   through the private `OPENCLI_PROGRESS_FD` descriptor -- neither stdout
   (the command's final JSON result) nor stderr (diagnostics). The bridge
   opens FD 3 only for streamed turns and verifies that a reading belongs to
@@ -2869,10 +2870,13 @@ single list; the route patterns and the site registry in
 - **ChatGPT's missing terminal marker is not an indefinite wait.** The stored
   reply normally has `end_turn=true`. If it does not, the adapter accepts
   the stored answer only after it is unchanged for at least 12 seconds and
-  the site is no longer generating; a persistently unreadable stored reply
-  also fails after a bounded interval once generation has stopped. A
-  successfully read but unfinished reply retains timeout classification,
-  and a stored message must match the submitted prompt and conversation.
+  the site is no longer generating, with the 12-second stability clock
+  beginning only once generation is observed to stop. A persistently
+  unreadable stored reply receives a grace period starting after generation
+  stops, while a successfully read but unfinished reply retains timeout
+  classification. On continued chats, the stored user-message node ID must
+  advance beyond the ID captured before submission: matching text alone
+  cannot distinguish a repeated prompt from its preceding reply.
   Neither condition treats an actively generating response as complete.
 - **A Gemini first prompt names MCP tools instead of documenting them when
   it would not fit.** `exec`'s description documents every nested tool, and a
