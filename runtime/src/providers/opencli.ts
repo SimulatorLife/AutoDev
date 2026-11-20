@@ -2224,7 +2224,8 @@ export function createOpencliBridge(
                 signal,
                 deadline,
                 stream
-                  ? (record) => showReading(stream, record, conversationId, turn.site)
+                  ? (record) =>
+                      showReading(stream, record, conversationId, turn.site)
                   : undefined
               )
             )
