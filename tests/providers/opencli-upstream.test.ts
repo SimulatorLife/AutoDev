@@ -1297,6 +1297,71 @@ test("the ChatGPT send baseline reads the last persisted user-message ID", async
   assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
 });
 
+test("ChatGPT waits 12 seconds after generation stops before accepting partial text", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  let polls = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => Response.json(storedConversation(polls >= 3, "Partial.")),
+      () => ++polls === 1
+    );
+    chat.page.sleep = async () => {
+      now += 20_000;
+    };
+    const result = await utils.waitForChatGPTResponse(
+      chat.page,
+      0,
+      CHATGPT_PROMPT,
+      180,
+      { baselinePairCounts: new Map() }
+    );
+    assert.equal(result, "Partial.");
+    assert.equal(polls, 3, "the first non-generating poll must not complete a partial reply");
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("ChatGPT starts an unreadable-storage grace period only after generation stops", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  let reads = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => {
+        reads += 1;
+        return reads <= 2
+          ? new Response("pending persistence", { status: 404 })
+          : Response.json(storedConversation(true, "New answer."));
+      },
+      () => reads === 0
+    );
+    chat.page.sleep = async () => {
+      now += 20_000;
+    };
+    const result = await utils.waitForChatGPTResponse(
+      chat.page,
+      0,
+      CHATGPT_PROMPT,
+      180,
+      { baselinePairCounts: new Map() }
+    );
+    assert.equal(result, "New answer.");
+    assert.equal(reads, 3);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("ChatGPT rejects a finished stored answer from another conversation", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
