@@ -1192,6 +1192,133 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
   ]);
 });
 
+
+test("ChatGPT publishes changing stored text while generation is still active", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-live-"));
+  const file = resolve(directory, "progress");
+  const fd = openSync(file, "w");
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  let reads = 0;
+  let activeReads = 0;
+  process.env.OPENCLI_PROGRESS_FD = String(fd);
+  try {
+    const chat = chatgptChat(
+      "",
+      () => {
+        reads += 1;
+        const reply =
+          reads === 1
+            ? "Working.\n"
+            : reads === 2
+              ? "Working.\nStill working.\n"
+              : "Working.\nStill working.\nDone.";
+        return Response.json(storedConversation(reads >= 3, reply));
+      },
+      () => {
+        activeReads += 1;
+        return true;
+      }
+    );
+    const reply = await utils.waitForChatGPTResponse(
+      chat.page,
+      0,
+      CHATGPT_PROMPT,
+      5,
+      { baselinePairCounts: new Map() }
+    );
+    assert.equal(reply, "Working.\nStill working.\nDone.");
+    assert.ok(activeReads >= 3, "generation was active on every stored read");
+    assert.equal(reads, 3, "partial records were read before end_turn");
+  } finally {
+    if (saved === undefined) delete process.env.OPENCLI_PROGRESS_FD;
+    else process.env.OPENCLI_PROGRESS_FD = saved;
+    closeSync(fd);
+  }
+  const records = readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { text: string; url: string });
+  rmSync(directory, { recursive: true, force: true });
+  assert.deepEqual(records.map((record) => record.text), [
+    "Working.\n",
+    "Working.\nStill working.\n",
+    "Working.\nStill working.\nDone."
+  ]);
+});
+
+test("ChatGPT rejects a finished stored answer from another conversation", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const otherChat = "00000000-1111-2222-3333-444444444444";
+  const chat = chatgptChat(
+    "Done",
+    () => Response.json(storedConversation(true)),
+    () => false,
+    () => "https://chatgpt.com/c/" + otherChat
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 2, {
+      baselinePairCounts: new Map(),
+      expectedConversationId: CHATGPT_CHAT_ID
+    }),
+    /navigated away from the submitted conversation/u
+  );
+});
+
+test("an incomplete stored answer times out rather than becoming an unreadable-reply error", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat(
+    "Still writing",
+    () => Response.json(storedConversation(false)),
+    () => true
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 0.1, {
+      baselinePairCounts: new Map()
+    }),
+    (error: unknown) =>
+      error instanceof Error && /timed out|timeout/iu.test(error.message)
+  );
+});
+
+test("the stored reply must belong to the submitted prompt", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat(
+    "Wrong reply",
+    () => Response.json(storedConversation(true, "Wrong reply", "A different prompt")),
+    () => true
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 0.1, {
+      baselinePairCounts: new Map()
+    }),
+    (error: unknown) =>
+      error instanceof Error && /timed out|timeout/iu.test(error.message)
+  );
+});
+
+test("the pnpm lock references the exact OpenCLI patch SHA256 in all three locations", () => {
+  const patch = readFileSync(
+    fileURLToPath(new URL("../../patches/@jackwener__opencli@2.0.3.patch", import.meta.url))
+  );
+  const lock = readFileSync(
+    fileURLToPath(new URL("../../pnpm-lock.yaml", import.meta.url)),
+    "utf8"
+  );
+  const digest = createHash("sha256").update(patch).digest("hex");
+  assert.ok(
+    lock.includes("'@jackwener/opencli@2.0.3': " + digest),
+    "the patchedDependencies entry must match the patch bytes"
+  );
+  const importerHashes = [...lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu)]
+    .map((match) => match[1]);
+  assert.deepEqual(importerHashes, [digest, digest]);
+});
+
 test("a Gemini reply keeps the line breaks the page shows inside a paragraph", async () => {
   // Gemini's reply panel is `white-space: pre-wrap`: a tool call's script is
   // a paragraph whose line breaks show on screen. Reading it as collapsed
