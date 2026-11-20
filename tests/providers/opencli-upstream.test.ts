@@ -953,11 +953,21 @@ interface ChatGPTReplyUtils {
     baselineCount: number,
     prompt: string,
     timeoutSeconds: number,
-    options: { baselinePairCounts: Map<string, number> }
+    options: {
+      baselinePairCounts: Map<string, number>;
+      expectedConversationId?: string;
+      baselinePromptId?: string | null;
+    }
   ) => Promise<string>;
+  getChatGPTStoredPromptId: (page: unknown) => Promise<string | null>;
   chatgptReplyFromConversation: (
     conversation: unknown
-  ) => { text: string; finished: boolean; promptText: string } | null;
+  ) => {
+    text: string;
+    finished: boolean;
+    promptText: string;
+    promptId: string;
+  } | null;
   chatgptReplyCanFinish: (
     stored: { text: string; finished: boolean },
     stableMs: number,
@@ -987,7 +997,8 @@ const CHATGPT_SHOWN_REPLY =
 function storedConversation(
   finalEndTurn: boolean | null,
   replyText = CHATGPT_STORED_REPLY,
-  promptText = CHATGPT_PROMPT
+  promptText = CHATGPT_PROMPT,
+  promptId = "prompt"
 ): unknown {
   const message = (
     role: string,
@@ -1003,10 +1014,10 @@ function storedConversation(
   const nodes: [string, string | null, unknown][] = [
     ["root", null, null],
     ["system", "root", message("system", "text", [""])],
-    ["prompt", "system", message("user", "text", [promptText])],
+    [promptId, "system", message("user", "text", [promptText])],
     [
       "read",
-      "prompt",
+      promptId,
       message("tool", "multimodal_text", ["# Codex agent turn"])
     ],
     [
@@ -1127,12 +1138,13 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
     {
       text: CHATGPT_STORED_REPLY,
       finished: true,
-      promptText: CHATGPT_PROMPT
+      promptText: CHATGPT_PROMPT,
+      promptId: "prompt"
     }
   );
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(false)),
-    { text: CHATGPT_STORED_REPLY, finished: false, promptText: CHATGPT_PROMPT }
+    { text: CHATGPT_STORED_REPLY, finished: false, promptText: CHATGPT_PROMPT, promptId: "prompt" }
   );
   assert.equal(
     utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
@@ -1245,6 +1257,44 @@ test("ChatGPT publishes changing stored text while generation is still active", 
     "Working.\nStill working.\n",
     "Working.\nStill working.\nDone."
   ]);
+});
+
+
+test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  let reads = 0;
+  const chat = chatgptChat(
+    "Repeated",
+    () => {
+      reads += 1;
+      // The previous completed reply has exactly the same user prompt.
+      return Response.json(
+        reads === 1
+          ? storedConversation(true, "Stale reply", CHATGPT_PROMPT, "old-prompt")
+          : storedConversation(true, "New reply", CHATGPT_PROMPT, "new-prompt")
+      );
+    }
+  );
+  const reply = await utils.waitForChatGPTResponse(
+    chat.page,
+    0,
+    CHATGPT_PROMPT,
+    2,
+    { baselinePairCounts: new Map(), baselinePromptId: "old-prompt" }
+  );
+  assert.equal(reply, "New reply");
+  assert.equal(reads, 2, "the completed previous turn must be ignored");
+});
+
+test("the ChatGPT send baseline reads the last persisted user-message ID", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat(
+    "",
+    () => Response.json(storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user"))
+  );
+  assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
 });
 
 test("ChatGPT rejects a finished stored answer from another conversation", async () => {
