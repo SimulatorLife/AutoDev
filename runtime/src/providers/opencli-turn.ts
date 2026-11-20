@@ -1214,10 +1214,10 @@ export type ParsedReplySegment =
   | { readonly type: "tool_call"; readonly call: ParsedToolCall };
 
 export interface ParsedReply {
-  /** The reply's prose, with every call removed. */
+  /** Safe prose preceding the first pending tool call (or all prose if no call). */
   readonly text: string;
   readonly calls: ParsedToolCall[];
-  /** Original reply order; prose on either side of a call is not moved across it. */
+  /** Initial prose followed by pending calls in original order; speculative trailing prose is omitted. */
   readonly segments: ParsedReplySegment[];
   /**
    * Whether the prose still holds a `<tool_call` the parser could not read.
