@@ -13156,6 +13156,7 @@ test("Every canonical Console route path maps to a canonical nav section", () =>
 });
 test("Canonical nav order matches Configure/Observe/Operate grouping", () => {
   const expected: readonly CanonicalNavSection[] = [
+    "Overview",
     "Agents",
     "Providers",
     "MCPs",

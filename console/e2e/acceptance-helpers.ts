@@ -85,11 +85,12 @@ export async function expectRouteHeading(
 /**
  * The canonical resources the target state names.
  *
- * The grouping is presentation only: all fourteen resources have first-class
- * routes, and each one answers with its own resource rather than with a
- * shared surface that says something about all of them.
+ * The grouping is presentation only: all fifteen resources have first-class
+ * routes. Overview links to those resources; the other routes answer with
+ * their own resource rather than a shared summary surface.
  */
 export const CANONICAL_ROUTES: readonly CanonicalRoute[] = [
+  { path: "/overview", section: "overview", heading: "Overview" },
   { path: "/agents", section: "agents", heading: "Agents" },
   { path: "/providers", section: "providers", heading: "Providers" },
   { path: "/mcps", section: "mcps", heading: "MCPs" },

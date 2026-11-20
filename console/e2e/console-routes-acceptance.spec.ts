@@ -136,6 +136,44 @@ test("every canonical resource route answers with its own resource", async ({
   );
 });
 
+test("Overview is a static resource landing page linking to canonical destinations", async ({
+  page
+}) => {
+  await page.goto("/overview");
+  await waitForPageContent(page);
+
+  await expect(
+    page.getByRole("heading", { name: "Overview", level: 1 })
+  ).toBeVisible();
+  await expect(page.locator('[data-nav-item="overview"]')).toHaveAttribute(
+    "aria-current",
+    "page"
+  );
+  for (const destination of [
+    "Agents",
+    "Providers",
+    "MCPs",
+    "Skills",
+    "Hooks",
+    "Prompts",
+    "Permissions",
+    "Tools",
+    "Usage",
+    "Evaluations",
+    "Playtesting",
+    "Memory",
+    "Workspaces",
+    "GitHub"
+  ]) {
+    await expect(
+      page.getByRole("link", { name: destination, exact: true }).last()
+    ).toHaveAttribute("href", `/${destination.toLowerCase()}`);
+  }
+  await expect(
+    page.getByText(/system health|active agents|resource counts/i)
+  ).toHaveCount(0);
+});
+
 /**
  * A detail page's tab names the item it is about.
  *

@@ -24,7 +24,7 @@ import {
   validateAgentDefinition
 } from "../src/index.ts";
 
-test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 sections in canonical order", () => {
+test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 15 sections in canonical order", () => {
   // The grouped definition is the single source of truth.
   assert.deepEqual(
     CANONICAL_NAV_GROUPS.map((group) => group.id),
@@ -34,6 +34,7 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 secti
   // This definition is the source of truth for resource grouping and route
   // ownership. The target Console contract places Playtesting in Observe.
   assert.deepEqual(CANONICAL_NAV_GROUPS[0]?.sections, [
+    "Overview",
     "Agents",
     "Providers",
     "MCPs",
@@ -53,6 +54,7 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 secti
 
   // The flattened list is derived from the grouped definition.
   const expected = [
+    "Overview",
     "Agents",
     "Providers",
     "MCPs",
@@ -69,7 +71,7 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 secti
     "GitHub"
   ] as const;
   assert.deepEqual(CANONICAL_NAVIGATION, expected);
-  assert.equal(CANONICAL_NAVIGATION.length, 14);
+  assert.equal(CANONICAL_NAVIGATION.length, 15);
 
   for (const [index, element] of expected.entries()) {
     const section = element!;

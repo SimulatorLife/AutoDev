@@ -22,6 +22,10 @@ import React from "react";
 const CIRCLE_24_PATH = "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z";
 
 export const ICON_PATHS = {
+  Overview: [
+    "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z",
+    "m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z"
+  ],
   Agents: [
     "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2",
     "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8",
@@ -296,6 +300,7 @@ export function IconLabel({
  * would typecheck while silently rendering no icon at all.
  */
 const NAV_ICON_SOURCES = [
+  "Overview",
   "Agents",
   "Providers",
   "MCPs",
