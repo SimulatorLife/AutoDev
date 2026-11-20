@@ -168,26 +168,19 @@ Mem0 `search` is a candidate source, not authorization or proof of downstream us
 
 Agents receive a compact advisory packet, not arbitrary historical chunks. It may contain relevant decisions, successes/failures, procedures, conflicts, uncertainty, and source references.
 
-Durable memories are append-oriented and can be:
+Mem0 manages durable memory writes, updates and deletes under its own provider semantics; **do not assume provider memory is append-only** or that it supports AutoDev's entire former lifecycle schema. The integration should convey vetted applicability and display only statuses backed by observed evidence, including active, stale/uncertain, superseded, or deleted **when determinable**. Unknown lifecycle facts remain unknown.
 
-- active;
-- superseded;
-- invalidated;
-- uncertain;
-- scope-limited.
+Preserve source and temporal metadata when supported by the selected Mem0 API and approved retention policy:
 
-Retain temporal/provenance fields where useful:
+~~~text
+source / trajectory reference
+created_at / observed_at
+valid_from / valid_to (if supported)
+last_verified_at / verification_source (if observed)
+supersedes / superseded_by (if supported)
+~~~
 
-```text
-source / trajectory
-created_at
-valid_from / valid_to
-last_verified_at
-verification_source
-supersedes / superseded_by
-```
-
-Contradictions trigger reconciliation rather than winner-takes-all similarity ranking. Superseded episodes remain queryable as historical evidence.
+Link to existing execution/evaluation evidence for history the provider does not preserve; do not invent a second AutoDev memory database to recreate unavailable provider features. Contradictions trigger current-state screening before injection. Superseded episodes remain inspectable from retained approved source evidence where permitted, not by assuming Mem0 preserves every prior version.
 
 ## 9. Storage, retention, and module ownership
 
