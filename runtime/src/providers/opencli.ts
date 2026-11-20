@@ -764,7 +764,11 @@ export function processRunner(
             // The process group may already be gone.
           }
         }
-        child.kill("SIGKILL");
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // The child can exit between being tracked and shutdown.
+        }
       }
       await browser.close();
     }
@@ -822,9 +826,9 @@ function unusableReply(
 ): string | null {
   if (parsed.unparsedCall)
     return `the ${site} reply holds a tool call the bridge could not read`;
-  const firstMessage = parsed.segments.find(
-    (segment) => segment.type === "message"
-  );
+  // A streamed message is already output item 0. A leading tool call must
+  // never cause that item to be reused at a later output index.
+  const firstMessage = parsed.segments[0];
   if (
     stream?.shownText &&
     (firstMessage?.type !== "message" ||
