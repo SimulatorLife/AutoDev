@@ -72,6 +72,8 @@ jobs:
       # agent's skills are installed and generated here before it starts.
       # rulesync.jsonc supplies the feature, output root, and delete behaviour.
       - name: Generate repository skills for Copilot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           pnpm exec rulesync install --frozen --silent
           pnpm exec rulesync generate --targets copilot --silent
