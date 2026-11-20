@@ -1,5 +1,8 @@
 # Memory injection outcome reports
 
+> **Transition notice:** This document describes the **currently implemented AutoDev/PostgreSQL** injection, use-assessment, and outcome/cohort reporting APIs. The [selected target](memory-target-state.md) changes the long-term memory engine to **Mem0 Platform**, retaining OpenLIT/OTel and the experiment/attribution distinctions here. It does **not** claim that provider-backed cohort collection or migration is implemented. During cutover, preserve the session-level cohort semantics, explicit no-memory arm, observed injection vs. assessed use, reporter-supplied outcomes, and historical audit data. Do not route Mem0/MCP reads into disabled cohorts or silently combine provider and native-memory exposures. This document must be updated when the real provider-backed API contract is implemented.
+
+
 AutoDev records packet exposure separately from raw experience envelopes so
 Runtime can observe what it actually attached without mutating append-only
 trajectory history.
