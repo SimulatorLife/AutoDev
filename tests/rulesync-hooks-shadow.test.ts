@@ -491,7 +491,8 @@ test("run-autodev-hook.sh executes TypeScript hooks under a minimal PATH", () =>
         env: {
           PATH: "/usr/bin:/bin",
           HOME: process.env.HOME ?? sandbox,
-          CODEX_HOME: codexHome
+          CODEX_HOME: codexHome,
+          AUTODEV_NODE_BIN: process.execPath
         }
       }
     );
