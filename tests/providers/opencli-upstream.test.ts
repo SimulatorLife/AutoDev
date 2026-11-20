@@ -1098,8 +1098,7 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
   const reply = await utils.waitForChatGPTResponse(
     chat.page,
     CHATGPT_PROMPT,
-    30,
-    {}
+    30
   );
   assert.equal(reply, CHATGPT_STORED_REPLY);
   assert.deepEqual(chat.fetched, [
@@ -1116,7 +1115,7 @@ test("a ChatGPT reply whose stored text cannot be read fails instead of using th
     () => new Response("{}", { status: 404 })
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1, {}),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1),
     /stored text could not be read: conversation fetch status 404/u
   );
 });
@@ -1159,8 +1158,7 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
     const reply = await utils.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
-      30,
-      {}
+      30
     );
     assert.equal(reply, CHATGPT_STORED_REPLY);
   } finally {
@@ -1212,8 +1210,7 @@ test("ChatGPT publishes changing stored text while generation is still active", 
     const reply = await utils.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
-      5,
-      {}
+      5
     );
     assert.equal(reply, "Working.\nStill working.\nDone.");
     assert.ok(activeReads >= 3, "generation was active on every stored read");
@@ -1291,11 +1288,10 @@ test("ChatGPT waits 12 seconds after generation stops before accepting partial t
     const result = await utils.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
-      180,
-      {}
+      180
     );
     assert.equal(result, "Partial.");
-    assert.equal(polls, 8, "fallback waits 12 seconds after generation stops");
+    assert.equal(polls, 7, "fallback waits 12 seconds after generation stops");
   } finally {
     Date.now = originalNow;
   }
@@ -1325,11 +1321,64 @@ test("ChatGPT starts an unreadable-storage grace period only after generation st
     const result = await utils.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
-      180,
-      {}
+      180
     );
     assert.equal(result, "New answer.");
     assert.equal(reads, 3);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("missing conversation IDs fail clearly after a bounded wait", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => Response.json(storedConversation(true)),
+      () => true,
+      () => "https://chatgpt.com/"
+    );
+    chat.page.sleep = async () => {
+      now += 2000;
+    };
+    await assert.rejects(
+      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      /did not create a conversation URL/u
+    );
+    assert.equal(now, 12_000);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("wrong stored prompts fail in 12 seconds despite an active stop button", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () =>
+        Response.json(
+          storedConversation(true, "Wrong answer.", CHATGPT_PROMPT + " extra")
+        ),
+      () => true
+    );
+    chat.page.sleep = async () => {
+      now += 2000;
+    };
+    await assert.rejects(
+      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      /different prompt or turn/u
+    );
+    assert.ok(now <= 14_000);
   } finally {
     Date.now = originalNow;
   }
@@ -1362,7 +1411,7 @@ test("an incomplete stored answer times out rather than becoming an unreadable-r
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1, {}),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
     (error: unknown) =>
       error instanceof Error && /timed out|timeout/iu.test(error.message)
   );
@@ -1378,9 +1427,8 @@ test("the stored reply must belong to the submitted prompt", async () => {
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1, {}),
-    (error: unknown) =>
-      error instanceof Error && /timed out|timeout/iu.test(error.message)
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
+    /different prompt or turn/u
   );
 });
 
