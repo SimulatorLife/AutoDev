@@ -1075,7 +1075,8 @@ function chatgptChat(
               fetch: unknown
             ) => Promise<unknown>
           )(fetch);
-        if (script.includes("stop-button")) return Promise.resolve(generating());
+        if (script.includes("stop-button"))
+          return Promise.resolve(generating());
         return Promise.resolve([
           { role: "User", text: CHATGPT_PROMPT, html: "" },
           { role: "Assistant", text: shown, html: "" }
@@ -1134,7 +1135,12 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
   );
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(false)),
-    { text: CHATGPT_STORED_REPLY, finished: false, promptText: CHATGPT_PROMPT, promptId: "prompt" }
+    {
+      text: CHATGPT_STORED_REPLY,
+      finished: false,
+      promptText: CHATGPT_PROMPT,
+      promptId: "prompt"
+    }
   );
   assert.equal(
     utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
@@ -1232,7 +1238,6 @@ test("ChatGPT publishes changing stored text while generation is still active", 
   ]);
 });
 
-
 test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
@@ -1264,7 +1269,10 @@ test("the ChatGPT send baseline reads the last persisted user-message ID", async
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     "",
-    () => Response.json(storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user"))
+    () =>
+      Response.json(
+        storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user")
+      )
   );
   assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
 });
@@ -1423,7 +1431,9 @@ test("the stored reply must belong to the submitted prompt", async () => {
   const chat = chatgptChat(
     "Wrong reply",
     () =>
-      Response.json(storedConversation(true, "Wrong reply", "A different prompt")),
+      Response.json(
+        storedConversation(true, "Wrong reply", "A different prompt")
+      ),
     () => true
   );
   await assert.rejects(
