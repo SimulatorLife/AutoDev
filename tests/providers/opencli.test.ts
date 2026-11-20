@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, type spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
