@@ -2846,8 +2846,8 @@ single list; the route patterns and the site registry in
   during generation, the bridge forwards it incrementally. This is
   best-effort, not a guarantee that the site persists partial text:
   deterministic adapter tests exercise growing mid-generation snapshots,
-  but a live signed-in-browser acceptance test is still required. Both
-  adapters send newline-delimited `{text, url}` readings
+  but a live signed-in-browser acceptance test is still required.
+  Both adapters send newline-delimited `{text, url}` readings
   through the private `OPENCLI_PROGRESS_FD` descriptor -- neither stdout
   (the command's final JSON result) nor stderr (diagnostics). The bridge
   opens FD 3 only for streamed turns and verifies that a reading belongs to
