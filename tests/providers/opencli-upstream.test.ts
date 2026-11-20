@@ -950,12 +950,11 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
 interface ChatGPTReplyUtils {
   waitForChatGPTResponse: (
     page: unknown,
-    baselineCount: number,
     prompt: string,
     timeoutSeconds: number,
-    options: {
-      baselinePairCounts: Map<string, number>;
+    options?: {
       expectedConversationId?: string;
+      conversationUrl?: string;
       baselinePromptId?: string | null;
     }
   ) => Promise<string>;
@@ -968,11 +967,6 @@ interface ChatGPTReplyUtils {
     promptText: string;
     promptId: string;
   } | null;
-  chatgptReplyCanFinish: (
-    stored: { text: string; finished: boolean },
-    stableMs: number,
-    isGeneratingNow: boolean
-  ) => boolean;
 }
 
 async function chatgptReplyUtils(): Promise<ChatGPTReplyUtils | null> {
@@ -1103,10 +1097,9 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
   );
   const reply = await utils.waitForChatGPTResponse(
     chat.page,
-    0,
     CHATGPT_PROMPT,
     30,
-    { baselinePairCounts: new Map() }
+    {}
   );
   assert.equal(reply, CHATGPT_STORED_REPLY);
   assert.deepEqual(chat.fetched, [
@@ -1123,9 +1116,7 @@ test("a ChatGPT reply whose stored text cannot be read fails instead of using th
     () => new Response("{}", { status: 404 })
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 1, {
-      baselinePairCounts: new Map()
-    }),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1, {}),
     /stored text could not be read: conversation fetch status 404/u
   );
 });
@@ -1152,19 +1143,6 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
   );
 });
 
-test("ChatGPT's missing completion marker requires a settled reply and stopped generation", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
-  const stored = { text: "Done-looking reply", finished: false };
-  assert.equal(utils.chatgptReplyCanFinish(stored, 11_999, false), false);
-  assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, true), false);
-  assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, false), true);
-  assert.equal(
-    utils.chatgptReplyCanFinish({ ...stored, finished: true }, 0, true),
-    true
-  );
-});
-
 test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
@@ -1180,10 +1158,9 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
     );
     const reply = await utils.waitForChatGPTResponse(
       chat.page,
-      0,
       CHATGPT_PROMPT,
       30,
-      { baselinePairCounts: new Map() }
+      {}
     );
     assert.equal(reply, CHATGPT_STORED_REPLY);
   } finally {
@@ -1234,10 +1211,9 @@ test("ChatGPT publishes changing stored text while generation is still active", 
     );
     const reply = await utils.waitForChatGPTResponse(
       chat.page,
-      0,
       CHATGPT_PROMPT,
       5,
-      { baselinePairCounts: new Map() }
+      {}
     );
     assert.equal(reply, "Working.\nStill working.\nDone.");
     assert.ok(activeReads >= 3, "generation was active on every stored read");
@@ -1253,8 +1229,8 @@ test("ChatGPT publishes changing stored text while generation is still active", 
     .map((line) => JSON.parse(line) as { text: string; url: string });
   rmSync(directory, { recursive: true, force: true });
   assert.deepEqual(records.map((record) => record.text), [
-    "Working.\n",
-    "Working.\nStill working.\n",
+    "Working.",
+    "Working.\nStill working.",
     "Working.\nStill working.\nDone."
   ]);
 });
@@ -1278,10 +1254,9 @@ test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
   );
   const reply = await utils.waitForChatGPTResponse(
     chat.page,
-    0,
     CHATGPT_PROMPT,
     2,
-    { baselinePairCounts: new Map(), baselinePromptId: "old-prompt" }
+    { baselinePromptId: "old-prompt" }
   );
   assert.equal(reply, "New reply");
   assert.equal(reads, 2, "the completed previous turn must be ignored");
@@ -1307,21 +1282,20 @@ test("ChatGPT waits 12 seconds after generation stops before accepting partial t
   try {
     const chat = chatgptChat(
       "",
-      () => Response.json(storedConversation(polls >= 3, "Partial.")),
+      () => Response.json(storedConversation(false, "Partial.")),
       () => ++polls === 1
     );
     chat.page.sleep = async () => {
-      now += 20_000;
+      now += 2000;
     };
     const result = await utils.waitForChatGPTResponse(
       chat.page,
-      0,
       CHATGPT_PROMPT,
       180,
-      { baselinePairCounts: new Map() }
+      {}
     );
     assert.equal(result, "Partial.");
-    assert.equal(polls, 3, "the first non-generating poll must not complete a partial reply");
+    assert.equal(polls, 8, "fallback waits 12 seconds after generation stops");
   } finally {
     Date.now = originalNow;
   }
@@ -1350,10 +1324,9 @@ test("ChatGPT starts an unreadable-storage grace period only after generation st
     };
     const result = await utils.waitForChatGPTResponse(
       chat.page,
-      0,
       CHATGPT_PROMPT,
       180,
-      { baselinePairCounts: new Map() }
+      {}
     );
     assert.equal(result, "New answer.");
     assert.equal(reads, 3);
@@ -1373,8 +1346,7 @@ test("ChatGPT rejects a finished stored answer from another conversation", async
     () => "https://chatgpt.com/c/" + otherChat
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 2, {
-      baselinePairCounts: new Map(),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 2, {
       expectedConversationId: CHATGPT_CHAT_ID
     }),
     /navigated away from the submitted conversation/u
@@ -1390,9 +1362,7 @@ test("an incomplete stored answer times out rather than becoming an unreadable-r
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 0.1, {
-      baselinePairCounts: new Map()
-    }),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1, {}),
     (error: unknown) =>
       error instanceof Error && /timed out|timeout/iu.test(error.message)
   );
@@ -1408,9 +1378,7 @@ test("the stored reply must belong to the submitted prompt", async () => {
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 0.1, {
-      baselinePairCounts: new Map()
-    }),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1, {}),
     (error: unknown) =>
       error instanceof Error && /timed out|timeout/iu.test(error.message)
   );
