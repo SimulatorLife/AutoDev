@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -12,7 +13,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   geminiModelLimit,
@@ -956,7 +957,7 @@ interface ChatGPTReplyUtils {
   ) => Promise<string>;
   chatgptReplyFromConversation: (
     conversation: unknown
-  ) => { text: string; finished: boolean } | null;
+  ) => { text: string; finished: boolean; promptText: string } | null;
   chatgptReplyCanFinish: (
     stored: { text: string; finished: boolean },
     stableMs: number,
@@ -983,7 +984,11 @@ const CHATGPT_SHOWN_REPLY =
  * A stored conversation shaped like ChatGPT's: the turn's messages hang off
  * one another by `parent`, and the mapping's key order is not their order.
  */
-function storedConversation(finalEndTurn: boolean | null): unknown {
+function storedConversation(
+  finalEndTurn: boolean | null,
+  replyText = CHATGPT_STORED_REPLY,
+  promptText = CHATGPT_PROMPT
+): unknown {
   const message = (
     role: string,
     contentType: string,
@@ -998,7 +1003,7 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
   const nodes: [string, string | null, unknown][] = [
     ["root", null, null],
     ["system", "root", message("system", "text", [""])],
-    ["prompt", "system", message("user", "text", [CHATGPT_PROMPT])],
+    ["prompt", "system", message("user", "text", [promptText])],
     [
       "read",
       "prompt",
@@ -1016,7 +1021,7 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
     [
       "reply",
       "thoughts",
-      message("assistant", "text", [CHATGPT_STORED_REPLY], {
+      message("assistant", "text", [replyText], {
         end_turn: finalEndTurn
       })
     ],
@@ -1038,7 +1043,12 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
  * The stored reply is read by running the adapter's own page script against
  * a fetch that serves the session and the conversation.
  */
-function chatgptChat(shown: string, stored: () => Response) {
+function chatgptChat(
+  shown: string,
+  stored: () => Response,
+  generating: () => boolean = () => false,
+  currentUrl: () => string = () => `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
+) {
   const fetched: string[] = [];
   const fetch = (url: string, init?: { headers?: Record<string, string> }) => {
     fetched.push(url);
@@ -1053,14 +1063,14 @@ function chatgptChat(shown: string, stored: () => Response) {
       sleep: () => Promise.resolve(),
       evaluate: (script: string): Promise<unknown> => {
         if (script === "window.location.href")
-          return Promise.resolve(`https://chatgpt.com/c/${CHATGPT_CHAT_ID}`);
+          return Promise.resolve(currentUrl());
         if (script.includes("/backend-api/conversation/"))
           return (
             new Function("fetch", `return ${script.trim()}`) as (
               fetch: unknown
             ) => Promise<unknown>
           )(fetch);
-        if (script.includes("stop-button")) return Promise.resolve(false);
+        if (script.includes("stop-button")) return Promise.resolve(generating());
         return Promise.resolve([
           { role: "User", text: CHATGPT_PROMPT, html: "" },
           { role: "Assistant", text: shown, html: "" }
@@ -1076,7 +1086,7 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
   // <tool_call>, the page showed a tagless script cut at its first `{`, and
   // that fragment ended the worker's turn as its answer.
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
     Response.json(storedConversation(true))
   );
@@ -1096,7 +1106,7 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
 
 test("a ChatGPT reply whose stored text cannot be read fails instead of using the page's", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     CHATGPT_SHOWN_REPLY,
     () => new Response("{}", { status: 404 })
@@ -1111,17 +1121,18 @@ test("a ChatGPT reply whose stored text cannot be read fails instead of using th
 
 test("a stored ChatGPT turn is read along its current branch and ends only when the site says so", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(true)),
     {
       text: CHATGPT_STORED_REPLY,
-      finished: true
+      finished: true,
+      promptText: CHATGPT_PROMPT
     }
   );
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(false)),
-    { text: CHATGPT_STORED_REPLY, finished: false }
+    { text: CHATGPT_STORED_REPLY, finished: false, promptText: CHATGPT_PROMPT }
   );
   assert.equal(
     utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
@@ -1131,7 +1142,7 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
 
 test("ChatGPT's missing completion marker requires a settled reply and stopped generation", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const stored = { text: "Done-looking reply", finished: false };
   assert.equal(utils.chatgptReplyCanFinish(stored, 11_999, false), false);
   assert.equal(utils.chatgptReplyCanFinish(stored, 12_000, true), false);
@@ -1144,7 +1155,7 @@ test("ChatGPT's missing completion marker requires a settled reply and stopped g
 
 test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-progress-"));
   const file = resolve(directory, "progress");
   const fd = openSync(file, "w");
