@@ -93,7 +93,8 @@ export const OPENLIT_PATCH_NAMES = [
   "76-autodev-usage-query-scheduler",
   "77-autodev-usage-session-lookup",
   "78-autodev-provider-phase-usage",
-  "79-autodev-usage-session-pagination"
+  "79-autodev-usage-session-pagination",
+  "80-retire-autodev-memory-ui-routes"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

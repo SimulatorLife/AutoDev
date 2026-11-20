@@ -1086,8 +1086,8 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     ],
     "duplicate Costs/Pricing UI removal"
   );
-  // The Console is the only Memory operator UI. Retain OpenLIT's connector
-  // APIs for integrations, but delete the temporary standalone Memory page.
+  // The Console is the only Memory operator UI. Keep generic connector APIs,
+  // but retire the page-specific same-origin proxies.
   assertPathsRemoved(
     dir,
     [
@@ -1095,6 +1095,26 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
       "src/client/src/components/(playground)/memory/memory-page.tsx"
     ],
     "standalone Memory page removal"
+  );
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/api/memory/[id]/actions/route.ts",
+      "src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts",
+      "src/client/src/app/api/memory/cohorts/route.ts",
+      "src/client/src/__tests__/app/api/memory/cohorts/route.test.ts",
+      "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
+      "src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts",
+      "src/client/src/app/api/memory/experiences/[id]/session-outcome/route.ts",
+      "src/client/src/__tests__/app/api/memory/experiences/[id]/session-outcome/route.test.ts",
+      "src/client/src/app/api/memory/session-cohorts/route.ts",
+      "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts",
+      "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
+      "src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts",
+      "src/client/src/app/api/memory/use-cohorts/route.ts",
+      "src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts"
+    ],
+    "retired OpenLIT Memory proxy routes"
   );
   assert.equal(
     existsSync(join(dir, "src/client/src/components/(playground)/memory")),
@@ -2077,24 +2097,7 @@ test(
       "src/client/src/__tests__/app/api/autodev/usage/route.test.ts",
       // 08-autodev-memory-connector
       "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
-      "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts",
-      // 09-autodev-memory-lifecycle-actions
-      "src/client/src/app/api/memory/[id]/actions/route.ts",
-      "src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts",
-      // 13-autodev-memory-outcome-cohorts
-      "src/client/src/app/api/memory/cohorts/route.ts",
-      "src/client/src/__tests__/app/api/memory/cohorts/route.test.ts",
-      // 14-autodev-memory-outcome-reporting
-      "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
-      "src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts",
-      // 16-autodev-memory-session-outcome-cohorts
-      "src/client/src/app/api/memory/session-cohorts/route.ts",
-      "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts",
-      // 22-autodev-memory-injection-use
-      "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
-      "src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts",
-      "src/client/src/app/api/memory/use-cohorts/route.ts",
-      "src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts"
+      "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts"
     ];
     const removedAutoDevProductFiles = [
       "src/client/src/app/(playground)/autodev/layout.tsx",
@@ -2231,17 +2234,6 @@ test(
       "utf8"
     );
     assert.match(memoryBootstrap, /autoDevMemoryAdapterFactory/u);
-    const memoryActionRoute = readFileSync(
-      join(dir, "src/client/src/app/api/memory/[id]/actions/route.ts"),
-      "utf8"
-    );
-    assert.match(memoryActionRoute, /executeProjectMemoryAction/u);
-    assert.match(
-      memoryActionRoute,
-      /withMemoryAudit\(withMemoryAccess\("update"/u
-    );
-    assert.match(memoryActionRoute, /PAYLOAD_MAX/u);
-
     const usageDashboard = JSON.parse(
       readFileSync(
         join(
@@ -2771,19 +2763,8 @@ test(
       "common.ts must not define OTEL_GPUS_TABLE_NAME"
     );
 
-    // Verify patch 16 adds session outcome cohorts:
-    const sessionCohortsRoute = readFileSync(
-      join(dir, "src/client/src/app/api/memory/session-cohorts/route.ts"),
-      "utf8"
-    );
-    assert.match(sessionCohortsRoute, /readSessionOutcomeCohorts/u);
-    assert.match(sessionCohortsRoute, /resolveAutoDevConnectorId/u);
-    assert.match(sessionCohortsRoute, /withMemoryAccess\("read"/u);
-    assert.match(
-      sessionCohortsRoute,
-      /MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR/u
-    );
-    assert.match(sessionCohortsRoute, /MAX_COHORT_WINDOW_MS/u);
+    // Patch 16's adapter capability remains independently available to
+    // connector consumers after patch 80 retires the page-only proxy route.
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_TITLE/u);
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_NOTE/u);
     assert.match(autoDevMemoryAdapter, /readSessionOutcomeCohorts/u);
@@ -2815,35 +2796,6 @@ test(
       /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u,
       "patch 22 must not project opaque correlation tokens or reporter identity to the UI"
     );
-    const useAssessmentsRoute = readFileSync(
-      join(
-        dir,
-        "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"
-      ),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      useAssessmentsRoute,
-      /export const GET/u,
-      "experience reads must stay with the canonical AutoDev MemoryAdapter detail path"
-    );
-    assert.match(
-      useAssessmentsRoute,
-      /export const POST\s*=\s*withMemoryAudit\(withMemoryAccess\("update"/u
-    );
-    assert.match(useAssessmentsRoute, /reportInjectionUse\(/u);
-    assert.match(useAssessmentsRoute, /requiredId\(params\.id\)/u);
-    assert.match(useAssessmentsRoute, /request\.json\(\)/u);
-    assert.match(useAssessmentsRoute, /MEMORY_INJECTION_USE_REPORT_INVALID/u);
-    const useCohortsRoute = readFileSync(
-      join(dir, "src/client/src/app/api/memory/use-cohorts/route.ts"),
-      "utf8"
-    );
-    assert.match(
-      useCohortsRoute,
-      /export const GET\s*=\s*withMemoryAccess\("read"/u
-    );
-    assert.match(useCohortsRoute, /readInjectionUseCohorts\(/u);
     // Verify patch 17 removes OpenLIT session gating in favor of Control API:
     assert.match(
       proxy,
@@ -2865,33 +2817,6 @@ test(
       /_setActorResolverForTesting/u,
       "proxy must remove testing session resolver hook"
     );
-    assert.doesNotMatch(
-      memoryActionRoute,
-      /getCurrentUser/u,
-      "memory action route must delegate actor auth to Control API without an OpenLIT session gate"
-    );
-    const memoryCohortsRoute = readFileSync(
-      join(dir, "src/client/src/app/api/memory/cohorts/route.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      memoryCohortsRoute,
-      /getCurrentUser/u,
-      "memory cohorts route must delegate auth to Control API without an OpenLIT session gate"
-    );
-    const memoryOutcomesRoute = readFileSync(
-      join(
-        dir,
-        "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts"
-      ),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      memoryOutcomesRoute,
-      /getCurrentUser/u,
-      "memory outcome reporting route must delegate auth to Control API without an OpenLIT session gate"
-    );
-
     // Verify patch 18 removes OpenLIT controller discovery if present:
     if (patches.some((p) => p.startsWith("18-"))) {
       const removedControllerDiscoveryPaths = [
@@ -3070,23 +2995,29 @@ test(
       assert.match(layout, /AutoDev/u);
       assert.doesNotMatch(layout, /OpenLIT/u);
 
-      // 13-autodev-memory-outcome-cohorts depends on files created by
-      // 08-12; its presence proves the cohort view applied.
-      assert.ok(
-        statSync(
-          join(workDirectory, "src/client/src/app/api/memory/cohorts/route.ts")
-        ).isFile()
+      // Patch 80 retires the page-only proxy routes after their earlier
+      // patches have applied; generic Memory APIs remain asserted separately.
+      assert.equal(
+        existsSync(
+          join(workDirectory, "src/client/src/app/api/memory/route.ts")
+        ),
+        true
       );
-      // 14-autodev-memory-outcome-reporting extends the existing experience
-      // detail surface with an evidence-backed, token-private report form.
-      assert.ok(
-        statSync(
-          join(
-            workDirectory,
-            "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts"
-          )
-        ).isFile()
-      );
+      for (const rel of [
+        "src/client/src/app/api/memory/[id]/actions/route.ts",
+        "src/client/src/app/api/memory/cohorts/route.ts",
+        "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
+        "src/client/src/app/api/memory/experiences/[id]/session-outcome/route.ts",
+        "src/client/src/app/api/memory/session-cohorts/route.ts",
+        "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
+        "src/client/src/app/api/memory/use-cohorts/route.ts"
+      ]) {
+        assert.equal(
+          existsSync(join(workDirectory, rel)),
+          false,
+          `${rel} is retired`
+        );
+      }
 
       // 15-remove-gpu-product removes the GPU dashboard and metrics
       assert.equal(
@@ -3098,17 +3029,6 @@ test(
         ),
         false,
         "15-remove-gpu-product must remove GPU dashboard files"
-      );
-
-      // 16-autodev-memory-session-outcome-cohorts adds the session cohorts route
-      assert.ok(
-        statSync(
-          join(
-            workDirectory,
-            "src/client/src/app/api/memory/session-cohorts/route.ts"
-          )
-        ).isFile(),
-        "16-autodev-memory-session-outcome-cohorts must add the session cohorts route"
       );
 
       // 17-remove-openlit-memory-session-authorization removes OpenLIT session gating
@@ -3126,19 +3046,6 @@ test(
         /fetchActorFromSession/u,
         "17-remove-openlit-memory-session-authorization must remove fetchActorFromSession"
       );
-      const appliedActionRoute = readFileSync(
-        join(
-          workDirectory,
-          "src/client/src/app/api/memory/[id]/actions/route.ts"
-        ),
-        "utf8"
-      );
-      assert.doesNotMatch(
-        appliedActionRoute,
-        /getCurrentUser/u,
-        "17-remove-openlit-memory-session-authorization must remove session check in memory actions"
-      );
-
       // 18-remove-openlit-controller-discovery removes controller discovery when present
       if (patches.some((p) => p.startsWith("18-"))) {
         assert.equal(
@@ -3211,37 +3118,8 @@ test(
         );
       }
 
-      // 22-autodev-memory-injection-use adds curator assessment and count-only
-      // cohort APIs to the retained Memory connector. Verify the API routes
-      // were applied by the script after patch 21; the OpenLIT UI is retired.
-      for (const rel of [
-        "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
-        "src/client/src/app/api/memory/use-cohorts/route.ts"
-      ]) {
-        assert.ok(
-          statSync(join(workDirectory, rel)).isFile(),
-          `22-autodev-memory-injection-use must add ${rel}`
-        );
-      }
-      const appliedUseAssessmentsRoute = readFileSync(
-        join(
-          workDirectory,
-          "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"
-        ),
-        "utf8"
-      );
-      assert.doesNotMatch(appliedUseAssessmentsRoute, /export const GET/u);
-      assert.match(appliedUseAssessmentsRoute, /withMemoryAccess\("update"/u);
-      assert.match(appliedUseAssessmentsRoute, /reportInjectionUse\(/u);
-      const appliedUseCohortsRoute = readFileSync(
-        join(
-          workDirectory,
-          "src/client/src/app/api/memory/use-cohorts/route.ts"
-        ),
-        "utf8"
-      );
-      assert.match(appliedUseCohortsRoute, /withMemoryAccess\("read"/u);
-      assert.match(appliedUseCohortsRoute, /readInjectionUseCohorts\(/u);
+      // Patch 80 removes only the UI proxy routes; connector adapter methods
+      // remain available and are covered by the adapter's own tests.
       const appliedUseAdapter = readFileSync(
         join(
           workDirectory,

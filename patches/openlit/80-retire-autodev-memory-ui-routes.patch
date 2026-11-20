@@ -1,0 +1,2261 @@
+diff --git a/src/client/src/app/api/memory/[id]/actions/route.ts b/src/client/src/app/api/memory/[id]/actions/route.ts
+deleted file mode 100644
+index 1e9710cd..00000000
+--- a/src/client/src/app/api/memory/[id]/actions/route.ts
++++ /dev/null
+@@ -1,111 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import asaw from "@/utils/asaw";
+-import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+-import { isMemoryConnectorId, memoryConnectorId } from "@/lib/platform/connectors/memory/crud";
+-import { executeProjectMemoryAction } from "@/lib/platform/connectors/memory/write";
+-import { UnsupportedMemoryCapabilityError } from "@/lib/platform/connectors/memory/types";
+-import {
+-	MEMORY_CONNECTOR_NOT_FOUND,
+-	MEMORY_DETAIL_NOT_FOUND,
+-	MEMORY_EDIT_FAILED,
+-	MEMORY_INVALID_FILTER,
+-	MEMORY_INVALID_JSON,
+-} from "@/constants/messages/en";
+-
+-const ID_MAX = 200;
+-const ACTION_MAX = 64;
+-const PAYLOAD_MAX = 4_000;
+-
+-function parseId(value: string): string {
+-	const id = String(value || "").trim();
+-	if (!id || id.length > ID_MAX || /[\u0000-\u001f]/.test(id)) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	return id;
+-}
+-
+-function parseConnectorId(value: unknown): string | undefined {
+-	if (value == null) return undefined;
+-	if (typeof value !== "string") throw new Error(MEMORY_INVALID_FILTER);
+-	const trimmed = value.trim();
+-	if (!trimmed) return undefined;
+-	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	const id = memoryConnectorId(trimmed);
+-	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return id;
+-}
+-
+-function parseBody(value: unknown): {
+-	action: string;
+-	connectorId?: string;
+-	payload: Record<string, unknown>;
+-} {
+-	if (!value || typeof value !== "object" || Array.isArray(value)) {
+-		throw new Error(MEMORY_INVALID_JSON);
+-	}
+-	const body = value as Record<string, unknown>;
+-	if (Object.keys(body).some((key) => !["action", "connectorId", "payload"].includes(key))) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	if (
+-		typeof body.action !== "string" ||
+-		!body.action.trim() ||
+-		body.action.trim().length > ACTION_MAX ||
+-		/[\u0000-\u001f]/.test(body.action)
+-	) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	if (!body.payload || typeof body.payload !== "object" || Array.isArray(body.payload)) {
+-		throw new Error(MEMORY_INVALID_JSON);
+-	}
+-	if (JSON.stringify(body.payload).length > PAYLOAD_MAX) {
+-		throw new Error(MEMORY_INVALID_JSON);
+-	}
+-	return {
+-		action: body.action.trim(),
+-		connectorId: parseConnectorId(body.connectorId),
+-		payload: body.payload as Record<string, unknown>,
+-	};
+-}
+-
+-function statusFor(error: unknown): number {
+-	if (error instanceof UnsupportedMemoryCapabilityError) return 400;
+-	if (error instanceof Error && error.message === MEMORY_DETAIL_NOT_FOUND) return 404;
+-	if (error && typeof error === "object" && "status" in error) {
+-		const status = Number((error as { status?: unknown }).status);
+-		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
+-	}
+-	return 503;
+-}
+-
+-async function POSTHandler(request: NextRequest, { params }: { params: { id: string } }) {
+-	let id: string;
+-	try {
+-		id = parseId(params.id);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+-	}
+-	let body: unknown;
+-	try {
+-		body = await request.json();
+-	} catch {
+-		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
+-	}
+-	let input: ReturnType<typeof parseBody>;
+-	try {
+-		input = parseBody(body);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+-	}
+-
+-	const [error, result] = await asaw(executeProjectMemoryAction({ id, ...input }));
+-	if (error) {
+-		return errorResponse(error, MEMORY_EDIT_FAILED, statusFor(error));
+-	}
+-	return Response.json(result);
+-}
+-
+-export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+diff --git a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+deleted file mode 100644
+index ab252360..00000000
+--- a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
++++ /dev/null
+@@ -1,115 +0,0 @@
+-jest.mock("@/lib/platform/connectors/memory/write", () => ({
+-	executeProjectMemoryAction: jest.fn(),
+-}));
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-}));
+-jest.mock("@/utils/asaw", () =>
+-	jest.fn(async (promise: Promise<unknown>) => {
+-		try {
+-			return [null, await promise];
+-		} catch (error) {
+-			return [error, null];
+-		}
+-	}),
+-);
+-
+-import { POST } from "@/app/api/memory/[id]/actions/route";
+-import { executeProjectMemoryAction } from "@/lib/platform/connectors/memory/write";
+-import { MEMORY_INVALID_FILTER, MEMORY_INVALID_JSON } from "@/constants/messages/en";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	}),
+-};
+-
+-function makeRequest(body: unknown) {
+-	const url = "http://localhost/api/memory/memory-a/actions";
+-	return {
+-		url,
+-		nextUrl: { searchParams: new URL(url).searchParams },
+-		json: async () => {
+-			if (body === "__invalid__") throw new SyntaxError("bad JSON");
+-			return body;
+-		},
+-	} as any;
+-}
+-
+-describe("POST /api/memory/[id]/actions", () => {
+-	beforeEach(() => {
+-		jest.clearAllMocks();
+-	});
+-
+-	it("delegates actor authorization to the AutoDev Control API", async () => {
+-		(executeProjectMemoryAction as jest.Mock).mockRejectedValue(
+-			Object.assign(new Error("actor not authorized"), { status: 403 }),
+-		);
+-		const response = await POST(
+-			makeRequest({
+-				action: "invalidate",
+-				connectorId: "memory:autodev",
+-				payload: { evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }] },
+-			}),
+-			{ params: { id: "memory-a" } },
+-		);
+-		expect(response.status).toBe(403);
+-		await expect(response.json()).resolves.toBe("actor not authorized");
+-		expect(executeProjectMemoryAction).toHaveBeenCalled();
+-	});
+-
+-	it("rejects malformed or extra action fields", async () => {
+-		const malformed = await POST(makeRequest("__invalid__"), {
+-			params: { id: "memory-a" },
+-		});
+-		expect(malformed.status).toBe(400);
+-		await expect(malformed.json()).resolves.toBe(MEMORY_INVALID_JSON);
+-
+-		const extra = await POST(
+-			makeRequest({ action: "invalidate", payload: {}, actor: "forged" }),
+-			{ params: { id: "memory-a" } },
+-		);
+-		expect(extra.status).toBe(400);
+-		await expect(extra.json()).resolves.toBe(MEMORY_INVALID_FILTER);
+-		expect(executeProjectMemoryAction).not.toHaveBeenCalled();
+-	});
+-
+-	it("dispatches a capability action through the connector service", async () => {
+-		(executeProjectMemoryAction as jest.Mock).mockResolvedValue({
+-			connector: { id: "memory:autodev" },
+-			capabilities: { actions: [] },
+-			memory: { id: "memory-a", lifecycleState: "invalidated" },
+-		});
+-		const payload = {
+-			evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }],
+-		};
+-		const response = await POST(
+-			makeRequest({
+-				action: "invalidate",
+-				connectorId: "memory:autodev",
+-				payload,
+-			}),
+-			{ params: { id: "memory-a" } },
+-		);
+-		expect(response.status).toBe(200);
+-		expect(executeProjectMemoryAction).toHaveBeenCalledWith({
+-			id: "memory-a",
+-			connectorId: "memory:autodev",
+-			action: "invalidate",
+-			payload,
+-		});
+-	});
+-
+-	it("preserves the Control API conflict status", async () => {
+-		(executeProjectMemoryAction as jest.Mock).mockRejectedValue(
+-			Object.assign(new Error("conflict"), { status: 409 }),
+-		);
+-		const response = await POST(
+-			makeRequest({ action: "invalidate", payload: { evidence: [] } }),
+-			{ params: { id: "memory-a" } },
+-		);
+-		expect(response.status).toBe(409);
+-	});
+-});
+diff --git a/src/client/src/app/api/memory/cohorts/route.ts b/src/client/src/app/api/memory/cohorts/route.ts
+deleted file mode 100644
+index d88e20a3..00000000
+--- a/src/client/src/app/api/memory/cohorts/route.ts
++++ /dev/null
+@@ -1,145 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId,
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevCohortFilter,
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_CONNECTOR_NOT_FOUND,
+-	MEMORY_COHORTS_LOAD_FAILED,
+-	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-	MEMORY_INVALID_FILTER,
+-} from "@/constants/messages/en";
+-
+-const FILTER_MAX = 64;
+-const FILTER_VALUES_MAX = 10;
+-const MEMORY_MODE_VALUES = ["jit", "retrieval-only", "disabled", "invalid", "unknown"];
+-const INJECTION_RESULT_VALUES = ["injected", "empty", "skipped"];
+-const REPORT_KIND_VALUES = ["task", "pull_request", "issue", "other"];
+-const OUTCOME_KIND_VALUES = ["success", "partial", "failure", "cancelled", "unknown"];
+-const ALLOWED_QUERY_KEYS = new Set([
+-	"connectorId",
+-	"occurredFrom",
+-	"occurredUntil",
+-	"memoryMode",
+-	"injectionResult",
+-	"reportKind",
+-	"outcomeKind"
+-]);
+-// Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core; the
+-// adapter and the Control API both re-validate this, but checking here
+-// gives a clear 400 before any Control API round trip.
+-const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+-
+-function parseConnectorId(value: string | null): string | undefined {
+-	if (value == null) return undefined;
+-	const trimmed = value.trim();
+-	if (!trimmed) return undefined;
+-	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	const id = memoryConnectorId(trimmed);
+-	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return id;
+-}
+-
+-function parseTimestamp(value: string | null, label: string): string {
+-	const trimmed = String(value || "").trim();
+-	if (!trimmed || !Number.isFinite(Date.parse(trimmed))) {
+-		throw new Error(label + " must be a valid ISO 8601 timestamp.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseEnumValues(values: string[], allowed: string[], label: string): string[] | undefined {
+-	if (!values.length) return undefined;
+-	if (values.length > FILTER_VALUES_MAX) throw new Error(MEMORY_INVALID_FILTER);
+-	const trimmed = values.map((value) => value.trim());
+-	if (trimmed.some((value) => !value || value.length > FILTER_MAX || !allowed.includes(value))) {
+-		throw new Error(label + " filter is invalid.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseFilter(params: URLSearchParams): AutoDevCohortFilter {
+-	let hasUnexpectedKey = false;
+-	params.forEach((_value, key) => {
+-		if (!ALLOWED_QUERY_KEYS.has(key)) hasUnexpectedKey = true;
+-	});
+-	if (hasUnexpectedKey) throw new Error(MEMORY_INVALID_FILTER);
+-	const occurredFrom = parseTimestamp(params.get("occurredFrom"), "occurredFrom");
+-	const occurredUntil = parseTimestamp(params.get("occurredUntil"), "occurredUntil");
+-	const fromMs = Date.parse(occurredFrom);
+-	const untilMs = Date.parse(occurredUntil);
+-	if (untilMs < fromMs) throw new Error("occurredUntil must be on or after occurredFrom.");
+-	if (untilMs - fromMs > MAX_COHORT_WINDOW_MS) {
+-		throw new Error("The occurred window cannot exceed 365 days.");
+-	}
+-	return {
+-		occurredFrom,
+-		occurredUntil,
+-		memoryModes: parseEnumValues(params.getAll("memoryMode"), MEMORY_MODE_VALUES, "memoryMode"),
+-		injectionResults: parseEnumValues(
+-			params.getAll("injectionResult"),
+-			INJECTION_RESULT_VALUES,
+-			"injectionResult"
+-		),
+-		reportKinds: parseEnumValues(params.getAll("reportKind"), REPORT_KIND_VALUES, "reportKind"),
+-		outcomeKinds: parseEnumValues(params.getAll("outcomeKind"), OUTCOME_KIND_VALUES, "outcomeKind"),
+-	};
+-}
+-
+-async function resolveAutoDevConnectorId(requested: string | undefined): Promise<string> {
+-	const connectors = await listMemoryConnectors();
+-	if (requested) {
+-		const match = connectors.find((connector) => connector.id === requested);
+-		if (!match) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-		return match.id;
+-	}
+-	const autoDevConnector = connectors.find((connector) => connector.type === "autodev");
+-	if (!autoDevConnector) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return autoDevConnector.id;
+-}
+-
+-function statusFor(message: string): number {
+-	if (message === MEMORY_CONNECTOR_NOT_FOUND) return 404;
+-	return 400;
+-}
+-
+-async function GETHandler(request: NextRequest) {
+-	const params = request.nextUrl.searchParams;
+-	let connectorId: string | undefined;
+-	let filter: AutoDevCohortFilter;
+-	try {
+-		connectorId = parseConnectorId(params.get("connectorId"));
+-		filter = parseFilter(params);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+-	}
+-
+-	try {
+-		const resolvedConnectorId = await resolveAutoDevConnectorId(connectorId);
+-		const runtime = await getMemoryRuntime(resolvedConnectorId);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(
+-				MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-				MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-				400
+-			);
+-		}
+-		const result = await runtime.adapter.readOutcomeCohorts(filter);
+-		return Response.json({ connector: runtime.connector, result });
+-	} catch (error) {
+-		const message = error instanceof Error ? error.message : String(error);
+-		return errorResponse(error, MEMORY_COHORTS_LOAD_FAILED, statusFor(message));
+-	}
+-}
+-
+-export const GET = withMemoryAccess("read", GETHandler);
+diff --git a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
+deleted file mode 100644
+index 996fb4f5..00000000
+--- a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
++++ /dev/null
+@@ -1,160 +0,0 @@
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) =>
+-		!!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true,
+-}));
+-
+-import { GET } from "@/app/api/memory/cohorts/route";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import { MEMORY_COHORTS_UNSUPPORTED_CONNECTOR } from "@/constants/messages/en";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	}),
+-};
+-
+-function makeRequest(query: string) {
+-	const url = "http://localhost/api/memory/cohorts" + (query ? "?" + query : "");
+-	return { nextUrl: { searchParams: new URL(url).searchParams } } as any;
+-}
+-
+-const autoDevConnector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-const claudeConnector = { id: "memory:claude-a", type: "claude", name: "Claude" };
+-
+-describe("GET /api/memory/cohorts", () => {
+-	beforeEach(() => {
+-		jest.clearAllMocks();
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+-	});
+-
+-	it("forwards unavailable Control API authorization without an OpenLIT session gate", async () => {
+-		const readOutcomeCohorts = jest.fn().mockResolvedValue({ status: "unavailable", page: null });
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readOutcomeCohorts },
+-			connector: autoDevConnector,
+-		});
+-		const response = await GET(
+-			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-		);
+-		expect(response.status).toBe(200);
+-		await expect(response.json()).resolves.toMatchObject({
+-			result: { status: "unavailable", page: null },
+-		});
+-	});
+-
+-	it("rejects a missing or invalid occurred timestamp", async () => {
+-		const response = await GET(makeRequest("occurredUntil=2026-09-02T00:00:00.000Z"));
+-		expect(response.status).toBe(400);
+-		const body = await response.json();
+-		expect(String(body)).toMatch(/occurredFrom/);
+-	});
+-
+-	it("rejects a window exceeding 365 days", async () => {
+-		const response = await GET(
+-			makeRequest("occurredFrom=2024-01-01T00:00:00.000Z&occurredUntil=2026-01-01T00:00:00.000Z")
+-		);
+-		expect(response.status).toBe(400);
+-		const body = await response.json();
+-		expect(String(body)).toMatch(/365 days/);
+-	});
+-
+-	it("rejects an invalid enum filter value", async () => {
+-		const response = await GET(
+-			makeRequest(
+-				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=not-a-mode"
+-			)
+-		);
+-		expect(response.status).toBe(400);
+-	});
+-
+-	it("rejects task/run/agent identity and unknown query selectors", async () => {
+-		for (const key of ["taskId", "runId", "agentId", "unknown"]) {
+-			const response = await GET(
+-				makeRequest(
+-					"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&" + key + "=caller-value"
+-				)
+-			);
+-			expect(response.status).toBe(400);
+-		}
+-		expect(listMemoryConnectors).not.toHaveBeenCalled();
+-	});
+-
+-
+-	it("404s when no AutoDev connector exists and none was requested", async () => {
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+-		const response = await GET(
+-			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-		);
+-		expect(response.status).toBe(404);
+-	});
+-
+-	it("rejects a requested connector that is not the AutoDev adapter", async () => {
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: false },
+-			connector: claudeConnector,
+-		});
+-		const response = await GET(
+-			makeRequest(
+-				"connectorId=claude-a&occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z"
+-			)
+-		);
+-		expect(response.status).toBe(400);
+-		const body = await response.json();
+-		expect(body).toBe(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR);
+-	});
+-
+-	it("returns the cohort result for a valid request, excluding role/task/run/agent scope", async () => {
+-		const readOutcomeCohorts = jest.fn().mockResolvedValue({
+-			status: "available",
+-			page: {
+-				occurredFrom: "2026-09-01T00:00:00.000Z",
+-				occurredUntil: "2026-09-02T00:00:00.000Z",
+-				cells: [
+-					{
+-						memoryMode: "jit",
+-						injectionResult: "injected",
+-						sessionCardinality: "multiple",
+-						reportKind: null,
+-						outcomeKind: null,
+-						exposureCount: 5,
+-						reportCount: 0,
+-					},
+-				],
+-				exposureCount: 5,
+-				reportCount: 0,
+-			},
+-		});
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readOutcomeCohorts },
+-			connector: autoDevConnector,
+-		});
+-
+-		const response = await GET(
+-			makeRequest(
+-				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z"
+-			)
+-		);
+-		expect(response.status).toBe(200);
+-		const body = await response.json();
+-		expect(body.connector).toEqual(autoDevConnector);
+-		expect(body.result.status).toBe("available");
+-		expect(body.result.page.cells[0].reportKind).toBeNull();
+-		expect(readOutcomeCohorts).toHaveBeenCalledWith({
+-			occurredFrom: "2026-09-01T00:00:00.000Z",
+-			occurredUntil: "2026-09-02T00:00:00.000Z",
+-			memoryModes: undefined,
+-			injectionResults: undefined,
+-			reportKinds: undefined,
+-			outcomeKinds: undefined,
+-		});
+-	});
+-});
+diff --git a/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts b/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
+deleted file mode 100644
+index 5c793d0b..00000000
+--- a/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
++++ /dev/null
+@@ -1,187 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevOutcomeReportInput
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-	MEMORY_DETAIL_OUTCOME_REPORT_FAILED,
+-	MEMORY_DETAIL_OUTCOME_REPORT_INVALID,
+-	MEMORY_INVALID_JSON
+-} from "@/constants/messages/en";
+-
+-const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+-const EVIDENCE_KINDS = new Set([
+-	"trajectory", "trace", "file", "commit", "pull_request", "issue",
+-	"rule", "skill", "document", "other"
+-]);
+-const OUTCOME_KINDS = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
+-const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
+-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+-const MAX_BODY_BYTES = 64 * 1024;
+-const MAX_EVIDENCE_REFERENCES = 64;
+-
+-interface ParsedReportBody {
+-	readonly connectorId?: string;
+-	readonly injectionEventId: string;
+-	readonly outcomeKind: string;
+-	readonly reportKind: string;
+-	readonly evidence: AutoDevOutcomeReportInput["evidence"];
+-}
+-
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-	return !!value && typeof value === "object" && !Array.isArray(value);
+-}
+-
+-function requiredId(value: unknown): string {
+-	if (
+-		typeof value !== "string" ||
+-		!ID_PATTERN.test(value) ||
+-		CONTROL_CHARACTER_PATTERN.test(value)
+-	) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	return value;
+-}
+-
+-function parseConnectorId(value: unknown): string | undefined {
+-	if (value === undefined || value === null) return undefined;
+-	if (typeof value !== "string" || value.length > 120 || CONTROL_CHARACTER_PATTERN.test(value)) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	const normalized = memoryConnectorId(value.trim());
+-	if (!isMemoryConnectorId(normalized)) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	return normalized;
+-}
+-
+-function parseEvidence(value: unknown): AutoDevOutcomeReportInput["evidence"] {
+-	if (!Array.isArray(value) || value.length > MAX_EVIDENCE_REFERENCES) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	return value.map((entry) => {
+-		if (!isRecord(entry)) throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-		if (
+-			Object.keys(entry).some((key) => !["kind", "uri", "revision", "observedAt"].includes(key)) ||
+-			typeof entry.kind !== "string" ||
+-			!EVIDENCE_KINDS.has(entry.kind) ||
+-			typeof entry.uri !== "string" ||
+-			!entry.uri.trim() ||
+-			entry.uri.length > 2048 ||
+-			CONTROL_CHARACTER_PATTERN.test(entry.uri) ||
+-			(entry.revision !== undefined &&
+-				(typeof entry.revision !== "string" || entry.revision.length > 256 || CONTROL_CHARACTER_PATTERN.test(entry.revision))) ||
+-			(entry.observedAt !== undefined &&
+-				(typeof entry.observedAt !== "string" || !Number.isFinite(Date.parse(entry.observedAt))))
+-		) {
+-			throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-		}
+-		return {
+-			kind: entry.kind,
+-			uri: entry.uri.trim(),
+-			...(typeof entry.revision === "string" ? { revision: entry.revision } : {}),
+-			...(typeof entry.observedAt === "string" ? { observedAt: entry.observedAt } : {})
+-		};
+-	});
+-}
+-
+-function parseBody(value: unknown): ParsedReportBody {
+-	if (!isRecord(value)) throw new TypeError(MEMORY_INVALID_JSON);
+-	if (
+-		Object.keys(value).some((key) => !["connectorId", "injectionEventId", "outcomeKind", "reportKind", "evidence"].includes(key)) ||
+-		Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_BODY_BYTES ||
+-		typeof value.outcomeKind !== "string" ||
+-		!OUTCOME_KINDS.has(value.outcomeKind) ||
+-		typeof value.reportKind !== "string" ||
+-		!REPORT_KINDS.has(value.reportKind)
+-	) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	const input: ParsedReportBody = {
+-		connectorId: parseConnectorId(value.connectorId),
+-		injectionEventId: requiredId(value.injectionEventId),
+-		outcomeKind: value.outcomeKind,
+-		reportKind: value.reportKind,
+-		evidence: parseEvidence(value.evidence)
+-	};
+-	if (input.outcomeKind !== "unknown" && input.evidence.length === 0) {
+-		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-	}
+-	return input;
+-}
+-
+-function statusFor(error: unknown): number {
+-	if (error && typeof error === "object" && "status" in error) {
+-		const status = Number((error as { status?: unknown }).status);
+-		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
+-	}
+-	return 503;
+-}
+-
+-async function POSTHandler(
+-	request: NextRequest,
+-	{ params }: { readonly params: { readonly id: string } }
+-) {
+-	let experienceId: string;
+-	let rawBody: unknown;
+-	let input: ParsedReportBody;
+-	try {
+-		experienceId = requiredId(params.id);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_INVALID, 400);
+-	}
+-	try {
+-		rawBody = await request.json();
+-	} catch {
+-		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
+-	}
+-	try {
+-		input = parseBody(rawBody);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_INVALID, 400);
+-	}
+-
+-	try {
+-		const connectors = await listMemoryConnectors();
+-		const connector = input.connectorId
+-			? connectors.find((item) => item.id === input.connectorId)
+-			: connectors.find((item) => item.type === "autodev");
+-		if (!connector) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 404);
+-		}
+-		const runtime = await getMemoryRuntime(connector.id);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 400);
+-		}
+-		const result = await runtime.adapter.reportOutcome({
+-			experienceId,
+-			injectionEventId: input.injectionEventId,
+-			outcomeKind: input.outcomeKind,
+-			reportKind: input.reportKind,
+-			evidence: input.evidence
+-		});
+-		// The adapter returns only the reporter-visible outcome; the opaque token
+-		// and Control API report id remain server-side.
+-		return Response.json(
+-			{
+-				schema: "autodev-memory-outcome-report-ui-v1",
+-				appended: result.appended,
+-				outcome: result.outcome
+-			},
+-			{ headers: { "cache-control": "no-store" } }
+-		);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_FAILED, statusFor(error));
+-	}
+-}
+-
+-export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+diff --git a/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts b/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
+deleted file mode 100644
+index c728e7c4..00000000
+--- a/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
++++ /dev/null
+@@ -1,161 +0,0 @@
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`)
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) => !!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true
+-}));
+-
+-import { POST } from "@/app/api/memory/experiences/[id]/outcomes/route";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import { MEMORY_DETAIL_OUTCOME_REPORT_INVALID } from "@/constants/messages/en";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	})
+-};
+-
+-function makeRequest(body: unknown) {
+-	return { json: async () => body } as any;
+-}
+-
+-const connector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-
+-beforeEach(() => {
+-	jest.clearAllMocks();
+-	(listMemoryConnectors as jest.Mock).mockResolvedValue([connector]);
+-});
+-
+-test("outcome POST sends only the event id and reporter fields and returns no opaque token", async () => {
+-	const reportOutcome = jest.fn().mockResolvedValue({
+-		appended: true,
+-		outcome: {
+-			outcomeKind: "success",
+-			reportKind: "pull_request",
+-			reportedAt: "2026-10-01T00:05:00.000Z",
+-			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
+-		}
+-	});
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportOutcome } });
+-	const reportBody = {
+-		connectorId: connector.id,
+-		injectionEventId: "injection-event-a",
+-		outcomeKind: "success",
+-		reportKind: "pull_request",
+-		evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
+-	};
+-	const response = await POST(makeRequest(reportBody), { params: { id: "experience-a" } });
+-	const body = await response.json();
+-
+-	expect(response.status).toBe(200);
+-	expect(reportOutcome).toHaveBeenCalledWith({
+-		experienceId: "experience-a",
+-		injectionEventId: "injection-event-a",
+-		outcomeKind: "success",
+-		reportKind: "pull_request",
+-		evidence: reportBody.evidence
+-	});
+-	expect(body.appended).toBe(true);
+-	expect(body.outcome.reportKind).toBe("pull_request");
+-	expect(JSON.stringify(body)).not.toMatch(/correlationToken|opaque-token|reportId|reporterId/iu);
+-	expect(JSON.stringify(reportBody)).not.toMatch(/correlationToken|reporterId|reportId/iu);
+-});
+-
+-test("outcome POST requires evidence for non-unknown reports", async () => {
+-	const reportOutcome = jest.fn().mockResolvedValue({
+-		appended: true,
+-		outcome: {
+-			outcomeKind: "unknown",
+-			reportKind: "task",
+-			reportedAt: "2026-10-01T00:05:00.000Z",
+-			evidence: []
+-		}
+-	});
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportOutcome } });
+-	const missingEvidence = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			injectionEventId: "injection-event-a",
+-			outcomeKind: "success",
+-			reportKind: "task",
+-			evidence: []
+-		}),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(missingEvidence.status).toBe(400);
+-	expect(reportOutcome).not.toHaveBeenCalled();
+-	const unknownWithoutEvidence = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			injectionEventId: "injection-event-a",
+-			outcomeKind: "unknown",
+-			reportKind: "task",
+-			evidence: []
+-		}),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(unknownWithoutEvidence.status).toBe(200);
+-});
+-
+-test("outcome POST rejects caller-supplied correlation tokens and unknown fields", async () => {
+-	const response = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			injectionEventId: "injection-event-a",
+-			correlationToken: "caller-token",
+-			outcomeKind: "unknown",
+-			reportKind: "task",
+-			evidence: []
+-		}),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(response.status).toBe(400);
+-	const body = await response.json();
+-	expect(body).toBe(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
+-});
+-
+-test("outcome POST rejects non-AutoDev connectors and preserves append-only conflict status", async () => {
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: false } });
+-	const nonAutoDev = await POST(
+-		makeRequest({ connectorId: connector.id, injectionEventId: "event-a", outcomeKind: "unknown", reportKind: "task", evidence: [] }),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(nonAutoDev.status).toBe(400);
+-
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		connector,
+-		adapter: { __autodev: true, reportOutcome: jest.fn().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 })) }
+-	});
+-	const conflict = await POST(
+-		makeRequest({ connectorId: connector.id, injectionEventId: "event-a", outcomeKind: "failure", reportKind: "task", evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }] }),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(conflict.status).toBe(409);
+-});
+-
+-test("outcome POST preserves Control API actor authorization without an OpenLIT session", async () => {
+-	const reportOutcome = jest.fn().mockRejectedValue(
+-		Object.assign(new Error("actor not authorized"), { status: 403 }),
+-	);
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		connector,
+-		adapter: { __autodev: true, reportOutcome },
+-	});
+-	const response = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			injectionEventId: "injection-event-a",
+-			outcomeKind: "success",
+-			reportKind: "pull_request",
+-			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }],
+-		}),
+-		{ params: { id: "experience-a" } },
+-	);
+-	expect(response.status).toBe(403);
+-	await expect(response.json()).resolves.toBe("actor not authorized");
+-	expect(reportOutcome).toHaveBeenCalled();
+-});
+diff --git a/src/client/src/app/api/memory/experiences/[id]/session-outcome/route.ts b/src/client/src/app/api/memory/experiences/[id]/session-outcome/route.ts
+deleted file mode 100644
+index 9b61f816..00000000
+--- a/src/client/src/app/api/memory/experiences/[id]/session-outcome/route.ts
++++ /dev/null
+@@ -1,193 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevSessionOutcomeReportInput
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-	MEMORY_INVALID_JSON,
+-	MEMORY_SESSION_OUTCOME_REPORT_FAILED,
+-	MEMORY_SESSION_OUTCOME_REPORT_INVALID
+-} from "@/constants/messages/en";
+-
+-const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+-const EVIDENCE_KINDS = new Set([
+-	"trajectory", "trace", "file", "commit", "pull_request", "issue",
+-	"rule", "skill", "document", "other"
+-]);
+-const OUTCOME_KINDS = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
+-const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
+-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+-const MAX_BODY_BYTES = 64 * 1024;
+-const MAX_EVIDENCE_REFERENCES = 64;
+-
+-interface ParsedReportBody {
+-	readonly connectorId?: string;
+-	readonly outcomeKind: string;
+-	readonly reportKind: string;
+-	readonly evidence: AutoDevSessionOutcomeReportInput["evidence"];
+-}
+-
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-	return !!value && typeof value === "object" && !Array.isArray(value);
+-}
+-
+-function requiredId(value: unknown): string {
+-	if (
+-		typeof value !== "string" ||
+-		!ID_PATTERN.test(value) ||
+-		CONTROL_CHARACTER_PATTERN.test(value)
+-	) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	return value;
+-}
+-
+-function parseConnectorId(value: unknown): string | undefined {
+-	if (value === undefined || value === null) return undefined;
+-	if (typeof value !== "string" || value.length > 120 || CONTROL_CHARACTER_PATTERN.test(value)) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	const normalized = memoryConnectorId(value.trim());
+-	if (!isMemoryConnectorId(normalized)) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	return normalized;
+-}
+-
+-function parseEvidence(value: unknown): AutoDevSessionOutcomeReportInput["evidence"] {
+-	if (!Array.isArray(value) || value.length > MAX_EVIDENCE_REFERENCES) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	return value.map((entry) => {
+-		if (!isRecord(entry)) throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-		if (
+-			Object.keys(entry).some((key) => !["kind", "uri", "revision", "observedAt"].includes(key)) ||
+-			typeof entry.kind !== "string" ||
+-			!EVIDENCE_KINDS.has(entry.kind) ||
+-			typeof entry.uri !== "string" ||
+-			!entry.uri.trim() ||
+-			entry.uri.length > 2048 ||
+-			CONTROL_CHARACTER_PATTERN.test(entry.uri) ||
+-			(entry.revision !== undefined &&
+-				(typeof entry.revision !== "string" || entry.revision.length > 256 || CONTROL_CHARACTER_PATTERN.test(entry.revision))) ||
+-			(entry.observedAt !== undefined &&
+-				(typeof entry.observedAt !== "string" || !Number.isFinite(Date.parse(entry.observedAt))))
+-		) {
+-			throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-		}
+-		return {
+-			kind: entry.kind,
+-			uri: entry.uri.trim(),
+-			...(typeof entry.revision === "string" ? { revision: entry.revision } : {}),
+-			...(typeof entry.observedAt === "string" ? { observedAt: entry.observedAt } : {})
+-		};
+-	});
+-}
+-
+-// Session-level reports carry no task/run/agent, reporter, authority, or
+-// correlation-token fields. Identity is derived server-side from the visible
+-// experience and the authenticated operator; the only accepted body keys are
+-// the outcome category, report kind, and evidence.
+-function parseBody(value: unknown): ParsedReportBody {
+-	if (!isRecord(value)) throw new TypeError(MEMORY_INVALID_JSON);
+-	if (
+-		Object.keys(value).some((key) => !["connectorId", "outcomeKind", "reportKind", "evidence"].includes(key)) ||
+-		Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_BODY_BYTES ||
+-		typeof value.outcomeKind !== "string" ||
+-		!OUTCOME_KINDS.has(value.outcomeKind) ||
+-		typeof value.reportKind !== "string" ||
+-		!REPORT_KINDS.has(value.reportKind)
+-	) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	const input: ParsedReportBody = {
+-		connectorId: parseConnectorId(value.connectorId),
+-		outcomeKind: value.outcomeKind,
+-		reportKind: value.reportKind,
+-		evidence: parseEvidence(value.evidence)
+-	};
+-	if (input.outcomeKind !== "unknown" && input.evidence.length === 0) {
+-		throw new TypeError(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-	return input;
+-}
+-
+-function statusFor(error: unknown): number {
+-	if (error && typeof error === "object" && "status" in error) {
+-		const status = Number((error as { status?: unknown }).status);
+-		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
+-	}
+-	return 503;
+-}
+-
+-async function POSTHandler(
+-	request: NextRequest,
+-	{ params }: { readonly params: { readonly id: string } }
+-) {
+-	const user = await getCurrentUser();
+-	if (!user) return Response.json("Unauthorized", { status: 401 });
+-
+-	let experienceId: string;
+-	let rawBody: unknown;
+-	let input: ParsedReportBody;
+-	try {
+-		experienceId = requiredId(params.id);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_SESSION_OUTCOME_REPORT_INVALID, 400);
+-	}
+-	try {
+-		rawBody = await request.json();
+-	} catch {
+-		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
+-	}
+-	try {
+-		input = parseBody(rawBody);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_SESSION_OUTCOME_REPORT_INVALID, 400);
+-	}
+-
+-	try {
+-		const connectors = await listMemoryConnectors();
+-		const connector = input.connectorId
+-			? connectors.find((item) => item.id === input.connectorId)
+-			: connectors.find((item) => item.type === "autodev");
+-		if (!connector) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 404);
+-		}
+-		const runtime = await getMemoryRuntime(connector.id);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 400);
+-		}
+-		const result = await runtime.adapter.reportSessionOutcome({
+-			experienceId,
+-			outcomeKind: input.outcomeKind,
+-			reportKind: input.reportKind,
+-			evidence: input.evidence
+-		});
+-		// The adapter returns only the reporter-visible report; the Control
+-		// API report id and reporter identity remain server-side.
+-		return Response.json(
+-			{
+-				schema: "autodev-memory-session-outcome-report-ui-v1",
+-				appended: result.appended,
+-				report: result.report
+-			},
+-			{ headers: { "cache-control": "no-store" } }
+-		);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_SESSION_OUTCOME_REPORT_FAILED, statusFor(error));
+-	}
+-}
+-
+-export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+-
+diff --git a/src/client/src/__tests__/app/api/memory/experiences/[id]/session-outcome/route.test.ts b/src/client/src/__tests__/app/api/memory/experiences/[id]/session-outcome/route.test.ts
+deleted file mode 100644
+index a47991b9..00000000
+--- a/src/client/src/__tests__/app/api/memory/experiences/[id]/session-outcome/route.test.ts
++++ /dev/null
+@@ -1,145 +0,0 @@
+-jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : "memory:" + id)
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) => !!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true
+-}));
+-
+-import { POST } from "@/app/api/memory/experiences/[id]/session-outcome/route";
+-import { getCurrentUser } from "@/lib/session";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import { MEMORY_SESSION_OUTCOME_REPORT_INVALID } from "@/constants/messages/en";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	})
+-};
+-
+-function makeRequest(body: unknown) {
+-	return { json: async () => body } as any;
+-}
+-
+-const connector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-
+-beforeEach(() => {
+-	jest.clearAllMocks();
+-	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
+-	(listMemoryConnectors as jest.Mock).mockResolvedValue([connector]);
+-});
+-
+-test("session-outcome POST sends only outcomeKind/reportKind/evidence and returns no reporter identity or report id", async () => {
+-	const reportSessionOutcome = jest.fn().mockResolvedValue({
+-		appended: true,
+-		report: {
+-			outcomeKind: "success",
+-			reportKind: "task",
+-			reportedAt: "2026-10-01T00:06:00.000Z",
+-			evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-		}
+-	});
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportSessionOutcome } });
+-	const reportBody = {
+-		connectorId: connector.id,
+-		outcomeKind: "success",
+-		reportKind: "task",
+-		evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-	};
+-	const response = await POST(makeRequest(reportBody), { params: { id: "experience-a" } });
+-	const body = await response.json();
+-
+-	expect(response.status).toBe(200);
+-	expect(reportSessionOutcome).toHaveBeenCalledWith({
+-		experienceId: "experience-a",
+-		outcomeKind: "success",
+-		reportKind: "task",
+-		evidence: reportBody.evidence
+-	});
+-	expect(body.appended).toBe(true);
+-	expect(body.report.reportKind).toBe("task");
+-	expect(JSON.stringify(body)).not.toMatch(/correlationToken|reportId|reporterId|reporterAuthority/iu);
+-	expect(JSON.stringify(reportBody)).not.toMatch(/taskId|runId|agentId|reporterId|reporterAuthority|correlationToken/iu);
+-});
+-
+-test("session-outcome POST requires an authenticated session and evidence for non-unknown reports", async () => {
+-	(getCurrentUser as jest.Mock).mockResolvedValue(null);
+-	const unauthenticated = await POST(makeRequest({}), { params: { id: "experience-a" } });
+-	expect(unauthenticated.status).toBe(401);
+-	expect(listMemoryConnectors).not.toHaveBeenCalled();
+-
+-	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
+-	const reportSessionOutcome = jest.fn().mockResolvedValue({
+-		appended: true,
+-		report: {
+-			outcomeKind: "unknown",
+-			reportKind: "task",
+-			reportedAt: "2026-10-01T00:06:00.000Z",
+-			evidence: []
+-		}
+-	});
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportSessionOutcome } });
+-	const missingEvidence = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			outcomeKind: "success",
+-			reportKind: "task",
+-			evidence: []
+-		}),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(missingEvidence.status).toBe(400);
+-	expect(reportSessionOutcome).not.toHaveBeenCalled();
+-	const unknownWithoutEvidence = await POST(
+-		makeRequest({
+-			connectorId: connector.id,
+-			outcomeKind: "unknown",
+-			reportKind: "task",
+-			evidence: []
+-		}),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(unknownWithoutEvidence.status).toBe(200);
+-});
+-
+-test("session-outcome POST rejects task/run/agent, reporter, authority, and correlation-token fields", async () => {
+-	for (const extraKey of ["taskId", "runId", "agentId", "reporterId", "reporterAuthority", "correlationToken", "injectionEventId"]) {
+-		const response = await POST(
+-			makeRequest({
+-				connectorId: connector.id,
+-				outcomeKind: "unknown",
+-				reportKind: "task",
+-				evidence: [],
+-				[extraKey]: "caller-supplied"
+-			}),
+-			{ params: { id: "experience-a" } }
+-		);
+-		expect(response.status).toBe(400);
+-		const body = await response.json();
+-		expect(body).toBe(MEMORY_SESSION_OUTCOME_REPORT_INVALID);
+-	}
+-});
+-
+-test("session-outcome POST rejects non-AutoDev connectors and preserves append-only conflict status", async () => {
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: false } });
+-	const nonAutoDev = await POST(
+-		makeRequest({ connectorId: connector.id, outcomeKind: "unknown", reportKind: "task", evidence: [] }),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(nonAutoDev.status).toBe(400);
+-
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		connector,
+-		adapter: { __autodev: true, reportSessionOutcome: jest.fn().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 })) }
+-	});
+-	const conflict = await POST(
+-		makeRequest({ connectorId: connector.id, outcomeKind: "failure", reportKind: "task", evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }] }),
+-		{ params: { id: "experience-a" } }
+-	);
+-	expect(conflict.status).toBe(409);
+-});
+-
+diff --git a/src/client/src/app/api/memory/session-cohorts/route.ts b/src/client/src/app/api/memory/session-cohorts/route.ts
+deleted file mode 100644
+index df9ab4cf..00000000
+--- a/src/client/src/app/api/memory/session-cohorts/route.ts
++++ /dev/null
+@@ -1,130 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId,
+-	type MemoryConnectorPublic,
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevSessionCohortFilter,
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_CONNECTOR_NOT_FOUND,
+-	MEMORY_INVALID_FILTER,
+-	MEMORY_SESSION_COHORTS_LOAD_FAILED,
+-	MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR,
+-} from "@/constants/messages/en";
+-
+-const FILTER_MAX = 64;
+-const FILTER_VALUES_MAX = 10;
+-const MEMORY_MODE_VALUES = ["jit", "retrieval-only", "disabled"];
+-const ALLOWED_QUERY_KEYS = new Set([
+-	"connectorId",
+-	"occurredFrom",
+-	"occurredUntil",
+-	"memoryMode",
+-]);
+-const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+-
+-function parseConnectorId(value: string | null): string | undefined {
+-	if (value == null) return undefined;
+-	const trimmed = value.trim();
+-	if (!trimmed) return undefined;
+-	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	const id = memoryConnectorId(trimmed);
+-	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return id;
+-}
+-
+-function parseTimestamp(value: string | null, label: string): string {
+-	const trimmed = String(value || "").trim();
+-	if (!trimmed || !Number.isFinite(Date.parse(trimmed))) {
+-		throw new Error(label + " must be a valid ISO 8601 timestamp.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseModes(values: string[]): string[] | undefined {
+-	if (!values.length) return undefined;
+-	if (values.length > FILTER_VALUES_MAX) throw new Error(MEMORY_INVALID_FILTER);
+-	const trimmed = values.map((value) => value.trim());
+-	if (trimmed.some((value) => !value || value.length > FILTER_MAX || !MEMORY_MODE_VALUES.includes(value))) {
+-		throw new Error("memoryMode filter is invalid.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseFilter(params: URLSearchParams): AutoDevSessionCohortFilter {
+-	let hasUnexpectedKey = false;
+-	params.forEach((_value, key) => {
+-		if (!ALLOWED_QUERY_KEYS.has(key)) hasUnexpectedKey = true;
+-	});
+-	if (hasUnexpectedKey) throw new Error(MEMORY_INVALID_FILTER);
+-	const occurredFrom = parseTimestamp(params.get("occurredFrom"), "occurredFrom");
+-	const occurredUntil = parseTimestamp(params.get("occurredUntil"), "occurredUntil");
+-	const fromMs = Date.parse(occurredFrom);
+-	const untilMs = Date.parse(occurredUntil);
+-	if (untilMs < fromMs) throw new Error("occurredUntil must be on or after occurredFrom.");
+-	if (untilMs - fromMs > MAX_COHORT_WINDOW_MS) {
+-		throw new Error("The occurred window cannot exceed 365 days.");
+-	}
+-	return {
+-		occurredFrom,
+-		occurredUntil,
+-		memoryModes: parseModes(params.getAll("memoryMode")),
+-	};
+-}
+-
+-async function resolveAutoDevConnectorId(requested: string | undefined): Promise<string> {
+-	const connectors: readonly MemoryConnectorPublic[] = await listMemoryConnectors();
+-	if (requested) {
+-		const match = connectors.find((connector) => connector.id === requested);
+-		if (!match) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-		return match.id;
+-	}
+-	const autoDevConnector = connectors.find((connector) => connector.type === "autodev");
+-	if (!autoDevConnector) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return autoDevConnector.id;
+-}
+-
+-function statusFor(message: string): number {
+-	if (message === MEMORY_CONNECTOR_NOT_FOUND) return 404;
+-	return 400;
+-}
+-
+-async function GETHandler(request: NextRequest) {
+-	const params = request.nextUrl.searchParams;
+-	let connectorId: string | undefined;
+-	let filter: AutoDevSessionCohortFilter;
+-	try {
+-		connectorId = parseConnectorId(params.get("connectorId"));
+-		filter = parseFilter(params);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+-	}
+-
+-	try {
+-		const resolvedConnectorId = await resolveAutoDevConnectorId(connectorId);
+-		const runtime = await getMemoryRuntime(resolvedConnectorId);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(
+-				MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR,
+-				MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR,
+-				400
+-			);
+-		}
+-		const result = await runtime.adapter.readSessionOutcomeCohorts(filter);
+-		return Response.json({ connector: runtime.connector, result });
+-	} catch (error) {
+-		const message = error instanceof Error ? error.message : String(error);
+-		return errorResponse(error, MEMORY_SESSION_COHORTS_LOAD_FAILED, statusFor(message));
+-	}
+-}
+-
+-export const GET = withMemoryAccess("read", GETHandler);
+diff --git a/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts
+deleted file mode 100644
+index a34e8c50..00000000
+--- a/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts
++++ /dev/null
+@@ -1,106 +0,0 @@
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) =>
+-		!!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true,
+-}));
+-
+-import { GET } from "@/app/api/memory/session-cohorts/route";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import { MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR } from "@/constants/messages/en";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	}),
+-};
+-
+-function makeRequest(query: string) {
+-	const url = "http://localhost/api/memory/session-cohorts" + (query ? "?" + query : "");
+-	return { nextUrl: { searchParams: new URL(url).searchParams } } as any;
+-}
+-
+-const autoDevConnector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-const claudeConnector = { id: "memory:claude-a", type: "claude", name: "Claude" };
+-
+-beforeEach(() => {
+-	jest.clearAllMocks();
+-	(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+-});
+-
+-test("session cohort route rejects caller-selected identities and overlong windows", async () => {
+-	for (const query of [
+-		"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&taskId=caller",
+-		"occurredFrom=2024-01-01T00:00:00.000Z&occurredUntil=2026-01-01T00:00:00.000Z",
+-		"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=invalid"
+-	]) {
+-		const response = await GET(makeRequest(query));
+-		expect(response.status).toBe(400);
+-	}
+-	expect(listMemoryConnectors).not.toHaveBeenCalled();
+-});
+-
+-test("session cohort route invokes only the AutoDev adapter and returns deduplicated counts", async () => {
+-	const readSessionOutcomeCohorts = jest.fn().mockResolvedValue({
+-		status: "available",
+-		page: {
+-			schema: "autodev-memory-session-outcome-cohorts-v1",
+-			occurredFrom: "2026-09-01T00:00:00.000Z",
+-			occurredUntil: "2026-09-02T00:00:00.000Z",
+-			cells: [{ memoryMode: "jit", outcomeKind: "success", sessionCount: 2 }],
+-			sessionCount: 2,
+-			reportedSessionCount: 2,
+-			unreportedSessionCount: 0,
+-			conflictingOutcomeSessionCount: 1,
+-			mixedModeSessionCount: 0
+-		}
+-	});
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		adapter: { __autodev: true, readSessionOutcomeCohorts },
+-		connector: autoDevConnector,
+-	});
+-	const response = await GET(
+-		makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=jit")
+-	);
+-	expect(response.status).toBe(200);
+-	const body = await response.json();
+-	expect(body.connector).toEqual(autoDevConnector);
+-	expect(body.result.page.sessionCount).toBe(2);
+-	expect(readSessionOutcomeCohorts).toHaveBeenCalledWith({
+-		occurredFrom: "2026-09-01T00:00:00.000Z",
+-		occurredUntil: "2026-09-02T00:00:00.000Z",
+-		memoryModes: ["jit"]
+-	});
+-});
+-
+-test("session cohort route surfaces an unavailable Control API result (e.g. an upstream 401/403) without a local session gate", async () => {
+-	const readSessionOutcomeCohorts = jest.fn().mockResolvedValue({ status: "unavailable", page: null });
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		adapter: { __autodev: true, readSessionOutcomeCohorts },
+-		connector: autoDevConnector,
+-	});
+-	const response = await GET(
+-		makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-	);
+-	expect(response.status).toBe(200);
+-	const body = await response.json();
+-	expect(body.result).toEqual({ status: "unavailable", page: null });
+-});
+-
+-test("session cohort route does not expose session analysis for other connectors", async () => {
+-	(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		adapter: { __autodev: false },
+-		connector: claudeConnector,
+-	});
+-	const response = await GET(
+-		makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&connectorId=claude-a")
+-	);
+-	expect(response.status).toBe(400);
+-	expect(await response.json()).toBe(MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR);
+-});
+diff --git a/src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts b/src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts
+deleted file mode 100644
+index f91be0cf..00000000
+--- a/src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts
++++ /dev/null
+@@ -1,226 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevInjectionUseReportInput
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
+-	MEMORY_INJECTION_USE_REPORT_FAILED,
+-	MEMORY_INJECTION_USE_REPORT_INVALID,
+-	MEMORY_INVALID_JSON
+-} from "@/constants/messages/en";
+-
+-const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+-const EVIDENCE_KINDS = new Set([
+-	"trajectory", "trace", "file", "commit", "pull_request", "issue",
+-	"rule", "skill", "document", "other"
+-]);
+-const USE_KINDS = new Set(["used", "partially_used", "not_used", "unobservable"]);
+-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+-const MAX_BODY_BYTES = 64 * 1024;
+-const MAX_EVIDENCE_REFERENCES = 64;
+-const MAX_MEMORY_IDS = 64;
+-
+-interface ParsedUseReportBody {
+-	readonly connectorId?: string;
+-	readonly injectionEventId: string;
+-	readonly useKind: string;
+-	readonly usedMemoryIds: AutoDevInjectionUseReportInput["usedMemoryIds"];
+-	readonly evidence: AutoDevInjectionUseReportInput["evidence"];
+-}
+-
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-	return !!value && typeof value === "object" && !Array.isArray(value);
+-}
+-
+-function requiredId(value: unknown): string {
+-	if (
+-		typeof value !== "string" ||
+-		!ID_PATTERN.test(value) ||
+-		CONTROL_CHARACTER_PATTERN.test(value)
+-	) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	return value;
+-}
+-
+-function parseConnectorId(value: unknown): string | undefined {
+-	if (value === undefined || value === null) return undefined;
+-	if (typeof value !== "string" || value.length > 120 || CONTROL_CHARACTER_PATTERN.test(value)) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	const normalized = memoryConnectorId(value.trim());
+-	if (!isMemoryConnectorId(normalized)) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	return normalized;
+-}
+-
+-function parseUsedMemoryIds(value: unknown): string[] {
+-	if (!Array.isArray(value) || value.length > MAX_MEMORY_IDS) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	const ids = value.map((entry) => {
+-		if (
+-			typeof entry !== "string" ||
+-			!entry.trim() ||
+-			entry.length > 256 ||
+-			CONTROL_CHARACTER_PATTERN.test(entry)
+-		) {
+-			throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		}
+-		return entry.trim();
+-	});
+-	if (new Set(ids).size !== ids.length) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	return ids;
+-}
+-
+-function parseEvidence(value: unknown): AutoDevInjectionUseReportInput["evidence"] {
+-	if (!Array.isArray(value) || value.length > MAX_EVIDENCE_REFERENCES) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	return value.map((entry) => {
+-		if (!isRecord(entry)) throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		if (
+-			Object.keys(entry).some((key) => !["kind", "uri", "revision", "observedAt"].includes(key)) ||
+-			typeof entry.kind !== "string" ||
+-			!EVIDENCE_KINDS.has(entry.kind) ||
+-			typeof entry.uri !== "string" ||
+-			!entry.uri.trim() ||
+-			entry.uri.length > 2048 ||
+-			CONTROL_CHARACTER_PATTERN.test(entry.uri) ||
+-			(entry.revision !== undefined &&
+-				(typeof entry.revision !== "string" || entry.revision.length > 256 || CONTROL_CHARACTER_PATTERN.test(entry.revision))) ||
+-			(entry.observedAt !== undefined &&
+-				(typeof entry.observedAt !== "string" || !Number.isFinite(Date.parse(entry.observedAt))))
+-		) {
+-			throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		}
+-		return {
+-			kind: entry.kind,
+-			uri: entry.uri.trim(),
+-			...(typeof entry.revision === "string" ? { revision: entry.revision } : {}),
+-			...(typeof entry.observedAt === "string" ? { observedAt: entry.observedAt } : {})
+-		};
+-	});
+-}
+-
+-// The body is exactly {connectorId?, injectionEventId, useKind, usedMemoryIds,
+-// evidence}. Unlike the per-injection outcome report, there is no caller-
+-// chosen reportKind: the Control API derives session identity from the
+-// visible experience and resolves the opaque correlation token itself from
+-// injectionEventId, so this route never receives or forwards a token.
+-function parseBody(value: unknown): ParsedUseReportBody {
+-	if (!isRecord(value)) throw new TypeError(MEMORY_INVALID_JSON);
+-	if (
+-		Object.keys(value).some((key) => !["connectorId", "injectionEventId", "useKind", "usedMemoryIds", "evidence"].includes(key)) ||
+-		Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_BODY_BYTES ||
+-		typeof value.useKind !== "string" ||
+-		!USE_KINDS.has(value.useKind)
+-	) {
+-		throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-	}
+-	const usedMemoryIds = parseUsedMemoryIds(value.usedMemoryIds);
+-	const evidence = parseEvidence(value.evidence);
+-	const input: ParsedUseReportBody = {
+-		connectorId: parseConnectorId(value.connectorId),
+-		injectionEventId: requiredId(value.injectionEventId),
+-		useKind: value.useKind,
+-		usedMemoryIds,
+-		evidence
+-	};
+-	// Fail visibly instead of silently coercing a malformed assessment:
+-	// "unobservable" never carries ids or evidence; every other kind
+-	// requires exactly the captured trajectory as evidence, and "not_used"
+-	// never cites a memory id.
+-	if (input.useKind === "unobservable") {
+-		if (usedMemoryIds.length > 0 || evidence.length > 0) {
+-			throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		}
+-	} else {
+-		if (evidence.length === 0) {
+-			throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		}
+-		if (input.useKind === "not_used" && usedMemoryIds.length > 0) {
+-			throw new TypeError(MEMORY_INJECTION_USE_REPORT_INVALID);
+-		}
+-	}
+-	return input;
+-}
+-
+-function statusFor(error: unknown): number {
+-	if (error && typeof error === "object" && "status" in error) {
+-		const status = Number((error as { status?: unknown }).status);
+-		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
+-	}
+-	return 503;
+-}
+-
+-async function POSTHandler(
+-	request: NextRequest,
+-	{ params }: { readonly params: { readonly id: string } }
+-) {
+-	let experienceId: string;
+-	let rawBody: unknown;
+-	let input: ParsedUseReportBody;
+-	try {
+-		experienceId = requiredId(params.id);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INJECTION_USE_REPORT_INVALID, 400);
+-	}
+-	try {
+-		rawBody = await request.json();
+-	} catch {
+-		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
+-	}
+-	try {
+-		input = parseBody(rawBody);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INJECTION_USE_REPORT_INVALID, 400);
+-	}
+-
+-	try {
+-		const connectors = await listMemoryConnectors();
+-		const connector = input.connectorId
+-			? connectors.find((item) => item.id === input.connectorId)
+-			: connectors.find((item) => item.type === "autodev");
+-		if (!connector) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 404);
+-		}
+-		const runtime = await getMemoryRuntime(connector.id);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 400);
+-		}
+-		const result = await runtime.adapter.reportInjectionUse({
+-			experienceId,
+-			injectionEventId: input.injectionEventId,
+-			useKind: input.useKind,
+-			usedMemoryIds: input.usedMemoryIds,
+-			evidence: input.evidence
+-		});
+-		// The adapter returns only the curator-visible use assessment; the
+-		// opaque correlation token never reaches this route or the browser.
+-		return Response.json(
+-			{
+-				schema: "autodev-memory-injection-use-report-ui-v1",
+-				appended: result.appended,
+-				use: result.use
+-			},
+-			{ headers: { "cache-control": "no-store" } }
+-		);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INJECTION_USE_REPORT_FAILED, statusFor(error));
+-	}
+-}
+-
+-export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+diff --git a/src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts b/src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts
+deleted file mode 100644
+index 32558a29..00000000
+--- a/src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts
++++ /dev/null
+@@ -1,165 +0,0 @@
+-/**
+- * Focused unit tests for the per-injection use-assessment API route.
+- *
+- * Validates the JSON parsing 400 contract, ID-pattern validation, malformed
+- * payload 400 contract, and successful path via the AutoDev adapter.
+- */
+-import assert from "node:assert/strict";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	}),
+-};
+-
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) =>
+-		!!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true,
+-}));
+-
+-import { POST } from "@/app/api/memory/experiences/[id]/use-assessments/route";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import { MEMORY_INJECTION_USE_REPORT_INVALID } from "@/constants/messages/en";
+-
+-function request(body: unknown) {
+-	return { json: async () => body } as any;
+-}
+-
+-const connector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-
+-describe("POST /api/memory/experiences/[id]/use-assessments", () => {
+-	beforeEach(() => {
+-		jest.clearAllMocks();
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([connector]);
+-	});
+-
+-	it("returns 400 for malformed JSON without calling the adapter", async () => {
+-		const reportInjectionUse = jest.fn();
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, reportInjectionUse },
+-			connector,
+-		});
+-		const response = await POST(request({ /* not a body */ throw: true }), {
+-			params: { id: "experience-a" }
+-		});
+-		assert.equal(response.status, 400);
+-		assert.equal(reportInjectionUse.mock.calls.length, 0);
+-	});
+-
+-	it("returns 400 when the experience id fails the ID-pattern check", async () => {
+-		const reportInjectionUse = jest.fn();
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, reportInjectionUse },
+-			connector,
+-		});
+-		const response = await POST(
+-			request({
+-				injectionEventId: "injection-event-a",
+-				useKind: "used",
+-				usedMemoryIds: ["memory-a"],
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}),
+-			{ params: { id: "bad id with spaces" } }
+-		);
+-		assert.equal(response.status, 400);
+-		assert.equal(await response.json(), MEMORY_INJECTION_USE_REPORT_INVALID);
+-		assert.equal(reportInjectionUse.mock.calls.length, 0);
+-	});
+-
+-	it("returns 400 when usedMemoryIds include duplicates", async () => {
+-		const reportInjectionUse = jest.fn();
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, reportInjectionUse },
+-			connector,
+-		});
+-		const response = await POST(
+-			request({
+-				injectionEventId: "injection-event-a",
+-				useKind: "used",
+-				usedMemoryIds: ["memory-a", "memory-a"],
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}),
+-			{ params: { id: "experience-a" } }
+-		);
+-		assert.equal(response.status, 400);
+-		assert.equal(await response.json(), MEMORY_INJECTION_USE_REPORT_INVALID);
+-		assert.equal(reportInjectionUse.mock.calls.length, 0);
+-	});
+-
+-	it("returns 400 when unobservable carries evidence (server invariant mirror)", async () => {
+-		const reportInjectionUse = jest.fn();
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, reportInjectionUse },
+-			connector,
+-		});
+-		const response = await POST(
+-			request({
+-				injectionEventId: "injection-event-a",
+-				useKind: "unobservable",
+-				usedMemoryIds: [],
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}),
+-			{ params: { id: "experience-a" } }
+-		);
+-		assert.equal(response.status, 400);
+-		assert.equal(await response.json(), MEMORY_INJECTION_USE_REPORT_INVALID);
+-		assert.equal(reportInjectionUse.mock.calls.length, 0);
+-	});
+-
+-	it("forwards a valid used assessment and returns the sanitized projection", async () => {
+-		const reportInjectionUse = jest.fn().mockResolvedValue({
+-			appended: true,
+-			use: {
+-				useKind: "used",
+-				usedMemoryIds: ["memory-a"],
+-				reportedAt: "2026-10-01T00:05:00.000Z",
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}
+-		});
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, reportInjectionUse },
+-			connector,
+-		});
+-		const response = await POST(
+-			request({
+-				injectionEventId: "injection-event-a",
+-				useKind: "used",
+-				usedMemoryIds: ["memory-a"],
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}),
+-			{ params: { id: "experience-a" } }
+-		);
+-		assert.equal(response.status, 200);
+-		const body = await response.json();
+-		assert.equal(body.schema, "autodev-memory-injection-use-report-ui-v1");
+-		assert.equal(body.appended, true);
+-		assert.equal(body.use.useKind, "used");
+-	});
+-
+-	it("rejects non-AutoDev connectors with 400 and never touches the report pipeline", async () => {
+-		const claude = { id: "memory:claude-a", type: "claude", name: "Claude" };
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([claude]);
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: false },
+-			connector: claude,
+-		});
+-		const response = await POST(
+-			request({
+-				connectorId: claude.id,
+-				injectionEventId: "injection-event-a",
+-				useKind: "used",
+-				usedMemoryIds: ["memory-a"],
+-				evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
+-			}),
+-			{ params: { id: "experience-a" } }
+-		);
+-		assert.equal(response.status, 400);
+-	});
+-});
+diff --git a/src/client/src/app/api/memory/use-cohorts/route.ts b/src/client/src/app/api/memory/use-cohorts/route.ts
+deleted file mode 100644
+index 5fc46248..00000000
+--- a/src/client/src/app/api/memory/use-cohorts/route.ts
++++ /dev/null
+@@ -1,140 +0,0 @@
+-import { NextRequest } from "next/server";
+-import { errorResponse } from "@/utils/api-response";
+-import { withMemoryAccess } from "@/lib/access/memory-route";
+-import {
+-	getMemoryRuntime,
+-	isMemoryConnectorId,
+-	listMemoryConnectors,
+-	memoryConnectorId
+-} from "@/lib/platform/connectors/memory/crud";
+-import {
+-	isAutoDevMemoryAdapter,
+-	type AutoDevUseCohortFilter
+-} from "@/lib/platform/connectors/memory/autodev/adapter";
+-import {
+-	MEMORY_CONNECTOR_NOT_FOUND,
+-	MEMORY_USE_COHORTS_LOAD_FAILED,
+-	MEMORY_USE_COHORTS_UNSUPPORTED_CONNECTOR,
+-	MEMORY_INVALID_FILTER
+-} from "@/constants/messages/en";
+-
+-const FILTER_MAX = 64;
+-const FILTER_VALUES_MAX = 10;
+-// Mirrors MEMORY_USE_COHORT_ASSIGNED_MODES in @simulatorlife/autodev-core: the
+-// filter accepts every assigned mode a session can carry, even though only
+-// jit/retrieval-only sessions ever contain an eligible (injected,
+-// non-empty-packet) exposure. Selecting "disabled" is valid and simply
+-// yields an empty cohort; it is not rejected as an invalid filter.
+-const MEMORY_MODE_VALUES = ["jit", "retrieval-only", "disabled"];
+-const USE_KIND_VALUES = ["used", "partially_used", "not_used", "unobservable"];
+-const ALLOWED_QUERY_KEYS = new Set([
+-	"connectorId",
+-	"occurredFrom",
+-	"occurredUntil",
+-	"memoryMode",
+-	"useKind"
+-]);
+-// Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core; the
+-// adapter and the Control API both re-validate this, but checking here
+-// gives a clear 400 before any Control API round trip.
+-const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+-
+-function parseConnectorId(value: string | null): string | undefined {
+-	if (value == null) return undefined;
+-	const trimmed = value.trim();
+-	if (!trimmed) return undefined;
+-	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
+-		throw new Error(MEMORY_INVALID_FILTER);
+-	}
+-	const id = memoryConnectorId(trimmed);
+-	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return id;
+-}
+-
+-function parseTimestamp(value: string | null, label: string): string {
+-	const trimmed = String(value || "").trim();
+-	if (!trimmed || !Number.isFinite(Date.parse(trimmed))) {
+-		throw new Error(label + " must be a valid ISO 8601 timestamp.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseEnumValues(values: string[], allowed: string[], label: string): string[] | undefined {
+-	if (!values.length) return undefined;
+-	if (values.length > FILTER_VALUES_MAX) throw new Error(MEMORY_INVALID_FILTER);
+-	const trimmed = values.map((value) => value.trim());
+-	if (trimmed.some((value) => !value || value.length > FILTER_MAX || !allowed.includes(value))) {
+-		throw new Error(label + " filter is invalid.");
+-	}
+-	return trimmed;
+-}
+-
+-function parseFilter(params: URLSearchParams): AutoDevUseCohortFilter {
+-	let hasUnexpectedKey = false;
+-	params.forEach((_value, key) => {
+-		if (!ALLOWED_QUERY_KEYS.has(key)) hasUnexpectedKey = true;
+-	});
+-	if (hasUnexpectedKey) throw new Error(MEMORY_INVALID_FILTER);
+-	const occurredFrom = parseTimestamp(params.get("occurredFrom"), "occurredFrom");
+-	const occurredUntil = parseTimestamp(params.get("occurredUntil"), "occurredUntil");
+-	const fromMs = Date.parse(occurredFrom);
+-	const untilMs = Date.parse(occurredUntil);
+-	if (untilMs < fromMs) throw new Error("occurredUntil must be on or after occurredFrom.");
+-	if (untilMs - fromMs > MAX_COHORT_WINDOW_MS) {
+-		throw new Error("The occurred window cannot exceed 365 days.");
+-	}
+-	return {
+-		occurredFrom,
+-		occurredUntil,
+-		memoryModes: parseEnumValues(params.getAll("memoryMode"), MEMORY_MODE_VALUES, "memoryMode"),
+-		useKinds: parseEnumValues(params.getAll("useKind"), USE_KIND_VALUES, "useKind")
+-	};
+-}
+-
+-async function resolveAutoDevConnectorId(requested: string | undefined): Promise<string> {
+-	const connectors = await listMemoryConnectors();
+-	if (requested) {
+-		const match = connectors.find((connector) => connector.id === requested);
+-		if (!match) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-		return match.id;
+-	}
+-	const autoDevConnector = connectors.find((connector) => connector.type === "autodev");
+-	if (!autoDevConnector) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
+-	return autoDevConnector.id;
+-}
+-
+-function statusFor(message: string): number {
+-	if (message === MEMORY_CONNECTOR_NOT_FOUND) return 404;
+-	return 400;
+-}
+-
+-async function GETHandler(request: NextRequest) {
+-	const params = request.nextUrl.searchParams;
+-	let connectorId: string | undefined;
+-	let filter: AutoDevUseCohortFilter;
+-	try {
+-		connectorId = parseConnectorId(params.get("connectorId"));
+-		filter = parseFilter(params);
+-	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+-	}
+-
+-	try {
+-		const resolvedConnectorId = await resolveAutoDevConnectorId(connectorId);
+-		const runtime = await getMemoryRuntime(resolvedConnectorId);
+-		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
+-			return errorResponse(
+-				MEMORY_USE_COHORTS_UNSUPPORTED_CONNECTOR,
+-				MEMORY_USE_COHORTS_UNSUPPORTED_CONNECTOR,
+-				400
+-			);
+-		}
+-		const result = await runtime.adapter.readInjectionUseCohorts(filter);
+-		return Response.json({ connector: runtime.connector, result });
+-	} catch (error) {
+-		const message = error instanceof Error ? error.message : String(error);
+-		return errorResponse(error, MEMORY_USE_COHORTS_LOAD_FAILED, statusFor(message));
+-	}
+-}
+-
+-export const GET = withMemoryAccess("read", GETHandler);
+diff --git a/src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts
+deleted file mode 100644
+index 05e665b0..00000000
+--- a/src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts
++++ /dev/null
+@@ -1,193 +0,0 @@
+-/**
+- * Focused unit tests for the use-cohorts API route.
+- *
+- * The route is a thin same-origin presentation/proxy of the governed AutoDev
+- * `/control/memory/use-cohorts` endpoint. It enforces operator/task-history
+- * server-side via the AutoDev adapter; the UI never resolves roles or
+- * actors.
+- */
+-import assert from "node:assert/strict";
+-
+-(globalThis as unknown as { Response: { json: unknown } }).Response = {
+-	json: (body: unknown, init?: ResponseInit) => ({
+-		status: init?.status ?? 200,
+-		json: async () => body,
+-	}),
+-};
+-
+-jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+-	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+-	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+-	listMemoryConnectors: jest.fn(),
+-	getMemoryRuntime: jest.fn(),
+-}));
+-jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+-	isAutoDevMemoryAdapter: (adapter: unknown) =>
+-		!!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true,
+-}));
+-
+-import { GET } from "@/app/api/memory/use-cohorts/route";
+-import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+-import {
+-	MEMORY_INVALID_FILTER,
+-	MEMORY_USE_COHORTS_LOAD_FAILED,
+-	MEMORY_USE_COHORTS_UNSUPPORTED_CONNECTOR,
+-} from "@/constants/messages/en";
+-
+-function makeRequest(query: string) {
+-	const url = "http://localhost/api/memory/use-cohorts" + (query ? "?" + query : "");
+-	return { nextUrl: { searchParams: new URL(url).searchParams } } as any;
+-}
+-
+-const autoDevConnector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
+-const claudeConnector = { id: "memory:claude-a", type: "claude", name: "Claude" };
+-
+-describe("GET /api/memory/use-cohorts", () => {
+-	beforeEach(() => {
+-		jest.clearAllMocks();
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+-	});
+-
+-	it("returns the adapter result for a valid AutoDev request", async () => {
+-		const readInjectionUseCohorts = jest.fn().mockResolvedValue({
+-			status: "available",
+-			page: {
+-				schema: "autodev-memory-injection-use-cohorts-v1",
+-				workspaceId: "workspace-a",
+-				repositoryId: "owner/repo",
+-				occurredFrom: "2026-09-01T00:00:00.000Z",
+-				occurredUntil: "2026-09-02T00:00:00.000Z",
+-				cells: [
+-					{
+-						memoryMode: "jit",
+-						sessionCardinality: "single",
+-						useKind: "used",
+-						exposureCount: 3
+-					},
+-					{
+-						memoryMode: "jit",
+-						sessionCardinality: "single",
+-						useKind: null,
+-						exposureCount: 1
+-					}
+-				],
+-				exposureCount: 4
+-			}
+-		});
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readInjectionUseCohorts },
+-			connector: autoDevConnector,
+-		});
+-		const response = await GET(
+-			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-		);
+-		assert.equal(response.status, 200);
+-		const body = await response.json();
+-		assert.equal(body.connector, autoDevConnector);
+-		assert.equal(body.result.status, "available");
+-		assert.equal(body.result.page.cells.length, 2);
+-		assert.ok(readInjectionUseCohorts.mock.calls.length === 1);
+-	});
+-
+-	it("accepts every assigned mode including disabled without rejecting", async () => {
+-		const readInjectionUseCohorts = jest.fn().mockResolvedValue({ status: "empty", page: null });
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readInjectionUseCohorts },
+-			connector: autoDevConnector,
+-		});
+-		// disabled-only filter must yield empty rather than 400 because backend
+-		// contract asserts disabled yields zero rows.
+-		const response = await GET(
+-			makeRequest(
+-				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=disabled"
+-			)
+-		);
+-		assert.equal(response.status, 200);
+-		const body = await response.json();
+-		assert.equal(body.result.status, "empty");
+-		assert.equal(readInjectionUseCohorts.mock.calls[0][0].memoryModes.length, 1);
+-		assert.equal(readInjectionUseCohorts.mock.calls[0][0].memoryModes[0], "disabled");
+-	});
+-
+-	it("rejects invalid memoryMode and useKind filter values", async () => {
+-		const readInjectionUseCohorts = jest.fn();
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readInjectionUseCohorts },
+-			connector: autoDevConnector,
+-		});
+-		const memoryModeResponse = await GET(
+-			makeRequest(
+-				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=invalid"
+-			)
+-		);
+-		assert.equal(memoryModeResponse.status, 400);
+-		assert.ok(String(await memoryModeResponse.json()).includes("filter is invalid"));
+-		const useKindResponse = await GET(
+-			makeRequest(
+-				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&useKind=not-a-kind"
+-			)
+-		);
+-		assert.equal(useKindResponse.status, 400);
+-		assert.equal(readInjectionUseCohorts.mock.calls.length, 0);
+-	});
+-
+-	it("rejects missing occurred timestamps and oversized windows", async () => {
+-		const responseMissingFrom = await GET(makeRequest("occurredUntil=2026-09-02T00:00:00.000Z"));
+-		assert.equal(responseMissingFrom.status, 400);
+-		const responseTooLong = await GET(
+-			makeRequest("occurredFrom=2024-01-01T00:00:00.000Z&occurredUntil=2026-01-01T00:00:00.000Z")
+-		);
+-		assert.equal(responseTooLong.status, 400);
+-		assert.ok(String(await responseTooLong.json()).includes("365 days"));
+-	});
+-
+-	it("rejects role/task/run/agent identity and unknown query keys", async () => {
+-		for (const key of ["taskId", "runId", "agentId", "unknown"]) {
+-			const response = await GET(
+-				makeRequest(
+-					"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&" + key + "=value"
+-				)
+-			);
+-			assert.equal(response.status, 400);
+-		}
+-		assert.equal((listMemoryConnectors as jest.Mock).mock.calls.length, 0);
+-	});
+-
+-	it("404s when no AutoDev connector exists and none was requested", async () => {
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+-		const response = await GET(
+-			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-		);
+-		assert.equal(response.status, 404);
+-	});
+-
+-	it("rejects a requested connector that is not the AutoDev adapter", async () => {
+-		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: false },
+-			connector: claudeConnector,
+-		});
+-		const response = await GET(
+-			makeRequest(
+-				"connectorId=claude-a&occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z"
+-			)
+-		);
+-		assert.equal(response.status, 400);
+-		assert.equal(await response.json(), MEMORY_USE_COHORTS_UNSUPPORTED_CONNECTOR);
+-	});
+-
+-	it("propagates a Control API failure as MEMORY_USE_COHORTS_LOAD_FAILED", async () => {
+-		const readInjectionUseCohorts = jest.fn().mockRejectedValue(new Error("control-api down"));
+-		(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-			adapter: { __autodev: true, readInjectionUseCohorts },
+-			connector: autoDevConnector,
+-		});
+-		const response = await GET(
+-			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-		);
+-		assert.equal(response.status, 400);
+-		assert.equal(response.status, 400);
+-		// load endpoint already verified via the rest of the suite; this only
+-		// proves the route returns 400 for adapter errors instead of crashing.
+-	});
+-});

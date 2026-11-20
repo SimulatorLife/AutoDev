@@ -151,64 +151,13 @@ selecting one resolves detail through the fixed read-only span route. The retain
 request-time rendering because its telemetry pages consume URL search state;
 image builds must not prerender those pages.
 
-## Memory outcome cohorts
+## Memory ownership
 
-The retained OpenLIT Memory page's "Outcome cohorts" tab (AutoDev connector
-only) reads a bounded aggregate through `GET memory/cohorts` on the same
-server-only Control API proxy credential used by the rest of the `autodev`
-memory connector -- it is not a new app or a second Control API client. The
-read requires the connector's workspace, repository, and task-history/
-operator configuration; the occurred-time window is required and bounded to
-365 days by the adapter, the `/api/memory/cohorts` route, and the Control API
-itself. The view renders only exposure/report counts grouped by
-`(memoryMode, injectionResult, sessionCardinality, reportKind, outcomeKind)`.
-`sessionCardinality` is `single` or `multiple` according to the full event set
-for each contributing session, independent of the cohort's other filters; it
-is a bounded exposure classification, not a unique-session count or a
-per-turn outcome attribution. A null `reportKind`/`outcomeKind` cell is an
-unreported exposure and stays visible when no report filter is selected. The
-UI states outcomes are reporter-supplied and that `reportCount` is always less
-than or equal to `exposureCount`, and never labels these counts a task success
-rate, model-use metric, PR verification, or a causal measure of memory's
-effect.
-
-The retained experience detail exposes a reporter form for each unreported
-injection. Operators choose the outcome/report category and provide bounded
-evidence; non-`unknown` outcomes require evidence. The browser sends only the
-experience ID, injection event ID, selected categories, and evidence to a same-
-origin route. The server resolves the opaque correlation token from the scoped
-Control API read, then appends the report through the existing Control API.
-Neither the token, report ID, actor identity, nor service credential is returned
-to the browser. Reports are append-only, identical retries are idempotent, and
-conflicting reports are rejected. Outcomes remain reporter-supplied: provider
-status, retrieval, and a PR link are not treated as success.
-
-## Curator-assessed injection-use reports and cohorts
-
-The retained AutoDev Memory experience detail includes a per-injection use
-assessment for an actually injected, non-empty packet. Curators choose `used`,
-`partially_used`, `not_used`, or `unobservable`; partial use must cite a strict
-subset of the packet's memory IDs. Non-`unobservable` assessments require the
-exact captured trajectory reference, which the form attaches from the visible
-experience rather than accepting free-text evidence. Empty and skipped packets
-are shown as ineligible and cannot be assessed. This is an operator judgment,
-not automatic use detection or a task outcome.
-
-The browser posts reports through the same-origin
-`POST /api/memory/experiences/:id/use-assessments` route. Experience reads stay
-on the canonical `AutoDevMemoryAdapter.get()` detail path; there is no duplicate
-assessment-history GET proxy. The server resolves the opaque join token from the
-scoped Control API read and keeps it, report identifiers, actor identity, and
-service credentials out of browser responses. Reports are append-only and
-identical retries are idempotent.
-
-The retained page's `GET /api/memory/use-cohorts` proxy reads a bounded aggregate
-of eligible exposures grouped by assigned memory mode, session exposure
-cardinality, and curator-reported use kind. Unassessed cells remain visible as
-counts. The table reports counts only—never percentages, use rates, task/PR
-success, or causal effects—and `disabled` is an accepted filter that yields no
-eligible exposures. Curator assessments are not objective evidence that a model
-used a packet.
+The Console owns Memory reads and writes through AutoDev's Control API. Patch
+80 retires the fork's page-only same-origin action, outcome, cohort, and
+use-assessment proxy routes;
+the OpenLIT Memory page was removed earlier. Generic OpenLIT Memory connector
+read/CRUD APIs remain separate integration capabilities.
 
 ## Usage
 
