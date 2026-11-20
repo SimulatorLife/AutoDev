@@ -17,9 +17,9 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 - [`organization-routing.md`](organization-routing.md) — GitHub organization scheduler/repository routing. “Organization” here refers to SimulatorLife GitHub automation, not the removed OpenLIT organization concept.
 - [`private-target-validation.md`](private-target-validation.md) — centralized validation for private target repositories.
 - [`codebase-context-target.md`](codebase-context-target.md) — code-search/context tool responsibilities and target workflow.
-- [`memory-target-state.md`](memory-target-state.md) — focused memory architecture: raw experience, episodic/semantic/procedural memory, scoped multi-agent sharing, JIT retrieval/reconstruction, provenance, supersession, promotion, evaluation, and the Memory feature's domain contract. Its operator UI is the unified AutoDev Console, using adapted OpenLIT components rather than a second application.
+- [`memory-target-state.md`](memory-target-state.md) — **Mem0 Platform as the sole managed long-term memory engine** (official hosted MCP for trusted/scoped agents), OpenLIT Mem0 connector/UI/telemetry inside AutoDev Console, thin AutoDev security/current-state/JIT boundary, controlled evaluation, and reversible legacy-memory retirement. This is the new target, **not** the current implementation.
 - [`memory-injection-outcome-evaluation.md`](memory-injection-outcome-evaluation.md) — append-only request-level packet exposure and operator-reported outcome correlation, including scope and attribution limits.
-- [`../config/memory/README.md`](../config/memory/README.md) — local PostgreSQL/pgvector startup and migration command for the memory foundation.
+- [`../config/memory/README.md`](../config/memory/README.md) — **current transitional** PostgreSQL/pgvector runtime setup and operational tests; not the target Mem0 deployment guide. This remains applicable until the provider cutover is validated.
 
 ## Documentation rules
 

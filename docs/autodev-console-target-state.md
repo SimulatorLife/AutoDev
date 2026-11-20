@@ -80,7 +80,7 @@ AutoDev Console is an operator console, not a general AI platform, generic obser
 - All AutoDev-owned Console application/control code is TypeScript/TSX.
 - Do not iframe, embed, or visually stitch together OpenLIT, LiteLLM, MCPJam, LangWatch/Langfuse, Unleash, or other dashboards.
 - Reuse/adapt useful TypeScript components and interaction patterns into the shared AutoDev system instead of preserving foreign application shells.
-- One resource should look and behave consistently regardless of whether its data originates in RuleSync, the Control API, OpenTelemetry/OpenLIT, MemoryService, GitHub, or evaluation storage.
+- One resource should look and behave consistently regardless of whether its data originates in RuleSync, the Control API, OpenTelemetry/OpenLIT, Mem0 (via the trusted memory connector), GitHub, or evaluation storage.
 - Non-TypeScript infrastructure may remain underneath the product (for example ClickHouse and the OTel receiver), but no second AutoDev-facing application/runtime should be introduced.
 
 ### Dark-only visual system
@@ -623,7 +623,7 @@ All transports normalize **the same** logical task, physical attempts, provider 
 | Child lifecycle and tool results | Owning agent/executor → Runtime, parent-child IDs, Console and status; ACP events map to the same outcome contract. |
 | Tokens, cost and time | Owning provider evidence per attempt → OTel; missing values are **unknown**, not zero; never double-count parent/child or attempt/logical request. |
 | Historical usage | Standard OTel → authenticated OpenLIT OTLP → ClickHouse → Console Usage (one operator surface). |
-| Experience / trajectories | Approved, privacy-safe source references → PostgreSQL/pgvector and `@letta-ai/trajectory`; not a parallel transcript/memory store. |
+| Experience / trajectories | Runtime-owned, privacy-safe historical source references and optional `@letta-ai/trajectory` normalization; **Mem0 Platform** owns durable long-term memory extraction/storage/retrieval. Existing PostgreSQL/pgvector memory is transitional, not the target. |
 
 Live configuration and health remain Control API facts, not telemetry commands. Keep sensitive prompts, raw paths, secrets, user content and tool arguments out of metric dimensions.
 
@@ -733,7 +733,7 @@ Retain or adapt:
 - GenAI usage/cost foundations;
 - time-range, chart, widget, trace, table, filter, status, form, dialog, and detail primitives that fit the AutoDev design system;
 - telemetry query/source abstractions;
-- Memory connector/domain capabilities and useful Memory UI components;
+- OpenLIT's **Mem0** memory connector/domain capabilities and useful Memory UI components, adapted into Console (not a separate OpenLIT Memory product);
 - Evaluation definitions/results/history capabilities that remain independent of removed product concepts;
 - Prompt Hub browsing/edit/version/diff/preview interaction patterns, realized in the AutoDev Console's Prompts surface while RuleSync remains canonical. The OpenLIT's own Prompt Hub product is not retained: those patterns are kept by the Console that owns prompts, and a second copy of the surface would be a second authority over them.
 - useful Agent presentation patterns, but not OpenLIT discovery/instrumentation semantics;
@@ -829,7 +829,7 @@ The Console remains one application/package. A lightweight typed feature registr
 | **Usage**       | OTel/OpenLIT                                                                                                                             | cross-workspace/provider/model/agent/skill/MCP requests, tokens, cost, latency, failures, traces                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Evaluations** | evaluation definitions/storage + OTel                                                                                                    | definitions, runs/results/history, targets, comparisons, trace linkage; links to Playtesting only for source-authored batch-level evaluation assertions                                                                                                                                                                                                                                                                                                                               |
 | **Playtesting** | game-owned adapter and rubric + typed AutoDev playtest runner/evidence store                                                             | workspace-scoped batches, episodes, replay, result/quality metrics, independent critic analysis, findings, verified experiments, matched-cohort comparisons and optional human feedback                                                                                                                                                                                                                                                                                               |
-| **Memory**      | MemoryService/Data; OpenLIT-adapted connector capabilities                                                                               | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Memory**      | **Mem0 Platform** (memory authority) + OpenLIT Mem0 adapter inside AutoDev Console; Runtime retains scoped verification/injection only  | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Workspaces**  | AutoDev configuration + OTel                                                                                                             | repository catalog, enablement/scope, configuration/runtime health, aggregate usage                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **GitHub**      | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred                                                                                                                                                                                                                                                |
 
@@ -968,9 +968,11 @@ The skill's own routes follow the same rule as every other detail. A catalogue t
 
 Memory must use the same AutoDev shell, tables, forms, filters, status patterns, and detail surfaces as the rest of the Console.
 
-Reuse the useful OpenLIT connector/domain/list/detail/graph/chart/trace components and backend integration patterns, but port/adapt them into console/. The retained OpenLIT Memory page may exist only as a **temporary migration bridge** and must disappear as an operator dependency after Console parity.
+**Mem0 Platform** is the selected managed memory engine (capture-derived extraction, consolidation, durable storage, updates and retrieval), with its official hosted MCP usable only through trusted, scoped agent integration. AutoDev should **not** build or indefinitely maintain a competing PostgreSQL/pgvector memory engine, generic MemoryService CRUD/search pipeline, or custom general-purpose memory MCP. AutoDev retains execution evidence, scoped authorization, current Git/RuleSync applicability checks, bounded injection and evaluation.
 
-Memory governance, telemetry, retrieval, evaluation, and provenance details are defined in memory-target-state.md and memory-injection-outcome-evaluation.md.
+Keep **OpenLIT** as the memory UI/telemetry framework. Port/adapt the supported **Mem0 connector** and useful OpenLIT list/detail/graph/chart/trace primitives into `console/`; there is **no standalone OpenLIT Memory operator UI** in the target. API/connector/hosted-MCP compatibility and security isolation must be validated before replacement. The current AutoDev-owned memory system is transitional until cutover gates pass.
+
+Detailed Mem0 adoption, integration, security, telemetry, migration and evaluation requirements are in [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 
 ### Evaluations
 
@@ -1208,7 +1210,7 @@ Memory telemetry must remain governed by the focused Memory design. At the share
 - task/PR outcomes are never inferred from provider-routing success;
 - metric dimensions remain bounded and content-free;
 - GenAI attempt spans remain the source of model cost;
-- memory operations do not replace MemoryService authorization/state;
+- Mem0 is the durable memory authority; provider operations and hosted MCP must pass AutoDev's trusted scope/authorization boundary, and old MemoryService storage/search is transitional;
 - sensitive query/claim/evidence/session/memory identifiers do not become telemetry dimensions.
 
 Detailed stage/metric definitions remain in memory-target-state.md so this shared target does not duplicate the Memory implementation contract.
@@ -1539,7 +1541,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - This is the sole broad target-state authority for AutoDev's codebase: orchestration, providers, execution transports, configuration, permissions, memory, telemetry, Control API, Console, and dependency boundaries.
 - autodev-console-migration.md owns implementation status, gaps, cutover sequencing, and verification evidence; these are not normative target-state requirements.
 - local-setup.md owns operational commands, ports, environment variables, and local secret/bootstrap details.
-- memory-target-state.md owns detailed Memory architecture/telemetry/governance while deferring to this document on shared Console/OpenLIT UI rules.
+- memory-target-state.md owns the **Mem0 Platform + official MCP** target, OpenLIT memory UI/telemetry integration, scoped AutoDev adapter, migration gates, and detailed Memory evaluation while deferring here on shared Console/OpenLIT rules.
 - [playtesting-target-state.md](playtesting-target-state.md) owns Playtesting's runner/adapter, analysis, human-calibration, session UI and source-reuse details while deferring here on navigation, Console design, resource ownership, evaluator semantics and controls.
 - Focused docs such as provider routing, prompt ownership, and codebase context may document subsystem behavior but explicitly defer here on shared ownership/target-state questions.
 - Reusable skills should link here for AutoDev-specific decisions rather than copying them.
@@ -1550,4 +1552,4 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 AutoDev is a **TypeScript-first, provider-independent, subscription-capable agent platform** with role-based orchestration, safe direct CLI/Responses and parity-gated ACP execution, strict and observable permissions, durable routing and resource policy, and package-managed, maintained open-source dependencies rather than duplicated custom infrastructure.
 
-Its single-user, dark-only **AutoDev Console** is the sole compact product surface, with **14 canonical resources**. Rulesync owns portable desired agent configuration; Runtime/Control API owns live control; OpenTelemetry/OpenLIT/ClickHouse owns observed history; PostgreSQL/pgvector owns curated memory. No parallel authorities, operator dashboards, execution control planes, telemetry stores or shadow agent runtimes.
+Its single-user, dark-only **AutoDev Console** is the sole compact product surface, with **14 canonical resources**. Rulesync owns portable desired agent configuration; Runtime/Control API owns live control; OpenTelemetry/OpenLIT/ClickHouse owns observed history; managed Mem0 Platform owns long-term memory, exposed with trusted scoped MCP/API integration and OpenLIT UI components in AutoDev Console. No parallel authorities, operator dashboards, execution control planes, telemetry stores or shadow agent runtimes.

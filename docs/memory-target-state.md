@@ -3,6 +3,10 @@
 > **Authority:** Focused target-state design for AutoDev memory. It is subordinate to [`autodev-console-target-state.md`](autodev-console-target-state.md), which remains authoritative for repository-wide architecture, module ownership, Console behavior, RuleSync ownership, and observability/control-plane boundaries.
 >
 > **Goal:** Reuse useful cross-task experience without turning stale model-generated summaries into hidden policy or a competing source of truth.
+>
+> **Selected target (decision):** Use **Mem0 Platform** as the managed long-term memory engine and its maintained hosted MCP as the agent interoperability option. Use **OpenLIT/OpenTelemetry** for memory management UI and telemetry inside the **AutoDev Console**. AutoDev owns only integration, trusted identity/scoping, current-state applicability checks, bounded injection, and effectiveness evaluation—not a custom durable memory database, extractor, indexer, consolidator, general-purpose memory server, or second memory UI.
+>
+> **Status:** This is a **migration target, not a claim of implementation**. The currently deployed/code-backed memory foundation remains AutoDev PostgreSQL/pgvector + `MemoryService` + its own MCP; see [current local setup](../config/memory/README.md) and [evaluation contracts](memory-injection-outcome-evaluation.md). Do not remove working paths or claim Mem0/OpenLIT parity until tested.
 
 ## 1. Principles
 
@@ -11,36 +15,42 @@
 3. **Treat memory as evidence, not authority.** Git/repository state, RuleSync, version-controlled policy, and live runtime state override remembered claims.
 4. **Separate types and scopes.** Episodic, semantic, and procedural memory have different lifecycles; task-private, role, repository/workspace, and global memory must not collapse into one shared store.
 5. **Promote proven procedures.** Stable, repeatedly validated procedures should become explicit skills, rules, tests, or documentation.
+6. **Buy the memory engine, keep policy thin.** Mem0 owns learning, consolidation, persistence, indexing, and retrieval; AutoDev retains only responsibilities coupled to its execution, Git, authorization, and product contracts.
 
 The target is not conversation history plus vector search. It is a provenance-bearing, scoped, temporal memory lifecycle.
 
 ## 2. Target architecture
 
-```text
-execution
-   ↓
-raw experience
-   ├── episodic memory    (what happened?)
-   ├── semantic memory    (what appears true?)
-   └── procedural memory  (how did we succeed?)
-             │
-current task ┤
-current state┤
-             ↓
-scoped retrieval
-             ↓
-JIT research / curation
-inspect • critique • reconcile
-retain • revise • reject
-             ↓
-compact task-specific packet
-             ↓
-agent
-```
+~~~text
+AutoDev execution / tool evidence / native transcripts
+       |  bounded, redacted, provenance-bearing capture
+       v
+AutoDev integration (trusted repository/task/agent scope)
+       |  Mem0 Platform SDK/API: add + search
+       v
+Mem0 Platform (managed memory authority)
+       |  extraction, consolidation, storage, semantic recall, updates
+       +------------------------+
+       |                        |
+       v                        v
+AutoDev JIT retrieval      Official Mem0 hosted MCP
+       |                   (only trusted/scoped clients)
+       v
+Scope + Git/current-state verification
+       |
+       v
+Small, cited advisory memory packet -> agent
 
-Raw experience is the historical evidence for what agents observed and did. Derived memories accelerate reuse but retain provenance back to that evidence.
+OpenLIT Mem0 connector + OpenTelemetry -> AutoDev Console /memory
+~~~
 
-The current repository/runtime remains authoritative for what is true **now**.
+**Single durable memory authority:** Mem0. AutoDev's existing PostgreSQL memory records, full-text/pgvector search, consolidator/curator, and `autodev_memory` MCP are **transitional implementations**, not components to maintain indefinitely alongside Mem0. Do not instantiate both active memory write paths in production.
+
+**Distinct non-memory authorities:** Git/RuleSync/runtime configuration remains authoritative for current code and policy. AutoDev retains its existing execution evidence and telemetry contracts; that evidence is not a second searchable long-term memory product.
+
+**Transport is not authority:** the [Mem0 Platform API](https://docs.mem0.ai/platform/quickstart) is the trusted in-process integration route for orchestration. The [official Mem0 MCP](https://docs.mem0.ai/platform/mem0-mcp) is an optional tool interface for authenticated, explicitly scoped agents. OpenLIT's provider connector is for operator views, not the source of memory truth.
+
+Prefer the **managed Mem0 Platform** to minimize ongoing memory infrastructure maintenance. Self-hosted Mem0 OSS is a **separate, opt-in deployment choice**, not a transparent drop-in for the managed API, hosted MCP, or OpenLIT connector; validate API and UI parity if chosen.
 
 ## 3. Memory model
 
@@ -114,556 +124,184 @@ Promotion to durable shared memory requires the root, a memory curator, or an eq
 
 ## 6. Write lifecycle
 
-```text
-execution
-   ↓
-append raw experience
-   ↓
-record outcome + evidence
-   ↓
-optional memory candidates
-   ↓
-validate / consolidate
-   ↓
-episodic | semantic | procedural
-   ↓
-repeated + proven procedure?
-   ↓
-promote to skill/rule/test/doc
-```
+~~~text
+Agent activity -> AutoDev captures trustworthy, bounded evidence references
+               -> redaction/egress review and explicit scope
+               -> trusted Mem0 add/ingestion
+               -> Mem0 extraction, deduplication and memory updates
+               -> Mem0 long-term memory available for future scoped recall
+~~~
 
-A durable memory candidate should contain:
+Use Mem0's maintained extraction, update, consolidation, and lifecycle facilities rather than implementing equivalent AutoDev memory algorithms. Prefer asynchronously ingesting completed and validated executions; optional interim capture must not block tools or the agent's response stream.
 
-- type and scope;
-- concise claim/lesson;
-- source evidence/trajectory;
-- repository/workspace and relevant refs;
-- creation time;
-- validation/confidence state;
-- validity/supersession metadata where applicable.
+**Boundary:** AutoDev constructs the payload and validates who may publish it. It supplies only approved, minimal context (task/role/repo, relevant result, redacted facts/lessons, source references, verified outcome status) rather than raw tool arguments, secrets, private files, or whole transcripts by default. `@letta-ai/trajectory` can normalize native captures before a privacy-safe summary is sent. If provider ingestion requires more content, obtain an explicit egress decision and retention policy; never silently widen capture.
 
-Failures should capture conditions and evidence, not merely "do not do X."
+Map AutoDev's trusted workspace/repository, role, task/run, agent, and source identity to Mem0's supported identity fields and metadata. **Do not assume** a `user_id`, `agent_id`, `app_id`, `run_id`, tags, or provider-side search filters alone enforce AutoDev's access-control hierarchy: define an unambiguous mapping and test every cross-scope read/write, including source attribution in extracted memories. Never accept agent-authored tenant IDs as authority.
+
+Workers may record authorized task-local evidence. Publishing to shared repository knowledge must pass a host/root/curator approval policy, or be constrained to a dedicated untrusted candidate area until verified. Mem0's automatic updates must not silently promote an unsupported claim into policy. Preserve source evidence and provider record IDs so an operator can inspect, correct, supersede, or delete provider memories.
+
+Failures should retain conditions and evidence; treat unknown outcomes as unknown. Proven procedures graduate into version-controlled RuleSync skills/tests/docs, not another provider-controlled policy plane.
 
 ## 7. Read lifecycle: Just-In-Time memory
 
-Retrieval is driven by the current task, not merely semantic similarity.
+~~~text
+Current task and trusted workspace/repository context
+       -> host-authorized Mem0 recall/search
+       -> narrow, bounded candidate set
+       -> cite origin, verify current Git/RuleSync/runtime state
+       -> retain / revise-for-this-task / reject / mark uncertain
+       -> one deduplicated, token-bounded, advisory packet
+       -> agent
+~~~
 
-```text
-current task
-   ↓
-query decomposition
-   ↓
-hard scope / validity filters
-   ↓
-hybrid retrieval + reranking
-   ↓
-inspect authoritative current state
-   ↓
-critique / reconstruct
-   ↓
-retain • revise • reject
-   ↓
-bounded memory packet
-```
+AutoDev should retrieve automatically at **root-turn/task boundaries** so usefulness does not depend on a model remembering an MCP tool. Direct Mem0 MCP search is an optional follow-up for trusted agents, **never a bypass** around the normal authorization and injection path.
 
-Filter before ranking where possible by:
+Retrieval must enforce scope before request and after results; missing, ambiguous, or mismatched workspace identity fails closed to **no memory**. Favor coding-specific signals—exact symbols, paths, errors, repository and role, task type, commit lineage, PR/issue links, current file content, temporal validity, provenance quality, and observed utility—where provider filtering/ranking permits. Do **not** rebuild an independent AutoDev vector/BM25/graph reranker to duplicate Mem0; reserve a small applicability filter for provider results.
 
-- workspace/repository;
-- subsystem/entities/files;
-- task type and agent role;
-- memory type;
-- branch/commit lineage;
-- validity/supersession;
-- time when relevant.
+**Applicability check:** Mem0 recall indicates historical relevance, not current truth. Before presenting high-impact advice, check cited code/commit/PR/RuleSync references against the current repository. Reject stale, reverted, superseded, scope-incompatible, or unverifiable statements; do not let an LLM's summary override fresh source evidence. For older unverified memories return no packet (or explicitly uncertain non-directive history), not invented confidence.
 
-Ranking may combine lexical/semantic relevance, entity overlap, provenance quality, historical utility, validated outcome, recency, and current-state compatibility. Embedding similarity alone is not evidence of applicability.
+Preserve current AutoDev behavior where useful: no memory injection for compaction/tool-result continuations, bounded provider calls and concurrency, failure without blocking the task, minimal evidence references, prompt-injection-safe quoting, one advisory packet only, and OTel spans for each stage. Provider outage or rate limit means an explicitly observed skip/fallback, not silently switching back to an independent production memory database.
 
-PostgreSQL retrieval returns only records with an actual lexical, vector, or path signal instead of filling top-k with zero-score records. Disjunctive English full-text matching preserves claims with partial task-term overlap for JIT reconstruction; lexical relevance still ranks candidates, and applicability is decided only after validation. Relevant file evidence is a soft signal after hard scope, status, and validity filters: an exact file reference receives the maximum path score, while shared path prefixes contribute proportionally. A supplied task-kind signal adds a small ranking bonus for records citing scope-visible experiences of that kind, but cannot make an otherwise irrelevant candidate eligible; private task/agent episodes cannot influence another run's ranking. Raw-experience full-text search indexes repository, branch/commit, trajectory, task/plan, validation, and evidence-reference metadata (including file, PR, and issue locators) without copying transcript payloads. The Runtime Git verifier checks canonical same-repository GitHub evidence with one bounded GraphQL lookup per research context, batching at most one cited PR and one cited issue. A PR can contribute lineage only when it is closed/merged, not a draft, has `reviewDecision=APPROVED`, and has `statusCheckRollup=SUCCESS`, and all current review threads must be resolved or outdated. Only bounded thread-state fields are fetched (never comment bodies); more than 100 or incomplete thread states remain unknown. Open/reopened PRs, unapproved reviews, failed/pending checks, unresolved threads, or unavailable API responses remain unknown. The lookup supplies the merge commit only when no explicit revision is present; an explicit revision still must be a locally verifiable ancestor and every cited file must match current repository state. Multiple distinct PR or issue references exceed the one-query budget and remain unknown rather than validating only a subset. Canonical PR state is gate evidence, not proof of task success. Canonical RuleSync skill, command, hook, and MCP references resolve to tracked source files. The verifier additionally scans cited paths for the standard Git revert subject and body marker naming the exact source commit, even when a later commit restores the cited bytes. A canonical `git revert` naming the exact source commit is contradicted; any other descendant commit that touched a cited path and later restored its bytes leaves compatibility unknown and excludes the memory from injection rather than silently treating the old bytes as current. Canonical same-repository GitHub issue references now contribute a bounded, time-stamped `state`/`stateReason`/`updatedAt` observation to reconstruction; state is context, never a task-outcome verdict, and missing state remains unknown. Foreign or non-GitHub issue trackers and semantic issue-state reconciliation remain unvalidated. Review-thread content remains unvalidated. Semantic supersession is now checked for cited pull requests: the same bounded lookup reads the pull request's close event through `timelineItems` filtered to `CLOSED_EVENT`, because `PullRequest` has no `closedEvent` field. A pull request closed by a merged pull request, or by a commit, was replaced rather than merged, and is contradicted with reason `superseded` — checked ahead of the merge/review/checks gate, because such a pull request is usually not itself merged and approved, and letting the gate answer first would report an ordinary inconclusive read and discard the one finding that explains what happened. A superseding pull request is attached as evidence when GitHub names it; a commit closer is recorded as a supersession with no invented address. Merged and hand-closed pull requests report no outside closer and remain compatible, and a closer pull request that never merged replaced nothing. An unreadable close event stays unknown rather than reading as an observed absence of supersession. Semantic supersession of memories that cite no pull request, and PR reopen history, remain unvalidated. Current open/reopened PRs cannot authorize injection.
-
-Before injection, reconstruct the memory for the current task:
-
-1. What happened previously?
-2. Why is it relevant?
-3. What changed since then?
-4. What still applies?
-5. What is stale, contradicted, or uncertain?
-6. What concise evidence/guidance should the agent receive?
-
-Verify remembered facts against current tools/state when practical. If nothing survives validation, proceed without memory.
-
-JIT research preserves relevance rank and packet order while processing at most two candidate verification/reconstruction chains concurrently. The per-context GitHub evidence budget remains owned by the first ranked candidate that needs it. Candidate, evidence, and packet-size limits are unchanged; a failed batch fails closed without injecting a partial packet.
-
-Measure this path with `pnpm run bench:memory -- --candidates=2 --iterations=5 --reconstruction-delay-ms=250`. The harness uses a temporary Git repository and deterministic 250ms reconstruction delay (not a live provider); it checks packet contents and reports p50/p95 plus observed in-flight counts. On Node 25.0, five baseline runs from `5596ac09` measured p50/p95 `1992.74/2018.84ms`; the updated code measured `1600.09/1643.39ms` at similar host load (19.7% lower p50, 18.6% lower p95). Peak validation/reconstruction concurrency changed from 1/1 to 2/2. The benchmark excludes live provider/network latency.
+Mem0 `search` is a candidate source, not authorization or proof of downstream use. Record retrieved, screened, rejected, injected, and **assessed-used** outcomes separately. Retain controlled no-memory baseline behavior, including disconnecting independent MCP access in disabled cohorts.
 
 ## 8. Task-specific packet, validity, and provenance
 
 Agents receive a compact advisory packet, not arbitrary historical chunks. It may contain relevant decisions, successes/failures, procedures, conflicts, uncertainty, and source references.
 
-Durable memories are append-oriented and can be:
+Mem0 manages durable memory writes, updates and deletes under its own provider semantics; **do not assume provider memory is append-only** or that it supports AutoDev's entire former lifecycle schema. The integration should convey vetted applicability and display only statuses backed by observed evidence, including active, stale/uncertain, superseded, or deleted **when determinable**. Unknown lifecycle facts remain unknown.
 
-- active;
-- superseded;
-- invalidated;
-- uncertain;
-- scope-limited.
-
-Retain temporal/provenance fields where useful:
-
-```text
-source / trajectory
-created_at
-valid_from / valid_to
-last_verified_at
-verification_source
-supersedes / superseded_by
-```
-
-Contradictions trigger reconciliation rather than winner-takes-all similarity ranking. Superseded episodes remain queryable as historical evidence.
-
-## 9. Storage and module ownership
-
-The logical contract matters more than a particular database.
-
-- **`runtime/`** — trajectory capture, retrieval orchestration, JIT research/curation, promotion, and agent-facing context assembly.
-- **`data/`** — typed persistence/search adapters for trajectories, memories, indexes, and retained OpenLIT memory integration.
-- **`core/`** — infrastructure-independent memory types, scopes, provenance, lifecycle states, and contracts.
-- **`console/`** — the canonical Memory operator UI, built from adapted OpenLIT Memory connector/list/detail/graph/chart primitives plus AutoDev-specific provenance, lifecycle, scope/status, analytics, and governed management UX.
-
-Physical storage may combine append-oriented events, structured records, full-text search, vector indexes, and optional temporal/entity graphs.
-
-Use graph indexes only where relationships materially help: ownership, dependencies, PR/issue/commit links, supersession, temporal changes, and agent/skill/tool/workspace relationships. Do not force every trajectory or observation into graph form.
-
-Memory must not become an unbounded secret/context copy: redact credentials and unnecessary sensitive payloads, prefer references over duplication, retain provenance, and support retention/deletion by memory class.
-
-Raw experiences are append-only during their useful retention period. Privacy or retention erasure is a curator-only operation, scoped to the authorized workspace/repository, and is refused while any durable memory cites the experience. Successful erasure removes the raw envelope and retains only an append-only tombstone containing a one-way fingerprint, actor, reason, and timestamp. Durable memory is invalidated or superseded by default rather than physically erased; its source history remains available for governance unless a separate privacy process explicitly handles it.
-The operator Control API exposes `POST /control/memory/experiences/:id/purge` with `privacy_request` or `retention_expired`; invisible experiences return not-found, and provenance references return conflict rather than being broken.
-
-Runtime also provides a one-shot `memory:retention` curator job. It requires an explicit age and workspace/repository, is opt-in, bounds each run to 100 records, and leaves scheduling to the deployment; it erases only completed, unreferenced raw experiences through the same purge transaction.
-
-Purge scope is narrow and explicit: it erases only the raw `memory_experiences` envelope identified by `experienceId`. It does not touch, and is not blocked by, the independent append-only injection events, reporter-supplied outcome reports, curator-assessed use reports, or session outcome reports recorded for that session -- those tables hold bounded IDs, correlation tokens, and references rather than the raw transcript payload, and the purge eligibility check only inspects `memory_records.provenance.experienceIds`. Their bounded aggregates (`aggregateInjectionOutcomeCohorts`, `aggregateInjectionUseCohorts`, `aggregateSessionOutcomeCohorts`) count eligible events by their own `occurred_at`/`reported_at`, so a purge changes nothing about counts already recorded before it ran. If an erasure request covers those separate audit records themselves, or the external captured trajectory that an evidence reference points at, that is a distinct privacy process with its own scope and authorization; the experience-envelope purge described here does not claim to perform it.
-
-## 10. Implementation and dependency strategy
-
-AutoDev should own the **memory lifecycle and semantics**, not adopt a second agent framework merely to obtain memory. Reuse mature components for telemetry, transcript normalization, persistence, indexing, and protocol transport; keep repository-aware governance, validation, reconstruction, and promotion in AutoDev.
-
-Target stack:
+Preserve source and temporal metadata when supported by the selected Mem0 API and approved retention policy:
 
 ~~~text
-agent/provider executions
-        │
-        ├── OpenTelemetry / OpenLIT ──► historical execution evidence
-        │
-        └── native harness transcripts
-                    │
-                    ▼
-          @letta-ai/trajectory
-          normalized trajectory records
-                    │
-             AutoDev experience envelope
-                    │
-                    ▼
-          PostgreSQL + pgvector
-        structured + lexical + vector
-                    │
-          ┌─────────┴─────────┐
-          │                   │
-          ▼                   ▼
- AutoDev MemoryService    optional Graphiti
- JIT/governance/curator   temporal graph index
-          │
-   ┌──────┼──────────────────┐
-   │      │                  │
-   ▼      ▼                  ▼
-native   Control API +     MCP adapter
-runtime  OpenLIT Memory    (official TS SDK)
-   │      connector/page      │
-   ▼      │                  ▼
-agents    operators/UI     external agents +
-JIT       analytics        explicit follow-up
+source / trajectory reference
+created_at / observed_at
+valid_from / valid_to (if supported)
+last_verified_at / verification_source (if observed)
+supersedes / superseded_by (if supported)
 ~~~
 
-### Direct dependencies
+Link to existing execution/evaluation evidence for history the provider does not preserve; do not invent a second AutoDev memory database to recreate unavailable provider features. Contradictions trigger current-state screening before injection. Superseded episodes remain inspectable from retained approved source evidence where permitted, not by assuming Mem0 preserves every prior version.
 
-| Dependency | Use directly for | Why | Boundary |
-| --- | --- | --- | --- |
-| [OpenTelemetry](https://opentelemetry.io/) + [OpenLIT](https://github.com/openlit/openlit) | Execution evidence **and** the retained memory connector/operator UI, graph/detail/list primitives, connector management, and dashboard/trace surfaces | AutoDev already uses the OTel/OpenLIT foundation, and OpenLIT's memory connector layer is vendor-agnostic and capability-driven | OpenLIT is the primary operator/observability surface, but AutoDev `MemoryService` remains the memory semantic/runtime authority |
-| [@letta-ai/trajectory](https://github.com/letta-ai/trajectory) | Normalize supported Codex, Claude Code, Copilot CLI, Gemini CLI, OpenHands, Letta, and other native transcripts into deterministic records | Avoid writing/maintaining one transcript decoder per harness; it is TypeScript and exposes a validated shared trajectory schema | AutoDev still owns repository/task/run/PR/commit/outcome metadata and any unsupported adapters |
-| PostgreSQL | Canonical durable memory records, provenance, scopes, lifecycle state, supersession, utility/evaluation metadata | Memory is mostly structured mutable state requiring transactions, joins, filters, and history | Do not use ClickHouse telemetry tables as the canonical mutable memory database |
-| [pgvector](https://github.com/pgvector/pgvector) | Semantic retrieval inside the same PostgreSQL store | Adds vector/HNSW or IVFFlat search without introducing a separate vector database | Vector similarity is one ranking signal, never the applicability decision |
-| PostgreSQL full-text/GIN indexes | Exact/lexical retrieval for symbols, filenames, errors, PRs, SHAs, and technical phrases | Coding memory frequently depends on exact identifiers that embeddings can miss | Combine with structured filters and vector ranking |
-| [official MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) | Standard agent-facing memory server/client transport | Keeps memory usable across Codex, Claude, Copilot, Antigravity, and other MCP-capable agents without coupling the memory core to one harness | AutoDev owns the tools and authorization semantics; MCP is transport/interoperability |
-| Git/GitHub + RuleSync/AutoDev configuration | Current-state verification and canonical-source checks | These are the authoritative sources needed to decide whether old memory still applies | Query them during JIT validation; never copy their authority into memory |
+## 9. Storage, retention, and module ownership
 
-Prefer the existing provider/model abstraction for embeddings and reconstruction models. Do not create a dedicated model-routing subsystem for memory. Runtime resolves the optional embedding model through the existing provider routes and their configured credentials; no embedding model is selected by default.
-
-### OpenLIT memory capabilities and component reuse
-
-AutoDev should reuse OpenLIT's useful Memory connector/domain capabilities and adapt its TypeScript UI primitives **inside the unified AutoDev Console**. OpenLIT's connector layer is descriptor- and capability-driven: an adapter advertises supported operations and configuration/filter fields while shared list/detail/graph, pagination, forms, and action presentation respond to those capabilities.
-
-Implement an **AutoDev Memory connector/adapter** over the canonical MemoryService. The connector remains a presentation/integration adapter; it never becomes the memory authority.
-
-~~~text
-AutoDev MemoryService
-      │
-      ├── native orchestrator/JIT path
-      ├── Control API
-      │      ↓
-      │   Console Memory feature
-      │      ↓
-      │   adapted OpenLIT components/patterns
-      │
-      └── MCP facade
-~~~
-
-The retained standalone OpenLIT Memory page may exist only as a temporary migration bridge while feature parity is being ported. It is not the target operator application and must be removed as an operator dependency once the Console Memory feature is verified.
-
-#### Reuse directly or with light adaptation
-
-| OpenLIT capability | AutoDev use |
-| --- | --- |
-| **Memory connector registry + descriptors** | Register AutoDev Memory alongside optional external/experimental stores without bespoke per-vendor forms |
-| **Capability-driven UI/actions** | Advertise only operations AutoDev safely supports and hide unsupported actions |
-| **Connector configuration and health** | Reuse status/test/health patterns and external-backend endpoint/secret handling where applicable |
-| **Connector-defined filters** | Drive filters from AutoDev scope metadata rather than page-specific ad hoc controls |
-| **List/search/pagination** | Reuse generic browsing primitives over AutoDev indexed records |
-| **Detail sheet/panels** | Reuse the component shell and extend it with provenance, lifecycle, verification, evidence, and usage |
-| **Graph view / graph model** | Reuse for AutoDev relationships when the relationship data justifies it |
-| **Copy/import plumbing** | Reuse for explicit migration/experiments while retaining provenance/governance |
-| **Audit/access hooks** | Retain equivalent audit/access integration where the reduced Console needs it |
-| **Trace/chart/filter primitives** | Show pipeline latency, token/cost, retrieval quality, lifecycle activity, and controlled effectiveness metrics |
-
-Do not retain Otter/chat as a Memory interface. Do not duplicate the same capabilities in a second Memory application. Normalize reused components to the Console's dark-only design system and canonical status/action vocabulary.
-
-#### Adapt the OpenLIT domain model
-
-Stock OpenLIT memory connectors are generic external-memory CRUD integrations. AutoDev adds stronger semantics and has removed OpenLIT tenancy concepts.
-
-Map the retained machinery as follows:
-
-~~~text
-OpenLIT project/environment  → remove; use AutoDev workspace/repository scope
-user                         → only where a real external connector requires it
-session/run                  → AutoDev task/run
-agent                        → AutoDev agent/role
-
-generic memory record        → AutoDev episodic/semantic/procedural memory
-generic metadata             → provenance + validity + source/evidence references
-delete                       → invalidate/supersede by default for durable knowledge
-hard delete                  → retention/privacy/admin operation only
-~~~
-
-The generic list/detail/filter UI should therefore expose AutoDev concepts such as:
-
-- memory type: episodic / semantic / procedural;
-- scope: task/run / role / workspace/repository / global;
-- status: active / superseded / invalidated / uncertain;
-- source task/run, agent/role, PR/issue, commit/SHA, relevant files/entities;
-- created/valid/last-verified timestamps;
-- supersedes/superseded-by and related-memory links;
-- retrieval, reconstruction, rejection, injection, and observed-use counts;
-- current-state compatibility/verification evidence where available.
-
-Do not recreate OpenLIT organization, account, project, or environment scoping to satisfy the stock connector model.
-
-#### Extend actions where CRUD is insufficient
-
-AutoDev's durable-memory lifecycle is not plain CRUD. The UI/API should expose domain actions where appropriate:
-
-~~~text
-propose
-verify
-revise
-invalidate
-supersede
-promote
-inspect provenance/history
-~~~
-
-Generic `add/update/delete` may remain for external connectors and low-level compatibility, but AutoDev Memory must preserve its governance rules. In particular, deleting a stale semantic memory from the page must not silently erase the historical episode/evidence that produced it.
-
-#### Memory observability through OpenTelemetry/OpenLIT
-
-Instrument the AutoDev memory pipeline with OpenTelemetry so OpenLIT can show the same execution end-to-end:
-
-~~~text
-memory.research
-  ├── memory.query
-  ├── memory.retrieve
-  ├── memory.rerank
-  ├── memory.validate
-  ├── memory.reconstruct
-  └── memory.packet
-~~~
-
-Emit bounded attributes/metrics sufficient to answer:
-
-- candidates retrieved / retained / revised / rejected;
-- rejection reason such as stale, contradicted, superseded, or low relevance;
-- episodic/semantic/procedural composition;
-- packet size/tokens;
-- research/reconstruction latency and cost;
-- retrieval-to-injection/use rate;
-- memory-enabled versus no-memory task outcomes;
-- invalidation/supersession/promotion activity;
-- procedures promoted into skills/rules/tests/docs.
-
-The following instruments are part of the durable Memory telemetry contract:
-
-- `autodev.memory.operations` and `autodev.memory.operation.duration`: fixed operation name plus success/error outcome; nested stage durations may overlap and must not be summed as an end-to-end total.
-- `autodev.memory.candidates`: retrieved, retained, revised, rejected, packet-included, and packet-omitted candidate counts with bounded memory-kind/reason categories.
-- `autodev.memory.packet.characters` and `autodev.memory.packet.tokens`: packet size; omit the token histogram when no trustworthy token counter exists.
-- `autodev.memory.injections`: bounded `injected` / `empty` / supported skip-result categories at request assembly, plus bounded memory mode where applicable. Injection does not mean the model used the packet or the task succeeded.
-- `autodev.memory.outcome_reports` and `autodev.memory.session_outcome_reports`: increment only for newly appended reporter-supplied reports, never idempotent retries; use bounded report-kind/outcome/mode/injection-result categories and no correlation/task/session/memory identifiers.
-- `autodev.memory.use_reports`: increment only for newly appended curator-assessed injection-use reports; use bounded use-kind/memory-mode categories and never evidence or packet identifiers.
-- workspace/repository/time-scoped injection outcome/use aggregate spans may report only bounded cohort-cell and exposure/report counts; selectors, task/run/agent IDs, memory IDs, and evidence remain out of telemetry.
-
-The `memory.research` trace remains the parent for bounded `memory.query`, `memory.retrieve`, `memory.rerank`, `memory.validate`, `memory.reconstruct`, and `memory.packet` stages; `memory.embed` exists only when an embedding adapter is configured. Orchestrator preparation should remain within the logical routed-request trace so packet injection and provider-routing outcome are inspectable together without implying a downstream task/PR result. GenAI attempt/embedding spans remain the source of model cost rather than duplicating it in Memory metrics.
-
-Prefer OpenLIT's retained **query, trace, chart/widget, filtering, and resource-detail primitives** for these views rather than a parallel memory analytics backend. This does **not** retain the generic OpenLIT dashboard-authoring application: AutoDev owns the seeded Memory views and presents them inside the unified Console.
-
-Current schema versions, patch/image history, test counts, deployed-instance evidence, and open implementation gaps belong in [autodev-console-migration.md](autodev-console-migration.md), not in this target design.
-
-The durable telemetry/evaluation invariants are:
-
-- memory mode and packet-injection state describe exposure, not downstream model use or task success;
-- reporter-supplied task/session outcomes remain separate from provider-routing outcomes;
-- controlled cohorts use explicit assignment and strict isolation rather than inferring a no-memory control from missing telemetry;
-- session/request identifiers, correlation tokens, memory IDs, evidence, prompts, claims, and transcript contents do not become metric dimensions;
-- memory cost remains attributable through the existing GenAI attempt/embedding telemetry rather than duplicated accounting;
-- injection/use reports are append-only evidence with explicit provenance and must not be presented as causal effectiveness.
-
-The detailed cohort assignment, reporter-outcome, injection-use, and experimental-unit contract is maintained in [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
-
-### Optional secondary dependency: Graphiti
-
-[Graphiti](https://github.com/getzep/graphiti) is the preferred optional temporal graph index when relationship traversal becomes valuable. It is strong at incrementally building temporally-aware entity/relationship graphs, preserving event/reference time, and querying changing relationships. Its MCP server can also support exploratory graph access.
-
-Use it for relationships such as:
-
-~~~text
-subsystem ──owns──> responsibility
-PR ──fixes──> issue
-commit ──supersedes──> prior implementation
-skill ──applies-to──> subsystem
-decision ──valid-during──> commit range
-~~~
-
-Do **not** make Graphiti the canonical memory store. PostgreSQL remains authoritative and selected memories/episodes are projected into Graphiti. Detailed trajectories, permissions, promotion state, evidence links, and procedures remain relational/document records.
-
-Do not add Graphiti initially unless measured workloads demonstrate that graph/temporal relationship queries improve retrieval. Its MCP server should be treated as an optional research/read surface; durable writes still pass through AutoDev governance.
-
-### Reuse ideas or components selectively
-
-These systems contain useful mechanisms, but should not become AutoDev's memory authority:
-
-| System | Reuse / learn from | Does well | Do not adopt wholesale because |
-| --- | --- | --- | --- |
-| [Mem0](https://github.com/mem0ai/mem0) | Candidate extraction, consolidation/reranking experiments, entity/run scoping patterns | Packaged memory extraction/search, multiple stores/providers, scoped memory APIs | Its normal lifecycle emphasizes write-time extracted facts; AutoDev requires retained raw evidence plus task-time reconstruction. OSS graph memory is no longer available as the former external graph-store feature, while richer graph behavior is Platform-owned |
-| [LangMem](https://github.com/langchain-ai/langmem) | Extraction/consolidation prompts, hot-path/background memory-manager patterns, procedural/semantic memory concepts | Functional memory primitives decoupled from persistence and mature reflection patterns | Python/LangGraph adoption would introduce another orchestration/runtime stack beside AutoDev's TypeScript architecture |
-| [Letta / MemFS](https://github.com/letta-ai/letta-code) | Tiered working/external memory, git-backed versioning, shared attached memory, dreaming/reflection, memory hygiene | Strong stateful-agent and inspectable/versioned memory UX | Letta brings its own agent identity/runtime/harness model and would duplicate AutoDev orchestration; borrow mechanisms rather than replacing the runtime |
-| [Pathrule](https://github.com/pathrule/core) | Repository-path proximity as a first-class retrieval/injection signal | Coding-specific, path-scoped JIT context; avoids relying only on similarity | Its rules/skills/context authority overlaps RuleSync and AutoDev; incorporate path scoring rather than add a competing policy/context plane |
-| [General Agentic Memory](https://github.com/VectorSpaceLab/general-agentic-memory) / JIT-memory research | Deep-research-style memory researcher, hierarchical navigation, raw-history-first retrieval | Demonstrates iterative research over preserved experience rather than one-shot top-k injection | Research-oriented Python stack and memory product are unnecessary if AutoDev implements the researcher behind its own contracts |
-| [MemHarness](https://github.com/KnowledgeXLab/MemHarness) | Critique → reconstruct → reject/fallback stage and utility-based pruning ideas | Demonstrates that state-aligned reconstruction can outperform raw replay and avoid negative transfer | Its GRPO/verl/vLLM/Milvus research training stack is not required for AutoDev; use a strong existing model for reconstruction first |
-| Voyager-style skill libraries | Trajectory → validated procedure → explicit skill promotion | Converts repeated successful behavior into deterministic reusable capability | The useful idea is already compatible with RuleSync/Agent Skills; no separate Voyager runtime is needed |
-
-Any extractor from Mem0/LangMem or another project must produce **candidate** memories behind the AutoDev interface. It does not receive direct authority to mutate shared durable memory.
-
-### Components AutoDev must own
-
-The following encode AutoDev-specific semantics and should remain custom TypeScript contracts/services:
-
-| Component | Responsibility | Why it must be AutoDev-owned |
+| Concern | Target owner | Boundary |
 | --- | --- | --- |
-| **Experience envelope** | Wrap normalized trajectory records with workspace, repository, task/run, agent/role, branch, base/head SHA, PR/issue, outcome, validation, and evidence references | Generic transcript formats cannot know AutoDev/GitHub lifecycle semantics |
-| **Memory schema** | Episodic/semantic/procedural types, scope, provenance, validity, supersession, confidence/validation state, utility | These states define AutoDev's durable-memory contract |
-| **Scope/governance** | Decide who can see, propose, promote, invalidate, or supersede task/role/repository/global memory | Generic stores cannot safely infer AutoDev's root/worker/reviewer authority model |
-| **JIT researcher** | Decompose the task, retrieve candidates, follow evidence, and request additional current/historical context | Must understand repositories, paths, commits, PRs, skills, roles, and AutoDev task types |
-| **Current-state validator** | Check branch/commit ancestry, changed files/symbols, reverts/superseding PRs, current RuleSync policy, runtime/config state | This is the core protection against historically correct but currently wrong memory |
-| **Curator/reconstructor** | Compare historical and current evidence; classify candidate as applicable, partial, stale, contradicted, or uncertain; produce adapted guidance | Applicability is task/state dependent and cannot be delegated to vector ranking |
-| **Context packet builder** | Bound, deduplicate, prioritize, and cite reconstructed memories for the active agent | Controls context cost and prevents arbitrary history dumps |
-| **Promotion pipeline** | Move repeated/validated procedures into canonical skills/rules/tests/docs and invalidate redundant fuzzy memories | Only AutoDev knows its explicit configuration and development-lifecycle authorities |
-| **Evaluation/ablation layer** | Compare no-memory, retrieval-only, and JIT-reconstructed variants using real task outcomes | Memory must prove value in AutoDev's workload rather than inherit benchmark claims |
-| **Memory MCP facade** | Expose run-bound experience append plus governed search/read/history/propose/invalidate/research operations to heterogeneous agents | Direct PostgreSQL/Graphiti access would bypass authorization, provenance, validation, and promotion rules |
+| Durable memories, extraction, updates, storage, indexing, search, consolidation | **Mem0 Platform** | One managed memory authority; avoid custom PostgreSQL/pgvector tables or duplicate search pipelines |
+| Provider lifecycle, hosted MCP and provider-specific memory APIs | **Mem0** | Version/pin the API contract and MCP tools; supported operations vary between Platform and OSS |
+| Historical task execution and trajectory source references | **AutoDev runtime + approved existing telemetry/artifacts** | Evidence and outcome events are not a second long-term memory store |
+| Trusted identity, allowlists, scope policy, Git/current-state verification, injection budgets, experiment assignment | **AutoDev runtime/core** | Thin integration/safety wrapper; do not rebuild general memory logic |
+| Memory operator browse/manage, connector health, search/detail/graph/chart primitives | **OpenLIT provider connector adapted into AutoDev Console** | Single operator surface; provider mutations happen only through authorized server routes |
+| Memory latency/tokens/cost, traces, cohorts and evaluated outcomes | **OpenTelemetry/OpenLIT + AutoDev outcome attribution** | Historical observations, not authoritative memory state |
 
-The custom layer should orchestrate existing dependencies, not reimplement their storage/indexing/transport capabilities.
+The existing `runtime/src/memory/`, `data/src/memory/`, PostgreSQL migrations, `autodev_memory` MCP, and PostgreSQL-backed Control API are **current implementation only**. During migration, isolate their writes and keep them readable for audit/rollback. After parity and data portability gates pass, retire redundant memory storage, indexes, service methods, custom MCP facade, UI proxies, migrations, and dependencies. Preserve distinct execution evidence/telemetry and needed historical outcome comparisons; never destructively purge prior evidence without retention approval.
 
-### Memory access paths
+Privacy must be explicit: approve hosted data egress by repository/workspace; redact secrets and unnecessary sensitive files; avoid exporting raw transcripts by default; restrict keys to server-side trusted processes and do not expose them to browser, tool subprocesses, or arbitrary agents. Define provider retention, delete propagation, export/backup, tenant isolation, breach response and reversible cutover **before** ingesting production code-derived memory.
 
-Do **not** route every memory interaction through MCP. The canonical implementation is one shared TypeScript `MemoryService` with multiple adapters.
+Mem0's delete/update history and retention semantics must be tested; do not claim its API provides immutable append-only evidence or all current AutoDev provenance guarantees. Preserve an independently auditable, minimal **non-memory** action/outcome trail in existing telemetry where necessary, with no extra long-term memory database.
 
-Normal AutoDev memory use is automatic and orchestrator-driven:
+## 10. Product and dependency strategy
 
-~~~text
-task arrives
-    ↓
-AutoDev orchestrator
-    ↓
-MemoryService.research(...)
-    ↓
-JIT retrieval + current-state validation + reconstruction
-    ↓
-bounded memory packet
-    ↓
-agent context
-~~~
+### Selection and rationale
 
-The active agent should generally begin with relevant memory already present. Memory quality must not depend on the model remembering to call a tool.
+**Adopt [Mem0 Platform](https://docs.mem0.ai/) as the sole long-term memory engine.** It is an established, maintained product with automatic memory extraction and updates, structured identity/metadata, semantic recall, TypeScript/Python SDKs, and an [official hosted MCP](https://docs.mem0.ai/platform/mem0-mcp). This avoids ongoing AutoDev ownership of memory databases, embedding pipelines, consolidation, retrieval ranking, generic CRUD, and a separately maintained memory MCP server.
 
-Use these access paths:
+**Keep [OpenLIT](https://github.com/openlit/openlit) as AutoDev's memory UI/telemetry framework.** OpenLIT has a Mem0 provider connector and reusable list/search/detail/action/chart and trace/metric patterns. Port/adapt these **into the sole AutoDev Console**; do not restore a separate OpenLIT Memory page, generic dashboard builder, Otter/chat, or another operator console. Verify the stock provider connector's exact API, filters and capabilities against the selected Mem0 Platform version and AutoDev's pinned/forked OpenLIT component set; its upstream existence is **not** proof the current fork still exposes it or that it supports OSS.
 
-| Interaction | Access path |
-| --- | --- |
-| Raw trajectory/execution capture | Native runtime + OpenTelemetry/transcript ingestion; explicit MCP append accepts host-scoped metadata and source references without transcript payloads |
-| Durable memory persistence/search internals | `MemoryService` → `data/` adapters |
-| Automatic pre-delegation JIT research | Native orchestrator → `MemoryService.research(...)` |
-| Automatic memory-packet injection | Native runtime/context assembly |
-| Consolidation, promotion, supersession, retention | Internal runtime/background workflows |
-| Console browse/manage operations | Console Memory feature → Control API → MemoryService/shared memory contracts |
-| Operator investigation/analytics | Console Memory detail/analytics surfaces using adapted OpenLIT components plus traces/Usage links |
-| Agent discovers a new memory need during execution | Memory MCP tool call or equivalent native tool adapter |
-| External Codex/Claude/Gemini/other client | Memory MCP facade |
-| Direct PostgreSQL/Graphiti access by agents | **Never** |
+**Why not maintain the native engine?** It duplicates a general memory product inside a coding orchestrator and increases storage, retrieval, extraction, migration, test, and UI maintenance. AutoDev's differentiator is execution orchestration plus current-repository applicability, not owning a vector store. Hindsight/Claude-Mem/Graphiti remain comparison benchmarks or references, not parallel production memory authorities.
 
-Automatic native capture is wired for Codex and opt-in Claude Code SessionEnd
-hooks; the other supported trajectory formats remain manually importable.
-Claude Code's `session_id`, `cwd`, and `transcript_path` are not treated as an
-AutoDev Router session key or as workspace authority. Capture requires an
-operator-owned binding that maps one canonical repository root and its
-workspace/repository identity to that workspace's distinct, non-overlapping
-transcript directory. The Control API rejects missing/ambiguous bindings,
-nested or ancestor cwd matches, transcript paths outside the matched
-workspace's directory, and a transcript basename that does not match the hook
-session ID. Claude session
-outcome remains `unknown`; capture does not claim a router-session mapping or
-task success. See the [official Claude Code hook reference](https://code.claude.com/docs/en/hooks)
-and the local [memory capture notes](../config/memory/README.md).
-
-Internal AutoDev callers must invoke the shared service directly rather than serializing an in-process request through MCP:
+### Integration surfaces
 
 ~~~text
-AutoDev runtime ─────────────────────────► MemoryService
-Console ──Control API/OpenLIT adapter─────► MemoryService
-external/loosely-coupled agent ─MCP──────► MemoryService
+AutoDev runtime capture -> trusted Mem0 Platform client (add/ingest)
+AutoDev root-turn JIT  -> trusted Mem0 Platform client (search)
+                             -> AutoDev minimal validation + packet builder
+Authorized external agent -> official Mem0 MCP (only with enforced scope)
+Mem0 operator reads/writes -> OpenLIT Mem0 connector/adapted server API
+                                  -> AutoDev Console /memory
+AutoDev runtime/provider calls -> OpenTelemetry/OTLP -> OpenLIT -> Console
 ~~~
 
-MCP is therefore an **interoperability and explicit follow-up boundary**, not the internal memory architecture. It is appropriate when an agent learns something during execution that changes what history it needs, for provenance/history inspection, for proposing a durable memory, or when the caller is outside the AutoDev runtime.
+Use the **native Mem0 SDK/API for internal orchestrator calls**, not serializing every in-process call through MCP. Prefer the **official Mem0 MCP** where agents need explicit interoperable memory tools. No new generic AutoDev memory MCP server is a target. A small host-side scope/credential adapter may still be required; if the hosted MCP cannot be restricted to an agent's exact authorized tenant/workspace, **do not expose it directly**. Use a trusted server-side operation or omit direct agent MCP rather than leaking a global key.
 
-For ordinary Codex provider runs, Runtime may expose the same facade through a
-run-scoped `autodev_memory` MCP launch configuration when JIT is active and the
-host supplies a trusted database/workspace/repository binding. The server is
-forced to worker authority, receives fresh host-generated task/run/actor IDs,
-and receives no operator-only global or task-history grants. It is omitted (and
-explicitly disabled in the Codex invocation) for retrieval-only, disabled, or
-invalid modes and for every controlled ablation/experiment, so a direct tool
-call cannot bypass the router's cohort assignment. This is not a global
-`.rulesync/mcp.jsonc` server and does not replace native pre-delegation research
-or packet injection. External MCP clients remain separately managed and must be
-absent from controlled cohorts. The host database URL stays in the MCP-launch
-environment and Codex filters it out of model-spawned tool commands.
+### Minimal AutoDev-owned contract
 
-### Agent-facing interface
+- Associate Mem0 memory IDs with opaque, stable, validated scope and evidence references. Do not let the model choose provider credentials, identity filters, or publication privileges.
+- Translate AutoDev capture into a minimal allowed ingestion payload, with idempotency/deduplication handling and rate limits; don't implement memory extraction itself.
+- Translate a task into scoped recall; reject out-of-scope/stale results, verify current Git/RuleSync compatibility, and form a bounded advisory packet.
+- Record attempted/retrieved/injected/used outcomes and attribution through existing execution telemetry and evaluator reports, not an alternative memory store.
+- Keep operator mutations permission-checked, display provider-side failures honestly, and never label provider memory presence as proof of agent usage or task success.
 
-Expose memory through a small native/MCP contract, for example:
+### Mem0 Platform versus OSS
 
-~~~text
-experience.append  # host-bound task/run/agent; source reference and digest only
-experience.search
-experience.get
+The **managed Platform is the default target** because it minimizes infrastructure ownership and supplies the maintained hosted MCP. OSS/self-hosted Mem0 is a **distinct alternative** for approved data-sovereignty requirements; it changes deployment, API compatibility, hosted MCP availability, connector behavior and operations. Do not describe OSS as a drop-in Platform replacement or adopt archived `mem0-mcp` / OpenMemory repositories. If managed deployment cannot satisfy security/egress/retention constraints, pause the rollout and make an explicit platform-versus-OSS decision rather than quietly substituting a new local memory stack.
 
-memory.search
-memory.get
-memory.history
-memory.why
-memory.propose
-memory.invalidate
-memory.research
-~~~
+### OpenLIT and Console reuse
 
-Exact tools may be combined as the API matures. Read results should include scope, status, provenance, source evidence, and applicability/validation information.
+Reuse the upstream Mem0 connector's capability/descriptor patterns and useful React list/search/detail/forms/graph/chart primitives where they survive AutoDev's OpenLIT reductions. Use one canonical server-side adapter with explicit workspace/repository/role authorization, protected Mem0 credentials and bounded list/search/update/delete operations. The current `autodev` PostgreSQL connector and legacy OpenLIT Memory patches are transitional. Console Memory should inspect **Mem0's actual state**, show provider and scope health, memory source/metadata, edits/deletes where supported, trace links, lifecycle activity, and unknown/not-observed states; do not fabricate provider features or rewrite vendor CRUD semantics as guaranteed immutable lifecycle history.
 
-Workers can append host-bound experience envelopes with source references through `experience_append`; the MCP tool does not accept transcript payloads or caller-selected scope. Workers should normally append experience and **propose** durable memory. Promotion/invalidation of shared memory follows governance. Agents do not write directly to PostgreSQL or Graphiti.
+### Memory observability through OpenTelemetry/OpenLIT
 
-### Retrieval signals for coding work
+Preserve the existing `autodev.memory.*` operation, candidate, injection, outcome, use, and packet-size metrics wherever their meanings still apply; adapt internal stage labels to the real Mem0 operations and distinguish **provider-observed** from **AutoDev-assessed** facts. Include capture queue/ingestion result, provider read/write/update/delete/timeout/error, filter-rejection reason, packet bytes/characters/tokens, retries, provider latency, additional model/embedding charges where observed, and end-to-end task outcome comparisons.
 
-AutoDev's reranker should explicitly include signals generic memory systems often lack:
+Trace memory calls inside the same logical agent execution, with bounded operation names and status. Keep workspace/repository IDs, provider memory IDs, claims, transcripts, evidence paths, and correlation tokens **out of metric dimensions**; identifiers can appear only in appropriately protected, sampled and retention-governed traces/records. Do not double-count Mem0 and AutoDev token/cost observations. Unknown or vendor-unreported provider costs stay unknown.
 
-~~~text
-repository/workspace match
-path proximity
-symbol/entity overlap
-branch/commit ancestry
-relevant-file change since source memory
-PR/issue/commit relationship
-task type + agent role
-semantic similarity
-lexical/exact match
-provenance/validation quality
-historical utility
-recency / temporal validity
-~~~
+Maintain explicit cohort isolation: `disabled` cannot call Mem0 or offer an alternative memory MCP; `retrieval-only` and `jit` experiments must have defined, matched capture histories and session-level assignment. Outcomes and use assessments are not inferred from successful API calls, packet injection, PR links, or provider status. See [memory injection/outcome evaluation](memory-injection-outcome-evaluation.md).
 
-Path and Git lineage are first-class evidence, not merely metadata.
+### Migration and rollout gates (documentation target, not implementation claim)
 
-### Implementation order
+1. **Compatibility/discovery:** pin the Mem0 Platform SDK/API, official hosted MCP tool schema/auth, data/export/delete behavior, and OpenLIT Mem0 connector version; test scopes, metadata, filters, pagination, UI actions, and error mapping against a real non-production account.
+2. **Security:** approve repository-data egress, redaction, service-account ownership, secret handling, per-workspace/agent isolation, data retention, export/deletion and outage behavior; no unrestricted shared agent MCP credentials.
+3. **Adapter prototype:** implement a thin native capture/recall wrapper to Mem0; leave existing read-only memory and historical telemetry intact; disable duplicate write/injection paths.
+4. **Controlled evaluation:** compare no memory, current AutoDev JIT, and Mem0 JIT on matched coding tasks. Measure task/PR success, repeated investigation, memory usefulness, retrieval accuracy, stale advice, token and provider costs, p50/p95 latency, and missed/erroneous memory.
+5. **Console parity:** port/reuse OpenLIT Mem0 UI primitives in `console/`, expose provider health, browse/search/detail, supported CRUD and trace-linked metrics; verify browser acceptance and unavailable/error states.
+6. **Reversible cutover:** export/verify historical useful memories with evidence and scope mapping; switch the canonical production memory owner to Mem0 only after parity and rollback tests; freeze legacy writes, preserve audit data, and then retire redundant PostgreSQL, custom search, `MemoryService` memory CRUD, custom memory MCP, and legacy UI plumbing.
 
-1. **Foundation:** keep OpenLIT/OTel as execution evidence; implement an AutoDev Memory connector over `MemoryService`; reuse/adapt useful OpenLIT Memory components inside the Console; adopt @letta-ai/trajectory where its harness adapters fit; add PostgreSQL + pgvector/full-text persistence; implement AutoDev schemas, governance, JIT researcher/validator/curator, packet builder, and MCP facade.
-2. **Coding-aware retrieval:** add path proximity, commit ancestry/file-change checks, PR/issue relationships, and measured retrieval/ablation telemetry.
-3. **Temporal graph only when justified:** project selected entities/relationships to Graphiti if graph queries measurably improve results.
-4. **Extractor experiments:** benchmark native extraction against Mem0/LangMem-derived candidate generators behind the same interface.
-5. **Specialized researcher/training only if needed:** use JIT-memory/MemHarness techniques or trained policies only when evaluation shows the frontier-model JIT researcher is a material bottleneck.
-
-Do not introduce Qdrant, Milvus, Pinecone, a second agent framework, or another memory control plane by default. Add specialized infrastructure only after Postgres/hybrid retrieval or the custom JIT layer shows a measured limitation.
+If the pilot fails quality, privacy, isolation, service reliability, or cost gates, do **not** silently deploy it or retain a permanent dual-write architecture. Record a deliberate decision and revisit the provider choice.
 
 ## 11. Console target
 
-The **AutoDev Console Memory feature is the sole target operator surface**. It must use the same dark-only shell, navigation, tables, filters, forms, status semantics, drawers/tabs, loading/error states, and canonical-edit rules as the rest of the Console.
+The **AutoDev Console /memory feature is the sole operator surface**, using the same dark-only shell, navigation, tables, forms, filters, detail panels and failure-state semantics as other Console resources.
 
-Reuse/adapt OpenLIT's Memory connector, table, filter, detail, graph, chart, status, and trace-linking components where useful, but port them into console/ rather than preserving a second application. The standalone OpenLIT Memory page and the current Console portal link are transitional migration bridges only.
+The selected provider is **Mem0**. Reuse/adapt OpenLIT's Mem0 provider connector and UI primitives inside `console/` rather than maintaining AutoDev-owned memory browsing logic or re-exposing the retired standalone OpenLIT Memory page.
 
-The Memory feature should combine:
+Surface only capabilities confirmed by the pinned API/connector:
 
-- connector selection/configuration/health where multiple or external stores exist;
-- browse/search/pagination across episodes, semantic memories, procedures, and source trajectories;
-- repository/workspace, role, task/run, type, status, and time filters;
-- provenance, source evidence, PR/commit/file/entity links, and current-state verification;
-- active/superseded/invalidated/uncertain lifecycle state;
-- relationship/history/graph views where useful;
-- observed retrieval/reconstruction/injection/use and related traces;
-- memory effectiveness, quality, latency/cost, and lifecycle analytics from retained OpenLIT/OTel query infrastructure;
-- governed propose/verify/revise/invalidate/supersede/promote actions;
-- evidence-backed operator reporting that combines **observed packet-injection evidence** with separately **reporter-supplied task/session outcomes**; the latter are not inferred or independently verified by injection/provider telemetry;
-- promotion of suitable procedures through the canonical skill/configuration path.
+- provider connection/auth status and operational failure/latency;
+- scoped search, list, details and supported add/update/delete actions;
+- provider memory IDs, source metadata, freshness and source evidence links where available;
+- source trajectories, PR/commit/file links through existing AutoDev evidence surfaces, without inventing Mem0-native governance history;
+- retrieval, injection, rejected/stale candidates and provenance verification where observed in AutoDev traces;
+- memory usage/cost, memory effectiveness, task outcomes and controlled cohort comparisons;
+- retention/deletion and provider-export state, respecting permissions;
+- not-observed/error states instead of invented counts, judgments, or causal effects.
 
-Do not restore organization/project/environment/account tenancy concepts, Otter/chat, light theme, or a separate Memory dashboard application. The connector/UI layer remains a projection over MemoryService governance, never a second source of truth.
+Provider CRUD is not a substitute for AutoDev's permission checks. Provider-owned memory **must not** become RuleSync/skills/policy, the operator memory page must not become a second memory database, and source/telemetry identifiers must remain private. Do not resurrect OpenLIT tenancy concepts, Otter/chat, a second UI, or generic dashboard authoring.
 
 ## 12. Acceptance and evaluation
 
-The target is satisfied when:
+The target is achieved only when all of the following are demonstrated:
 
-- raw trajectories survive independently of derived summaries;
-- derived memories retain evidence provenance;
-- retrieval respects repository/workspace/task/role scope;
-- stale/superseded memories can be identified and excluded;
-- current authoritative state is consulted before high-impact remembered guidance is used;
-- retrieval can retain, revise, or reject candidates before injection;
-- agents receive bounded task-specific packets rather than unbounded history;
-- workers cannot freely pollute shared durable memory;
-- proven procedures can graduate into explicit skills/rules/tests/docs;
-- the memory pipeline is observable through the retained OpenTelemetry/OpenLIT backend and surfaced in AutoDev Console; controlled cohorts can be compared with no-memory/simpler-memory baselines without treating the standalone OpenLIT UI as a target operator surface;
-- the Console Memory feature can browse and inspect AutoDev memory through the Control API without bypassing `MemoryService` governance;
-- secrets and unnecessary sensitive payloads are not persisted by default.
+- A supported, version-pinned **Mem0 Platform** account owns production long-term memories, extraction, deduplication/updates, and retrieval. There is no active competing AutoDev long-term memory database/search or general-purpose MCP server after cutover.
+- Automatic capture from supported agent/provider paths yields useful, source-linked memories without blocking tools or exposing unapproved source content. Failed and unknown outcomes remain distinguishable.
+- Trusted workspace/repository/agent identity and publication controls prevent cross-repo leakage and unauthorized shared-memory writes, including through hosted MCP tools and the Console connector.
+- The JIT path rejects out-of-scope, stale or unsupported claims against current Git/RuleSync/runtime facts and injects only a small advisory packet. Unavailable Mem0 skips clearly and does not block execution.
+- The official Mem0 MCP is used only where its authentication/scope are actually enforceable; AutoDev does not maintain a replacement generic memory MCP.
+- OpenLIT's Mem0 connector/UI capabilities appear **within AutoDev Console**, including real read/write error states and trace-linked latency, token/cost, capture, retrieval and injection telemetry.
+- Operator mutation, exports, deletions and retention follow explicit policy. Credentials never appear in prompts, browser code or model-spawned tools.
+- No-memory and incumbent-memory baselines demonstrate that Mem0 improves or at least meets task outcomes within accepted cost/latency limits; extraction/ingestion cost and actual memory use are measured, not inferred.
+- Migration is reversible, historical evidence/outcome reports survive by defined retention rules, and old PostgreSQL/pgvector memory, bespoke indexers, generic MemoryService engine and old MCP/UI plumbing are removed **only after** validated parity.
 
-Measure memory changes with outcomes such as task/PR success, repeated failures, tool calls/tokens to completion, stale-memory rejection, retrieval/use rate, harmful memory application, and successful transfer to new tasks. Prefer controlled ablations over assuming more context is better. See [memory injection outcome evaluation](memory-injection-outcome-evaluation.md#controlled-ablation-assignment) for experimental unit (`sessionKey`), deterministic hash bucketing across `jit` / `retrieval-only` / `disabled`, strict cohort setup, and reporter-supplied outcomes.
+Use [injection/outcome evaluation](memory-injection-outcome-evaluation.md) for the currently implemented experimental attribution rules and update it during the cutover so provider operations remain measured under the same session/cohort contract. A successful provider request or a PR link is never automatically a task-success report.
 
-## 13. Design basis
+## 13. Design basis and references
 
-This target combines the strongest recurring ideas in agent-memory work:
+This decision adopts a maintained memory product rather than assembling a custom one. Ideas retained from existing agent-memory work are: just-in-time state-aware retrieval, explicit evidence provenance, compact working-context packets, task-scoped multi-agent isolation, and promoting repeatedly verified procedures into canonical skills/rules/tests/docs.
 
-- **Just-In-Time Memory:** preserve experience and perform task-aware curation at retrieval time.
-- **MemHarness:** critique/reconstruct retrieved experience against current state; raw replay can cause negative transfer.
-- **MemGPT/Letta:** separate bounded working context from larger archival memory.
-- **Voyager:** promote reusable procedures into explicit skills.
-- **MemoryArena:** external memory does not replace reasoning and can fail on deeply interdependent tasks.
-- **Governed shared-memory work:** multi-agent memory requires scope, provenance, supersession, and controlled propagation.
+- [Mem0 Platform quickstart/API](https://docs.mem0.ai/platform/quickstart) — managed memory storage, extraction and retrieval SDK/API.
+- [Official Mem0 MCP](https://docs.mem0.ai/platform/mem0-mcp) — supported agent tool transport. Archived historical MCP repositories are not the target.
+- [OpenLIT](https://github.com/openlit/openlit) — Mem0 memory connector and telemetry/UI building blocks; verify compatibility with AutoDev's pinned fork.
+- [AutoDev operational memory notes](../config/memory/README.md) — **current implementation** and migration baseline, not the new provider target.
+- [AutoDev evaluation and outcome rules](memory-injection-outcome-evaluation.md) — current append-only reporting/attribution rules that must survive provider cutover.
 
-These are design inputs, not dependencies on a specific memory product. AutoDev may reuse OpenLIT memory primitives or another implementation when it satisfies this contract without creating a competing architecture.
+Hindsight, Claude-Mem, LangMem, Letta and Graphiti may be used in comparative evaluations, but they are not simultaneous production memory authorities. No parallel custom memory engine is part of the target.
+

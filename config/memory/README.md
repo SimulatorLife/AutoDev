@@ -1,5 +1,8 @@
 # AutoDev memory database (local development)
 
+> **Current implementation / migration baseline — not the new memory target.** These commands document the existing local PostgreSQL/pgvector, `MemoryService`, `autodev_memory` MCP, and related Control API. The [Memory target state](../../docs/memory-target-state.md) now selects **managed Mem0 Platform** for long-term memory extraction, storage, updates and recall, its **official hosted MCP** for trusted/scoped external agents, and **OpenLIT's Mem0 connector** adapted inside AutoDev Console for memory UI/telemetry. None of the existing variables or instructions below configures Mem0. Do not remove or dual-write the legacy store until the documented provider compatibility, egress/privacy, permission, evaluation and reversible cutover gates pass.
+
+
 The canonical memory repository is PostgreSQL with the `pgvector` extension and
 PostgreSQL full-text indexes. It is separate from OpenLIT/ClickHouse: those
 stores remain historical telemetry, not mutable memory authority.
