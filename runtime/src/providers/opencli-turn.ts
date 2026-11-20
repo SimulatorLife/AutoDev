@@ -1331,8 +1331,7 @@ export function parseOpencliReply(response: string): ParsedReply {
   // The assistant may emit several independent calls. Keep those calls in
   // order, but never display prose it wrote after its first unexecuted call.
   const text = beforeFirstCall ? cleanText(usable) : firstMessage;
-  if (beforeFirstCall && text)
-    segments.push({ type: "message", text });
+  if (beforeFirstCall && text) segments.push({ type: "message", text });
   // Do not silently accept an incomplete call even in discarded trailing
   // prose; the model must repair the malformed request on another route.
   const unparsedCall = TOOL_CALL_OPENING.test(
