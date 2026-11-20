@@ -48,6 +48,11 @@ test("the server-rendered navigation says the viewport decides, not the componen
     /data-nav-rail-only="true"/u,
     "the rail's short brand mark must be reachable by the stylesheet that shows it"
   );
+  assert.match(markup, /data-nav-search-slot="true"/u);
+  assert.match(markup, /data-command-palette-trigger="true"/u);
+  assert.match(markup, /<span[^>]*data-nav-label="true"[^>]*>Search<\/span>/u);
+  assert.match(markup, /<kbd[^>]*data-nav-label="true"/u);
+  assert.match(markup, /aria-label="Search/u);
   assert.match(
     markup,
     /data-nav-collapsed="false"/u,
@@ -89,10 +94,32 @@ test("the narrow-viewport default is a stylesheet rule, so the first paint is al
     /\[data-nav-rail-only\][^}]*display: inline/u,
     "the rail's short brand mark belongs to the rail"
   );
+  assert.match(
+    narrow,
+    /\[data-nav-search-slot\][^}]*padding-inline: 0/u,
+    "the compact search button uses the rail's available width"
+  );
+  assert.match(
+    narrow,
+    /\[data-command-palette-trigger\][^}]*justify-content: center/u,
+    "the search icon remains centered when its text is hidden"
+  );
   assert.doesNotMatch(
     narrow,
     /nav\[data-nav-preference="(collapsed|expanded)"\]/u,
     "the operator's explicit choice is the component's business, not the stylesheet's"
+  );
+});
+
+test("an explicitly collapsed navigation hides search labels and retains the compact icon target", () => {
+  const css = readFileSync(STYLESHEET, "utf8");
+  assert.match(
+    css,
+    /nav\[data-nav-collapsed="true"\] \[data-nav-label\][^}]*display: none/u
+  );
+  assert.match(
+    css,
+    /nav\[data-nav-collapsed="true"\] \[data-command-palette-trigger\][^}]*padding: 0\.5rem/u
   );
 });
 

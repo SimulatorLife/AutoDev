@@ -502,53 +502,77 @@ async function renderSessionScopedPage(
         ? rawSpanId[0]
         : undefined;
 
-  // The three reads are started together and awaited together: the page's
-  // answer arrives in one piece, and each source degrades on its own.
-  const [diagnosticsResult, spansResult, traceResult] = await Promise.all([
-    config === null
-      ? Promise.resolve({
-          kind: "failed" as const,
-          failure: diagnosticsFailure(
-            "autodev_control_api_not_configured",
-            "The Control API credential is not configured, so the session diagnostics cannot be read."
+  // The diagnostics, requested span page, bounded provider-attribution sample,
+  // and selected trace read are independent and degrade separately.
+  const [diagnosticsResult, spansResult, providerSpansResult, traceResult] =
+    await Promise.all([
+      config === null
+        ? Promise.resolve({
+            kind: "failed" as const,
+            failure: diagnosticsFailure(
+              "autodev_control_api_not_configured",
+              "The Control API credential is not configured, so the session diagnostics cannot be read."
+            )
+          })
+        : fetchSessionDiagnostics(
+            sessionId,
+            {
+              includeEfficiency: true,
+              includeFailures: true,
+              includeEvents: true,
+              eventsLimit: viewState.eventsLimit,
+              eventsOffset: viewState.eventsOffset,
+              includeItems: true,
+              itemsLimit: viewState.itemsLimit,
+              itemsOffset: viewState.itemsOffset,
+              ...(viewState.threadId === undefined
+                ? {}
+                : { threadId: viewState.threadId })
+            },
+            config
+          ).then((result) =>
+            result.kind === "ok"
+              ? { kind: "ok" as const, report: result.data }
+              : { kind: "failed" as const, failure: controlApiFailure(result) }
+          ),
+      loadOpenLITSessionUsage(
+        sessionId,
+        sessionQuerySelection(state.selection),
+        {
+          limit: viewState.spanLimit,
+          offset: viewState.spanOffset,
+          sortDirection: viewState.spanSort
+        }
+      ),
+      viewState.tab === "overview" || viewState.tab === "threads"
+        ? loadOpenLITSessionUsage(
+            sessionId,
+            sessionQuerySelection(state.selection),
+            {
+              limit: 200,
+              offset: 0,
+              sortDirection: "desc"
+            }
           )
-        })
-      : fetchSessionDiagnostics(
-          sessionId,
-          {
-            includeEfficiency: true,
-            includeFailures: true,
-            includeEvents: true,
-            eventsLimit: viewState.eventsLimit,
-            eventsOffset: viewState.eventsOffset,
-            includeItems: true,
-            itemsLimit: viewState.itemsLimit,
-            itemsOffset: viewState.itemsOffset,
-            ...(viewState.threadId === undefined
-              ? {}
-              : { threadId: viewState.threadId })
-          },
-          config
-        ).then((result) =>
-          result.kind === "ok"
-            ? { kind: "ok" as const, report: result.data }
-            : { kind: "failed" as const, failure: controlApiFailure(result) }
-        ),
-    loadOpenLITSessionUsage(sessionId, sessionQuerySelection(state.selection), {
-      limit: viewState.spanLimit,
-      offset: viewState.spanOffset,
-      sortDirection: viewState.spanSort
-    }),
-    selectedSpanId === undefined
-      ? Promise.resolve(undefined)
-      : loadOpenLITTrace(selectedSpanId)
-  ]);
+        : Promise.resolve({ kind: "not-configured" as const }),
+      selectedSpanId === undefined
+        ? Promise.resolve(undefined)
+        : loadOpenLITTrace(selectedSpanId)
+    ]);
 
   const report =
     diagnosticsResult.kind === "ok" ? diagnosticsResult.report : null;
   const diagnosticsFailureValue =
     diagnosticsResult.kind === "ok" ? null : diagnosticsResult.failure;
   const spansEvidence = spansResult.kind === "ok" ? spansResult.data : null;
+  const providerSpans =
+    providerSpansResult.kind === "ok" ? providerSpansResult.data : null;
+  const observedProvidersByThread: Record<string, string[]> = {};
+  for (const span of providerSpans?.spans ?? []) {
+    if (span.conversationId === null || span.provider === null) continue;
+    const providers = (observedProvidersByThread[span.conversationId] ??= []);
+    if (!providers.includes(span.provider)) providers.push(span.provider);
+  }
   const spansFailureValue =
     spansResult.kind === "ok" ? null : spansFailureFor(spansResult);
 
@@ -577,6 +601,12 @@ async function renderSessionScopedPage(
       report,
       diagnosticsFailure: diagnosticsFailureValue,
       spans: spansEvidence,
+      observedProvidersByThread,
+      providerEvidencePartial:
+        providerSpans === null ||
+        providerSpans.total === null ||
+        providerSpans.partial ||
+        providerSpans.hasMore,
       spansFailure: spansFailureValue,
       spanHrefFor
     }),

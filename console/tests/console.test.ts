@@ -203,7 +203,6 @@ import {
   PromptsView,
   ProviderDetailView,
   ProvidersView,
-  providerUsageView,
   resolveActiveTabId,
   resolveMemoryPage,
   resolveProviderStatus,
@@ -221,6 +220,7 @@ import {
   withControlFailure,
   WorkspacesView
 } from "../src/index.ts";
+import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import {
   CONSOLE_BUILD_DIST_DIR,
   CONSOLE_DEV_DIST_DIR,
@@ -1787,7 +1787,8 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
   assert.match(toggleTag, /aria-expanded="true"/u);
   assert.match(toggleTag, /rounded-full/u);
   assert.match(toggleTag, /h-6 w-6/u);
-  assert.equal((markup.match(/<button\b/gu) ?? []).length, 1);
+  assert.equal((markup.match(/<button\b/gu) ?? []).length, 2);
+  assert.match(markup, /data-command-palette-trigger="true"/u);
   assert.equal(markup.includes("Projects"), false);
   assert.equal(markup.includes("Organizations"), false);
   assert.equal(markup.includes("Environments"), false);
@@ -23164,7 +23165,13 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
     ],
     [
-      join("src", "features", "providers", "ProviderUsagePanel.ts"),
+      join(
+        "src",
+        "features",
+        "providers",
+        "provider-usage",
+        "ProviderUsagePanel.ts"
+      ),
       "Reads one provider's usage aggregation from the Console's own Usage route and renders only what that route confirmed; the provider page's own reads stay server-owned."
     ],
     [

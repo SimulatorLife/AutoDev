@@ -21,8 +21,10 @@
  * double-counted between parent and child.
  *
  * Privacy: this module never exports raw paths, prompts, credentials,
- * request/session/conversation/thread/trace IDs, or tool arguments as
- * metric dimensions or as sensitive span attributes. autodev.workspace and
+ * request/session/trace IDs or tool arguments as metric dimensions or as
+ * sensitive span attributes. The source-confirmed GenAI conversation ID is
+ * retained only on the attempt span for trace-level correlation.
+ * autodev.workspace and
  * autodev.agent.role are attached only after value validation (non-empty,
  * non-"unattributed", trimmed, bounded length).
  */
@@ -1392,6 +1394,8 @@ export interface AttemptSpanOptions {
   workspace?: { key: string; cwd?: string | null } | null;
   /** The source-confirmed session this attempt serves. */
   sessionId?: string | null | undefined;
+  /** Source-confirmed Codex thread served by this physical attempt. */
+  threadId?: string | null | undefined;
 }
 
 /**
@@ -1415,6 +1419,8 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
   if (model) attributes[ATTR_GEN_AI_REQUEST_MODEL] = model;
   const requestedModel = safeModelName(options.requestedModel);
   if (requestedModel) attributes["autodev.requested_model"] = requestedModel;
+  const threadId = safeTrim(options.threadId);
+  if (threadId) attributes["gen_ai.conversation.id"] = threadId;
   const span = state.tracer.startSpan("gen_ai.client_operation", {
     kind: SpanKind.CLIENT,
     attributes

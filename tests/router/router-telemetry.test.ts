@@ -184,6 +184,37 @@ test("generic OTLP endpoint resolves to distinct signal paths", () => {
   assert.equal(resolveOtlpSignalEndpoint("not-a-url", "metrics"), null);
 });
 
+test("physical attempt spans retain only a source-confirmed conversation thread id", () => {
+  installExporter();
+  const attempt = startAttemptSpan({
+    provider: "thread-provider",
+    model: "thread-model",
+    selection: "primary",
+    attemptNumber: 1,
+    sessionId: "session-identity-is-not-the-thread",
+    threadId: "codex-thread-123"
+  });
+  endAttemptSpan(attempt, { status: "ok" });
+
+  const [span] = findAttemptSpans(snapshotSpans());
+  assert.equal(span?.attributes["gen_ai.conversation.id"], "codex-thread-123");
+  assert.equal(
+    span?.attributes["autodev.session.id"],
+    "session-identity-is-not-the-thread"
+  );
+
+  const unattributed = startAttemptSpan({
+    provider: "thread-provider",
+    model: "thread-model",
+    selection: "primary",
+    attemptNumber: 2,
+    threadId: null
+  });
+  endAttemptSpan(unattributed, { status: "ok" });
+  const attempts = findAttemptSpans(snapshotSpans());
+  assert.equal(attempts[1]?.attributes["gen_ai.conversation.id"], undefined);
+});
+
 test(
   "source metrics count one logical request and one physical GenAI operation with reported token and cache usage",
   { concurrency: false },
@@ -3631,6 +3662,11 @@ test(
           "an internal thread key is not a source session ID"
         );
       }
+      const [attempt] = findAttemptSpans(spans);
+      assert.equal(
+        attempt?.attributes["gen_ai.conversation.id"],
+        "thread-only-identity"
+      );
     } finally {
       globalThis.fetch = originalFetch;
       if (previousKey === undefined) delete process.env.LITELLM_API_KEY;

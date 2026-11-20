@@ -1,23 +1,23 @@
 import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
-import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
-import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
+import { SECTION_HEADING_CLASS } from "../../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../../components/layout/Panel.ts";
+import { NavigationLink } from "../../../components/navigation/NavigationLink.ts";
+import {
+  DetailGrid,
+  DetailValue
+} from "../../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
   StatusBadge
-} from "../../components/status/StatusBadge.ts";
+} from "../../../components/status/StatusBadge.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
-} from "../../components/ui/text-classes.ts";
-import {
-  providerUsagePath,
-  type ProviderUsageReading
-} from "./provider-usage.ts";
+} from "../../../components/ui/text-classes.ts";
+import { providerUsagePath, type ProviderUsageReading } from "./summary.ts";
 
 const PROVIDER_USAGE_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0

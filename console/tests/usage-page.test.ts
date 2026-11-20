@@ -4,6 +4,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import UsagePage from "../app/usage/page.ts";
+import { sessionDiagnosticsReport } from "../e2e/session-diagnostics-fixture.ts";
 import { clearUsageTelemetryCacheForTests } from "../src/lib/server/usage-telemetry.ts";
 
 const usageToken = "usage-page-test-token";
@@ -219,105 +220,16 @@ test("UsagePage maps an unreachable OpenLIT source to the actionable unavailable
 const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
 const threadId = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
 const controlApiToken = "control-api-test-token";
-
+const sourceDiagnosticsReport = sessionDiagnosticsReport();
 const diagnosticsReport = {
-  schema: "autodev-session-diagnostics-v1",
-  found: true,
-  requestedId: sessionId,
-  rootSessionId: sessionId,
-  matchedByThreadId: false,
-  threads: [
-    {
-      id: threadId,
-      sessionId,
-      parentId: null,
-      nickname: null,
-      role: "worker",
-      model: "autodev/worker",
-      modelProvider: "claude",
-      cliVersion: null,
-      cwd: "/repo",
-      file: "/repo/rollout.jsonl",
-      start: "2026-11-10T12:00:00.000Z",
-      end: "2026-11-10T12:00:10.000Z",
-      counts: { turns: 1 },
-      turns: [
-        {
-          turnId: "t1",
-          started: "2026-11-10T12:00:02.000Z",
-          ended: "2026-11-10T12:00:10.000Z",
-          outcome: "completed",
-          detail: null
-        }
-      ],
-      gaps: [],
-      tools: { read_file: 1 },
-      toolFailures: [],
-      investigation: {
-        observed: true,
-        firstEditAt: null,
-        toolCalls: 1,
-        tokens: 1000,
-        filesRead: 1,
-        repeatedReads: 0,
-        searches: 0,
-        repeatedSearches: 0,
-        context: { ccc: 0, cgc: 0, lsp: 0 }
-      }
-    }
-  ],
-  router: [],
-  logs: [],
-  bridgeAlerts: [],
-  live: null,
-  efficiency: null,
-  aggregates: {
-    threadCount: 1,
-    totalTokens: 1000,
-    inputTokens: 800,
-    cachedInputTokens: 400,
-    outputTokens: 100,
-    reasoningOutputTokens: 50,
-    cacheHitPct: 50,
-    reasoningPct: 50,
-    peakInputTokens: 800,
-    cacheDrops: 0,
-    compactions: 0,
-    contextCompactedEvents: 0,
-    maxReplacementItems: 0,
-    maxReplacementBytes: 0,
-    maxReplacementImages: 0,
-    responseImageItems: 0,
-    maxInitialDeveloperBytes: 0,
-    maxSkillsCatalogBytes: 0,
-    maxSkillsLoaded: 0,
-    skillsByRoot: {},
-    uniqueSkillsRead: 0,
-    skillTelemetryReads: null,
-    turnsTotal: 1,
-    turnsByOutcome: { completed: 1 },
-    gapsCount: 0,
-    toolCallsTotal: 1,
-    toolCallsByName: { read_file: 1 },
-    toolFailuresTotal: 0,
-    toolFailuresByCategory: {},
-    preToolUseBlocks: 0,
-    routerRequests: 0,
-    routerFailures: 0,
-    routerSkippedTotal: 0,
-    routerSkippedByReason: {},
-    routerRetries: 0,
-    exhaustionWaits: 0,
-    transportErrors: 0,
-    providerHops: 0,
-    byProvider: {}
-  },
-  eventsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false },
-  itemsPage: { items: [], total: 0, limit: 50, offset: 0, hasMore: false }
+  ...sourceDiagnosticsReport,
+  threads: (sourceDiagnosticsReport.threads as Record<string, unknown>[]).map(
+    (thread) => ({ ...thread, modelProvider: "local_model_router" })
+  )
 };
 
 const sessionUsageResponse = {
-  schema: "autodev-openlit-session-usage-v2",
+  schema: "autodev-openlit-session-usage-v3",
   status: "observed",
   partial: false,
   total: 1,
@@ -335,6 +247,7 @@ const sessionUsageResponse = {
       durationNs: 1_000_000,
       statusCode: "OK",
       provider: "claude",
+      conversationId: threadId,
       requestedModel: "autodev/worker",
       role: "worker",
       workspace: "SimulatorLife/AutoDev",
@@ -370,14 +283,15 @@ test("a session id in the top bar scopes the whole page to that session", async 
   const restoreControl = withControlApiConfig();
   try {
     const requests: string[] = [];
-    globalThis.fetch = async (input) => {
+    globalThis.fetch = async (input, init) => {
       const url = String(input);
       requests.push(url);
       if (url.startsWith("http://control.test/control/diagnostics/sessions/")) {
         return Response.json(diagnosticsReport);
       }
       if (url === "http://openlit.test/api/autodev/usage/session") {
-        return Response.json(sessionUsageResponse);
+        const body = JSON.parse(String(init?.body)) as { limit: number };
+        return Response.json({ ...sessionUsageResponse, limit: body.limit });
       }
       throw new Error(`Unexpected Usage request: ${url}`);
     };
@@ -407,6 +321,12 @@ test("a session id in the top bar scopes the whole page to that session", async 
     assert.match(markup, new RegExp(`value="${sessionId}"`));
     assert.match(markup, /Clear session/);
     assert.match(markup, /Overview/);
+    assert.ok(
+      markup.includes("Observed provider(s)"),
+      `provider column missing; thread table: ${markup.includes("Session threads")}, actual provider: ${markup.includes("claude")}`
+    );
+    assert.match(markup, /claude/);
+    assert.doesNotMatch(markup, /local_model_router/);
   } finally {
     restoreControl();
     restore();

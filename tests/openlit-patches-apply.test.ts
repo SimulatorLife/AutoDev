@@ -396,7 +396,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(
     usageSessionRoute,
-    /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v2"/u
+    /SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v3"/u
   );
   assert.match(
     usageSessionRoute,
@@ -438,6 +438,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "gen_ai.usage.output_tokens",
     "gen_ai.usage.cache_read.input_tokens",
     "gen_ai.usage.cost",
+    "gen_ai.conversation.id",
     "autodev.request_kind",
     "autodev.compaction.provider",
     "autodev.hop.route",
@@ -457,7 +458,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     ),
     "utf8"
   );
-  assert.match(usageSessionTests, /autodev-openlit-session-usage-v2/u);
+  assert.match(usageSessionTests, /autodev-openlit-session-usage-v3/u);
   assert.match(usageSessionTests, /autodev\.session\.id/u);
   assert.match(usageSessionTests, /private prompt content/u);
   assert.match(usageSessionTests, /status: "unavailable"/u);

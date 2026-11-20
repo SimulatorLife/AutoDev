@@ -9,8 +9,17 @@ import {
 import React from "react";
 
 import { canonicalNavPath } from "../../lib/routes.ts";
+import { Icon } from "../icons/Icon.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import { NavigationLink } from "./NavigationLink.ts";
+import {
+  isSearchSource,
+  matchesSearchDestination,
+  searchFailureMessage,
+  searchDestinations,
+  type SearchDestination,
+  type SearchSource
+} from "./search-destinations.ts";
 
 /**
  * The Console's command palette.
@@ -62,9 +71,12 @@ import { NavigationLink } from "./NavigationLink.ts";
  */
 
 interface PaletteResult {
-  readonly section: CanonicalNavSection;
+  readonly id: string;
+  readonly title: string;
+  readonly section?: CanonicalNavSection;
   readonly path: string;
-  readonly purpose: string;
+  readonly detail: string;
+  readonly type?: string;
 }
 
 /**
@@ -73,7 +85,7 @@ interface PaletteResult {
  * One string names the trigger, the dialog and the field, so the thing the
  * operator activates and the thing that opens are the same thing by name.
  */
-const PALETTE_NAME = "Find a resource";
+const PALETTE_NAME = "Search";
 
 /** The field's id, so the label and the input agree on it. */
 const PALETTE_INPUT_ID = "command-palette-input";
@@ -117,19 +129,6 @@ interface Shortcut {
  * The words are matched against the section's name and its purpose together,
  * so a word can name either.
  */
-/** The query's words, however the operator typed them. */
-const QUERY_WORDS = /\s+/u;
-
-function matches(result: PaletteResult, query: string): boolean {
-  const words = query
-    .toLowerCase()
-    .split(QUERY_WORDS)
-    .filter((word) => word.length > 0);
-  if (words.length === 0) return true;
-  const haystack = `${result.section} ${result.purpose}`.toLowerCase();
-  return words.every((word) => haystack.includes(word));
-}
-
 /** Whether the operator is typing into something, where a shortcut must not fire. */
 function isTyping(target: EventTarget | null): boolean {
   if (target === null || !(target instanceof HTMLElement)) return false;
@@ -171,10 +170,9 @@ export interface CommandPaletteProps {
 }
 
 /** A result's element id, so the announced selection can name the active row. */
-function resultId(section: CanonicalNavSection): string {
+function resultId(id: string): string {
   return (
-    "command-palette-result-" +
-    section.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")
+    "command-palette-result-" + id.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")
   );
 }
 
@@ -199,6 +197,11 @@ export function CommandPalette({
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const [shortcut, setShortcut] = React.useState<Shortcut | null>(null);
+  const [recordData, setRecordData] = React.useState<
+    readonly SearchDestination[]
+  >([]);
+  const [recordsLoaded, setRecordsLoaded] = React.useState(false);
+  const [recordStatus, setRecordStatus] = React.useState("");
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   /** Whether the palette closed because the operator chose a destination. */
   const navigatedRef = React.useRef(false);
@@ -222,21 +225,85 @@ export function CommandPalette({
     () =>
       CANONICAL_NAV_GROUPS.flatMap((group) =>
         group.sections.map((section) => ({
+          id: `section:${section}`,
+          title: section,
           section,
           path: canonicalNavPath(section),
-          purpose: canonicalSectionPurpose(section)
+          detail: canonicalSectionPurpose(section)
         }))
       ),
     []
   );
 
+  React.useEffect(() => {
+    if (!open || recordsLoaded) return;
+    let cancelled = false;
+    setRecordStatus("Loading search records.");
+    void globalThis
+      .fetch("/api/console/search")
+      .then(async (response) => ({
+        ok: response.ok,
+        data: (await response.json()) as unknown
+      }))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (data === null || typeof data !== "object") {
+          setRecordStatus(searchFailureMessage(["endpoint"]));
+          return;
+        }
+        const body = data as Record<string, unknown>;
+        const unavailableSources: SearchSource[] = Array.isArray(
+          body.unavailableSources
+        )
+          ? body.unavailableSources.filter(isSearchSource)
+          : [];
+        if (!ok && unavailableSources.length === 0) {
+          unavailableSources.push("endpoint");
+        }
+        setRecordData(
+          searchDestinations(body as Parameters<typeof searchDestinations>[0])
+        );
+        if (unavailableSources.length > 0) {
+          setRecordStatus(searchFailureMessage(unavailableSources));
+          // A following open retries reads that were partial or unavailable.
+          setRecordsLoaded(false);
+        } else {
+          setRecordStatus("");
+          setRecordsLoaded(ok);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRecordStatus(searchFailureMessage(["endpoint"]));
+        setRecordsLoaded(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, recordsLoaded]);
+
+  const allResults = React.useMemo<readonly PaletteResult[]>(
+    () => [
+      ...results,
+      ...recordData.map((record) => ({
+        id: record.id,
+        title: record.title,
+        path: record.path,
+        detail: record.detail,
+        type: record.type
+      }))
+    ],
+    [recordData, results]
+  );
+
   const shown = React.useMemo(
-    () => results.filter((result) => matches(result, query)),
-    [query, results]
+    () =>
+      allResults.filter((result) => matchesSearchDestination(result, query)),
+    [allResults, query]
   );
 
   const activeResult =
-    shown.find((result) => resultId(result.section) === activeId) ?? null;
+    shown.find((result) => resultId(result.id) === activeId) ?? null;
 
   const count =
     shown.length === 0
@@ -291,15 +358,21 @@ export function CommandPalette({
       type: "button",
       onClick: openPalette,
       className:
-        "flex min-h-6 items-center gap-2 whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-xs text-fg-muted transition-colors hover:border-fg-muted hover:text-fg",
+        "flex min-h-9 w-full items-center gap-2 whitespace-nowrap rounded border border-border bg-surface-raised px-3 py-2 text-sm text-fg-muted transition-colors hover:border-fg-muted hover:text-fg",
       "aria-label": triggerName,
       title: triggerName,
       "data-command-palette-trigger": true
     },
-    React.createElement("span", null, PALETTE_NAME),
+    React.createElement(
+      "span",
+      { "aria-hidden": true },
+      React.createElement(Icon, { name: "search", size: 16 })
+    ),
+    React.createElement("span", { "data-nav-label": "true" }, PALETTE_NAME),
     React.createElement(
       "kbd",
       {
+        "data-nav-label": "true",
         className:
           "inline-block min-w-[2.5rem] rounded border border-border px-1 text-center font-sans text-xs text-fg-muted"
       },
@@ -337,6 +410,17 @@ export function CommandPalette({
     count
   );
 
+  const recordStatusLine = React.createElement(
+    "p",
+    {
+      className: MUTED_META_CLASS + " px-3 py-1.5",
+      role: "status",
+      "aria-live": "polite",
+      "data-search-record-status": "true"
+    },
+    recordStatus
+  );
+
   /**
    * What the palette has selected, said out loud.
    *
@@ -351,15 +435,15 @@ export function CommandPalette({
       role: "status",
       "data-palette-selection": "true"
     },
-    activeResult === null ? "" : activeResult.section + " is selected."
+    activeResult === null ? "" : activeResult.title + " is selected."
   );
 
   const entries = shown.map((result) =>
     React.createElement(
       Ariakit.ComboboxItem,
       {
-        key: result.section,
-        id: resultId(result.section),
+        key: result.id,
+        id: resultId(result.id),
         focusOnHover: true,
         // Choosing a result closes the palette and hands the focus to the
         // navigation owner rather than back to the trigger.
@@ -376,7 +460,7 @@ export function CommandPalette({
       React.createElement(
         "span",
         { className: "text-sm text-fg" },
-        result.section,
+        result.title,
         result.section === activeSection
           ? React.createElement(
               "span",
@@ -388,7 +472,7 @@ export function CommandPalette({
       React.createElement(
         "span",
         { className: "line-clamp-2 text-xs " + MUTED_META_CLASS },
-        result.purpose
+        result.detail
       )
     )
   );
@@ -424,6 +508,7 @@ export function CommandPalette({
       input
     ),
     countLine,
+    recordStatusLine,
     selection,
     list
   );

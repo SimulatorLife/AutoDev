@@ -12,6 +12,7 @@ import { canonicalNavPath } from "../../lib/routes.ts";
 import { Button } from "../forms/Button.ts";
 import { Icon, navIcon } from "../icons/Icon.ts";
 import { NavigationLink } from "./NavigationLink.ts";
+import { CommandPalette } from "./CommandPalette.ts";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
 const SIDEBAR_COMPACT_QUERY = "(max-width: 1279px)";
@@ -185,6 +186,11 @@ export function AppNav({
           "AC"
         )
       )
+    ),
+    React.createElement(
+      "div",
+      { className: "mb-4 px-2", "data-nav-search-slot": "true" },
+      React.createElement(CommandPalette, { activeSection })
     ),
     React.createElement(
       Button,

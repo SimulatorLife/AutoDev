@@ -32,6 +32,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { readOpenChildThreads } from "@simulatorlife/autodev-runtime/router/codex-state-collector";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
@@ -461,8 +462,4 @@ export function pendingToolCallOutputs(input: unknown): Map<string, unknown> {
 /** True when this request is Codex returning the result of a call we made. */
 export function carriesPendingSpawnResult(payload: unknown): boolean {
   return isRecord(payload) && pendingToolCallOutputs(payload.input).size > 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
 }

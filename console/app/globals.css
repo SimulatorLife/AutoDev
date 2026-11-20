@@ -242,4 +242,35 @@ body {
   nav[data-nav-preference="auto"] [data-nav-brand-row] {
     justify-content: center;
   }
+
+  nav[data-nav-preference="auto"] [data-nav-search-slot] {
+    display: flex;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  nav[data-nav-preference="auto"] [data-command-palette-trigger] {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    padding: 0.5rem;
+  }
+}
+
+/* An explicitly collapsed rail keeps the Search icon but hides its labels. */
+nav[data-nav-collapsed="true"] [data-nav-label] {
+  display: none;
+}
+
+nav[data-nav-collapsed="true"] [data-nav-search-slot] {
+  display: flex;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+nav[data-nav-collapsed="true"] [data-command-palette-trigger] {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  padding: 0.5rem;
 }

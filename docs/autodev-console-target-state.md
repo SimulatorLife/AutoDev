@@ -1096,6 +1096,8 @@ A failed OpenAI attempt followed by a successful Anthropic fallback is one logic
 - Do not duplicate attempt token/cost totals on the parent.
 - Keep requested-model identity distinct from the actual physical provider/model target.
 
+An explicitly selected session may expose a bounded, paginated trace evidence view. Its fixed span summary is an allowlist of source-confirmed operational fields (including actual attempt provider and `gen_ai.conversation.id` where present), timestamps/status/duration and selected usage/routing facts; it never returns arbitrary span/resource attributes, prompts, tool payloads, or free-form errors. Conversation identity is high-cardinality trace context only: it may be retained per span for session/thread investigation, never as a metric dimension. Missing provider or conversation identity remains `null` (unknown), not a guessed value. The endpoint bounds each page to at most 200 spans and reports source truncation separately from pagination; a long session alone is not partial evidence.
+
 ### Semantic conventions and privacy
 
 - Prefer current official gen_ai.* and MCP conventions.

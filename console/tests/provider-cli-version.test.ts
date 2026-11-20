@@ -10,6 +10,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  ProviderCliVersionText,
   providerCliVersionLabel,
   type ProviderCliVersionState,
   providerCliVersionView
@@ -139,6 +140,40 @@ test("a CLI that is installed but unreadable says so differently", () => {
   const view = providerCliVersionView(state, "claude");
   assert.equal(view.status, "not-readable");
   assert.equal(providerCliVersionLabel(view), "claude · Not read");
+});
+
+test("an unreadable agy version is shown as not read, not as a missing mapping", () => {
+  const state: ProviderCliVersionState = {
+    status: "available",
+    data: {
+      ...VERSIONS,
+      providers: [
+        {
+          provider: "antigravity-gemini",
+          cli: {
+            status: "unavailable",
+            kind: "not-readable",
+            command: "agy",
+            reason: "The agy CLI did not report a version.",
+            lastAttemptAt: "2026-11-09T12:00:00.000Z"
+          }
+        }
+      ]
+    }
+  };
+
+  const view = providerCliVersionView(state, "antigravity-gemini");
+  assert.equal(view.status, "not-readable");
+  assert.equal(providerCliVersionLabel(view), "agy · Not read");
+  assert.equal(
+    view.status === "not-readable" ? view.reason : "",
+    "The agy CLI did not report a version."
+  );
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderCliVersionText, { view })
+  );
+  assert.match(markup, /agy · Not read/u);
+  assert.match(markup, /title="The agy CLI did not report a version\."/u);
 });
 
 test("a Runtime that did not report a version says the version was not observed", () => {

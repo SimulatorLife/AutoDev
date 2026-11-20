@@ -193,13 +193,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** The numeric contract shared by every count in a scoped Usage payload. */
+export function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function isCountRow(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.provider === "string" &&
-    typeof value.count === "number" &&
-    Number.isSafeInteger(value.count) &&
-    value.count >= 0
+    isNonNegativeSafeInteger(value.count)
   );
 }
 
@@ -207,9 +210,7 @@ function isToolCountRow(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.tool === "string" &&
-    typeof value.count === "number" &&
-    Number.isSafeInteger(value.count) &&
-    value.count >= 0
+    isNonNegativeSafeInteger(value.count)
   );
 }
 
@@ -222,9 +223,7 @@ function isBreakdown(value: unknown): value is UsageWorkspaceRequestBreakdown {
       (row) =>
         isRecord(row) &&
         (row.workspace === null || typeof row.workspace === "string") &&
-        typeof row.count === "number" &&
-        Number.isSafeInteger(row.count) &&
-        row.count >= 0
+        isNonNegativeSafeInteger(row.count)
     )
   );
 }

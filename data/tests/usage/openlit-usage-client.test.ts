@@ -39,6 +39,7 @@ function sessionSpan(index: number) {
     durationNs: 1_000_000,
     statusCode: "OK",
     provider: null,
+    conversationId: null,
     requestedModel: null,
     role: null,
     workspace: null,
@@ -1267,7 +1268,7 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
       requestUrl = String(input);
       requestInit = init;
       return response({
-        schema: "autodev-openlit-session-usage-v2",
+        schema: "autodev-openlit-session-usage-v3",
         status: "observed",
         partial: false,
         total: 438,
@@ -1285,6 +1286,7 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
             durationNs: 1_000_000,
             statusCode: "OK",
             provider: "claude",
+            conversationId: "codex-thread-123",
             requestedModel: "autodev/orchestrator",
             role: "orchestrator",
             workspace: "SimulatorLife/AutoDev",
@@ -1323,6 +1325,8 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
   assert.equal(requestInit?.cache, "no-store");
   if (result.kind === "ok") {
     assert.equal(result.data.spans[0]?.role, "orchestrator");
+    assert.equal(result.data.spans[0]?.provider, "claude");
+    assert.equal(result.data.spans[0]?.conversationId, "codex-thread-123");
     assert.equal(result.data.spans[0]?.hopRoute, null);
     assert.equal(Object.hasOwn(result.data, "sessionId"), false);
     assert.equal(result.data.total, 438);
@@ -1330,6 +1334,34 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
     assert.equal(result.data.offset, 0);
     assert.equal(result.data.hasMore, true);
     assert.equal(result.data.estimatedCostUsd, 1.25);
+  }
+});
+
+test("OpenLIT session evidence keeps unknown conversation identity distinct", async () => {
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "session-secret",
+    fetchImpl: async () =>
+      response({
+        schema: "autodev-openlit-session-usage-v3",
+        status: "observed",
+        partial: false,
+        total: 1,
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        estimatedCostUsd: null,
+        spans: [sessionSpan(0)]
+      })
+  });
+  const result = await client.querySession(
+    "01a0ba14-d54c-78f2-9367-3f80e9a8f75f",
+    { range: "7D" }
+  );
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.spans[0]?.provider, null);
+    assert.equal(result.data.spans[0]?.conversationId, null);
   }
 });
 
@@ -1342,7 +1374,7 @@ test("OpenLITUsageClient asks for the requested page of a session's spans", asyn
     fetchImpl: async (_input, init) => {
       requestInit = init;
       return response({
-        schema: "autodev-openlit-session-usage-v2",
+        schema: "autodev-openlit-session-usage-v3",
         status: "observed",
         partial: false,
         total: 250,
@@ -1380,10 +1412,10 @@ test("OpenLITUsageClient asks for the requested page of a session's spans", asyn
   }
 });
 
-test("OpenLITUsageClient rejects malformed or contradictory v2 session pages", async () => {
+test("OpenLITUsageClient rejects malformed or contradictory v3 session pages", async () => {
   const sessionId = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
   const valid = {
-    schema: "autodev-openlit-session-usage-v2",
+    schema: "autodev-openlit-session-usage-v3",
     status: "observed",
     partial: false,
     total: 1,
@@ -1479,7 +1511,7 @@ test("OpenLITUsageClient distinguishes an observed empty session from an unavail
     serviceToken: "session-secret",
     fetchImpl: async () =>
       response({
-        schema: "autodev-openlit-session-usage-v2",
+        schema: "autodev-openlit-session-usage-v3",
         status: "observed",
         partial: false,
         total: 0,
@@ -1504,7 +1536,7 @@ test("OpenLITUsageClient distinguishes an observed empty session from an unavail
     fetchImpl: async () =>
       response(
         {
-          schema: "autodev-openlit-session-usage-v2",
+          schema: "autodev-openlit-session-usage-v3",
           status: "unavailable",
           partial: false,
           total: null,

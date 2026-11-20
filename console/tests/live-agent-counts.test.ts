@@ -25,7 +25,7 @@ import {
   liveAgentCount,
   liveAgentRoleBreakdown
 } from "../src/features/live-agent-count.ts";
-import { providerUsageView } from "../src/features/providers/provider-usage-view.ts";
+import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 

@@ -1931,6 +1931,8 @@ export interface AttemptTelemetryOptions {
    * spans.
    */
   sessionId?: string | null;
+  /** The source-confirmed Codex thread served by this attempt. */
+  threadId?: string | null;
 }
 
 async function authForRoute(
@@ -2110,7 +2112,8 @@ export async function fetchUpstream(
         attemptNumber: attemptTelemetry.attemptNumber,
         role: attemptTelemetry.role ?? null,
         workspace: attemptTelemetry.workspace ?? null,
-        sessionId: attemptTelemetry.sessionId ?? null
+        sessionId: attemptTelemetry.sessionId ?? null,
+        threadId: attemptTelemetry.threadId ?? null
       })
     : null;
   let upstream: Response;
@@ -3445,7 +3448,8 @@ async function runConcreteAttempts(ctx: ConcreteRequestContext): Promise<void> {
                 requestedModel: ctx.modelName,
                 role: ctx.attribution.role,
                 workspace: ctx.workspace,
-                sessionId: session?.sessionId ?? null
+                sessionId: session?.sessionId ?? null,
+                threadId: session?.thread ?? null
               },
               attemptSignal
             );
@@ -5099,7 +5103,8 @@ function fetchCandidate(
             requestedModel: ctx.modelName,
             role: ctx.effectiveRole,
             workspace: ctx.workspace,
-            sessionId: ctx.session?.sessionId ?? null
+            sessionId: ctx.session?.sessionId ?? null,
+            threadId: ctx.session?.thread ?? null
           },
           attemptSignal
         );

@@ -52,7 +52,7 @@ export * from "./features/providers/ModelDetailView.ts";
 export * from "./features/providers/ModelToggle.ts";
 export * from "./features/providers/paths.ts";
 export * from "./features/providers/provider-status.ts";
-export * from "./features/providers/provider-usage-view.ts";
+export * from "./features/providers/provider-usage/index.ts";
 export * from "./features/providers/ProviderDetailView.ts";
 export * from "./features/providers/ProvidersView.ts";
 export * from "./features/skills/SkillRoleAssignment.ts";

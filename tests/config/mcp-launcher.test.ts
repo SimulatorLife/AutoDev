@@ -42,7 +42,13 @@ function createIsolatedTempDir(prefix: string): string {
       if (parent === current) break;
       current = parent;
     }
-    if (!containsProject) return mkdtempSync(join(base, prefix));
+    if (!containsProject) {
+      try {
+        return mkdtempSync(join(base, prefix));
+      } catch {
+        continue;
+      }
+    }
   }
   throw new Error(
     "MCP launcher tests need a temporary directory outside initialized cocoindex-code projects"
@@ -53,7 +59,7 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
   assert.deepEqual(resolveMcpCommand("lsp", "/repo"), {
     binary: "/repo/node_modules/.bin/lsp-mcp-server",
     args: [],
-    pathPrepend: ["/repo/node_modules/.bin"]
+    pathPrepend: ["/repo/node_modules/.bin", dirname(process.execPath)]
   });
   assert.deepEqual(resolveMcpCommand("playwright", "/repo", {}), {
     binary: "/repo/node_modules/.bin/playwright-mcp",
@@ -175,6 +181,41 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
   } finally {
     rmSync(checkout, { recursive: true, force: true });
     rmSync(materialized, { recursive: true, force: true });
+  }
+});
+
+test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
+  const root = createIsolatedTempDir("autodev-mcp-hook-pnpm-node-");
+  try {
+    const launcher = join(root, "runtime", "src", "mcp", "launcher.ts");
+    const pnpmBin = join(root, "pnpm", "bin");
+    const seen = join(root, "seen-args");
+    mkdirSync(dirname(launcher), { recursive: true });
+    mkdirSync(pnpmBin, { recursive: true });
+    writeFileSync(launcher, "export {};\n");
+    const pnpmNode = join(pnpmBin, "node");
+    writeFileSync(
+      pnpmNode,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`
+    );
+    chmodSync(pnpmNode, 0o755);
+
+    const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+      env: {
+        HOME: root,
+        PATH: "/usr/bin:/bin",
+        PNPM_HOME: join(root, "pnpm"),
+        AUTODEV_REPO_ROOT: root
+      },
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
+      launcher,
+      "playtest"
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -431,7 +472,7 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
     );
     writeFileSync(
       join(bin, "lsp-mcp-server"),
-      `#!/usr/bin/env bash\ncommand -v typescript-language-server > "${seen}"\n`
+      `#!/usr/bin/env bash\ncommand -v node > "${seen}"\ncommand -v typescript-language-server >> "${seen}"\n`
     );
     chmodSync(join(bin, "typescript-language-server"), 0o755);
     chmodSync(join(bin, "lsp-mcp-server"), 0o755);
@@ -440,10 +481,10 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
       PATH: "/usr/bin:/bin"
     });
     assert.equal(status, 0);
-    assert.equal(
-      readFileSync(seen, "utf8").trim(),
+    assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
+      process.execPath,
       join(bin, "typescript-language-server")
-    );
+    ]);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

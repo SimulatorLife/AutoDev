@@ -203,6 +203,13 @@ a shell profile puts on `PATH` and a bare process does not, so a `PATH`-only
 lookup reported an installed tool as missing on a host where the launcher
 started it every day.
 
+Native MCP clients such as Claude Code also start servers with a minimal
+environment, which may omit Node even when it is installed through pnpm. The
+launcher checks `PATH`, then `PNPM_HOME/bin/node` (or pnpm's platform-default
+bin directory); `AUTODEV_NODE_BIN` can select a Node executable explicitly.
+Without Node, all three AutoDev MCP processes exit before their server starts,
+and the client reports the generic `Connection closed` transport error.
+
 ### User configuration composition
 
 Codex user-level configuration is managed via a composed model rather than a direct symlink:

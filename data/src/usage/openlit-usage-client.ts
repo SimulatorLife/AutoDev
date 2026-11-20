@@ -35,7 +35,7 @@ const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
 const SESSION_USAGE_API_PATH = "/api/autodev/usage/session";
-const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v2";
+const SESSION_USAGE_SCHEMA = "autodev-openlit-session-usage-v3";
 const MAX_SESSION_SPANS = 200;
 const DEFAULT_SESSION_SPAN_LIMIT = 50;
 const MAX_SESSION_SPAN_OFFSET = 100_000;
@@ -399,6 +399,7 @@ const SESSION_SPAN_KEYS = new Set([
   "durationNs",
   "statusCode",
   "provider",
+  "conversationId",
   "requestedModel",
   "role",
   "workspace",
@@ -416,6 +417,7 @@ const SESSION_SPAN_KEYS = new Set([
 const SESSION_SPAN_LABEL_KEYS = [
   "operationName",
   "provider",
+  "conversationId",
   "requestedModel",
   "role",
   "workspace",
@@ -609,6 +611,7 @@ function parseOpenLITSessionUsage(
       durationNs: counts.durationNs,
       statusCode: candidate.statusCode as UsageTraceStatus,
       provider: labels.provider ?? null,
+      conversationId: labels.conversationId ?? null,
       requestedModel: labels.requestedModel ?? null,
       role: labels.role ?? null,
       workspace: labels.workspace ?? null,

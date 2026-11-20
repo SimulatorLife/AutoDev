@@ -248,6 +248,17 @@ test("Codex's returned tool output is matched back by call id", () => {
   assert.equal(carriesPendingSpawnResult({ input }), true);
 });
 
+test("Codex tool outputs must be records, not array-shaped objects", () => {
+  const arrayOutput = Object.assign([], {
+    type: "custom_tool_call_output",
+    call_id: "call_1",
+    output: "not a record"
+  });
+
+  assert.deepEqual(pendingToolCallOutputs([arrayOutput]), new Map());
+  assert.equal(carriesPendingSpawnResult({ input: [arrayOutput] }), false);
+});
+
 test("a turn with no pending result is not mistaken for a continuation", () => {
   assert.equal(
     carriesPendingSpawnResult({

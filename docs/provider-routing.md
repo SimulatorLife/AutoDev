@@ -2852,8 +2852,10 @@ single list; the route patterns and the site registry in
   (the command's final JSON result) nor stderr (diagnostics). The bridge
   opens FD 3 only for streamed turns and verifies that a reading belongs to
   the expected chat before showing it in Codex.
-  The shared preview only emits append-only, settled prose: complete lines
-  seen consistently on successive readings, stopping before any
+  The shared preview emits append-only prose through the last whitespace
+  boundary agreed on by successive readings, so a single-line reply can grow
+  in Codex before its newline while the unfinished final word remains hidden.
+  It stops before any
   `<tool_call`, `<tool_output`, or HTML-escaped tool markup. The finished
   reply closes the same message item; if it no longer begins with the emitted
   prefix, the turn fails instead of silently changing already-shown text.

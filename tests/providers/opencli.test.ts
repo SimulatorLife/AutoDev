@@ -1263,7 +1263,7 @@ test("a Gemini reply's settled prose reaches Codex before the command ends, and 
       });
       const reader = response.body!.getReader();
       const seen = { text: "" };
-      await readUntil(reader, seen, (text) => text.includes("Second line."));
+      await readUntil(reader, seen, (text) => text.includes("Hello there."));
       // The command has not returned, yet the prose is already in the stream,
       // and nothing of the call being written is.
       assert.doesNotMatch(seen.text, /response\.completed/u);
@@ -1278,7 +1278,7 @@ test("a Gemini reply's settled prose reaches Codex before the command ends, and 
         .filter((entry) => entry.event === "response.output_text.delta")
         .map((entry) => entry.data.delta);
       // Appended, never repeated: the finished reply adds nothing to the text.
-      assert.deepEqual(deltas, ["Hello there.", "\nSecond line."]);
+      assert.deepEqual(deltas, ["Hello there.\nSecond", " line."]);
       assert.equal(
         events.filter((entry) => entry.event === "response.output_item.added")
           .length,
@@ -1456,16 +1456,25 @@ test("the process runner hears progress on its own descriptor, apart from the re
   }
 });
 
-test("a reply being written is previewed only as whole, agreed, tool-free prose", () => {
+test("a reply being written streams agreed words without exposing tool markup", () => {
   const preview = new OpencliReplyPreview();
+  const singleLine = new OpencliReplyPreview();
+  assert.equal(singleLine.next("A growing"), null);
+  assert.equal(singleLine.next("A growing reply"), "A");
+  assert.equal(singleLine.next("A growing reply now"), " growing");
+  assert.equal(singleLine.next("A growing reply now."), " reply");
+  assert.equal(singleLine.shown, "A growing reply");
   // A line still being written is not shown, nor is one reading's word.
   assert.equal(preview.next("Hello wor"), null);
-  assert.equal(preview.next("Hello world.\nNext li"), null);
-  // Two readings agree on the first line.
-  assert.equal(preview.next("Hello world.\nNext line.\nThird"), "Hello world.");
+  assert.equal(preview.next("Hello world.\nNext li"), "Hello");
+  // Agreed words stream even before the line is complete.
+  assert.equal(
+    preview.next("Hello world.\nNext line.\nThird"),
+    " world.\nNext"
+  );
   assert.equal(
     preview.next("Hello world.\nNext line.\nThird part\n"),
-    "\nNext line."
+    " line."
   );
   // A page that rewrites what was shown adds nothing and revises nothing.
   assert.equal(preview.next("Changed.\nNext line.\nThird part\n"), null);
@@ -1483,7 +1492,11 @@ test("a reply being written is previewed only as whole, agreed, tool-free prose"
     const text = "Fine.\n" + marker + "\nsecret\n";
     guarded.next(text);
     guarded.next(text);
-    assert.equal(guarded.shown, "Fine.", marker);
+    assert.equal(
+      guarded.shown,
+      marker === "a &amp; b" ? "Fine.\na" : "Fine.",
+      marker
+    );
   }
 });
 
@@ -1931,9 +1944,18 @@ test("ChatGPT streams stored prose before browser completion without displaying 
     run: async (request) => {
       if (request.args[1] === "model")
         return [{ Status: "ok", Model: String(request.args[2]) }];
-      request.onProgress?.({ text: "Checking.\nStill wri", url: chatUrl });
+      request.onProgress?.({ text: "Checking.\n", url: chatUrl });
+      request.onProgress?.({ text: "Checking.\nStill writing", url: chatUrl });
       request.onProgress?.({
-        text: 'Checking.\nWorking.\n<tool_call name="exec">text(',
+        text: "Checking.\nStill writing the reply",
+        url: chatUrl
+      });
+      request.onProgress?.({
+        text: "Checking.\nStill writing the reply now",
+        url: chatUrl
+      });
+      request.onProgress?.({
+        text: 'Checking.\nStill writing the reply now.\n<tool_call name="exec">text(',
         url: chatUrl
       });
       await new Promise<void>((resolve) => {
@@ -1942,7 +1964,7 @@ test("ChatGPT streams stored prose before browser completion without displaying 
       return [
         {
           response:
-            'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
+            'Checking.\nStill writing the reply now.\n<tool_call name="exec">text(1)</tool_call>',
           conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
         }
       ];
@@ -1963,7 +1985,18 @@ test("ChatGPT streams stored prose before browser completion without displaying 
     const reader = response.body!.getReader();
     const seen = { text: "" };
     await readUntil(reader, seen, (text) =>
-      text.includes('"delta":"Checking."')
+      sseEvents(text).some(
+        (entry) =>
+          entry.event === "response.output_text.delta" &&
+          String(entry.data.delta).includes("Checking.")
+      )
+    );
+    await readUntil(reader, seen, (text) =>
+      sseEvents(text).some(
+        (entry) =>
+          entry.event === "response.output_text.delta" &&
+          String(entry.data.delta).includes("Still")
+      )
     );
     assert.doesNotMatch(seen.text, /response.completed/u);
     assert.doesNotMatch(seen.text, /custom_tool_call/u);

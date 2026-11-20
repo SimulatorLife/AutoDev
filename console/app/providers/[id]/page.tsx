@@ -4,7 +4,7 @@ import React from "react";
 
 import { ProviderDetailView } from "../../../src/features/providers/ProviderDetailView.ts";
 import { providerQuotaView } from "../../../src/features/providers/ProviderQuota.ts";
-import { ProviderUsagePanel } from "../../../src/features/providers/ProviderUsagePanel.ts";
+import { ProviderUsagePanel } from "../../../src/features/providers/provider-usage/index.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import { controlApiFailureCode } from "../../../src/lib/server/control-api.ts";
 import {

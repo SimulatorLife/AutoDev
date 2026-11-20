@@ -114,6 +114,11 @@ export interface SessionDiagnosticsViewProps {
   readonly report: SessionDiagnosticsReport | null;
   readonly diagnosticsFailure: SessionDiagnosticsFailure | null;
   readonly spans: UsageSessionEvidence | null;
+  /** Actual providers observed on physical attempts for each router thread id. */
+  readonly observedProvidersByThread: Readonly<
+    Record<string, readonly string[]>
+  >;
+  readonly providerEvidencePartial: boolean;
   readonly spansFailure: SessionDiagnosticsFailure | null;
   readonly spanHrefFor: (offset: number) => string;
 }
@@ -459,7 +464,9 @@ function renderAlerts(report: SessionDiagnosticsReport): React.JSX.Element[] {
 /* ------------------------------------------------------------------ */
 
 function threadColumns(
-  state: SessionDiagnosticsViewState
+  state: SessionDiagnosticsViewState,
+  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
+  providerEvidencePartial: boolean
 ): readonly ColumnDef<SessionThreadTrace, unknown>[] {
   return [
     {
@@ -489,9 +496,12 @@ function threadColumns(
     },
     {
       id: "provider",
-      header: "Model provider",
+      header: "Observed provider(s)",
       cell: ({ row: { original: thread } }) =>
-        thread.modelProvider ?? NOT_OBSERVED_LABEL,
+        observedProviderLabel(
+          observedProvidersByThread[thread.id],
+          providerEvidencePartial
+        ),
       meta: { weight: 120, align: "tokens" }
     },
     {
@@ -562,10 +572,20 @@ function threadColumns(
   ];
 }
 
+function observedProviderLabel(
+  providers: readonly string[] | undefined,
+  partial: boolean
+): string {
+  if (!providers || providers.length === 0) return NOT_OBSERVED_LABEL;
+  return `${providers.join(", ")}${partial ? " (partial evidence)" : ""}`;
+}
+
 function renderOverview(
   report: SessionDiagnosticsReport,
   spans: UsageSessionEvidence | null,
-  state: SessionDiagnosticsViewState
+  state: SessionDiagnosticsViewState,
+  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
+  providerEvidencePartial: boolean
 ): React.JSX.Element[] {
   const aggregates = report.aggregates;
   const byProvider = chartData(
@@ -729,7 +749,11 @@ function renderOverview(
         "Threads",
         React.createElement<DataTableProps<SessionThreadTrace>>(DataTable, {
           data: report.threads,
-          columns: threadColumns(state),
+          columns: threadColumns(
+            state,
+            observedProvidersByThread,
+            providerEvidencePartial
+          ),
           keyExtractor: (thread) => thread.id,
           emptyMessage: "No thread was observed for this session.",
           label: "Session threads"
@@ -848,7 +872,11 @@ function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
   ];
 }
 
-function renderThreadDetail(thread: SessionThreadTrace): React.JSX.Element {
+function renderThreadDetail(
+  thread: SessionThreadTrace,
+  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
+  providerEvidencePartial: boolean
+): React.JSX.Element {
   const efficiency = thread.efficiency;
   return React.createElement(
     DetailGrid,
@@ -860,8 +888,11 @@ function renderThreadDetail(thread: SessionThreadTrace): React.JSX.Element {
     ),
     React.createElement(
       DetailValue,
-      { label: "Provider" },
-      thread.modelProvider ?? NOT_OBSERVED_LABEL
+      { label: "Observed provider(s)" },
+      observedProviderLabel(
+        observedProvidersByThread[thread.id],
+        providerEvidencePartial
+      )
     ),
     React.createElement(
       DetailValue,
@@ -931,7 +962,9 @@ function renderThreadDetail(thread: SessionThreadTrace): React.JSX.Element {
 
 function renderThreads(
   report: SessionDiagnosticsReport,
-  state: SessionDiagnosticsViewState
+  state: SessionDiagnosticsViewState,
+  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
+  providerEvidencePartial: boolean
 ): React.JSX.Element {
   const selected = state.threadId
     ? report.threads.filter((thread) => thread.id === state.threadId)
@@ -978,7 +1011,14 @@ function renderThreads(
       : React.createElement(
           "div",
           { className: PAGE_SECTION_STACK_CLASS },
-          panel("Thread detail", renderThreadDetail(thread)),
+          panel(
+            "Thread detail",
+            renderThreadDetail(
+              thread,
+              observedProvidersByThread,
+              providerEvidencePartial
+            )
+          ),
           panel(
             "Turns",
             React.createElement<
@@ -1567,6 +1607,8 @@ export function SessionDiagnosticsView({
   report,
   diagnosticsFailure,
   spans,
+  observedProvidersByThread,
+  providerEvidencePartial,
   spansFailure,
   spanHrefFor
 }: SessionDiagnosticsViewProps): React.JSX.Element {
@@ -1587,7 +1629,12 @@ export function SessionDiagnosticsView({
     }
     switch (state.tab) {
       case "threads": {
-        return renderThreads(report, state);
+        return renderThreads(
+          report,
+          state,
+          observedProvidersByThread,
+          providerEvidencePartial
+        );
       }
       case "failures": {
         return renderFailures(report, state);
@@ -1602,7 +1649,13 @@ export function SessionDiagnosticsView({
         return React.createElement(
           "div",
           { className: PAGE_SECTION_STACK_CLASS },
-          ...renderOverview(report, spans, state)
+          ...renderOverview(
+            report,
+            spans,
+            state,
+            observedProvidersByThread,
+            providerEvidencePartial
+          )
         );
       }
     }

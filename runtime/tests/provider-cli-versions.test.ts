@@ -210,6 +210,38 @@ test("providers served by the same CLI share one version read per refresh", asyn
   );
 });
 
+test("an unreadable agy version is attributed to every Antigravity provider", async () => {
+  const service = new ProviderCliVersionService({
+    providerIds: () => [
+      "antigravity-gemini",
+      "antigravity-argon",
+      "antigravity-claude-gpt"
+    ],
+    now: () => new Date("2026-11-09T12:00:00.000Z"),
+    locate: () => ({ command: "agy", program: "/opt/bin/agy", args: [] }),
+    capture: () =>
+      Promise.resolve({
+        ok: false,
+        reason: "The agy CLI did not report a version."
+      })
+  });
+
+  await service.refresh();
+
+  assert.deepEqual(
+    service.snapshot().providers.map(({ cli }) => cli),
+    ["antigravity-gemini", "antigravity-argon", "antigravity-claude-gpt"].map(
+      () => ({
+        status: "unavailable",
+        kind: "not-readable",
+        command: "agy",
+        reason: "The agy CLI did not report a version.",
+        lastAttemptAt: "2026-11-09T12:00:00.000Z"
+      })
+    )
+  );
+});
+
 test("a CLI that is not installed is reported as not installed", async () => {
   const service = new ProviderCliVersionService({
     providerIds: () => ["claude"],

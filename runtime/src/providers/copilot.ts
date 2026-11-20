@@ -1934,13 +1934,6 @@ async function handle(
     await handleSpawnRoute(request, response, pathname);
     return;
   }
-  if (pathname === "/v1/models" && request.method === "GET") {
-    sendJson(response, 200, {
-      object: "list",
-      data: [{ id: "copilot", object: "model", owned_by: "github" }]
-    });
-    return;
-  }
   if (pathname !== "/v1/responses" || request.method !== "POST") {
     sendJson(response, 404, {
       error: { message: "not found", type: "invalid_request_error" }

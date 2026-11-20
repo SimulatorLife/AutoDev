@@ -10,7 +10,22 @@ while [[ -L "$target" ]]; do
   [[ "$target" = /* ]] || target="$target_dir/$target"
 done
 repo_root="${AUTODEV_REPO_ROOT:-$(cd -- "$(dirname -- "$target")/.." && pwd)}"
-node_bin="${AUTODEV_NODE_BIN:-$(command -v node || true)}"
+node_bin=""
+if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then
+  node_bin="$AUTODEV_NODE_BIN"
+else
+  node_bin="$(command -v node || true)"
+fi
+if [[ -z "$node_bin" ]]; then
+  pnpm_home="${PNPM_HOME:-}"
+  if [[ -z "$pnpm_home" ]]; then
+    case "$(uname -s)" in
+      Darwin) pnpm_home="$HOME/Library/pnpm" ;;
+      *) pnpm_home="$HOME/.local/share/pnpm" ;;
+    esac
+  fi
+  [[ -x "$pnpm_home/bin/node" ]] && node_bin="$pnpm_home/bin/node"
+fi
 [[ -x "$node_bin" ]] || { echo "AutoDev MCP launcher: node not found" >&2; exit 127; }
 # The Runtime lives at <root>/runtime/src in a checkout and at <root>/src once it
 # is materialized into CODEX_HOME, so the root alone does not say which layout

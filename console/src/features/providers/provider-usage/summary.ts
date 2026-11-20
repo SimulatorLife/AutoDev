@@ -1,5 +1,8 @@
-import { NOT_OBSERVED_STATUS } from "../../components/status/StatusBadge.ts";
-import type { UsageProviderAttemptSource } from "../usage/usage-api.ts";
+import { NOT_OBSERVED_STATUS } from "../../../components/status/StatusBadge.ts";
+import {
+  isNonNegativeSafeInteger,
+  type UsageProviderAttemptSource
+} from "../../usage/usage-api.ts";
 
 export type ProviderUsageSummary =
   | { readonly status: "not-configured" }
@@ -31,7 +34,7 @@ function countForProvider(
   if (rows === null) return null;
   let count = 0;
   for (const row of rows) {
-    if (!Number.isSafeInteger(row.count) || row.count < 0) return null;
+    if (!isNonNegativeSafeInteger(row.count)) return null;
     if (row.provider !== provider) continue;
     count += row.count;
     if (!Number.isSafeInteger(count)) return null;

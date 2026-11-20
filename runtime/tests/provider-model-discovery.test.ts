@@ -5,7 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  copilotModelSource,
   createAntigravityModelDiscoveryAdapters,
   discoverBridgeModels,
   discoverCodexModels,
@@ -209,68 +208,6 @@ test("MiniMax model discovery uses its authenticated read-only listing endpoint"
       authorization: "Bearer model-list-fixture-token"
     }
   ]);
-});
-
-test("Copilot model discovery asks the bridge for the models the Runtime can route", async () => {
-  const requests: Array<{ url: string; method: string }> = [];
-  const models = await discoverBridgeModels(
-    copilotModelSource({} as NodeJS.ProcessEnv),
-    async (input, init) => {
-      requests.push({ url: String(input), method: init?.method ?? "GET" });
-      return Response.json({
-        object: "list",
-        data: [{ id: "copilot", object: "model", owned_by: "github" }]
-      });
-    }
-  );
-  assert.deepEqual(models, [{ id: "copilot", displayName: null }]);
-  assert.deepEqual(requests, [
-    { url: "http://127.0.0.1:4003/v1/models", method: "GET" }
-  ]);
-});
-
-test("Copilot model discovery honours the bridge's configured address", async () => {
-  const requests: string[] = [];
-  await discoverBridgeModels(
-    copilotModelSource({
-      COPILOT_PROXY_HOST: "127.0.0.2",
-      COPILOT_PROXY_PORT: "4999"
-    } as NodeJS.ProcessEnv),
-    async (input) => {
-      requests.push(String(input));
-      return Response.json({ object: "list", data: [] });
-    }
-  );
-  assert.deepEqual(requests, ["http://127.0.0.2:4999/v1/models"]);
-});
-
-test("Copilot model discovery refuses a failed or malformed listing", async () => {
-  await assert.rejects(
-    discoverBridgeModels(
-      copilotModelSource({} as NodeJS.ProcessEnv),
-      async () => Response.json({ error: "nope" }, { status: 500 })
-    ),
-    /returned HTTP 500/u
-  );
-  await assert.rejects(
-    discoverBridgeModels(
-      copilotModelSource({} as NodeJS.ProcessEnv),
-      async () =>
-        Response.json({ object: "list", data: [{ id: "invalid/id" }] })
-    ),
-    /invalid or duplicate model ID/u
-  );
-  await assert.rejects(
-    discoverBridgeModels(
-      copilotModelSource({} as NodeJS.ProcessEnv),
-      async () =>
-        new Response("{not json", {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
-    ),
-    /invalid JSON/u
-  );
 });
 
 test("each opencli provider discovers its own site's models from the shared bridge", async () => {
@@ -816,24 +753,61 @@ test("an invalid persisted model snapshot is discarded and remains unavailable",
   );
 });
 
-test("providers without verified provider-owned listings remain unavailable", async () => {
+test("Copilot drops a persisted placeholder when no provider-owned listing is configured", () => {
+  const previousPersistence = providerModelDiscoveryPersistenceSnapshot();
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((model) => model.provider === "copilot")
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
+  assert.equal(
+    restoreProviderModelDiscoveryPersistence({
+      schema: "autodev-provider-model-discovery-state-v1",
+      providers: [
+        {
+          provider: "copilot",
+          source: "Copilot bridge GET /v1/models",
+          observedAt: "2026-10-14T12:00:00.000Z",
+          lastAttemptAt: "2026-10-14T12:00:00.000Z",
+          reason: null,
+          models: [{ id: "copilot", displayName: null }]
+        }
+      ]
+    }),
+    true
+  );
   const service = new ProviderModelDiscoveryService({
-    providerIds: () => ["codex", "claude", "copilot"],
-    adapters: {}
+    providerIds: () => ["copilot"]
   });
 
-  await service.refresh();
-
-  for (const entry of service.snapshot().providers) {
-    assert.deepEqual(entry.discovery, {
+  try {
+    const discovery = service.snapshot().providers[0]?.discovery;
+    assert.deepEqual(discovery, {
       status: "unavailable",
       source: null,
       lastAttemptAt: null,
       reason:
         "No machine-readable model discovery adapter is configured for this provider."
     });
+    assert.equal(
+      (providerModelDiscoveryPersistenceSnapshot() as {
+        providers: Array<{ provider: string }>;
+      }).providers.some(({ provider }) => provider === "copilot"),
+      false
+    );
+    assert.equal(
+      ROUTING_POLICY.discoveredModels().some(
+        (model) => model.provider === "copilot" && model.id === "copilot"
+      ),
+      false
+    );
+  } finally {
+    service.stop();
+    restoreProviderModelDiscoveryPersistence(previousPersistence);
+    ROUTING_POLICY.setDiscoveredProviderModels("copilot", previousDiscovered);
   }
-  service.stop();
 });
 
 test("a bridge listing refused for a signed-out account is reported as a sign-in", async () => {

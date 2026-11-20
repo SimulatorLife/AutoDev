@@ -16,10 +16,7 @@ import { illegibleText, waitForPageContent } from "./acceptance-helpers.ts";
 async function paletteTrigger(page: Page): Promise<Locator> {
   const trigger = page.locator("[data-command-palette-trigger]");
   await expect(trigger).toBeVisible();
-  await expect(trigger).toHaveAttribute(
-    "aria-label",
-    /^Find a resource \(.+?\)$/u
-  );
+  await expect(trigger).toHaveAttribute("aria-label", /^Search \(.+?\)$/u);
   return trigger;
 }
 
@@ -62,9 +59,7 @@ test("the page says the client has taken over only when the page responds", asyn
   // in the gap would go nowhere -- and the gap is exactly what the marker has
   // to exclude. This is the assertion that says it does.
   await page.keyboard.press("Meta+k");
-  await expect(
-    page.getByRole("dialog", { name: "Find a resource" })
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Search" })).toBeVisible();
 });
 
 test("the palette finds a resource by name and by what it is for", async ({
@@ -76,7 +71,7 @@ test("the palette finds a resource by name and by what it is for", async ({
   await paletteTrigger(page);
 
   await page.keyboard.press("Meta+k");
-  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  const dialog = page.getByRole("dialog", { name: "Search" });
   await expect(dialog).toBeVisible();
   // The field takes the focus, so the operator can type straight away.
   await expect(page.locator("#command-palette-input")).toBeFocused();
@@ -84,7 +79,7 @@ test("the palette finds a resource by name and by what it is for", async ({
   // Every resource is offered, and each carries the sentence that says what
   // it is for.
   const results = page.locator("[data-command-palette] a");
-  await expect(results).toHaveCount(14);
+  await expect.poll(() => results.count()).toBeGreaterThanOrEqual(14);
   await expect(results.first()).toContainText("Agents");
   await expect(results.first()).toContainText("Configured agent roles");
 
@@ -134,9 +129,7 @@ test("the palette does not open while the operator is typing in a field", async 
     field.focus();
   });
   await page.keyboard.press("Meta+k");
-  await expect(
-    page.getByRole("dialog", { name: "Find a resource" })
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Search" })).toHaveCount(0);
 });
 
 test("the palette hands the focus back to its trigger when it closes", async ({
@@ -162,7 +155,7 @@ test("the palette keeps the focus inside itself", async ({ page }) => {
 
   await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
-  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  const dialog = page.getByRole("dialog", { name: "Search" });
   await expect(dialog).toBeVisible();
 
   // The dialog says it is modal, so the keyboard must not walk off it into
@@ -211,7 +204,7 @@ test("the palette fits a short window", async ({ page }) => {
 
   await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
-  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  const dialog = page.getByRole("dialog", { name: "Search" });
   await expect(dialog).toBeVisible();
 
   const geometry = await page.evaluate(() => {
@@ -304,7 +297,7 @@ test("the open palette is legible, whole and named", async ({ page }) => {
   await waitForPageContent(page);
   await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
-  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  const dialog = page.getByRole("dialog", { name: "Search" });
   await expect(dialog).toBeVisible();
 
   const illegible = await illegibleText(page, "[data-command-palette] *");
@@ -356,4 +349,76 @@ test("the open palette is legible, whole and named", async ({ page }) => {
     })
     .map((node) => node.role?.value ?? "");
   expect(unnamed, "every control in the palette names itself").toEqual([]);
+});
+
+test("partial record failures are announced and retried when Search is reopened", async ({
+  page
+}) => {
+  let requests = 0;
+  await page.route("**/api/console/search", async (route) => {
+    requests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        providers: { providers: [{ id: "codex" }] },
+        unavailableSources: requests === 1 ? ["models"] : []
+      })
+    });
+  });
+  await page.goto("/agents");
+  await waitForPageContent(page);
+  const trigger = await paletteTrigger(page);
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search" });
+  const status = dialog.locator("[data-search-record-status]");
+  await expect(status).toContainText(
+    "Some search records are unavailable: Models"
+  );
+  await expect(status).toHaveAttribute("role", "status");
+  await expect(
+    dialog.getByRole("option", { name: /codex Provider/u })
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await trigger.click();
+  await expect.poll(() => requests).toBe(2);
+  await expect(status).toHaveText("");
+  await expect(
+    dialog.getByRole("option", { name: /codex Provider/u })
+  ).toBeVisible();
+});
+
+test("total record failure is announced while canonical section results remain usable", async ({
+  page
+}) => {
+  await page.route("**/api/console/search", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        unavailableSources: [
+          "endpoint",
+          "providers",
+          "models",
+          "agentRoles",
+          "workspaces"
+        ]
+      })
+    })
+  );
+  await page.goto("/agents");
+  await waitForPageContent(page);
+  await (await paletteTrigger(page)).click();
+  const dialog = page.getByRole("dialog", { name: "Search" });
+  await expect(dialog.locator("[data-search-record-status]")).toContainText(
+    "Search records are unavailable: search service"
+  );
+  await expect(dialog.locator("[data-search-record-status]")).toContainText(
+    "Section results remain available"
+  );
+  await expect(dialog.locator("a")).toHaveCount(14);
+  await expect(
+    dialog.getByRole("option", { name: /^Agents\b/u })
+  ).toBeVisible();
 });

@@ -19,7 +19,12 @@ import {
   type SessionDiagnosticsViewState
 } from "../src/features/usage/SessionDiagnosticsView.ts";
 
-function render(tab: string, threadId?: string): string {
+function render(
+  tab: string,
+  threadId?: string,
+  observedProvidersByThread: Readonly<Record<string, readonly string[]>> = {},
+  providerEvidencePartial = false
+): string {
   const report = sessionDiagnosticsReport();
   assert.ok(isSessionDiagnosticsReport(report));
   const state: SessionDiagnosticsViewState = {
@@ -42,20 +47,41 @@ function render(tab: string, threadId?: string): string {
       report,
       diagnosticsFailure: null,
       spans: null,
+      observedProvidersByThread,
+      providerEvidencePartial,
       spansFailure: null,
       spanHrefFor: () => "/usage"
     })
   );
 }
 
-test("the threads table shows role, model provider and model as distinct columns", () => {
-  const markup = render("overview");
-  for (const header of ["Role", "Model provider", "Model"]) {
-    assert.match(markup, new RegExp(">" + header + "<"));
+test("the threads table shows observed provider telemetry, not the configured router", () => {
+  const report = sessionDiagnosticsReport();
+  assert.ok(isSessionDiagnosticsReport(report));
+  const first = report.threads[0];
+  assert.ok(first);
+  const markup = render("overview", undefined, { [first.id]: ["claude"] });
+  for (const header of ["Role", "Observed provider(s)", "Model"]) {
+    assert.ok(markup.includes(`>${header}<`));
   }
   assert.match(markup, />orchestrator</);
   assert.match(markup, />autodev\/orchestrator</);
   assert.match(markup, />claude</);
+  assert.doesNotMatch(markup, />local_model_router</);
+});
+
+test("provider evidence is labeled partial when session coverage is unknown", () => {
+  const report = sessionDiagnosticsReport();
+  assert.ok(isSessionDiagnosticsReport(report));
+  const first = report.threads[0];
+  assert.ok(first);
+  const markup = render(
+    "overview",
+    undefined,
+    { [first.id]: ["claude"] },
+    true
+  );
+  assert.match(markup, /claude \(partial evidence\)/);
 });
 
 test("a thread with no observed provider reads Not observed", () => {
@@ -86,6 +112,8 @@ test("a thread with no observed provider reads Not observed", () => {
       },
       diagnosticsFailure: null,
       spans: null,
+      observedProvidersByThread: {},
+      providerEvidencePartial: false,
       spansFailure: null,
       spanHrefFor: () => "/usage"
     })

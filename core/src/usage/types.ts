@@ -392,6 +392,8 @@ export interface UsageSessionSpanSummary {
   readonly durationNs: number;
   readonly statusCode: UsageTraceStatus;
   readonly provider: string | null;
+  /** Source-confirmed GenAI conversation/thread identity; absent evidence is null. */
+  readonly conversationId: string | null;
   readonly requestedModel: string | null;
   readonly role: string | null;
   readonly workspace: string | null;

@@ -57,7 +57,10 @@ export function resolveMcpCommand(
     return {
       binary: path.join(repoRoot, "node_modules/.bin/lsp-mcp-server"),
       args: [],
-      pathPrepend: [path.join(repoRoot, "node_modules/.bin")]
+      pathPrepend: [
+        path.join(repoRoot, "node_modules/.bin"),
+        path.dirname(process.execPath)
+      ]
     };
   if (tool === "playwright")
     return {

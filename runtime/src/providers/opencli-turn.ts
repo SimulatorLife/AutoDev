@@ -1350,10 +1350,11 @@ export function parseOpencliReply(response: string): ParsedReply {
  * The prose of a reply that is still being written, as far as it is settled
  * enough to show Codex before the reply ends.
  *
- * A reply shown cannot be taken back, so a line is shown only once it is
+ * A reply shown cannot be taken back, so a prefix is shown only once it is
  * certain to be part of the finished reply's text:
  *
- * - Only whole lines: the last line is still being written.
+ * - Only an agreed prefix: the page can rewrite what it shows. The final
+ *   whitespace-delimited word is held back until a delimiter (or completion).
  * - Only what two readings in a row agree on: the page can rewrite what it
  *   shows. A reading that no longer starts with what was shown adds nothing,
  *   and what was shown is never revised.
@@ -1379,7 +1380,10 @@ export class OpencliReplyPreview {
     const settled = settledProse(reading);
     const agreed = commonPrefix(this.previous, settled);
     this.previous = settled;
-    const stable = agreed.slice(0, agreed.lastIndexOf("\n") + 1).trimEnd();
+    const unfinishedWord = /\S+$/u.exec(agreed);
+    const stable = (
+      unfinishedWord ? agreed.slice(0, unfinishedWord.index) : agreed
+    ).trimEnd();
     if (stable.length <= this.shownText.length) return null;
     if (!stable.startsWith(this.shownText)) return null;
     const added = stable.slice(this.shownText.length);

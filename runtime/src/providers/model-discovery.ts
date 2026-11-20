@@ -460,21 +460,7 @@ function minimaxModelAdapter(
   };
 }
 
-/**
- * A local bridge's own model list (`GET /v1/models`).
- *
- * Copilot and opencli are the providers whose model set the Runtime does not
- * learn from an account API. The Copilot CLI chooses its model behind the
- * scenes, so its bridge serves a single id; opencli serves one id per web chat
- * site it drives. Each bridge's listing is therefore the authority on what the
- * Runtime can route to it, the same shape as asking `agy models` for
- * Antigravity.
- *
- * Without this such a provider had no discovery at all, which is not a
- * cosmetic gap: the Console offers a role the models the Runtime can route to
- * that provider, so an unobserved provider offered none, and its models in the
- * catalogue could not be selected for any role.
- */
+/** A local bridge listing for provider-owned models, used by opencli. */
 export interface BridgeModelListSource {
   /** The name the provider is reported under in errors. */
   readonly label: string;
@@ -530,16 +516,6 @@ export async function discoverBridgeModels(
   return prefix === undefined
     ? models
     : models.filter((model) => model.id.startsWith(prefix));
-}
-
-export function copilotModelSource(
-  env: NodeJS.ProcessEnv = process.env
-): BridgeModelListSource {
-  return {
-    label: "Copilot",
-    host: env.COPILOT_PROXY_HOST?.trim() || "127.0.0.1",
-    port: env.COPILOT_PROXY_PORT?.trim() || "4003"
-  };
 }
 
 /**
@@ -805,7 +781,6 @@ function defaultAdapters(): Readonly<
     minimax: minimaxModelAdapter(),
     codex: codexModelAdapter(),
     claude: claudeModelAdapter(),
-    copilot: bridgeModelAdapter(copilotModelSource()),
     ...Object.fromEntries(
       OPENCLI_PROVIDERS.map((provider) => [
         provider,
@@ -866,6 +841,20 @@ export class ProviderModelDiscoveryService {
     this.onSnapshotChanged = options.onSnapshotChanged;
     this.onSignIn = options.onSignIn;
     for (const provider of this.providerIds()) {
+      const adapter = this.adapters[provider];
+      if (!adapter) {
+        persistedProviderModels.delete(provider);
+        ROUTING_POLICY.setDiscoveredProviderModels(provider, []);
+        this.states.set(
+          provider,
+          unavailable(
+            null,
+            null,
+            "No machine-readable model discovery adapter is configured for this provider."
+          )
+        );
+        continue;
+      }
       const persisted = persistedProviderModels.get(provider);
       if (persisted) {
         const models = persisted.models.map(
@@ -892,13 +881,11 @@ export class ProviderModelDiscoveryService {
       this.states.set(
         provider,
         unavailable(
-          this.adapters[provider]?.source ?? null,
+          adapter.source,
           null,
-          this.adapters[provider]
-            ? invalidPersistedProviderModels
-              ? "The persisted model snapshot was invalid and was discarded; waiting for a fresh provider listing."
-              : "Model availability has not been observed yet."
-            : "No machine-readable model discovery adapter is configured for this provider."
+          invalidPersistedProviderModels
+            ? "The persisted model snapshot was invalid and was discarded; waiting for a fresh provider listing."
+            : "Model availability has not been observed yet."
         )
       );
       ROUTING_POLICY.setDiscoveredProviderModels(provider, []);

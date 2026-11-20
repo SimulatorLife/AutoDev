@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   providerUsagePath,
   summarizeProviderUsage
-} from "../src/features/providers/provider-usage.ts";
+} from "../src/features/providers/provider-usage/summary.ts";
 
 test("provider usage summarizes only source-confirmed attempts for that provider", () => {
   assert.deepEqual(
