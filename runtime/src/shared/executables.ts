@@ -3,12 +3,20 @@
  * so every caller resolves a tool's binary the same way.
  */
 
-import { accessSync, constants, existsSync, readdirSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+const OPENCLI_PACKAGE = "@jackwener/opencli";
 
 export function isExecutable(file: string): boolean {
   try {
@@ -146,6 +154,11 @@ export function findCopilotBinary(
  * bridge's CLI and the daemon it talks to in step. The launchd PATH names no
  * version manager's bin directory, so resolving through the module graph is
  * also what keeps the supervised bridge from depending on the login shell.
+ *
+ * The package is found by walking the `node_modules` directories above this
+ * module on every call, not through `import.meta.resolve`: Node's ESM resolver
+ * caches what it resolved, so a long-lived bridge would keep launching the
+ * pre-install version after `pnpm install` swaps the package symlink.
  */
 export interface OpencliCommand {
   readonly command: string;
@@ -164,17 +177,42 @@ export function resolveOpencliCommand(
       return { command: resolved, args: [] };
     throw new Error(`opencli is not executable: ${configured}`);
   }
-  let entry: string;
-  try {
-    entry = fileURLToPath(import.meta.resolve("@jackwener/opencli"));
-  } catch {
+  const entry = findOpencliPackageEntry();
+  if (!entry)
     throw new Error(
       "opencli is not installed; run pnpm install --frozen-lockfile in the AutoDev checkout."
     );
-  }
   if (!existsSync(entry))
     throw new Error(`opencli entry point is missing: ${entry}`);
   return { command: process.execPath, args: [entry] };
+}
+
+/** The package's `opencli` bin, read from the installed manifest as it is now. */
+function findOpencliPackageEntry(): string | null {
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const packageDirectory = path.join(
+      directory,
+      "node_modules",
+      OPENCLI_PACKAGE
+    );
+    try {
+      const manifest = JSON.parse(
+        readFileSync(path.join(packageDirectory, "package.json"), "utf8")
+      ) as { bin?: string | Record<string, string> };
+      const bin =
+        typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.opencli;
+      if (bin) {
+        const entry = path.resolve(realpathSync(packageDirectory), bin);
+        return existsSync(entry) ? realpathSync(entry) : entry;
+      }
+    } catch {
+      // Not installed at this level; keep looking in the parent.
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
 }
 
 /** The same lookup without the failure, for callers that only ask whether it exists. */

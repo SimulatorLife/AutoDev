@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
   findCodexBinary,
@@ -37,6 +42,113 @@ function installExecutable(path: string): string {
   chmodSync(path, 0o755);
   return path;
 }
+
+/**
+ * A Runtime layout holding a private copy of the resolver module, so the test
+ * controls the package symlink it resolves through while that one module
+ * instance stays loaded -- the way the long-lived bridge does across an install.
+ */
+function runtimeFixture(): {
+  root: string;
+  load: () => Promise<
+    typeof import("@simulatorlife/autodev-runtime/shared/executables")
+  >;
+  installPackage: (name: string) => string;
+  linkPackage: (name: string) => void;
+  cleanup: () => void;
+} {
+  const root = mkdtempSync(join(tmpdir(), "autodev-opencli-runtime-"));
+  const moduleDir = join(root, "runtime", "src", "shared");
+  mkdirSync(moduleDir, { recursive: true });
+  const modulePath = join(moduleDir, "executables.ts");
+  copyFileSync(
+    new URL("../../runtime/src/shared/executables.ts", import.meta.url),
+    modulePath
+  );
+  const scope = join(root, "runtime", "node_modules", "@jackwener");
+  return {
+    root,
+    load: () => import(pathToFileURL(modulePath).href),
+    installPackage: (name) => {
+      const directory = join(root, "store", name);
+      mkdirSync(join(directory, "dist", "src"), { recursive: true });
+      writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({
+          name: "@jackwener/opencli",
+          type: "module",
+          exports: { ".": "./dist/src/main.js" },
+          bin: { opencli: "dist/src/main.js" }
+        })
+      );
+      writeFileSync(join(directory, "dist", "src", "main.js"), "");
+      return join(directory, "dist", "src", "main.js");
+    },
+    linkPackage: (name) => {
+      mkdirSync(scope, { recursive: true });
+      const link = join(scope, "opencli");
+      try {
+        unlinkSync(link);
+      } catch {
+        // First link: nothing to replace.
+      }
+      symlinkSync(join(root, "store", name), link);
+    },
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  };
+}
+
+test("opencli is resolved through the package symlink as it is now, not as it was first resolved", async (t) => {
+  const fixture = runtimeFixture();
+  t.after(fixture.cleanup);
+  const v1 = fixture.installPackage("v1");
+  const v2 = fixture.installPackage("v2");
+  const { resolveOpencliCommand } = await fixture.load();
+
+  fixture.linkPackage("v1");
+  assert.deepEqual(resolveOpencliCommand({}), {
+    command: process.execPath,
+    args: [realpathSync(v1)]
+  });
+
+  // pnpm install swaps the symlink under the running process.
+  fixture.linkPackage("v2");
+  assert.deepEqual(resolveOpencliCommand({}), {
+    command: process.execPath,
+    args: [realpathSync(v2)]
+  });
+});
+
+test("a missing opencli package is reported as not installed", async (t) => {
+  const fixture = runtimeFixture();
+  t.after(fixture.cleanup);
+  const { resolveOpencliCommand, findOpencliCommand } = await fixture.load();
+  assert.throws(() => resolveOpencliCommand({}), /opencli is not installed/);
+  assert.equal(findOpencliCommand({}), null);
+
+  // A package whose bin entry was not built is a different, named failure.
+  const entry = fixture.installPackage("broken");
+  fixture.linkPackage("broken");
+  rmSync(entry);
+  assert.throws(() => resolveOpencliCommand({}), /entry point is missing/);
+});
+
+test("OPENCLI_BIN still wins over the package", async (t) => {
+  const fixture = runtimeFixture();
+  t.after(fixture.cleanup);
+  fixture.installPackage("v1");
+  fixture.linkPackage("v1");
+  const binary = installExecutable(join(fixture.root, "bin", "opencli"));
+  const { resolveOpencliCommand } = await fixture.load();
+  assert.deepEqual(resolveOpencliCommand({ OPENCLI_BIN: binary }), {
+    command: binary,
+    args: []
+  });
+  assert.throws(
+    () => resolveOpencliCommand({ OPENCLI_BIN: join(fixture.root, "nope") }),
+    /opencli is not executable/
+  );
+});
 
 test("an explicit Copilot CLI is used when it is executable", (t) => {
   const fixture = homeFixture();
