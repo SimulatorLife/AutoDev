@@ -898,7 +898,10 @@ test("OpenCLI retains calls but suppresses prose written after an unexecuted cal
     '<tool_call name="exec">text(1)</tool_call>Invented.\n' +
       '<tool_call name="wait">now</tool_call>'
   );
-  assert.deepEqual(parallel.calls.map((call) => call.name), ["exec", "wait"]);
+  assert.deepEqual(
+    parallel.calls.map((call) => call.name),
+    ["exec", "wait"]
+  );
   assert.deepEqual(
     parallel.segments.map((segment) => segment.type),
     ["tool_call", "tool_call"]
@@ -1486,7 +1489,8 @@ test("a reply being written is previewed only as whole, agreed, tool-free prose"
 
 test("blank lines in a preview do not cause a false changed-after-shown error", () => {
   const preview = new OpencliReplyPreview();
-  const reply = 'First.\n\n\nSecond.\n<tool_call name="exec">text(1)</tool_call>\n';
+  const reply =
+    'First.\n\n\nSecond.\n<tool_call name="exec">text(1)</tool_call>\n';
   preview.next(reply);
   preview.next(reply);
   const parsed = parseOpencliReply(reply);
@@ -1937,7 +1941,8 @@ test("ChatGPT streams stored prose before browser completion without displaying 
       });
       return [
         {
-          response: 'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
+          response:
+            'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
           conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
         }
       ];
@@ -1968,10 +1973,10 @@ test("ChatGPT streams stored prose before browser completion without displaying 
     const completed = events.find(
       (entry) => entry.event === "response.completed"
     )!.data.response as { output: JsonRecord[] };
-    assert.deepEqual(completed.output.map((item) => item.type), [
-      "message",
-      "custom_tool_call"
-    ]);
+    assert.deepEqual(
+      completed.output.map((item) => item.type),
+      ["message", "custom_tool_call"]
+    );
     assert.equal(events.at(-1)?.event, "response.completed");
   } finally {
     finish();
@@ -2011,10 +2016,12 @@ test("a response does not expose speculative prose after a pending tool call", a
 
 test("SSE final output keeps the first message before the pending tool call", async () => {
   await withBridge(
-    [{
-      response: 'Before.\n<tool_call name="exec">text(1)</tool_call>\nAfter.',
-      conversationId: "ordered-chat"
-    }],
+    [
+      {
+        response: 'Before.\n<tool_call name="exec">text(1)</tool_call>\nAfter.',
+        conversationId: "ordered-chat"
+      }
+    ],
     async (baseUrl) => {
       const response = await post(baseUrl, {
         model: "opencli-chatgpt-balanced",
@@ -2037,8 +2044,10 @@ test("SSE final output keeps the first message before the pending tool call", as
         added.map((entry) => entry.data.output_index),
         [0, 1]
       );
-      assert.equal(added[0]?.data.item && (added[0].data.item as JsonRecord).id,
-        completed.output[0]?.id);
+      assert.equal(
+        added[0]?.data.item && (added[0].data.item as JsonRecord).id,
+        completed.output[0]?.id
+      );
       assert.doesNotMatch(JSON.stringify(completed), /After\./u);
     }
   );

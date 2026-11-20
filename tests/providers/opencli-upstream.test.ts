@@ -959,9 +959,7 @@ interface ChatGPTReplyUtils {
     }
   ) => Promise<string>;
   getChatGPTStoredPromptId: (page: unknown) => Promise<string | null>;
-  chatgptReplyFromConversation: (
-    conversation: unknown
-  ) => {
+  chatgptReplyFromConversation: (conversation: unknown) => {
     text: string;
     finished: boolean;
     promptText: string;
@@ -1231,29 +1229,25 @@ test("ChatGPT publishes changing stored text while generation is still active", 
     .split("\n")
     .map((line) => JSON.parse(line) as { text: string; url: string });
   rmSync(directory, { recursive: true, force: true });
-  assert.deepEqual(records.map((record) => record.text), [
-    "Working.",
-    "Working.\nStill working.",
-    "Working.\nStill working.\nDone."
-  ]);
+  assert.deepEqual(
+    records.map((record) => record.text),
+    ["Working.", "Working.\nStill working.", "Working.\nStill working.\nDone."]
+  );
 });
 
 test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
   let reads = 0;
-  const chat = chatgptChat(
-    "Repeated",
-    () => {
-      reads += 1;
-      // The previous completed reply has exactly the same user prompt.
-      return Response.json(
-        reads === 1
-          ? storedConversation(true, "Stale reply", CHATGPT_PROMPT, "old-prompt")
-          : storedConversation(true, "New reply", CHATGPT_PROMPT, "new-prompt")
-      );
-    }
-  );
+  const chat = chatgptChat("Repeated", () => {
+    reads += 1;
+    // The previous completed reply has exactly the same user prompt.
+    return Response.json(
+      reads === 1
+        ? storedConversation(true, "Stale reply", CHATGPT_PROMPT, "old-prompt")
+        : storedConversation(true, "New reply", CHATGPT_PROMPT, "new-prompt")
+    );
+  });
   const reply = await utils.waitForChatGPTResponse(
     chat.page,
     CHATGPT_PROMPT,
@@ -1267,12 +1261,10 @@ test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
 test("the ChatGPT send baseline reads the last persisted user-message ID", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
-  const chat = chatgptChat(
-    "",
-    () =>
-      Response.json(
-        storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user")
-      )
+  const chat = chatgptChat("", () =>
+    Response.json(
+      storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user")
+    )
   );
   assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
 });

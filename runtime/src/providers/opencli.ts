@@ -823,9 +823,7 @@ function showReading(
   const { text, url } = record;
   if (typeof text !== "string" || typeof url !== "string") return;
   const shownChat =
-    site === "gemini"
-      ? geminiConversationId(url)
-      : chatgptConversationId(url);
+    site === "gemini" ? geminiConversationId(url) : chatgptConversationId(url);
   if (!shownChat || (conversationId !== null && shownChat !== conversationId))
     return;
   stream.showReply(text);
