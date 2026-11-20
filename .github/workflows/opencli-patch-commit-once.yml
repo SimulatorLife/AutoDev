@@ -1,0 +1,50 @@
+name: "Temporary OpenCLI pnpm patch-commit"
+
+on:
+  push:
+    branches:
+      - fix/opencli-tool-lifecycle-and-streaming-20261119
+    paths:
+      - ".github/workflows/opencli-patch-commit-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install locked dependency
+        run: pnpm install --frozen-lockfile
+      - name: Regenerate OpenCLI patch with pnpm patch-commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          edit_dir="$RUNNER_TEMP/opencli-patch"
+          pnpm patch '@jackwener/opencli@2.0.3' --ignore-existing --edit-dir "$edit_dir"
+          git -C "$edit_dir" apply --check "$GITHUB_WORKSPACE/patches/@jackwener__opencli@2.0.3.patch"
+          git -C "$edit_dir" apply "$GITHUB_WORKSPACE/patches/@jackwener__opencli@2.0.3.patch"
+          pnpm patch-commit "$edit_dir"
+          pnpm install --frozen-lockfile
+      - name: Commit regenerated patch and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if ! git diff --quiet -- \
+            patches/@jackwener__opencli@2.0.3.patch \
+            pnpm-lock.yaml pnpm-workspace.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add patches/@jackwener__opencli@2.0.3.patch pnpm-lock.yaml pnpm-workspace.yaml
+            git commit -m "chore(opencli): regenerate upstream patch with pnpm patch-commit"
+            git push origin HEAD:fix/opencli-tool-lifecycle-and-streaming-20261119
+          fi
