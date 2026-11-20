@@ -3142,7 +3142,15 @@ function isControlApiLiveSessions(
     if (
       !isRecord(candidate) ||
       Object.keys(candidate).some(
-        (key) => !["sessionId", "state", "lastActivityAt"].includes(key)
+        (key) =>
+          ![
+            "sessionId",
+            "state",
+            "lastActivityAt",
+            "provider",
+            "model",
+            "role"
+          ].includes(key)
       ) ||
       typeof candidate.sessionId !== "string" ||
       safeAutoDevSessionId(candidate.sessionId) !== candidate.sessionId ||
@@ -3153,7 +3161,11 @@ function isControlApiLiveSessions(
       typeof candidate.lastActivityAt !== "number" ||
       !Number.isSafeInteger(candidate.lastActivityAt) ||
       candidate.lastActivityAt < 0 ||
-      !Number.isFinite(new Date(candidate.lastActivityAt).getTime())
+      !Number.isFinite(new Date(candidate.lastActivityAt).getTime()) ||
+      ![candidate.provider, candidate.model, candidate.role].every(
+        (field) =>
+          field === null || (typeof field === "string" && field.length > 0)
+      )
     ) {
       return false;
     }

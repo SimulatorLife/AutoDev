@@ -65,7 +65,7 @@ test("runtime distinguishes unavailable session evidence from an observed empty 
       unattributedLiveActivityCount: 0
     });
     // `liveSessions` arrived in contract v31.
-    assert.ok(CONTROL_API_CONTRACT.version >= 31);
+    assert.ok(CONTROL_API_CONTRACT.version >= 36);
   } finally {
     setControlApiLiveSessionsSource(null);
     if (previousToken === undefined)
@@ -86,6 +86,9 @@ test("runtime publishes explicit distinct tracker session identities and unattri
   tracker.beginRequest("request-subject-a", {
     requestId: "request-a",
     sessionId: "session-a",
+    provider: "provider-z",
+    model: "model-x",
+    role: "worker",
     timestamp: 10
   });
   tracker.beginRequest("bridge-subject-b", {
@@ -99,12 +102,17 @@ test("runtime publishes explicit distinct tracker session identities and unattri
     tag: "session-from-tag-is-not-used",
     timestamp: 30
   });
+  assert.equal(tracker.getRecord("request-subject-a")?.provider, "provider-z");
+  assert.deepEqual(tracker.listLiveSessions(30).identitiesObserved[0], {
+    sessionId: "session-a", state: "active", lastActivityAt: 20,
+    provider: "provider-z", model: "model-x", role: "worker"
+  });
   setControlApiLiveSessionsSource((now) => tracker.listLiveSessions(now));
   try {
     const runtime = await readRuntime();
     assert.deepEqual(runtime?.liveSessions, {
       identitiesObserved: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 20 }
+        { sessionId: "session-a", state: "active", lastActivityAt: 20, provider: "provider-z", model: "model-x", role: "worker" }
       ],
       identifiedSessionCount: 1,
       partial: false,

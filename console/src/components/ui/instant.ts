@@ -1,39 +1,24 @@
 /**
- * One owner for an instant.
+ * The formatting owner for an instant.
  *
- * The Console answers "when did this happen" in seven spellings, and the
- * spellings disagree with each other about the same fact. The memory records
- * table read a record's update as `2/11/2026` -- a date whose order is
- * ambiguous to anyone outside the United States, with no time in it at all.
- * The memory detail lines beside it read `2/11/2026, 3:00:12 AM`, which is
- * worse: `toLocaleString()` renders in the *server's* zone, so the time is
- * the time of whichever machine answered the request, not of the operator
- * reading it. The GitHub page rendered the raw wire value,
- * `2026-02-11T03:00:12.000Z`, milliseconds and all. The evaluations table
- * split an ISO instant into a date and a clock and spoke the zone as `Z`. The
- * Usage trace table spoke the same zone as `UTC`. The playtesting review line
- * printed the raw ISO again.
+ * Every timestamp the Console shows renders through `InstantDisplay`, the
+ * Inline Display Toggle for a moment: relative time ("3 hours ago") and the
+ * full date and time in the operator's local zone ("Nov 19, 2026, 10:30 AM").
+ * This module is what it reads, and nothing else may format a moment: the
+ * Console once answered "when did this happen" in seven spellings, including
+ * `toLocaleString()` in the *server's* zone, because every view had its own.
  *
- * An instant is one quantity, so it has one rendering, the way a duration has
- * one (`components/ui/duration.ts`). Which page a reader is on is not a reason
- * for the moment to change its shape.
+ * Three readings live here:
  *
- * Two shapes are enough for every surface the Console has:
+ * - `relativeInstantText` and `localInstantText`, the two representations the
+ *   operator toggles between, both computed in the browser, where the
+ *   operator's clock and zone are;
+ * - `instantLabel`, the storage form (`2026-02-11 03:00:12 UTC`), which is
+ *   what the server renders before hydration because it knows neither. UTC
+ *   is named in words, and a source's own numeric offset is kept, since
+ *   relabelling `+02:00` would be a claim about the data.
  *
- * - the date alone, `2026-02-11`, for a column whose budget holds a date and
- *   whose full value belongs on the hover title;
- * - the date, the clock and the zone, `2026-02-11 03:00:12 UTC`, for
- *   everything else.
- *
- * The zone is named in words. The Console already says "Time (UTC)" in a
- * column header and "From (UTC):" beside a date field, so `UTC` is the
- * Console's own spelling of the zone, and a reader does not have to know that
- * `Z` means Zulu to read a moment. A source that stated a numeric offset keeps
- * it: `+02:00` is the source's own spelling of a zone that is not UTC, and
- * relabelling it would be a claim about the data rather than about its
- * formatting.
- *
- * A value that is not an ISO instant is shown whole. A value that cannot be
+ * A value that is not an ISO instant is shown whole: a value that cannot be
  * cut into parts is not cut into parts.
  */
 
@@ -58,7 +43,7 @@ const FRACTION = /^\d+/u;
  * Anything that is not an ISO instant comes back whole, which is the property
  * that matters: a value that cannot be cut into parts is not cut into parts.
  */
-export interface InstantParts {
+interface InstantParts {
   /** The calendar date, `YYYY-MM-DD`, or the whole value when it is not one. */
   readonly date: string;
   /** The clock reading, `HH:MM:SS`, when the value carries one. */
@@ -67,7 +52,7 @@ export interface InstantParts {
   readonly offset?: string | undefined;
 }
 
-export function splitInstant(value: string | undefined | null): InstantParts {
+function splitInstant(value: string | undefined | null): InstantParts {
   if (typeof value !== "string") return { date: "" };
   const date = value.slice(0, 10);
   if (!UTC_DATE.test(date) || value.length === 10) return { date: value };
@@ -110,38 +95,18 @@ export function isReadableInstant(value: string | undefined | null): boolean {
 /**
  * The zone, named the way the Console names it everywhere else.
  *
- * `Z` is Zulu, which is UTC; the Console says "UTC" because its own column
- * headers and date fields say "UTC", and a reader should not have to know a
- * symbol to read a moment. A numeric offset is left as the source stated it.
+ * `Z` is Zulu, which is UTC; the storage form says "UTC" because the
+ * Console's date-range fields say "UTC", and a reader should not have to know
+ * a symbol to read a moment. A numeric offset is left as the source stated it.
  */
-export function instantZone(offset: string | undefined): string {
+function instantZone(offset: string | undefined): string {
   if (offset === undefined || offset === "") return "";
   return offset === "Z" ? "UTC" : offset;
 }
 
 /**
- * The date an instant names, or the whole value when it names no date.
- */
-export function instantDate(value: string | undefined | null): string {
-  return splitInstant(value).date;
-}
-
-/**
- * The clock an instant names, with its zone, or nothing when it names no
- * clock.
- *
- * This is the second half of the split rendering: a cell that shows the date
- * and the clock as two items can fold between them, and the whole value stays
- * on the title.
- */
-export function instantClock(value: string | undefined | null): string {
-  const { clock, offset } = splitInstant(value);
-  if (clock === undefined) return "";
-  return `${clock} ${instantZone(offset)}`.trim();
-}
-
-/**
- * The whole of an instant: its date, its clock and its zone.
+ * The storage form of an instant: its date, its clock and its zone -- what the
+ * server renders before the browser can say "3 hours ago".
  *
  * A value that names no clock is its date alone, and a value that is not an
  * instant at all is shown whole.
@@ -151,4 +116,81 @@ export function instantLabel(value: string | undefined | null): string {
   if (clock === undefined) return date;
   const zone = instantZone(offset);
   return zone === "" ? `${date} ${clock}` : `${date} ${clock} ${zone}`;
+}
+
+/** The relative-time steps, largest first: a moment is read in the largest unit it spans. */
+const RELATIVE_STEPS: readonly (readonly [
+  Intl.RelativeTimeFormatUnit,
+  number
+])[] = [
+  ["year", 365 * 24 * 60 * 60 * 1000],
+  ["month", 30 * 24 * 60 * 60 * 1000],
+  ["week", 7 * 24 * 60 * 60 * 1000],
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000],
+  ["second", 1000]
+];
+
+const RELATIVE_FORMATTER = new Intl.RelativeTimeFormat("en-US", {
+  numeric: "always"
+});
+
+/**
+ * How far an instant is from now, in the operator's words: "3 hours ago" for a
+ * moment that has passed, "in 20 minutes" for one that has not (a quota reset,
+ * a cooldown's end). The magnitude is truncated, never rounded up: a moment
+ * fifty-nine minutes ago has not yet been an hour ago. Under a second reads as
+ * "0 seconds ago". A value that is not a readable instant comes back whole.
+ */
+export function relativeInstantText(value: string, nowMs: number): string {
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return value;
+  const delta = at - nowMs;
+  const magnitude = Math.abs(delta);
+  for (const [unit, size] of RELATIVE_STEPS) {
+    if (magnitude >= size || unit === "second") {
+      const count = Math.trunc(magnitude / size);
+      // `-0` reads "0 seconds ago": the moment that is now has just passed.
+      return RELATIVE_FORMATTER.format(delta <= 0 ? -count : count, unit);
+    }
+  }
+  return value;
+}
+
+/**
+ * The full date and time of an instant in a zone, "Nov 19, 2026, 10:30 AM".
+ *
+ * The zone defaults to the zone of the runtime the call runs in, which is the
+ * operator's own only in the browser: on the server it is whichever machine
+ * answered the request. So only the client calls this without a zone -- the
+ * Console's timestamps are rendered by `InstantDisplay`, which reads it after
+ * hydration -- and a test names the zone it means. A value that is not a
+ * readable instant comes back whole.
+ */
+export function localInstantText(value: string, timeZone?: string): string {
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return value;
+  return localFormatter(timeZone).format(at);
+}
+
+/**
+ * One formatter per zone. Building an `Intl.DateTimeFormat` loads locale and
+ * zone data, and a page renders every timestamp through this call, so the
+ * formatter is built once per zone rather than once per timestamp.
+ */
+const LOCAL_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function localFormatter(timeZone: string | undefined): Intl.DateTimeFormat {
+  const key = timeZone ?? "";
+  let formatter = LOCAL_FORMATTERS.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...(timeZone === undefined ? {} : { timeZone })
+    });
+    LOCAL_FORMATTERS.set(key, formatter);
+  }
+  return formatter;
 }

@@ -55,7 +55,7 @@ export function activeSessionsFromRuntime(
   const unattributedLiveActivityCount =
     sessions?.unattributedLiveActivityCount ?? null;
   return {
-    schema: "autodev-usage-active-sessions-v2",
+    schema: "autodev-usage-active-sessions-v3",
     lifecycle: runtime.lifecycle?.state ?? null,
     lifecycleChangedAt: runtime.lifecycle?.changedAt ?? null,
     // Preserve the Runtime's concurrency scalar; the identified activity

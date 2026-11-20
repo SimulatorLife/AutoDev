@@ -371,9 +371,9 @@ test("the evidence rows speak the Console's words, not the wire's keys", async (
   assert.match(markup, /Reported outcome: Failure/u);
   assert.match(
     markup,
-    /Task by operator@example \(Worker\) at 2026-10-07 09:00:00 UTC — Supplied by the reporter/u
+    /Task by operator@example \(Worker\) at <time dateTime="2026-10-07T09:00:00\.000Z">2026-10-07 09:00:00 UTC<\/time> — Supplied by the reporter/u
   );
-  assert.match(markup, /2026-10-07 08:59:00 UTC/u);
+  assert.match(markup, /<time dateTime="2026-10-07T08:59:00\.000Z">2026-10-07 08:59:00 UTC<\/time>/u);
 
   // And none of the wire's own keys is what the reader sees.
   assert.doesNotMatch(markup, /· jit ·/u);

@@ -11,9 +11,12 @@ import {
 } from "../e2e/session-diagnostics-fixture.ts";
 import {
   InlineDisplayToggle,
-  inlineUnitText,
-  nextUnitIndex
+  nextRepresentationIndex
 } from "../src/components/ui/InlineDisplayToggle.ts";
+import {
+  measureRepresentations,
+  measureText
+} from "../src/components/ui/measure.ts";
 import {
   SessionDiagnosticsView,
   type SessionDiagnosticsViewState
@@ -22,10 +25,8 @@ import {
 function render(
   tab: string,
   threadId?: string,
-  observedProvidersByThread: Readonly<Record<string, readonly string[]>> = {},
-  providerEvidencePartial = false
+  report = sessionDiagnosticsReport()
 ): string {
-  const report = sessionDiagnosticsReport();
   assert.ok(isSessionDiagnosticsReport(report));
   const state: SessionDiagnosticsViewState = {
     sessionId: DIAGNOSTICS_SESSION_ID,
@@ -47,41 +48,81 @@ function render(
       report,
       diagnosticsFailure: null,
       spans: null,
-      observedProvidersByThread,
-      providerEvidencePartial,
       spansFailure: null,
       spanHrefFor: () => "/usage"
     })
   );
 }
 
-test("the threads table shows observed provider telemetry, not the configured router", () => {
+test("the threads table shows authoritative per-thread routed providers", () => {
   const report = sessionDiagnosticsReport();
   assert.ok(isSessionDiagnosticsReport(report));
-  const first = report.threads[0];
-  assert.ok(first);
-  const markup = render("overview", undefined, { [first.id]: ["claude"] });
-  for (const header of ["Role", "Observed provider(s)", "Model"]) {
+  const summary = report.router[0];
+  assert.ok(summary);
+  const markup = render("overview");
+  for (const header of ["Role", "Routed provider(s)", "Model"]) {
     assert.ok(markup.includes(`>${header}<`));
   }
   assert.match(markup, />orchestrator</);
   assert.match(markup, />autodev\/orchestrator</);
-  assert.match(markup, />claude</);
+  assert.match(markup, />antigravity → claude</);
   assert.doesNotMatch(markup, />local_model_router</);
 });
 
-test("provider evidence is labeled partial when session coverage is unknown", () => {
+test("model-window router matches are explicitly identified instead of called partial evidence", () => {
   const report = sessionDiagnosticsReport();
   assert.ok(isSessionDiagnosticsReport(report));
-  const first = report.threads[0];
-  assert.ok(first);
-  const markup = render(
-    "overview",
-    undefined,
-    { [first.id]: ["claude"] },
-    true
+  const summary = report.router[0];
+  assert.ok(summary);
+  const markup = renderToStaticMarkup(
+    SessionDiagnosticsView({
+      state: {
+        sessionId: DIAGNOSTICS_SESSION_ID,
+        range: "24H",
+        tab: "overview",
+        spanOffset: 0,
+        spanLimit: 50,
+        spanSort: "desc",
+        eventsOffset: 0,
+        eventsLimit: 50,
+        itemsOffset: 0,
+        itemsLimit: 50,
+        threadId: undefined,
+        failureCategory: undefined
+      },
+      report: {
+        ...report,
+        router: [{ ...summary, matchedBy: "model-window" }]
+      },
+      diagnosticsFailure: null,
+      spans: null,
+      spansFailure: null,
+      spanHrefFor: () => "/usage"
+    })
   );
-  assert.match(markup, /claude \(partial evidence\)/);
+  assert.match(markup, /matched by model\/time window/);
+  assert.doesNotMatch(markup, /partial evidence/);
+});
+
+test("an unknown provider remains visible as a gap in the routed sequence", () => {
+  const report = sessionDiagnosticsReport();
+  assert.ok(isSessionDiagnosticsReport(report));
+  const summary = report.router[0];
+  assert.ok(summary);
+  const markup = render("overview", undefined, {
+    ...report,
+    router: [
+      { ...summary, providerSequence: ["claude", "?", "openai"] }
+    ]
+  });
+  assert.match(markup, />claude → Unknown provider → openai</);
+  const requestMarkup = render("requests", undefined, {
+    ...report,
+    router: [
+      { ...summary, providerSequence: ["claude", "?", "openai"] }
+    ]
+  });
+  assert.match(requestMarkup, />claude → Unknown provider → openai</);
 });
 
 test("a thread with no observed provider reads Not observed", () => {
@@ -108,12 +149,11 @@ test("a thread with no observed provider reads Not observed", () => {
       state,
       report: {
         ...report,
-        threads: [{ ...first, modelProvider: null, model: null }, ...rest]
+        threads: [{ ...first, modelProvider: null, model: null }, ...rest],
+        router: []
       },
       diagnosticsFailure: null,
       spans: null,
-      observedProvidersByThread: {},
-      providerEvidencePartial: false,
       spansFailure: null,
       spanHrefFor: () => "/usage"
     })
@@ -130,28 +170,23 @@ test("the initial developer prompt is a keyboard-operable inline toggle starting
   assert.match(markup, /type="button"/);
   assert.match(markup, /decoration-dotted/);
   assert.match(markup, /cursor-pointer/);
-  assert.match(markup, /data-unit="bytes"[^>]*>1,200 bytes</);
+  assert.match(markup, /data-representation="bytes"[^>]*>1,200 bytes</);
   assert.match(markup, /Activate to show characters\./);
 });
 
 test("the inline toggle cycles bytes, characters, tokens and never invents a missing count", () => {
-  assert.equal(nextUnitIndex(0, 3), 1);
-  assert.equal(nextUnitIndex(1, 3), 2);
-  assert.equal(nextUnitIndex(2, 3), 0);
-  const bytes = { id: "bytes", singular: "byte", plural: "bytes", value: 1200 };
-  const chars = {
-    id: "characters",
-    singular: "character",
-    plural: "characters",
-    value: null
-  };
-  assert.equal(inlineUnitText(bytes), "1,200 bytes");
-  assert.equal(inlineUnitText({ ...bytes, value: 1 }), "1 byte");
-  assert.equal(inlineUnitText(chars), "Not observed (characters)");
+  assert.equal(nextRepresentationIndex(0, 3), 1);
+  assert.equal(nextRepresentationIndex(1, 3), 2);
+  assert.equal(nextRepresentationIndex(2, 3), 0);
+  const bytes = { id: "bytes", value: 1200 } as const;
+  const chars = { id: "characters", value: null } as const;
+  assert.equal(measureText(bytes), "1,200 bytes");
+  assert.equal(measureText({ ...bytes, value: 1 }), "1 byte");
+  assert.equal(measureText(chars), "Not observed (characters)");
   const markup = renderToStaticMarkup(
     React.createElement(InlineDisplayToggle, {
       label: "Size",
-      units: [bytes, chars]
+      representations: measureRepresentations([bytes, chars])
     })
   );
   assert.doesNotMatch(markup, /characters<\//);

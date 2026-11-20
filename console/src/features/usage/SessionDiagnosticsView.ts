@@ -55,11 +55,12 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
+import { InlineDisplayToggle } from "../../components/ui/InlineDisplayToggle.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
-  InlineDisplayToggle,
-  type InlineDisplayUnit
-} from "../../components/ui/InlineDisplayToggle.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+  measureRepresentations,
+  type MeasureUnit
+} from "../../components/ui/measure.ts";
 import {
   ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
@@ -85,7 +86,7 @@ export const SESSION_TABS = [
 const PANEL_CONTENT_STACK_CLASS = "flex flex-col gap-3";
 
 /** The column header every time-carrying table uses. */
-const TIME_UTC_HEADER = "Time (UTC)";
+const TIME_UTC_HEADER = "Time";
 
 /** The session-scoped page's own state. */
 export interface SessionDiagnosticsViewState {
@@ -114,11 +115,6 @@ export interface SessionDiagnosticsViewProps {
   readonly report: SessionDiagnosticsReport | null;
   readonly diagnosticsFailure: SessionDiagnosticsFailure | null;
   readonly spans: UsageSessionEvidence | null;
-  /** Actual providers observed on physical attempts for each router thread id. */
-  readonly observedProvidersByThread: Readonly<
-    Record<string, readonly string[]>
-  >;
-  readonly providerEvidencePartial: boolean;
   readonly spansFailure: SessionDiagnosticsFailure | null;
   readonly spanHrefFor: (offset: number) => string;
 }
@@ -158,27 +154,22 @@ function count(value: number | null): string {
 /** The units the initial developer prompt can be read in. */
 function promptSizeUnits(
   prompt: SessionThreadPromptOverhead | undefined
-): readonly InlineDisplayUnit[] {
-  return [
+): ReturnType<typeof measureRepresentations> {
+  const units: MeasureUnit[] = [
     {
       id: "bytes",
-      singular: "byte",
-      plural: "bytes",
-      value: prompt?.initialDeveloperBytes ?? 0
+      value: prompt?.initialDeveloperBytes ?? null
     },
     {
       id: "characters",
-      singular: "character",
-      plural: "characters",
       value: prompt?.initialDeveloperChars ?? null
     },
     {
       id: "tokens",
-      singular: "token",
-      plural: "tokens",
       value: prompt?.initialDeveloperTokens ?? null
     }
   ];
+  return measureRepresentations(units);
 }
 
 /** One skill a thread read, with its read count when the engine supplies it. */
@@ -380,13 +371,13 @@ function renderContextHeader(
     ),
     React.createElement(
       DetailValue,
-      { label: "Started (UTC)" },
-      started ? instantLabel(started) : NOT_OBSERVED_LABEL
+      { label: "Started" },
+      React.createElement(InstantDisplay, { value: started, label: "Started" })
     ),
     React.createElement(
       DetailValue,
-      { label: "Ended (UTC)" },
-      ended ? instantLabel(ended) : NOT_OBSERVED_LABEL
+      { label: "Ended" },
+      React.createElement(InstantDisplay, { value: ended, label: "Ended" })
     ),
     React.createElement(
       DetailValue,
@@ -465,8 +456,7 @@ function renderAlerts(report: SessionDiagnosticsReport): React.JSX.Element[] {
 
 function threadColumns(
   state: SessionDiagnosticsViewState,
-  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
-  providerEvidencePartial: boolean
+  routerSummaries: readonly SessionRouterSummary[]
 ): readonly ColumnDef<SessionThreadTrace, unknown>[] {
   return [
     {
@@ -496,11 +486,10 @@ function threadColumns(
     },
     {
       id: "provider",
-      header: "Observed provider(s)",
+      header: "Routed provider(s)",
       cell: ({ row: { original: thread } }) =>
-        observedProviderLabel(
-          observedProvidersByThread[thread.id],
-          providerEvidencePartial
+        routerProviderLabel(
+          routerSummaries.find((summary) => summary.thread === thread.id)
         ),
       meta: { weight: 120, align: "tokens" }
     },
@@ -572,20 +561,25 @@ function threadColumns(
   ];
 }
 
-function observedProviderLabel(
-  providers: readonly string[] | undefined,
-  partial: boolean
+function routerProviderLabel(
+  summary: SessionRouterSummary | undefined
 ): string {
-  if (!providers || providers.length === 0) return NOT_OBSERVED_LABEL;
-  return `${providers.join(", ")}${partial ? " (partial evidence)" : ""}`;
+  if (!summary) return NOT_OBSERVED_LABEL;
+  const providers = summary.providerSequence.map((provider) =>
+    provider === "?" ? "Unknown provider" : provider
+  );
+  if (providers.length === 0) return NOT_OBSERVED_LABEL;
+  const matchNote =
+    summary.matchedBy === "model-window"
+      ? " (matched by model/time window)"
+      : "";
+  return `${providers.join(" → ")}${matchNote}`;
 }
 
 function renderOverview(
   report: SessionDiagnosticsReport,
   spans: UsageSessionEvidence | null,
-  state: SessionDiagnosticsViewState,
-  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
-  providerEvidencePartial: boolean
+  state: SessionDiagnosticsViewState
 ): React.JSX.Element[] {
   const aggregates = report.aggregates;
   const byProvider = chartData(
@@ -749,11 +743,7 @@ function renderOverview(
         "Threads",
         React.createElement<DataTableProps<SessionThreadTrace>>(DataTable, {
           data: report.threads,
-          columns: threadColumns(
-            state,
-            observedProvidersByThread,
-            providerEvidencePartial
-          ),
+          columns: threadColumns(state, report.router),
           keyExtractor: (thread) => thread.id,
           emptyMessage: "No thread was observed for this session.",
           label: "Session threads"
@@ -790,16 +780,16 @@ function turnColumns(): readonly ColumnDef<
     },
     {
       id: "started",
-      header: "Started (UTC)",
+      header: "Started",
       cell: ({ row: { original: turn } }) =>
-        turn.started ? instantLabel(turn.started) : NOT_OBSERVED_LABEL,
+        React.createElement(InstantDisplay, { value: turn.started, label: "Turn start" }),
       meta: { weight: 170, align: "tokens" }
     },
     {
       id: "ended",
-      header: "Ended (UTC)",
+      header: "Ended",
       cell: ({ row: { original: turn } }) =>
-        turn.ended ? instantLabel(turn.ended) : "open",
+        turn.ended ? React.createElement(InstantDisplay, { value: turn.ended, label: "Turn end" }) : "open",
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -830,8 +820,8 @@ function gapColumns(): readonly ColumnDef<
     },
     {
       id: "at",
-      header: "At (UTC)",
-      cell: ({ row: { original: gap } }) => instantLabel(gap.at),
+      header: "At",
+      cell: ({ row: { original: gap } }) => React.createElement(InstantDisplay, { value: gap.at, label: "Gap time" }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -853,8 +843,8 @@ function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
   return [
     {
       id: "at",
-      header: "At (UTC)",
-      cell: ({ row: { original: item } }) => instantLabel(item.at),
+      header: "At",
+      cell: ({ row: { original: item } }) => React.createElement(InstantDisplay, { value: item.at, label: "Item time" }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -874,8 +864,7 @@ function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
 
 function renderThreadDetail(
   thread: SessionThreadTrace,
-  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
-  providerEvidencePartial: boolean
+  routerSummary: SessionRouterSummary | undefined
 ): React.JSX.Element {
   const efficiency = thread.efficiency;
   return React.createElement(
@@ -888,18 +877,15 @@ function renderThreadDetail(
     ),
     React.createElement(
       DetailValue,
-      { label: "Observed provider(s)" },
-      observedProviderLabel(
-        observedProvidersByThread[thread.id],
-        providerEvidencePartial
-      )
+      { label: "Routed provider(s)" },
+      routerProviderLabel(routerSummary)
     ),
     React.createElement(
       DetailValue,
       { label: "Initial developer prompt" },
       React.createElement(InlineDisplayToggle, {
         label: "Initial developer prompt size",
-        units: promptSizeUnits(efficiency?.prompt),
+        representations: promptSizeUnits(efficiency?.prompt),
         dataAttribute: "initial-developer-prompt"
       })
     ),
@@ -962,9 +948,7 @@ function renderThreadDetail(
 
 function renderThreads(
   report: SessionDiagnosticsReport,
-  state: SessionDiagnosticsViewState,
-  observedProvidersByThread: Readonly<Record<string, readonly string[]>>,
-  providerEvidencePartial: boolean
+  state: SessionDiagnosticsViewState
 ): React.JSX.Element {
   const selected = state.threadId
     ? report.threads.filter((thread) => thread.id === state.threadId)
@@ -1015,8 +999,7 @@ function renderThreads(
             "Thread detail",
             renderThreadDetail(
               thread,
-              observedProvidersByThread,
-              providerEvidencePartial
+              report.router.find((summary) => summary.thread === thread.id)
             )
           ),
           panel(
@@ -1122,7 +1105,7 @@ function failureColumns(): readonly ColumnDef<FailureRow, unknown>[] {
     {
       id: "at",
       header: TIME_UTC_HEADER,
-      cell: ({ row: { original: row } }) => instantLabel(row.at),
+      cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.at, label: "Request time" }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -1233,7 +1216,7 @@ function renderFailures(
           {
             id: "at",
             header: TIME_UTC_HEADER,
-            cell: ({ row: { original: row } }) => instantLabel(row.at),
+            cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.at, label: "Request time" }),
             meta: { weight: 170, align: "tokens" }
           },
           {
@@ -1342,7 +1325,7 @@ function renderRequests(
             id: "providers",
             header: "Provider sequence",
             cell: ({ row: { original: summary } }) =>
-              summary.providerSequence.join(" → ") || NOT_OBSERVED_LABEL,
+              routerProviderLabel(summary),
             meta: { weight: 220, align: "tokens" }
           },
           {
@@ -1397,7 +1380,7 @@ function renderRequests(
             {
               id: "at",
               header: TIME_UTC_HEADER,
-              cell: ({ row: { original: event } }) => instantLabel(event.at),
+              cell: ({ row: { original: event } }) => React.createElement(InstantDisplay, { value: event.at, label: "Event time" }),
               meta: { weight: 170, align: "tokens" }
             },
             {
@@ -1464,7 +1447,7 @@ function spanColumns(): readonly ColumnDef<UsageSessionSpanSummary, unknown>[] {
     {
       id: "time",
       header: TIME_UTC_HEADER,
-      cell: ({ row: { original: span } }) => instantLabel(span.timestamp),
+      cell: ({ row: { original: span } }) => React.createElement(InstantDisplay, { value: span.timestamp, label: "Span time" }),
       meta: { weight: 180, align: "tokens" }
     },
     {
@@ -1607,8 +1590,6 @@ export function SessionDiagnosticsView({
   report,
   diagnosticsFailure,
   spans,
-  observedProvidersByThread,
-  providerEvidencePartial,
   spansFailure,
   spanHrefFor
 }: SessionDiagnosticsViewProps): React.JSX.Element {
@@ -1631,9 +1612,7 @@ export function SessionDiagnosticsView({
       case "threads": {
         return renderThreads(
           report,
-          state,
-          observedProvidersByThread,
-          providerEvidencePartial
+          state
         );
       }
       case "failures": {
@@ -1652,9 +1631,7 @@ export function SessionDiagnosticsView({
           ...renderOverview(
             report,
             spans,
-            state,
-            observedProvidersByThread,
-            providerEvidencePartial
+            state
           )
         );
       }

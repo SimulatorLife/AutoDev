@@ -205,9 +205,8 @@ function ProvidersTab({
   readonly cliVersions?: ProviderCliVersionState | undefined;
 }): React.JSX.Element {
   const records = providers.providers;
-  const nowMs = Date.now();
   const versions = cliVersions ?? CLI_VERSIONS_NOT_OBSERVED;
-  const quota = providerQuotaView(providers.quotaAxi, nowMs);
+  const quota = providerQuotaView(providers.quotaAxi);
   const quotaExhaustion = quota.exhaustion;
   const healthObserved = records.every((provider) => provider.health !== null);
   // Ready is the one count worth leading with, and it is computed from the same
@@ -225,7 +224,7 @@ function ProvidersTab({
       NOT_OBSERVED_STATUS,
     (provider) =>
       resolveProviderStatus(provider, quotaExhaustion.get(provider.id))
-        .label === "Ready"
+        .verdict === "ready"
   );
   return React.createElement(
     "div",

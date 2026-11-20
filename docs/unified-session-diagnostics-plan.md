@@ -303,7 +303,7 @@ Pure server-rendered React component using only shared dark theme tokens and pri
   - **`Threads & Turns`**:
     - Thread filter links (`All threads` or single thread), per-thread `DetailGrid` (prompt bytes, skill roots, read `SKILL.md` tags, `skill-read-telemetry` count, investigation counts), Turns `DataTable`, 60s+ Gaps `DataTable`, and (when a thread is selected) paginated Rollout Items `DataTable` + [`Pagination`](../console/src/components/navigation/Pagination.ts).
   - **`Failures & Hooks`**:
-    - Failure category filter chips/links + Categorized Tool Failures `DataTable` (Time UTC, Thread/Role, Tool, Category `Tag`, Detail, Sanitized Input Preview) + Router Failures, Router Skipped Events, Retries/Exhaustion Waits, and Bridge Log Alerts.
+    - Failure category filter chips/links + Categorized Tool Failures `DataTable` (Time, Thread/Role, Tool, Category `Tag`, Detail, Sanitized Input Preview) + Router Failures, Router Skipped Events, Retries/Exhaustion Waits, and Bridge Log Alerts.
   - **`Router Requests`**:
     - Per-thread Router Summary `DataTable` (Match mode, Requests, Provider sequence/hops, Failures, Skipped, Retries, Exhaustion waits, Transport errors) + paginated Router Events `DataTable` + `Pagination`.
   - **`OTel Spans`**:

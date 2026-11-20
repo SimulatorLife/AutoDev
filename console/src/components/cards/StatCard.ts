@@ -6,7 +6,7 @@ import { MUTED_BODY_CLASS, SECTION_LABEL_CLASS } from "../ui/text-classes.ts";
 export interface StatCardProps {
   readonly title: string;
   readonly value: string | number;
-  readonly subtitle?: string;
+  readonly subtitle?: React.ReactNode;
   readonly trend?: {
     readonly value: number;
     readonly isPositive: boolean;

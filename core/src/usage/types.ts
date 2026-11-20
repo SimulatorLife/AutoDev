@@ -190,7 +190,7 @@ export type UsageHistoricalTimeRange = Exclude<
  * reading the Console must never synthesize.
  */
 export interface UsageActiveSessions {
-  readonly schema: "autodev-usage-active-sessions-v2";
+  readonly schema: "autodev-usage-active-sessions-v3";
   readonly lifecycle: "ready" | "draining" | null;
   readonly lifecycleChangedAt: string | null;
   /** The Runtime concurrency active-session scalar; `null` when not observed. */

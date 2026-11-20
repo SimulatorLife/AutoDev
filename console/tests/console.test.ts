@@ -1651,6 +1651,22 @@ test("an unobserved stat reads as an absence, not as a large measurement", () =>
   );
   assert.match(explained, /No runtime health probe/);
 
+  // A subtitle may contain an interactive display control, such as a
+  // timestamp, without flattening it into a string before rendering.
+  const composed = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Recent activity",
+      value: "1",
+      subtitle: React.createElement(
+        "span",
+        null,
+        "Since ",
+        React.createElement("time", null, "recently")
+      )
+    })
+  );
+  assert.match(composed, /Since <time>recently<\/time>/);
+
   // A measured zero is a measurement. It keeps the value scale, and it keeps
   // its own subtitle -- the whole point of the "never synthesize" rule is that
   // zero and unobserved stay two different things.
@@ -2635,7 +2651,10 @@ test("Agent detail renders the reconciliation its own response requires of it", 
   );
   assert.match(converged, /data-field="desired-generation">gen-7</);
   assert.match(converged, /data-field="observed-generation">gen-7</);
-  assert.match(converged, /data-field="last-apply">2026-10-07 00:00:00 UTC</);
+  assert.match(
+    converged,
+    /data-field="last-apply"><time dateTime="2026-10-07T00:00:00Z">2026-10-07 00:00:00 UTC<\/time>/
+  );
   assert.match(
     converged,
     /data-history-outcome="ok"/,
@@ -3376,7 +3395,7 @@ function evaluationsFilters(
 
 test("one instant is rendered one way, including in the drawer", () => {
   // The Console has a single definition of how it renders an instant --
-  // `components/ui/instant.ts` -- and the history and trace tables both go
+  // `components/ui/InstantDisplay.ts` -- and the history and trace tables both go
   // through it. The drawer's subtitle did not, and it is the third rendering
   // of the same value on the same screen: opening a run showed
   // `2026-10-05 12:20:05 UTC` in the row and `2026-10-05T12:20:05.000Z` in the
@@ -3458,21 +3477,21 @@ test("one instant is rendered one way, including in the drawer", () => {
   assert.ok(brokenDrawer.length > 0, "the run is still opened");
   assert.match(
     brokenDrawer,
-    /<span data-evaluations-unreadable-time="true">not a timestamp the source ever wrote</,
+    /<time>not a timestamp the source ever wrote<\/time>/,
     "an unreadable run time is shown as the text it is"
   );
   assert.doesNotMatch(
     brokenDrawer,
-    /<time/u,
+    /<time[^>]*dateTime=/u,
     "and it is not stamped as an instant a machine can read back"
   );
 
   // Both halves of the same cell, because the row and the subtitle have to agree
   // about which of the two a value is -- that is the claim this test opened on.
   assert.equal(
-    brokenMarkup.includes("data-evaluations-unreadable-time"),
+    brokenMarkup.includes("<time>not a timestamp the source ever wrote</time>"),
     true,
-    "the history row marks it too, not only the drawer"
+    "the history row also renders the unreadable value whole"
   );
 });
 
@@ -5095,7 +5114,7 @@ test("a measured zero and an unreported counter stay different readings", () => 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v2",
+        schema: "autodev-usage-active-sessions-v3",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
         activeSessions: 0,
@@ -5116,7 +5135,7 @@ test("a measured zero and an unreported counter stay different readings", () => 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v2",
+        schema: "autodev-usage-active-sessions-v3",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
         activeSessions: null,
@@ -5159,9 +5178,9 @@ test("live session state projects Runtime counters without inventing defaults", 
       concurrency: { activeSessions: 3, activeSubagentThreads: 1 },
       liveSessions: {
         identitiesObserved: [
-          { sessionId: "session-a", state: "active", lastActivityAt: 10 },
-          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20 },
-          { sessionId: "session-c", state: "resumed", lastActivityAt: 30 }
+          { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker" },
+          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null },
+          { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null }
         ],
         identifiedSessionCount: 3,
         partial: false,
@@ -5169,7 +5188,7 @@ test("live session state projects Runtime counters without inventing defaults", 
       }
     }),
     {
-      schema: "autodev-usage-active-sessions-v2",
+      schema: "autodev-usage-active-sessions-v3",
       lifecycle: "ready",
       lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
       activeSessions: 3,
@@ -5177,9 +5196,9 @@ test("live session state projects Runtime counters without inventing defaults", 
       activeSubagentThreads: 1,
       inFlightRequests: 2,
       sessionIdentities: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 10 },
-        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20 },
-        { sessionId: "session-c", state: "resumed", lastActivityAt: 30 }
+        { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker" },
+        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null },
+        { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null }
       ],
       sessionIdentitiesPartial: false,
       unattributedLiveActivityCount: 0
@@ -5205,7 +5224,7 @@ test("live session state projects Runtime counters without inventing defaults", 
     concurrency: { activeSessions: 3 },
     liveSessions: {
       identitiesObserved: [
-        { sessionId: "session-known", state: "active", lastActivityAt: 10 }
+        { sessionId: "session-known", state: "active", lastActivityAt: 10, provider: null, model: null, role: null }
       ],
       identifiedSessionCount: 1,
       partial: false,
@@ -10852,7 +10871,7 @@ test("a window older than the bounded read is not an empty history", () => {
   assert.match(html, /data-evaluations-unread-window="\d+"/);
   assert.match(
     html,
-    /runs before 2026-10-05 09:31:00Z were never read/,
+    /Runs before <time dateTime="2026-10-05T09:31:00\.000Z">2026-10-05 09:31:00 UTC<\/time> were never read/,
     "the boundary is the oldest run the read holds, in the Run Time column's own format"
   );
   assert.match(
@@ -11240,25 +11259,25 @@ test("a timestamp is never stamped with an offset the source did not write", () 
     });
 
   // The source's own offset is kept.
-  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00 UTC/);
+  assert.match(trace("2026-10-05T09:31:00Z"), /2026-10-05 09:31:00 UTC/);
   assert.match(
     trace("2026-10-05T09:31:00.000Z"),
-    /09:31:00 UTC/,
+    /2026-10-05 09:31:00 UTC/,
     "a fractional second is not part of the clock reading"
   );
   assert.match(
     trace("2026-10-05T09:31:00+02:00"),
-    /09:31:00\+02:00/,
+    /2026-10-05 09:31:00 \+02:00/,
     "a non-UTC offset is shown, not silently relabelled as UTC"
   );
   assert.doesNotMatch(
     trace("2026-10-05T09:31:00+02:00"),
-    /09:31:00 UTC/,
+    /2026-10-05 09:31:00 UTC/,
     "a source that wrote +02:00 is not shown in UTC"
   );
   assert.match(
     trace("2026-10-05T09:31:00"),
-    />09:31:00</,
+    />2026-10-05 09:31:00</,
     "a timestamp with no offset shows none rather than borrowing one"
   );
 
@@ -17603,7 +17622,7 @@ test("Console rejects a runtime response that does not match the v3 contract", a
             (_, index) => ({
               sessionId: `session-${String(index).padStart(3, "0")}`,
               state: "active",
-              lastActivityAt: index
+              lastActivityAt: index, provider: null, model: null, role: null
             })
           ),
           identifiedSessionCount: CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT + 1,
@@ -17751,7 +17770,7 @@ test("Console rejects a runtime response that does not match the v3 contract", a
       ...valid,
       liveSessions: {
         identitiesObserved: [
-          { sessionId: "session-a", state: "active", lastActivityAt: 1 }
+        { sessionId: "session-a", state: "active", lastActivityAt: 1, provider: 7, model: null, role: null }
         ],
         identifiedSessionCount: 2,
         partial: true,
@@ -23159,7 +23178,11 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     ],
     [
       join("src", "components", "ui", "InlineDisplayToggle.ts"),
-      "Cycles the display units of a server-supplied measurement in a small accessible client island, without treating unavailable measurements as observed."
+      "The shared Inline Display Toggle: cycles one value through its server-supplied representations (measurements, relative and local time) as local display state in a small accessible client island."
+    ],
+    [
+      join("src", "components", "ui", "InstantDisplay.ts"),
+      "Renders every Console timestamp as relative and local time from the operator's own clock and zone, which only the browser has; the server render keeps the storage form until hydration."
     ],
     [
       join("src", "features", "usage", "use-usage-telemetry.ts"),

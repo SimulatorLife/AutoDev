@@ -4,7 +4,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 
 type QuotaAxiSnapshot = NonNullable<ControlApiProvidersResponse["quotaAxi"]>;
 type QuotaAxiProvider = QuotaAxiSnapshot["providers"][number];
@@ -16,7 +16,7 @@ export interface ProviderQuotaWindowBar {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly resetText: string | null;
-  readonly resetTitle: string | null;
+  readonly resetAt: string | null;
 }
 
 /** A fresh, authoritative quota scope that quota-axi says is exhausted now. */
@@ -143,59 +143,27 @@ function shortQuotaWindowLabel(window: QuotaAxiWindow): string {
   return stripped.length > 0 ? stripped : base.trim();
 }
 
-function formatQuotaResetRemaining(
-  resetsAt: string | null | undefined,
-  nowMs: number
-): string | null {
-  if (!resetsAt) return null;
-  const parsed = Date.parse(resetsAt);
-  if (!Number.isFinite(parsed)) return null;
-  const remainingMs = parsed - nowMs;
-  if (remainingMs <= 0) return "resetting";
-  const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
-  if (totalMinutes < 60) return `in ${totalMinutes}m`;
-  const totalHours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (totalHours < 24) {
-    return minutes > 0 ? `in ${totalHours}h ${minutes}m` : `in ${totalHours}h`;
-  }
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  return hours > 0 ? `in ${days}d ${hours}h` : `in ${days}d`;
-}
-
-function resolveQuotaWindowReset(
-  window: QuotaAxiWindow,
-  nowMs: number
-): {
+function resolveQuotaWindowReset(window: QuotaAxiWindow): {
   readonly resetText: string | null;
-  readonly resetTitle: string | null;
+  readonly resetAt: string | null;
 } {
-  const relative = formatQuotaResetRemaining(window.resetsAt, nowMs);
-  if (relative !== null) {
-    const formattedInstant = instantLabel(window.resetsAt);
-    return {
-      resetText: relative,
-      resetTitle:
-        formattedInstant.length > 0
-          ? `${relative} (${formattedInstant})`
-          : relative
-    };
+  const resetsAt = window.resetsAt ?? null;
+  if (resetsAt !== null && Number.isFinite(Date.parse(resetsAt))) {
+    return { resetText: null, resetAt: resetsAt };
   }
   if (
     typeof window.resetText === "string" &&
     window.resetText.trim().length > 0
   ) {
     const fallback = window.resetText.trim();
-    return { resetText: fallback, resetTitle: fallback };
+    return { resetText: fallback, resetAt: null };
   }
-  return { resetText: null, resetTitle: null };
+  return { resetText: null, resetAt: null };
 }
 
 function quotaBarsForProviderEntry(
   entry: QuotaAxiProvider,
-  providerId: string,
-  nowMs: number
+  providerId: string
 ): ProviderQuotaWindowBar[] {
   const routeWindows = entry.windows.filter(
     (window) =>
@@ -211,14 +179,14 @@ function quotaBarsForProviderEntry(
   for (const [index, window] of selectedWindows.entries()) {
     const percents = resolveQuotaWindowPercents(window);
     if (percents === null) continue;
-    const reset = resolveQuotaWindowReset(window, nowMs);
+    const reset = resolveQuotaWindowReset(window);
     bars.push({
       key: `${entry.provider}:${accountKey}:${window.id}:${index}`,
       label: shortQuotaWindowLabel(window),
       remainingPercent: percents.remainingPercent,
       usedPercent: percents.usedPercent,
       resetText: reset.resetText,
-      resetTitle: reset.resetTitle
+      resetAt: reset.resetAt
     });
   }
   return bars;
@@ -226,8 +194,7 @@ function quotaBarsForProviderEntry(
 
 /** Extracts compact per-provider usage bars from the quota-axi snapshot. */
 export function quotaByProvider(
-  report: QuotaAxiSnapshot | null,
-  nowMs: number
+  report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, readonly ProviderQuotaWindowBar[]> {
   const grouped = new Map<string, ProviderQuotaWindowBar[]>();
   for (const entry of report?.providers ?? []) {
@@ -236,7 +203,7 @@ export function quotaByProvider(
     const providerRows =
       entry.provider === "agy" ? ANTIGRAVITY_PROVIDERS : [entry.provider];
     for (const providerId of providerRows) {
-      const bars = quotaBarsForProviderEntry(entry, providerId, nowMs);
+      const bars = quotaBarsForProviderEntry(entry, providerId);
       if (bars.length === 0) continue;
       const existing = grouped.get(providerId);
       if (existing === undefined) grouped.set(providerId, bars);
@@ -308,6 +275,35 @@ function providerIdForExhaustion(
   return isProviderWideRoutingScope(candidate.scope) ? entryProvider : null;
 }
 
+function hasValidGeneratedAt(report: QuotaAxiSnapshot): boolean {
+  return Number.isFinite(Date.parse(report.generatedAt));
+}
+
+function isFreshQuotaEntry(entry: QuotaAxiProvider): boolean {
+  return entry.state.status === "fresh" && !entry.state.stale;
+}
+
+/**
+ * How much of the quota report can support an exhaustion count.
+ *
+ * Exhaustion is only ever projected from fresh readings, so a count of zero is
+ * an observation only when some fresh reading exists. `partial` means some
+ * entries are stale, failed or unreadable, so providers they cover are not
+ * known to be non-exhausted.
+ */
+export type QuotaExhaustionEvidence =
+  "fresh" | "partial" | "stale" | "invalid" | "missing";
+
+export function quotaExhaustionEvidence(
+  report: QuotaAxiSnapshot | null
+): QuotaExhaustionEvidence {
+  if (report === null) return "missing";
+  if (!hasValidGeneratedAt(report)) return "invalid";
+  const fresh = report.providers.filter(isFreshQuotaEntry).length;
+  if (fresh === 0) return "stale";
+  return fresh === report.providers.length ? "fresh" : "partial";
+}
+
 /**
  * Projects only quota-axi's explicit, fresh, provider-wide exhaustion verdicts
  * onto Console provider rows. Non-routing workloads (such as `code_review`,
@@ -318,12 +314,10 @@ export function exhaustedQuotaByProvider(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, ProviderQuotaExhaustion> {
   const exhausted = new Map<string, ProviderQuotaExhaustion>();
-  if (report === null || !Number.isFinite(Date.parse(report.generatedAt))) {
-    return exhausted;
-  }
+  if (report === null || !hasValidGeneratedAt(report)) return exhausted;
 
   for (const entry of report.providers) {
-    if (entry.state.status !== "fresh" || entry.state.stale) continue;
+    if (!isFreshQuotaEntry(entry)) continue;
     for (const availability of entry.quotaSemantics?.effectiveAvailability ??
       []) {
       const candidate = authoritativeExhaustion(entry, availability);
@@ -356,10 +350,8 @@ export function exhaustedQuotaByProvider(
 export interface ProviderQuotaReadState {
   /** The short fact, as the cell shows it. */
   readonly label: string;
-  /** When the report asks for the read to be retried, relative to now. */
-  readonly retryText: string | null;
-  /** The moment the read may be retried, whole, for the hover title. */
-  readonly retryTitle: string | null;
+  /** When the report asks for the read to be retried. */
+  readonly retryAt: string | null;
   /** The report's own explanation, for the hover title. */
   readonly title: string;
 }
@@ -411,8 +403,7 @@ const QUOTA_READ_STATE_EXPLANATION: Readonly<Record<string, string>> = {
  * quota source, three route rows, each showing that source's state.
  */
 export function quotaReadStates(
-  report: QuotaAxiSnapshot | null,
-  nowMs: number
+  report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, ProviderQuotaReadState> {
   const states = new Map<string, ProviderQuotaReadState>();
   for (const entry of report?.providers ?? []) {
@@ -422,11 +413,13 @@ export function quotaReadStates(
     const error = (entry.state?.error ?? "").trim();
     const explanation = QUOTA_READ_STATE_EXPLANATION[status] ?? "";
     const retryAfter = entry.state?.retryAfter;
+    const retryAt = retryAfter ?? null;
     const state: ProviderQuotaReadState = {
       label,
-      retryText: formatQuotaResetRemaining(retryAfter, nowMs),
-      retryTitle:
-        retryAfter === undefined ? null : instantLabel(retryAfter) || null,
+      retryAt:
+        retryAt !== null && Number.isFinite(Date.parse(retryAt))
+          ? retryAt
+          : null,
       title:
         error === ""
           ? explanation
@@ -457,19 +450,18 @@ export interface ProviderQuotaView {
 }
 
 export function providerQuotaView(
-  report: QuotaAxiSnapshot | null,
-  nowMs: number
+  report: QuotaAxiSnapshot | null
 ): ProviderQuotaView {
   return {
-    windows: quotaByProvider(report, nowMs),
-    readStates: quotaReadStates(report, nowMs),
+    windows: quotaByProvider(report),
+    readStates: quotaReadStates(report),
     exhaustion: exhaustedQuotaByProvider(report)
   };
 }
 
 /**
- * The read state as the cell shows it: the fact, and the moment the report
- * asks for the read to be retried beside it.
+ * The read state as the cell shows it: the fact and, when present, its retry
+ * instant.
  */
 function ProviderQuotaReadStateLine({
   providerId,
@@ -498,16 +490,10 @@ function ProviderQuotaReadStateLine({
         },
         state.label
       ),
-      state.retryText === null
-        ? null
-        : React.createElement(
-            "span",
-            {
-              className: "max-w-full truncate text-fg-muted",
-              title: state.retryTitle ?? state.retryText
-            },
-            state.retryText
-          )
+      React.createElement(InstantDisplay, {
+        value: state.retryAt,
+        label: "Quota retry time"
+      })
     )
   );
 }
@@ -570,12 +556,15 @@ export function ProviderQuotaCell({
             summaryText
           ),
           window.resetText === null
-            ? null
+            ? React.createElement(InstantDisplay, {
+                value: window.resetAt,
+                label: "Quota reset time"
+              })
             : React.createElement(
                 "span",
                 {
                   className: "max-w-full truncate text-fg-muted",
-                  title: window.resetTitle ?? window.resetText
+                  title: window.resetText
                 },
                 window.resetText
               )

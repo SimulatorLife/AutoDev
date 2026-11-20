@@ -502,9 +502,10 @@ async function renderSessionScopedPage(
         ? rawSpanId[0]
         : undefined;
 
-  // The diagnostics, requested span page, bounded provider-attribution sample,
-  // and selected trace read are independent and degrade separately.
-  const [diagnosticsResult, spansResult, providerSpansResult, traceResult] =
+  // Diagnostics, the requested span page, and selected trace read are
+  // independent and degrade separately. Thread provider attribution comes
+  // from the Runtime's per-thread router summary in the diagnostics report.
+  const [diagnosticsResult, spansResult, traceResult] =
     await Promise.all([
       config === null
         ? Promise.resolve({
@@ -544,17 +545,6 @@ async function renderSessionScopedPage(
           sortDirection: viewState.spanSort
         }
       ),
-      viewState.tab === "overview" || viewState.tab === "threads"
-        ? loadOpenLITSessionUsage(
-            sessionId,
-            sessionQuerySelection(state.selection),
-            {
-              limit: 200,
-              offset: 0,
-              sortDirection: "desc"
-            }
-          )
-        : Promise.resolve({ kind: "not-configured" as const }),
       selectedSpanId === undefined
         ? Promise.resolve(undefined)
         : loadOpenLITTrace(selectedSpanId)
@@ -565,14 +555,6 @@ async function renderSessionScopedPage(
   const diagnosticsFailureValue =
     diagnosticsResult.kind === "ok" ? null : diagnosticsResult.failure;
   const spansEvidence = spansResult.kind === "ok" ? spansResult.data : null;
-  const providerSpans =
-    providerSpansResult.kind === "ok" ? providerSpansResult.data : null;
-  const observedProvidersByThread: Record<string, string[]> = {};
-  for (const span of providerSpans?.spans ?? []) {
-    if (span.conversationId === null || span.provider === null) continue;
-    const providers = (observedProvidersByThread[span.conversationId] ??= []);
-    if (!providers.includes(span.provider)) providers.push(span.provider);
-  }
   const spansFailureValue =
     spansResult.kind === "ok" ? null : spansFailureFor(spansResult);
 
@@ -601,12 +583,6 @@ async function renderSessionScopedPage(
       report,
       diagnosticsFailure: diagnosticsFailureValue,
       spans: spansEvidence,
-      observedProvidersByThread,
-      providerEvidencePartial:
-        providerSpans === null ||
-        providerSpans.total === null ||
-        providerSpans.partial ||
-        providerSpans.hasMore,
       spansFailure: spansFailureValue,
       spanHrefFor
     }),

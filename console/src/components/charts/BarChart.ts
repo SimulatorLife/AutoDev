@@ -25,6 +25,8 @@ import { EMPTY_INLINE_CLASS, EmptyState } from "../status/EmptyState.ts";
 export interface BarChartDatum {
   /** Dimension value, already rendered for display (e.g. "Not attributed"). */
   readonly label: string;
+  /** Optional interactive label when the dimension is itself an instant. */
+  readonly displayLabel?: React.ReactNode | undefined;
   /** Drives the bar length. Never used as a label — the label is `label`. */
   readonly value: number;
   /** Pre-formatted so the caller's own formatting rules stay authoritative. */
@@ -111,9 +113,9 @@ export function BarChart({
             className: "truncate font-mono text-fg",
             // The label column is deliberately narrow so the bars keep their
             // length; the untruncated value stays reachable on hover.
-            title: item.label
+            title: item.displayLabel === undefined ? item.label : undefined
           },
-          item.label
+          item.displayLabel ?? item.label
         ),
         React.createElement(
           "span",

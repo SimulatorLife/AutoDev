@@ -132,11 +132,15 @@
  * summary (`GET /control/diagnostics/hooks`). Every route is read-only, so
  * both the `viewer` and the `operator` role may read it, and each route
  * answers `format=json` (the default) or `format=text`.
+ * v36: live-session identities publish source-observed provider, model, and
+ * role attribution, with null retained when an activity record did not supply
+ * that dimension. Each dimension selects its newest non-null observation;
+ * equal timestamps resolve to the lexically smallest value.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 35
+  version: 36
 } as const;
 
 export type ControlApiContractResponse = {

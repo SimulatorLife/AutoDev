@@ -1850,6 +1850,10 @@ export interface ControlApiLiveSessionIdentity {
   readonly state: ControlApiLiveSessionState;
   /** Unix epoch milliseconds of the latest observed activity for this ID. */
   readonly lastActivityAt: number;
+  /** Newest non-null source observation for each dimension; null if absent. */
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly role: string | null;
 }
 
 export interface ControlApiLiveSessions {

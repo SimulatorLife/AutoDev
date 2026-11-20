@@ -503,8 +503,7 @@ test("provider rows show compact used-usage bars and refresh times across window
   assert.equal(progressBarsIn(claudeQuota).length, 2);
   assert.match(claudeQuota, />5h 28% used</u);
   assert.match(claudeQuota, />7d 59% used</u);
-  assert.match(claudeQuota, />in 2h</u);
-  assert.match(claudeQuota, />in 2d</u);
+  assert.equal((claudeQuota.match(/<time dateTime=/gu) ?? []).length, 2);
   assert.match(claudeQuota, /bg-accent/u);
   assert.match(claudeQuota, /text-fg-secondary/u);
   assert.doesNotMatch(claudeQuota, /bg-warning|bg-error/u);
@@ -512,7 +511,7 @@ test("provider rows show compact used-usage bars and refresh times across window
   const codexQuota = quotaBlockFor(rowFor(markup, "codex"), "codex");
   assert.equal(progressBarsIn(codexQuota).length, 1);
   assert.match(codexQuota, />7d 25% used</u);
-  assert.match(codexQuota, />Resets tomorrow</u);
+  assert.match(codexQuota, /title="Resets tomorrow">Resets tomorrow</u);
   assert.match(codexQuota, /bg-accent/u);
 
   const cursorRow = rowFor(markup, "cursor");
@@ -544,7 +543,7 @@ test("a provider whose quota read was refused says so instead of showing nothing
   const row = rowFor(markup, "claude");
   assert.match(row, /data-provider-quota-state="claude"/u);
   assert.match(row, />Quota rate limited</u);
-  assert.match(row, /in 58m/u);
+  assert.equal((row.match(/<time dateTime=/gu) ?? []).length, 1);
   assert.match(row, /Claude quota endpoint rate limited/u);
   assert.equal(progressBarsIn(row).length, 0);
 });
@@ -668,7 +667,7 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
   // 95% used (5% remaining) is still available -> blue
   const claudeQuota = quotaBlockFor(rowFor(markup, "claude"), "claude");
   assert.match(claudeQuota, />5h 95% used</u);
-  assert.match(claudeQuota, />in 45m</u);
+  assert.equal((claudeQuota.match(/<time dateTime=/gu) ?? []).length, 1);
   assert.match(claudeQuota, /bg-accent/u);
   assert.match(claudeQuota, /text-fg-secondary/u);
   assert.match(claudeQuota, /aria-valuenow="95"/u);
@@ -678,7 +677,7 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
   // 96% used (4% remaining) is over 95% used -> yellow
   const codexQuota = quotaBlockFor(rowFor(markup, "codex"), "codex");
   assert.match(codexQuota, />7d 96% used</u);
-  assert.match(codexQuota, />in 1h 30m</u);
+  assert.equal((codexQuota.match(/<time dateTime=/gu) ?? []).length, 1);
   assert.match(codexQuota, /bg-warning/u);
   assert.match(codexQuota, /text-warning/u);
   assert.match(codexQuota, /aria-valuenow="96"/u);
@@ -688,9 +687,8 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
   // Mixed warning (>95% via percentUsed fallback) + exhausted (100%+ clamped)
   const minimaxQuota = quotaBlockFor(rowFor(markup, "minimax"), "minimax");
   assert.match(minimaxQuota, />5h 98% used</u);
-  assert.match(minimaxQuota, />in 2h 30m</u);
+  assert.equal((minimaxQuota.match(/<time dateTime=/gu) ?? []).length, 2);
   assert.match(minimaxQuota, />7d 100% used</u);
-  assert.match(minimaxQuota, />resetting</u);
   assert.match(minimaxQuota, /bg-warning/u);
   assert.match(minimaxQuota, /text-warning/u);
   assert.match(minimaxQuota, /bg-error/u);
@@ -700,7 +698,7 @@ test("usage bars use blue when available, yellow over 95% used, and red at 100% 
   // 100% used (0% remaining) -> red bar at full width so exhaustion is visible
   const copilotQuota = quotaBlockFor(rowFor(markup, "copilot"), "copilot");
   assert.match(copilotQuota, />premium interactions 100% used</u);
-  assert.match(copilotQuota, />in 5m</u);
+  assert.equal((copilotQuota.match(/<time dateTime=/gu) ?? []).length, 1);
   assert.match(copilotQuota, /bg-error/u);
   assert.match(copilotQuota, /text-error/u);
   assert.match(copilotQuota, /aria-valuenow="100"/u);
@@ -928,7 +926,7 @@ test("provider rows omit verbose quota debug metadata and raw ISO timestamps", (
     const quota = quotaBlockFor(rowFor(markup, id), id);
     assert.equal(progressBarsIn(quota).length, 1);
     assert.match(quota, />5h 20% used</u);
-    assert.match(quota, />in 3h</u);
+    assert.equal((quota.match(/<time dateTime=/gu) ?? []).length, 1);
   }
 
   assert.doesNotMatch(
@@ -986,9 +984,7 @@ test("fetchProviders passes the quota-axi report through without reshaping it", 
 test("ProviderDetailView shows Quota exhausted for a fresh provider-wide exhausted report and Ready otherwise", () => {
   const provider = healthyProviderRecord("claude");
   const report = quotaReport([exhaustedQuotaProvider()]);
-  const quotaExhaustion = providerQuotaView(report, Date.now()).exhaustion.get(
-    provider.id
-  );
+  const quotaExhaustion = providerQuotaView(report).exhaustion.get(provider.id);
   assert.ok(quotaExhaustion !== undefined);
 
   const exhaustedMarkup = renderToStaticMarkup(

@@ -41,11 +41,7 @@ import {
   FIELD_GROUP_CLASS,
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
-import {
-  instantClock,
-  isReadableInstant,
-  splitInstant
-} from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_ID_CLASS,
@@ -293,81 +289,24 @@ function metricCell(evaluation: EvaluationResult): React.JSX.Element {
  * The zone is named rather than signed -- `Z` is Zulu, which is UTC, and the
  * Console says "UTC" because its own column headers and date fields say "UTC".
  *
- * Splitting is what makes it fit. The raw string is 24 characters with no break
- * opportunity, so a column holding one either truncates or pushes every other
- * column out; the date and the clock as two items in a wrapping row give the
- * column a natural 10-character budget and let the row fold at a narrow width
- * instead of losing the seconds. The full value stays on `title`, and the
- * machine-readable form stays in `dateTime`.
- *
- * `min-w-0` on both parts is what keeps a narrow column from overflowing. A flex
- * item defaults to `min-width: auto`, so `2026-10-05` refuses to shrink below
- * its own width and the cell paints straight through the table's right edge --
- * outside the scroll container that was supposed to contain it. The trace table
- * did not have it, which is the other half of why this is one function now.
+ * Both evaluation rows and trace spans use the shared toggle, keeping the
+ * machine-readable instant and local display behavior consistent.
  */
 function timestampCell(timestamp: string): React.JSX.Element {
-  const { date, clock } = splitInstant(timestamp);
-  const readable = isReadableInstant(timestamp);
-  return React.createElement(
-    "span",
-    {
-      className: "flex flex-wrap items-baseline gap-x-1.5",
-      // A tooltip that repeats the only text in the cell says nothing, and the
-      // whole value is what the readable case is hiding.
-      ...(readable
-        ? { title: timestamp }
-        : { "data-evaluations-unreadable-time": "true" })
-    },
-    React.createElement(
-      readable ? "time" : "span",
-      {
-        ...(readable ? { dateTime: timestamp } : {}),
-        className: `${MONO_META_CLASS} min-w-0 break-words`
-      },
-      date
-    ),
-    clock === undefined
-      ? null
-      : React.createElement(
-          "span",
-          { className: `${MONO_META_CLASS} min-w-0 break-words` },
-          instantClock(timestamp)
-        )
-  );
+  return React.createElement(InstantDisplay, {
+    value: timestamp,
+    label: "Evaluation time"
+  });
 }
 
 /**
- * One instant on a single line, for the places that are not a wrapping cell.
- *
- * `timestampCell` gives its parts room to fold between them, which is right in a
- * table and wrong in a drawer's subtitle, where they want to stay on one line.
- * The parts still come from `splitInstant`, so the resource keeps one definition
- * of how it renders an instant and only the layout differs.
- *
- * The drawer's subtitle used to carry the raw wire value, which made the same
- * moment print two ways on one screen -- `2026-10-05 12:20:05Z` in the history
- * row that opened it and `2026-10-05T12:20:05.000Z` above the detail -- and at
- * 390px the raw token broke mid-date as `2026-10-` / `05T12:20:05.000Z`. It also
- * carried no `dateTime`, so the one place showing this run's time was the one
- * place a machine could not read it.
- *
- * The drawer asked the same question `timestampCell` does and answers it the
- * same way, because "is this a time" cannot have two answers on one screen.
+ * The drawer's subtitle is the same instant representation as the table cell.
  */
 function runTimeInstant(timestamp: string): React.JSX.Element {
-  const { date, clock } = splitInstant(timestamp);
-  const readable = isReadableInstant(timestamp);
-  const clockText = instantClock(timestamp);
-  return React.createElement(
-    readable ? "time" : "span",
-    {
-      ...(readable
-        ? { dateTime: timestamp, title: timestamp }
-        : { "data-evaluations-unreadable-time": "true" })
-    },
-    `${date}${clock === undefined || clockText === "" ? "" : ` ${clockText}`}`
-  );
+  return React.createElement(InstantDisplay, {
+    value: timestamp,
+    label: "Run time"
+  });
 }
 
 /** The value a prompt-less run reports instead of naming a prompt. */
@@ -1515,7 +1454,7 @@ function renderViewCaveats({
   readRows,
   storeTotal
 }: ViewCaveats): React.JSX.Element | null {
-  const lines: string[] = [];
+  const lines: React.ReactNode[] = [];
   // First, because it is the one cause that needs no data to establish and is
   // the only one of them the operator can fix without changing what the page
   // has read. The others describe what the history holds; this one describes
@@ -1537,7 +1476,16 @@ function renderViewCaveats({
   }
   if (oldestReadAt !== undefined) {
     lines.push(
-      `runs before ${runTimeText(oldestReadAt)} were never read — the read holds the most recent ${readRows} of ${storeTotal} retained results — so this view is empty because it was not read, not because nothing ran`
+      React.createElement(
+        React.Fragment,
+        null,
+        "Runs before ",
+        React.createElement(InstantDisplay, {
+          value: new Date(oldestReadAt).toISOString(),
+          label: "Oldest retained run time"
+        }),
+        ` were never read — the read holds the most recent ${readRows} of ${storeTotal} retained results — so this view is empty because it was not read, not because nothing ran`
+      )
     );
   }
   if (lines.length === 0) return null;
@@ -1560,7 +1508,9 @@ function renderViewCaveats({
         ? {}
         : { "data-evaluations-unread-window": String(oldestReadAt) })
     },
-    ...lines.map((line) => React.createElement("p", { key: line }, `${line}.`))
+    ...lines.map((line, index) =>
+      React.createElement("p", { key: index }, line, ".")
+    )
   );
 }
 
@@ -1571,11 +1521,6 @@ function renderViewCaveats({
  * explaining is one more thing to translate before the two can be compared, and
  * the comparison is the whole reason the timestamp is there.
  */
-function runTimeText(at: number): string {
-  const iso = new Date(at).toISOString();
-  return `${iso.slice(0, 10)} ${iso.slice(11, 19)}Z`;
-}
-
 function filterSelect(
   name: "outcome" | "role" | "model" | "prompt",
   label: string,

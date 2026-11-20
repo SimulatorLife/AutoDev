@@ -235,6 +235,10 @@ test("Usage shows provider hops with both providers, the reason and where they h
   assert.match(markup, /Provider Hops/u);
   assert.match(markup, /Hops per Request/u);
   assert.match(markup, /Provider Hops Over Time/u);
+  assert.match(
+    markup,
+    /<time dateTime="2026-11-09T09:00:00Z">2026-11-09 09:00:00 UTC<\/time>/u
+  );
   assert.match(markup, /Provider Hops by Route/u);
   assert.match(markup, /anthropic → openai/u);
   assert.match(markup, /Provider Hops by Reason/u);
@@ -408,7 +412,7 @@ test("Usage active-session stats and detail use the shared section spacing", () 
     React.createElement(UsageView, {
       selection: { range: "ACTIVE_SESSIONS", values: {} },
       activeSessions: {
-        schema: "autodev-usage-active-sessions-v2",
+        schema: "autodev-usage-active-sessions-v3",
         lifecycle: "ready",
         lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
         activeSessions: 3,
@@ -419,17 +423,26 @@ test("Usage active-session stats and detail use the shared section spacing", () 
           {
             sessionId: "session-fixture-a",
             state: "active",
-            lastActivityAt: 1_760_000_000_000
+            lastActivityAt: 1_760_000_000_000,
+            provider: "claude",
+            model: "opus",
+            role: "orchestrator"
           },
           {
             sessionId: "session-fixture-b",
             state: "tool_wait",
-            lastActivityAt: 1_760_000_001_000
+            lastActivityAt: 1_760_000_001_000,
+            provider: null,
+            model: null,
+            role: null
           },
           {
             sessionId: "abc",
             state: "resumed",
-            lastActivityAt: 1_760_000_002_000
+            lastActivityAt: 1_760_000_002_000,
+            provider: null,
+            model: null,
+            role: null
           }
         ],
         sessionIdentitiesPartial: false,
@@ -451,6 +464,17 @@ test("Usage active-session stats and detail use the shared section spacing", () 
   assert.doesNotMatch(markup, />abc</u);
   assert.match(markup, /sessionId=session-fixture-a/u);
   assert.match(markup, /Live Runtime sessions/u);
+  for (const value of [
+    "Provider",
+    "Model",
+    "Role",
+    "claude",
+    "opus",
+    "orchestrator"
+  ]) {
+    assert.match(markup, new RegExp(value, "u"));
+  }
+  assert.match(markup, /Not observed/u);
 });
 
 test("UsageView keeps scope filters but omits metrics until a snapshot is validated", () => {
@@ -598,7 +622,8 @@ test("UsageView shows the bounded recent-attempt table and preserves filters whe
 
   assert.match(markup, /Recent provider attempts/);
   assert.match(markup, /This list is partial/);
-  assert.match(markup, /Time \(UTC\)/);
+  assert.match(markup, /Time/);
+  assert.doesNotMatch(markup, /Time \(UTC\)/);
   assert.match(markup, /gpt-6-luna/);
   assert.match(markup, /data-trace-status="ERROR"/);
   assert.match(

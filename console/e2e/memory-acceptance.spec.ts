@@ -213,12 +213,13 @@ test("the Experiences tab renders the evidence it read, in the Console's words",
   await expect(outcomes).toContainText("Injected");
   await expect(outcomes).toContainText("JIT");
   await expect(outcomes).toContainText("Reported outcome: Success");
-  await expect(outcomes).toContainText(
-    "Task by reporter@example (Worker) at 2026-02-11 09:01:00 UTC — Supplied by the reporter"
-  );
-  await expect(outcomes).toContainText(
-    "1 memories · 812 chars · 2026-02-11 09:00:00 UTC"
-  );
+  await expect(outcomes).toContainText(/Task by reporter@example \(Worker\) at .* — Supplied by the reporter/u);
+  await expect(outcomes).toContainText(/1 memories · 812 chars · /u);
+  const injectionTime = outcomes.locator('time[datetime="2026-02-11T09:00:00.000Z"]');
+  await expect(injectionTime).toHaveText(/ago$|^in /u);
+  await injectionTime.locator("button").click();
+  await expect(injectionTime).toContainText("2026");
+  await expect(injectionTime).not.toContainText("UTC");
 
   // The curator's half is a separate claim from the reporter's, and it is
   // reported separately.
@@ -273,7 +274,11 @@ test("the Experiences table shows the moment it started, whole", async ({
   // cannot tell whether the seconds are 00 or 09, and a timestamp that says
   // less than the page knows says less about the run than the run does.
   const cell = page.locator("tbody tr td").last();
-  await expect(cell).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/u);
+  const startedAt = cell.locator("time");
+  await expect(startedAt).toHaveText(/ago$|^in /u);
+  await startedAt.locator("button").click();
+  await expect(startedAt).toContainText("2026");
+  await expect(startedAt).not.toContainText("UTC");
   const cut = await cell.evaluate(
     (element) => element.scrollWidth > element.clientWidth + 1
   );

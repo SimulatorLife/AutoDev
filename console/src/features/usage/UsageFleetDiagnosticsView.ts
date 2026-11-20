@@ -37,7 +37,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
@@ -141,8 +141,8 @@ function sessionColumns(
     },
     {
       id: "lastWrite",
-      header: "Last write (UTC)",
-      cell: ({ row: { original: row } }) => instantLabel(row.lastWrite),
+      header: "Last write",
+      cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.lastWrite, label: "Last write" }),
       meta: { weight: 180, align: "tokens" }
     },
     {
@@ -327,7 +327,7 @@ function renderHookDenials(
         React.createElement(StatCard, {
           title: "PreToolUse denials",
           value: count(summary.preToolUseDenials),
-          subtitle: `Since ${instantLabel(summary.cutoff)}`
+          subtitle: React.createElement(React.Fragment, null, "Since ", React.createElement(InstantDisplay, { value: summary.cutoff, label: "Since" }))
         }),
         React.createElement(StatCard, {
           title: "Prompt submits",

@@ -100,9 +100,9 @@ test("the threads tab shows role, provider and model, and the prompt size toggle
   await expect(toggle).toHaveCSS("cursor", "pointer");
   await expect(toggle).toHaveCSS("text-decoration-style", "dotted");
   await expect(toggle).toHaveText("1,200 bytes");
-  // The engine reports bytes only, so the other units say so rather than guess.
+  // The fixture carries independent byte and character counts; tokens were not observed.
   await toggle.click();
-  await expect(toggle).toHaveText("Not observed (characters)");
+  await expect(toggle).toHaveText("1,188 characters");
   await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(toggle).toHaveText("Not observed (tokens)");

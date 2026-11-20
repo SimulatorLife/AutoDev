@@ -28,7 +28,20 @@ import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
  * optional authoritative quota verdict, so the ordering is testable without
  * rendering and the column cannot drift into showing a summary by accident.
  */
+export type ProviderVerdict =
+  | "disabled"
+  | "unrouted"
+  | "missing-credential"
+  | "sign-in-required"
+  | "cooling-down"
+  | "unavailable"
+  | "quota-exhausted"
+  | "not-observed"
+  | "ready";
+
 export type ProviderStatus = {
+  /** The typed verdict; consumers classify on this, never on `label`. */
+  readonly verdict: ProviderVerdict;
   readonly tone: StatusBadgeVariant;
   readonly label: string;
   readonly title?: string;
@@ -59,6 +72,7 @@ export function resolveProviderStatus(
 ): ProviderStatus {
   if (provider.disabled) {
     return {
+      verdict: "disabled",
       tone: "invalid",
       label: "Disabled",
       title:
@@ -67,6 +81,7 @@ export function resolveProviderStatus(
   }
   if (provider.route === null) {
     return {
+      verdict: "unrouted",
       tone: "invalid",
       label: "Missing CODEX_ROUTE",
       title:
@@ -75,6 +90,7 @@ export function resolveProviderStatus(
   }
   if (provider.credential.envKey !== null && !provider.credential.configured) {
     return {
+      verdict: "missing-credential",
       tone: "invalid",
       label: `Missing ${provider.credential.envKey}`,
       // An environment key is longer than the Status column is wide, so the
@@ -86,6 +102,7 @@ export function resolveProviderStatus(
   if (providerSignInRequired(provider.health)) {
     const check = provider.health?.lastCheck;
     return {
+      verdict: "sign-in-required",
       tone: "invalid",
       label: "Sign-in required",
       title:
@@ -101,6 +118,7 @@ export function resolveProviderStatus(
     if (provider.health?.cooldown) {
       const failureClass = provider.health.cooldown.failureClass;
       return {
+        verdict: "cooling-down",
         tone: "unavailable",
         label:
           failureClass === null
@@ -112,6 +130,7 @@ export function resolveProviderStatus(
     }
     const failureClass = provider.health?.lastFailure?.failureClass;
     return {
+      verdict: "unavailable",
       tone: "unavailable",
       label: failureClass ? `Unavailable (${failureClass})` : "Unavailable",
       title: "The latest provider health evidence is a failure."
@@ -119,6 +138,7 @@ export function resolveProviderStatus(
   }
   if (quotaExhaustion !== undefined) {
     return {
+      verdict: "quota-exhausted",
       tone: "unavailable",
       label: "Quota exhausted",
       title: `Quota scope ${quotaExhaustion.scope} is exhausted (limiting window: ${quotaExhaustion.limitingWindowId}). This scoped report does not change Runtime health or routing.`
@@ -126,12 +146,14 @@ export function resolveProviderStatus(
   }
   if (readiness === "not-observed") {
     return {
+      verdict: "not-observed",
       tone: "not-observed",
       label: NOT_OBSERVED_LABEL,
       title: "No successful provider health observation is available yet."
     };
   }
   return {
+    verdict: "ready",
     tone: "ready",
     label: "Ready",
     title:

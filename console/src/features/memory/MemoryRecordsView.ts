@@ -37,7 +37,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
-import { instantDate, instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -118,19 +118,20 @@ function nowIso(): string {
  * Only a bound that exists is spoken about. An absent one is the absence of a
  * decision -- not "valid forever", not "expired" -- and rendering a dash would
  * claim one of those. Each shape is its own string rather than an assembled
- * phrase, so a half-written window cannot read as a complete sentence.
+ * phrase, so a half-written window cannot read as a complete sentence. The
+ * bounds remain separate nodes so each instant keeps its own toggle.
  */
-function validityWindowLabel(validity: MemoryValidity): string | null {
+function validityWindowLabel(validity: MemoryValidity): React.ReactNode {
   const from = validity.validFrom;
   const to = validity.validTo;
   if (from !== undefined && to !== undefined) {
-    return `Valid ${instantLabel(from)} to ${instantLabel(to)}`;
+    return React.createElement(React.Fragment, null, "Valid ", React.createElement(InstantDisplay, { value: from, label: "Valid from" }), " to ", React.createElement(InstantDisplay, { value: to, label: "Valid until" }));
   }
   if (from !== undefined) {
-    return `Valid from ${instantLabel(from)}`;
+    return React.createElement(React.Fragment, null, "Valid from ", React.createElement(InstantDisplay, { value: from, label: "Valid from" }));
   }
   if (to !== undefined) {
-    return `Valid until ${instantLabel(to)}`;
+    return React.createElement(React.Fragment, null, "Valid until ", React.createElement(InstantDisplay, { value: to, label: "Valid until" }));
   }
   return null;
 }
@@ -181,7 +182,7 @@ function ValidityFacts({
       ? React.createElement(
           "div",
           { className: MUTED_META_CLASS },
-          `Checked at: ${instantLabel(validity.checkedAt)}`
+          React.createElement(React.Fragment, null, "Checked at: ", React.createElement(InstantDisplay, { value: validity.checkedAt, label: "Validity checked" }))
         )
       : null,
     validity.verificationSource
@@ -368,7 +369,10 @@ export function MemoryRecordsView({
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
-          record.updatedAt ? instantDate(record.updatedAt) : "unknown"
+          React.createElement(InstantDisplay, {
+            value: record.updatedAt,
+            label: "Record updated"
+          })
         ),
       meta: {
         weight: 140
@@ -751,7 +755,7 @@ function RecordDetailPanel({
           ? React.createElement(
               "div",
               { className: MONO_META_CLASS },
-              `Last verified: ${instantLabel(record.provenance.lastVerifiedAt)}`
+              React.createElement(React.Fragment, null, "Last verified: ", React.createElement(InstantDisplay, { value: record.provenance.lastVerifiedAt, label: "Last verified" }))
             )
           : null,
         record.provenance.evidence && record.provenance.evidence.length > 0
@@ -862,7 +866,7 @@ function RecordDetailPanel({
                       "flex shrink-0 items-center gap-3 text-fg-muted font-mono text-meta"
                   },
                   React.createElement("span", null, t.actorId),
-                  React.createElement("span", null, instantLabel(t.occurredAt))
+                  React.createElement(InstantDisplay, { value: t.occurredAt, label: "Transition time" })
                 )
               )
             )

@@ -153,6 +153,9 @@ export interface AgentActivityLiveSessionIdentity {
   /** State and timestamp of the newest live activity record for this ID. */
   readonly state: AgentActivityLiveState;
   readonly lastActivityAt: number;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly role: string | null;
 }
 
 export interface AgentActivityLiveSessionsProjection {
@@ -799,7 +802,19 @@ export function createAgentActivityTracker({
    * `partial` is reserved for truncation of the identified list.
    */
   function listLiveSessions(at = now()): AgentActivityLiveSessionsProjection {
-    const grouped = new Map<string, AgentActivityLiveSessionIdentity>();
+    type MutableIdentity = {
+      sessionId: string;
+      state: AgentActivityLiveState;
+      lastActivityAt: number;
+      provider: string | null;
+      model: string | null;
+      role: string | null;
+    };
+    const grouped = new Map<string, MutableIdentity>();
+    const attributionTimes = new Map<
+      string,
+      { provider: number; model: number; role: number }
+    >();
     let unattributedLiveActivityCount = 0;
     for (const activity of listLive({}, at)) {
       const sessionId = safeAutoDevSessionId(activity.sessionId);
@@ -822,11 +837,34 @@ export function createAgentActivityTracker({
           // listLive only returns LIVE_STATES. This summary deliberately does
           // not widen to terminal/stale states which the source excludes.
           state: activity.state as AgentActivityLiveState,
-          lastActivityAt: activity.updatedAt
+          lastActivityAt: activity.updatedAt,
+          provider: current?.provider ?? null,
+          model: current?.model ?? null,
+          role: current?.role ?? null
         });
       }
+      const identity = grouped.get(sessionId)!;
+      const times = attributionTimes.get(sessionId) ?? { provider: -1, model: -1, role: -1 };
+      const update = (field: "provider" | "model" | "role") => {
+        const value = activity[field];
+        if (value === null) return;
+        if (
+          activity.updatedAt > times[field] ||
+          (activity.updatedAt === times[field] &&
+            (identity[field] === null || value < identity[field]!))
+        ) {
+          identity[field] = value;
+          times[field] = activity.updatedAt;
+        }
+      };
+      update("provider");
+      update("model");
+      update("role");
+      attributionTimes.set(sessionId, times);
     }
-    const sorted = Array.from(grouped.values()).sort((a, b) =>
+    const sorted: AgentActivityLiveSessionIdentity[] = Array.from(
+      grouped.values()
+    ).sort((a, b) =>
       a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0
     );
     return {

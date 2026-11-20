@@ -40,7 +40,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -63,7 +63,6 @@ import {
 } from "./playtesting-labels.ts";
 import {
   reviewHeadlineText,
-  reviewRecordedDay,
   reviewSummaryLine
 } from "./playtesting-review-presentation.ts";
 import {
@@ -737,7 +736,16 @@ function latestConclusions(
               React.createElement(
                 "p",
                 { className: MUTED_META_CLASS },
-                `${reviewSummaryLine(review)} · ${reviewRecordedDay(review.createdAt)}`
+                React.createElement(
+                  React.Fragment,
+                  null,
+                  reviewSummaryLine(review),
+                  " · ",
+                  React.createElement(InstantDisplay, {
+                    value: review.createdAt,
+                    label: "Review recorded"
+                  })
+                )
               )
             )
           )
@@ -919,7 +927,16 @@ function analystReviewDetail(
             ? "Discovery review"
             : "Confirmatory review"
       }),
-      subtitle: `${review.reviewId} · Recorded ${instantLabel(review.createdAt)}`,
+      subtitle: React.createElement(
+        React.Fragment,
+        null,
+        review.reviewId,
+        " · Recorded ",
+        React.createElement(InstantDisplay, {
+          value: review.createdAt,
+          label: "Review recorded"
+        })
+      ),
       closeHref: playtestingReviewCloseHref(scope),
       closeLabel: "Close review detail",
       anchorId: PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
@@ -1193,11 +1210,10 @@ function analystHypotheses(
       id: "recorded",
       header: "Recorded",
       cell: ({ row: { original: review } }) =>
-        React.createElement(
-          "span",
-          { title: review.createdAt },
-          reviewRecordedDay(review.createdAt)
-        ),
+        React.createElement(InstantDisplay, {
+          value: review.createdAt,
+          label: "Review recorded"
+        }),
       meta: {
         weight: 140
       }

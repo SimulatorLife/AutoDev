@@ -26,7 +26,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   ENTITY_LINK_CLASS,
@@ -655,11 +655,10 @@ export function GithubView({
       id: "createdAt",
       header: "Created",
       cell: ({ row: { original: run } }) =>
-        React.createElement(
-          "span",
-          { className: MONO_META_CLASS },
-          instantLabel(run.createdAt)
-        )
+        React.createElement(InstantDisplay, {
+          value: run.createdAt,
+          label: "Run created"
+        })
     }
   ];
 

@@ -30,7 +30,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { instantDate } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   MONO_VALUE_CLASS,
   MUTED_TEXT_CLASS
@@ -182,11 +182,15 @@ function useJudgementChartData(totals: UseOutcomeTotals): BarChartDatum[] {
 function cohortWindow(
   from: string | undefined,
   until: string | undefined
-): string {
-  const start = instantDate(from);
-  const end = instantDate(until);
-  if (start === "" || end === "") return NOT_OBSERVED_LABEL;
-  return `${start} — ${end}`;
+): React.ReactNode {
+  if (!from || !until) return NOT_OBSERVED_LABEL;
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(InstantDisplay, { value: from, label: "Window start" }),
+    " — ",
+    React.createElement(InstantDisplay, { value: until, label: "Window end" })
+  );
 }
 
 export interface MemoryCohortsViewProps {

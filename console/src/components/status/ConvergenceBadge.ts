@@ -6,7 +6,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { instantLabel } from "../ui/instant.ts";
+import { InstantDisplay } from "../ui/InstantDisplay.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -76,7 +76,7 @@ const HISTORY_ROW_CLASS =
  * Render one reconciliation field. `null` means the Runtime has not observed it,
  * which must never render as an empty value that could read as "none".
  */
-function fieldValue(value: string | null): string {
+function fieldValue(value: React.ReactNode): React.ReactNode {
   return value ?? NOT_OBSERVED_LABEL;
 }
 
@@ -87,8 +87,8 @@ function fieldValue(value: string | null): string {
  * rendered the way the Console renders a moment: read through the one owner,
  * rather than printed as the raw wire value.
  */
-function instantField(value: string | null): string | null {
-  return value === null ? null : instantLabel(value);
+function instantField(value: string | null, label: string): React.ReactNode {
+  return React.createElement(InstantDisplay, { value, label });
 }
 
 function historyRow(entry: OperationHistoryEntry): React.JSX.Element {
@@ -107,7 +107,10 @@ function historyRow(entry: OperationHistoryEntry): React.JSX.Element {
       { className: "font-mono text-fg-secondary" },
       entry.action
     ),
-    React.createElement("span", null, instantLabel(entry.timestamp)),
+    React.createElement(InstantDisplay, {
+      value: entry.timestamp,
+      label: "Operation time"
+    }),
     React.createElement(
       "span",
       {
@@ -186,8 +189,11 @@ export function ReconciliationPanel({
         [
           ["Desired generation", status.desiredGeneration],
           ["Observed generation", status.observedGeneration],
-          ["Last apply", instantField(status.lastApplyAt)],
-          ["Last observation", instantField(status.lastObservationAt)],
+          ["Last apply", instantField(status.lastApplyAt, "Last apply")],
+          [
+            "Last observation",
+            instantField(status.lastObservationAt, "Last observation")
+          ],
           ["Last error", status.lastError]
         ] as const
       ).flatMap(([label, value]) => [

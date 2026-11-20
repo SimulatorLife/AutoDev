@@ -149,8 +149,11 @@ test("a half-open validity window is named, not left blank", () => {
   // Read out of the validity card rather than matched against the document:
   // the whole render is one long line of markup, so a `^…$` pattern would never
   // match it. The window is the only text in that card.
-  const windowText = (markup: string): string | undefined =>
-    /font-mono text-xs text-fg-muted">(Valid[^<]*)</u.exec(markup)?.[1];
+  const windowText = (markup: string): string | undefined => {
+    const match = /font-mono text-xs text-fg-muted">(Valid[\s\S]*?)<\/div>/u.exec(markup);
+    const text = match?.[1];
+    return text?.replace(/<[^>]+>/gu, "");
+  };
 
   const cases: readonly [string, MemoryValidity, RegExp][] = [
     [

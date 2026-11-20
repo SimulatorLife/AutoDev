@@ -322,7 +322,7 @@ test("a session id in the top bar scopes the whole page to that session", async 
     assert.match(markup, /Clear session/);
     assert.match(markup, /Overview/);
     assert.ok(
-      markup.includes("Observed provider(s)"),
+      markup.includes("Routed provider(s)"),
       `provider column missing; thread table: ${markup.includes("Session threads")}, actual provider: ${markup.includes("claude")}`
     );
     assert.match(markup, /claude/);

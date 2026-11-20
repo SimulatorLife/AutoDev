@@ -32,7 +32,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_VALUE_CLASS,
@@ -240,7 +240,10 @@ export function MemoryExperiencesView({
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
-          exp.startedAt ? instantLabel(exp.startedAt) : "unknown"
+          React.createElement(InstantDisplay, {
+            value: exp.startedAt,
+            label: "Experience start"
+          })
         ),
       meta: {
         // A whole instant -- the date, the clock and the zone -- is 173px, and
@@ -711,7 +714,16 @@ function ExperienceEvidence({
                     : {
                         label: "Reported outcome",
                         value: MEMORY_OUTCOME_LABEL[row.outcome.outcomeKind],
-                        detail: `${MEMORY_REPORT_KIND_LABEL[row.outcome.reportKind]} by ${row.outcome.reporterId} (${MEMORY_AUTHORITY_LABEL[row.outcome.reporterAuthority]}) at ${instantLabel(row.outcome.reportedAt)} — ${MEMORY_OUTCOME_REPORT_REASON_LABEL[row.outcome.reasonCode]}`
+                        detail: React.createElement(
+                          React.Fragment,
+                          null,
+                          `${MEMORY_REPORT_KIND_LABEL[row.outcome.reportKind]} by ${row.outcome.reporterId} (${MEMORY_AUTHORITY_LABEL[row.outcome.reporterAuthority]}) at `,
+                          React.createElement(InstantDisplay, {
+                            value: row.outcome.reportedAt,
+                            label: "Outcome reported"
+                          }),
+                          ` — ${MEMORY_OUTCOME_REPORT_REASON_LABEL[row.outcome.reasonCode]}`
+                        )
                       }
               })
             )
@@ -792,7 +804,7 @@ function EvidenceRow({
   readonly report: {
     readonly label: string;
     readonly value: string;
-    readonly detail: string;
+    readonly detail: React.ReactNode;
   } | null;
   readonly listScope: MemoryListScope;
   readonly experienceId: string;
@@ -821,7 +833,15 @@ function EvidenceRow({
       React.createElement(
         "span",
         { className: MUTED_TEXT_CLASS },
-        `${injection.memoryIds.length} memories · ${injection.packetCharacterCount} chars · ${instantLabel(injection.occurredAt)}`
+        React.createElement(
+          React.Fragment,
+          null,
+          `${injection.memoryIds.length} memories · ${injection.packetCharacterCount} chars · `,
+          React.createElement(InstantDisplay, {
+            value: injection.occurredAt,
+            label: "Injection time"
+          })
+        )
       )
     ),
     React.createElement(

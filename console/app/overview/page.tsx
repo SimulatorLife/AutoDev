@@ -1,20 +1,45 @@
+import { CANONICAL_NAV_GROUPS } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
-import { NavigationLink } from "../../src/components/navigation/NavigationLink.ts";
-import { PageBody } from "../../src/components/layout/PageBody.ts";
 import { SECTION_HEADING_CLASS } from "../../src/components/layout/Heading.ts";
+import { PageBody } from "../../src/components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../src/components/layout/Panel.ts";
+import { NavigationLink } from "../../src/components/navigation/NavigationLink.ts";
 import { MUTED_META_CLASS } from "../../src/components/ui/text-classes.ts";
-import { CANONICAL_NAV_GROUPS } from "@simulatorlife/autodev-core";
+import { OverviewSignals } from "../../src/features/overview/OverviewSignals.ts";
+import type { ControlApiConfig } from "../../src/lib/server/control-api.ts";
 import { ConsolePageShell, readNodeContext } from "../_console.ts";
+import { readOverview } from "./overview-reads.ts";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Overview" };
 
+/** Awaits the slow source reads so the landing content can stream first. */
+async function OverviewSignalsSection({
+  config
+}: {
+  readonly config: ControlApiConfig | null;
+}): Promise<React.JSX.Element> {
+  const data = await readOverview(config);
+  return React.createElement(OverviewSignals, { data });
+}
+
+function OverviewSignalsLoading(): React.JSX.Element {
+  return React.createElement(
+    "p",
+    {
+      className: `${DETAIL_PANEL_CLASS} text-sm text-fg-secondary`,
+      "aria-busy": "true",
+      "data-overview-signals-loading": ""
+    },
+    "Reading live signals from the Runtime, providers, session rollouts and telemetry. No values are shown until each source reports."
+  );
+}
+
 export default function OverviewPage(): React.JSX.Element {
-  const { section } = readNodeContext("/overview");
+  const { section, config } = readNodeContext("/overview");
 
   return React.createElement(
     ConsolePageShell,
@@ -28,6 +53,11 @@ export default function OverviewPage(): React.JSX.Element {
           className: `${DETAIL_PANEL_CLASS} text-sm leading-6 text-fg-secondary`
         },
         "Configure AutoDev resources, inspect observed activity, and manage the workspaces and workflows that run your agents. Choose a resource below to get started."
+      ),
+      React.createElement(
+        React.Suspense,
+        { fallback: React.createElement(OverviewSignalsLoading) },
+        React.createElement(OverviewSignalsSection, { config })
       ),
       CANONICAL_NAV_GROUPS.map((group) =>
         React.createElement(

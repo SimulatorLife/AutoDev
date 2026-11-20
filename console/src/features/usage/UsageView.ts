@@ -43,7 +43,7 @@ import {
   FIELD_GROUP_CLASS,
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
@@ -247,10 +247,34 @@ const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
     }
   },
   {
-    id: "last-activity",
-    header: "Last activity (UTC)",
+    id: "provider",
+    header: "Provider",
     cell: ({ row: { original: session } }) =>
-      instantLabel(new Date(session.lastActivityAt).toISOString()),
+      session.provider ?? NOT_OBSERVED_LABEL,
+    meta: { weight: 120, align: "tokens" }
+  },
+  {
+    id: "model",
+    header: "Model",
+    cell: ({ row: { original: session } }) =>
+      session.model ?? NOT_OBSERVED_LABEL,
+    meta: { weight: 150, align: "tokens" }
+  },
+  {
+    id: "role",
+    header: "Role",
+    cell: ({ row: { original: session } }) =>
+      session.role ?? NOT_OBSERVED_LABEL,
+    meta: { weight: 100, align: "tokens" }
+  },
+  {
+    id: "last-activity",
+    header: "Last activity",
+    cell: ({ row: { original: session } }) =>
+      React.createElement(InstantDisplay, {
+        value: new Date(session.lastActivityAt).toISOString(),
+        label: "Last activity"
+      }),
     meta: {
       weight: 180,
       align: "tokens"
@@ -630,8 +654,12 @@ function traceAttemptColumns(
   return [
     {
       id: "time",
-      header: "Time (UTC)",
-      cell: ({ row: { original: attempt } }) => instantLabel(attempt.timestamp),
+      header: "Time",
+      cell: ({ row: { original: attempt } }) =>
+        React.createElement(InstantDisplay, {
+          value: attempt.timestamp,
+          label: "Attempt time"
+        }),
       meta: {
         weight: 190,
         align: "tokens"
@@ -775,8 +803,12 @@ function traceSpanColumns(
     },
     {
       id: "time",
-      header: "Time (UTC)",
-      cell: ({ row: { original: span } }) => instantLabel(span.timestamp),
+      header: "Time",
+      cell: ({ row: { original: span } }) =>
+        React.createElement(InstantDisplay, {
+          value: span.timestamp,
+          label: "Span time"
+        }),
       meta: {
         weight: 190,
         align: "tokens"
@@ -1247,6 +1279,10 @@ function renderProviderHopMetrics(
               ? null
               : metrics.providerHopsOverTime.map((item) => ({
                   label: item.bucket,
+                  displayLabel: bucketDisplay(
+                    item.bucket,
+                    "Provider hop time bucket"
+                  ),
                   value: item.count,
                   valueText: formatCount(item.count)
                 })),
@@ -1625,6 +1661,10 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                 ? null
                 : metrics.contextCompactionsOverTime.map((item) => ({
                     label: item.bucket,
+                    displayLabel: bucketDisplay(
+                      item.bucket,
+                      "Context compaction time bucket"
+                    ),
                     value: item.count,
                     valueText: formatCount(item.count)
                   })),
@@ -1868,6 +1908,47 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
     ),
     renderGitChangeMetrics(metrics.gitChanges)
   );
+}
+
+/** OpenLIT time-series buckets are UTC wall-clock labels, not local times. */
+function timeBucketInstant(bucket: string): string | null {
+  if (
+    (bucket.length !== 16 && bucket.length !== 19) ||
+    (bucket[10] !== " " && bucket[10] !== "T") ||
+    bucket[13] !== ":" ||
+    (bucket.length === 19 && bucket[16] !== ":")
+  ) {
+    return null;
+  }
+  const digitPositions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15];
+  if (bucket.length === 19) digitPositions.push(17, 18);
+  if (
+    digitPositions.some((index) => {
+      const char = bucket[index];
+      return char === undefined || char < "0" || char > "9";
+    })
+  ) {
+    return null;
+  }
+  const wallClock = `${bucket.slice(0, 10)}T${bucket.slice(11, 16)}:${bucket.length === 19 ? bucket.slice(17, 19) : "00"}`;
+  const date = new Date(`${wallClock}Z`);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.toISOString().slice(0, 19) !== wallClock
+  ) {
+    return null;
+  }
+  return `${wallClock}Z`;
+}
+
+function bucketDisplay(
+  bucket: string,
+  label: string
+): React.ReactNode | undefined {
+  const value = timeBucketInstant(bucket);
+  return value === null
+    ? undefined
+    : React.createElement(InstantDisplay, { value, label });
 }
 
 function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {

@@ -83,8 +83,7 @@ export default async function ProviderDetailPage({
   );
   if (!provider) notFound();
   const quotaExhaustion = providerQuotaView(
-    providersResult.data.quotaAxi,
-    Date.now()
+    providersResult.data.quotaAxi
   ).exhaustion.get(provider.id);
 
   return React.createElement(

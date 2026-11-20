@@ -20,6 +20,7 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -563,12 +564,6 @@ function RoutePanel({
   );
 }
 
-function formatTimestamp(value: string | null): React.ReactNode {
-  return value === null
-    ? "None observed"
-    : React.createElement("time", { dateTime: value }, value);
-}
-
 function HealthPanel({
   health
 }: {
@@ -602,7 +597,12 @@ function HealthPanel({
       React.createElement(
         DetailValue,
         { label: "Cooldown until" },
-        cooldown === null ? "None" : formatTimestamp(cooldown.until)
+        cooldown === null
+          ? "None"
+          : React.createElement(InstantDisplay, {
+              value: cooldown.until,
+              label: "Cooldown until"
+            })
       ),
       React.createElement(
         DetailValue,
@@ -639,7 +639,10 @@ function HealthPanel({
       React.createElement(
         DetailValue,
         { label: "Last success" },
-        formatTimestamp(health.lastSuccessAt)
+        React.createElement(InstantDisplay, {
+          value: health.lastSuccessAt,
+          label: "Last success"
+        })
       ),
       React.createElement(
         DetailValue,
@@ -649,7 +652,10 @@ function HealthPanel({
           : React.createElement(
               "span",
               { className: "flex flex-col gap-0.5" },
-              formatTimestamp(health.lastFailure.at),
+              React.createElement(InstantDisplay, {
+                value: health.lastFailure.at,
+                label: "Last failure"
+              }),
               React.createElement(
                 "span",
                 { className: MUTED_META_CLASS },

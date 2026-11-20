@@ -26,7 +26,7 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { instantLabel } from "../../components/ui/instant.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -359,7 +359,14 @@ function renderPromptHistory(
               }
               return React.createElement(
                 "li",
-                { key: version.versionHash },
+                {
+                  key: version.versionHash,
+                  className: "flex flex-wrap items-center gap-2"
+                },
+                React.createElement(InstantDisplay, {
+                  value: version.updatedAt,
+                  label: "Prompt version updated"
+                }),
                 React.createElement(
                   NavigationLink,
                   {
@@ -371,14 +378,6 @@ function renderPromptHistory(
                       "data-prompt-version": version.versionHash
                     }
                   },
-                  React.createElement(
-                    "time",
-                    {
-                      dateTime: version.updatedAt,
-                      className: "text-fg-secondary"
-                    },
-                    instantLabel(version.updatedAt)
-                  ),
                   React.createElement(
                     "span",
                     { className: `font-mono ${MUTED_TEXT_CLASS}` },
@@ -423,7 +422,16 @@ function renderPromptHistory(
           React.createElement(
             "h4",
             { className: "text-sm font-semibold text-fg" },
-            `Changes since ${selectedVersion.versionHash.slice(0, 12)} (${instantLabel(selectedVersion.updatedAt)})`
+            React.createElement(
+              React.Fragment,
+              null,
+              `Changes since ${selectedVersion.versionHash.slice(0, 12)} (`,
+              React.createElement(InstantDisplay, {
+                value: selectedVersion.updatedAt,
+                label: "Selected prompt version updated"
+              }),
+              ")"
+            )
           ),
           selectedVersion.diff.length > 0
             ? React.createElement(CodeBlock, {
