@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync, type spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   chmodSync,
   existsSync,
@@ -793,15 +795,20 @@ test("a reply splits into prose and tool calls, unwrapping a fenced body", () =>
   });
 });
 
-test("OpenCLI preserves the original message/tool/message order", () => {
+test("OpenCLI retains calls but suppresses prose written after an unexecuted call", () => {
   const parsed = parseOpencliReply(
-    'Before.<tool_call name="exec">text(1)</tool_call>After.'
+    'Before.\n<tool_call name="exec">text(1)</tool_call>\nInvented result.'
   );
   assert.deepEqual(parsed.segments, [
     { type: "message", text: "Before." },
-    { type: "tool_call", call: { name: "exec", input: "text(1)" } },
-    { type: "message", text: "After." }
+    { type: "tool_call", call: { name: "exec", input: "text(1)" } }
   ]);
+  assert.equal(parsed.text, "Before.");
+  const parallel = parseOpencliReply(
+    '<tool_call name="exec">text(1)</tool_call>Invented.\n<tool_call name="wait">now</tool_call>'
+  );
+  assert.deepEqual(parallel.calls.map((call) => call.name), ["exec", "wait"]);
+  assert.deepEqual(parallel.segments.map((segment) => segment.type), ["tool_call", "tool_call"]);
 });
 
 test("a reply that writes its own tool output keeps only what came before it", () => {
@@ -1383,6 +1390,17 @@ test("a reply being written is previewed only as whole, agreed, tool-free prose"
   }
 });
 
+test("blank lines in a preview do not cause a false changed-after-shown error", () => {
+  const preview = new OpencliReplyPreview();
+  const reply = 'First.\n\n\nSecond.\n<tool_call name="exec">text(1)</tool_call>\n';
+  preview.next(reply);
+  preview.next(reply);
+  const parsed = parseOpencliReply(reply);
+  assert.ok(parsed.segments[0]?.type === "message");
+  assert.equal(parsed.text, "First.\n\nSecond.");
+  assert.ok(parsed.text.startsWith(preview.shown));
+});
+
 test("the conversation ledger survives a bridge restart through its file", () => {
   const directory = mkdtempSync(join(tmpdir(), "autodev-opencli-ledger-"));
   const file = join(directory, "run", "opencli-conversations.json");
@@ -1867,7 +1885,7 @@ test("ChatGPT streams stored prose before browser completion without displaying 
   }
 });
 
-test("a streamed response keeps prose on both sides of a tool call", async () => {
+test("a response does not expose speculative prose after a pending tool call", async () => {
   await withBridge(
     [
       {
@@ -1885,16 +1903,14 @@ test("a streamed response keeps prose on both sides of a tool call", async () =>
       ).json()) as { output: JsonRecord[] };
       assert.deepEqual(
         body.output.map((item) => item.type),
-        ["message", "custom_tool_call", "message"]
+        ["message", "custom_tool_call"]
       );
       assert.equal(
         (body.output[0]!.content as JsonRecord[])[0]!.text,
         "Before."
       );
-      assert.equal(
-        (body.output[2]!.content as JsonRecord[])[0]!.text,
-        "After."
-      );
+      // No accidental concatenation of unverified follow-up prose.
+      assert.equal((body as { output_text?: string }).output_text, "Before.");
     }
   );
 });
