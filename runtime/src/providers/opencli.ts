@@ -602,7 +602,15 @@ export function processRunner(
       const site = OPENCLI_SITES.includes(args[0] as OpencliSite)
         ? (args[0] as OpencliSite)
         : null;
-      if (site !== null && (quarantined.get(site) ?? 0) > 0) {
+      const dedicatedEndpoint = env.OPENCLI_CDP_ENDPOINT || null;
+      // Dedicated browser commands quarantine only their own CDP target.
+      // Extension-pool commands do not expose their leased tab to us, so
+      // those still quarantine the site until the CLI is reaped.
+      if (
+        !dedicatedEndpoint &&
+        site !== null &&
+        (quarantined.get(site) ?? 0) > 0
+      ) {
         reject(
           new OpencliCommandError(
             `a cancelled ${site} command has not exited; its tab remains quarantined`,
@@ -673,10 +681,14 @@ export function processRunner(
         signal.removeEventListener("abort", onAbort);
         if (killTimer) clearTimeout(killTimer);
         if (settleTimer) clearTimeout(settleTimer);
-        if (isQuarantined && site !== null) {
-          const remaining = (quarantined.get(site) ?? 1) - 1;
-          if (remaining > 0) quarantined.set(site, remaining);
-          else quarantined.delete(site);
+        if (isQuarantined) {
+          if (dedicatedEndpoint) {
+            browser.releaseQuarantine(dedicatedEndpoint);
+          } else if (site !== null) {
+            const remaining = (quarantined.get(site) ?? 1) - 1;
+            if (remaining > 0) quarantined.set(site, remaining);
+            else quarantined.delete(site);
+          }
         }
       };
       const onAbort = (): void => {
@@ -690,7 +702,10 @@ export function processRunner(
         // Keep the child tracked and its site quarantined until actual close.
         settleTimer = setTimeout(() => {
           if (closed || settled) return;
-          if (site !== null) {
+          if (dedicatedEndpoint) {
+            browser.quarantine(dedicatedEndpoint);
+            isQuarantined = true;
+          } else if (site !== null) {
             quarantined.set(site, (quarantined.get(site) ?? 0) + 1);
             isQuarantined = true;
           }
@@ -753,24 +768,26 @@ export function processRunner(
   return Object.assign(run, {
     browser,
     close: async () => {
-      // A leaked descendant must not survive shutdown just because the
-      // request promise settled before its child's close event.
-      for (const child of live) {
-        if (process.platform !== "win32" && child.pid) {
+      // Browser shutdown must run even if a tracked child rejects a signal.
+      try {
+        for (const child of live) {
+          if (process.platform !== "win32" && child.pid) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+              continue;
+            } catch {
+              // The process group may already be gone.
+            }
+          }
           try {
-            process.kill(-child.pid, "SIGKILL");
-            continue;
+            child.kill("SIGKILL");
           } catch {
-            // The process group may already be gone.
+            // The child can exit between being tracked and shutdown.
           }
         }
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // The child can exit between being tracked and shutdown.
-        }
+      } finally {
+        await browser.close();
       }
-      await browser.close();
     }
   });
 }
