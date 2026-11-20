@@ -212,7 +212,10 @@ test("a cancelled child without close remains tracked and quarantines its site",
     assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
     assert.equal(live.has(fake), true, "the child must remain tracked until close");
     await assert.rejects(
-      runner({ args: ["chatgpt", "ask", "next"], signal: new AbortController().signal }),
+      runner({
+        args: ["chatgpt", "ask", "next"],
+        signal: new AbortController().signal
+      }),
       (error: unknown) =>
         error instanceof OpencliCommandError && error.code === "SITE_BUSY"
     );
@@ -861,10 +864,14 @@ test("OpenCLI retains calls but suppresses prose written after an unexecuted cal
   ]);
   assert.equal(parsed.text, "Before.");
   const parallel = parseOpencliReply(
-    '<tool_call name="exec">text(1)</tool_call>Invented.\n<tool_call name="wait">now</tool_call>'
+    '<tool_call name="exec">text(1)</tool_call>Invented.\n' +
+      '<tool_call name="wait">now</tool_call>'
   );
   assert.deepEqual(parallel.calls.map((call) => call.name), ["exec", "wait"]);
-  assert.deepEqual(parallel.segments.map((segment) => segment.type), ["tool_call", "tool_call"]);
+  assert.deepEqual(
+    parallel.segments.map((segment) => segment.type),
+    ["tool_call", "tool_call"]
+  );
 });
 
 test("a reply that writes its own tool output keeps only what came before it", () => {
