@@ -199,7 +199,10 @@ test("a cancelled child without close remains tracked and quarantines its site",
   );
   const controller = new AbortController();
   try {
-    const turn = runner({ args: ["chatgpt", "ask", "x"], signal: controller.signal });
+    const turn = runner({
+      args: ["chatgpt", "ask", "x"],
+      signal: controller.signal
+    });
     const settled = assert.rejects(turn, /did not exit after SIGKILL/u);
     controller.abort();
     // A referenced test timer keeps the event loop running despite unref'd
@@ -209,7 +212,11 @@ test("a cancelled child without close remains tracked and quarantines its site",
       new Promise<void>((resolve) => setTimeout(resolve, 5200))
     ]);
     assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
-    assert.equal(live.has(fake), true, "the child must remain tracked until close");
+    assert.equal(
+      live.has(fake),
+      true,
+      "the child must remain tracked until close"
+    );
     await assert.rejects(
       runner({
         args: ["chatgpt", "ask", "next"],
@@ -229,7 +236,7 @@ test("a cancelled child without close remains tracked and quarantines its site",
 
 test("runner shutdown still closes the browser if a child rejects SIGKILL", async () => {
   let closed = false;
-  const child = Object.assign(new EventEmitter(), {
+  const child = Object.assign(new PassThrough(), {
     pid: undefined,
     kill: () => {
       throw new Error("process already exited");
