@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, spawnSync, type spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -20,6 +18,7 @@ import {
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -174,7 +173,7 @@ test("a cancelled child without close remains tracked and quarantines its site",
   const stderr = new PassThrough();
   const progress = new PassThrough();
   const signals: string[] = [];
-  const fake = Object.assign(new EventEmitter(), {
+  const fake = Object.assign(new PassThrough(), {
     pid: undefined,
     stdout,
     stderr,
