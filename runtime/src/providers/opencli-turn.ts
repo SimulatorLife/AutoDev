@@ -1304,9 +1304,17 @@ export function parseOpencliReply(response: string): ParsedReply {
   const usable = invented ? source.slice(0, invented.index) : source;
   const segments: ParsedReplySegment[] = [];
   let offset = 0;
+  let beforeFirstCall = true;
+  let firstMessage = "";
   for (const match of usable.matchAll(TOOL_CALL_PATTERN)) {
     const before = cleanText(usable.slice(offset, match.index));
-    if (before) segments.push({ type: "message", text: before });
+    if (beforeFirstCall) {
+      // Codex has not executed the call yet: any later prose would be an
+      // unverified continuation, even without an explicit <tool_output>.
+      firstMessage = before;
+      if (before) segments.push({ type: "message", text: before });
+      beforeFirstCall = false;
+    }
     const call: ParsedToolCall = {
       name: match[2] ?? "",
       input: callBody(match[3] ?? "")
@@ -1315,15 +1323,21 @@ export function parseOpencliReply(response: string): ParsedReply {
     segments.push({ type: "tool_call", call });
     offset = match.index + match[0].length;
   }
-  const after = cleanText(usable.slice(offset));
-  if (after) segments.push({ type: "message", text: after });
-  // Retain the original combined-text contract for diagnostics and tests.
-  const text = cleanText(usable.replaceAll(TOOL_CALL_PATTERN, ""));
+  // The assistant may emit several independent calls. Keep those calls in
+  // order, but never display prose it wrote after its first unexecuted call.
+  const text = beforeFirstCall ? cleanText(usable) : firstMessage;
+  if (beforeFirstCall && text)
+    segments.push({ type: "message", text });
+  // Do not silently accept an incomplete call even in discarded trailing
+  // prose; the model must repair the malformed request on another route.
+  const unparsedCall = TOOL_CALL_OPENING.test(
+    usable.replaceAll(TOOL_CALL_PATTERN, "")
+  );
   return {
     text,
     calls,
     segments,
-    unparsedCall: TOOL_CALL_OPENING.test(text),
+    unparsedCall,
     inventedOutput: invented !== null
   };
 }
