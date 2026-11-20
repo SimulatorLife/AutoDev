@@ -168,7 +168,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2340,40 +2352,189 @@
+@@ -2340,40 +2352,195 @@
      return '';
  }
  
@@ -282,6 +282,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +    let storedErrorSince = 0;
 +    let wrongPromptSince = 0;
 +    let lastGenerating = false;
++    let stoppedGeneratingSince = 0;
 +    const progressFd = Number(process.env.OPENCLI_PROGRESS_FD);
 +    const writeProgress = Number.isInteger(progressFd) && progressFd >= 3
 +        ? (await import('node:fs')).writeSync : null;
@@ -314,8 +315,12 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +        const generatingNow = await isGenerating(page);
 +        lastGenerating = generatingNow;
 +        if (generatingNow) {
++            stoppedGeneratingSince = 0;
 +            storedErrorSince = 0;
 +            wrongPromptSince = 0;
++        } else if (!stoppedGeneratingSince) {
++            // Time the fallback from observed cessation, not the last partial.
++            stoppedGeneratingSince = Date.now();
 +        }
 +        const stored = await readChatGPTStoredReply(page, conversationId);
 +        if (stored.error) {
@@ -368,7 +373,8 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +            }
 +            reportedText = stored.text;
 +        }
-+        if (chatgptReplyCanFinish(stored, now - lastStoredChange, generatingNow)) {
++        const stableMs = Math.min(now - lastStoredChange, now - stoppedGeneratingSince);
++        if (chatgptReplyCanFinish(stored, stableMs, generatingNow)) {
 +            return stored.text;
 +        }
      }
@@ -381,7 +387,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
      throw new TimeoutError(
          'chatgpt ask',
          timeoutSeconds,
-@@ -2670,6 +2831,97 @@
+@@ -2670,6 +2837,97 @@
      };
  `;
  
@@ -479,7 +485,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2929,7 @@
+@@ -2677,30 +2935,7 @@
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -511,7 +517,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3926,80 @@
+@@ -3697,3 +3932,80 @@
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
