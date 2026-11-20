@@ -169,6 +169,62 @@ test("an aborted command that ignores SIGTERM is killed and its turn settles", a
   }
 });
 
+test("a cancelled child without close remains tracked and quarantines its site", async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const progress = new PassThrough();
+  const signals: string[] = [];
+  const fake = Object.assign(new EventEmitter(), {
+    pid: undefined,
+    stdout,
+    stderr,
+    stdio: [null, stdout, stderr, progress],
+    kill: (signal: string) => {
+      signals.push(signal);
+      return true;
+    }
+  }) as unknown as ChildProcess;
+  let spawned = 0;
+  const spawnCommand = (() => {
+    spawned += 1;
+    return fake;
+  }) as typeof spawn;
+  const live = new Set<ChildProcess>();
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    ONE_TAB_PER_SITE,
+    () => false,
+    live,
+    undefined,
+    spawnCommand
+  );
+  const controller = new AbortController();
+  try {
+    const turn = runner({ args: ["chatgpt", "ask", "x"], signal: controller.signal });
+    const settled = assert.rejects(turn, /did not exit after SIGKILL/u);
+    controller.abort();
+    // A referenced test timer keeps the event loop running despite unref'd
+    // cancellation timers. The mocked child never emits close on its own.
+    await Promise.all([
+      settled,
+      new Promise<void>((resolve) => setTimeout(resolve, 5200))
+    ]);
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(live.has(fake), true, "the child must remain tracked until close");
+    await assert.rejects(
+      runner({ args: ["chatgpt", "ask", "next"], signal: new AbortController().signal }),
+      (error: unknown) =>
+        error instanceof OpencliCommandError && error.code === "SITE_BUSY"
+    );
+    assert.equal(spawned, 1, "a quarantined site must not spawn another CLI");
+    fake.emit("close", null);
+    assert.equal(live.has(fake), false);
+  } finally {
+    fake.emit("close", null);
+    await runner.close();
+  }
+});
+
 test("a pre-aborted runner request never starts a child process", async () => {
   let commands = 0;
   const runner = processRunner(
