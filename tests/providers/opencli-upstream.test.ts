@@ -1192,7 +1192,6 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
   ]);
 });
 
-
 test("ChatGPT publishes changing stored text while generation is still active", async () => {
   const utils = await chatgptReplyUtils();
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
@@ -1289,7 +1288,8 @@ test("the stored reply must belong to the submitted prompt", async () => {
   assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     "Wrong reply",
-    () => Response.json(storedConversation(true, "Wrong reply", "A different prompt")),
+    () =>
+      Response.json(storedConversation(true, "Wrong reply", "A different prompt")),
     () => true
   );
   await assert.rejects(
@@ -1303,7 +1303,9 @@ test("the stored reply must belong to the submitted prompt", async () => {
 
 test("the pnpm lock references the exact OpenCLI patch SHA256 in all three locations", () => {
   const patch = readFileSync(
-    fileURLToPath(new URL("../../patches/@jackwener__opencli@2.0.3.patch", import.meta.url))
+    fileURLToPath(
+      new URL("../../patches/@jackwener__opencli@2.0.3.patch", import.meta.url)
+    )
   );
   const lock = readFileSync(
     fileURLToPath(new URL("../../pnpm-lock.yaml", import.meta.url)),
@@ -1314,8 +1316,9 @@ test("the pnpm lock references the exact OpenCLI patch SHA256 in all three locat
     lock.includes("'@jackwener/opencli@2.0.3': " + digest),
     "the patchedDependencies entry must match the patch bytes"
   );
-  const importerHashes = [...lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu)]
-    .map((match) => match[1]);
+  const importerHashes = [
+    ...lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu)
+  ].map((match) => match[1]);
   assert.deepEqual(importerHashes, [digest, digest]);
 });
 
