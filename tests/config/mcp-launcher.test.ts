@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   findCocoindexProjectRoot,
+  resolveCocoindexInitRoot,
   resolveMcpCommand,
   resolveMcpWorkspace,
   runMcp
@@ -25,6 +27,10 @@ import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shar
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const mcpLauncherHook = join(repositoryRoot, "scripts", "run-autodev-mcp.sh");
+
+/** A `ccc` stand-in whose `init` writes the project marker the real one writes. */
+const MOCK_CCC_INIT =
+  'if [ "$1" = "init" ]; then mkdir -p .cocoindex_code && touch .cocoindex_code/settings.yml; fi\n';
 
 function createIsolatedTempDir(prefix: string): string {
   const candidates = Array.from(new Set(["/var/tmp", tmpdir()]));
@@ -194,10 +200,7 @@ test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
     mkdirSync(pnpmBin, { recursive: true });
     writeFileSync(launcher, "export {};\n");
     const pnpmNode = join(pnpmBin, "node");
-    writeFileSync(
-      pnpmNode,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`
-    );
+    writeFileSync(pnpmNode, `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`);
     chmodSync(pnpmNode, 0o755);
 
     const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
@@ -322,10 +325,7 @@ test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () =
   const prevCwd = process.cwd();
   try {
     const mockBin = join(tempDir, "mock-ccc");
-    writeFileSync(
-      mockBin,
-      '#!/usr/bin/env bash\nif [ "$1" = "init" ]; then mkdir -p .cocoindex_code; fi\nexit 0\n'
-    );
+    writeFileSync(mockBin, `#!/usr/bin/env bash\n${MOCK_CCC_INIT}exit 0\n`);
     chmodSync(mockBin, 0o755);
 
     process.chdir(tempDir);
@@ -336,7 +336,7 @@ test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () =
       AUTODEV_COCOINDEX_BIN: mockBin
     });
     assert.equal(status, 0);
-    assert.equal(existsSync(join(tempDir, ".cocoindex_code")), true);
+    assert.equal(findCocoindexProjectRoot(tempDir), tempDir);
   } finally {
     process.chdir(prevCwd);
     rmSync(tempDir, { recursive: true, force: true });
@@ -387,10 +387,117 @@ test("findCocoindexProjectRoot agrees with the ancestor walk ccc performs", () =
     assert.equal(findCocoindexProjectRoot(nested), null);
 
     mkdirSync(join(repo, ".cocoindex_code"));
+    // A bare settings directory is ccc's user-level home, not a project.
+    writeFileSync(join(repo, ".cocoindex_code", "global_settings.yml"), "");
+    assert.equal(findCocoindexProjectRoot(nested), null);
+
+    writeFileSync(join(repo, ".cocoindex_code", "settings.yml"), "");
     assert.equal(findCocoindexProjectRoot(nested), repo);
     assert.equal(findCocoindexProjectRoot(repo), repo);
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("resolveCocoindexInitRoot initializes where ccc init would, and never the home directory", () => {
+  const home = realpathSync(createIsolatedTempDir("autodev-cocoindex-home-"));
+  try {
+    mkdirSync(join(home, ".cocoindex_code"));
+    writeFileSync(join(home, ".cocoindex_code", "global_settings.yml"), "");
+    const plain = join(home, "notes");
+    const repo = join(home, "repo");
+    const nested = join(repo, "packages", "app");
+    mkdirSync(plain);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+
+    assert.equal(resolveCocoindexInitRoot(plain, home), plain);
+    assert.equal(resolveCocoindexInitRoot(nested, home), repo);
+    assert.equal(resolveCocoindexInitRoot(repo, home), repo);
+    for (const covering of [home, dirname(home), "/"])
+      assert.throws(
+        () => resolveCocoindexInitRoot(covering, home),
+        /will not index .*home directory, one of its ancestors or the filesystem root/
+      );
+
+    // ccc compares physical paths, so a symlinked spelling of the home or the
+    // workspace still names the same directories.
+    const alias = join(
+      createIsolatedTempDir("autodev-cocoindex-alias-"),
+      "home"
+    );
+    try {
+      symlinkSync(home, alias);
+      assert.equal(resolveCocoindexInitRoot(join(alias, "notes"), home), plain);
+      assert.equal(resolveCocoindexInitRoot(nested, alias), repo);
+      assert.throws(
+        () => resolveCocoindexInitRoot(alias, home),
+        /will not index/
+      );
+      assert.throws(
+        () => resolveCocoindexInitRoot(home, alias),
+        /will not index/
+      );
+    } finally {
+      rmSync(dirname(alias), { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("runMcp initializes a repository under a home that holds ccc's user settings", () => {
+  // ~/.cocoindex_code is ccc's user-level directory. Taking it for a project
+  // skipped initialization for every workspace under the home directory, and
+  // `ccc mcp` then exited with "Not in an initialized project directory".
+  const home = realpathSync(createIsolatedTempDir("autodev-mcp-home-"));
+  const prevCwd = process.cwd();
+  try {
+    mkdirSync(join(home, ".cocoindex_code"));
+    writeFileSync(join(home, ".cocoindex_code", "global_settings.yml"), "");
+    const repo = join(home, "repo");
+    const workspace = join(repo, "packages", "app");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(workspace, { recursive: true });
+    const mockBin = join(home, "mock-ccc");
+    const seenCwd = join(home, "seen-cwd");
+    writeFileSync(
+      mockBin,
+      `#!/usr/bin/env bash\n${MOCK_CCC_INIT}pwd > "${seenCwd}"\nexit 0\n`
+    );
+    chmodSync(mockBin, 0o755);
+
+    process.chdir(workspace);
+    const status = runMcp("cocoindex-code", home, {
+      ...process.env,
+      HOME: home,
+      AUTODEV_COCOINDEX_BIN: mockBin
+    });
+    assert.equal(status, 0);
+    assert.equal(findCocoindexProjectRoot(workspace), repo);
+    assert.equal(
+      existsSync(join(home, ".cocoindex_code", "settings.yml")),
+      false
+    );
+    assert.equal(readFileSync(seenCwd, "utf8").trim(), workspace);
+
+    process.chdir(home);
+    assert.throws(
+      () =>
+        runMcp("cocoindex-code", home, {
+          ...process.env,
+          HOME: home,
+          AUTODEV_COCOINDEX_BIN: mockBin
+        }),
+      /will not index/
+    );
+    assert.equal(
+      existsSync(join(home, ".cocoindex_code", "settings.yml")),
+      false
+    );
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -408,7 +515,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
     const seenCwd = join(root, "seen-cwd");
     writeFileSync(
       mockBin,
-      `#!/usr/bin/env bash\nif [ "$1" = "init" ]; then mkdir -p .cocoindex_code; fi\npwd > "${seenCwd}"\nexit 0\n`
+      `#!/usr/bin/env bash\n${MOCK_CCC_INIT}pwd > "${seenCwd}"\nexit 0\n`
     );
     chmodSync(mockBin, 0o755);
 
@@ -422,7 +529,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
     // macOS may spell a temp workspace as /tmp or /private/tmp; the spawned
     // process reports the physical cwd, which must still be the declared workspace.
     assert.equal(readFileSync(seenCwd, "utf8").trim(), realpathSync(workspace));
-    assert.equal(existsSync(join(workspace, ".cocoindex_code")), true);
+    assert.equal(findCocoindexProjectRoot(workspace), workspace);
     assert.equal(existsSync(join(elsewhere, ".cocoindex_code")), false);
   } finally {
     process.chdir(prevCwd);

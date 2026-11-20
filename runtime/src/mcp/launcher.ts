@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,22 @@ export type McpName =
   | "cocoindex-code"
   | typeof MCP_SERVER_CODEGRAPHCONTEXT
   | typeof MCP_SERVER_PLAYTEST;
+/**
+ * The physical form of `dir`, as ccc sees it: ccc resolves every path it
+ * walks, so a symlinked spelling (`/tmp` for `/private/tmp`, an aliased home)
+ * has to be compared in that same form or the launcher and ccc disagree about
+ * which ancestor is the project, the repository or the home directory. A path
+ * that does not exist has no physical form and stays as written.
+ */
+function physicalPath(dir: string): string {
+  const resolved = path.resolve(dir);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 /**
  * `pathPrepend` holds directories the server needs ahead of the caller's PATH.
  * lsp-mcp-server spawns its language servers (`typescript-language-server`)
@@ -129,19 +146,67 @@ export function resolveMcpWorkspace(
 }
 
 /**
- * The nearest ancestor of `startDir` that holds a `.cocoindex_code` project, or
- * null when the directory sits outside every initialized cocoindex project.
- * `ccc mcp` performs this same ancestor walk, so the launcher has to agree with
- * it before deciding whether a project needs initializing.
+ * The nearest ancestor of `startDir` that holds a cocoindex project, or null
+ * when the directory sits outside every initialized cocoindex project.
+ *
+ * A project is marked by `.cocoindex_code/settings.yml`, not by the directory
+ * alone: `~/.cocoindex_code/` is ccc's user-level directory (its
+ * `global_settings.yml` and daemon socket), so a walk that stopped at any
+ * `.cocoindex_code` directory took the home directory for a project from every
+ * workspace under it, skipped initialization, and left `ccc mcp` exiting with
+ * "Not in an initialized project directory". `ccc mcp` performs this same walk
+ * for this same marker, so the launcher has to agree with it before deciding
+ * whether a project needs initializing.
  */
 export function findCocoindexProjectRoot(startDir: string): string | null {
-  let dir = path.resolve(startDir);
+  let dir = physicalPath(startDir);
   for (;;) {
-    if (existsSync(path.join(dir, ".cocoindex_code"))) return dir;
+    if (existsSync(path.join(dir, ".cocoindex_code", "settings.yml")))
+      return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/**
+ * The directory `ccc init` should run in to give `workspace` a project.
+ *
+ * `ccc init` refuses to initialize below a directory that already carries a
+ * project marker -- a `.git` directory or a project's settings, looked for
+ * strictly below the home directory -- and ccc's own auto-init anchors at that
+ * marker, so a workspace inside a repository initializes the repository's root.
+ * Without a marker the workspace itself is the project. The home directory,
+ * its ancestors and the filesystem root are never a project: initializing one
+ * would index everything beneath it, so a server started there is refused
+ * rather than bound to the wrong tree.
+ */
+export function resolveCocoindexInitRoot(
+  workspace: string,
+  home: string = homedir()
+): string {
+  const resolvedHome = physicalPath(home);
+  let root = physicalPath(workspace);
+  for (let dir = root; dir !== resolvedHome;) {
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    if (
+      existsSync(path.join(dir, ".cocoindex_code", "settings.yml")) ||
+      existsSync(path.join(dir, ".git"))
+    ) {
+      root = dir;
+      break;
+    }
+    dir = parent;
+  }
+  const relativeToRoot = path.relative(root, resolvedHome);
+  const coversHome =
+    !relativeToRoot.startsWith("..") && !path.isAbsolute(relativeToRoot);
+  if (coversHome || path.dirname(root) === root)
+    throw new Error(
+      `AutoDev cocoindex-code will not index ${root}: it is the home directory, one of its ancestors or the filesystem root. Start the server inside a project workspace or point AUTODEV_MCP_WORKSPACE at one.`
+    );
+  return root;
 }
 
 export function runMcp(
@@ -166,7 +231,7 @@ export function runMcp(
       : env;
   if (name === "cocoindex-code" && !findCocoindexProjectRoot(workspace)) {
     spawnSync(command.binary, ["init"], {
-      cwd: workspace,
+      cwd: resolveCocoindexInitRoot(workspace, env.HOME || homedir()),
       env,
       stdio: ["ignore", "ignore", "inherit"]
     });

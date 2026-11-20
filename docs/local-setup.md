@@ -261,13 +261,21 @@ packages.
 That cwd contract only holds when the caller launches from inside the
 workspace. A host that starts MCP servers from its own process directory
 instead leaves `cocoindex-code` with no project at all: `ccc mcp` binds its
-index to the nearest ancestor holding `.cocoindex_code` and refuses to start
-when there is none, and its auto-init cannot create one on a read-only root.
+index to the nearest ancestor holding `.cocoindex_code/settings.yml` and
+refuses to start when there is none, and its auto-init cannot create one on a
+read-only root. The settings file is the project marker, not the directory:
+`~/.cocoindex_code/` is ccc's user-level directory (`global_settings.yml` and
+its daemon), so it never makes the home directory a project.
 Such a caller sets `AUTODEV_MCP_WORKSPACE` to the absolute path of the active
 workspace, and `runtime/src/mcp/launcher.ts` runs the server there rather than
 inheriting the caller's directory. The launcher rejects a relative or missing
 workspace rather than starting in the wrong project, and initializes a
-cocoindex project in the workspace only when no ancestor already holds one.
+cocoindex project only when no ancestor already holds one. It initializes where
+`ccc init` itself would: the nearest ancestor below the home directory that
+holds `.git`, otherwise the workspace. It refuses to initialize the home
+directory, any of its ancestors or the filesystem root, because that would index
+everything beneath it, so a server started with no workspace (for example from
+`$HOME`) exits with that reason instead.
 `AUTODEV_MCP_WORKSPACE` composes with `AUTODEV_REPO_ROOT`, which selects the
 AutoDev checkout supplying the launcher code and its pinned binaries, so a host
 with more than one AutoDev checkout still runs the workspace it intends.
