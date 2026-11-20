@@ -228,6 +228,31 @@ test("a cancelled child without close remains tracked and quarantines its site",
   }
 });
 
+test("runner shutdown still closes the browser if a child rejects SIGKILL", async () => {
+  let closed = false;
+  const child = Object.assign(new EventEmitter(), {
+    pid: undefined,
+    kill: () => {
+      throw new Error("process already exited");
+    }
+  }) as unknown as ChildProcess;
+  const live = new Set<ChildProcess>([child]);
+  const browser = {
+    close: async () => {
+      closed = true;
+    }
+  } as never;
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    ONE_TAB_PER_SITE,
+    () => false,
+    live,
+    browser
+  );
+  await runner.close();
+  assert.equal(closed, true);
+});
+
 test("a pre-aborted runner request never starts a child process", async () => {
   let commands = 0;
   const runner = processRunner(
@@ -1974,6 +1999,41 @@ test("a response does not expose speculative prose after a pending tool call", a
       );
       // No accidental concatenation of unverified follow-up prose.
       assert.equal((body as { output_text?: string }).output_text, "Before.");
+    }
+  );
+});
+
+test("SSE final output keeps the first message before the pending tool call", async () => {
+  await withBridge(
+    [{
+      response: 'Before.\n<tool_call name="exec">text(1)</tool_call>\nAfter.',
+      conversationId: "ordered-chat"
+    }],
+    async (baseUrl) => {
+      const response = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [EXEC_TOOL],
+        stream: true,
+        input: "inspect"
+      });
+      const events = sseEvents(await response.text());
+      const added = events.filter(
+        (entry) => entry.event === "response.output_item.added"
+      );
+      const completed = events.find(
+        (entry) => entry.event === "response.completed"
+      )!.data.response as { output: JsonRecord[] };
+      assert.deepEqual(
+        completed.output.map((item) => item.type),
+        ["message", "custom_tool_call"]
+      );
+      assert.deepEqual(
+        added.map((entry) => entry.data.output_index),
+        [0, 1]
+      );
+      assert.equal(added[0]?.data.item && (added[0].data.item as JsonRecord).id,
+        completed.output[0]?.id);
+      assert.doesNotMatch(JSON.stringify(completed), /After\./u);
     }
   );
 });
