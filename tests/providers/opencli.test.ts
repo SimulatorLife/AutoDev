@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, type spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +18,7 @@ import {
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -124,6 +125,160 @@ test("with the dedicated browser off, the process runner uses the extension's ta
     await runner.close();
     if (previousEndpoint === undefined) delete process.env.OPENCLI_CDP_ENDPOINT;
     else process.env.OPENCLI_CDP_ENDPOINT = previousEndpoint;
+  }
+});
+
+test("an aborted command that ignores SIGTERM is killed and its turn settles", async () => {
+  // `child.killed` is true once SIGTERM is delivered, so the SIGKILL fallback
+  // was never sent and a command that ignored SIGTERM held its turn open.
+  const script = [
+    'process.on("SIGTERM", () => {});',
+    'process.stdout.write("ready");',
+    "setInterval(() => {}, 1000);"
+  ].join("");
+  const live = new Set<ChildProcess>();
+  const runner = processRunner(
+    () => ({ command: process.execPath, args: ["-e", script] }),
+    { chatgpt: 1, gemini: 1 },
+    () => false,
+    live
+  );
+  const controller = new AbortController();
+  try {
+    const turn = runner({
+      args: ["chatgpt", "ask", "x"],
+      signal: controller.signal
+    });
+    const [child] = live;
+    assert.ok(child, "the command was started");
+    await new Promise<void>((resolve) =>
+      child.stdout!.once("data", () => resolve())
+    );
+    controller.abort();
+    const started = Date.now();
+    await assert.rejects(turn, /turn cancelled/u);
+    assert.ok(
+      Date.now() - started < 5000,
+      "the turn settled after the grace period"
+    );
+    assert.equal(child.signalCode, "SIGKILL");
+  } finally {
+    for (const child of live) child.kill("SIGKILL");
+    await runner.close();
+  }
+});
+
+test("a cancelled child without close remains tracked and quarantines its site", async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const progress = new PassThrough();
+  const signals: string[] = [];
+  const fake = Object.assign(new PassThrough(), {
+    pid: undefined,
+    stdout,
+    stderr,
+    stdio: [null, stdout, stderr, progress],
+    kill: (signal: string) => {
+      signals.push(signal);
+      return true;
+    }
+  }) as unknown as ChildProcess;
+  let spawned = 0;
+  const spawnCommand = (() => {
+    spawned += 1;
+    return fake;
+  }) as typeof spawn;
+  const live = new Set<ChildProcess>();
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    ONE_TAB_PER_SITE,
+    () => false,
+    live,
+    undefined,
+    spawnCommand
+  );
+  const controller = new AbortController();
+  try {
+    const turn = runner({
+      args: ["chatgpt", "ask", "x"],
+      signal: controller.signal
+    });
+    const settled = assert.rejects(turn, /did not exit after SIGKILL/u);
+    controller.abort();
+    // A referenced test timer keeps the event loop running despite unref'd
+    // cancellation timers. The mocked child never emits close on its own.
+    await Promise.all([
+      settled,
+      new Promise<void>((resolve) => setTimeout(resolve, 5200))
+    ]);
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(
+      live.has(fake),
+      true,
+      "the child must remain tracked until close"
+    );
+    await assert.rejects(
+      runner({
+        args: ["chatgpt", "ask", "next"],
+        signal: new AbortController().signal
+      }),
+      (error: unknown) =>
+        error instanceof OpencliCommandError && error.code === "SITE_BUSY"
+    );
+    assert.equal(spawned, 1, "a quarantined site must not spawn another CLI");
+    fake.emit("close", null);
+    assert.equal(live.has(fake), false);
+  } finally {
+    fake.emit("close", null);
+    await runner.close();
+  }
+});
+
+test("runner shutdown still closes the browser if a child rejects SIGKILL", async () => {
+  let closed = false;
+  const child = Object.assign(new PassThrough(), {
+    pid: undefined,
+    kill: () => {
+      throw new Error("process already exited");
+    }
+  }) as unknown as ChildProcess;
+  const live = new Set<ChildProcess>([child]);
+  const browser = {
+    close: async () => {
+      closed = true;
+    }
+  } as never;
+  const runner = processRunner(
+    ECHO_OPENCLI,
+    ONE_TAB_PER_SITE,
+    () => false,
+    live,
+    browser
+  );
+  await runner.close();
+  assert.equal(closed, true);
+});
+
+test("a pre-aborted runner request never starts a child process", async () => {
+  let commands = 0;
+  const runner = processRunner(
+    () => {
+      commands += 1;
+      return ECHO_OPENCLI();
+    },
+    ONE_TAB_PER_SITE,
+    () => false
+  );
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await assert.rejects(
+      runner({ args: ["chatgpt", "ask-file"], signal: controller.signal }),
+      /turn cancelled/u
+    );
+    assert.equal(commands, 0);
+  } finally {
+    await runner.close();
   }
 });
 
@@ -724,9 +879,33 @@ test("a reply splits into prose and tool calls, unwrapping a fenced body", () =>
   assert.deepEqual(parseOpencliReply("All done."), {
     text: "All done.",
     calls: [],
+    segments: [{ type: "message", text: "All done." }],
     unparsedCall: false,
     inventedOutput: false
   });
+});
+
+test("OpenCLI retains calls but suppresses prose written after an unexecuted call", () => {
+  const parsed = parseOpencliReply(
+    'Before.\n<tool_call name="exec">text(1)</tool_call>\nInvented result.'
+  );
+  assert.deepEqual(parsed.segments, [
+    { type: "message", text: "Before." },
+    { type: "tool_call", call: { name: "exec", input: "text(1)" } }
+  ]);
+  assert.equal(parsed.text, "Before.");
+  const parallel = parseOpencliReply(
+    '<tool_call name="exec">text(1)</tool_call>Invented.\n' +
+      '<tool_call name="wait">now</tool_call>'
+  );
+  assert.deepEqual(
+    parallel.calls.map((call) => call.name),
+    ["exec", "wait"]
+  );
+  assert.deepEqual(
+    parallel.segments.map((segment) => segment.type),
+    ["tool_call", "tool_call"]
+  );
 });
 
 test("a reply that writes its own tool output keeps only what came before it", () => {
@@ -1277,43 +1456,6 @@ test("the process runner hears progress on its own descriptor, apart from the re
   }
 });
 
-test("an aborted command that ignores SIGTERM is killed and its turn settles", async () => {
-  // `child.killed` is true once SIGTERM is delivered, so the SIGKILL fallback
-  // was never sent and a command that ignored SIGTERM held its turn open.
-  const script = [
-    'process.on("SIGTERM", () => {});',
-    'process.stdout.write("ready");',
-    "setInterval(() => {}, 1000);"
-  ].join("");
-  const live = new Set<import("node:child_process").ChildProcess>();
-  const runner = processRunner(
-    () => ({ command: process.execPath, args: ["-e", script] }),
-    { chatgpt: 1, gemini: 1 },
-    () => false,
-    live
-  );
-  const controller = new AbortController();
-  try {
-    const turn = runner({
-      args: ["chatgpt", "ask", "x"],
-      signal: controller.signal
-    });
-    const [child] = live;
-    assert.ok(child, "the command was started");
-    await new Promise<void>((resolve) =>
-      child.stdout!.once("data", () => resolve())
-    );
-    controller.abort();
-    const started = Date.now();
-    await assert.rejects(turn, /turn cancelled/u);
-    assert.ok(Date.now() - started < 5000, "the turn settled after the grace period");
-    assert.equal(child.signalCode, "SIGKILL");
-  } finally {
-    for (const child of live) child.kill("SIGKILL");
-    await runner.close();
-  }
-});
-
 test("a reply being written is previewed only as whole, agreed, tool-free prose", () => {
   const preview = new OpencliReplyPreview();
   // A line still being written is not shown, nor is one reading's word.
@@ -1343,6 +1485,18 @@ test("a reply being written is previewed only as whole, agreed, tool-free prose"
     guarded.next(text);
     assert.equal(guarded.shown, "Fine.", marker);
   }
+});
+
+test("blank lines in a preview do not cause a false changed-after-shown error", () => {
+  const preview = new OpencliReplyPreview();
+  const reply =
+    'First.\n\n\nSecond.\n<tool_call name="exec">text(1)</tool_call>\n';
+  preview.next(reply);
+  preview.next(reply);
+  const parsed = parseOpencliReply(reply);
+  assert.ok(parsed.segments[0]?.type === "message");
+  assert.equal(parsed.text, "First.\n\nSecond.");
+  assert.ok(parsed.text.startsWith(preview.shown));
 });
 
 test("the conversation ledger survives a bridge restart through its file", () => {
@@ -1763,6 +1917,138 @@ test("a tool call goes to Codex and its output continues the same site conversat
       assert.match(runs.prompts[1]!, /- `exec`/u);
       assert.ok(runs.prompts[1]!.length < runs.prompts[0]!.length);
       assert.doesNotMatch(runs.prompts[1]!, /Which directory is this\?/u);
+    }
+  );
+});
+
+test("ChatGPT streams stored prose before browser completion without displaying tool markup", async () => {
+  let finish: () => void = () => {};
+  const chatUrl = "https://chatgpt.com/c/12345678-abcd-12ab-12ab-123456789abc";
+  const bridge = createOpencliBridge({
+    siteTabs: ONE_TAB_PER_SITE,
+    authToken: "",
+    turnTimeoutSeconds: 30,
+    run: async (request) => {
+      if (request.args[1] === "model")
+        return [{ Status: "ok", Model: String(request.args[2]) }];
+      request.onProgress?.({ text: "Checking.\nStill wri", url: chatUrl });
+      request.onProgress?.({
+        text: 'Checking.\nWorking.\n<tool_call name="exec">text(',
+        url: chatUrl
+      });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return [
+        {
+          response:
+            'Checking.\nWorking.\n<tool_call name="exec">text(1)</tool_call>',
+          conversation_id: "12345678-abcd-12ab-12ab-123456789abc"
+        }
+      ];
+    }
+  });
+  const server = createServer((request, response) => {
+    void bridge.handle(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const response = await post(`http://127.0.0.1:${port}`, {
+      model: "opencli-chatgpt-balanced",
+      stream: true,
+      input: "inspect",
+      tools: [EXEC_TOOL]
+    });
+    const reader = response.body!.getReader();
+    const seen = { text: "" };
+    await readUntil(reader, seen, (text) =>
+      text.includes('"delta":"Checking."')
+    );
+    assert.doesNotMatch(seen.text, /response.completed/u);
+    assert.doesNotMatch(seen.text, /custom_tool_call/u);
+    finish();
+    await readUntil(reader, seen, () => false);
+    const events = sseEvents(seen.text);
+    const completed = events.find(
+      (entry) => entry.event === "response.completed"
+    )!.data.response as { output: JsonRecord[] };
+    assert.deepEqual(
+      completed.output.map((item) => item.type),
+      ["message", "custom_tool_call"]
+    );
+    assert.equal(events.at(-1)?.event, "response.completed");
+  } finally {
+    finish();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a response does not expose speculative prose after a pending tool call", async () => {
+  await withBridge(
+    [
+      {
+        response: 'Before.<tool_call name="exec">text(1)</tool_call>After.',
+        conversationId: "ordered-chat"
+      }
+    ],
+    async (baseUrl) => {
+      const body = (await (
+        await post(baseUrl, {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: "inspect"
+        })
+      ).json()) as { output: JsonRecord[] };
+      assert.deepEqual(
+        body.output.map((item) => item.type),
+        ["message", "custom_tool_call"]
+      );
+      assert.equal(
+        (body.output[0]!.content as JsonRecord[])[0]!.text,
+        "Before."
+      );
+      // No accidental concatenation of unverified follow-up prose.
+      assert.equal((body as { output_text?: string }).output_text, "Before.");
+    }
+  );
+});
+
+test("SSE final output keeps the first message before the pending tool call", async () => {
+  await withBridge(
+    [
+      {
+        response: 'Before.\n<tool_call name="exec">text(1)</tool_call>\nAfter.',
+        conversationId: "ordered-chat"
+      }
+    ],
+    async (baseUrl) => {
+      const response = await post(baseUrl, {
+        model: "opencli-chatgpt-balanced",
+        tools: [EXEC_TOOL],
+        stream: true,
+        input: "inspect"
+      });
+      const events = sseEvents(await response.text());
+      const added = events.filter(
+        (entry) => entry.event === "response.output_item.added"
+      );
+      const completed = events.find(
+        (entry) => entry.event === "response.completed"
+      )!.data.response as { output: JsonRecord[] };
+      assert.deepEqual(
+        completed.output.map((item) => item.type),
+        ["message", "custom_tool_call"]
+      );
+      assert.deepEqual(
+        added.map((entry) => entry.data.output_index),
+        [0, 1]
+      );
+      assert.equal(
+        added[0]?.data.item && (added[0].data.item as JsonRecord).id,
+        completed.output[0]?.id
+      );
+      assert.doesNotMatch(JSON.stringify(completed), /After\./u);
     }
   );
 });

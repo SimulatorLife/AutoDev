@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -12,7 +13,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   geminiModelLimit,
@@ -949,14 +950,21 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
 interface ChatGPTReplyUtils {
   waitForChatGPTResponse: (
     page: unknown,
-    baselineCount: number,
     prompt: string,
     timeoutSeconds: number,
-    options: { baselinePairCounts: Map<string, number> }
+    options?: {
+      expectedConversationId?: string;
+      conversationUrl?: string;
+      baselinePromptId?: string | null;
+    }
   ) => Promise<string>;
-  chatgptReplyFromConversation: (
-    conversation: unknown
-  ) => { text: string; finished: boolean } | null;
+  getChatGPTStoredPromptId: (page: unknown) => Promise<string | null>;
+  chatgptReplyFromConversation: (conversation: unknown) => {
+    text: string;
+    finished: boolean;
+    promptText: string;
+    promptId: string;
+  } | null;
 }
 
 async function chatgptReplyUtils(): Promise<ChatGPTReplyUtils | null> {
@@ -978,7 +986,12 @@ const CHATGPT_SHOWN_REPLY =
  * A stored conversation shaped like ChatGPT's: the turn's messages hang off
  * one another by `parent`, and the mapping's key order is not their order.
  */
-function storedConversation(finalEndTurn: boolean | null): unknown {
+function storedConversation(
+  finalEndTurn: boolean | null,
+  replyText = CHATGPT_STORED_REPLY,
+  promptText = CHATGPT_PROMPT,
+  promptId = "prompt"
+): unknown {
   const message = (
     role: string,
     contentType: string,
@@ -993,10 +1006,10 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
   const nodes: [string, string | null, unknown][] = [
     ["root", null, null],
     ["system", "root", message("system", "text", [""])],
-    ["prompt", "system", message("user", "text", [CHATGPT_PROMPT])],
+    [promptId, "system", message("user", "text", [promptText])],
     [
       "read",
-      "prompt",
+      promptId,
       message("tool", "multimodal_text", ["# Codex agent turn"])
     ],
     [
@@ -1011,7 +1024,7 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
     [
       "reply",
       "thoughts",
-      message("assistant", "text", [CHATGPT_STORED_REPLY], {
+      message("assistant", "text", [replyText], {
         end_turn: finalEndTurn
       })
     ],
@@ -1033,7 +1046,12 @@ function storedConversation(finalEndTurn: boolean | null): unknown {
  * The stored reply is read by running the adapter's own page script against
  * a fetch that serves the session and the conversation.
  */
-function chatgptChat(shown: string, stored: () => Response) {
+function chatgptChat(
+  shown: string,
+  stored: () => Response,
+  generating: () => boolean = () => false,
+  currentUrl: () => string = () => `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
+) {
   const fetched: string[] = [];
   const fetch = (url: string, init?: { headers?: Record<string, string> }) => {
     fetched.push(url);
@@ -1048,14 +1066,15 @@ function chatgptChat(shown: string, stored: () => Response) {
       sleep: () => Promise.resolve(),
       evaluate: (script: string): Promise<unknown> => {
         if (script === "window.location.href")
-          return Promise.resolve(`https://chatgpt.com/c/${CHATGPT_CHAT_ID}`);
+          return Promise.resolve(currentUrl());
         if (script.includes("/backend-api/conversation/"))
           return (
             new Function("fetch", `return ${script.trim()}`) as (
               fetch: unknown
             ) => Promise<unknown>
           )(fetch);
-        if (script.includes("stop-button")) return Promise.resolve(false);
+        if (script.includes("stop-button"))
+          return Promise.resolve(generating());
         return Promise.resolve([
           { role: "User", text: CHATGPT_PROMPT, html: "" },
           { role: "Assistant", text: shown, html: "" }
@@ -1071,16 +1090,14 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
   // <tool_call>, the page showed a tagless script cut at its first `{`, and
   // that fragment ended the worker's turn as its answer.
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
     Response.json(storedConversation(true))
   );
   const reply = await utils.waitForChatGPTResponse(
     chat.page,
-    0,
     CHATGPT_PROMPT,
-    30,
-    { baselinePairCounts: new Map() }
+    30
   );
   assert.equal(reply, CHATGPT_STORED_REPLY);
   assert.deepEqual(chat.fetched, [
@@ -1091,37 +1108,352 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
 
 test("a ChatGPT reply whose stored text cannot be read fails instead of using the page's", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     CHATGPT_SHOWN_REPLY,
     () => new Response("{}", { status: 404 })
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, 0, CHATGPT_PROMPT, 1, {
-      baselinePairCounts: new Map()
-    }),
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1),
     /stored text could not be read: conversation fetch status 404/u
   );
 });
 
 test("a stored ChatGPT turn is read along its current branch and ends only when the site says so", async () => {
   const utils = await chatgptReplyUtils();
-  if (utils === null) return;
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(true)),
     {
       text: CHATGPT_STORED_REPLY,
-      finished: true
+      finished: true,
+      promptText: CHATGPT_PROMPT,
+      promptId: "prompt"
     }
   );
   assert.deepEqual(
     utils.chatgptReplyFromConversation(storedConversation(false)),
-    { text: CHATGPT_STORED_REPLY, finished: false }
+    {
+      text: CHATGPT_STORED_REPLY,
+      finished: false,
+      promptText: CHATGPT_PROMPT,
+      promptId: "prompt"
+    }
   );
   assert.equal(
     utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
     null
   );
+});
+
+test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-progress-"));
+  const file = resolve(directory, "progress");
+  const fd = openSync(file, "w");
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  let storedReads = 0;
+  process.env.OPENCLI_PROGRESS_FD = String(fd);
+  try {
+    const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
+      Response.json(storedConversation(++storedReads > 2))
+    );
+    const reply = await utils.waitForChatGPTResponse(
+      chat.page,
+      CHATGPT_PROMPT,
+      30
+    );
+    assert.equal(reply, CHATGPT_STORED_REPLY);
+  } finally {
+    if (saved === undefined) delete process.env.OPENCLI_PROGRESS_FD;
+    else process.env.OPENCLI_PROGRESS_FD = saved;
+    closeSync(fd);
+  }
+  const records = readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { text: string; url: string });
+  rmSync(directory, { recursive: true, force: true });
+  assert.deepEqual(records, [
+    {
+      text: CHATGPT_STORED_REPLY,
+      url: `https://chatgpt.com/c/${CHATGPT_CHAT_ID}`
+    }
+  ]);
+});
+
+test("ChatGPT publishes changing stored text while generation is still active", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-live-"));
+  const file = resolve(directory, "progress");
+  const fd = openSync(file, "w");
+  const saved = process.env.OPENCLI_PROGRESS_FD;
+  let reads = 0;
+  let activeReads = 0;
+  process.env.OPENCLI_PROGRESS_FD = String(fd);
+  try {
+    const chat = chatgptChat(
+      "",
+      () => {
+        reads += 1;
+        const reply =
+          reads === 1
+            ? "Working.\n"
+            : reads === 2
+              ? "Working.\nStill working.\n"
+              : "Working.\nStill working.\nDone.";
+        return Response.json(storedConversation(reads >= 3, reply));
+      },
+      () => {
+        activeReads += 1;
+        return true;
+      }
+    );
+    const reply = await utils.waitForChatGPTResponse(
+      chat.page,
+      CHATGPT_PROMPT,
+      5
+    );
+    assert.equal(reply, "Working.\nStill working.\nDone.");
+    assert.ok(activeReads >= 3, "generation was active on every stored read");
+    assert.equal(reads, 3, "partial records were read before end_turn");
+  } finally {
+    if (saved === undefined) delete process.env.OPENCLI_PROGRESS_FD;
+    else process.env.OPENCLI_PROGRESS_FD = saved;
+    closeSync(fd);
+  }
+  const records = readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { text: string; url: string });
+  rmSync(directory, { recursive: true, force: true });
+  assert.deepEqual(
+    records.map((record) => record.text),
+    ["Working.", "Working.\nStill working.", "Working.\nStill working.\nDone."]
+  );
+});
+
+test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  let reads = 0;
+  const chat = chatgptChat("Repeated", () => {
+    reads += 1;
+    // The previous completed reply has exactly the same user prompt.
+    return Response.json(
+      reads === 1
+        ? storedConversation(true, "Stale reply", CHATGPT_PROMPT, "old-prompt")
+        : storedConversation(true, "New reply", CHATGPT_PROMPT, "new-prompt")
+    );
+  });
+  const reply = await utils.waitForChatGPTResponse(
+    chat.page,
+    CHATGPT_PROMPT,
+    2,
+    { baselinePromptId: "old-prompt" }
+  );
+  assert.equal(reply, "New reply");
+  assert.equal(reads, 2, "the completed previous turn must be ignored");
+});
+
+test("the ChatGPT send baseline reads the last persisted user-message ID", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat("", () =>
+    Response.json(
+      storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user")
+    )
+  );
+  assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
+});
+
+test("ChatGPT waits 12 seconds after generation stops before accepting partial text", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  let polls = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => Response.json(storedConversation(false, "Partial.")),
+      () => ++polls === 1
+    );
+    chat.page.sleep = async () => {
+      now += 2000;
+    };
+    const result = await utils.waitForChatGPTResponse(
+      chat.page,
+      CHATGPT_PROMPT,
+      180
+    );
+    assert.equal(result, "Partial.");
+    assert.equal(polls, 7, "fallback waits 12 seconds after generation stops");
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("ChatGPT starts an unreadable-storage grace period only after generation stops", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  let reads = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => {
+        reads += 1;
+        return reads <= 2
+          ? new Response("pending persistence", { status: 404 })
+          : Response.json(storedConversation(true, "New answer."));
+      },
+      () => reads === 0
+    );
+    chat.page.sleep = async () => {
+      now += 20_000;
+    };
+    const result = await utils.waitForChatGPTResponse(
+      chat.page,
+      CHATGPT_PROMPT,
+      180
+    );
+    assert.equal(result, "New answer.");
+    assert.equal(reads, 3);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("missing conversation IDs fail clearly after a bounded wait", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () => Response.json(storedConversation(true)),
+      () => true,
+      () => "https://chatgpt.com/"
+    );
+    chat.page.sleep = async () => {
+      now += 2000;
+    };
+    await assert.rejects(
+      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      /did not create a conversation URL/u
+    );
+    assert.equal(now, 12_000);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("wrong stored prompts fail in 12 seconds despite an active stop button", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const originalNow = Date.now;
+  let now = 0;
+  Date.now = () => now;
+  try {
+    const chat = chatgptChat(
+      "",
+      () =>
+        Response.json(
+          storedConversation(true, "Wrong answer.", CHATGPT_PROMPT + " extra")
+        ),
+      () => true
+    );
+    chat.page.sleep = async () => {
+      now += 2000;
+    };
+    await assert.rejects(
+      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      /different prompt or turn/u
+    );
+    assert.ok(now <= 14_000);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("ChatGPT rejects a finished stored answer from another conversation", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const otherChat = "00000000-1111-2222-3333-444444444444";
+  const chat = chatgptChat(
+    "Done",
+    () => Response.json(storedConversation(true)),
+    () => false,
+    () => "https://chatgpt.com/c/" + otherChat
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 2, {
+      expectedConversationId: CHATGPT_CHAT_ID
+    }),
+    /navigated away from the submitted conversation/u
+  );
+});
+
+test("an incomplete stored answer times out rather than becoming an unreadable-reply error", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat(
+    "Still writing",
+    () => Response.json(storedConversation(false)),
+    () => true
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
+    (error: unknown) =>
+      error instanceof Error && /timed out|timeout/iu.test(error.message)
+  );
+});
+
+test("the stored reply must belong to the submitted prompt", async () => {
+  const utils = await chatgptReplyUtils();
+  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const chat = chatgptChat(
+    "Wrong reply",
+    () =>
+      Response.json(
+        storedConversation(true, "Wrong reply", "A different prompt")
+      ),
+    () => true
+  );
+  await assert.rejects(
+    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
+    /different prompt or turn/u
+  );
+});
+
+test("the pnpm lock references the exact OpenCLI patch SHA256 in all three locations", () => {
+  const patch = readFileSync(
+    fileURLToPath(
+      new URL("../../patches/@jackwener__opencli@2.0.3.patch", import.meta.url)
+    )
+  );
+  const lock = readFileSync(
+    fileURLToPath(new URL("../../pnpm-lock.yaml", import.meta.url)),
+    "utf8"
+  );
+  const digest = createHash("sha256").update(patch).digest("hex");
+  assert.ok(
+    lock.includes("'@jackwener/opencli@2.0.3': " + digest),
+    "the patchedDependencies entry must match the patch bytes"
+  );
+  const importerHashes = Array.from(
+    lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu),
+    (match) => match[1]
+  );
+  assert.deepEqual(importerHashes, [digest, digest]);
 });
 
 test("a Gemini reply keeps the line breaks the page shows inside a paragraph", async () => {

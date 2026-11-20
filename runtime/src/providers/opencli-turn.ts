@@ -1209,10 +1209,21 @@ export interface ParsedToolCall {
   readonly input: string;
 }
 
+export type ParsedReplySegment =
+  | { readonly type: "message"; readonly text: string }
+  | { readonly type: "tool_call"; readonly call: ParsedToolCall };
+
 export interface ParsedReply {
-  /** The reply's prose, with every call removed. */
+  /**
+   * Safe prose preceding the first pending tool call (or all prose if no call).
+   */
   readonly text: string;
   readonly calls: ParsedToolCall[];
+  /**
+   * Initial prose followed by pending calls in original order; speculative
+   * trailing prose is omitted.
+   */
+  readonly segments: ParsedReplySegment[];
   /**
    * Whether the prose still holds a `<tool_call` the parser could not read.
    * Such a reply asked for a call it did not complete; sending it to Codex as
@@ -1268,6 +1279,15 @@ function callBody(raw: string): string {
   return fenced?.[1] ?? body;
 }
 
+/** Strip transcript-only wrappers from prose between tool-call spans. */
+function cleanText(value: string): string {
+  return value
+    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
+    .replaceAll(ESCAPE_TAG_PATTERN, "")
+    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
+    .trim();
+}
+
 /** Split a site reply into its prose and the tool calls it requests. */
 export function parseOpencliReply(response: string): ParsedReply {
   const calls: ParsedToolCall[] = [];
@@ -1286,22 +1306,42 @@ export function parseOpencliReply(response: string): ParsedReply {
   // 01a1e592-6349-73a2-8d2f-3d8bea217417). The calls before the invented
   // output are real requests; nothing from it on is.
   const invented = TOOL_OUTPUT_OPENING.exec(source);
-  const text = (invented ? source.slice(0, invented.index) : source)
-    .replaceAll(
-      TOOL_CALL_PATTERN,
-      (_match, _quote: string, name: string, body: string) => {
-        calls.push({ name, input: callBody(body) });
-        return "";
-      }
-    )
-    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
-    .replaceAll(ESCAPE_TAG_PATTERN, "")
-    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
-    .trim();
+  const usable = invented ? source.slice(0, invented.index) : source;
+  const segments: ParsedReplySegment[] = [];
+  let offset = 0;
+  let beforeFirstCall = true;
+  let firstMessage = "";
+  for (const match of usable.matchAll(TOOL_CALL_PATTERN)) {
+    const before = cleanText(usable.slice(offset, match.index));
+    if (beforeFirstCall) {
+      // Codex has not executed the call yet: any later prose would be an
+      // unverified continuation, even without an explicit <tool_output>.
+      firstMessage = before;
+      if (before) segments.push({ type: "message", text: before });
+      beforeFirstCall = false;
+    }
+    const call: ParsedToolCall = {
+      name: match[2] ?? "",
+      input: callBody(match[3] ?? "")
+    };
+    calls.push(call);
+    segments.push({ type: "tool_call", call });
+    offset = match.index + match[0].length;
+  }
+  // The assistant may emit several independent calls. Keep those calls in
+  // order, but never display prose it wrote after its first unexecuted call.
+  const text = beforeFirstCall ? cleanText(usable) : firstMessage;
+  if (beforeFirstCall && text) segments.push({ type: "message", text });
+  // Do not silently accept an incomplete call even in discarded trailing
+  // prose; the model must repair the malformed request on another route.
+  const unparsedCall = TOOL_CALL_OPENING.test(
+    usable.replaceAll(TOOL_CALL_PATTERN, "")
+  );
   return {
     text,
     calls,
-    unparsedCall: TOOL_CALL_OPENING.test(text),
+    segments,
+    unparsedCall,
     inventedOutput: invented !== null
   };
 }
