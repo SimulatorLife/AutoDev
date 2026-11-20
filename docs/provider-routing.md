@@ -2837,12 +2837,16 @@ single list; the route patterns and the site registry in
   an older chat holding other sessions' turns, which it then answered from
   (session `01a1b8ef-0797-73d2-82bd-a887418caf2b`). `ask` also prefixes every reply with `💬 `,
   which the spec strips.
-- **ChatGPT and Gemini stream settled assistant prose before the turn ends.**
+- **Gemini streams settled prose; ChatGPT forwards stored partials when available.**
   While `gemini ask` waits, patched `waitForGeminiResponse` reports snapshots
   from the chat's structured turns. While `chatgpt ask-file` waits, the
-  patched ChatGPT adapter reads the *stored* conversation reply instead of
-  using its lossy rendered HTML, and reports that stored text as it becomes
-  available. Both adapters send newline-delimited `{text, url}` readings
+  patched ChatGPT adapter polls the *stored* conversation reply **while
+  ChatGPT is still generating**, instead of waiting for the lossy DOM to
+  settle. If the site's conversation API publishes growing stored text
+  during generation, the bridge forwards it incrementally. This is
+  best-effort, not a guarantee that the site persists partial text:
+  deterministic adapter tests exercise growing mid-generation snapshots,
+  but a live signed-in-browser acceptance test is still required. Both adapters send newline-delimited `{text, url}` readings
   through the private `OPENCLI_PROGRESS_FD` descriptor -- neither stdout
   (the command's final JSON result) nor stderr (diagnostics). The bridge
   opens FD 3 only for streamed turns and verifies that a reading belongs to
@@ -2854,16 +2858,22 @@ single list; the route patterns and the site registry in
   prefix, the turn fails instead of silently changing already-shown text.
   Neither an incomplete tool call nor its output is speculatively emitted:
   Codex executes complete calls from the final reply and the model must await
-  any dependent results. Once text has been shown the router cannot fall
+  any dependent results. Prose the site generated **after** a pending tool
+  call is also discarded, because it would speculate about unexecuted work;
+  multiple tool calls are still passed in their original order. Once text
+  has been shown the router cannot fall
   back to another provider or restart the turn in a new chat. Non-streamed
   requests are unchanged; installing the patched adapter requires `pnpm
-  install` with the matching patch checksum in `pnpm-lock.yaml`.
+  install --frozen-lockfile` with the matching SHA256 checksum in
+  `pnpm-lock.yaml`.
 - **ChatGPT's missing terminal marker is not an indefinite wait.** The stored
   reply normally has `end_turn=true`. If it does not, the adapter accepts
   the stored answer only after it is unchanged for at least 12 seconds and
   the site is no longer generating; a persistently unreadable stored reply
-  also fails after a bounded interval once generation has stopped. Neither
-  condition treats an actively generating response as complete.
+  also fails after a bounded interval once generation has stopped. A
+  successfully read but unfinished reply retains timeout classification,
+  and a stored message must match the submitted prompt and conversation.
+  Neither condition treats an actively generating response as complete.
 - **A Gemini first prompt names MCP tools instead of documenting them when
   it would not fit.** `exec`'s description documents every nested tool, and a
   root orchestrator in the Codex app carries enough connector and MCP tools
