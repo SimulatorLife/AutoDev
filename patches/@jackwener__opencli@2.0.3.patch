@@ -45,11 +45,12 @@ index 4b294f1db04d234f44a88729727093c2ac44f413..95bc4a672d185f1f1bec879be991de09
 diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
 --- a/clis/chatgpt/ask-file.js
 +++ b/clis/chatgpt/ask-file.js
-@@ -11,9 +11,12 @@
+@@ -11,9 +11,13 @@
      openChatGPTConversation,
      navigateToProject,
      parseChatGPTConversationId,
 +    requireChatGPTChat,
++    getChatGPTStoredPromptId,
      sendChatGPTMessage,
 +    stopStaleChatGPTReply,
      startNewChat,
@@ -58,7 +59,7 @@ diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
      waitForChatGPTResponse,
  } from './utils.js';
  
-@@ -45,6 +48,7 @@
+@@ -45,6 +49,7 @@
          { name: 'new', type: 'boolean', default: false, help: 'Start a new chat before sending' },
          { name: 'conversation', valueRequired: true, help: 'Continue an existing ChatGPT conversation ID or /c/<id> URL' },
          { name: 'project', valueRequired: true, help: 'Start a new chat inside a ChatGPT project ID or /g/g-p-<id> URL' },
@@ -66,7 +67,7 @@ diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
      ],
      columns: ['conversation_id', 'conversation_url', 'attachments', 'response'],
      func: async (page, kwargs) => {
-@@ -73,18 +77,48 @@
+@@ -73,18 +78,49 @@
              throw new ArgumentError('chatgpt ask-file cannot use --project and --conversation together');
          }
  
@@ -97,13 +98,14 @@ diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
 +            const fs = await import('node:fs');
 +            const body = fs.readFileSync(filePaths[0], 'utf8');
 +            const baselineMessages = await getVisibleMessages(page, { textOnly: true });
++            const baselinePromptId = await getChatGPTStoredPromptId(page);
 +            if (expectedChat !== undefined)
 +                await requireChatGPTChat(page, expectedChat);
 +            const sent = await sendChatGPTMessage(page, `${prompt}\n\n${body}`);
 +            if (!sent) {
 +                throw new CommandExecutionError('Failed to send message to ChatGPT');
 +            }
-+            const responseText = await waitForChatGPTInlineReply(page, baselineMessages, prompt, timeout, expectedChat);
++            const responseText = await waitForChatGPTInlineReply(page, baselineMessages, prompt, timeout, expectedChat, baselinePromptId);
 +            const currentUrl = await currentChatGPTUrl(page);
 +            return [{
 +                conversation_id: parseChatGPTConversationId(currentUrl) || '',
@@ -116,9 +118,10 @@ diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
          // 1. Upload files into composer
          let uploadResult;
          try {
-@@ -103,14 +137,21 @@
+@@ -103,14 +139,23 @@
          const baselineCount = baselineMessages.length;
          const baselinePairCounts = getChatGPTResponsePairCounts(baselineMessages, prompt);
++        const baselinePromptId = await getChatGPTStoredPromptId(page);
  
 -        // 2. Send prompt
 +        // 2. Send prompt -- into the chat asked for, checked on this page
@@ -136,6 +139,7 @@ diff --git a/clis/chatgpt/ask-file.js b/clis/chatgpt/ask-file.js
 +        const responseText = await waitForChatGPTResponse(page, baselineCount, prompt, timeout, {
 +            baselinePairCounts,
 +            expectedConversationId: expectedChat,
++            baselinePromptId,
 +        });
  
          const currentUrl = await currentChatGPTUrl(page);
@@ -164,7 +168,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2340,40 +2352,168 @@
+@@ -2340,40 +2352,189 @@
      return '';
  }
  
@@ -179,13 +183,14 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 + */
 +export function chatgptReplyFromConversation(conversation) {
 +    const mapping = conversation && typeof conversation.mapping === 'object' && conversation.mapping ? conversation.mapping : {};
-+    const chain = [];
++    const chainNodes = [];
 +    const seen = new Set();
 +    for (let id = conversation?.current_node; id && mapping[id] && !seen.has(id); id = mapping[id].parent) {
 +        seen.add(id);
-+        if (mapping[id].message) chain.push(mapping[id].message);
++        if (mapping[id].message) chainNodes.push({ id, message: mapping[id].message });
 +    }
-+    chain.reverse();
++    chainNodes.reverse();
++    const chain = chainNodes.map((node) => node.message);
 +    const isPrompt = (message) => message?.author?.role === 'user'
 +        && ['text', 'multimodal_text'].includes(message?.content?.content_type);
 +    let promptIndex = -1;
@@ -209,7 +214,8 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +    const promptParts = chain[promptIndex]?.content?.parts;
 +    const promptText = (Array.isArray(promptParts) ? promptParts : [])
 +        .filter((part) => typeof part === 'string').join('').trim();
-+    return { text, finished: last?.author?.role === 'assistant' && last.end_turn === true, promptText };
++    return { text, finished: last?.author?.role === 'assistant' && last.end_turn === true,
++        promptText, promptId: chainNodes[promptIndex].id };
 +}
 +
 +/** Accept missing end_turn only when the site's stopped and the reply is stable. */
@@ -246,6 +252,17 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +    return result;
 +}
 +
++/** Snapshot the previous user-message ID before sending to reject stale answers. */
++export async function getChatGPTStoredPromptId(page) {
++    const conversationId = conversationIdFromUrl(await currentChatGPTUrl(page));
++    if (!conversationId) return null; // A new chat has no prior stored turn.
++    const stored = await readChatGPTStoredReply(page, conversationId);
++    if (stored.error || !stored.promptId) {
++        throw new CommandExecutionError('ChatGPT could not establish the previous stored turn before sending');
++    }
++    return stored.promptId;
++}
++
  export async function waitForChatGPTResponse(page, baselineCount, prompt, timeoutSeconds, options = {}) {
      const startTime = Date.now();
 -    let lastText = '';
@@ -264,6 +281,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +    let storedError = '';
 +    let storedErrorSince = 0;
 +    let wrongPromptSince = 0;
++    let lastGenerating = false;
 +    const progressFd = Number(process.env.OPENCLI_PROGRESS_FD);
 +    const writeProgress = Number.isInteger(progressFd) && progressFd >= 3
 +        ? (await import('node:fs')).writeSync : null;
@@ -294,10 +312,15 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +        // IMPORTANT: read while the stop button is present. Only observing
 +        // DOM text after isGenerating() becomes false cannot stream live.
 +        const generatingNow = await isGenerating(page);
++        lastGenerating = generatingNow;
++        if (generatingNow) {
++            storedErrorSince = 0;
++            wrongPromptSince = 0;
++        }
 +        const stored = await readChatGPTStoredReply(page, conversationId);
 +        if (stored.error) {
 +            storedError = stored.error;
-+            if (!storedErrorSince) storedErrorSince = Date.now();
++            if (!generatingNow && !storedErrorSince) storedErrorSince = Date.now();
 +            // A not-yet-persisted partial answer is expected during generation.
 +            if (!generatingNow && Date.now() - storedErrorSince >= 12000) {
 +                throw new CommandExecutionError("ChatGPT's reply is shown, but its stored text could not be read: " + storedError);
@@ -310,8 +333,9 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +        storedErrorSince = 0;
 +        // A reused tab can still show the previous answer just after sending.
 +        // Never publish a response whose last stored user message is not ours.
-+        if (!stored.promptText || (promptMarker && !stored.promptText.includes(promptMarker))) {
-+            if (!wrongPromptSince) wrongPromptSince = Date.now();
++        if (!stored.promptId || (options.baselinePromptId && stored.promptId === options.baselinePromptId)
++            || !stored.promptText || (promptMarker && !stored.promptText.includes(promptMarker))) {
++            if (!generatingNow && !wrongPromptSince) wrongPromptSince = Date.now();
 +            if (!generatingNow && Date.now() - wrongPromptSince >= 12000) {
 +                throw new CommandExecutionError('ChatGPT stored reply belongs to a different prompt');
 +            }
@@ -330,8 +354,9 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 -            stableCount = 0;
 +        wrongPromptSince = 0;
 +        const now = Date.now();
-+        if (stored.text !== lastStoredText) {
++        if (stored.text !== lastStoredText || generatingNow) {
 +            lastStoredText = stored.text;
++            // Only stability observed after generation stops can finish a turn.
 +            lastStoredChange = now;
          }
 +        if (writeProgress && stored.text !== reportedText
@@ -349,14 +374,14 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
      }
  
 +    // A persistently unreadable stored answer is not a valid, unfinished turn.
-+    if (storedError) {
++    if (storedError && !lastGenerating) {
 +        throw new CommandExecutionError("ChatGPT's reply is shown, but its stored text could not be read: " + storedError);
 +    }
 +    // A valid unfinished reply is a timeout (408), not a storage error (503).
      throw new TimeoutError(
          'chatgpt ask',
          timeoutSeconds,
-@@ -2670,6 +2810,97 @@
+@@ -2670,6 +2831,97 @@
      };
  `;
  
@@ -454,7 +479,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2908,7 @@
+@@ -2677,30 +2929,7 @@
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -486,7 +511,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3905,79 @@
+@@ -3697,3 +3926,80 @@
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }
@@ -541,7 +566,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 + * reply is paired against that bubble's own text -- whatever the site made of
 + * the rest.
 + */
-+export async function waitForChatGPTInlineReply(page, baselineMessages, marker, timeoutSeconds, expectedChat) {
++export async function waitForChatGPTInlineReply(page, baselineMessages, marker, timeoutSeconds, expectedChat, baselinePromptId) {
 +    const startTime = Date.now();
 +    const markerKey = cleanPromptText(marker);
 +    let shown = null;
@@ -564,6 +589,7 @@ diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
 +        baselinePairCounts: getChatGPTResponsePairCounts(baselineMessages, shown),
 +        promptMarker: marker,
 +        expectedConversationId: expectedChat,
++        baselinePromptId,
 +    });
 +}
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
