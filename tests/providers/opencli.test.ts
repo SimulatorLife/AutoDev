@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, type spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1775,6 +1776,28 @@ interface FakeRun {
   readonly prompts: string[];
 }
 
+/**
+ * Exercise role rendering against an installed-skill fixture, not the CI
+ * runner's (or developer's) mutable global ~/.agents directory.
+ */
+async function withOrchestrationSkillHome(
+  run: () => Promise<void>
+): Promise<void> {
+  const fixtureHome = mkdtempSync(join(tmpdir(), "autodev-role-skill-"));
+  const originalHome = process.env.HOME;
+  const source = join(repositoryRoot, ".rulesync", "skills", "orchestration");
+  const destination = join(fixtureHome, ".agents", "skills", "orchestration");
+  cpSync(source, destination, { recursive: true });
+  try {
+    process.env.HOME = fixtureHome;
+    await run();
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fixtureHome, { recursive: true, force: true });
+  }
+}
+
 async function withBridge(
   replies: Array<JsonRecord | Error>,
   body: (baseUrl: string, runs: FakeRun) => Promise<void>,
@@ -2149,46 +2172,48 @@ test("the bridge refuses requests it cannot serve before running opencli", async
 });
 
 test("an orchestrator turn carries the full orchestrator role prompt, a leaf turn none", async () => {
-  await withBridge(
-    [
-      { response: "Delegating.", conversation_id: "c1" },
-      { response: "Done.", conversation_id: "c1" },
-      { response: "Leaf answer.", conversation_id: "c2" }
-    ],
-    async (baseUrl, runs) => {
-      const orchestrator = { "x-autodev-agent-role": "orchestrator" };
-      const input: JsonRecord[] = [userMessage("Fix the bug.")];
-      const first = await post(
-        baseUrl,
-        { model: "opencli-chatgpt-balanced", tools: [EXEC_TOOL], input },
-        orchestrator
-      );
-      const firstBody = (await first.json()) as { output: JsonRecord[] };
-      await post(
-        baseUrl,
-        {
+  await withOrchestrationSkillHome(async () => {
+    await withBridge(
+      [
+        { response: "Delegating.", conversation_id: "c1" },
+        { response: "Done.", conversation_id: "c1" },
+        { response: "Leaf answer.", conversation_id: "c2" }
+      ],
+      async (baseUrl, runs) => {
+        const orchestrator = { "x-autodev-agent-role": "orchestrator" };
+        const input: JsonRecord[] = [userMessage("Fix the bug.")];
+        const first = await post(
+          baseUrl,
+          { model: "opencli-chatgpt-balanced", tools: [EXEC_TOOL], input },
+          orchestrator
+        );
+        const firstBody = (await first.json()) as { output: JsonRecord[] };
+        await post(
+          baseUrl,
+          {
+            model: "opencli-chatgpt-balanced",
+            tools: [EXEC_TOOL],
+            input: [...input, ...firstBody.output, userMessage("Continue.")]
+          },
+          orchestrator
+        );
+        // Codex truncates the hook-injected root policy, so the bridge adds the
+        // whole role prompt to the conversation's first message; a follow-up
+        // only reminds the model it is orchestrating.
+        assert.match(runs.prompts[0]!, /## Your role/u);
+        assert.match(runs.prompts[0]!, /Root orchestrator bootstrap/u);
+        assert.match(runs.prompts[0]!, /Canonical orchestration skill/u);
+        assert.doesNotMatch(runs.prompts[1]!, /Root orchestrator bootstrap/u);
+        assert.match(runs.prompts[1]!, /still the root orchestrator/u);
+        await post(baseUrl, {
           model: "opencli-chatgpt-balanced",
           tools: [EXEC_TOOL],
-          input: [...input, ...firstBody.output, userMessage("Continue.")]
-        },
-        orchestrator
-      );
-      // Codex truncates the hook-injected root policy, so the bridge adds the
-      // whole role prompt to the conversation's first message; a follow-up
-      // only reminds the model it is orchestrating.
-      assert.match(runs.prompts[0]!, /## Your role/u);
-      assert.match(runs.prompts[0]!, /Root orchestrator bootstrap/u);
-      assert.match(runs.prompts[0]!, /Canonical orchestration skill/u);
-      assert.doesNotMatch(runs.prompts[1]!, /Root orchestrator bootstrap/u);
-      assert.match(runs.prompts[1]!, /still the root orchestrator/u);
-      await post(baseUrl, {
-        model: "opencli-chatgpt-balanced",
-        tools: [EXEC_TOOL],
-        input: [userMessage("Read a file.")]
-      });
-      assert.doesNotMatch(runs.prompts[2]!, /## Your role/u);
-    }
-  );
+          input: [userMessage("Read a file.")]
+        });
+        assert.doesNotMatch(runs.prompts[2]!, /## Your role/u);
+      }
+    );
+  });
 });
 
 test("an empty site model list is not cached", async () => {
@@ -3275,36 +3300,38 @@ test("an orchestrator's first prompt carries the hook's bootstrap once, keeping 
   // The role section renders the bootstrap, and Codex also hands the bridge
   // the hook's copy: about 10 KB twice in a prompt Gemini caps at 100 KB.
   const heading = "# Root orchestrator bootstrap";
-  await withBridge(
-    [{ response: "Delegating.", conversation_id: "c1" }],
-    async (baseUrl, runs) => {
-      await post(
-        baseUrl,
-        {
-          model: "opencli-chatgpt-balanced",
-          tools: [EXEC_TOOL],
-          input: [
-            {
-              type: "message",
-              role: "developer",
-              content: [
-                {
-                  type: "input_text",
-                  text: `${heading}\n\nhook copy\n\n## Current-parent recovery preflight\nCurrent parent session: parent-1.`
-                }
-              ]
-            },
-            userMessage("Fix the bug.")
-          ]
-        },
-        { "x-autodev-agent-role": "orchestrator" }
-      );
-      const prompt = runs.prompts[0]!;
-      assert.equal(prompt.split(heading).length - 1, 1);
-      assert.doesNotMatch(prompt, /hook copy/u);
-      assert.match(prompt, /Current parent session: parent-1\./u);
-    }
-  );
+  await withOrchestrationSkillHome(async () => {
+    await withBridge(
+      [{ response: "Delegating.", conversation_id: "c1" }],
+      async (baseUrl, runs) => {
+        await post(
+          baseUrl,
+          {
+            model: "opencli-chatgpt-balanced",
+            tools: [EXEC_TOOL],
+            input: [
+              {
+                type: "message",
+                role: "developer",
+                content: [
+                  {
+                    type: "input_text",
+                    text: `${heading}\n\nhook copy\n\n## Current-parent recovery preflight\nCurrent parent session: parent-1.`
+                  }
+                ]
+              },
+              userMessage("Fix the bug.")
+            ]
+          },
+          { "x-autodev-agent-role": "orchestrator" }
+        );
+        const prompt = runs.prompts[0]!;
+        assert.equal(prompt.split(heading).length - 1, 1);
+        assert.doesNotMatch(prompt, /hook copy/u);
+        assert.match(prompt, /Current parent session: parent-1\./u);
+      }
+    );
+  });
 });
 
 test("browser-unavailable health is distinct from site sign-in and never reports ready", async () => {

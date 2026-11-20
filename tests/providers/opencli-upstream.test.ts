@@ -1115,7 +1115,7 @@ test("a ChatGPT reply whose stored text cannot be read fails instead of using th
   );
   await assert.rejects(
     utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1),
-    /stored text could not be read: conversation fetch status 404/u
+    /stored reply could not be read: conversation fetch status 404/u
   );
 });
 
