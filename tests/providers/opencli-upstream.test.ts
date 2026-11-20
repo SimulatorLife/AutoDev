@@ -1431,9 +1431,10 @@ test("the pnpm lock references the exact OpenCLI patch SHA256 in all three locat
     lock.includes("'@jackwener/opencli@2.0.3': " + digest),
     "the patchedDependencies entry must match the patch bytes"
   );
-  const importerHashes = [
-    ...lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu)
-  ].map((match) => match[1]);
+  const importerHashes = Array.from(
+    lock.matchAll(/2\.0\.3\(patch_hash=([0-9a-f]{64})\)/gu),
+    (match) => match[1]
+  );
   assert.deepEqual(importerHashes, [digest, digest]);
 });
 
