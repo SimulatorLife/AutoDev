@@ -540,6 +540,10 @@ const KEEP_ALIVE_MS = 15_000;
 const MODEL_LIST_TIMEOUT_MS = 60_000;
 /** How long a first listing waits for the site before answering unavailable. */
 const FIRST_MODEL_LIST_WAIT_MS = 5000;
+/** Give a cancelled child time to terminate before escalating to SIGKILL. */
+const KILL_GRACE_MS = 2000;
+/** Bound request settlement without claiming an unreaped child has exited. */
+const CANCEL_SETTLE_MS = 5000;
 
 /**
  * Spawns opencli and collects its JSON result; aborting kills the process.
@@ -569,11 +573,16 @@ export function processRunner(
   browser = new OpencliBrowser({
     executable: resolveOpencliBrowserExecutable(process.env) ?? "",
     siteTabs
-  })
+  }),
+  spawnCommand: typeof spawn = spawn
 ): OpencliRunner & {
   readonly browser: OpencliBrowser;
   close(): Promise<void>;
 } {
+  // A child whose pipes never close may still own a browser session even
+  // after the caller's 5s settlement guard fires. Refuse new commands for
+  // that site until the original child actually emits close.
+  const quarantined = new Map<OpencliSite, number>();
   const extensionEnv = {
     ...process.env,
     OPENCLI_CDP_ENDPOINT: undefined,
@@ -590,10 +599,24 @@ export function processRunner(
         reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
         return;
       }
+      const site = OPENCLI_SITES.includes(args[0] as OpencliSite)
+        ? (args[0] as OpencliSite)
+        : null;
+      if (site !== null && (quarantined.get(site) ?? 0) > 0) {
+        reject(
+          new OpencliCommandError(
+            `a cancelled ${site} command has not exited; its tab remains quarantined`,
+            SITE_BUSY,
+            null
+          )
+        );
+        return;
+      }
       const command = resolveCommand();
-      // The fourth pipe is the progress descriptor (fd 3); the command writes
-      // to it only when OPENCLI_PROGRESS_FD names it.
-      const child = spawn(command.command, [...command.args, ...args], {
+      // Start a new process group on POSIX so cancellation reaches the CLI's
+      // descendants as well as the parent (and its inherited pipe handles).
+      const child = spawnCommand(command.command, [...command.args, ...args], {
+        detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe", "pipe"],
         env: { ...env, OPENCLI_PROGRESS_FD: onProgress ? "3" : undefined }
       }) as ChildProcessByStdio<null, Readable, Readable>;
@@ -624,58 +647,79 @@ export function processRunner(
         });
       }
       let closed = false;
+      let settled = false;
+      let isQuarantined = false;
       let killTimer: ReturnType<typeof setTimeout> | null = null;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      const signalChild = (name: NodeJS.Signals): void => {
+        // Killing only the CLI leaves any descendant still operating Chrome.
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, name);
+            return;
+          } catch {
+            // The group has already gone; fall back to the child itself.
+          }
+        }
+        try {
+          child.kill(name);
+        } catch {
+          // The child already exited between the check and the signal.
+        }
+      };
       const cleanup = (): void => {
         closed = true;
         live.delete(child);
         signal.removeEventListener("abort", onAbort);
         if (killTimer) clearTimeout(killTimer);
         if (settleTimer) clearTimeout(settleTimer);
+        if (isQuarantined && site !== null) {
+          const remaining = (quarantined.get(site) ?? 1) - 1;
+          if (remaining > 0) quarantined.set(site, remaining);
+          else quarantined.delete(site);
+        }
       };
       const onAbort = (): void => {
         if (closed) return;
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // The child already exited between request cancellation and signal.
-        }
-        // child.killed indicates a signal was sent, NOT that the child exited.
+        signalChild("SIGTERM");
+        // The signal's dispatch says nothing about whether the process died.
         killTimer = setTimeout(() => {
-          if (!closed) {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              // The child already exited.
-            }
-          }
-        }, 2000);
-        // A process that never emits close cannot hold a Codex turn indefinitely.
+          if (!closed) signalChild("SIGKILL");
+        }, KILL_GRACE_MS);
+        // Uncooperative pipes must not hold the caller's promise forever.
+        // Keep the child tracked and its site quarantined until actual close.
         settleTimer = setTimeout(() => {
-          if (!closed) {
-            cleanup();
-            reject(
-              new OpencliCommandError(
-                "turn cancelled: opencli did not exit after SIGKILL",
-                "CANCELLED",
-                null
-              )
-            );
+          if (closed || settled) return;
+          if (site !== null) {
+            quarantined.set(site, (quarantined.get(site) ?? 0) + 1);
+            isQuarantined = true;
           }
-        }, 5000);
+          settled = true;
+          reject(
+            new OpencliCommandError(
+              "turn cancelled: opencli did not exit after SIGKILL",
+              "CANCELLED",
+              null
+            )
+          );
+        }, CANCEL_SETTLE_MS);
         killTimer.unref?.();
         settleTimer.unref?.();
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
       child.once("error", (error) => {
         if (closed) return;
         cleanup();
-        reject(error);
+        if (!settled) {
+          settled = true;
+          reject(error);
+        }
       });
       child.once("close", (code) => {
         if (closed) return;
         cleanup();
+        if (settled) return;
+        settled = true;
         if (signal.aborted) {
           reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
           return;
@@ -706,7 +750,25 @@ export function processRunner(
       )
     );
   };
-  return Object.assign(run, { browser, close: () => browser.close() });
+  return Object.assign(run, {
+    browser,
+    close: async () => {
+      // A leaked descendant must not survive shutdown just because the
+      // request promise settled before its child's close event.
+      for (const child of live) {
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+            continue;
+          } catch {
+            // The process group may already be gone.
+          }
+        }
+        child.kill("SIGKILL");
+      }
+      await browser.close();
+    }
+  });
 }
 
 /**
