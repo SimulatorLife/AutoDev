@@ -154,6 +154,50 @@ function moduleSpecifiers(file: string): string[] {
   return specifiers;
 }
 
+/** Find relative imports whose resolved target belongs to another workspace. */
+function crossWorkspaceRelativeImports(
+  imports: readonly Import[],
+  workspaceRoots: readonly {
+    readonly directory: string;
+    readonly roots: readonly string[];
+  }[]
+): Import[] {
+  const owners = workspaceRoots.flatMap((workspace) =>
+    workspace.roots.map((root) => ({
+      directory: path.join(workspace.directory, root),
+      workspace: workspace.directory
+    }))
+  );
+  return imports.filter(({ file, specifier }) => {
+    if (!specifier.startsWith(".")) return false;
+    const target = path.normalize(path.join(path.dirname(file), specifier));
+    const owner = (candidate: string): string | undefined =>
+      owners.find(
+        ({ directory }) =>
+          candidate === directory ||
+          candidate.startsWith(`${directory}${path.sep}`)
+      )?.workspace;
+    const sourceWorkspace = owner(file);
+    const targetWorkspace = owner(target);
+    return (
+      sourceWorkspace !== undefined &&
+      targetWorkspace !== undefined &&
+      sourceWorkspace !== targetWorkspace
+    );
+  });
+}
+
+function relativeImports(workspace: {
+  readonly directory: string;
+  readonly roots: readonly string[];
+}): Import[] {
+  return workspaceFiles(workspace).flatMap((file) =>
+    moduleSpecifiers(file)
+      .filter((specifier) => specifier.startsWith("."))
+      .map((specifier) => ({ file, specifier }))
+  );
+}
+
 const NODE_BUILTINS = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`)
@@ -206,6 +250,52 @@ test("every import a workspace makes is a dependency its manifest declares", () 
     }
   }
   assert.deepEqual(offenders, []);
+});
+
+test("relative imports stay within their owning workspace", () => {
+  const codeWorkspaces = WORKSPACES.filter(
+    (workspace) => workspace.directory !== ""
+  );
+  const fixtures: Import[] = [];
+  const expectedOffenders: Import[] = [];
+  for (const source of codeWorkspaces) {
+    for (const target of codeWorkspaces) {
+      const file = path.join(source.directory, source.roots[0]!, "entry.ts");
+      const targetFile = path.join(
+        target.directory,
+        target.roots[0]!,
+        "module.ts"
+      );
+      const fixture = {
+        file,
+        specifier: path.relative(path.dirname(file), targetFile)
+      };
+      fixtures.push(fixture);
+      if (source.directory !== target.directory) {
+        expectedOffenders.push(fixture);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    crossWorkspaceRelativeImports(fixtures, codeWorkspaces),
+    expectedOffenders
+  );
+  assert.deepEqual(
+    crossWorkspaceRelativeImports(
+      [{ file: "console/app/page.ts", specifier: "../src/index.ts" }],
+      codeWorkspaces
+    ),
+    []
+  );
+
+  // Root-level tests are a repository harness, not one of the four code
+  // workspaces; they may import implementation files directly to test them.
+  const actualImports = codeWorkspaces.flatMap(relativeImports);
+  assert.deepEqual(
+    crossWorkspaceRelativeImports(actualImports, WORKSPACES),
+    []
+  );
 });
 
 test("a cross-workspace import reaches for an export the target declares", () => {

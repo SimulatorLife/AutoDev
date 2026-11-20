@@ -345,7 +345,7 @@ console ──> core, data         # data: exported server-only read projections
 
 **Verifiable independence**
 
-- Package manifests declare `workspace:*` dependencies and explicit public `exports`; prohibit undeclared, relative and deep imports across workspace internals with TypeScript/import-boundary lint rules and CI. `workspace:*` alone does not enforce encapsulation.
+- Package manifests declare `workspace:*` dependencies and explicit public `exports`; imports between the four code workspaces must use those declared package exports, never relative paths or deep imports into workspace internals. Enforce this with TypeScript/import-boundary lint rules and CI. Same-workspace relative imports are allowed. Root-level test harnesses may import implementation files directly to exercise them; `workspace:*` alone does not enforce encapsulation.
 - A swappable port exposes versioned/compatible typed inputs, outcomes and error semantics, cancellation/lifecycle, authorization and telemetry contracts without leaking concrete adapter classes. Consumer-driven contract suites run against the incumbent and replacement adapter at the public boundary.
 - Each package documents owner/domain, public API and exports, dependencies, local typecheck/test/build commands and replacement contract in its package README. Maintain a root ownership/dependency map.
 - A cross-workspace change **merges atomically** with its affected API, implementation, migration, tests and documentation; it need not be one commit. CI checks all changed packages and their transitive dependents, runs isolated tests and relevant integration contracts, and offers a full monorepo validation gate for merges/releases.
