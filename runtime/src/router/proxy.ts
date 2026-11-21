@@ -55,7 +55,8 @@ import {
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,
-  providerSignInRequiredMessage
+  providerSignInRequiredMessage,
+  providerToolChannelUnavailable
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
@@ -875,6 +876,10 @@ export function fallbackable(status: number, body: unknown): boolean {
   // A route that says it cannot serve this request is not a broken provider:
   // the next candidate may serve it, so the chain moves on.
   if (providerRequestUnsupported(body)) return true;
+  // A route whose tool channel could not carry the turn answered, but not
+  // with the turn's work: another candidate can do it. Unlike a refusal, the
+  // provider is cooled down, so the next turn does not repeat it.
+  if (providerToolChannelUnavailable(body)) return true;
   return FALLBACKABLE_BODY_REGEX.test(String(body ?? ""));
 }
 

@@ -45,6 +45,7 @@ import {
   parseOpencliOutput,
   parseOpencliReply,
   prefixDigests,
+  renderOpencliContinuation,
   replyFromRow,
   toolIndex,
   transcriptEntries,
@@ -1847,6 +1848,220 @@ async function post(
     body: JSON.stringify(payload)
   });
 }
+
+test("a read-only role's turn carries the sandbox policy into the prompt", async () => {
+  await withBridge(
+    [{ response: "Understood: read-only.", conversationId: "conv-ro" }],
+    async (baseUrl, runs) => {
+      const response = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          instructions: "Be brief.",
+          tools: [EXEC_TOOL, WAIT_TOOL],
+          input: [userMessage("Inspect the repository.")]
+        },
+        // The router sends the role's tier with every non-orchestrator turn.
+        { "x-autodev-sandbox-mode": "read-only" }
+      );
+      assert.equal(response.status, 200);
+      // Every other bridge turns this header into a system instruction; the
+      // web-chat bridge used to drop it, so a read-only role served by a site
+      // was never told it could not write.
+      assert.match(runs.prompts[0]!, /Sandbox policy: READ-ONLY/u);
+      assert.match(runs.prompts[0]!, /MUST NOT edit, create, delete/u);
+    }
+  );
+});
+
+test("a writable role's turn carries no sandbox policy", async () => {
+  await withBridge(
+    [{ response: "Working.", conversationId: "conv-rw" }],
+    async (baseUrl, runs) => {
+      const response = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          instructions: "Be brief.",
+          tools: [EXEC_TOOL, WAIT_TOOL],
+          input: [userMessage("Edit the file.")]
+        },
+        { "x-autodev-sandbox-mode": "workspace-write" }
+      );
+      assert.equal(response.status, 200);
+      assert.doesNotMatch(runs.prompts[0]!, /Sandbox policy: READ-ONLY/u);
+    }
+  );
+});
+
+/**
+ * Codex's code-mode `exec`, as an explorer gets it: the shell is not a tool of
+ * its own but `exec_command` on the `tools` global, and the description says
+ * the script has no file system -- which ChatGPT read as "no repository
+ * access" (thread `01a1fbe9-d211-7bb1-a791-e80743556eef`).
+ */
+const CODE_MODE_EXEC_TOOL = {
+  type: "custom",
+  name: "exec",
+  description: [
+    "Run JavaScript code to orchestrate/compose tool calls",
+    "- Runs raw JavaScript -- no Node, no file system, no network access, no console.",
+    "",
+    "### `exec_command`",
+    "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+    "```ts",
+    "declare const tools: { exec_command(args: { cmd: string; }): Promise<{ output: string }>; };",
+    "```"
+  ].join("\n")
+};
+const EXPLORER = { "x-autodev-agent-role": "explorer" };
+const NO_REPO_ACCESS_REPLY =
+  "NO_REPO_ACCESS: functions.exec, container.exec, python.exec, web.run; provider/model: OpenAI GPT-6.";
+
+test("an explorer's prompt names its shell and how to call it through the tool protocol", async () => {
+  await withBridge(
+    [
+      {
+        response: '<tool_call name="exec">\ntext(1)\n</tool_call>',
+        conversationId: "conv-sh"
+      }
+    ],
+    async (baseUrl, runs) => {
+      const response = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-fast",
+          tools: [CODE_MODE_EXEC_TOOL, WAIT_TOOL],
+          input: [
+            userMessage(
+              "FIRST: run `pwd` with your shell tool. If you have no shell tool, reply only with NO_REPO_ACCESS."
+            )
+          ]
+        },
+        EXPLORER
+      );
+      assert.equal(response.status, 200);
+      const prompt = runs.prompts[0]!;
+      // The shell is named outright, with a complete call in the protocol the
+      // bridge parses -- not left for the model to find as a nested
+      // declaration under a tool whose description says "no file system".
+      assert.match(
+        prompt,
+        /Your shell on the user's machine is `tools\.exec_command`, called inside `exec`/u
+      );
+      assert.ok(
+        prompt.includes(
+          '<tool_call name="exec">\nconst result = await tools.exec_command({ cmd: "pwd && ls" });\ntext(result.output);\n</tool_call>'
+        )
+      );
+      // And the tools are the model's own, called through its reply text, not
+      // this site's built-in functions it went looking for.
+      assert.match(prompt, /not this site's built-in function calling/u);
+      // The example call is one the bridge itself reads back as a tool call.
+      const example = prompt.slice(
+        prompt.indexOf('<tool_call name="exec">\nconst result')
+      );
+      assert.equal(
+        parseOpencliReply(
+          example.slice(0, example.indexOf("</tool_call>") + 12)
+        ).calls.length,
+        1
+      );
+    }
+  );
+});
+
+test("a continued turn's tool index still names the shell", () => {
+  const continuation = renderOpencliContinuation(
+    [
+      {
+        kind: "custom",
+        name: "exec",
+        description: CODE_MODE_EXEC_TOOL.description,
+        parameters: null,
+        namespace: null
+      }
+    ],
+    "<tool_output>1</tool_output>"
+  );
+  assert.match(
+    continuation,
+    /Your shell on the user's machine is `tools\.exec_command`/u
+  );
+  assert.match(continuation, /not this site's built-in functions/u);
+});
+
+test("an explorer turn that answers in prose before any tool has run is a tool-channel failure", async () => {
+  await withBridge(
+    [{ response: NO_REPO_ACCESS_REPLY, conversationId: "conv-none" }],
+    async (baseUrl) => {
+      const response = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-fast",
+          tools: [CODE_MODE_EXEC_TOOL, WAIT_TOOL],
+          input: [userMessage("Run `pwd` with your shell tool.")]
+        },
+        EXPLORER
+      );
+      // Delivered as an answer, Codex ended the child's turn on it and the
+      // router counted a success: 13 wasted explorer spawns on 2026-11-20.
+      assert.equal(response.status, 400);
+      const body = (await response.json()) as { error: { type: string } };
+      assert.equal(body.error.type, "provider_tool_channel_unavailable");
+    }
+  );
+});
+
+test("a leaf turn may finish in prose once a tool has run, and an orchestrator may answer in prose", async () => {
+  await withBridge(
+    [
+      {
+        response: "Found it: docs/ has 12 files.",
+        conversationId: "conv-done"
+      },
+      {
+        response: "Hello! What should we work on?",
+        conversationId: "conv-root"
+      }
+    ],
+    async (baseUrl) => {
+      const done = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-fast",
+          tools: [CODE_MODE_EXEC_TOOL, WAIT_TOOL],
+          input: [
+            userMessage("List docs."),
+            {
+              type: "custom_tool_call",
+              call_id: "c1",
+              name: "exec",
+              input: "text(1)"
+            },
+            {
+              type: "custom_tool_call_output",
+              call_id: "c1",
+              output: "12 files"
+            }
+          ]
+        },
+        EXPLORER
+      );
+      assert.equal(done.status, 200);
+      const root = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-fast",
+          tools: [CODE_MODE_EXEC_TOOL, WAIT_TOOL],
+          input: [userMessage("hi")]
+        },
+        { "x-autodev-agent-role": "orchestrator" }
+      );
+      assert.equal(root.status, 200);
+    }
+  );
+});
 
 test("a tool call goes to Codex and its output continues the same site conversation", async () => {
   await withBridge(

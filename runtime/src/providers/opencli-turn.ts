@@ -564,6 +564,7 @@ const RESPONSE_RULES = [
   "You are the model behind a Codex coding agent working on the user's machine. You cannot see that machine and cannot run anything yourself: you act only by requesting tool calls, which the agent executes in its own sandbox. Their results arrive in the next message.",
   "You know nothing about the machine's files, directories, commands, or state except what tool results in the conversation show. Never guess or assume them: when the task needs such a fact and no tool result states it yet, your reply must be the tool calls that find it out.",
   "Your own chat tools -- this site's Python or code sandbox, file search, browsing -- run somewhere else, not on the agent's machine. They cannot see its repository, its files, or its tools, so never use them to check whether a path, a file, or a tool exists. A repository path or a function on `tools` (such as the `multi_agent_v1__*` delegation functions) is checked only through a tool call to the agent, for example `exec` running `text(typeof tools.multi_agent_v1__spawn_agent)`. Never report a capability or path as unavailable unless a tool result in this conversation shows it.",
+  "The tools listed under \"Tools\" below are the agent's tools, and they are your tools in this conversation: your shell, your file access, your access to the repository. They are not this site's built-in function calling and will never appear among your own built-in tools. You call them by writing <tool_call> blocks in the text of your reply, and the agent runs them on the user's machine. So when a message asks whether you have a shell, can read files, or have some tool, the answer is these tools: call them, and never reply that the repository, a shell, or a tool is unavailable without first calling it.",
   "Reply in exactly one of two ways:",
   '1. To act, write one or more tool calls, each in exactly this form, with only the tool\'s input between the tags:\n\n<tool_call name="TOOL_NAME">\nINPUT\n</tool_call>\n\nFor a tool that takes raw text (such as `exec`, whose input is JavaScript source), INPUT is that text, with no Markdown fences. For a tool that takes JSON arguments, INPUT is one JSON object matching its schema. You may write a short note before the calls. Stop after the last call: do not invent its result.',
   "2. When the task is done, or you need nothing more from the tools, reply with your final answer as plain text and no tool_call tags.",
@@ -575,9 +576,86 @@ const CONTINUATION_HEADER =
   "The conversation so far is in this chat's earlier messages. What follows is everything new since your last reply: the results of your tool calls and any new messages.";
 
 function toolsSection(tools: readonly CodexTool[]): string {
-  return tools.length > 0
-    ? `## Tools\n\n${codexToolReference(tools)}`
-    : "## Tools\n\nNo tools are available on this turn: answer in plain text.";
+  if (tools.length === 0)
+    return "## Tools\n\nNo tools are available on this turn: answer in plain text.";
+  const shell = shellAccess(tools);
+  return [
+    "## Tools",
+    ...(shell ? [`### Your shell\n\n${shell.guide}`] : []),
+    codexToolReference(tools)
+  ].join("\n\n");
+}
+
+/** Codex's shell tools when it offers them as plain functions (no code mode). */
+const SHELL_FUNCTION_TOOLS = new Set([
+  "exec_command",
+  "shell_command",
+  "shell"
+]);
+/** The command every shell example runs: harmless, and what a first look needs. */
+const EXAMPLE_COMMAND = "pwd && ls";
+
+/** How the model reaches the user's shell on this turn, if the tools carry one. */
+export interface ShellAccess {
+  /** One line naming the shell, for a continuation's reminder. */
+  readonly summary: string;
+  /** The shell named, with a complete example call, for a first prompt. */
+  readonly guide: string;
+}
+
+/**
+ * The shell among a turn's tools, with an example call in the response
+ * protocol -- or null when the turn offers no shell.
+ *
+ * In Codex's code mode the shell is not a tool of its own: it is
+ * `exec_command`, a function on the `tools` global inside `exec`, and `exec`'s
+ * description says its JavaScript has "no Node, no file system, no network
+ * access" (true of the isolate, not of the functions it calls). A web chat
+ * model reading that reference found no tool named like a shell, read `exec`
+ * as a sandbox with no file access, and answered an explorer's "run `pwd`
+ * with your shell tool" with `NO_REPO_ACCESS: functions.exec, container.exec,
+ * python.exec, web.run` -- every explorer turn on ChatGPT on 2026-11-20 ended
+ * that way, with no tool call (thread `01a1fbe9-d211-7bb1-a791-e80743556eef`).
+ * The shell is named outright, with a call the model can copy.
+ */
+export function shellAccess(tools: readonly CodexTool[]): ShellAccess | null {
+  const codeMode = tools.find(
+    (tool) =>
+      tool.kind === "custom" &&
+      nestedToolNames(tool.description).includes("exec_command")
+  );
+  if (codeMode) {
+    const summary = `Your shell on the user's machine is \`tools.exec_command\`, called inside \`${codeMode.name}\`.`;
+    return {
+      summary,
+      guide: `${summary} \`${codeMode.name}\`'s note that its JavaScript has no file system or network describes the script's own isolate: the functions on \`tools\` run on the user's machine, in its repository. To run a command, read a file, or list a directory, reply with a call like this one:\n\n<tool_call name="${codeMode.name}">\nconst result = await tools.exec_command({ cmd: ${JSON.stringify(EXAMPLE_COMMAND)} });\ntext(result.output);\n</tool_call>`
+    };
+  }
+  const shell = tools.find(
+    (tool) => tool.kind === "function" && SHELL_FUNCTION_TOOLS.has(tool.name)
+  );
+  const argument = shell ? shellCommandArgument(shell) : null;
+  if (!shell || !argument) return null;
+  const summary = `Your shell on the user's machine is the \`${shell.name}\` tool.`;
+  return {
+    summary,
+    guide: `${summary} It runs on the user's machine, in its repository. To run a command, read a file, or list a directory, reply with a call like this one:\n\n<tool_call name="${shell.name}">\n${JSON.stringify(argument)}\n</tool_call>`
+  };
+}
+
+/** A shell function's arguments running the example command, from its schema. */
+function shellCommandArgument(tool: CodexTool): JsonRecord | null {
+  const properties = tool.parameters?.properties;
+  const required = tool.parameters?.required;
+  const name = Array.isArray(required) ? required[0] : undefined;
+  if (typeof name !== "string" || !properties || typeof properties !== "object")
+    return null;
+  const schema = (properties as JsonRecord)[name];
+  const array =
+    schema !== null &&
+    typeof schema === "object" &&
+    (schema as JsonRecord).type === "array";
+  return { [name]: array ? ["bash", "-lc", EXAMPLE_COMMAND] : EXAMPLE_COMMAND };
 }
 
 /**
@@ -741,7 +819,7 @@ export function renderOpencliPrompt(
 }
 
 const CONTINUATION_RULES =
-  'Same rules as this chat\'s first message: to act, reply with <tool_call name="TOOL_NAME">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. Nothing about the machine is known except what tool results show, and your own chat tools (Python, file search) cannot see it.';
+  "Same rules as this chat's first message: to act, reply with <tool_call name=\"TOOL_NAME\">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. The tools below are your tools, called only by writing those blocks in your reply, not this site's built-in functions. Nothing about the machine is known except what tool results show, and your own chat tools (Python, file search) cannot see it.";
 
 const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\` in an \`exec\` cell whose first line is \`// @exec: {"yield_time_ms": 330000}\` (so the cell waits the full \`timeout_ms\` of 300000 instead of yielding after 30 seconds), and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
 
@@ -752,7 +830,8 @@ const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the fu
 export function toolIndex(tools: readonly CodexTool[]): string {
   if (tools.length === 0)
     return "No tools are available on this turn: answer in plain text.";
-  return tools
+  const shell = shellAccess(tools);
+  const index = tools
     .map((tool) => {
       const description = tool.description.trim();
       const newline = description.indexOf("\n");
@@ -763,6 +842,7 @@ export function toolIndex(tools: readonly CodexTool[]): string {
       return `- \`${tool.name}\`${summary ? `: ${summary}` : ""}${nested.length > 0 ? ` Functions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.` : ""}`;
     })
     .join("\n");
+  return shell ? `${shell.summary}\n\n${index}` : index;
 }
 
 /**

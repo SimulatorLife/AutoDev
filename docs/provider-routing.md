@@ -2748,6 +2748,32 @@ single list; the route patterns and the site registry in
   function is checked only through a tool call to the agent, and nothing is
   reported unavailable unless a tool result shows it. The bridge logs each
   turn's offered tool count and prompt size.
+- **The shell is named, with a call to copy.** In Codex's code mode the shell
+  is not a tool of its own: it is `exec_command` on the `tools` global inside
+  `exec`, whose own description says its JavaScript has "no file system, no
+  network access". Every explorer ChatGPT served on 2026-11-20 read that as
+  having no shell and answered "run `pwd` with your shell tool" with
+  `NO_REPO_ACCESS: functions.exec, container.exec, python.exec, web.run` --
+  zero tool calls, each one taken as the child's final answer (thread
+  `01a1fbe9-d211-7bb1-a791-e80743556eef`). The tool reference now opens with
+  a "Your shell" section (`shellAccess`) naming the shell and a complete
+  `<tool_call name="exec">` that runs `tools.exec_command`, a continued
+  turn's tool index repeats the one-line form, and the response rules say the
+  listed tools are the model's own, called by writing `<tool_call>` blocks in
+  the reply text -- not the site's built-in function calling, where it went
+  looking for them. Codex without code mode offers the shell as a plain
+  function (`exec_command`, `shell_command` or `shell`), and the example is
+  built from that function's schema instead.
+- **A leaf agent's turn is not done until a tool has run.** A turn whose
+  router role is not the orchestrator, whose tools include a shell, whose
+  reply calls no tool, and whose conversation holds no tool result has not
+  touched the machine it was sent to work on. The bridge answers it as
+  `provider_tool_channel_unavailable` (`NO_TOOL_USE`, HTTP 400) instead of a
+  completed turn; the router falls back to the next candidate, cools the
+  provider down and records the failure class `tool_channel_unavailable`, so
+  the route is counted rather than reporting success. The orchestrator is
+  exempt (a plain answer to the user can be its whole turn), as is a request
+  with no role header, and a leaf may end in prose once any tool has run.
 - **No tool API, so a text protocol.** A site has no function calling. The
   bridge renders the turn into one prompt -- response rules, Codex's
   `instructions`, the full reference for every tool Codex offered

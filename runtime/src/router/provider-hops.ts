@@ -52,6 +52,7 @@ export const PROVIDER_HOP_FAILURE_CLASSES: ReadonlySet<string> = new Set([
   "invalid_model",
   "authentication",
   "unsupported_request",
+  "tool_channel_unavailable",
   "upstream_error",
   "request_error",
   "provider_disabled",

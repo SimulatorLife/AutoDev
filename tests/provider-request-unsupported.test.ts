@@ -144,6 +144,29 @@ test("a route that cannot serve the request is a fallback, not a broken provider
   );
 });
 
+test("a route whose tool channel did not carry the turn falls back and cools down", () => {
+  const body = JSON.stringify({
+    error: {
+      type: "provider_tool_channel_unavailable",
+      code: "provider_tool_channel_unavailable",
+      message:
+        "the chatgpt reply ended a leaf agent's turn without calling a tool"
+    }
+  });
+  const decision = decideCandidateFailure(400, body);
+  assert.equal(
+    decision.outcome,
+    "fallback",
+    "another candidate can do the turn the route answered without doing"
+  );
+  assert.equal(
+    decision.coolDown,
+    true,
+    "the provider is counted, so the next turn does not repeat the refusal"
+  );
+  assert.equal(classifyProviderFailure(400, body), "tool_channel_unavailable");
+});
+
 test("a provider failure still cools down and still moves the chain on", () => {
   const throttled = decideCandidateFailure(429, "rate limit exceeded");
   assert.equal(throttled.outcome, "fallback");

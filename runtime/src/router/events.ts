@@ -2,7 +2,8 @@ import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,
-  providerSignInRequiredMessage
+  providerSignInRequiredMessage,
+  providerToolChannelUnavailable
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 
 export type ProviderFailureClass =
@@ -16,6 +17,7 @@ export type ProviderFailureClass =
   | "authentication"
   | typeof SIGN_IN_REQUIRED_FAILURE_CLASS
   | "unsupported_request"
+  | "tool_channel_unavailable"
   | "upstream_error"
   | "request_error";
 
@@ -117,6 +119,10 @@ export function classifyProviderFailure(
   body: unknown = ""
 ): ProviderFailureClass {
   const text = String(body ?? "");
+  // A route whose tool channel could not carry out the turn is its own case: it
+  // is neither a refusal of the request nor a broken provider, and the chain
+  // moves on while the provider cools down briefly.
+  if (providerToolChannelUnavailable(text)) return "tool_channel_unavailable";
   // A route that cannot serve this request is not a broken provider: the
   // router moves to the next candidate and leaves the provider healthy.
   if (providerRequestUnsupported(text)) return "unsupported_request";

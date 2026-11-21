@@ -35,6 +35,61 @@ export const PROVIDER_REQUEST_UNSUPPORTED_TYPE =
   "provider_request_unsupported" as const;
 
 /**
+ * The typed refusal of a provider whose tool channel did not carry the turn.
+ *
+ * A bridge that serves a model which cannot call tools natively -- a web chat
+ * site, whose model has to write the call out in prose for the bridge to read
+ * -- can end a turn with prose that reports the agent's tools as unavailable
+ * instead of with the work the turn asked for. The reply is a report about the
+ * turn, not an answer to it, and delivered as an answer it ends the agent's
+ * turn with a false result.
+ *
+ * This type tells the router that the route could not carry out a turn it was
+ * given: the chain moves on to another candidate, and the provider is cooled
+ * down briefly so the next turn does not pick it again and repeat the refusal.
+ */
+export const PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE =
+  "provider_tool_channel_unavailable" as const;
+
+/**
+ * Fail closed on a turn the provider could not carry out with its tools.
+ */
+export function sendToolChannelUnavailableFailure(
+  response: ServerResponse,
+  provider: string,
+  message: string
+): void {
+  writeErrorLine(`${provider} could not carry out the turn: ${message}`);
+  sendJson(response, 400, {
+    error: {
+      type: PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE,
+      code: PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE,
+      message
+    }
+  });
+}
+
+/**
+ * Whether a provider body reports that its tool channel could not carry out
+ * the turn.
+ */
+export function providerToolChannelUnavailable(body: unknown): boolean {
+  if (typeof body !== "string" || !body.includes(PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE))
+    return false;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!isRecord(parsed)) return false;
+    const error = isRecord(parsed.error) ? parsed.error : null;
+    return (
+      error?.type === PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE ||
+      error?.code === PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fail closed on a request this bridge cannot serve.
  *
  * The refusal is typed so the router can tell "this route cannot serve this

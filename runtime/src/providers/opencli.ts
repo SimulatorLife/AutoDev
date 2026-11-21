@@ -50,6 +50,7 @@ import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
   isOrchestratorRole,
   orchestratorBootstrapHeading,
+  readOnlySystemPromptInjection,
   resolveAgentRole,
   roleInstructions
 } from "@simulatorlife/autodev-runtime/agents";
@@ -67,8 +68,10 @@ import {
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   PROVIDER_REQUEST_UNSUPPORTED_TYPE,
+  PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE,
   sendJson,
   sendSignInRequired,
+  sendToolChannelUnavailableFailure,
   sendUnsupportedRequestFailure,
   signInRequiredBody
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
@@ -127,6 +130,7 @@ import {
   prefixDigests,
   renderOpencliContinuation,
   renderOpencliPrompt,
+  shellAccess,
   transcriptEntries,
   type TranscriptEntry,
   transcriptSegments,
@@ -479,9 +483,20 @@ const STALE_DAEMON = /stale daemon/iu;
  *   Gemini app). Nothing was sent, and nothing will be until the operator
  *   signs in, so the turn is answered as that (`sign_in_required`) rather
  *   than as a refusal that would leave the provider reading healthy.
+ * - `tool_channel`: a leaf agent's turn ended without the agent ever touching
+ *   the machine (`NO_TOOL_USE`). The site answered, but not through the tool
+ *   channel the turn depends on, so the route could not carry the turn
+ *   (`provider_tool_channel_unavailable`): the router moves on and counts it
+ *   against the provider.
  */
 type OpencliFailureKind =
-  "limit" | "timeout" | "not_sent" | "unusable" | "failed" | "sign_in";
+  | "limit"
+  | "timeout"
+  | "not_sent"
+  | "unusable"
+  | "tool_channel"
+  | "failed"
+  | "sign_in";
 
 /**
  * The bridge's code for a reply that asked for a tool call it did not
@@ -491,6 +506,51 @@ type OpencliFailureKind =
  * for a reply its model garbled once.
  */
 const UNUSABLE_REPLY = "UNUSABLE_REPLY";
+
+/**
+ * The bridge's code for a leaf agent's turn that ended in prose with no tool
+ * call, in a conversation that holds no tool result.
+ *
+ * An explorer, worker or validator exists to act on the user's machine, and
+ * its only way there is the tool channel. A reply that finishes such an
+ * agent's turn before any tool ever ran has not done the turn: on 2026-11-20
+ * every explorer ChatGPT served answered `NO_REPO_ACCESS: functions.exec,
+ * container.exec, ...` in prose, Codex took each one as the child's final
+ * answer, and the router counted every one of them as a success -- thirteen
+ * wasted explorer spawns and eight tasks marked complete with no work done.
+ * The orchestrator is exempt: it talks to the user, and a plain answer from it
+ * can be the whole turn.
+ */
+const NO_TOOL_USE = "NO_TOOL_USE";
+
+/**
+ * Why a reply cannot finish this leaf agent's turn, or null when it can: the
+ * turn offers a shell, the reply calls no tool, and no tool has run in the
+ * conversation.
+ */
+function toolChannelUnused(
+  turn: PreparedTurn,
+  parsed: ParsedReply
+): string | null {
+  if (!turn.requiresToolUse || parsed.calls.length > 0) return null;
+  if (turn.entries.some((entry) => entry.kind === "tool_output")) return null;
+  return `the ${turn.site} reply ended a leaf agent's turn without calling a tool, and no tool has run in this conversation`;
+}
+
+/** The failure a site reply is answered with instead of reaching Codex, or null. */
+function refusedReply(
+  turn: PreparedTurn,
+  parsed: ParsedReply,
+  stream: TurnStream | null
+): OpencliCommandError | null {
+  const unusable = unusableReply(turn.site, parsed, stream);
+  if (unusable !== null)
+    return new OpencliCommandError(unusable, UNUSABLE_REPLY, null);
+  const unused = toolChannelUnused(turn, parsed);
+  return unused === null
+    ? null
+    : new OpencliCommandError(unused, NO_TOOL_USE, null);
+}
 
 function failureKind(error: unknown): OpencliFailureKind {
   if (signInRequired(error)) return "sign_in";
@@ -511,6 +571,8 @@ function failureKind(error: unknown): OpencliFailureKind {
     return "not_sent";
   if (error instanceof OpencliCommandError && error.code === UNUSABLE_REPLY)
     return "unusable";
+  if (error instanceof OpencliCommandError && error.code === NO_TOOL_USE)
+    return "tool_channel";
   const message = errorMessage(error);
   const exitCode = error instanceof OpencliCommandError ? error.exitCode : null;
   const limit = classifyCliLimit(message, exitCode);
@@ -531,6 +593,7 @@ function failureKind(error: unknown): OpencliFailureKind {
 function failureErrorType(kind: OpencliFailureKind): string {
   if (kind === "not_sent" || kind === "unusable")
     return PROVIDER_REQUEST_UNSUPPORTED_TYPE;
+  if (kind === "tool_channel") return PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE;
   if (kind === "timeout") return "timeout_error";
   return "opencli_proxy_error";
 }
@@ -1453,6 +1516,10 @@ function sendFailure(response: ServerResponse, error: unknown): void {
     sendUnsupportedRequestFailure(response, PROVIDER, message);
     return;
   }
+  if (kind === "tool_channel") {
+    sendToolChannelUnavailableFailure(response, PROVIDER, message);
+    return;
+  }
   if (kind === "sign_in") {
     sendSignInRequired(response, message);
     return;
@@ -1503,6 +1570,8 @@ interface PreparedTurn {
   /** How many leading items the continued chat has already seen; 0 for a fresh turn. */
   readonly seen: number;
   readonly tools: ReturnType<typeof codexToolSurface>["tools"];
+  /** A leaf agent with a shell: its turn is not done until a tool has run. */
+  readonly requiresToolUse: boolean;
 }
 
 /** A turn's reply, with the prompt that produced it and whether it continued a chat. */
@@ -1786,8 +1855,16 @@ export function createOpencliBridge(
       thread: codexThread(request, payload)
     };
     const recorded = ledger.find(scope, prefixDigests(segments));
+    // The role's sandbox tier travels in the request headers, and every other
+    // bridge turns it into a system instruction: this one did not, so a
+    // read-only role served by a web chat site was told nothing about the
+    // restriction it was running under.
+    const sandboxInjection = readOnlySystemPromptInjection(
+      request.headers as Record<string, unknown>
+    );
     const instructions =
-      typeof payload.instructions === "string" ? payload.instructions : "";
+      (typeof payload.instructions === "string" ? payload.instructions : "") +
+      sandboxInjection;
     const role = orchestrator ? roleInstructions(agentRole, "web-chat") : null;
     // Both sites narrow MCP tool descriptions before omitting transcript.
     // ChatGPT additionally attempts MCP-only compaction to stay in typed mode.
@@ -1865,7 +1942,11 @@ export function createOpencliBridge(
       },
       entries,
       seen: resume?.seen ?? 0,
-      tools
+      tools,
+      // Only a role the router named: a request with no role header is not
+      // known to be a leaf agent.
+      requiresToolUse:
+        agentRole !== null && !orchestrator && shellAccess(tools) !== null
     };
   }
 
@@ -2446,12 +2527,12 @@ export function createOpencliBridge(
         writeErrorLine(
           `opencli ${turn.site} reply wrote a <tool_output> of its own; it and everything after it were dropped`
         );
-      const unusable = unusableReply(turn.site, parsed, stream);
-      if (unusable !== null) {
+      const refused = refusedReply(turn, parsed, stream);
+      if (refused !== null) {
         // The site's chat now holds a reply Codex never saw, so it is not
         // continued: the next turn starts a new chat.
         if (turn.resumedFrom) ledger.consume(turn.scope, turn.resumedFrom);
-        throw new OpencliCommandError(unusable, UNUSABLE_REPLY, null);
+        throw refused;
       }
     } catch (error) {
       observeSignIn(turn.site, error);
