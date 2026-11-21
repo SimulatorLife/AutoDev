@@ -672,8 +672,13 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   known quota scope with `runway.status: exhausted_now` as a yellow
   `Quota exhausted` provider status, naming the scope and limiting window; it
   ignores stale/unknown scopes, bound conflicts and raw percentages for this
-  verdict. This is a scoped UI projection only: it does not become Runtime
-  provider health evidence or a router availability decision.
+  verdict. Any exhausted window bounding the routed capacity is enough: a free
+  5h window never makes a provider with an exhausted 7d window `Ready`. The
+  routed capacity is the provider-wide scope (`all_models`/`all_products`)
+  when quota-axi reports one, the mapped Antigravity family scope, and
+  otherwise the provider's model scopes (MiniMax's `model:general`), which
+  must all be exhausted. This is a scoped UI projection only: it does not
+  become Runtime provider health evidence or a router availability decision.
 
 - **Each agent stays with its own provider across turns.** The SubagentRegistry
   tracks the orchestrator by its session (`noteOrchestratorSession`) and each

@@ -100,6 +100,7 @@ test("a thread's requests are summarized by provider, with the failures named", 
     assert.equal(summary.requests, 2);
     assert.equal(summary.matchedBy, "model-window");
     assert.deepEqual(summary.providerSequence, ["antigravity", "claude"]);
+    assert.deepEqual(summary.modelSequence, ["gemini", "sonnet"]);
     assert.equal(summary.failures.length, 1);
     assert.equal(summary.failures[0]?.provider, "antigravity");
     assert.equal(summary.failures[0]?.status, 502);

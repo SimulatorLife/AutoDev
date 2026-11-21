@@ -1290,12 +1290,13 @@ function buildThreadTrace(
       typeof meta.parent_thread_id === "string" ? meta.parent_thread_id : null,
     nickname:
       typeof meta.agent_nickname === "string" ? meta.agent_nickname : null,
+    // A root thread carries no agent_role; it is the orchestrator.
     role:
       typeof meta.agent_role === "string"
         ? meta.agent_role
         : meta.thread_source === "subagent"
           ? null
-          : "root",
+          : "orchestrator",
     model: typeof context.model === "string" ? context.model : null,
     modelProvider:
       typeof meta.model_provider === "string" ? meta.model_provider : null,

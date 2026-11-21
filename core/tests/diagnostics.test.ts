@@ -145,7 +145,8 @@ function report(): SessionDiagnosticsReport {
           claude: { requests: 1, failures: 0, elapsedMs: 120, toolCalls: 1 }
         },
         failures: [],
-        providerSequence: ["claude"]
+        providerSequence: ["claude"],
+        modelSequence: ["claude-sonnet-5"]
       }
     ],
     logs: [

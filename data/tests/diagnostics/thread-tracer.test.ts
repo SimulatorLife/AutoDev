@@ -35,6 +35,22 @@ test("a thread's turns, gaps and tool calls are read from its rollout", () => {
   }
 });
 
+test("a root thread, which carries no agent role, is the orchestrator", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const dir = path.join(home, "sessions", "2026", "09", "18");
+    const trace = traceThread(
+      path.join(dir, `rollout-2026-09-18T17-00-00-${ROOT}.jsonl`),
+      { items: false }
+    );
+    assert.equal(trace.id, ROOT);
+    assert.equal(trace.parentId, null);
+    assert.equal(trace.role, "orchestrator");
+  } finally {
+    cleanup();
+  }
+});
+
 test("a silence of a minute or more inside a turn is a gap", () => {
   const { home, cleanup } = fixture();
   try {

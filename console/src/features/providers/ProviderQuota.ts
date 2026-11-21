@@ -259,20 +259,69 @@ function isProviderWideRoutingScope(scope: string): boolean {
   return scope === "all_models" || scope === "all_products";
 }
 
-function providerIdForExhaustion(
-  entryProvider: string,
-  candidate: ProviderQuotaExhaustion
-): string | null {
-  // The shared service has separate AutoDev routes. Do not fan an
-  // unfamiliar limiter out to every route row: both its quota scope and
-  // authoritative limiting window must identify the same family.
-  if (entryProvider === "agy") {
-    return antigravityRouteForExhaustion(
+function isModelScope(scope: string): boolean {
+  return scope.startsWith("model:");
+}
+
+/**
+ * The exhaustion that leaves a single-route provider unable to serve anything.
+ *
+ * A provider-wide scope (`all_models`/`all_products`), when reported, is the
+ * whole verdict: one exhausted model under a live provider-wide scope (Claude's
+ * `model:opus`) leaves the provider's other models serving. A provider that
+ * reports no provider-wide scope meters its capacity only per model family --
+ * MiniMax's `model:general`, bounded by both a 5h and a 7d window -- so it is
+ * exhausted once every model scope it reports is exhausted, whichever of its
+ * windows ran out. Non-routing workloads (`code_review`, `tools`, ...) never
+ * decide it.
+ */
+function providerRouteExhaustion(
+  entry: QuotaAxiProvider
+): ProviderQuotaExhaustion | null {
+  const availabilities = entry.quotaSemantics?.effectiveAvailability ?? [];
+  const providerWide = availabilities.filter((availability) =>
+    isProviderWideRoutingScope(availability.scope)
+  );
+  if (providerWide.length > 0) {
+    for (const availability of providerWide) {
+      const candidate = authoritativeExhaustion(entry, availability);
+      if (candidate !== null) return candidate;
+    }
+    return null;
+  }
+  const modelScopes = availabilities.filter((availability) =>
+    isModelScope(availability.scope)
+  );
+  if (modelScopes.length === 0) return null;
+  let first: ProviderQuotaExhaustion | null = null;
+  for (const availability of modelScopes) {
+    const candidate = authoritativeExhaustion(entry, availability);
+    if (candidate === null) return null;
+    first ??= candidate;
+  }
+  return first;
+}
+
+/**
+ * The shared Antigravity service has separate AutoDev routes. Do not fan an
+ * unfamiliar limiter out to every route row: both its quota scope and
+ * authoritative limiting window must identify the same family.
+ */
+function antigravityExhaustions(
+  entry: QuotaAxiProvider
+): [string, ProviderQuotaExhaustion][] {
+  const routes: [string, ProviderQuotaExhaustion][] = [];
+  for (const availability of entry.quotaSemantics?.effectiveAvailability ??
+    []) {
+    const candidate = authoritativeExhaustion(entry, availability);
+    if (candidate === null) continue;
+    const route = antigravityRouteForExhaustion(
       candidate.scope,
       candidate.limitingWindowId
     );
+    if (route !== null) routes.push([route, candidate]);
   }
-  return isProviderWideRoutingScope(candidate.scope) ? entryProvider : null;
+  return routes;
 }
 
 function hasValidGeneratedAt(report: QuotaAxiSnapshot): boolean {
@@ -305,10 +354,13 @@ export function quotaExhaustionEvidence(
 }
 
 /**
- * Projects only quota-axi's explicit, fresh, provider-wide exhaustion verdicts
- * onto Console provider rows. Non-routing workloads (such as `code_review`,
- * `tools`, or `grok_bot`), single-model scopes, stale readings, and raw
- * percentages do not mark a usable provider unavailable.
+ * Projects quota-axi's explicit, fresh exhaustion verdicts onto Console
+ * provider rows: a provider is exhausted when *any* window bounding the
+ * capacity it routes is exhausted -- a free 5h window does not make a provider
+ * with an exhausted 7d window usable. Non-routing workloads (such as
+ * `code_review`, `tools`, or `grok_bot`), a single model scope beside a
+ * live provider-wide scope, stale readings, and raw percentages do not mark a
+ * usable provider unavailable.
  */
 export function exhaustedQuotaByProvider(
   report: QuotaAxiSnapshot | null
@@ -318,15 +370,14 @@ export function exhaustedQuotaByProvider(
 
   for (const entry of report.providers) {
     if (!isFreshQuotaEntry(entry)) continue;
-    for (const availability of entry.quotaSemantics?.effectiveAvailability ??
-      []) {
-      const candidate = authoritativeExhaustion(entry, availability);
-      if (candidate === null) continue;
-      const providerId = providerIdForExhaustion(entry.provider, candidate);
-      if (providerId === null) continue;
-      if (!exhausted.has(providerId)) {
-        exhausted.set(providerId, candidate);
-      }
+    if (entry.provider !== "agy") {
+      const candidate = providerRouteExhaustion(entry);
+      if (candidate !== null && !exhausted.has(entry.provider))
+        exhausted.set(entry.provider, candidate);
+      continue;
+    }
+    for (const [providerId, candidate] of antigravityExhaustions(entry)) {
+      if (!exhausted.has(providerId)) exhausted.set(providerId, candidate);
     }
   }
   return exhausted;

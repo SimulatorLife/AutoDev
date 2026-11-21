@@ -64,6 +64,9 @@ test("the threads table shows authoritative per-thread routed providers", () => 
     assert.ok(markup.includes(`>${header}<`));
   }
   assert.match(markup, />orchestrator</);
+  // A thread the router saw shows the upstream models it was served by...
+  assert.match(markup, />gemini → sonnet</);
+  // ...and one it did not see falls back to the model Codex requested.
   assert.match(markup, />autodev\/orchestrator</);
   assert.match(markup, />antigravity → claude</);
   assert.doesNotMatch(markup, />local_model_router</);

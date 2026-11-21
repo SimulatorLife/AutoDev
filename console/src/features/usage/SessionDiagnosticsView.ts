@@ -497,7 +497,10 @@ function threadColumns(
       id: "model",
       header: "Model",
       cell: ({ row: { original: thread } }) =>
-        thread.model ?? NOT_OBSERVED_LABEL,
+        threadModelLabel(
+          thread,
+          routerSummaries.find((summary) => summary.thread === thread.id)
+        ),
       meta: { weight: 130, align: "tokens" }
     },
     {
@@ -574,6 +577,20 @@ function routerProviderLabel(
       ? " (matched by model/time window)"
       : "";
   return `${providers.join(" → ")}${matchNote}`;
+}
+
+/**
+ * The upstream model(s) that served a thread. The thread's own model is the
+ * alias Codex requested (`autodev/orchestrator`); the router knows the real
+ * one, so it is used whenever the router saw the thread.
+ */
+function threadModelLabel(
+  thread: SessionThreadTrace,
+  summary: SessionRouterSummary | undefined
+): string {
+  if (summary && summary.modelSequence.length > 0)
+    return summary.modelSequence.join(" → ");
+  return thread.model ?? NOT_OBSERVED_LABEL;
 }
 
 function renderOverview(
@@ -877,7 +894,7 @@ function renderThreadDetail(
     React.createElement(
       DetailValue,
       { label: "Model" },
-      thread.model ?? NOT_OBSERVED_LABEL
+      threadModelLabel(thread, routerSummary)
     ),
     React.createElement(
       DetailValue,

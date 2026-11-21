@@ -364,6 +364,127 @@ test("quota status ignores non-routing and single-model scopes when provider-wid
   assert.equal(exhausted.size, 0);
 });
 
+test("an exhausted weekly window marks a provider exhausted even while its 5h window is free", () => {
+  const weeklyClaude = exhaustedQuotaProvider({
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        kind: "session",
+        percentRemaining: 100
+      },
+      { id: "seven_day", label: "7-day", kind: "weekly", percentRemaining: 0 }
+    ],
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "all_models",
+          status: "known",
+          boundedBy: ["five_hour", "seven_day"],
+          runway: { status: "exhausted_now", limitingWindowId: "seven_day" }
+        }
+      ]
+    }
+  });
+  // MiniMax meters its routed capacity only per model family: its sole
+  // \`model:general\` scope is the whole provider.
+  const modelScopedMinimax: QuotaAxiProvider = {
+    provider: "minimax",
+    windows: [
+      {
+        id: "model:general:5h",
+        label: "general 5h",
+        kind: "model",
+        percentRemaining: 100
+      },
+      {
+        id: "model:general:7d",
+        label: "general 7d",
+        kind: "model",
+        percentRemaining: 0
+      }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "model:general",
+          status: "known",
+          boundedBy: ["model:general:5h", "model:general:7d"],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "model:general:7d"
+          }
+        }
+      ]
+    }
+  };
+  const exhausted = exhaustedQuotaByProvider(
+    quotaReport([weeklyClaude, modelScopedMinimax])
+  );
+  assert.deepEqual(exhausted.get("claude"), {
+    scope: "all_models",
+    limitingWindowId: "seven_day"
+  });
+  assert.deepEqual(exhausted.get("minimax"), {
+    scope: "model:general",
+    limitingWindowId: "model:general:7d"
+  });
+
+  const markup = renderProvidersView(
+    quotaReport([modelScopedMinimax]),
+    ["minimax"],
+    [healthyProviderRecord("minimax")]
+  );
+  const row = rowFor(markup, "minimax");
+  assert.match(row, />Quota exhausted</u);
+  assert.doesNotMatch(row, />Ready</u);
+});
+
+test("a model-scoped provider stays usable while any of its model scopes is live", () => {
+  const partlyLive: QuotaAxiProvider = {
+    provider: "minimax",
+    windows: [
+      {
+        id: "model:general:7d",
+        label: "general 7d",
+        kind: "model",
+        percentRemaining: 0
+      },
+      {
+        id: "model:video:7d",
+        label: "video 7d",
+        kind: "model",
+        percentRemaining: 40
+      }
+    ],
+    state: { status: "fresh", stale: false },
+    quotaSemantics: {
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "model:general",
+          status: "known",
+          boundedBy: ["model:general:7d"],
+          runway: {
+            status: "exhausted_now",
+            limitingWindowId: "model:general:7d"
+          }
+        },
+        {
+          scope: "model:video",
+          status: "known",
+          boundedBy: ["model:video:7d"],
+          runway: { status: "through_reset" }
+        }
+      ]
+    }
+  };
+  assert.equal(exhaustedQuotaByProvider(quotaReport([partlyLive])).size, 0);
+});
+
 test("an exhausted agy quota scope changes only the route named by its known limiting window", () => {
   const markup = renderProvidersView(
     quotaReport([

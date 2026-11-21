@@ -226,6 +226,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
         },
         failures: [],
         providerSequence: ["antigravity", "claude"],
+        modelSequence: ["gemini", "sonnet"],
         skipped: [
           {
             at: WORKER_START,

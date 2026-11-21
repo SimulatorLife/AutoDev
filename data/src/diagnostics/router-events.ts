@@ -187,6 +187,7 @@ export async function readRouterEvents(
 interface RouterSummaryAccumulator {
   requests: Set<string>;
   providerSequence: string[];
+  modelSequence: string[];
   byProvider: Record<string, MutableProviderStats>;
   failures: SessionRouterFailure[];
   skipped: SessionRouterSkippedEvent[];
@@ -232,6 +233,8 @@ function recordRouterEvent(
       const provider = row.provider ?? "?";
       if (acc.providerSequence.at(-1) !== provider)
         acc.providerSequence.push(provider);
+      if (row.model && acc.modelSequence.at(-1) !== row.model)
+        acc.modelSequence.push(row.model);
       return;
     }
     case "spawn_failed": {
@@ -329,6 +332,7 @@ export function summarizeRouter(
   const acc: RouterSummaryAccumulator = {
     requests: new Set<string>(),
     providerSequence: [],
+    modelSequence: [],
     byProvider: {},
     failures: [],
     skipped: [],
@@ -346,6 +350,7 @@ export function summarizeRouter(
     byProvider: acc.byProvider,
     failures: acc.failures,
     providerSequence: acc.providerSequence,
+    modelSequence: acc.modelSequence,
     ...(acc.skipped.length > 0 ? { skipped: acc.skipped } : {}),
     ...(acc.retries > 0 ? { retries: acc.retries } : {}),
     ...(acc.exhaustionWaitCount > 0

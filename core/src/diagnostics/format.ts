@@ -174,6 +174,8 @@ function renderRouterDetails(router: SessionRouterSummary): string[] {
   );
   if (router.providerSequence.length > 1)
     lines.push(`${INDENT}PROVIDER HOPS ${router.providerSequence.join(" → ")}`);
+  if (router.modelSequence.length > 0)
+    lines.push(`${INDENT}upstream models ${router.modelSequence.join(" → ")}`);
   if (router.skipped && router.skipped.length > 0)
     lines.push(renderSkippedRouterSummary(router.skipped));
   const retryLine = renderRouterRetries(router);

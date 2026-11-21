@@ -283,6 +283,12 @@ export interface SessionRouterSummary {
   readonly failures: readonly SessionRouterFailure[];
   /** Providers in request order, collapsed: a turn that hops shows more. */
   readonly providerSequence: readonly string[];
+  /**
+   * Upstream models the router sent the thread's requests to, in request
+   * order and collapsed. These are provider model ids (`claude-opus-5-5`),
+   * not the AutoDev role alias Codex asked for (`autodev/orchestrator`).
+   */
+  readonly modelSequence: readonly string[];
   readonly skipped?: readonly SessionRouterSkippedEvent[];
   readonly retries?: number;
   readonly exhaustionWaits?: {
@@ -921,6 +927,7 @@ function isSessionRouterSummary(value: unknown): value is SessionRouterSummary {
     isProviderStatsMap(value.byProvider) &&
     isListOf(value.failures, isSessionRouterFailure) &&
     isStringList(value.providerSequence) &&
+    isStringList(value.modelSequence) &&
     isAbsentOr(value.skipped, (skipped) =>
       isListOf(skipped, isSessionRouterSkippedEvent)
     ) &&
