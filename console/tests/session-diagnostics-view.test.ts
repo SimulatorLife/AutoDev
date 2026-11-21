@@ -69,6 +69,12 @@ test("the threads table shows authoritative per-thread routed providers", () => 
   assert.doesNotMatch(markup, />local_model_router</);
 });
 
+test("the session token card separates new input from cache re-reads", () => {
+  const markup = render("overview");
+  assert.match(markup, />Total tokens</);
+  assert.match(markup, /6,000 new \+ 4,000 cached in \/ 2,000 out/);
+});
+
 test("model-window router matches are explicitly identified instead of called partial evidence", () => {
   const report = sessionDiagnosticsReport();
   assert.ok(isSessionDiagnosticsReport(report));

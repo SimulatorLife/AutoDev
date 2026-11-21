@@ -607,7 +607,11 @@ function renderOverview(
           React.createElement(StatCard, {
             title: "Total tokens",
             value: tokens(aggregates.totalTokens),
-            subtitle: `${count(aggregates.inputTokens)} in / ${count(
+            // Every request re-sends the whole conversation, so a long turn's
+            // total is dominated by cache re-reads; show them apart from new input.
+            subtitle: `${count(
+              aggregates.inputTokens - aggregates.cachedInputTokens
+            )} new + ${count(aggregates.cachedInputTokens)} cached in / ${count(
               aggregates.outputTokens
             )} out`
           }),
