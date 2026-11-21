@@ -51,7 +51,7 @@ export interface RouterStatusBody {
 
 const COLLATOR = new Intl.Collator();
 const ACTIVE_PROCESS_REGEX =
-  /\/claude -p|\bagy\b.* -p|\bcopilot\b.* -p|codex-tools-shim|spawn-shim|lsp-mcp-server|typescript-language-server/u;
+  /\/claude -p|\bagy\b.* -p|\bcopilot\b.* -p|codex-tools-shim|lsp-mcp-server|typescript-language-server/u;
 const WHITESPACE_SPLIT_REGEX = /\s+/u;
 const SERVICE_PROCESS_REGEX =
   /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+\S*node\S*\s+(\S*(?:router\/server|providers\/\w+)\.ts)/u;

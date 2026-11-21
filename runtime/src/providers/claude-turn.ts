@@ -18,10 +18,6 @@
 import type { ServerResponse } from "node:http";
 
 import {
-  buildSpawnToolCallItem,
-  type SpawnChild
-} from "@simulatorlife/autodev-runtime/agents";
-import {
   INCOMPLETE_REASON_INTERRUPTED,
   incompleteDetails,
   limitPayload,
@@ -549,17 +545,6 @@ interface AwaitingCall {
   resolve: (result: JsonRecord) => void;
 }
 
-/**
- * The delegation a turn asked for, and the parent conversation it belongs to.
- *
- * The children are the ones the bridge collected while the CLI ran; the
- * parent is the Codex conversation the spawn script creates them under.
- */
-export interface TurnDelegation {
-  children: SpawnChild[];
-  parentId: string;
-}
-
 export interface ClaudeTurnOptions {
   tools: CodexTool[];
   registry: CodexToolTurnRegistry<ClaudeTurn>;
@@ -568,18 +553,6 @@ export interface ClaudeTurnOptions {
   /** How long to gather tool calls the CLI issues together before emitting them. */
   gatherMs?: number;
   describeFailure: (error: unknown) => TurnFailure;
-  /**
-   * The delegation this turn asked for, handed over once.
-   *
-   * The bridge owns the spawn session; the turn owns the moment the response
-   * completes. A turn that delegated gets one `exec` call in its response, so
-   * Codex creates the children and they become sessions the app can show. A
-   * turn that ended without completing takes the delegation and drops it: a
-   * failed turn must not dispatch children.
-   */
-  delegation?: () => TurnDelegation | null;
-  /** Called on turn progress, tool calls, and keep-alives to keep session leases fresh. */
-  onActivity?: () => void;
 }
 
 export class ClaudeTurn {
@@ -595,7 +568,6 @@ export class ClaudeTurn {
   private parkTimer: NodeJS.Timeout | null = null;
   private keepAliveTimer: NodeJS.Timeout | null = null;
   private finished = false;
-  private delegationTaken = false;
   private stashedFailure: TurnFailure | null = null;
   private lastText = "";
   /**
@@ -629,7 +601,6 @@ export class ClaudeTurn {
 
   /** The MCP tool list the shim offers the CLI. */
   toolDefinitions(): JsonRecord[] {
-    this.options.onActivity?.();
     return this.options.tools.map(mcpToolDefinition);
   }
 
@@ -648,14 +619,12 @@ export class ClaudeTurn {
     awaited: AwaitedToolResults = DEFAULT_AWAITED
   ): void {
     this.clearParkTimer();
-    this.options.onActivity?.();
     this.stream = stream;
     this.reporter = reporter;
     stream.onClientClose(() => {
       if (this.stream === stream) this.cancel();
     });
     this.keepAliveTimer ??= setInterval(() => {
-      this.options.onActivity?.();
       this.stream?.keepAlive();
       this.reporter?.heartbeat();
     }, 2000);
@@ -716,7 +685,6 @@ export class ClaudeTurn {
 
   /** A tool call the CLI made through the shim; resolves with Codex's output. */
   requestTool(name: string, args: unknown): Promise<JsonRecord> {
-    this.options.onActivity?.();
     const tool = this.options.tools.find(
       (candidate) => candidate.name === name
     );
@@ -756,7 +724,6 @@ export class ClaudeTurn {
     this.finished = true;
     this.abortController.abort();
     this.release("This turn was cancelled; the call was not run.");
-    this.discardDelegation();
     if (this.stream)
       this.endStream({
         error: new Error("turn cancelled"),
@@ -769,7 +736,6 @@ export class ClaudeTurn {
   }
 
   private handle(event: ClaudeCliEvent): void {
-    this.options.onActivity?.();
     this.reporter?.heartbeat();
     const stream = this.stream;
     switch (event.kind) {
@@ -826,9 +792,6 @@ export class ClaudeTurn {
     this.finished = true;
     this.release("This turn has ended; the call was not run.");
     const stream = this.stream;
-    // The turn is over, so this is the last moment its delegation can be
-    // handed over: the children become a Codex `exec` call in this response.
-    this.emitDelegation(stream);
     this.detach();
     // The result's totals stand in only for a CLI that reported no message
     // usage at all; then this response is the whole turn.
@@ -839,7 +802,6 @@ export class ClaudeTurn {
   private fail(failure: TurnFailure): void {
     this.finished = true;
     this.release("This turn failed; the call was not run.");
-    this.discardDelegation();
     if (this.stream) {
       this.endStream(failure);
       this.options.registry.remove(this);
@@ -848,34 +810,6 @@ export class ClaudeTurn {
     // Parked: the next continuation request is the one that reports it.
     this.stashedFailure = failure;
     this.startParkTimer();
-  }
-
-  /**
-   * Hand the turn's delegation to Codex as one `exec` call.
-   *
-   * The bridge writes the spawn script and the bridge creates the children,
-   * so the model never has to author one. A turn that did not delegate gets
-   * no item, and a turn whose delegation was already taken gets nothing.
-   */
-  private emitDelegation(stream: ResponseStream | null): void {
-    if (this.delegationTaken) return;
-    this.delegationTaken = true;
-    const delegation = this.options.delegation?.();
-    if (!delegation || !stream) return;
-    const item = buildSpawnToolCallItem(
-      delegation.children,
-      delegation.parentId,
-      `call_${this.id}_${++this.sequence}`
-    );
-    if (!item) return;
-    stream.toolCall(item);
-  }
-
-  /** A turn that ended without completing must not dispatch children. */
-  private discardDelegation(): void {
-    if (this.delegationTaken) return;
-    this.delegationTaken = true;
-    this.options.delegation?.();
   }
 
   private endStream(failure: TurnFailure): void {

@@ -264,22 +264,22 @@ test("capabilities and telemetry headers resolve properly", () => {
     providers: {
       claude: {
         spawnTools: ["Agent"],
-        delegation: "codex-shim",
+        delegation: "codex",
         permissionMode: "native"
       },
       antigravity: {
         spawnTools: ["invoke_subagent"],
-        delegation: "codex-shim",
+        delegation: "codex",
         permissionMode: "configured"
       },
       copilot: {
         spawnTools: [],
-        delegation: "codex-shim",
+        delegation: "none",
         permissionMode: "configured"
       },
       codex: {
         spawnTools: [],
-        delegation: "native",
+        delegation: "codex",
         permissionMode: "native"
       },
       minimax: {
@@ -321,7 +321,7 @@ test("capabilities and telemetry headers resolve properly", () => {
   );
   assert.equal(
     providerCapabilities("copilot", mockExecutionContract).subagentSpawn,
-    true
+    false
   );
   assert.equal(
     providerCapabilities("missing", mockExecutionContract).subagentSpawn,

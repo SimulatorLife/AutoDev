@@ -7,8 +7,10 @@ import test from "node:test";
 import {
   evaluatePreToolUse,
   isCccInvocation,
+  maskHeredocBodies,
   REDIRECTION_MESSAGE,
-  runBlockCccCli
+  runBlockCccCli,
+  splitShellSegments
 } from "../../runtime/src/hooks/block-ccc-cli.ts";
 
 test("isCccInvocation identifies direct and compound ccc CLI invocations", () => {
@@ -65,6 +67,51 @@ test("isCccInvocation ignores non-ccc commands and harmless substrings", () => {
       `expected "${cmd}" NOT to be identified as ccc invocation`
     );
   }
+});
+
+test("isCccInvocation allows a search whose pattern mentions ccc", () => {
+  // The denials these commands produced (2026-11-20) came from a splitter
+  // that read the `|` inside a quoted pattern as a pipe between commands, so
+  // the `ccc` alternative in the pattern became a command of its own.
+  const allowed = [
+    "rg -n -i 'CodeGraphContext|CocoIndex|ccc|LSP MCP|lsp-mcp|claude.json' .rulesync",
+    'cat AGENTS.md; cat /Users/henrykirk/.agents/skills/ccc/SKILL.md; rg -n "CodeGraph|CocoIndex|cocoindex|ccc|lsp|claude" .',
+    "find .rulesync -maxdepth 3 -type f | head -50; rg -n 'lsp|ccc|codegraph|CocoIndex' .rulesync",
+    "grep -rln 'findCocoindexProjectRoot|resolveMcpWorkspace|runMcp' runtime core console",
+    'git commit -m "ccc is cool"'
+  ];
+
+  for (const cmd of allowed) {
+    assert.equal(
+      isCccInvocation(cmd),
+      false,
+      `expected "${cmd}" NOT to be identified as ccc invocation`
+    );
+  }
+});
+
+test("isCccInvocation reads a heredoc body as data, not as commands", () => {
+  assert.equal(
+    isCccInvocation("cat > /tmp/p.json <<'EOF'\nccc is only data\nEOF"),
+    false
+  );
+  assert.equal(
+    isCccInvocation("cat > /tmp/p.json <<'EOF'\nccc is only data\nEOF\nccc index"),
+    true
+  );
+});
+
+test("splitShellSegments splits on the shell's separators only", () => {
+  assert.deepEqual(splitShellSegments("echo a; echo b"), ["echo a", "echo b"]);
+  assert.deepEqual(splitShellSegments("echo 'a; b'"), ["echo 'a; b'"]);
+  assert.deepEqual(splitShellSegments('echo "a | b"'), ['echo "a | b"']);
+  assert.deepEqual(splitShellSegments("echo $(ccc index)"), ["echo $(ccc index)"]);
+});
+
+test("maskHeredocBodies blanks a heredoc body and keeps its delimiters", () => {
+  const masked = maskHeredocBodies("cat <<EOF\nccc data\nEOF\necho hi");
+  assert.equal(masked.includes("ccc"), false);
+  assert.equal(masked.includes("echo hi"), true);
 });
 
 test("evaluatePreToolUse blocks command tools executing ccc", () => {

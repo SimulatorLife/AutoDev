@@ -77,13 +77,5 @@
       "codegraphcontext": null,
       "lsp": null
     }
-  },
-  "antigravity-cli": {
-    "mcpServers": {
-      "autodev_spawn": {
-        "command": "bash",
-        "args": ["-lc", "exec node \"${CODEX_HOME:-$HOME/.codex}/src/mcp/spawn-shim.ts\""]
-      }
-    }
   }
 }

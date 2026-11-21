@@ -181,15 +181,11 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/tool-call-ownership/index.ts",
   "runtime/src/agents/index.ts",
   "runtime/src/agents/agent-activity.ts",
-  "runtime/src/agents/bridge-delegation.ts",
   "runtime/src/agents/bridge-role.ts",
   "runtime/src/agents/bridge-sandbox.ts",
-  "runtime/src/agents/bridge-spawn-session.ts",
   "runtime/src/agents/orchestrator-policy.ts",
   "runtime/src/agents/read-only-policy.ts",
   "runtime/src/agents/role-mcp-environment.ts",
-  "runtime/src/agents/spawn-shim-server.ts",
-  "runtime/src/agents/spawn-tools.ts",
   "runtime/src/config/index.ts",
   "runtime/src/config/cli-args.ts",
   "runtime/src/config/compose-user-config.ts",
@@ -229,7 +225,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/claude-codex-tools.ts",
   "runtime/src/providers/claude-turn.ts",
   "runtime/src/providers/codex-tool-turns.ts",
-  "runtime/src/mcp/spawn-shim.ts",
   "runtime/src/mcp/tool-filter.ts",
   "runtime/src/mcp/codex-tools-shim.ts",
   "runtime/src/mcp/codex-tools-shim-telemetry.ts",
@@ -2058,8 +2053,8 @@ function renderAndMaterializeContract(
  *
  * Plan mode instructs the model to call `request_user_input`; everything else
  * the plugin ships (thread create/fork/handoff/read/wait/list/archive,
- * automations) belongs to the role-based delegation surface (`autodev_spawn`)
- * and must not reach a model through `codex_app`.
+ * automations) belongs to the one delegation surface, Codex's own
+ * `multi_agent_v1__*` functions, and must not reach a model through `codex_app`.
  */
 const CODEX_APP_ENABLED_TOOLS = ["request_user_input"] as const;
 

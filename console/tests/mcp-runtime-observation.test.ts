@@ -26,7 +26,7 @@ const RUNTIME_PUBLISHED: ControlApiMcpRuntimeResponse = {
   health: { ready: 0, error: 0, stale: 1, configured: 0, observed: 0 },
   servers: [
     {
-      name: "autodev_spawn",
+      name: "lsp",
       health: "stale",
       lastSeenAt: "2026-11-03T19:02:21.397Z",
       lastStatus: "configured",

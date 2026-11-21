@@ -60,10 +60,10 @@ function waitForListening(child: any): Promise<void> {
  * The stub CLI.
  *
  * It stands in for the real Claude CLI: it records the argv the bridge built,
- * drains the transcript the bridge wrote on stdin, and -- when the bridge
- * offered it a delegation surface -- asks that surface for a child, exactly
- * as the spawn shim does on the model's behalf. The call it makes is the
- * shim's own protocol, read out of the MCP config the bridge handed it.
+ * drains the transcript the bridge wrote on stdin, and ends the turn. An
+ * orchestrator delegates through Codex's own `exec` tool, which the bridge
+ * mirrors like any other Codex tool, so the stub has nothing to call to
+ * delegate.
  */
 const STUB_CLI = String.raw`
 import { writeFileSync } from "node:fs";
@@ -75,29 +75,10 @@ let stdin = "";
 for await (const chunk of process.stdin) stdin += chunk.toString();
 writeFileSync(process.env.CLAUDE_STDIN_FILE, stdin);
 
-const configIndex = argv.indexOf("--mcp-config");
-const config = configIndex === -1 ? {} : JSON.parse(argv[configIndex + 1] ?? "{}");
-const spawn = config?.mcpServers?.autodev_spawn;
-if (spawn) {
-  const env = spawn.env ?? {};
-  const response = await fetch(new URL("/v1/bridge-spawn/call", env.AUTODEV_BRIDGE_URL), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: "Bearer " + env.AUTODEV_BRIDGE_TOKEN
-    },
-    body: JSON.stringify({
-      session: env.AUTODEV_SPAWN_SESSION,
-      children: [{ agent_type: "explorer", message: "look at the router" }]
-    })
-  });
-  writeFileSync(process.env.CLAUDE_SPAWN_RESULT_FILE, await response.text());
-}
-
 process.stdout.write(
   JSON.stringify({
     type: "result",
-    result: "delegated",
+    result: "done",
     usage: { input_tokens: 3, output_tokens: 4 }
   }) + "\n"
 );
@@ -106,7 +87,6 @@ process.stdout.write(
 interface BridgeTurn {
   argv: string[];
   stdin: string;
-  spawnResult: string;
   response: any;
   stderr: string;
 }
@@ -115,12 +95,14 @@ interface BridgeTurn {
  * Run one turn through the Claude bridge and return what the CLI was given
  * and what the bridge answered.
  */
-async function runTurn(headers: Record<string, string>): Promise<BridgeTurn> {
+async function runTurn(
+  headers: Record<string, string>,
+  tools: unknown[] = []
+): Promise<BridgeTurn> {
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-delegation-"));
   const cliPath = join(temp, "fake-claude.mjs");
   const argvFile = join(temp, "argv.json");
   const stdinFile = join(temp, "stdin.txt");
-  const spawnResultFile = join(temp, "spawn-result.json");
   const port = await freePort();
   await writeFile(cliPath, `${NODE_SHEBANG}\n${STUB_CLI}`, "utf8");
   await chmod(cliPath, 0o755);
@@ -134,7 +116,6 @@ async function runTurn(headers: Record<string, string>): Promise<BridgeTurn> {
       CLAUDE_CODE_OAUTH_TOKEN: "test-oauth-token",
       CLAUDE_ARGV_FILE: argvFile,
       CLAUDE_STDIN_FILE: stdinFile,
-      CLAUDE_SPAWN_RESULT_FILE: spawnResultFile,
       CODEX_PROJECT_ROOT: REPO_ROOT,
       LITELLM_API_KEY: BRIDGE_TOKEN
     },
@@ -156,6 +137,7 @@ async function runTurn(headers: Record<string, string>): Promise<BridgeTurn> {
       body: JSON.stringify({
         model: "claude-subscription",
         input: [{ role: "user", content: "delegate this" }],
+        tools,
         cwd: REPO_ROOT
       })
     });
@@ -170,7 +152,6 @@ async function runTurn(headers: Record<string, string>): Promise<BridgeTurn> {
     return {
       argv: JSON.parse((await read(argvFile)) || "[]") as string[],
       stdin: await read(stdinFile),
-      spawnResult: await read(spawnResultFile),
       response: body ? JSON.parse(body) : null,
       stderr
     };
@@ -197,64 +178,44 @@ function argValue(argv: string[], flag: string): string {
   return index === -1 ? "" : (argv[index + 1] ?? "");
 }
 
-test("an orchestrator turn is offered delegation even when Codex offered no tools", async () => {
-  const turn = await runTurn(ORCHESTRATOR_HEADERS);
+// Codex's code-mode surface: one `exec` custom tool whose description declares
+// the nested functions, the orchestrator's spawn functions among them.
+const EXEC_TOOL = {
+  type: "custom",
+  name: "exec",
+  description:
+    "Run JavaScript. declare const tools: { exec_command(args): Promise<unknown>; multi_agent_v1__spawn_agent(args): Promise<unknown>; multi_agent_v1__wait_agent(args): Promise<unknown>; }"
+};
+
+test("an orchestrator delegates through the mirrored exec tool, with no spawn server of the bridge's own", async () => {
+  const turn = await runTurn(ORCHESTRATOR_HEADERS, [EXEC_TOOL]);
   const config = mcpConfigOf(turn.argv);
   assert.ok(config, "the bridge must hand the CLI an MCP config");
-  // The request declared no tools, so there is no Codex tool server to mirror.
-  assert.equal(config.mcpServers.codex, undefined);
-  // The delegation surface is the bridge's own, and it is offered anyway.
-  const spawnServer = config.mcpServers.autodev_spawn;
-  assert.ok(spawnServer, "the bridge must offer the spawn server");
-  assert.match(spawnServer.args[0], /spawn-shim\.ts$/);
-  assert.equal(
-    spawnServer.env.AUTODEV_SPAWN_SESSION,
-    "claude-delegation-session"
-  );
-  assert.match(
-    spawnServer.env.AUTODEV_BRIDGE_URL,
-    /^http:\/\/127\.0\.0\.1:\d+$/
-  );
-  assert.equal(spawnServer.env.AUTODEV_BRIDGE_TOKEN, BRIDGE_TOKEN);
-  // The CLI must be allowed to call it.
-  assert.match(argValue(turn.argv, "--allowed-tools"), /mcp__autodev_spawn/);
-  // And the model must be told the call in the shape its CLI can make.
+  // The only server is the mirror of Codex's own tools.
+  assert.deepEqual(Object.keys(config.mcpServers), ["codex"]);
+  assert.equal(argValue(turn.argv, "--allowed-tools"), "mcp__codex");
   const systemPrompt = argValue(turn.argv, "--system-prompt");
-  assert.match(systemPrompt, /## Delegation on this provider/);
-  assert.match(systemPrompt, /mcp__autodev_spawn__spawn_subagent/);
-  // A turn with no Codex tools must not be told it has none at all.
-  assert.match(systemPrompt, /You may still delegate through the bridge/);
+  // No provider-specific delegation section: the spawn functions are named
+  // where every provider finds them, on exec's tools global.
+  assert.doesNotMatch(systemPrompt, /Delegation on this provider/);
+  assert.doesNotMatch(systemPrompt, /spawn_subagent|autodev_spawn/);
+  assert.match(systemPrompt, /tools\.multi_agent_v1__spawn_agent/);
 });
 
-test("a leaf turn is offered no delegation surface and told nothing about delegating", async () => {
-  const turn = await runTurn({
-    "x-autodev-agent-role": "explorer",
-    "x-autodev-session-id": "claude-leaf-session",
-    "x-autodev-session-scope": "identified"
-  });
-  const config = mcpConfigOf(turn.argv);
-  assert.equal(config?.mcpServers?.autodev_spawn, undefined);
-  assert.doesNotMatch(argValue(turn.argv, "--allowed-tools"), /autodev_spawn/);
-  const systemPrompt = argValue(turn.argv, "--system-prompt");
-  assert.doesNotMatch(systemPrompt, /## Delegation on this provider/);
-  assert.doesNotMatch(systemPrompt, /spawn_subagent/);
-});
-
-test("a delegated turn hands Codex one exec call that creates the children", async () => {
+test("an orchestrator turn Codex offered no tools has no delegation surface to invent", async () => {
   const turn = await runTurn(ORCHESTRATOR_HEADERS);
-  // The shim's own call is accepted: the bridge collected the child.
-  assert.match(turn.spawnResult, /Dispatched 1 subagent\(s\): explorer/);
-  // And the bridge turned it into Codex's own spawn, on one exec call.
+  assert.equal(mcpConfigOf(turn.argv), null);
+  const systemPrompt = argValue(turn.argv, "--system-prompt");
+  assert.match(systemPrompt, /No Codex tools are available on this turn/);
+  assert.doesNotMatch(systemPrompt, /spawn server|spawn_subagent/);
+});
+
+test("the bridge never writes a spawn call of its own into the response", async () => {
+  const turn = await runTurn(ORCHESTRATOR_HEADERS, [EXEC_TOOL]);
   const output = turn.response?.output ?? [];
-  const exec = output.find(
-    (item: any) => item.type === "custom_tool_call" && item.name === "exec"
+  assert.equal(
+    output.some((item: any) => item.type === "custom_tool_call"),
+    false,
+    `a turn whose model made no call must carry no tool call: ${JSON.stringify(output)}`
   );
-  assert.ok(
-    exec,
-    `the response must carry one exec call: ${JSON.stringify(output)}`
-  );
-  assert.match(exec.input, /spawn_agent/);
-  assert.match(exec.input, /"agent_type":"explorer"/);
-  assert.match(exec.input, /look at the router/);
-  assert.equal(exec.status, "completed");
 });

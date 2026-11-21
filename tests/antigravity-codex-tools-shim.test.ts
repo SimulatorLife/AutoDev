@@ -92,7 +92,7 @@ function isolatedServers(
 ): Record<string, Record<string, unknown>> {
   const env = fixtureEnvironment();
   try {
-    const isolated = createIsolatedAntigravityHome(ROLE, "session-shim", {
+    const isolated = createIsolatedAntigravityHome(ROLE, {
       originalHome: env.userHome,
       codexHome: env.codexHome,
       cwd: REPO_ROOT,
@@ -145,7 +145,7 @@ test("a turn that cannot park a call is not given the tools shim", () => {
 test("the invocation's own agent runs with Codex's tools and nothing else", () => {
   const env = fixtureEnvironment();
   try {
-    const isolated = createIsolatedAntigravityHome(ROLE, "session-shim", {
+    const isolated = createIsolatedAntigravityHome(ROLE, {
       originalHome: env.userHome,
       codexHome: env.codexHome,
       cwd: REPO_ROOT,
@@ -202,7 +202,7 @@ test("the invocation's own agent runs with Codex's tools and nothing else", () =
 test("a turn without the shim is not run as the Codex-tools agent", () => {
   const env = fixtureEnvironment();
   try {
-    const isolated = createIsolatedAntigravityHome(ROLE, "session-shim", {
+    const isolated = createIsolatedAntigravityHome(ROLE, {
       originalHome: env.userHome,
       codexHome: env.codexHome,
       cwd: REPO_ROOT,

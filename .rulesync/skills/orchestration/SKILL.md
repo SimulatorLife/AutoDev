@@ -19,8 +19,7 @@ Each reference is a self-contained procedure. Read one when its trigger applies 
 | Reference | Read when |
 | --- | --- |
 | `references/runtime-contract.md` | Before your first spawn: spawning, waiting, parking, closing, commits |
-| `references/codex-code-mode.md` | Before your first spawn when your instructions have no "Delegation on this provider" section (Codex-native GPT, MiniMax, opencli) |
-| `references/provider-bridges.md` | Before your first spawn when your instructions have a "Delegation on this provider" section (Claude, Antigravity, Copilot bridges) |
+| `references/codex-code-mode.md` | Before your first spawn, on every provider: the one spawn surface |
 | `references/web-chat.md` | Your replies go through a web chat (`opencli-chatgpt`, `opencli-gemini`) |
 | `references/recovery.md` | A spawn fails for capacity or admission, or a delegation is interrupted |
 | `references/validation.md` | You plan or run a validation gate, including browser verification |

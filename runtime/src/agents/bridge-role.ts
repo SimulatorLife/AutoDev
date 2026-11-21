@@ -111,19 +111,20 @@ export function orchestratorBootstrapHeading(): string {
 }
 
 /**
- * How a bridged orchestrator delegates, which decides the orchestration
- * skill references it needs: a provider CLI delegates through the bridge's
- * spawn server, a web-chat site through Codex's code-mode `exec` at a minute a
- * turn. The bridge knows which it is, so it inlines those references rather
- * than have the model read every provider's rules.
+ * The orchestration skill references every bridged orchestrator needs.
+ *
+ * Every provider delegates the same way -- Codex's own `multi_agent_v1__*`
+ * functions on the `exec` tool -- so every orchestrator gets the same spawn
+ * reference. A web-chat site additionally answers at about a minute a turn,
+ * which changes how it should pace its waits, not how it spawns.
  */
-export type OrchestratorSurface = "provider-bridge" | "web-chat";
+export type OrchestratorSurface = "web-chat";
 
+const SPAWN_REFERENCES = ["codex-code-mode.md"] as const;
 const SURFACE_REFERENCES: Readonly<
   Record<OrchestratorSurface, readonly string[]>
 > = Object.freeze({
-  "provider-bridge": ["provider-bridges.md"],
-  "web-chat": ["codex-code-mode.md", "web-chat.md"]
+  "web-chat": ["web-chat.md"]
 });
 
 /**
@@ -139,7 +140,10 @@ function orchestrationSkillSection(
 ): string {
   const directory = installedSkillDirectory("orchestration");
   const body = readFileSync(path.join(directory, "SKILL.md"), "utf8").trim();
-  const references = (surface ? SURFACE_REFERENCES[surface] : []).map(
+  const references = [
+    ...SPAWN_REFERENCES,
+    ...(surface ? SURFACE_REFERENCES[surface] : [])
+  ].map(
     (name) =>
       `### references/${name} (inlined; do not read it again)\n\n${readFileSync(path.join(directory, "references", name), "utf8").trim()}`
   );
@@ -198,9 +202,8 @@ export function roleInstructions(
  * Compose the complete prompt sent to a bridge-owned CLI.
  *
  * Every bridge gets the same shared base, workspace context, and role section;
- * only the downstream CLI invocation differs. A bridge-owned CLI delegates
- * through the bridge's spawn server, so an orchestrator gets the
- * provider-bridge references inlined. Native Codex role configs use
+ * only the downstream CLI invocation differs. An orchestrator delegates through
+ * Codex's own spawn functions like every other provider. Native Codex role configs use
  * render-agent-configs.py to materialize this same base+leaf+role-fragment composition.
  */
 export function composeProviderPrompt(
@@ -211,5 +214,5 @@ export function composeProviderPrompt(
     typeof cwd === "string" && cwd.trim()
       ? `\n\n## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`
       : "";
-  return `${BASE_PROMPT}${workspace}\n\n${roleInstructions(role, "provider-bridge")}`;
+  return `${BASE_PROMPT}${workspace}\n\n${roleInstructions(role)}`;
 }

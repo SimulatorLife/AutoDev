@@ -26,7 +26,12 @@ export interface RoleContract {
 }
 export interface ProviderContract {
   spawnTools: string[];
-  delegation: "native" | "codex-shim" | "bridge-native" | "none";
+  /**
+   * `codex`: the provider's orchestrator spawns through Codex's own
+   * `multi_agent_v1__*` functions on `exec`, the one delegation surface.
+   * `none`: the provider cannot serve the orchestrator tier.
+   */
+  delegation: "codex" | "none";
   permissionMode: string;
   roleMcpInjection?: boolean;
   [key: string]: unknown;

@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import {
   AGENT_ACTIVITY_STATES,
   AGENT_ACTIVITY_TTL_ENV,
-  buildSpawnToolCallOutput,
   createAgentActivityTracker,
   DEFAULT_AGENT_ACTIVITY_TTL_MS,
   resolveAgentActivityTtlMs
@@ -417,14 +416,14 @@ test("provider capabilities expose only providers with a real delegation path", 
       `${provider} must not declare capabilities in routing config`
     );
   }
-  // Every shipped provider has a path: Codex, MiniMax and opencli call
-  // Codex's own `multi_agent_v1__*` functions through its `exec` tool, and the
-  // CLI bridges reach them through their spawn shims.
+  // Every delegating provider spawns the same way: Codex's own
+  // `multi_agent_v1__*` functions reached through its `exec` tool, mirrored
+  // unchanged to the CLI bridges. Copilot is subagent-only.
   for (const provider of Object.keys(config.providers)) {
     assert.equal(
       providerCapabilities(provider).subagentSpawn,
-      true,
-      `${provider} must be treated as spawn-capable`
+      provider !== "copilot",
+      `${provider} spawn capability`
     );
   }
   for (const group of config.providerGroups.orchestrator) {
@@ -443,8 +442,8 @@ test("router status reports only providers with a delegation path", () => {
   for (const [name, provider] of Object.entries(providers) as [string, any][]) {
     assert.equal(
       provider.capabilities.subagentSpawn,
-      true,
-      `${name} has a delegation path`
+      name !== "copilot",
+      `${name} delegation path`
     );
     assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
     assert.equal("mcp" in provider.capabilities, false);
@@ -477,9 +476,13 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
       "antigravity-argon",
       "antigravity-claude-gpt",
       "antigravity-gemini",
-      "claude",
-      "copilot"
+      "claude"
     ]
+  );
+  assert.equal(
+    candidates.some((candidate: any) => candidate.provider === "copilot"),
+    false,
+    "copilot is subagent-only and never serves the orchestrator"
   );
 
   const byProvider: Record<string, any> = Object.fromEntries(
@@ -487,8 +490,6 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   );
   assert.equal(byProvider.claude.model, "claude-opus-5-5");
   assert.equal(byProvider.claude.reasoningEffort, "high");
-  assert.equal(byProvider.copilot.model, "copilot");
-  assert.equal(byProvider.copilot.reasoningEffort, null);
   assert.equal(byProvider["antigravity-argon"].model, "gemini-4-argon-high");
   assert.equal(byProvider["antigravity-argon"].reasoningEffort, "high");
   assert.equal(byProvider["antigravity-gemini"].model, "gemini-3.8-flash-high");
@@ -1531,19 +1532,57 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
 });
 
 test("an exec tool call carrying a spawn script reaches Codex byte for byte", async () => {
-  // Codex runs these models in code mode: a bridge that wants a real child
+  // Codex runs these models in code mode: a model that wants a real child
   // thread emits an `exec` custom tool call whose JavaScript calls
   // `tools.multi_agent_v1__spawn_agent`. That spawn name therefore travels
   // inside a *string* -- the script source -- and the namespace rewriting above
   // must not touch it. If it ever did, Codex would be handed a script calling a
-  // function that does not exist, and every bridge-driven spawn would fail with
+  // function that does not exist, and every spawn would fail with
   // nothing in the router log to explain it.
-  const spawnOutput = buildSpawnToolCallOutput(
-    [{ agentType: "explorer", message: "audit the catalogue" }],
-    "parent-1",
-    1
-  );
-  assert.ok(spawnOutput);
+  // The spawn script a model writes into `exec` on every provider.
+  const input = `const out = await Promise.allSettled([tools.multi_agent_v1__spawn_agent({ agent_type: "explorer", message: "audit the catalogue" })]);`;
+  const item = {
+    id: "ctc_spawn",
+    type: "custom_tool_call",
+    call_id: "call_spawn",
+    name: "exec",
+    input,
+    status: "completed"
+  };
+  const spawnOutput = {
+    events: [
+      [
+        "response.output_item.added",
+        {
+          type: "response.output_item.added",
+          output_index: 1,
+          item: { ...item, input: "", status: "in_progress" }
+        }
+      ],
+      [
+        "response.custom_tool_call_input.delta",
+        {
+          type: "response.custom_tool_call_input.delta",
+          item_id: item.id,
+          output_index: 1,
+          delta: input
+        }
+      ],
+      [
+        "response.custom_tool_call_input.done",
+        {
+          type: "response.custom_tool_call_input.done",
+          item_id: item.id,
+          output_index: 1,
+          input
+        }
+      ],
+      [
+        "response.output_item.done",
+        { type: "response.output_item.done", output_index: 1, item }
+      ]
+    ] as const
+  };
 
   for (const [name, payload] of spawnOutput.events) {
     const transformed = responses.transformSseEvent(
@@ -1701,7 +1740,6 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
       "antigravity-argon",
       "claude",
       "minimax",
-      "copilot",
       "opencli-chatgpt",
       "opencli-gemini",
       "codex"

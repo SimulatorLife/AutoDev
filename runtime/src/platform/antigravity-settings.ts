@@ -25,8 +25,6 @@ export const REQUIRED_MCP_PERMISSIONS = [
   "read_url(*)",
   "mcp(openaiDeveloperDocs)",
   "mcp(openaiDeveloperDocs/*)",
-  "mcp(autodev_spawn)",
-  "mcp(autodev_spawn/*)",
   "unsandboxed(pwd)",
   "unsandboxed(pnpm test)",
   "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')"

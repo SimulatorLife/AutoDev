@@ -8,7 +8,6 @@ import {
   ALL_DOCUMENTED_EXCEPTIONS,
   ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS,
   auditToolNames,
-  AUTODEV_SPAWN_TOOL,
   CANONICAL_TOOL_NAME_PATTERN,
   CLAUDE_NATIVE_TOOL_EXCEPTIONS,
   CODEX_APP_REQUEST_USER_INPUT_TOOL,
@@ -16,7 +15,6 @@ import {
   EXEC_TOOL,
   isCanonicalToolName,
   MCP_NAMESPACE,
-  MCP_SERVER_AUTODEV_SPAWN,
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_CODEX_APP,
@@ -48,7 +46,7 @@ test("canonical Codex code-mode tool names are pinned", () => {
   assert.equal(CODEX_APP_REQUEST_USER_INPUT_TOOL, "request_user_input");
 });
 
-test("MCP server names and the bridge-injected spawn shim are pinned", () => {
+test("MCP server names are pinned", () => {
   assert.equal(MCP_NAMESPACE, "mcp");
   assert.equal(MCP_SERVER_LSP, "lsp");
   assert.equal(MCP_SERVER_COCOINDEX, "cocoindex-code");
@@ -58,8 +56,6 @@ test("MCP server names and the bridge-injected spawn shim are pinned", () => {
   assert.equal(MCP_SERVER_OPENAI_DEVELOPER_DOCS, "openaiDeveloperDocs");
   assert.equal(MCP_SERVER_CONTEXT7, "context7");
   assert.equal(MCP_SERVER_CODEX_APP, "codex_app");
-  assert.equal(MCP_SERVER_AUTODEV_SPAWN, "autodev_spawn");
-  assert.equal(AUTODEV_SPAWN_TOOL, "mcp__autodev_spawn__spawn_subagent");
 });
 
 test("multiAgentToolName and mcpToolName produce the documented form", () => {
@@ -70,10 +66,6 @@ test("multiAgentToolName and mcpToolName produce the documented form", () => {
   assert.equal(
     mcpToolName("lsp", "lsp_goto_definition"),
     "mcp__lsp__lsp_goto_definition"
-  );
-  assert.equal(
-    mcpToolName("autodev_spawn", "spawn_subagent"),
-    "mcp__autodev_spawn__spawn_subagent"
   );
 });
 
@@ -88,7 +80,6 @@ test("every canonical name passes the membership check", () => {
     WEB_SEARCH_TOOL,
     WEB_FETCH_TOOL,
     CODEX_APP_REQUEST_USER_INPUT_TOOL,
-    AUTODEV_SPAWN_TOOL,
     "mcp__lsp__lsp_goto_definition",
     "mcp__cocoindex-code__search",
     "mcp__playwright__browser_navigate",
@@ -109,7 +100,6 @@ test("the regex matches every multi-segment canonical name", () => {
     MULTI_AGENT_CLOSE_TOOL,
     MULTI_AGENT_RESUME_TOOL,
     MULTI_AGENT_SEND_INPUT_TOOL,
-    AUTODEV_SPAWN_TOOL,
     "mcp__lsp__lsp_goto_definition",
     "mcp__cocoindex-code__search",
     "mcp__playwright__browser_navigate",
@@ -179,7 +169,6 @@ test("the audit classifier routes names to the right bucket", () => {
   const audit = auditToolNames([
     EXEC_TOOL,
     MULTI_AGENT_SPAWN_TOOL,
-    AUTODEV_SPAWN_TOOL,
     WEB_SEARCH_TOOL,
     CLAUDE_NATIVE_TOOL_EXCEPTIONS.webSearch,
     ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS.searchWeb,
@@ -188,12 +177,7 @@ test("the audit classifier routes names to the right bucket", () => {
   ]);
   assert.deepEqual(
     audit.canonical.sort(),
-    [
-      EXEC_TOOL,
-      MULTI_AGENT_SPAWN_TOOL,
-      AUTODEV_SPAWN_TOOL,
-      WEB_SEARCH_TOOL
-    ].sort()
+    [EXEC_TOOL, MULTI_AGENT_SPAWN_TOOL, WEB_SEARCH_TOOL].sort()
   );
   assert.equal(audit.exceptions.length, 3);
   assert.ok(

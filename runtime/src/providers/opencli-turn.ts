@@ -1368,6 +1368,53 @@ function cleanText(value: string): string {
     .trim();
 }
 
+/**
+ * The shapes a site reply takes when it reports that the agent's own tools --
+ * or the repository they reach -- are not available to it.
+ *
+ * A web chat site runs a model that has tools of its own: a Python sandbox, a
+ * file search, a browser. Asked to act as a Codex agent, it sometimes lists
+ * *those* tools and concludes that the repository and the agent's tools are out
+ * of reach, then says so in prose instead of making a tool call. The bridge's
+ * own prompt warns against exactly this ("never report a capability or path as
+ * unavailable unless a tool result in this conversation shows it"), and the
+ * warning does not always land: on 2026-11-20 fourteen explorer turns in one
+ * session came back this way, each one a confident statement that the work was
+ * impossible.
+ *
+ * Such a reply is not an answer to the task; it is a report that the turn could
+ * not be carried out. Delivered as an answer it ends the agent's turn with a
+ * false result, and the caller reads the result as the work. The bridge
+ * refuses these turns instead, and the router moves on to a route whose tool
+ * channel works.
+ *
+ * The site's wording is not ours to fix, so this matches prose. It is kept
+ * narrow on purpose: a matcher that fires on ordinary answers would refuse
+ * turns that succeeded.
+ */
+const TOOL_CHANNEL_REFUSAL_PATTERNS: readonly RegExp[] = [
+  /NO_REPO_ACCESS/i,
+  /\b(?:exec_command|apply_patch)\b[^\n]{0,140}\b(?:not exposed|not available|unavailable|missing|not provided|not connected)\b/i,
+  /\b(?:not exposed|not available|unavailable|missing|not provided|not connected)\b[^\n]{0,140}\b(?:exec_command|apply_patch|codegraphcontext|cocoindex)\b/i,
+  /\b(?:do(?:es)? not expose|cannot see|has no access to)\b[^\n]{0,140}\b(?:exec_command|apply_patch|codegraphcontext|cocoindex|shell|filesystem|repository|repo)\b/i,
+  /\b(?:repository|repo|workspace|filesystem|file system)\b[^\n]{0,140}\b(?:access is unavailable|is unavailable|not accessible|inaccessible)\b/i,
+  /\bno (?:shell|filesystem|repository|repo|workspace) access\b/i,
+  /\bblocked by unavailable\b[^\n]{0,120}\b(?:tools?|runtime)\b/i,
+  /\brequires? access to the\b[^\n]{0,120}\bworkspace\b/i
+];
+
+/**
+ * Whether a reply declares the agent's tools, or the repository they reach,
+ * unavailable to it.
+ */
+export function declaresToolChannelUnavailable(text: string): boolean {
+  if (!text) return false;
+  // The declaration is at the start of the reply; a long answer that mentions
+  // it later is talking about something else.
+  const opening = text.slice(0, 2000);
+  return TOOL_CHANNEL_REFUSAL_PATTERNS.some((pattern) => pattern.test(opening));
+}
+
 /** Split a site reply into its prose and the tool calls it requests. */
 export function parseOpencliReply(response: string): ParsedReply {
   const calls: ParsedToolCall[] = [];

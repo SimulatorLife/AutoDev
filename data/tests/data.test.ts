@@ -92,7 +92,10 @@ test("RuleSyncRepository loads canonical RuleSync sources", () => {
   const mcps = repo.loadMcpState();
   assert.equal(mcps.valid, true);
   assert.ok(mcps.servers.some((server) => server.name === "lsp"));
-  assert.ok(mcps.servers.some((server) => server.name === "autodev_spawn"));
+  assert.equal(
+    mcps.servers.some((server) => server.name === "autodev_spawn"),
+    false
+  );
   const context7 = mcps.servers.find((server) => server.name === "context7");
   assert.deepEqual(context7?.targetOverrides, [
     { target: "codexcli", enabled: false }

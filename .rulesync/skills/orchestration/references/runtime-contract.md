@@ -6,10 +6,10 @@ also read `references/recovery.md`.
 
 ## Delegation path
 
-Use the delegation surface your provider offers: the bridge's call where your
-instructions have a "Delegation on this provider" section
-(`references/provider-bridges.md`), otherwise `tools.multi_agent_v1__spawn_agent`
-with `{ agent_type, message }` inside `exec` (`references/codex-code-mode.md`).
+Every provider delegates the same way: `tools.multi_agent_v1__spawn_agent` with
+`{ agent_type, message }` inside `exec` (`references/codex-code-mode.md`). There
+is no provider-specific spawn tool; the spawn's result comes back to the `exec`
+call that made it.
 
 Do not substitute `create_thread`, `fork_thread`, `handoff_thread`, or
 provider-private task APIs for the configured child path.

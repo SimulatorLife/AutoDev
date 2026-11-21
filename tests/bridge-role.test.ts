@@ -363,10 +363,12 @@ test("a web-chat orchestrator is taught the canonical code-mode spawn path", () 
   // The role travels as `agent_type`; `agent` is accepted and silently ignored,
   // producing a generic agent instead of the requested role.
   assert.match(orchestrator, /agent_type/);
-  assert.match(orchestrator, /batched\s+`await Promise\.allSettled/);
+  assert.match(
+    orchestrator,
+    /independent spawns in one cell with\s+`await Promise\.allSettled/
+  );
   assert.match(orchestrator, /### references\/web-chat\.md \(inlined/);
   assert.doesNotMatch(orchestrator, /### references\/provider-bridges\.md/);
-  assert.match(orchestrator, /provider-bridge shim, not a Codex MCP server/);
   // Generic child lifecycle stays in the runtime contract the skill names.
   assert.doesNotMatch(orchestrator, /Wait timeouts and running children/);
   const runtimeContract = read(
@@ -391,7 +393,6 @@ test("the orchestration skill core names each reference with the situation that 
   for (const reference of [
     "runtime-contract",
     "codex-code-mode",
-    "provider-bridges",
     "web-chat",
     "recovery",
     "validation",

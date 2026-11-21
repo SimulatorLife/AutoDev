@@ -24,8 +24,7 @@ const MCP_ORDER: Record<string, number> = {
   playwright: 3,
   openaiDeveloperDocs: 4,
   context7: 5,
-  autodev_spawn: 6,
-  codex_app: 7
+  codex_app: 6
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so
@@ -51,12 +50,9 @@ const SKILL_ORDER: Record<string, number> = {
 const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();
 const RESEARCH_ROLES = new Set(["docs-researcher", "smart", "orchestrator"]);
-const DELEGATION_MODES = new Set([
-  "native",
-  "codex-shim",
-  "bridge-native",
-  "none"
-]);
+// Every delegating provider spawns through Codex's own `multi_agent_v1__*`
+// functions on the `exec` tool; there is no provider-specific spawn surface.
+const DELEGATION_MODES = new Set(["codex", "none"]);
 
 export function validateProviderContracts(value: unknown): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -291,10 +287,7 @@ export function renderExecutionContract(
     if (roleScopedMcp.length > 0) role.roleScopedMcp = roleScopedMcp;
   }
   const missingRootMcp = roles.orchestrator.mcp.filter(
-    (name) =>
-      name !== "autodev_spawn" &&
-      !PLUGIN_MCPS.has(name) &&
-      !enabledRootMcp.has(name)
+    (name) => !PLUGIN_MCPS.has(name) && !enabledRootMcp.has(name)
   );
   if (missingRootMcp.length > 0)
     throw new ConfigError(

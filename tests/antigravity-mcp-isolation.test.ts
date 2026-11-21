@@ -220,7 +220,6 @@ test("browser-tester receives Playwright only, with exactly its declared browser
   try {
     const { mcpConfig, settings, cleanup } = createIsolatedAntigravityHome(
       "browser-tester",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -310,7 +309,7 @@ test("the MCP servers a turn starts are told the user's own home", () => {
   // server may learn where that home is.
   const env = createFixtureEnvironment();
   try {
-    const config = buildInvocationMcpConfig("explorer", null, {
+    const config = buildInvocationMcpConfig("explorer", {
       originalHome: env.userHome,
       codexHome: env.codexHome
     });
@@ -345,7 +344,7 @@ test("the home the bridge hands the launcher is the one it resolves the tools fr
       writeFileSync(join(toolHome, name), "#!/usr/bin/env bash\nexit 0\n");
       chmodSync(join(toolHome, name), 0o755);
     }
-    const config = buildInvocationMcpConfig("explorer", null, {
+    const config = buildInvocationMcpConfig("explorer", {
       originalHome: env.userHome,
       codexHome: env.codexHome
     });
@@ -370,7 +369,7 @@ test("the home the bridge hands the launcher is the one it resolves the tools fr
 test("remote MCP authentication launch settings survive catalog conversion", () => {
   const env = createFixtureEnvironment();
   try {
-    const config = buildInvocationMcpConfig("docs-researcher", null, {
+    const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
       codexHome: env.codexHome
     });
@@ -391,7 +390,7 @@ test("remote MCP authentication launch settings survive catalog conversion", () 
 test("remote MCP config keeps environment-backed and custom HTTP authentication", () => {
   const env = createFixtureEnvironment();
   try {
-    const config = buildInvocationMcpConfig("docs-researcher", null, {
+    const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
       codexHome: env.codexHome
     });
@@ -414,7 +413,6 @@ test("ordinary leaf roles cannot see or use Playwright or autodev_spawn", () => 
     for (const role of ["default", "explorer", "validator"]) {
       const { mcpConfig, settings, cleanup } = createIsolatedAntigravityHome(
         role,
-        "some-spawn-session",
         {
           originalHome: env.userHome,
           codexHome: env.codexHome,
@@ -453,50 +451,33 @@ test("ordinary leaf roles cannot see or use Playwright or autodev_spawn", () => 
   }
 });
 
-test("orchestrator gets only its declared MCPs and authenticated spawn shim", () => {
+test("orchestrator gets only its declared MCPs and no spawn server of the bridge's own", () => {
   const env = createFixtureEnvironment();
   try {
-    // With authorized spawn session
-    const withSession = createIsolatedAntigravityHome(
-      "orchestrator",
-      "session-123",
-      {
-        originalHome: env.userHome,
-        codexHome: env.codexHome,
-        cwd: REPO_ROOT
-      }
-    );
+    const home = createIsolatedAntigravityHome("orchestrator", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
+    });
     try {
-      const servers = Object.keys(withSession.mcpConfig.mcpServers);
-      assert.ok(servers.includes("autodev_spawn"));
-      const spawnServer = withSession.mcpConfig.mcpServers.autodev_spawn;
-      assert.ok(spawnServer, "authorized orchestrator must receive spawn shim");
-      assert.equal(spawnServer.env, undefined);
-      const inherited = agyEnvironment("session-123", withSession.isolatedHome);
-      assert.equal(inherited.AUTODEV_SPAWN_SESSION, "session-123");
-      assert.equal(
-        inherited.AUTODEV_BRIDGE_TOKEN,
-        process.env.LITELLM_API_KEY ?? ""
-      );
-      const serializedMcpConfig = JSON.stringify(withSession.mcpConfig);
-      assert.equal(serializedMcpConfig.includes("session-123"), false);
-      if (inherited.AUTODEV_BRIDGE_TOKEN)
-        assert.equal(
-          serializedMcpConfig.includes(inherited.AUTODEV_BRIDGE_TOKEN),
-          false
-        );
+      const servers = Object.keys(home.mcpConfig.mcpServers);
+      // Delegation goes through Codex's own exec tool on every provider, so
+      // there is no bridge spawn server to register or grant.
+      assert.ok(!servers.includes("autodev_spawn"));
       assert.ok(servers.includes("lsp"));
       assert.ok(servers.includes("cocoindex-code"));
       assert.ok(servers.includes("codegraphcontext"));
       assert.ok(servers.includes("codex_app"));
       assert.ok(!servers.includes("playwright"));
       assert.ok(!servers.includes("stale_global_server"));
+      const inherited = agyEnvironment(home.isolatedHome);
+      assert.equal(inherited.AUTODEV_SPAWN_SESSION, undefined);
 
       const allowList = stringList(
-        withSession.settings.permissions.allow,
+        home.settings.permissions.allow,
         "allow permissions"
       );
-      assert.ok(allowList.includes("mcp(autodev_spawn)"));
+      assert.ok(!allowList.some((entry) => entry.includes("autodev_spawn")));
       assert.ok(allowList.includes("mcp(lsp)"));
       assert.ok(allowList.includes("mcp(cocoindex-code)"));
       // codegraphcontext has mcpTools in execution contract -> per-tool grants only
@@ -505,27 +486,7 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
         allowList.includes("mcp(codegraphcontext/list_indexed_repositories)")
       );
     } finally {
-      withSession.cleanup();
-    }
-
-    // Without spawn session: autodev_spawn is NOT included
-    const withoutSession = createIsolatedAntigravityHome("orchestrator", null, {
-      originalHome: env.userHome,
-      codexHome: env.codexHome
-    });
-    try {
-      const servers = Object.keys(withoutSession.mcpConfig.mcpServers);
-      assert.ok(
-        !servers.includes("autodev_spawn"),
-        "orchestrator without spawn session must not receive autodev_spawn"
-      );
-      const allowList = stringList(
-        withoutSession.settings.permissions.allow,
-        "allow permissions"
-      );
-      assert.ok(!allowList.includes("mcp(autodev_spawn)"));
-    } finally {
-      withoutSession.cleanup();
+      home.cleanup();
     }
   } finally {
     env.cleanup();
@@ -535,14 +496,10 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
 test("children cannot inherit stale or user-global MCP servers", () => {
   const env = createFixtureEnvironment();
   try {
-    const { mcpConfig, cleanup } = createIsolatedAntigravityHome(
-      "default",
-      null,
-      {
-        originalHome: env.userHome,
-        codexHome: env.codexHome
-      }
-    );
+    const { mcpConfig, cleanup } = createIsolatedAntigravityHome("default", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome
+    });
     try {
       const servers = Object.keys(mcpConfig.mcpServers);
       assert.ok(!servers.includes("stale_global_server"));
@@ -574,7 +531,6 @@ test("preserves non-MCP data by symlinking and enforces restrictive permissions"
   try {
     const { isolatedHome, cleanup } = createIsolatedAntigravityHome(
       "browser-tester",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -644,7 +600,6 @@ test("macOS Keychains directory is preserved via symlink in isolated home", () =
   try {
     const { isolatedHome, cleanup } = createIsolatedAntigravityHome(
       "browser-tester",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -684,7 +639,7 @@ test("fails closed when required role MCP is missing from catalog", () => {
 
     assert.throws(
       () =>
-        createIsolatedAntigravityHome("browser-tester", null, {
+        createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
           codexHome: env.codexHome
         }),
@@ -709,7 +664,7 @@ test("fails closed when a catalogue stdio server has a non-object environment", 
 
     assert.throws(
       () =>
-        createIsolatedAntigravityHome("browser-tester", null, {
+        createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
           codexHome: env.codexHome
         }),
@@ -732,7 +687,7 @@ test("fails closed when catalogue file is missing or invalid", () => {
 
     assert.throws(
       () =>
-        createIsolatedAntigravityHome("default", null, {
+        createIsolatedAntigravityHome("default", {
           originalHome: env.userHome,
           codexHome: env.codexHome
         }),
@@ -752,7 +707,7 @@ test("invalid user settings fail closed instead of dropping explicit permissions
     );
     assert.throws(
       () =>
-        createIsolatedAntigravityHome("browser-tester", null, {
+        createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
           codexHome: env.codexHome
         }),
@@ -785,7 +740,7 @@ process.exit(0);
 import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 
-const res = await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, null, "default");
+const res = await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, "default");
 assert.equal(res.text, "hello");
 `;
 
@@ -838,7 +793,7 @@ import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 
 try {
-  await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, null, "default");
+  await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, "default");
   process.exit(2);
 } catch (err) {
   if (err.message.includes("CLI simulated error")) {
@@ -889,7 +844,7 @@ import path from "node:path";
 const beforeHomes = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith("autodev-agy-home-"));
 
 try {
-  await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, null, "default");
+  await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, "default");
   process.exit(2);
 } catch (err) {
   if (err.code === "ENOENT" || err.message.includes("ENOENT")) {
@@ -920,17 +875,13 @@ try {
 test("playtester receives only its allowlisted Playtest MCP with trusted non-secret session env", () => {
   const env = createFixtureEnvironment();
   try {
-    const { mcpConfig, cleanup } = createIsolatedAntigravityHome(
-      "playtester",
-      null,
-      {
-        originalHome: env.userHome,
-        codexHome: env.codexHome,
-        cwd: "/Users/henrykirk/Desktop/RacingGame",
-        requestId: "trusted-request-1",
-        workspaceKey: "SimulatorLife/RacingGame"
-      }
-    );
+    const { mcpConfig, cleanup } = createIsolatedAntigravityHome("playtester", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: "/Users/henrykirk/Desktop/RacingGame",
+      requestId: "trusted-request-1",
+      workspaceKey: "SimulatorLife/RacingGame"
+    });
     try {
       assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["playtest"]);
       const playtestServer = mcpConfig.mcpServers.playtest;
@@ -1070,7 +1021,6 @@ const res = await runAgy(
   "gemini-3.8-flash-medium",
   "medium",
   process.cwd(),
-  null,
   null,
   "browser-tester"
 );
@@ -1242,7 +1192,6 @@ test("read-only Antigravity permission scope limits read_file to validated works
   try {
     const { settings, cleanup } = createIsolatedAntigravityHome(
       "browser-tester",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -1423,7 +1372,7 @@ test("read-only Antigravity invocation fails closed without a validated workspac
   try {
     assert.throws(
       () =>
-        createIsolatedAntigravityHome("browser-tester", null, {
+        createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
           codexHome: env.codexHome
         }),
@@ -1465,15 +1414,11 @@ test("write-capable roles preserve user non-MCP permissions and keep --dangerous
   });
 
   try {
-    const { settings, cleanup } = createIsolatedAntigravityHome(
-      "default",
-      null,
-      {
-        originalHome: env.userHome,
-        codexHome: env.codexHome,
-        cwd: targetWorkspace
-      }
-    );
+    const { settings, cleanup } = createIsolatedAntigravityHome("default", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: targetWorkspace
+    });
     try {
       const allowList = stringList(
         settings.permissions.allow,
@@ -1518,12 +1463,11 @@ test("write-capable roles preserve user non-MCP permissions and keep --dangerous
   }
 });
 
-test("Codex-tools turns register only the codex shim and autodev_spawn without launching duplicate local MCP servers", () => {
+test("Codex-tools turns register only the codex shim without launching duplicate local MCP servers", () => {
   const env = createFixtureEnvironment();
   try {
     const explorerConfig = buildInvocationMcpConfig(
       "explorer",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -1535,7 +1479,6 @@ test("Codex-tools turns register only the codex shim and autodev_spawn without l
 
     const orchestratorConfig = buildInvocationMcpConfig(
       "orchestrator",
-      "orch-session-123",
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,
@@ -1543,10 +1486,8 @@ test("Codex-tools turns register only the codex shim and autodev_spawn without l
       },
       "turn-codex-456"
     );
-    assert.deepEqual(Object.keys(orchestratorConfig.mcpServers).sort(), [
-      "autodev_spawn",
-      "codex"
-    ]);
+    // The orchestrator's spawn functions ride on the codex shim's exec tool.
+    assert.deepEqual(Object.keys(orchestratorConfig.mcpServers), ["codex"]);
   } finally {
     env.cleanup();
   }
@@ -1558,7 +1499,7 @@ test("Codex-tools turns still inject roleScopedMcp servers disabled at Codex roo
     // browser-tester: playwright is disabled in Codex's root config, so Codex
     // 0.169 does not expose it to spawned children; agy must inject playwright
     // alongside codex, allowlist its tools, and name it in agent.md.
-    const btHome = createIsolatedAntigravityHome("browser-tester", null, {
+    const btHome = createIsolatedAntigravityHome("browser-tester", {
       originalHome: env.userHome,
       codexHome: env.codexHome,
       cwd: REPO_ROOT,
@@ -1598,7 +1539,6 @@ test("Codex-tools turns still inject roleScopedMcp servers disabled at Codex roo
     // playtester: playtest is role-scoped and disabled at Codex root.
     const ptConfig = buildInvocationMcpConfig(
       "playtester",
-      null,
       {
         originalHome: env.userHome,
         codexHome: env.codexHome,

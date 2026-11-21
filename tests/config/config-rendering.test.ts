@@ -118,8 +118,6 @@ test("the root config takes the orchestrator role's per-server MCP settings", as
         'command = "role-must-not-own-launch-keys"',
         "[mcp_servers.playwright]",
         "enabled = false",
-        "[mcp_servers.autodev_spawn]",
-        "enabled = true",
         "[mcp_servers.codex_app]",
         "enabled = true",
         'enabled_tools = ["request_user_input"]',
@@ -149,20 +147,18 @@ test("the root config takes the orchestrator role's per-server MCP settings", as
   }
 });
 
-test("bridge-injected autodev_spawn is absent from Codex leaf role TOMLs", () => {
+test("no role TOML declares a spawn MCP server; every provider spawns through Codex exec", () => {
   const roleDir = join(import.meta.dirname, "../../agents/roles");
-  const leafRoles = readdirSync(roleDir).filter(
-    (name) => name.endsWith(".toml") && name !== "orchestrator.toml"
-  );
-
-  for (const roleName of leafRoles) {
+  for (const roleName of readdirSync(roleDir).filter((name) =>
+    name.endsWith(".toml")
+  )) {
     const role = parse(readFileSync(join(roleDir, roleName), "utf8")) as {
       mcp_servers?: Record<string, unknown>;
     };
     assert.equal(
       role.mcp_servers?.autodev_spawn,
       undefined,
-      `${roleName} must not declare the bridge-injected spawn shim as a Codex MCP`
+      `${roleName} must not declare a separate spawn MCP server`
     );
   }
 });
@@ -216,18 +212,18 @@ test("bridge MCP catalogues are deterministic and preserve launch authentication
 test("execution-contract provider delegation is explicit and consistent", () => {
   assert.deepEqual(
     validateProviderContracts({
-      codex: { delegation: "native", spawnTools: [], roleMcpInjection: false },
+      codex: { delegation: "codex", spawnTools: [], roleMcpInjection: false },
       claude: {
-        delegation: "codex-shim",
+        delegation: "codex",
         spawnTools: ["Agent"],
         roleMcpInjection: false
       },
       minimax: { delegation: "none", spawnTools: [], roleMcpInjection: false }
     }),
     {
-      codex: { delegation: "native", spawnTools: [], roleMcpInjection: false },
+      codex: { delegation: "codex", spawnTools: [], roleMcpInjection: false },
       claude: {
-        delegation: "codex-shim",
+        delegation: "codex",
         spawnTools: ["Agent"],
         roleMcpInjection: false
       },
@@ -249,7 +245,7 @@ test("execution-contract provider delegation is explicit and consistent", () => 
     () =>
       validateProviderContracts({
         antigravity: {
-          delegation: "codex-shim",
+          delegation: "codex",
           spawnTools: ["invoke_subagent"],
           roleMcpInjection: "true"
         }
@@ -274,7 +270,7 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["lsp", "cocoindex-code", "codegraphcontext", "autodev_spawn", "codex_app"],
+    ["lsp", "cocoindex-code", "codegraphcontext", "codex_app"],
     "orchestrator MCPs must include codex_app in deterministic order"
   );
   assert.deepEqual(
@@ -288,7 +284,7 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
       ],
       codex_app: ["request_user_input"]
     },
-    "codex_app must expose only request_user_input; thread tools belong to autodev_spawn"
+    "codex_app must expose only request_user_input"
   );
 
   // Every other role must not see codex_app — it is orchestrator-only.
@@ -344,7 +340,7 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
 
   // Per-role MCP ordering must respect MCP_ORDER (lsp=0, cocoindex-code=1,
   // codegraphcontext=2, playwright=3, openaiDeveloperDocs=4, context7=5,
-  // autodev_spawn=6, codex_app=7): within each role's mcp list, known servers
+  // codex_app=6): within each role's mcp list, known servers
   // appear in ascending MCP_ORDER index; unknown keys sort lexicographically after
   // them. This protects against accidental reorderings.
   const ORDER: Record<string, number> = {
@@ -354,8 +350,7 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     playwright: 3,
     openaiDeveloperDocs: 4,
     context7: 5,
-    autodev_spawn: 6,
-    codex_app: 7
+    codex_app: 6
   };
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
     const mcp = roleCfg.mcp ?? [];

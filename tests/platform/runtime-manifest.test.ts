@@ -596,7 +596,6 @@ test("MCP implementations are Runtime-owned and installed at canonical paths", (
     "codex-tools-shim-telemetry.ts",
     "codex-tools-shim.ts",
     "launcher.ts",
-    "spawn-shim.ts",
     "tool-filter.ts"
   ];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
@@ -1069,8 +1068,7 @@ test("Agents implementations are Runtime-owned behind the workspace package", ()
     "agent-activity.ts",
     "bridge-role.ts",
     "bridge-sandbox.ts",
-    "bridge-spawn-session.ts",
-    "spawn-tools.ts"
+    "role-mcp-environment.ts"
   ];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const agentsIndex = readFileSync(

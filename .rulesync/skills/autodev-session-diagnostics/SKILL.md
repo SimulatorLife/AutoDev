@@ -154,12 +154,9 @@ every event and looked like "the router logged nothing".
   (it was `typescript-language-server` missing from Codex's `PATH`).
 - **`toolCalls=0` on a long successful bridge request** means the provider
   worked invisibly, or not at all.
-- **Mid-turn `Delegation is unavailable in this session` on an orchestrator turn**
-  means `SpawnSessionRegistry` dropped or rejected `/v1/bridge-spawn/call`
-  (expiry, leaf-burst eviction, stale-token `close()`, or missing session
-  header), not that initial delegation gating hid the tool. Check `TOOL FAILED`,
-  router `spawn_failed`, `$CODEX_HOME/hooks/<bridge>.launchd.log` for
-  `spawn rejected ... reason=`, and `DRIFT` against `$CODEX_HOME/src`.
+- **Every provider spawns through `exec` → `tools.multi_agent_v1__spawn_agent`.**
+  A refused child shows in that `exec` call's own output (`TOOL FAILED`), e.g.
+  Codex's `agent thread limit reached`; there is no bridge-side spawn state.
 - **Item id prefixes identify the minter**: `rs_`/`ctc_`/`fc_`/`msg_` Codex-shaped;
   `<32 hex>_rs`, `<32 hex>_fc_<n>` MiniMax.
 - **Live CLIs surface bugs fakes hide** (the Claude CLI truncates long MCP tool

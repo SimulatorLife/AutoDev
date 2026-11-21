@@ -41,8 +41,8 @@ const ROLE_SERVER_KEYS = [
 
 /**
  * Overlay the root role's per-server settings onto the servers the MCP source
- * declares. Role entries the source does not declare (the bridge-injected
- * `autodev_spawn`, the plugin-owned `codex_app`) are not Codex MCP servers.
+ * declares. A role entry the source does not declare (the plugin-owned
+ * `codex_app`) is not a Codex MCP server.
  */
 function applyRootRole(mcp: TomlTable, rootRole: TomlTable): TomlTable {
   const roleServers = table(rootRole.mcp_servers);

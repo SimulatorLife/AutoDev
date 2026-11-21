@@ -66,7 +66,6 @@ const CODE_WRITE_OR_DELEGATION_SERVERS = [
   "codegraphcontext",
   "playwright",
   "context7",
-  "autodev_spawn",
   "codex_app"
 ];
 

@@ -82,7 +82,6 @@ const FORBIDDEN_SERVERS = [
   "codegraphcontext",
   "playwright",
   "context7",
-  "autodev_spawn",
   "codex_app"
 ];
 

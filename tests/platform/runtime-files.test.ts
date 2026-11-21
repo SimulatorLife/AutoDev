@@ -104,7 +104,6 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     "runtime/src/mcp/codex-tools-shim-telemetry.ts",
     "runtime/src/mcp/codex-tools-shim.ts",
     "runtime/src/mcp/launcher.ts",
-    "runtime/src/mcp/spawn-shim.ts",
     "runtime/src/mcp/tool-filter.ts"
   ]) {
     assert.equal(

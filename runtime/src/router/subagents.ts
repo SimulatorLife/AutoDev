@@ -580,18 +580,15 @@ export function providerCapabilities(
       )
     : [];
   // The provider delegation mode is generated alongside the role contract.
-  // A route is not evidence of orchestration capability: providers without a
-  // native, Codex-shim, or bridge-native path must not enter the root fallback
-  // tier merely because they can serve ordinary turns.
+  // A route is not evidence of orchestration capability: a provider whose
+  // model cannot reach Codex's spawn functions must not enter the root
+  // fallback tier merely because it can serve ordinary turns.
   const delegation = executionContract.providers?.[provider]?.delegation;
   // The execution contract is the provider capability source of truth. A
   // route alone is not evidence that its orchestrator can delegate, and a
   // stale spawnTools list must not resurrect a provider explicitly marked
   // `none`.
-  const subagentSpawn =
-    delegation === "native" ||
-    delegation === "codex-shim" ||
-    delegation === "bridge-native";
+  const subagentSpawn = delegation === "codex";
   return {
     subagentSpawn,
     subagentSpawnTools,

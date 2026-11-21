@@ -141,13 +141,7 @@ test("source declares each launch definition consistently", () => {
   const shared = serverMap(document.mcpServers);
   assert.deepEqual(
     Object.keys(document).sort(),
-    [
-      "$schema",
-      "antigravity-cli",
-      "codexcli",
-      "copilotcli",
-      "mcpServers"
-    ].sort()
+    ["$schema", "codexcli", "copilotcli", "mcpServers"].sort()
   );
   assert.deepEqual(Object.keys(shared).sort(), [
     "cocoindex-code",
@@ -171,19 +165,11 @@ test("source declares each launch definition consistently", () => {
       ),
       []
     );
-    assert.equal(
-      Object.hasOwn(targetServers, "autodev_spawn"),
-      target === "antigravity-cli"
-    );
+    // Spawning is Codex's own `exec` surface on every provider; no target
+    // declares a separate spawn server.
+    assert.equal(Object.hasOwn(targetServers, "autodev_spawn"), false);
     for (const [name, server] of Object.entries(targetServers)) {
-      if (name === "autodev_spawn") {
-        assert.equal(server.command, "bash");
-        assert.ok(Array.isArray(server.args));
-        assert.equal(
-          String(server.args[1]).endsWith('/src/mcp/spawn-shim.ts"'),
-          true
-        );
-      } else if (name === "codex_app") {
+      if (name === "codex_app") {
         assert.ok(typeof server.command === "string");
         assert.ok(Array.isArray(server.args));
       } else if (Object.hasOwn(server, "command")) {

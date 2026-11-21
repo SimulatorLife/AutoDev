@@ -1,9 +1,9 @@
 # Delegating through Codex code mode
 
-Read this before your first spawn when your instructions have no "Delegation on
-this provider" section: Codex-native GPT, MiniMax, and the opencli web-chat
-providers (`opencli-chatgpt`, `opencli-gemini`), including a Gemini model served
-by opencli, which is not Antigravity.
+Read this before your first spawn. It is the one delegation surface on every
+provider -- Codex-native GPT, MiniMax, the opencli web-chat sites, and the
+Claude and Antigravity CLI bridges, which mirror Codex's `exec` tool to their
+model unchanged. No provider has a spawn tool of its own.
 
 ## The spawn surface
 
@@ -21,10 +21,13 @@ global inside the `exec` cell and are not listed as top-level functions -- by
 design, not a missing tool. Probe `typeof tools.multi_agent_v1__spawn_agent`
 inside an `exec` script before reporting a delegation capability failure.
 
-`runtime/src/agents/spawn-tools.ts` builds the batched
-`await Promise.allSettled(...)` script that fans out across children and is the
-reference implementation: batch independent spawns in one cell, so one rejected
-child does not hide its successful siblings.
+Batch independent spawns in one cell with `await Promise.allSettled(...)`, so
+one rejected child does not hide its successful siblings. Each child is
+accepted or refused on its own: when the session's child limit is reached,
+Codex refuses the spawns that do not fit with `agent thread limit reached`, and
+the children that did fit keep running. Close finished children with
+`tools.multi_agent_v1__close_agent` to free their slots (see
+`references/runtime-contract.md`).
 
 ## Writing the spawn message
 

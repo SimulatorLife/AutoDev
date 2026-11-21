@@ -1901,8 +1901,11 @@ spawn batches use it twice:
   probes every owned child in parallel (`wait_agent`'s 10s minimum bounds the
   whole preflight), closes errored or shut-down handles, then evicts the
   oldest completed ones until the batch fits. Running children are never
-  closed; a batch that still cannot fit is refused before any spawn call.
-  Without pressure no preflight is emitted.
+  closed. The batch then spawns as many new children as there are free
+  slots, in order, and refuses only the overflow before its spawn call
+  (`spawn_status: "rejected"`, "Concurrency limit reached: this session's N
+  child slots are full; ..."), so a batch larger than the limit still starts
+  the children it has room for. Without pressure no preflight is emitted.
 - **Reuse ownership.** `openSpawnSession` adopts the parent's open edges into
   the bridge's registry, so a parent that reaches a bridge after compaction,
   a provider hop to another bridge process, or a restart can still reuse its

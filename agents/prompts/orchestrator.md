@@ -19,7 +19,7 @@ Standard, read the skill and delegate what remains. If the skill or the
 delegation surface is unavailable when you need it, report that capability
 failure instead of silently substituting a different workflow.
 
-A bridge with its own delegation tool states it under "Delegation on this provider". Otherwise delegate on Codex via `tools.multi_agent_v1__spawn_agent` / `multi_agent_v1__wait_agent` inside `exec` (not top-level tools); see `references/codex-code-mode.md`.
+Delegate via `tools.multi_agent_v1__spawn_agent` / `multi_agent_v1__wait_agent` inside `exec` (not top-level tools) on every provider; see `references/codex-code-mode.md`. There is no other spawn tool.
 
 ## Keep the context small
 
@@ -32,9 +32,3 @@ Every tool output stays in every later request until compaction, delegated or no
 - Answer from current references, tests, and docs. The root does not read git history (`git log`, `git show`, `git blame`, `git reflog`): the `PreToolUse` hook hard-blocks the entire command whenever any history subcommand appears, even chained after `git status` or `git commit`. Use `git status --short`, `git diff`, or `git rev-parse --short HEAD` for current state/HEAD verification, and delegate scoped regression history to one child with symptom, files, and commit range.
 - Do not re-run a call whose output is already in context.
 - Browser `MachPortRendezvousServer` error: check `playwright.config.*` for single-process or use `browser-tester`.
-
-## Bridge-injected `autodev_spawn`
-
-`autodev_spawn` is a provider-bridge shim, not a Codex MCP server. On direct
-Codex, use `multi_agent_v1__spawn_agent`; use `autodev_spawn` only when the
-active provider's instructions say its bridge injected the shim.

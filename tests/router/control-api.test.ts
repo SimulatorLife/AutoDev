@@ -3086,18 +3086,11 @@ test("Control API surfaces all 13 typed resource families", async () => {
         (server: { name: string }) => server.name === "lsp"
       )
     );
-    const isolatedTargetMcp = mcps.body.servers.find(
-      (server: { name: string }) => server.name === "autodev_spawn"
-    );
-    assert.ok(isolatedTargetMcp);
-    assert.equal(isolatedTargetMcp.transport, "stdio");
-    assert.equal(isolatedTargetMcp.enabled, null);
-    assert.equal(isolatedTargetMcp.declared, true);
-    assert.ok(
-      isolatedTargetMcp.targetOverrides.some(
-        (override: { target: string; enabled: boolean }) =>
-          override.target === "antigravity-cli" && override.enabled
-      )
+    assert.equal(
+      mcps.body.servers.some(
+        (server: { name: string }) => server.name === "autodev_spawn"
+      ),
+      false
     );
     const context7 = mcps.body.servers.find(
       (server: { name: string }) => server.name === "context7"

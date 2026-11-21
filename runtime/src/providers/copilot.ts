@@ -15,18 +15,12 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
-  bridgeDelegationInstruction,
   bridgeSkillContext,
-  buildSpawnToolCallOutput,
   composeProviderPrompt,
   isOrchestratorRole,
-  openSpawnSession,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  roleMcpEnvironment,
-  SpawnSessionRegistry,
-  spawnShimMcpServer,
-  type SpawnToolCallOutput
+  roleMcpEnvironment
 } from "@simulatorlife/autodev-runtime/agents";
 import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
@@ -163,8 +157,6 @@ function readOnlyHeaderValue(
   const single = readContextHeader(headers, SANDBOX_MODE_HEADER);
   return single === "read-only" || single === "workspace-write" ? single : null;
 }
-
-const spawnSessions = new SpawnSessionRegistry();
 
 const REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
@@ -628,30 +620,12 @@ function disabledUserServerArgs(
   return args;
 }
 
-/**
- * The CLI cannot reach Codex directly. Give only this identified root turn
- * a per-request MCP server whose call is collected and returned as a
- * synthetic Codex exec item after the CLI turn completes.
- */
-function copilotSpawnShimServer(spawnSession: string): JsonRecord {
-  return {
-    type: "stdio",
-    ...spawnShimMcpServer(
-      { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
-      spawnSession
-    )
-  };
-}
-
 function copilotMcpArgs(
   agentRole: string | null,
-  spawnSession: string | null = null,
   roleMcpContext: CopilotRoleMcpContext | null = null
 ): string[] {
   const contract = copilotRoleContract(agentRole);
-  const granted = (contract.mcp ?? []).filter(
-    (name) => name !== "autodev_spawn"
-  );
+  const granted = contract.mcp ?? [];
   const catalogue = bridgeMcpCatalogue();
   const userServers = new Set(userMcpServerNames());
   const args: string[] = [
@@ -688,9 +662,6 @@ function copilotMcpArgs(
       tools,
       copilotRoleMcpEnvironment(agentRole, name, roleMcpContext)
     );
-  }
-  if (isOrchestratorRole(agentRole) && spawnSession) {
-    additional.autodev_spawn = copilotSpawnShimServer(spawnSession);
   }
   if (Object.keys(additional).length > 0)
     args.push(
@@ -1017,7 +988,6 @@ function runCopilot(
   cwd: string,
   onEvent: OnRunCopilotEvent | null = null,
   agentRole: string | null = null,
-  spawnSession: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
   workspaceKey: unknown = null,
   requestId: string | null = null,
@@ -1036,7 +1006,7 @@ function runCopilot(
       args.splice(4, 0, "--no-ask-user");
     } else {
       args.push(
-        ...copilotMcpArgs(agentRole, spawnSession, {
+        ...copilotMcpArgs(agentRole, {
           requestId,
           workspaceId: typeof workspaceKey === "string" ? workspaceKey : null,
           workspaceRoot: cwd,
@@ -1072,7 +1042,6 @@ function runCopilot(
     const childEnvironment: NodeJS.ProcessEnv = {
       ...process.env,
       // The local Router credential belongs to this bridge, not the model CLI.
-      // Its orchestrator-only spawn shim receives the credential separately.
       ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" }),
       PATH: copilotChildPath()
     };
@@ -1182,8 +1151,6 @@ interface CopilotRequestContext {
   agentEvents: AgentReporter | null;
   cwd: string;
   prompt: string;
-  spawnSession: string | null;
-  spawnToken: string | null;
   sandboxModeHeader: "read-only" | "workspace-write" | null;
   compaction: boolean;
 }
@@ -1218,19 +1185,11 @@ class CopilotResponseStream {
     };
     response.on("error", this.onResponseError);
     response.on("close", this.onResponseClose);
-    this.keepAlive = setInterval(() => {
-      if (this.context.spawnSession) {
-        spawnSessions.touch(this.context.spawnSession, this.context.spawnToken);
-      }
-      this.writeKeepAlive();
-    }, 2000);
+    this.keepAlive = setInterval(() => this.writeKeepAlive(), 2000);
     this.emitInitialEvents();
   }
 
   acceptEvent(event: CopilotRunEvent): void {
-    if (this.context.spawnSession) {
-      spawnSessions.touch(this.context.spawnSession, this.context.spawnToken);
-    }
     if (typeof this.context.agentEvents?.reportHeartbeat === "function") {
       void this.context.agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
     }
@@ -1296,17 +1255,6 @@ class CopilotResponseStream {
       completedReasoning,
       completedMessage
     );
-    const spawnOutput = buildCopilotSpawnOutput(this.context, output.length);
-    if (spawnOutput) {
-      for (const [eventName, body] of spawnOutput.events)
-        this.emit(eventName, body);
-      output.push(spawnOutput.events[3][1].item);
-      writeErrorLine(
-        "copilot delegating " +
-          spawnOutput.childCount +
-          " subagent(s) through Codex"
-      );
-    }
     this.emit("response.completed", {
       type: "response.completed",
       response: completed
@@ -1315,8 +1263,6 @@ class CopilotResponseStream {
   }
 
   fail(error: unknown): void {
-    if (this.context.spawnSession)
-      spawnSessions.close(this.context.spawnSession, this.context.spawnToken);
     if (!this.isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
     const limit = classifyCliLimit(message, copilotErrorExitCode(error));
@@ -1351,8 +1297,6 @@ class CopilotResponseStream {
 
   dispose(): void {
     clearInterval(this.keepAlive);
-    if (this.context.spawnSession)
-      spawnSessions.close(this.context.spawnSession, this.context.spawnToken);
     this.response.removeListener("error", this.onResponseError);
   }
 
@@ -1578,33 +1522,6 @@ function copilotErrorExitCode(error: unknown): number | null {
   return error.exitCode;
 }
 
-function buildCopilotSpawnOutput(
-  context: CopilotRequestContext,
-  outputIndex: number
-): SpawnToolCallOutput | null {
-  const session = context.spawnSession;
-  if (!session) return null;
-  return buildSpawnToolCallOutput(
-    spawnSessions.close(session, context.spawnToken),
-    session,
-    outputIndex
-  );
-}
-
-function appendCopilotSpawnItem(
-  context: CopilotRequestContext,
-  output: object[]
-): void {
-  const spawnOutput = buildCopilotSpawnOutput(context, output.length);
-  if (!spawnOutput) return;
-  output.push(spawnOutput.events[3][1].item);
-  writeErrorLine(
-    "copilot delegating " +
-      spawnOutput.childCount +
-      " subagent(s) through Codex"
-  );
-}
-
 async function readRequestRecord(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1616,45 +1533,6 @@ async function readRequestRecord(
     return null;
   }
   return parsed.value;
-}
-
-async function handleSpawnRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  pathname: string
-): Promise<void> {
-  if (AUTH_TOKEN && request.headers.authorization !== "Bearer " + AUTH_TOKEN) {
-    sendJson(response, 401, { error: "invalid local gateway key" });
-    return;
-  }
-  const body = await readRequestRecord(request, response, {
-    error: "invalid JSON"
-  });
-  if (!body) return;
-  const session = typeof body.session === "string" ? body.session : "";
-  if (pathname.endsWith("/attach")) {
-    spawnSessions.touch(session);
-    sendJson(response, 200, {
-      spawnAllowed: spawnSessions.mayDelegate(session)
-    });
-    return;
-  }
-  const result = spawnSessions.record(session, body.children);
-  if (!result.accepted) {
-    writeErrorLine(
-      `copilot spawn rejected session=${session || "none"} reason=${result.reason ?? "rejected"}`
-    );
-    sendJson(response, 409, { error: result.message });
-    return;
-  }
-  sendJson(response, 200, {
-    text:
-      "Dispatched " +
-      result.count +
-      " subagent(s): " +
-      result.roles +
-      ". They are running now and are tracked by the orchestration layer, not by you."
-  });
 }
 
 function resolveCopilotWorkspace(
@@ -1714,31 +1592,9 @@ function prepareCopilotRequest(
   const sandboxInjection = compaction
     ? ""
     : readOnlySystemPromptInjection(headers);
-  const spawnSession = compaction
-    ? null
-    : openSpawnSession(request.headers, spawnSessions, {
-        orchestrator: isOrchestratorRole(agentRole),
-        role: agentRole,
-        workspace: cwd,
-        payload
-      });
-  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (!compaction && isOrchestratorRole(agentRole) && spawnSession === null) {
-    writeErrorLine(
-      `copilot orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
-    );
-  }
   const composedPrompt = compaction
     ? COMPACTION_SYSTEM_PROMPT
-    : composeProviderPrompt(agentRole, cwd) +
-      sandboxInjection +
-      bridgeDelegationInstruction({
-        mayDelegate:
-          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
-        // The Copilot CLI advertises each MCP tool directly, so the model calls
-        // one name rather than naming a server and a tool.
-        reach: { kind: "direct", prefix: "mcp__" }
-      });
+    : composeProviderPrompt(agentRole, cwd) + sandboxInjection;
   const finalPrompt =
     composedPrompt +
     (skillContextHeader
@@ -1781,17 +1637,12 @@ function prepareCopilotRequest(
     agentEvents,
     cwd,
     prompt,
-    spawnSession,
-    spawnToken,
     sandboxModeHeader,
     compaction
   };
 }
 
 function reportCopilotHeartbeat(context: CopilotRequestContext): void {
-  if (context.spawnSession) {
-    spawnSessions.touch(context.spawnSession, context.spawnToken);
-  }
   if (typeof context.agentEvents?.reportHeartbeat === "function") {
     void context.agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
   }
@@ -1817,7 +1668,6 @@ async function sendCopilotNonStreamingResponse(
           reportToolObservation(context.agentEvents, event);
         },
         context.agentRole,
-        context.spawnSession,
         context.sandboxModeHeader,
         context.workspaceKey,
         context.requestId,
@@ -1827,8 +1677,6 @@ async function sendCopilotNonStreamingResponse(
       clearInterval(nonStreamHeartbeat);
     }
   } catch (error) {
-    if (context.spawnSession)
-      spawnSessions.close(context.spawnSession, context.spawnToken);
     const message = error instanceof Error ? error.message : String(error);
     sendJson(response, 503, {
       error: { type: "copilot_proxy_error", message }
@@ -1847,7 +1695,6 @@ async function sendCopilotNonStreamingResponse(
   const output: object[] = [
     responseMessageItem(result.text, "msg_" + randomBytes(10).toString("hex"))
   ];
-  appendCopilotSpawnItem(context, output);
   sendJson(
     response,
     200,
@@ -1874,7 +1721,6 @@ async function streamCopilotResponse(
       context.cwd,
       (event) => stream.acceptEvent(event),
       context.agentRole,
-      context.spawnSession,
       context.sandboxModeHeader,
       context.workspaceKey,
       context.requestId,
@@ -1922,16 +1768,8 @@ async function handle(
   if (pathname === "/health" || pathname === "/health/liveliness") {
     sendJson(response, 200, {
       status: "ok",
-      provider: "copilot",
-      spawnSessions: spawnSessions.status()
+      provider: "copilot"
     });
-    return;
-  }
-  if (
-    pathname === "/v1/bridge-spawn/attach" ||
-    pathname === "/v1/bridge-spawn/call"
-  ) {
-    await handleSpawnRoute(request, response, pathname);
     return;
   }
   if (pathname !== "/v1/responses" || request.method !== "POST") {

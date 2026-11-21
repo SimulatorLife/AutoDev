@@ -155,7 +155,6 @@
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
-        "autodev_spawn",
         "codex_app"
       ],
       "skills": [
@@ -440,14 +439,14 @@
     "claude": {
       "spawnTools": [],
       "permissionMode": "native",
-      "delegation": "codex-shim"
+      "delegation": "codex"
     },
     "antigravity-gemini": {
       "spawnTools": [
         "invoke_subagent"
       ],
       "permissionMode": "configured",
-      "delegation": "codex-shim",
+      "delegation": "codex",
       "roleMcpInjection": true
     },
     "antigravity-claude-gpt": {
@@ -455,7 +454,7 @@
         "invoke_subagent"
       ],
       "permissionMode": "configured",
-      "delegation": "codex-shim",
+      "delegation": "codex",
       "roleMcpInjection": true
     },
     "antigravity-argon": {
@@ -463,34 +462,34 @@
         "invoke_subagent"
       ],
       "permissionMode": "configured",
-      "delegation": "codex-shim",
+      "delegation": "codex",
       "roleMcpInjection": true
     },
     "minimax": {
       "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "native"
+      "delegation": "codex"
     },
     "opencli-chatgpt": {
       "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "native"
+      "delegation": "codex"
     },
     "opencli-gemini": {
       "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "native"
+      "delegation": "codex"
     },
     "copilot": {
       "spawnTools": [],
       "permissionMode": "configured",
-      "delegation": "codex-shim",
+      "delegation": "none",
       "roleMcpInjection": true
     },
     "codex": {
       "spawnTools": [],
       "permissionMode": "native",
-      "delegation": "native"
+      "delegation": "codex"
     }
   }
 }

@@ -284,14 +284,6 @@ test("runCopilot hands the role's MCP arguments to the Copilot CLI", async () =>
     result.gitIdentity,
     gitCommitIdentityEnv({ role: "browser-tester", provider: "copilot" })
   );
-
-  // The spawn MCP is a forwarding shim; its environment cannot reach the
-  // separate Copilot CLI that actually executes native git tools.
-  const spawnEnvironment = parse(
-    copilotMcpArgs("orchestrator", "spawn-session")
-  ).additional.autodev_spawn?.env;
-  assert.ok(spawnEnvironment);
-  assert.equal(spawnEnvironment.GIT_COMMITTER_EMAIL, undefined);
 });
 
 test("runCopilot denies the orchestrator Copilot's git-history shell commands, and only the orchestrator", async () => {
@@ -306,14 +298,9 @@ test("runCopilot denies the orchestrator Copilot's git-history shell commands, a
   const saved = process.env.COPILOT_BIN;
   process.env.COPILOT_BIN = fakeCli;
   const argsFor = async (role: string): Promise<string[]> => {
-    await runCopilot(
-      "task",
-      "copilot",
-      homes.root,
-      () => {},
-      role,
-      "spawn-session"
-    ).catch(() => {});
+    await runCopilot("task", "copilot", homes.root, () => {}, role).catch(
+      () => {}
+    );
     return JSON.parse(await readFile(argsFile, "utf8")) as string[];
   };
   try {

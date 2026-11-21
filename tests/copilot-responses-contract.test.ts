@@ -408,19 +408,13 @@ process.exitCode = fixture.exitCode ?? 0;
   }
 }
 
-test("Copilot orchestrator receives only its identified AutoDev spawn shim", () => {
-  const args = copilotMcpArgs("orchestrator", "copilot-session");
-  const configIndex = args.indexOf("--additional-mcp-config");
-  assert.notEqual(configIndex, -1);
-  const config = JSON.parse(args[configIndex + 1] ?? "{}");
-  const shim = config.mcpServers.autodev_spawn;
-  assert.equal(shim.type, "stdio");
-  assert.equal(shim.command, process.env.AUTODEV_NODE_BIN ?? process.execPath);
-  assert.equal(shim.env.AUTODEV_SPAWN_SESSION, "copilot-session");
-  assert.equal(
-    copilotMcpArgs("worker").some((arg) => arg.includes("autodev_spawn")),
-    false
-  );
+test("Copilot is offered no spawn server: it cannot serve the orchestrator tier", () => {
+  for (const role of ["orchestrator", "worker"])
+    assert.equal(
+      copilotMcpArgs(role).some((arg) => arg.includes("autodev_spawn")),
+      false,
+      `${role} must not receive a bridge spawn server`
+    );
 });
 
 test("Copilot CLI receives validated per-request OTel workspace and role resources", async () => {
@@ -462,7 +456,6 @@ console.log(JSON.stringify({ type: "result", exitCode: 0 }));
       temp,
       null,
       "worker",
-      null,
       null,
       "SimulatorLife/AutoDev"
     );

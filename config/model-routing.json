@@ -35,7 +35,7 @@
     "orchestrator": [
       ["codex"],
       ["claude", "antigravity-claude-gpt"],
-      ["copilot", "antigravity-gemini", "antigravity-argon"]
+      ["antigravity-gemini", "antigravity-argon"]
     ]
   },
   "routes": {
@@ -152,8 +152,7 @@
     },
     "copilot": {
       "models": {
-        "default": "copilot",
-        "orchestrator": "copilot"
+        "default": "copilot"
       },
       "links": {
         "usage": "https://github.com/settings/billing/ai_usage",

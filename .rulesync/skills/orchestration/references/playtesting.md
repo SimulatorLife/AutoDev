@@ -41,9 +41,9 @@ Verify a real provider tool call, not just the role TOML or `mcpExposed`
 telemetry. Never enable the servers globally. Playtester MCP additionally
 requires the trusted workspace/session identity and dedicated runner credential
 supplied by Runtime; an arbitrary MCP launch or shell invocation without that
-binding must stop. For provider-internal delegation, `autodev_spawn` still asks
-Codex to create the native child thread, which is then routed through the same
-role-aware Router path.
+binding must stop. Every provider spawns through Codex's own
+`multi_agent_v1__spawn_agent`, so each child is a native Codex thread routed
+through the same role-aware Router path.
 
 These handoffs reuse the existing orchestrator and roles; they do not create
 another scheduler or grant a role capabilities it does not already have.

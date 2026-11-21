@@ -27,18 +27,12 @@ import { pathToFileURL } from "node:url";
 
 import { type AntigravityProvider } from "@simulatorlife/autodev-core";
 import {
-  bridgeDelegationInstruction,
   bridgeSkillContext,
-  buildSpawnToolCallOutput,
   composeProviderPrompt,
   isOrchestratorRole,
-  openSpawnSession,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  roleMcpEnvironment,
-  SpawnSessionRegistry,
-  spawnShimMcpServer,
-  type SpawnToolCallOutput
+  roleMcpEnvironment
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
 import {
@@ -2135,10 +2129,6 @@ function agentResponseActivityText(state: string): string {
   return "";
 }
 
-// Delegation requests the shim collects while a turn is in flight. See
-// runtime/src/agents/bridge-spawn-session.ts for why the session key matters.
-const spawnSessions = new SpawnSessionRegistry();
-
 interface IsolatedHomeOptions {
   originalHome?: string;
   codexHome?: string;
@@ -2218,8 +2208,8 @@ function bridgeMcpCatalogue(codexHome?: string): Record<string, JsonRecord> {
 /**
  * Builds the invocation-scoped Antigravity MCP config containing only the current
  * role contract's declared MCP servers (from the bridge catalogue), plus the
- * autodev_spawn shim only for an authorized orchestrator turn with an active spawn session.
- * Leaf roles never receive the spawn shim.
+ * Codex tools shim for a turn that can park a Codex tool call. An orchestrator
+ * delegates through that shim's `exec`, like every other provider.
  */
 function bridgeMcpEntry(
   name: string,
@@ -2412,10 +2402,10 @@ function writeCodexToolsAgent(
     "it holds the sandbox, the approvals, and the history, and it executes the",
     "tools you call.",
     "",
-    "Your file and command tools come from the `codex` MCP server -- reading",
-    "files, writing them, running commands. Delegation is a separate server,",
-    "and the instructions name it. Do not describe a tool you have not called",
-    "as done. If a call returns an error, say what failed.",
+    "Every tool comes from the `codex` MCP server -- reading files, writing",
+    "them, running commands, and, for an orchestrator, spawning and managing",
+    "subagents through `exec`'s `tools` global. Do not describe a tool you",
+    "have not called as done. If a call returns an error, say what failed.",
     directMcpNote,
     attachmentNote,
     ""
@@ -2423,35 +2413,11 @@ function writeCodexToolsAgent(
 }
 
 /**
- * The MCP server that offers this turn the bridge's delegation tool.
- *
- * The entry is the shared one every CLI bridge writes; agy reads it in its own
- * config schema. The shim calls back into this bridge over loopback, so it
- * needs the bridge's address, its token, and the turn the calls belong to.
- *
- * agy's MCP registry is a **file** in the isolated home, so that identity is
- * not written into it: a token in a file outlives the turn. The shim inherits
- * it from agy's own environment instead, which `agyEnvironment` builds from
- * the same owner.
- */
-function bridgeSpawnMcpEntry(spawnSession: string): AntigravityMcpServerConfig {
-  const server = spawnShimMcpServer(
-    { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
-    spawnSession
-  );
-  return {
-    command: server.command,
-    args: server.args
-  };
-}
-
-/**
  * The MCP server that offers this turn Codex's tools.
  *
  * Without it agy has no way to reach a Codex tool at all, so the entry is
- * registered for any turn that can hold one -- the spawn entry is the only one
- * gated on the role, because delegation genuinely belongs to the orchestrator
- * while Codex's tools belong to whoever was given them.
+ * registered for any turn that can hold one. Delegation needs nothing extra:
+ * an orchestrator's Codex tools already carry the spawn functions.
  */
 function codexToolsMcpEntry(toolTurnId: string): AntigravityMcpServerConfig {
   return codexToolsMcpServer(toolTurnId, {
@@ -2462,7 +2428,6 @@ function codexToolsMcpEntry(toolTurnId: string): AntigravityMcpServerConfig {
 
 function buildInvocationMcpConfig(
   agentRole: string | null,
-  spawnSession: string | null = null,
   options?: IsolatedHomeOptions,
   toolTurnId: string | null = null
 ): AntigravityMcpConfig {
@@ -2477,7 +2442,7 @@ function buildInvocationMcpConfig(
   // spawned children, so agy still injects them directly.
   const scopedMcp = toolTurnId ? new Set(roleScopedMcp(agentRole)) : null;
   const bridgeMcpNames = (contract.mcp ?? []).filter(
-    (name) => name !== "autodev_spawn" && (!scopedMcp || scopedMcp.has(name))
+    (name) => !scopedMcp || scopedMcp.has(name)
   );
   if (bridgeMcpNames.length > 0) {
     const catalogue = bridgeMcpCatalogue(options?.codexHome);
@@ -2516,8 +2481,6 @@ function buildInvocationMcpConfig(
       );
     }
   }
-  if (isOrchestratorRole(agentRole) && spawnSession)
-    mcpServers.autodev_spawn = bridgeSpawnMcpEntry(spawnSession);
   // A turn is offered the shim exactly when it has somewhere to park a call:
   // streaming, and carrying at least one Codex tool. Minting the id under the
   // same condition keeps "the shim was launched" and "there is a turn to park
@@ -2805,7 +2768,6 @@ function symlinkGeminiState(source: string, target: string): void {
 /** Creates an invocation-scoped home while retaining the user's authenticated state. */
 function createIsolatedAntigravityHome(
   agentRole: string | null,
-  spawnSession: string | null = null,
   options?: IsolatedHomeOptions
 ): IsolatedHomeResult {
   const originalHome = options?.originalHome ?? process.env.HOME ?? homedir();
@@ -2846,12 +2808,7 @@ function createIsolatedAntigravityHome(
     );
 
     const toolTurnId = options?.toolTurnId ?? null;
-    const mcpConfig = buildInvocationMcpConfig(
-      agentRole,
-      spawnSession,
-      options,
-      toolTurnId
-    );
+    const mcpConfig = buildInvocationMcpConfig(agentRole, options, toolTurnId);
     const settings = buildInvocationSettings(
       agentRole,
       mcpConfig,
@@ -2893,7 +2850,7 @@ function createIsolatedAntigravityHome(
     activeIsolatedHomeCleanups.add(cleanup);
 
     const directMcpServers = Object.keys(mcpConfig.mcpServers).filter(
-      (name) => name !== CODEX_TOOLS_SERVER && name !== "autodev_spawn"
+      (name) => name !== CODEX_TOOLS_SERVER
     );
     return {
       isolatedHome: tempHome,
@@ -2920,23 +2877,12 @@ function createIsolatedAntigravityHome(
  * The bridge constructs an invocation-scoped temporary HOME containing only
  * the current role's contract MCP servers and permissions.
  */
-function agyEnvironment(
-  spawnSession: string | null,
-  isolatedHome: string | null = null
-): NodeJS.ProcessEnv {
+function agyEnvironment(isolatedHome: string | null = null): NodeJS.ProcessEnv {
   const codexHome = process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex");
-  // The shim's identity -- the bridge it calls back, and the turn its calls
-  // belong to -- is the shared owner's. It travels in the environment rather
-  // than in agy's MCP config because that config is a file.
-  const identity = spawnShimMcpServer(
-    { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
-    spawnSession ?? ""
-  ).env;
   return {
     ...process.env,
     ...(isolatedHome ? { HOME: isolatedHome } : {}),
-    CODEX_HOME: codexHome,
-    ...identity
+    CODEX_HOME: codexHome
   };
 }
 
@@ -3041,7 +2987,6 @@ function runAgy(
   effort: string,
   cwd: string,
   onEvent: OnAgyEvent | null,
-  spawnSession: string | null = null,
   agentRole: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
   skillContext: string | null = null,
@@ -3053,7 +2998,7 @@ function runAgy(
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
-    isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession, {
+    isolatedState = createIsolatedAntigravityHome(agentRole, {
       cwd,
       requestId,
       workspaceKey,
@@ -3102,7 +3047,7 @@ function runAgy(
           cwd,
           env: withAutoDevOtelResourceContext(
             {
-              ...agyEnvironment(spawnSession, isolatedState.isolatedHome),
+              ...agyEnvironment(isolatedState.isolatedHome),
               // Commits this agent makes carry its own bounded identity, so
               // attribution is read back from git rather than guessed by the
               // observing Runtime. Set as env, not repo config, so nothing is
@@ -3302,16 +3247,8 @@ async function handleLocalRoute(
 ): Promise<boolean> {
   if (pathname === "/health" || pathname === "/health/liveliness") {
     sendJson(response, 200, {
-      status: "ok",
-      spawnSessions: spawnSessions.status()
+      status: "ok"
     });
-    return true;
-  }
-  if (
-    pathname === "/v1/bridge-spawn/attach" ||
-    pathname === "/v1/bridge-spawn/call"
-  ) {
-    await handleBridgeSpawnRoute(pathname, request, response);
     return true;
   }
   if (
@@ -3356,7 +3293,6 @@ async function handleBridgeToolsRoute(
   const turn = codexToolTurns.byId(
     typeof body?.turn === "string" ? body.turn : ""
   );
-  if (turn) turn.touchSpawnSession();
   if (pathname.endsWith("/list")) {
     sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
     return;
@@ -3372,45 +3308,6 @@ async function handleBridgeToolsRoute(
     body?.arguments ?? {}
   );
   if (!response.destroyed) sendJson(response, 200, result);
-}
-
-async function handleBridgeSpawnRoute(
-  pathname: string,
-  request: IncomingMessage,
-  response: ServerResponse
-): Promise<void> {
-  // The shim reaches this loopback route behind the same bearer check.
-  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
-    sendJson(response, 401, { error: "invalid local gateway key" });
-    return;
-  }
-  const body = await readJsonBody(request);
-  const session = typeof body?.session === "string" ? body.session : "";
-  if (pathname.endsWith("/attach")) {
-    // A leaf turn, or a CLI that outlived its request, is simply not offered
-    // the tool rather than being offered one that fails.
-    spawnSessions.touch(session);
-    sendJson(response, 200, {
-      spawnAllowed: spawnSessions.mayDelegate(session)
-    });
-    return;
-  }
-  const result = spawnSessions.record(session, body?.children);
-  if (!result.accepted) {
-    writeErrorLine(
-      `agy spawn rejected session=${session || "none"} reason=${result.reason ?? "rejected"}`
-    );
-    sendJson(response, 409, { error: result.message });
-    return;
-  }
-  // Dispatch, rather than await: Codex creates and tracks these children.
-  sendJson(response, 200, {
-    text:
-      `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by ` +
-      "the orchestration layer, not by you. End your turn now with a brief statement of what you delegated -- " +
-      "do not wait for them, and do not do their work yourself. Their results are delivered to you " +
-      "automatically on your next turn."
-  });
 }
 
 function authorizeResponsesRoute(
@@ -3562,8 +3459,6 @@ interface ResponsesTurn {
   sandboxMode: "read-only" | "workspace-write" | null;
   skillContext: string | null;
   agentEvents: AgentReporter | null;
-  spawnSession: string | null;
-  spawnToken: string | null;
   requestId: string | null;
   cwd: string;
   prompt: string;
@@ -3614,8 +3509,6 @@ function prepareTurnPromptAndTools(args: {
   } = args;
   if (compaction) {
     return {
-      spawnSession: null,
-      spawnToken: null,
       codexTools: [] as ReturnType<typeof codexToolSurface>["tools"],
       toolTurnId: payload.stream ? turnId(12) : null,
       prompt: promptFromInput(payload.input ?? "", COMPACTION_SYSTEM_PROMPT),
@@ -3624,29 +3517,12 @@ function prepareTurnPromptAndTools(args: {
       bootstrapContract: null
     };
   }
-  const spawnSession = openSpawnSession(request.headers, spawnSessions, {
-    orchestrator: isOrchestratorRole(agentRole),
-    role: agentRole,
-    workspace: cwd,
-    payload
-  });
-  const spawnToken = spawnSession ? spawnSessions.tokenOf(spawnSession) : null;
-  if (isOrchestratorRole(agentRole) && spawnSession === null) {
-    writeErrorLine(
-      `agy orchestrator request missing trackable spawn session header request=${requestId ?? "none"}`
-    );
-  }
   const codexTools = codexToolSurface(payload).tools;
   const toolTurnId = payload.stream ? turnId(12) : null;
   const prompt = promptFromInput(
     payload.input ?? "",
     [
       composeProviderPrompt(agentRole, cwd),
-      bridgeDelegationInstruction({
-        mayDelegate:
-          spawnSession !== null && spawnSessions.mayDelegate(spawnSession),
-        reach: { kind: "dispatcher", dispatcher: "call_mcp_tool" }
-      }),
       toolTurnId && codexTools.length > 0
         ? codexToolReferenceForDispatcher(codexTools, "call_mcp_tool")
         : ""
@@ -3660,8 +3536,6 @@ function prepareTurnPromptAndTools(args: {
   );
   reportRoleExposure(agentEvents, bootstrapContract);
   return {
-    spawnSession,
-    spawnToken,
     codexTools,
     toolTurnId,
     prompt,
@@ -3701,8 +3575,6 @@ function prepareResponsesTurn(
   }
   const compaction = isCompactionRequest(payload);
   const {
-    spawnSession,
-    spawnToken,
     codexTools,
     toolTurnId,
     prompt,
@@ -3734,8 +3606,6 @@ function prepareResponsesTurn(
     sandboxMode,
     skillContext,
     agentEvents,
-    spawnSession,
-    spawnToken,
     requestId,
     cwd,
     prompt,
@@ -3773,7 +3643,6 @@ function runTurnAgy(
     turn.effort,
     turn.cwd,
     onEvent,
-    turn.spawnSession,
     turn.agentRole,
     turn.sandboxMode,
     turn.skillContext,
@@ -3785,43 +3654,16 @@ function runTurnAgy(
   );
 }
 
-/**
- * Delegation this turn asked for, collected out-of-band by the shim while agy
- * ran. Closing the session drains it; a non-empty batch becomes one `exec`
- * call so Codex creates the children itself and they become sessions the app
- * can show.
- */
-function closeSpawnDelegation(
-  spawnSession: string | null,
-  spawnToken: string | null,
-  outputIndex: number
-): SpawnToolCallOutput | null {
-  if (!spawnSession) return null;
-  return buildSpawnToolCallOutput(
-    spawnSessions.close(spawnSession, spawnToken),
-    spawnSession,
-    outputIndex
-  );
-}
-
 async function runNonStreamingTurn(
   turn: ResponsesTurn,
   response: ServerResponse
 ): Promise<void> {
-  const { agentEvents, spawnSession, spawnToken, agentRole, cwd, requestId } =
-    turn;
-  const touchSession = () => {
-    if (spawnSession) spawnSessions.touch(spawnSession, spawnToken);
-  };
+  const { agentEvents, agentRole, cwd, requestId } = turn;
   try {
-    const heartbeat = setInterval(() => {
-      touchSession();
-      reportTurnHeartbeat(agentEvents);
-    }, 5000);
+    const heartbeat = setInterval(() => reportTurnHeartbeat(agentEvents), 5000);
     let result: RunAgyResult;
     try {
       result = await runTurnAgy(turn, (event) => {
-        touchSession();
         reportTurnHeartbeat(agentEvents);
         if (!isStepUpdateEvent(event)) return;
         const update: JsonValue = isStepUpdate(event.step_update)
@@ -3838,21 +3680,7 @@ async function runNonStreamingTurn(
     const output: object[] = [
       responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`)
     ];
-    const delegation = closeSpawnDelegation(
-      spawnSession,
-      spawnToken,
-      output.length
-    );
-    if (delegation) {
-      output.push(delegation.events[3][1].item);
-      writeErrorLine(
-        `agy delegating ${delegation.childCount} subagent(s) through Codex`
-      );
-    }
-    if (
-      turn.compaction &&
-      isInvalidCompactionResponse(result.text, delegation ? 1 : 0)
-    ) {
+    if (turn.compaction && isInvalidCompactionResponse(result.text, 0)) {
       throw new Error(
         "Compaction turn returned empty summary or attempted tool calls."
       );
@@ -3875,7 +3703,6 @@ async function runNonStreamingTurn(
   } catch (error) {
     turn.spawnTracker.flushSpawns("failure");
     turn.toolObserver.reportPermissionDenial(error);
-    if (spawnSession) spawnSessions.close(spawnSession, spawnToken);
     turn.logTurnEnd("failed", errorMessage(error));
     sendJson(response, 502, {
       error: agyErrorDetails(
@@ -4453,20 +4280,12 @@ class StreamingTurn implements ParkableTurn {
   }
 
   attach(): void {
-    this.touchSpawnSession();
     this.response.on("error", this.onResponseError);
     this.response.on("close", this.onResponseClose);
     this.keepAlive = setInterval(() => {
-      this.touchSpawnSession();
       reportTurnHeartbeat(this.turn.agentEvents);
       this.stream.writeKeepAlive();
     }, 2000);
-  }
-
-  touchSpawnSession(): void {
-    if (this.turn.spawnSession) {
-      spawnSessions.touch(this.turn.spawnSession, this.turn.spawnToken);
-    }
   }
 
   /**
@@ -4479,7 +4298,6 @@ class StreamingTurn implements ParkableTurn {
    * so the listener is removed before the response is closed.
    */
   park(): void {
-    this.touchSpawnSession();
     this.parked = true;
     this.detach();
     // Detached first, so closing the response here is not read as the client
@@ -4496,7 +4314,6 @@ class StreamingTurn implements ParkableTurn {
    * call was emitted.
    */
   rebind(stream: ResponseEventStream, response: ServerResponse): void {
-    this.touchSpawnSession();
     this.detach();
     this.parked = false;
     this.stream = stream;
@@ -4512,7 +4329,6 @@ class StreamingTurn implements ParkableTurn {
    * call rather than the one that asked for it.
    */
   resume(awaited: AwaitedToolResults): void {
-    this.touchSpawnSession();
     this.releaseOutputs(awaited.outputs, awaited.messages);
     // Anything agy asked for while this turn was parked is owed Codex now, on
     // the response that just reopened -- not on the one that has already ended.
@@ -4546,7 +4362,6 @@ class StreamingTurn implements ParkableTurn {
    * answer on the next request.
    */
   requestTool(name: string, args: unknown): Promise<ShimJson> {
-    this.touchSpawnSession();
     const tool = this.turn.codexTools.find(
       (candidate) => candidate.name === name
     );
@@ -4696,7 +4511,6 @@ class StreamingTurn implements ParkableTurn {
   }
 
   readonly onEvent = (event: AgyEvent): void => {
-    this.touchSpawnSession();
     reportTurnHeartbeat(this.turn.agentEvents);
     if (isProcessEvent(event)) {
       this.child = event.child;
@@ -4752,19 +4566,6 @@ class StreamingTurn implements ParkableTurn {
       result,
       this.turn.usage
     );
-    const delegation = closeSpawnDelegation(
-      this.turn.spawnSession,
-      this.turn.spawnToken,
-      completed.output.length
-    );
-    if (delegation) {
-      for (const [name, event] of delegation.events)
-        this.stream.emit(name, event);
-      completed.output.push(delegation.events[3][1].item);
-      writeErrorLine(
-        `agy delegating ${delegation.childCount} subagent(s) through Codex`
-      );
-    }
     this.stream.emit(EVENT_RESPONSE_COMPLETED, {
       type: EVENT_RESPONSE_COMPLETED,
       response: completed
@@ -5018,13 +4819,6 @@ async function runStreamingTurn(
     streaming.fail(error);
   } finally {
     streaming.detach();
-    // The registry must not outlive the turn on any path. A stale entry would
-    // accept a delegation from a CLI that outlived its request and attach it
-    // to nothing, or -- on a reused session key -- to the next turn. Closing
-    // twice is harmless; the success path has already drained it.
-    if (turn.spawnSession) {
-      spawnSessions.close(turn.spawnSession, turn.spawnToken);
-    }
     codexToolTurns.remove(streaming);
   }
 }

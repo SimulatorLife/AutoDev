@@ -172,31 +172,28 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
       ].map((name) => [name, asObject(providers[name]).delegation])
     ),
     {
-      codex: "native",
-      claude: "codex-shim",
-      "antigravity-gemini": "codex-shim",
-      "antigravity-argon": "codex-shim",
-      "antigravity-claude-gpt": "codex-shim",
-      copilot: "codex-shim",
-      minimax: "native",
-      "opencli-chatgpt": "native",
-      "opencli-gemini": "native"
+      codex: "codex",
+      claude: "codex",
+      "antigravity-gemini": "codex",
+      "antigravity-argon": "codex",
+      "antigravity-claude-gpt": "codex",
+      copilot: "none",
+      minimax: "codex",
+      "opencli-chatgpt": "codex",
+      "opencli-gemini": "codex"
     }
   );
   const mcpTargets = asObject(rulesyncMcp);
-  assert.ok(
-    Object.hasOwn(
-      asObject(asObject(mcpTargets["antigravity-cli"]).mcpServers),
-      "autodev_spawn"
-    )
-  );
-  for (const target of ["codexcli", "copilotcli"])
+  for (const target of Object.keys(mcpTargets).filter(
+    (name) => name !== "$schema" && name !== "mcpServers"
+  ))
     assert.equal(
       Object.hasOwn(
         asObject(asObject(mcpTargets[target]).mcpServers),
         "autodev_spawn"
       ),
-      false
+      false,
+      `${target} must not declare a separate spawn server`
     );
 });
 

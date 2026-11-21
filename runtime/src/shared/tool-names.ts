@@ -7,7 +7,7 @@
  *
  *   - `<namespace>__<tool>`              -- snake_case, double underscore
  *   - `<namespace>` is a stable snake_case identifier (e.g. `multi_agent_v1`,
- *     `mcp`, `autodev_spawn`)
+ *     `mcp`)
  *   - `<tool>` is the bare tool name the server returns (also snake_case)
  *
  * Bridges, hooks, MCP launchers, the Codex code-mode shim, and tests all read
@@ -83,20 +83,6 @@ export const MCP_SERVER_PLAYWRIGHT = "playwright" as const;
 export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;
 export const MCP_SERVER_PLAYTEST = "playtest" as const;
-
-/**
- * Bridge-injected spawn shim attached by provider CLI bridges (Copilot,
- * Antigravity) to their subprocess. Not a Codex-level MCP server: it has no
- * entry in `$CODEX_HOME/config.toml` and `run-autodev-mcp.sh` rejects it by
- * name. The shim's own declared tool name is `spawn_subagent`; the model sees
- * it as `mcp__autodev_spawn__spawn_subagent`.
- */
-export const MCP_SERVER_AUTODEV_SPAWN = "autodev_spawn" as const;
-export const AUTODEV_SPAWN_BARE_TOOL = "spawn_subagent" as const;
-export const AUTODEV_SPAWN_TOOL = mcpToolName(
-  MCP_SERVER_AUTODEV_SPAWN,
-  AUTODEV_SPAWN_BARE_TOOL
-);
 
 /**
  * Codex App tools live behind the codex-app-tools plugin and are surfaced to
