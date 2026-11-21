@@ -9,7 +9,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 
-import { handleMemoryControlApiRequest } from "../../runtime/src/control-api/memory.ts";
+import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 
 const taskHistoryEnv = "AUTODEV_MEMORY_READ_TASK_HISTORY";
 const originalTaskHistoryGrant = process.env[taskHistoryEnv];

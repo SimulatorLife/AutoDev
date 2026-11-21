@@ -18,7 +18,9 @@ const usageWidgetIds = [
   "p95-provider-queue",
   "p95-provider-site",
   "attempts-by-provider",
+  "attempts-by-model",
   "requests-by-agent",
+  "requests-by-model",
   "requests-by-workspace",
   "mcp-calls",
   "mcp-duration",
@@ -104,9 +106,13 @@ const traceResponse = {
 function withUsageConfig(): () => void {
   const oldToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
   const oldUrl = process.env.AUTODEV_OPENLIT_USAGE_URL;
+  const oldControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const oldCodexHome = process.env.CODEX_HOME;
   const oldFetch = globalThis.fetch;
   process.env.AUTODEV_OPENLIT_USAGE_TOKEN = usageToken;
   process.env.AUTODEV_OPENLIT_USAGE_URL = "http://openlit.test";
+  delete process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.CODEX_HOME = "/nonexistent-codex-home-for-usage-page-test";
   // The Usage telemetry cache is process-wide, so a read that a previous test
   // answered would otherwise answer this one -- and this file's tests each
   // stub a different response for the same selection.
@@ -116,6 +122,13 @@ function withUsageConfig(): () => void {
     else process.env.AUTODEV_OPENLIT_USAGE_TOKEN = oldToken;
     if (oldUrl === undefined) delete process.env.AUTODEV_OPENLIT_USAGE_URL;
     else process.env.AUTODEV_OPENLIT_USAGE_URL = oldUrl;
+    if (oldControlToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = oldControlToken;
+    }
+    if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = oldCodexHome;
     globalThis.fetch = oldFetch;
     clearUsageTelemetryCacheForTests();
   };
@@ -164,6 +177,8 @@ test("UsagePage renders a validated v5 snapshot and selected trace using server-
     assert.match(markup, /data-feature="usage-trace-detail"/);
     assert.match(markup, /gen_ai\.client_operation/);
     assert.match(markup, /value="openai" selected/);
+    assert.match(markup, /data-mcp-inventory-status="unavailable"/);
+    assert.match(markup, /autodev_control_api_not_configured/);
     assert.doesNotMatch(markup, new RegExp(usageToken));
   } finally {
     restore();
@@ -355,6 +370,123 @@ test("an invalid session id is refused before anything is read", async () => {
     assert.deepEqual(requests, []);
     assert.match(markup, /not a valid AutoDev session identity/u);
     assert.match(markup, /data-usage-session-scoped="true"/);
+  } finally {
+    restoreControl();
+    restore();
+  }
+});
+
+test("UsagePage loads Control API MCP inventory and runtime observations server-side", async () => {
+  const restore = withUsageConfig();
+  const restoreControl = withControlApiConfig();
+  try {
+    const requests: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "http://openlit.test/api/autodev/usage") {
+        return Response.json(usageResponse);
+      }
+      if (url === "http://control.test/control/mcps") {
+        return Response.json({
+          schema: "autodev-control-mcps-v2",
+          source: ".rulesync/mcp.jsonc",
+          revision: "rev-1",
+          readOnly: false,
+          valid: true,
+          issues: [],
+          servers: [
+            {
+              name: "playwright",
+              declared: true,
+              enabled: true,
+              transport: "stdio",
+              targetOverrides: [],
+              roles: ["orchestrator"]
+            },
+            {
+              name: "lsp",
+              declared: true,
+              enabled: true,
+              transport: "stdio",
+              targetOverrides: [],
+              roles: ["worker"]
+            }
+          ]
+        });
+      }
+      if (url === "http://control.test/control/mcp-runtime") {
+        return Response.json({
+          schema: "autodev-control-mcp-runtime-v1",
+          source: "runtime.telemetry",
+          observedServers: 1,
+          health: { ready: 1, error: 0, stale: 0, configured: 0, observed: 0 },
+          servers: [
+            {
+              name: "playwright",
+              health: "ready",
+              lastSeenAt: "2026-11-21T09:00:00.000Z",
+              lastStatus: "ready",
+              initAttempts: null,
+              toolDiscoveryAttempts: null,
+              toolCalls: 4,
+              failures: 0,
+              averageDurationMs: 25,
+              roles: [],
+              tools: []
+            }
+          ]
+        });
+      }
+      throw new Error(`Unexpected UsagePage request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await UsagePage({
+        searchParams: Promise.resolve({ range: "7D" })
+      })
+    );
+
+    assert.ok(requests.includes("http://control.test/control/mcps"));
+    assert.ok(requests.includes("http://control.test/control/mcp-runtime"));
+    assert.match(markup, /data-mcp-inventory-status="observed"/u);
+    assert.match(markup, /playwright/u);
+    assert.match(markup, /data-mcp-usage-state="used"/u);
+    assert.match(markup, /lsp/u);
+    assert.match(markup, /data-mcp-usage-state="exposed-never-used"/u);
+  } finally {
+    restoreControl();
+    restore();
+  }
+});
+
+test("UsagePage renders explicit unavailable MCP inventory when Control API returns an error", async () => {
+  const restore = withUsageConfig();
+  const restoreControl = withControlApiConfig();
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url === "http://openlit.test/api/autodev/usage") {
+        return Response.json(usageResponse);
+      }
+      if (
+        url === "http://control.test/control/mcps" ||
+        url === "http://control.test/control/mcp-runtime"
+      ) {
+        return new Response("unavailable", { status: 503 });
+      }
+      throw new Error(`Unexpected UsagePage request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await UsagePage({
+        searchParams: Promise.resolve({ range: "7D" })
+      })
+    );
+
+    assert.match(markup, /data-mcp-inventory-status="unavailable"/u);
+    assert.match(markup, /MCP server inventory is unavailable/u);
+    assert.doesNotMatch(markup, /No MCP servers are configured or observed/u);
   } finally {
     restoreControl();
     restore();

@@ -12825,8 +12825,7 @@ test("an empty list names its resource instead of inheriting a generic sentence"
       revision: "a".repeat(64),
       applied: null,
       appliedSource: "/tmp/codex/config.toml",
-      roleMatrices: [],
-      returnTo: "/permissions"
+      roleMatrices: []
     })
   );
   assert.match(permissions, /No role capability matrices were observed\./u);
@@ -13062,8 +13061,7 @@ test("the matrix shows the sandbox a role runs in beside the one it declared", (
           allowedSkills: [],
           allowedMcpTools: {}
         }
-      ],
-      returnTo: "/permissions"
+      ]
     })
   );
   assert.match(markup, /data-permission-mode="workspace-write"/u);
@@ -13157,8 +13155,7 @@ test("the policy reads as prose rather than raw config values", () => {
         revision: "1".repeat(64),
         applied: null,
         appliedSource: "/tmp/codex/config.toml",
-        roleMatrices: [],
-        returnTo: "/permissions"
+        roleMatrices: []
       })
     );
     assert.match(markup, new RegExp(`>${expected}<`, "u"));
@@ -23845,8 +23842,7 @@ test("the permissions page answers which tools a role may call, not only which s
       revision,
       applied,
       appliedSource,
-      roleMatrices,
-      returnTo: "/permissions"
+      roleMatrices
     })
   );
 
@@ -23881,8 +23877,7 @@ test("the permissions view says the execution contract was not read", () => {
     revision: "a".repeat(64),
     applied: null,
     appliedSource: "/tmp/codex/config.toml",
-    roleMatrices: [],
-    returnTo: "/permissions"
+    roleMatrices: []
   };
   const unobserved = renderToStaticMarkup(
     React.createElement(PermissionsView, {
@@ -23958,8 +23953,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
       revision,
       applied,
       appliedSource,
-      roleMatrices,
-      returnTo: "/permissions"
+      roleMatrices
     })
   );
   assert.match(markup, /No role has an MCP tool grant recorded/u);

@@ -2,9 +2,7 @@
 export const PERMISSIONS_PATH = "/permissions";
 
 /** Same-origin Console mutation URL for the canonical permission policy. */
-export function permissionPolicyPath(): string {
-  return "/api/permissions";
-}
+export const PERMISSION_POLICY_MUTATION_PATH = "/api/permissions";
 
 /**
  * Only the canonical permissions page may be a return target.

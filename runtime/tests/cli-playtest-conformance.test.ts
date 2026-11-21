@@ -24,11 +24,11 @@ import {
   checkPlaytestIntegration,
   initPlaytestIntegration,
   PLAYTESTS_BINDING_FILE
-} from "../../runtime/src/cli/playtest.ts";
+} from "../src/cli/playtest.ts";
 import {
   formatConformanceReport,
   runPlaytestConformance
-} from "../../runtime/src/cli/playtest-conformance.ts";
+} from "../src/cli/playtest-conformance.ts";
 
 const WORKING_GAME = `
 export function createGame() {

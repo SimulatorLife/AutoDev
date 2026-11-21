@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { startRouterIngressProcess } from "../../runtime/src/router/ingress-main.ts";
+import { startRouterIngressProcess } from "../src/router/ingress-main.ts";
 
 const TOKEN = "isolated-ingress-management-secret-0123456789";
 

@@ -10,9 +10,9 @@ import type {
   RouterEnsureResult
 } from "@simulatorlife/autodev-runtime/platform/router-ensure";
 
-import { runRootDelegation } from "../../runtime/src/hooks/root-delegation.ts";
-import { createSessionStart } from "../../runtime/src/hooks/session-start.ts";
-import { createSubagentStart } from "../../runtime/src/hooks/subagent-start.ts";
+import { runRootDelegation } from "../src/hooks/root-delegation.ts";
+import { createSessionStart } from "../src/hooks/session-start.ts";
+import { createSubagentStart } from "../src/hooks/subagent-start.ts";
 
 function withCodexHome<T>(callback: (home: string) => T): T {
   const previous = process.env.CODEX_HOME;

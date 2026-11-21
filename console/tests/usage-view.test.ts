@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
+  ControlApiMcpRuntimeResponse,
+  McpServerResource,
   UsageFilterSelection,
   UsageMetricsData,
   UsageTraceDetail,
@@ -13,6 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   formatEstimatedCost,
   formatLatency,
+  type UsageMcpInventory,
   UsageView
 } from "../src/features/usage/UsageView.ts";
 
@@ -103,11 +106,19 @@ const observedMetrics: UsageMetricsData = {
   },
   skillEventsByEvent: [{ event: "used", count: 4 }],
   requestsByRole: [{ role: "Default", count: 42 }],
+  requestsByModel: [
+    { model: "autodev/orchestrator", count: 28 },
+    { model: "autodev/worker", count: 14 }
+  ],
   requestsByWorkspace: {
     rows: [{ workspace: "repo-a", count: 42 }],
     partial: false
   },
   attemptsByProvider: [{ provider: "openai", count: 48 }],
+  attemptsByModel: [
+    { model: "gpt-5.4", count: 36 },
+    { model: "claude-sonnet-4-5", count: 12 }
+  ],
   callsByTool: [{ tool: "mcp__playwright__test", count: 5 }]
 };
 
@@ -384,8 +395,10 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     providerHopsBreakdownsPartial: false,
     skillEventsByEvent: null,
     requestsByRole: null,
+    requestsByModel: null,
     requestsByWorkspace: null,
     attemptsByProvider: null,
+    attemptsByModel: null,
     callsByTool: null,
     gitChanges: unobservedGitChanges
   };
@@ -722,4 +735,167 @@ test("UsageView keeps aggregate metrics visible when a selected trace is unavail
   assert.match(markup, /OpenLIT no longer has this span/);
   assert.match(markup, /Logical Routed Requests/);
   assert.match(markup, /Back to recent attempts/);
+});
+
+test("UsageView renders Requests by Model and Physical Attempts by Model beside role and provider charts", () => {
+  const observed = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics })
+  );
+  assert.match(observed, /Requests by Model/u);
+  assert.match(observed, /autodev\/orchestrator/u);
+  assert.match(observed, /autodev\/worker/u);
+  assert.match(observed, /Physical Attempts by Model/u);
+  assert.match(observed, /gpt-5\.4/u);
+  assert.match(observed, /claude-sonnet-4-5/u);
+
+  const unobserved = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: {
+        ...observedMetrics,
+        requestsByModel: null,
+        attemptsByModel: null
+      }
+    })
+  );
+  assert.match(unobserved, /Requested model telemetry not observed\./u);
+  assert.match(unobserved, /Served model attempt telemetry not observed\./u);
+});
+
+const sampleMcpServers: readonly McpServerResource[] = [
+  {
+    name: "playwright",
+    declared: true,
+    enabled: true,
+    transport: "stdio",
+    targetOverrides: [],
+    roles: ["orchestrator", "worker"]
+  },
+  {
+    name: "lsp",
+    declared: true,
+    enabled: true,
+    transport: "stdio",
+    targetOverrides: [],
+    roles: ["worker"]
+  },
+  {
+    name: "legacy-disabled",
+    declared: true,
+    enabled: false,
+    transport: "http",
+    targetOverrides: [],
+    roles: ["worker"]
+  }
+];
+
+const sampleMcpRuntime: ControlApiMcpRuntimeResponse = {
+  schema: "autodev-control-mcp-runtime-v1",
+  source: "runtime.telemetry",
+  observedServers: 2,
+  health: { ready: 1, error: 1, stale: 0, configured: 0, observed: 0 },
+  servers: [
+    {
+      name: "playwright",
+      health: "error",
+      lastSeenAt: "2026-11-21T09:00:00.000Z",
+      lastStatus: "error",
+      initAttempts: null,
+      toolDiscoveryAttempts: null,
+      toolCalls: 12,
+      failures: 2,
+      averageDurationMs: 42,
+      roles: [],
+      tools: [{ name: "browser_click", count: 12, errors: 2 }]
+    },
+    {
+      name: "ephemeral-mcp",
+      health: "ready",
+      lastSeenAt: "2026-11-21T09:05:00.000Z",
+      lastStatus: "ready",
+      initAttempts: null,
+      toolDiscoveryAttempts: null,
+      toolCalls: 3,
+      failures: 0,
+      averageDurationMs: 10,
+      roles: [],
+      tools: []
+    }
+  ]
+};
+
+test("UsageView renders MCP servers exposed vs. used alongside MCP Calls by Tool Name", () => {
+  const mcpInventory: UsageMcpInventory = {
+    kind: "observed",
+    servers: sampleMcpServers,
+    sourceValidity: true,
+    validationIssues: [],
+    runtime: sampleMcpRuntime,
+    runtimeFailure: null
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics, mcpInventory })
+  );
+
+  assert.match(markup, /MCP Calls by Tool Name/u);
+  assert.match(markup, /mcp__playwright__test/u);
+  assert.match(markup, /data-mcp-inventory-status="observed"/u);
+  assert.match(markup, /accumulated since router start/u);
+  assert.match(markup, /3 configured · 2 exposed · 2 used · 1 exposed, never used/u);
+  assert.match(markup, /playwright/u);
+  assert.match(markup, /data-mcp-usage-state="used-with-errors"/u);
+  assert.match(markup, /Used \(errors\)/u);
+  assert.match(markup, /lsp/u);
+  assert.match(markup, /data-mcp-usage-state="exposed-never-used"/u);
+  assert.match(markup, /Exposed, never used/u);
+  assert.match(markup, /legacy-disabled/u);
+  assert.match(markup, /data-mcp-usage-state="disabled"/u);
+  assert.match(markup, /ephemeral-mcp/u);
+  assert.match(markup, /data-mcp-usage-state="observed-unconfigured"/u);
+});
+
+test("UsageView renders explicit unavailable state when Control API MCP inventory or runtime observations fail", () => {
+  const unavailable = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      mcpInventory: {
+        kind: "unavailable",
+        code: "autodev_control_api_unreachable",
+        message: "Control API timed out."
+      }
+    })
+  );
+  assert.match(unavailable, /data-mcp-inventory-status="unavailable"/u);
+  assert.match(unavailable, /MCP server inventory is unavailable/u);
+  assert.match(unavailable, /autodev_control_api_unreachable/u);
+  assert.doesNotMatch(unavailable, /No MCP servers are configured or observed/u);
+
+  const runtimeUnavailable = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      mcpInventory: {
+        kind: "observed",
+        servers: sampleMcpServers,
+        sourceValidity: true,
+        validationIssues: [],
+        runtime: null,
+        runtimeFailure: {
+          code: "autodev_control_api_http_503",
+          message: "Runtime observation endpoint returned 503."
+        }
+      }
+    })
+  );
+  assert.match(
+    runtimeUnavailable,
+    /data-mcp-inventory-status="runtime-unavailable"/u
+  );
+  assert.match(
+    runtimeUnavailable,
+    /Runtime MCP observations are unavailable \(autodev_control_api_http_503\)/u
+  );
+  assert.match(runtimeUnavailable, /data-mcp-usage-state="not-observed"/u);
+  assert.doesNotMatch(
+    runtimeUnavailable,
+    /data-mcp-usage-state="exposed-never-used"/u
+  );
 });

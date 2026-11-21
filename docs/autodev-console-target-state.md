@@ -1208,6 +1208,8 @@ Target Usage may show counts, time series, and bounded breakdowns by workspace, 
 
 The AutoDev Codex-tools MCP shim owns its server-side tools/call round trip. Its span duration is the shim round trip, not assumed downstream execution duration. Preserve W3C context where available and export bounded categorical/error metadata only.
 
+On the **Usage** page, the **MCP servers** panel pairs Control API configuration inventory (`GET /control/mcps`, covering configured servers, exposed roles, and default enabled state) with Runtime usage observations (`GET /control/mcp-runtime`, covering observed calls and failures accumulated since router start), alongside the existing OpenLIT **MCP Calls by Tool Name** breakdown. The panel explicitly notes that Runtime observations are cumulative since router start rather than filtered by the OpenLIT time range, distinguishes exposed-but-never-used servers from used ones when live Runtime observations are attached, and renders an explicit unavailable or `Not observed` state (never synthetic zeros or an empty catalog) when either Control API read cannot be completed.
+
 ### Skills
 
 Use a minimal autodev.skill.* contract where no standard skill semantic convention exists. Configuration is not proof of runtime use. Avoid unbounded skill-name metric dimensions; prefer traces/events and bounded queries where appropriate.
@@ -1255,6 +1257,8 @@ Target views include logical requests, attempts/provider reliability, input/outp
 Use OpenLIT's compact time-scope, summary, and breakdown-chart patterns ([Costs analytics](https://docs.openlit.io/latest/openlit/costs/analytics)) inside the AutoDev-owned dark Console; do not import its generic shell, dashboard builder, or tenant model. If the Usage request is unreachable, unauthorized, fails HTTP, or returns an invalid schema, keep the shared scope/filter controls and show one shared unavailable state, but do not render metric cards or charts as if a validated snapshot had been read. Distinguish transport failure from invalid response. A valid partial snapshot may still show its observed metrics alongside per-signal `Not observed` states.
 
 Cost is read only from OpenLIT's `gen_ai.usage.cost` attribute and is labeled as an estimate, not a provider bill: stock OpenLIT may compute it from a pricing catalog when no provider-reported amount exists. If no attempt carries a cost value, the Console reports `Not observed`; an empty aggregate is not a measured `$0`.
+
+Model breakdowns keep requested and served models distinct under `autodev-openlit-usage-v5`: `requests-by-model` groups logical `autodev.routed_request` spans by `autodev.requested_model` (the attribute the router publishes on logical request spans; opts in to `workspace`, `model`, `agent` and intentionally ignores `provider` and `skill`), and `attempts-by-model` groups physical `gen_ai.client_operation` spans by served `gen_ai.response.model` (opts in to `workspace`, `provider`, `model`, `agent` and ignores `skill`). Both widgets require their grouping attribute to exist so unattributed spans are omitted rather than fabricating a served model from `gen_ai.request.model` or rendering an empty bucket.
 
 ### Session diagnostics and session-scoped Usage
 

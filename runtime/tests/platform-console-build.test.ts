@@ -17,7 +17,7 @@ import {
   computeConsoleBuildFingerprint,
   type ConsoleBuildDeps,
   runConsoleBuildCli
-} from "../../runtime/src/platform/console-build.ts";
+} from "../src/platform/console-build.ts";
 
 function withTempRepo<T>(run: (repositoryRoot: string) => T): T {
   const repositoryRoot = mkdtempSync(

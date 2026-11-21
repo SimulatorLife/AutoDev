@@ -93,6 +93,12 @@ const partialPayload = {
       xAxis: "role",
       yAxis: "requests"
     }),
+    makeWidget("requests-by-model", {
+      observed: true,
+      rows: [{ g0: "gpt-6-luna", requests: "12" }],
+      xAxis: "g0",
+      yAxis: "requests"
+    }),
     makeWidget("requests-by-workspace", {
       observed: true,
       rows: [{ g0: "repo-a", requests: "12" }],
@@ -125,6 +131,12 @@ const partialPayload = {
       observed: true,
       rows: [{ provider: "openai", attempts: "5" }],
       xAxis: "provider",
+      yAxis: "attempts"
+    }),
+    makeWidget("attempts-by-model", {
+      observed: true,
+      rows: [{ g0: "gpt-6-luna-2026", attempts: "4" }],
+      xAxis: "g0",
       yAxis: "attempts"
     }),
     makeWidget("mcp-calls"),
@@ -412,15 +424,48 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     commitsByAgent: [{ name: "worker", count: 2 }]
   });
   assert.deepEqual(result.data.metrics.requestsByRole, []);
+  assert.deepEqual(result.data.metrics.requestsByModel, [
+    { model: "gpt-6-luna", count: 12 }
+  ]);
   assert.deepEqual(result.data.metrics.requestsByWorkspace, {
     rows: [{ workspace: "repo-a", count: 12 }],
     partial: false
   });
+  assert.deepEqual(result.data.metrics.attemptsByModel, [
+    { model: "gpt-6-luna-2026", count: 4 }
+  ]);
   assert.deepEqual(result.data.filterOptions.workspace, ["repo-a"]);
   assert.equal(result.data.filterOptions.model, null);
   assert.deepEqual(result.data.filterOptions.agent, []);
   assert.deepEqual(result.data.filterOptions.skill, ["agent-skill"]);
   assert.deepEqual(result.data.traceList, { kind: "unavailable" });
+});
+
+test("OpenLITUsageClient maps unobserved and empty model breakdowns honestly without fallback", async () => {
+  const payload = structuredClone(partialPayload);
+  const reqModel = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-model"
+  );
+  const attModel = payload.widgets.find(
+    (candidate) => candidate.key === "attempts-by-model"
+  );
+  assert.ok(reqModel);
+  assert.ok(attModel);
+  reqModel.observed = true;
+  reqModel.rows = [];
+  attModel.observed = false;
+  attModel.rows = [];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.requestsByModel, []);
+  assert.equal(result.data.metrics.attemptsByModel, null);
 });
 
 test("OpenLITUsageClient keeps unattributed requests out of every workspace without losing the breakdown", async () => {

@@ -2,11 +2,10 @@ import type { Metadata } from "next";
 import React from "react";
 
 import {
-  permissionPolicySaveNotice,
-  permissionPolicySaveOutcomeFromQuery
-} from "../../src/features/permissions/configuration.ts";
-import { PERMISSIONS_PATH } from "../../src/features/permissions/paths.ts";
-import { PermissionsView } from "../../src/features/permissions/PermissionsView.ts";
+  permissionPolicySaveOutcomeFromQuery,
+  PERMISSIONS_PATH,
+  PermissionsView
+} from "../../src/features/permissions/index.ts";
 import { editorBaseRevisionFromQuery } from "../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
@@ -66,7 +65,7 @@ export default async function PermissionsPage({
     roleMatrices,
     executionContractObserved
   } = permissionsFromControlApi(result.data);
-  const outcome = permissionPolicySaveOutcomeFromQuery(
+  const saveOutcome = permissionPolicySaveOutcomeFromQuery(
     resolvedSearchParams.save
   );
   // A refused write leaves the control based on the revision it was filled
@@ -93,8 +92,7 @@ export default async function PermissionsPage({
       appliedSource,
       roleMatrices,
       executionContractObserved,
-      returnTo: PERMISSIONS_PATH
-    }),
-    permissionPolicySaveNotice(outcome)
+      ...(saveOutcome === undefined ? {} : { saveOutcome })
+    })
   );
 }

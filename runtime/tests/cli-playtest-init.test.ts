@@ -26,14 +26,14 @@ import {
   PLAYTESTS_OBSERVATION_FILE,
   PLAYTESTS_RUBRIC_FILE,
   writePlaytestHashes
-} from "../../runtime/src/cli/playtest.ts";
+} from "../src/cli/playtest.ts";
 import {
   observationSchemaHash,
   observationSchemaHashMatches,
   playtestBenchmarkContentHash,
   playtestFileHash,
   playtestManifestHash
-} from "../../runtime/src/playtesting/hash-chain.ts";
+} from "../src/playtesting/hash-chain.ts";
 
 function checkout(): {
   readonly root: string;

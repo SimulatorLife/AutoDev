@@ -26,13 +26,13 @@ import {
   PLAYTESTS_CONFIG_FILE,
   PLAYTESTS_OBSERVATION_FILE,
   PLAYTESTS_RUBRIC_FILE
-} from "../../runtime/src/cli/playtest.ts";
-import { runPlaytestConformance } from "../../runtime/src/cli/playtest-conformance.ts";
+} from "../src/cli/playtest.ts";
+import { runPlaytestConformance } from "../src/cli/playtest-conformance.ts";
 import {
   PLAYTESTS_SCAFFOLD_BODY_COUNT,
   scaffoldAdapterModule,
   scaffoldBinding
-} from "../../runtime/src/cli/playtest-scaffold.ts";
+} from "../src/cli/playtest-scaffold.ts";
 
 function checkout(): {
   readonly root: string;

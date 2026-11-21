@@ -11,7 +11,7 @@ import {
   REDIRECTION_MESSAGE,
   runBlockCccCli,
   splitShellSegments
-} from "../../runtime/src/hooks/block-ccc-cli.ts";
+} from "../src/hooks/block-ccc-cli.ts";
 
 test("isCccInvocation identifies direct and compound ccc CLI invocations", () => {
   const blocked = [

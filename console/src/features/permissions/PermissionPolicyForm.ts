@@ -7,7 +7,10 @@ import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectFi
 import { TextField } from "../../components/forms/TextField.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { permissionPolicyDisabledReason } from "./configuration.ts";
-import { permissionPolicyPath } from "./paths.ts";
+import {
+  PERMISSION_POLICY_MUTATION_PATH,
+  PERMISSIONS_PATH
+} from "./paths.ts";
 
 /**
  * The control that writes the canonical permission policy.
@@ -41,13 +44,6 @@ export interface PermissionPolicyFormProps {
   readonly revision: string | null;
   /** The status of the canonical source this read came from. */
   readonly policyStatus: "valid" | "invalid" | "unavailable";
-  /**
-   * Where the write answers to.
-   *
-   * The destination is a bounded Permissions path rather than one the browser
-   * chooses, so a write can never redirect off this Console.
-   */
-  readonly returnTo: string;
 }
 
 /** The names the route reads the form's fields by. */
@@ -90,8 +86,7 @@ const NOT_OBSERVED_CHOICE = { value: "", label: "Not observed" } as const;
 export function PermissionPolicyForm({
   policy,
   revision,
-  policyStatus,
-  returnTo
+  policyStatus
 }: PermissionPolicyFormProps): React.JSX.Element {
   const formRef = useRef<HTMLFormElement | null>(null);
   // What the last submission carried. A field that has not changed since then
@@ -140,7 +135,7 @@ export function PermissionPolicyForm({
     "form",
     {
       method: "POST",
-      action: permissionPolicyPath(),
+      action: PERMISSION_POLICY_MUTATION_PATH,
       className: "grid min-w-0 gap-3 sm:grid-cols-2",
       "aria-label": "Edit the canonical permission policy",
       "data-permission-policy": "true",
@@ -158,7 +153,7 @@ export function PermissionPolicyForm({
     React.createElement("input", {
       type: "hidden",
       name: "returnTo",
-      value: returnTo
+      value: PERMISSIONS_PATH
     }),
     React.createElement(AutoSubmitSelectField, {
       name: APPROVAL_POLICY_FIELD,

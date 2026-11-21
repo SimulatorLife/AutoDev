@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveRuntimeSourcePath } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import * as hookRoots from "../../runtime/src/hooks/hook-roots.ts";
+import * as hookRoots from "../src/hooks/hook-roots.ts";
 
 test("hook root helpers expose the Codex home and repository root", () => {
   assert.deepEqual(Object.keys(hookRoots).sort(), [
@@ -38,7 +38,7 @@ test("repositoryRoot resolves the Runtime source tree without a configured overr
       ),
       path.resolve(
         fileURLToPath(
-          new URL("../../runtime/src/mcp/tool-filter.ts", import.meta.url)
+          new URL("../src/mcp/tool-filter.ts", import.meta.url)
         )
       )
     );
@@ -63,7 +63,7 @@ test("repositoryRoot falls back to CODEX_HOME for an installed hook copy", async
   );
   copyFileSync(
     fileURLToPath(
-      new URL("../../runtime/src/hooks/hook-roots.ts", import.meta.url)
+      new URL("../src/hooks/hook-roots.ts", import.meta.url)
     ),
     installedModule
   );

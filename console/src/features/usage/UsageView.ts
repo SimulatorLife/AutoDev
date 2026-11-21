@@ -1,6 +1,9 @@
 import {
   CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
+  type ControlApiMcpRuntimeResponse,
   formatClientSurface,
+  type McpServerResource,
+  type RuleSyncValidationIssue,
   USAGE_VARIABLE_IDS,
   type UsageActiveSessions,
   type UsageFilterOptions,
@@ -30,7 +33,13 @@ import {
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
+import { chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableProps
@@ -47,6 +56,7 @@ import {
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
+  MONO_ID_LINK_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -93,7 +103,32 @@ export interface UsageViewProps {
   readonly sessionView?: React.ReactNode | undefined;
   /** The unscoped fleet diagnostics view, rendered above the historical body. */
   readonly fleetView?: React.ReactNode | undefined;
+  /**
+   * Control API MCP server inventory and Runtime usage observations.
+   *
+   * Absent or `kind: "unavailable"` renders an explicit unavailable state
+   * rather than an empty server list.
+   */
+  readonly mcpInventory?: UsageMcpInventory | undefined;
 }
+
+export type UsageMcpInventory =
+  | {
+      readonly kind: "observed";
+      readonly servers: readonly McpServerResource[];
+      readonly sourceValidity: boolean | null;
+      readonly validationIssues: readonly RuleSyncValidationIssue[];
+      readonly runtime: ControlApiMcpRuntimeResponse | null;
+      readonly runtimeFailure: {
+        readonly code: string;
+        readonly message: string;
+      } | null;
+    }
+  | {
+      readonly kind: "unavailable";
+      readonly code: string;
+      readonly message: string;
+    };
 
 export type UsageTraceLookup =
   | { readonly kind: "observed"; readonly detail: UsageTraceDetail }
@@ -1453,9 +1488,314 @@ function renderProviderHopMetrics(
   );
 }
 
-function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
+interface UsageMcpServerRow {
+  readonly name: string;
+  readonly configured: boolean;
+  readonly roles: readonly string[];
+  readonly enabled: boolean | null;
+  readonly usageState:
+    | "used"
+    | "used-with-errors"
+    | "exposed-never-used"
+    | "disabled"
+    | "not-exposed"
+    | "observed-unconfigured"
+    | "not-observed";
+  readonly toolCalls: number | null;
+  readonly failures: number | null;
+}
+
+function buildUsageMcpRows(
+  servers: readonly McpServerResource[],
+  runtime: ControlApiMcpRuntimeResponse | null
+): readonly UsageMcpServerRow[] {
+  const runtimeObserved =
+    runtime !== null && runtime.observedServers !== null;
+  const observationsByName = new Map(
+    (runtime?.servers ?? []).map((server) => [server.name, server] as const)
+  );
+  const configuredNames = new Set(servers.map((server) => server.name));
+
+  const rows: UsageMcpServerRow[] = servers.map((server) => {
+    const observation = observationsByName.get(server.name);
+    if (!runtimeObserved) {
+      return {
+        name: server.name,
+        configured: true,
+        roles: server.roles,
+        enabled: server.enabled,
+        usageState: "not-observed",
+        toolCalls: null,
+        failures: null
+      };
+    }
+    const toolCalls = observation?.toolCalls ?? 0;
+    const failures = observation?.failures ?? 0;
+    const hasActivity = toolCalls > 0 || failures > 0;
+    const usageState: UsageMcpServerRow["usageState"] = hasActivity
+      ? failures > 0
+        ? "used-with-errors"
+        : "used"
+      : server.enabled === false
+        ? "disabled"
+        : server.roles.length > 0
+          ? "exposed-never-used"
+          : "not-exposed";
+    return {
+      name: server.name,
+      configured: true,
+      roles: server.roles,
+      enabled: server.enabled,
+      usageState,
+      toolCalls,
+      failures
+    };
+  });
+
+  if (runtimeObserved) {
+    for (const observed of runtime.servers) {
+      if (configuredNames.has(observed.name)) continue;
+      rows.push({
+        name: observed.name,
+        configured: false,
+        roles: [],
+        enabled: null,
+        usageState: "observed-unconfigured",
+        toolCalls: observed.toolCalls,
+        failures: observed.failures
+      });
+    }
+  }
+
+  return rows;
+}
+
+const MCP_USAGE_BADGE_DESCRIPTORS: Readonly<
+  Record<
+    UsageMcpServerRow["usageState"],
+    {
+      readonly status: "configured" | "invalid" | typeof NOT_OBSERVED_STATUS;
+      readonly label: string;
+    }
+  >
+> = {
+  used: { status: "configured", label: "Used" },
+  "used-with-errors": { status: "invalid", label: "Used (errors)" },
+  "exposed-never-used": {
+    status: NOT_OBSERVED_STATUS,
+    label: "Exposed, never used"
+  },
+  disabled: { status: NOT_OBSERVED_STATUS, label: "Disabled" },
+  "not-exposed": { status: NOT_OBSERVED_STATUS, label: "Not exposed" },
+  "observed-unconfigured": {
+    status: "configured",
+    label: "Observed (unconfigured)"
+  },
+  "not-observed": { status: NOT_OBSERVED_STATUS, label: NOT_OBSERVED_LABEL }
+};
+
+function mcpUsageBadge(
+  state: UsageMcpServerRow["usageState"]
+): React.JSX.Element {
+  const descriptor = MCP_USAGE_BADGE_DESCRIPTORS[state];
+  return React.createElement(
+    "span",
+    { "data-mcp-usage-state": state },
+    React.createElement(StatusBadge, {
+      status: descriptor.status,
+      label: descriptor.label
+    })
+  );
+}
+
+function renderMcpServersPanel(
+  mcpInventory: UsageMcpInventory | undefined
+): React.JSX.Element {
+  const windowNote = React.createElement(
+    "p",
+    { className: `${MUTED_META_CLASS} mb-3` },
+    "Inventory from Control API (/control/mcps). Observed calls and failures come from Runtime observations (/control/mcp-runtime) accumulated since router start — independent of the OpenLIT time range and filters above."
+  );
+
+  if (mcpInventory === undefined || mcpInventory.kind === "unavailable") {
+    const code =
+      mcpInventory === undefined
+        ? "autodev_control_api_unavailable"
+        : mcpInventory.code;
+    const message =
+      mcpInventory === undefined
+        ? "Control API MCP server inventory is unavailable for this view."
+        : mcpInventory.message;
+    return React.createElement(
+      "div",
+      {
+        className: LIST_PANEL_CLASS,
+        "data-mcp-inventory-status": "unavailable"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "MCP servers"
+      ),
+      windowNote,
+      React.createElement(
+        "div",
+        { className: CALLOUT_WARNING_CLASS, role: "status" },
+        React.createElement(
+          "p",
+          { className: "font-medium" },
+          "MCP server inventory is unavailable"
+        ),
+        React.createElement("p", { className: "mt-1 text-xs" }, message),
+        React.createElement(
+          "p",
+          { className: `mt-1 font-mono ${MUTED_META_CLASS}` },
+          code
+        )
+      )
+    );
+  }
+
+  const runtimeObserved =
+    mcpInventory.runtime !== null &&
+    mcpInventory.runtime.observedServers !== null;
+  const rows = buildUsageMcpRows(mcpInventory.servers, mcpInventory.runtime);
+  const exposedCount = rows.filter(
+    (row) => row.configured && row.enabled !== false && row.roles.length > 0
+  ).length;
+  const usedCount = rows.filter(
+    (row) =>
+      row.usageState === "used" ||
+      row.usageState === "used-with-errors" ||
+      row.usageState === "observed-unconfigured"
+  ).length;
+  const exposedNeverUsedCount = rows.filter(
+    (row) => row.usageState === "exposed-never-used"
+  ).length;
+
+  const columns: ColumnDef<UsageMcpServerRow>[] = [
+    {
+      id: "name",
+      header: "Server",
+      cell: ({ row: { original: server } }) =>
+        React.createElement(
+          NavigationLink,
+          {
+            className: MONO_ID_LINK_CLASS,
+            href: `/mcps/${encodeURIComponent(server.name)}`,
+            title: server.name
+          },
+          server.name
+        ),
+      meta: { weight: 190 }
+    },
+    {
+      id: "roles",
+      header: "Exposed roles",
+      cell: ({ row: { original: server } }) =>
+        chipList({
+          items: server.roles,
+          emptyLabel: server.configured
+            ? "No roles assigned"
+            : "Not in catalog",
+          testId: "usage-mcp-roles"
+        }),
+      meta: { align: "tokens", weight: 210 }
+    },
+    {
+      id: "enabled",
+      header: "Enabled",
+      cell: ({ row: { original: server } }) =>
+        React.createElement(StatusBadge, {
+          status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
+          label:
+            server.enabled === null
+              ? NOT_OBSERVED_LABEL
+              : server.enabled
+                ? "Enabled"
+                : "Disabled"
+        }),
+      meta: { weight: 130 }
+    },
+    {
+      id: "usage",
+      header: "Runtime use",
+      cell: ({ row: { original: server } }) => mcpUsageBadge(server.usageState),
+      meta: { weight: 185 }
+    },
+    {
+      id: "calls",
+      header: "Calls (since start)",
+      cell: ({ row: { original: server } }) => formatCount(server.toolCalls),
+      meta: { weight: 145 }
+    },
+    {
+      id: "failures",
+      header: "Failures (since start)",
+      cell: ({ row: { original: server } }) => formatCount(server.failures),
+      meta: { weight: 155 }
+    }
+  ];
+
+  const tableProps: DataTableProps<UsageMcpServerRow> = {
+    data: rows,
+    columns,
+    keyExtractor: (row) => row.name,
+    emptyMessage: "No MCP servers are configured or observed.",
+    label: "MCP servers"
+  };
+
+  return React.createElement(
+    "div",
+    {
+      className: LIST_PANEL_CLASS,
+      "data-mcp-inventory-status": runtimeObserved
+        ? "observed"
+        : "runtime-unavailable"
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "MCP servers"
+    ),
+    windowNote,
+    mcpInventory.sourceValidity === false &&
+      mcpInventory.validationIssues.length > 0
+      ? React.createElement(
+          "div",
+          { className: "mb-3" },
+          React.createElement(SourceValidationIssues, {
+            issues: mcpInventory.validationIssues,
+            testId: "usage-mcp-validation-issues",
+            subject: "MCP source"
+          })
+        )
+      : null,
+    runtimeObserved
+      ? React.createElement(
+          "p",
+          { className: `${MUTED_BODY_CLASS} mb-3` },
+          `${COUNT_FORMATTER.format(mcpInventory.servers.length)} configured · ${COUNT_FORMATTER.format(exposedCount)} exposed · ${COUNT_FORMATTER.format(usedCount)} used · ${COUNT_FORMATTER.format(exposedNeverUsedCount)} exposed, never used`
+        )
+      : React.createElement(
+          "p",
+          { className: `${CALLOUT_WARNING_CLASS} mb-3`, role: "status" },
+          mcpInventory.runtimeFailure === null
+            ? "Runtime MCP observations are not attached; calls and failures are shown as Not observed."
+            : `Runtime MCP observations are unavailable (${mcpInventory.runtimeFailure.code}): ${mcpInventory.runtimeFailure.message} Calls and failures are shown as Not observed.`
+        ),
+    React.createElement(DataTable<UsageMcpServerRow>, tableProps)
+  );
+}
+
+function renderHistoricalMetrics(
+  metrics: UsageMetricsData,
+  mcpInventory: UsageMcpInventory | undefined
+): React.JSX.Element {
   const requestsByRole = metrics.requestsByRole;
+  const requestsByModel = metrics.requestsByModel;
   const attemptsByProvider = metrics.attemptsByProvider;
+  const attemptsByModel = metrics.attemptsByModel;
   const attemptErrorsByProvider = metrics.attemptErrorsByProvider;
   const callsByTool = metrics.callsByTool;
   const skillEventsByEvent = metrics.skillEventsByEvent;
@@ -1584,6 +1924,63 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
                 })),
           label: "Physical attempts by provider",
           notObservedMessage: "Provider attempt telemetry not observed.",
+          emptyMessage:
+            "No provider attempts were observed in this time range.",
+          barClass: CHART_PALETTE.series2.bar,
+          valueClass: CHART_PALETTE.series2.value
+        })
+      ),
+      React.createElement(
+        "div",
+        {
+          className: LIST_PANEL_CLASS
+        },
+        React.createElement(
+          "h3",
+          {
+            className: SECTION_HEADING_CLASS
+          },
+          "Requests by Model"
+        ),
+        React.createElement(BarChart, {
+          data:
+            requestsByModel === null || requestsByModel === undefined
+              ? null
+              : requestsByModel.map((item) => ({
+                  label: formatDimension(item.model),
+                  value: item.count,
+                  valueText: formatCount(item.count)
+                })),
+          label: "Logical routed requests by model",
+          notObservedMessage: "Requested model telemetry not observed.",
+          emptyMessage: "No logical requests were observed in this time range.",
+          barClass: CHART_PALETTE.series1.bar,
+          valueClass: CHART_PALETTE.series1.value
+        })
+      ),
+      React.createElement(
+        "div",
+        {
+          className: LIST_PANEL_CLASS
+        },
+        React.createElement(
+          "h3",
+          {
+            className: SECTION_HEADING_CLASS
+          },
+          "Physical Attempts by Model"
+        ),
+        React.createElement(BarChart, {
+          data:
+            attemptsByModel === null || attemptsByModel === undefined
+              ? null
+              : attemptsByModel.map((item) => ({
+                  label: formatDimension(item.model),
+                  value: item.count,
+                  valueText: formatCount(item.count)
+                })),
+          label: "Physical attempts by model",
+          notObservedMessage: "Served model attempt telemetry not observed.",
           emptyMessage:
             "No provider attempts were observed in this time range.",
           barClass: CHART_PALETTE.series2.bar,
@@ -1916,6 +2313,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         valueClass: CHART_PALETTE.series3.value
       })
     ),
+    renderMcpServersPanel(mcpInventory),
     renderGitChangeMetrics(metrics.gitChanges)
   );
 }
@@ -1995,7 +2393,9 @@ function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {
     metrics.providerHopsByReason,
     metrics.skillEventsByEvent,
     metrics.requestsByRole,
+    metrics.requestsByModel,
     metrics.attemptsByProvider,
+    metrics.attemptsByModel,
     metrics.callsByTool
   ];
   return (
@@ -2013,7 +2413,8 @@ export function UsageView({
   activeSessions,
   sessionScope,
   sessionView,
-  fleetView
+  fleetView,
+  mcpInventory
 }: UsageViewProps): React.JSX.Element {
   const selectedValues = selection.values;
   const todayUtc = new Date().toISOString().slice(0, 10);
@@ -2126,7 +2527,7 @@ export function UsageView({
               : React.createElement(
                   React.Fragment,
                   null,
-                  renderHistoricalMetrics(metrics),
+                  renderHistoricalMetrics(metrics, mcpInventory),
                   renderRecentAttempts(traceList, selection)
                 )
         )

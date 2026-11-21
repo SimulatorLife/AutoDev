@@ -20,6 +20,10 @@ import {
   MONO_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  permissionPolicySaveNotice,
+  type PermissionPolicySaveOutcome
+} from "./configuration.ts";
 import { PermissionPolicyForm } from "./PermissionPolicyForm.ts";
 
 export interface PermissionsViewProps {
@@ -50,8 +54,8 @@ export interface PermissionsViewProps {
    * empty matrix set is a different claim from a contract nobody read.
    */
   readonly executionContractObserved: boolean;
-  /** Where the write answers to. */
-  readonly returnTo: string;
+  /** How the last write to the canonical permission policy ended. */
+  readonly saveOutcome?: PermissionPolicySaveOutcome | undefined;
 }
 
 /**
@@ -126,7 +130,7 @@ export function PermissionsView({
   appliedSource,
   roleMatrices,
   executionContractObserved,
-  returnTo
+  saveOutcome
 }: PermissionsViewProps): React.JSX.Element {
   const columns: ColumnDef<RoleCapabilityMatrix>[] = [
     {
@@ -217,6 +221,7 @@ export function PermissionsView({
   return React.createElement(
     PageBody,
     { feature: "permissions" },
+    permissionPolicySaveNotice(saveOutcome),
     React.createElement(
       "section",
       {
@@ -244,8 +249,7 @@ export function PermissionsView({
       React.createElement(PermissionPolicyForm, {
         policy,
         revision,
-        policyStatus,
-        returnTo
+        policyStatus
       }),
       React.createElement(
         StatGrid,

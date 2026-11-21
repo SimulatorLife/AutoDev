@@ -7,7 +7,7 @@ import {
   type RouterGenerationEndpoint,
   RouterIngress,
   type RouterIngressEvent
-} from "../../runtime/src/router/ingress.ts";
+} from "../src/router/ingress.ts";
 
 async function worker(
   id: string,

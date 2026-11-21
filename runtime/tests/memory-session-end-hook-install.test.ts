@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { createServer } from "node:http";
@@ -16,6 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import { nodeModuleLinks } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import {
   materializeRuntimeContent,
   materializeRuntimeFile,
@@ -27,7 +29,7 @@ import { renderRuntimeMirrorPackage } from "@simulatorlife/autodev-runtime/platf
 import {
   createMemorySessionEndHandler,
   sessionEndCapture
-} from "../../runtime/src/hooks/memory-session-end.ts";
+} from "../src/hooks/memory-session-end.ts";
 
 const validEvent = {
   hook_event_name: "SessionEnd",
@@ -311,6 +313,14 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
           0o644
         );
     materializeRuntimeFile(source, installed, 0o755);
+    // The installer links the dependency trees the mirror resolves its
+    // workspace imports (`@simulatorlife/autodev-core`) through; the installed
+    // hook gets the same resolution environment here.
+    for (const { source: linkSource, target } of nodeModuleLinks({
+      repositoryRoot,
+      codexHome
+    }))
+      symlinkSync(linkSource, target, "dir");
     assert.equal(runtimeFileMatches(source, installed), true);
     assert.equal(
       path.relative(codexHome, installed),

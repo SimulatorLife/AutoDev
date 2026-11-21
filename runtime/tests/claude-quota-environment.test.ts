@@ -5,7 +5,7 @@ import test from "node:test";
 import {
   claudeKeychainAccount,
   claudeQuotaAxiEnvironment
-} from "../../runtime/src/providers/claude-credential.ts";
+} from "../src/providers/claude-credential.ts";
 
 test("claudeKeychainAccount falls back to the OS account when USER is missing", () => {
   assert.equal(claudeKeychainAccount({ USER: "claude-user" }), "claude-user");

@@ -17,6 +17,7 @@ import {
   type UsageFleetFailure
 } from "../../src/features/usage/UsageFleetDiagnosticsView.ts";
 import {
+  type UsageMcpInventory,
   type UsageTraceLookup,
   UsageView
 } from "../../src/features/usage/UsageView.ts";
@@ -26,6 +27,8 @@ import {
   type ControlApiResult,
   fetchFleetSessionScan,
   fetchHookDenials,
+  fetchMcpRuntime,
+  fetchMcps,
   fetchSessionDiagnostics
 } from "../../src/lib/server/control-api.ts";
 import {
@@ -377,7 +380,10 @@ export default async function UsagePage({
     );
   }
 
-  const fleetView = await renderFleetView(state, config ?? null);
+  const [fleetView, mcpInventory] = await Promise.all([
+    renderFleetView(state, config ?? null),
+    loadUsageMcpInventory(config ?? null)
+  ]);
 
   return React.createElement(
     ConsolePageShell,
@@ -390,9 +396,56 @@ export default async function UsagePage({
       traceList: result.data.traceList,
       selection,
       fleetView,
+      mcpInventory,
       ...(traceLookup === undefined ? {} : { traceLookup })
     })
   );
+}
+
+/**
+ * MCP server inventory and Runtime usage observations for the Usage page.
+ *
+ * Reuses the same two Control API reads as `/mcps`: the catalog read
+ * describes what is configured and exposed, and the runtime read reports
+ * calls and failures accumulated since router start. Unavailability stays
+ * explicit rather than collapsing to an empty server list.
+ */
+async function loadUsageMcpInventory(
+  config: ControlApiConfig | null
+): Promise<UsageMcpInventory> {
+  if (config === null) {
+    return {
+      kind: "unavailable",
+      code: "autodev_control_api_not_configured",
+      message:
+        "The Control API credential is not configured, so MCP server inventory and runtime usage cannot be read."
+    };
+  }
+  const [catalogResult, runtimeResult] = await Promise.all([
+    fetchMcps(config),
+    fetchMcpRuntime(config)
+  ]);
+  if (catalogResult.kind !== "ok") {
+    return {
+      kind: "unavailable",
+      code: controlApiFailureCode(catalogResult),
+      message: catalogResult.message
+    };
+  }
+  return {
+    kind: "observed",
+    servers: catalogResult.data.servers,
+    sourceValidity: catalogResult.data.valid,
+    validationIssues: catalogResult.data.issues,
+    runtime: runtimeResult.kind === "ok" ? runtimeResult.data : null,
+    runtimeFailure:
+      runtimeResult.kind === "ok"
+        ? null
+        : {
+            code: controlApiFailureCode(runtimeResult),
+            message: runtimeResult.message
+          }
+  };
 }
 
 /**

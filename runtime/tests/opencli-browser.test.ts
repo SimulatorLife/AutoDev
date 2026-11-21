@@ -19,7 +19,7 @@ import {
   OpencliBrowser,
   OpencliBrowserUnavailableError,
   resolveOpencliBrowserExecutable
-} from "../../runtime/src/providers/opencli-browser.ts";
+} from "../src/providers/opencli-browser.ts";
 
 type Target = { id: string; webSocketDebuggerUrl: string };
 type FakeChild = ChildProcess &

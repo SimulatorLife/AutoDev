@@ -23,11 +23,11 @@
 import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
 import type { NextRequest, NextResponse } from "next/server.js";
 
-import { type PermissionPolicySaveOutcome } from "../../../src/features/permissions/configuration.ts";
 import {
   isPermissionsReturnPath,
+  type PermissionPolicySaveOutcome,
   PERMISSIONS_PATH
-} from "../../../src/features/permissions/paths.ts";
+} from "../../../src/features/permissions/index.ts";
 import { editorBaseRevision } from "../../../src/lib/server/canonical-source.ts";
 import {
   patchPermissions,

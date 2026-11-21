@@ -78,6 +78,7 @@ const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([
 const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "logical-requests",
   "requests-by-agent",
+  "requests-by-model",
   "requests-by-workspace",
   "input-tokens",
   "output-tokens",
@@ -86,6 +87,7 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "p95-provider-queue",
   "p95-provider-site",
   "attempts-by-provider",
+  "attempts-by-model",
   "mcp-calls",
   "mcp-duration",
   "mcp-errors",
@@ -1300,8 +1302,10 @@ function toUsageSnapshot(
     response.widgets.map((widget) => [widget.key, widget])
   );
   const attempts = groupedRows(widgets.get("attempts-by-provider"));
+  const attemptsByModel = groupedRows(widgets.get("attempts-by-model"));
   const attemptErrors = groupedRows(widgets.get("attempt-errors-by-provider"));
   const requests = groupedRows(widgets.get("requests-by-agent"));
+  const requestsByModel = groupedRows(widgets.get("requests-by-model"));
   const calls = groupedRows(widgets.get("mcp-by-tool"));
   const skillEvents = groupedRows(widgets.get("skill-events-by-event"));
   const unsupportedCompactionFilters =
@@ -1407,6 +1411,10 @@ function toUsageSnapshot(
       requests === null
         ? null
         : requests.map(({ name, count }) => ({ role: name, count })),
+    requestsByModel:
+      requestsByModel === null
+        ? null
+        : requestsByModel.map(({ name, count }) => ({ model: name, count })),
     requestsByWorkspace: workspaceRequestBreakdown(
       widgets.get("requests-by-workspace"),
       logicalRequests
@@ -1415,6 +1423,10 @@ function toUsageSnapshot(
       attempts === null
         ? null
         : attempts.map(({ name, count }) => ({ provider: name, count })),
+    attemptsByModel:
+      attemptsByModel === null
+        ? null
+        : attemptsByModel.map(({ name, count }) => ({ model: name, count })),
     callsByTool:
       calls === null
         ? null

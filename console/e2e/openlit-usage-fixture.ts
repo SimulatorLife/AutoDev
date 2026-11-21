@@ -54,6 +54,7 @@ const UNOBSERVED_SPAN_ID = "ffffffffffffffff";
 const USAGE_WIDGET_IDS = [
   "logical-requests",
   "requests-by-agent",
+  "requests-by-model",
   "requests-by-workspace",
   "input-tokens",
   "output-tokens",
@@ -62,6 +63,7 @@ const USAGE_WIDGET_IDS = [
   "p95-provider-queue",
   "p95-provider-site",
   "attempts-by-provider",
+  "attempts-by-model",
   "mcp-calls",
   "mcp-duration",
   "mcp-errors",
@@ -154,6 +156,30 @@ function observedWidgets(): readonly UsageWidget[] {
         { role: "worker", count: 5 }
       ],
       xAxis: "role",
+      yAxis: "count"
+    },
+    {
+      key: "requests-by-model",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { model: "autodev/orchestrator", count: 7 },
+        { model: "autodev/worker", count: 5 }
+      ],
+      xAxis: "model",
+      yAxis: "count"
+    },
+    {
+      key: "attempts-by-model",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { model: "claude-sonnet-4-5", count: 9 },
+        { model: "gemini-2.5-pro", count: 6 }
+      ],
+      xAxis: "model",
       yAxis: "count"
     },
     {

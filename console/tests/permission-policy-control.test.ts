@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { PermissionsView } from "../src/features/permissions/PermissionsView.ts";
+import {
+  type PermissionPolicySaveOutcome,
+  permissionPolicySaveOutcomeFromQuery,
+  PermissionsView
+} from "../src/features/permissions/index.ts";
 
 /**
  * The one control that writes the canonical permission policy.
@@ -43,6 +48,7 @@ function markup(
       readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
     }[];
     readonly executionContractObserved?: boolean;
+    readonly saveOutcome?: PermissionPolicySaveOutcome;
   } = {}
 ): string {
   return renderToStaticMarkup(
@@ -70,7 +76,9 @@ function markup(
           allowedMcpTools: {}
         }
       ],
-      returnTo: "/permissions"
+      ...(overrides.saveOutcome === undefined
+        ? {}
+        : { saveOutcome: overrides.saveOutcome })
     })
   );
 }
@@ -144,4 +152,37 @@ test("the applied state is shown beside the canonical source", () => {
   // so rather than reporting a converged policy.
   assert.match(rendered, /Pending/u);
   assert.match(rendered, /Canonical Source/u);
+});
+
+test("the view renders the save outcome notice from the query value", () => {
+  assert.equal(permissionPolicySaveOutcomeFromQuery("conflict"), "conflict");
+  assert.equal(permissionPolicySaveOutcomeFromQuery(["failed"]), "failed");
+  assert.equal(permissionPolicySaveOutcomeFromQuery("unknown"), undefined);
+  const conflict = markup({ saveOutcome: "conflict" });
+  assert.match(conflict, /data-permission-policy-save="conflict"/u);
+  assert.match(conflict, /role="status"/u);
+  const failed = markup({ saveOutcome: "failed" });
+  assert.match(failed, /data-permission-policy-save="failed"/u);
+  assert.match(failed, /role="alert"/u);
+});
+
+test("the Permissions page and route reach the feature through its entrypoint", () => {
+  const callers = [
+    new URL("../app/permissions/page.tsx", import.meta.url),
+    new URL("../app/api/permissions/route.ts", import.meta.url)
+  ];
+  for (const caller of callers) {
+    const source = readFileSync(caller, "utf8");
+    assert.match(
+      source,
+      /from\s+["'][^"']*src\/features\/permissions\/index\.ts["']/u,
+      caller.pathname + " must import Permissions through its entrypoint"
+    );
+    assert.doesNotMatch(
+      source,
+      /from\s+["'][^"']*src\/features\/permissions\/(?!index\.ts)["']/u,
+      caller.pathname +
+        " must not reach past the entrypoint into Permissions modules"
+    );
+  }
 });

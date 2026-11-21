@@ -25,6 +25,7 @@ export interface UsageVariable {
 export type UsageWidgetId =
   | "logical-requests"
   | "requests-by-agent"
+  | "requests-by-model"
   | "requests-by-workspace"
   | "input-tokens"
   | "output-tokens"
@@ -33,6 +34,7 @@ export type UsageWidgetId =
   | "p95-provider-queue"
   | "p95-provider-site"
   | "attempts-by-provider"
+  | "attempts-by-model"
   | "mcp-calls"
   | "mcp-duration"
   | "mcp-errors"
@@ -345,10 +347,21 @@ export interface UsageMetricsData {
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:
     readonly { readonly role: string; readonly count: number }[] | null;
+  /** Logical routed requests grouped by requested model (`autodev.requested_model`). */
+  readonly requestsByModel:
+    readonly { readonly model: string; readonly count: number }[] | null;
   /** Logical routed requests grouped by workspace; null when not observed. */
   readonly requestsByWorkspace: UsageWorkspaceRequestBreakdown | null;
   readonly attemptsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
+  /**
+   * Physical provider attempts grouped by served model (`gen_ai.response.model`).
+   *
+   * Only attempts whose provider reported a served model are counted; absent
+   * `gen_ai.response.model` never falls back to `gen_ai.request.model`.
+   */
+  readonly attemptsByModel:
+    readonly { readonly model: string; readonly count: number }[] | null;
   readonly callsByTool:
     readonly { readonly tool: string; readonly count: number }[] | null;
 }

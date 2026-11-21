@@ -1,0 +1,218 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 5867551..a36b518 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -113,6 +113,8 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+         "provider-hops-by-reason",
+         "p95-provider-queue",
+         "p95-provider-site",
++        "requests-by-model",
++        "attempts-by-model",
+         "skill-events-by-event",
+         "estimated-cost",
+         "requests-by-workspace"
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index 3cd5411..a6250f8 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -586,4 +586,60 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		]);
+ 	});
+ 
++	it("groups logical requests by requested model and physical attempts by served model without fallback", () => {
++		const requestsByModel = widgets.find(
++			(candidate) => candidate.title === "Logical requests by requested model",
++		);
++		expect(requestsByModel?.type).toBe("BAR_CHART");
++		expect(requestsByModel?.properties).toMatchObject({
++			xAxis: "g0",
++			yAxis: "requests",
++			resultLimit: 20,
++			optInVariables: ["workspace", "model", "agent"],
++		});
++		expect(requestsByModel?.config.structuredQuery?.query).toMatchObject({
++			filters: [
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{ target: "spanName", op: "eq", value: "autodev.routed_request" },
++				{ target: "attribute", scope: "span", key: "autodev.requested_model", op: "exists" },
++			],
++			groupBy: ["autodev.requested_model"],
++			aggregations: [{ fn: "count", as: "requests" }],
++			limit: 20,
++		});
++
++		const attemptsByModel = widgets.find(
++			(candidate) => candidate.title === "Physical attempts by served model",
++		);
++		expect(attemptsByModel?.type).toBe("BAR_CHART");
++		expect(attemptsByModel?.properties).toMatchObject({
++			xAxis: "g0",
++			yAxis: "attempts",
++			resultLimit: 20,
++			optInVariables: ["workspace", "provider", "model", "agent"],
++		});
++		expect(attemptsByModel?.config.structuredQuery?.query).toMatchObject({
++			filters: [
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{ target: "spanName", op: "eq", value: "gen_ai.client_operation" },
++				{ target: "attribute", scope: "span", key: "gen_ai.response.model", op: "exists" },
++			],
++			groupBy: ["gen_ai.response.model"],
++			aggregations: [{ fn: "count", as: "attempts" }],
++			limit: 20,
++		});
++	});
++
+ });
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index 27465fb..c057b31 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -35,7 +35,9 @@ const USAGE_WIDGET_IDS = {
+ 	"p95-provider-queue": "47c52af8-0c4a-4e85-8a9e-a8f85745b205",
+ 	"p95-provider-site": "47c52af8-0c4a-4e85-8a9e-a8f85745b206",
+ 	"attempts-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
++	"attempts-by-model": "47c52af8-0c4a-4e85-8a9e-a8f85745b208",
+ 	"requests-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
++	"requests-by-model": "47c52af8-0c4a-4e85-8a9e-a8f85745b207",
+ 	"requests-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b116",
+ 	"mcp-calls": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
+ 	"mcp-duration": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index 291e2ac..737fda3 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -1700,6 +1700,121 @@
+           }
+         }
+       }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b207": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b207",
++      "title": "Logical requests by requested model",
++      "description": "Logical routed requests grouped by autodev.requested_model. This counts parent request spans that reported a requested model, not unique agent sessions, and intentionally ignores provider because one route may fall back across providers.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "requests",
++        "color": "#0ea5e9",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.requested_model",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "autodev.requested_model"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "requests"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b208": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b208",
++      "title": "Physical attempts by served model",
++      "description": "Physical provider attempts grouped by gen_ai.response.model. Only attempts whose provider reported a served model are counted; attempts without gen_ai.response.model are not attributed to gen_ai.request.model.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "attempts",
++        "color": "#F36C06",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.response.model",
++                "op": "exists"
++              }
++            ],
++            "groupBy": [
++              "gen_ai.response.model"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "attempts"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
+     }
+   },
+   "tags": "[\"autodev\",\"usage\"]",
