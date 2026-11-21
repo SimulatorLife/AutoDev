@@ -282,16 +282,20 @@ Adding a new reason is a small but cross-cutting change: the JS-side
 the shared typed `INCOMPLETE_REASON_*` contract, each provider cause
 ladder, and the tests that assert all bridges agree.
 
-All providers are treated as capable of MCP, skills, and subagent spawning;
-role TOMLs remain the sole source for role MCP/skill exposure and normal Codex inheritance.
-Routing does not gate on duplicated provider capability declarations in
-`config/model-routing.json`. The orchestrator's entire job is delegating,
-so a provider serving it must have a viable delegation path. There are two
-delegation paths:
+All providers are treated as capable of MCP and skills; role TOMLs remain the
+sole source for role MCP/skill exposure and normal Codex inheritance. Routing
+does not gate on duplicated provider capability declarations in
+`config/model-routing.json`. The orchestrator's entire job is delegating, so a
+provider serving it must have a delegation path, and there is exactly **one**:
 
-- **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
-  `multi_agent_v1` spawn tool, which creates a child thread that asks this
-  router for an `autodev/<role>` alias.
+- **Codex code-mode spawn, on every provider** (`delegation: "codex"`): the
+  parent drives Codex's own `multi_agent_v1` spawn tool, which creates a child
+  thread that asks this router for an `autodev/<role>` alias. Codex, MiniMax
+  and the opencli web-chat sites receive the `exec` tool directly; the Claude
+  and Antigravity bridges mirror the same `exec` tool to their CLI through the
+  codex-tools MCP shim (`runtime/src/mcp/codex-tools-shim.ts`) unchanged. No
+  provider has a spawn tool, spawn server, or spawn instructions of its own,
+  and no bridge writes an `exec` call on the model's behalf.
 
   Note how that call actually reaches Codex, because it is not what the model
   catalog suggests. These models run in **code mode**: the request carries no
@@ -306,36 +310,33 @@ delegation paths:
     ignored, and the child comes back as a generic agent rather than the
     role that was asked for.
   - Fan-out happens inside one script (`await Promise.allSettled(tasks.map(...))`),
-    which is why Codex sending `parallel_tool_calls: false` does not cap it. Settling
-    each child independently keeps successful siblings visible when the configured
-    concurrency limit rejects one child; the tool output names that rejected child
-    instead of collapsing the whole batch into an opaque `Failed creating` error.
-    The canonical `orchestration` skill documents this contract, and
-    `buildSpawnToolCallOutput` in `runtime/src/agents/spawn-tools.ts` owns the
-    shared script-and-event assembly; provider bridges only drain their
-    per-turn delegation and attach the returned events.
+    which is why Codex sending `parallel_tool_calls: false` does not cap it.
+    Each child is accepted or refused on its own: when the session's child
+    limit is reached Codex refuses the spawns that do not fit with
+    `agent thread limit reached`, the children that fit keep running, and the
+    orchestrator frees slots with `multi_agent_v1__close_agent`. The canonical
+    `orchestration` skill (`references/codex-code-mode.md`) documents this
+    contract, and the bridges inline that one reference for every orchestrator.
 
-- **Bridge-native spawn** (the Antigravity providers): the CLI behind the bridge
-  delegates inside its own runtime -- Antigravity's `invoke_subagent` -- and no
-  router request is made for the child. Claude is not in this category: it acts
-  only through Codex's tools (see "Claude bridge: Codex executes every tool"),
-  so a Claude orchestrator spawns with `tools.multi_agent_v1__spawn_agent`
-  inside `exec`, exactly like a Codex-served one -- through the bridge's
-  `autodev_spawn` shim, which is what turns that request into a real Codex
-  child. Watched spawn tool names are defined in the execution contract
-  (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
+  This replaced a second, bridge-side surface (the `autodev_spawn` MCP shim,
+  removed 2026-11-20). It answered "Dispatched" before Codex had run anything,
+  refused whole batches against a capacity preflight, and emitted a
+  bridge-written `exec` cell the model then misread as its own, so every
+  provider needed its own spawn instructions and every session needed its own
+  troubleshooting.
 
-  Antigravity's native subagent `Model` accepts tier aliases, not concrete
-  model ids: the installed CLI accepts `inherit`, `flash_lite`, `flash`, and
-  `pro`, and rejects an explicit Claude 5.5 id. With a Claude 5.5 parent,
-  `Model: "inherit"` does run the child on that same Claude model; cross-model
-  Sonnet/Opus targeting from a Gemini parent is not supported by this CLI.
+- **Copilot is subagent-only** (`delegation: "none"`). The Copilot CLI cannot
+  be given Codex's `exec` tool, so it never serves the orchestrator tier; the
+  router reports `provider_cannot_delegate` for it and
+  `config/model-routing.json` lists it in no orchestrator group.
+
+- Antigravity's CLI also has a native `invoke_subagent` that cannot be denied.
+  It stays in the execution contract's `spawnTools` only so telemetry counts
+  any child it starts (see "Counting subagents across providers"); it is not a
+  delegation path, and the prompt never names it. Its `Model` accepts tier
+  aliases (`inherit`, `flash_lite`, `flash`, `pro`), not concrete model ids;
   Google's [custom-subagent docs](https://antigravity.google/docs/subagents)
-  document `inherit`, `flash`, and `pro` as the model tiers. The separate
-  `autodev_spawn` Codex shim converts Antigravity child requests to
-  `{ agent_type, message }` and does not forward the native `Model` field, so
-  those real Codex child threads use their configured role/routing model rather
-  than inheriting the Antigravity Claude model implicitly.
+  document them.
 
   Browser-capable bridge roles follow the same role contract as native Codex
   roles. A Claude turn reaches its role's MCP servers through Codex's own
@@ -365,73 +366,13 @@ delegation paths:
   without granting blanket `allow-all` permissions. MiniMax's adapter forwards `web_search`
   tool payloads unchanged; MiniMax's Responses API supports `web_search` natively.
 
-  Copilot's CLI is in the orchestrator tier through the per-request
-  `autodev_spawn` MCP shim. The shim collects the CLI's delegation request and
-  returns a synthetic Codex `exec` item, so the child is created by Codex and
-  counted as `router_alias` rather than as an invisible Copilot child. The
-  static Rulesync MCP projection intentionally does not expose this server:
-  its session-scoped URL and token are generated by the bridge for one root
-  turn only.
-
-  The Claude bridge is in the orchestrator tier through the same per-request
-  `autodev_spawn` MCP shim. The Claude CLI has no delegation tool of its own
-  -- it runs without `Agent`/`Task` -- so the bridge offers its model the shim
-  and turns the request into Codex's own spawn, exactly as it does for
-  Copilot. The shim is offered **independently of the tools Codex put on the
-  request**: a Claude turn that Codex offered no tools to still gets the
-  delegation surface, because the child is created by Codex rather than by the
-  CLI. That independence is the point. A turn with no Codex tools has no `exec`
-  cell, and a model that can only delegate through `exec` has no way to create
-  a child at all -- which is what a bare request used to produce: a Claude
-  model answering "no tools are available to me this turn".
-
-- **A CLI bridge states the delegation call its own surface can serve.** The
-  shared orchestrator prompt names the Codex-native surface
-  (`multi_agent_v1__spawn_agent`, reached through the `exec` cell's `tools`
-  global), because that is what a Codex-native model and the Claude bridge
-  have. A CLI bridge has no such surface: the bridge reaches Codex through an
-  MCP server, and the one delegation tool it actually serves -- the
-  `autodev_spawn` shim -- has to be named the way that CLI names MCP tools.
-  `runtime/src/agents/bridge-delegation.ts` owns the wording; the bridge
-  passes how its CLI names an MCP tool (agy reaches every server through one
-  `call_mcp_tool` built-in, so the call names `ServerName`, `ToolName` and
-  `Arguments`; the Copilot and Claude CLIs advertise each tool directly, so the
-  call names `mcp__autodev_spawn__spawn_subagent`). The instruction is published
-  for exactly the turns the bridge holds delegation state for -- the spawn
-  registry owns that fact -- so a turn that may not delegate is told nothing.
-
-  The surface itself is the bridge's, and it does not depend on what the
-  caller declared. The shim's launch has one owner
-  (`runtime/src/agents/spawn-shim-server.ts`), which fixes the shim's path, the
-  bridge it calls back, and the turn its calls belong to; each CLI renders
-  that one entry in its own MCP config schema, and each delivers the shim's
-  identity the way its own config can carry it safely: Claude and Copilot pass
-  their config on the command line, so the entry carries the bridge's address,
-  token and session inline, while Antigravity reads its config from a **file**
-  in the isolated home, so that identity travels in agy's process environment
-  instead -- a token written into a file outlives the turn. The session the
-  calls belong to has one owner too (`openSpawnSession` in
-  `runtime/src/agents/bridge-spawn-session.ts`), which is what decides whether
-  the router identified the conversation the turn belongs to.
-
-  This is not a formality. An Antigravity-served orchestrator turn
-  (`01a19247-af45-7240-adc4-f1be011ffa44`) ran 821 `exec` calls and created no
-  child: the shared prompt named only the Codex-native surface, and the
-  bridge-injected shim was named `tools.mcp__autodev_spawn__spawn_subagent` --
-  a name that exists only for a model that reaches MCP tools through Codex's
-  `tools` global -- and the shim is an agy-side server, so it is not on
-  Codex's global either. agy has no `tools` global of its own and advertises
-  no MCP server names at all, so the tool that was present, registered and
-  permitted (`spawnAllowed: true`, with `mcp(autodev_spawn)` already allowed)
-  had no usable name.
-
-- MiniMax delegates natively (`delegation: "native"`). It was marked `none`
-  on 2026-09-17 ("no supported orchestration path"), before code mode moved
-  every tool -- `multi_agent_v1__*` included -- into Codex's `exec` tool. The
-  MiniMax proxy is a pass-through Responses adapter, so a MiniMax model gets
-  the same `exec` surface a Codex-native model does and Codex runs its spawn
-  calls; the `none` marking was stale. It serves the orchestrator tier once
-  the operator gives it an Orchestrator priority.
+- MiniMax delegates through code mode like every other provider. It was marked
+  `none` on 2026-09-17 ("no supported orchestration path"), before code mode
+  moved every tool -- `multi_agent_v1__*` included -- into Codex's `exec`
+  tool. The MiniMax proxy is a pass-through Responses adapter, so a MiniMax
+  model gets the same `exec` surface a Codex-native model does and Codex runs
+  its spawn calls; the `none` marking was stale. It serves the orchestrator
+  tier once the operator gives it an Orchestrator priority.
 - Codex CLI defines subagent tools in a `type: "namespace"` structure (`multi_agent_v1`). The
   router flattens namespaced tools into standard `type: "function"` definitions
   (e.g., `multi_agent_v1__spawn_agent`) on every non-Codex route and re-expands
@@ -1890,33 +1831,17 @@ router, not open Codex app child handles or provider CLI processes. Cumulative
 `thread limit reached` error can therefore occur while this router reports zero
 active requests.
 
-Ownership of child handles comes from Codex itself: `thread_spawn_edges` in
+Child slots belong to Codex itself: `thread_spawn_edges` in
 `$CODEX_HOME/state_5.sqlite` keeps a parent's edge `open` until `close_agent`,
-so the open edges are exactly the handles holding that parent's slots
-(`readOpenChildThreads` in `runtime/src/router/codex-state-collector.ts`). Bridge-driven
-spawn batches use it twice:
-
-- **Recovery preflight.** When the parent's open handles plus the new
-  children exceed `max_concurrent_threads_per_session`, the `exec` script
-  probes every owned child in parallel (`wait_agent`'s 10s minimum bounds the
-  whole preflight), closes errored or shut-down handles, then evicts the
-  oldest completed ones until the batch fits. Running children are never
-  closed. The batch then spawns as many new children as there are free
-  slots, in order, and refuses only the overflow before its spawn call
-  (`spawn_status: "rejected"`, "Concurrency limit reached: this session's N
-  child slots are full; ..."), so a batch larger than the limit still starts
-  the children it has room for. Without pressure no preflight is emitted.
-- **Reuse ownership.** `openSpawnSession` adopts the parent's open edges into
-  the bridge's registry, so a parent that reaches a bridge after compaction,
-  a provider hop to another bridge process, or a restart can still reuse its
-  parked children. A child whose edge is closed is dropped. A
-  `<subagent_notification>` or spawn item in the payload only refines a
-  known child's status; it never establishes ownership.
-
-The earlier preflight read the parent's history through the Codex App
-`read_thread` tool, which the Codex App MCP does not expose, so it never
-recovered a handle: one session locked out 13 queued tasks after its two
-finished children kept both slots. No global cleanup is safe.
+so the open edges are exactly the handles holding that parent's
+`max_concurrent_threads_per_session` slots. AutoDev adds no capacity layer on
+top: a spawn that does not fit fails with Codex's own `agent thread limit
+reached`, the siblings that fit keep running, and the orchestration contract
+tells the orchestrator to close finished children with `close_agent` before
+it spawns more. An earlier bridge-side recovery preflight that probed and
+evicted children on the parent's behalf was removed with the `autodev_spawn`
+shim (2026-11-20); it refused whole batches and hid Codex's real error.
+No global cleanup is safe.
 
 The concurrency status carries the configured limit as `maxConcurrentThreadsPerSession`,
 and it has three states rather than two. A number is a config file that was read and
@@ -2044,19 +1969,16 @@ The skill uses progressive disclosure. `SKILL.md` is a short core every
 provider needs (roles, complexity, delegation rules, waiting and context
 budget, integration) plus a table naming each `references/` file with the
 situation that needs it: `runtime-contract.md` (spawn, wait, park, close,
-commits), `codex-code-mode.md` (Codex-native GPT, MiniMax, opencli),
-`provider-bridges.md` (Claude, Antigravity, Copilot), `web-chat.md` (opencli
-sites), `recovery.md`, `validation.md`, `development-lifecycle.md`,
+commits), `codex-code-mode.md` (every provider's one spawn surface),
+`web-chat.md` (opencli sites), `recovery.md`, `validation.md`, `development-lifecycle.md`,
 `playtesting.md`, and `tool-names.md`. A delegating Codex-native root reads
 the core, the runtime contract and the code-mode reference: about 18.0k
 characters, down from 27.8k for the old `SKILL.md` plus runtime contract
 (`SKILL.md` alone went from 14,680 to 8,201). Where the serving provider is
-known, AutoDev points straight at its reference: the bridges' "Delegation on
-this provider" section names `provider-bridges.md`, and `roleInstructions(role,
-surface)` inlines `provider-bridges.md` for the Antigravity and Copilot CLIs
-and `codex-code-mode.md` plus `web-chat.md` for opencli, so those models never
-spend a turn reading them. The native root
-hook points at the skill and adds the recovery preflight; the Antigravity and
+known, AutoDev inlines its reference: `roleInstructions(role, surface)`
+inlines `codex-code-mode.md` for every bridged orchestrator and adds
+`web-chat.md` for opencli, so those models never spend a turn reading them.
+The native root hook points at the skill; the Antigravity and
 Copilot bridges use `runtime/src/agents/bridge-role.ts` to assemble the same role prompt,
 inlining the skill body. Both read the skill only from its installed link,
 `$HOME/.agents/skills/orchestration` (`runtime/src/shared/installed-skills.ts`),
@@ -2195,10 +2117,9 @@ the test rather than in a supervised service.
 
 A Claude turn has no delegation tool of its own to bound: the CLI runs without
 `Agent`/`Task`, and delegation is Codex's `multi_agent_v1__spawn_agent`, which
-Codex offers only to the orchestrator. The bridge's `autodev_spawn` shim is the
-surface it reaches that spawn through, so the turn is bounded by the bridge's
-own rule -- the shim is offered to an orchestrator turn and to nothing else --
-rather than by a CLI tool a workspace could remove. A target repository's
+Codex offers only to the orchestrator, through the mirrored `exec` tool. The
+turn is therefore bounded by Codex's own role tool surface rather than by a CLI
+tool a workspace could remove. A target repository's
 `.claude/settings.json` deny list likewise no longer guards anything a bridged
 turn does, because shell commands and file edits run in Codex under the role's
 sandbox mode and AutoDev's Codex rules (`agents/rules/`), exactly as they do
@@ -2403,12 +2324,10 @@ Two details follow from that:
 The shared reporter is `runtime/src/telemetry/agent-events.ts`, exported as
 `@simulatorlife/autodev-runtime/telemetry`. Provider bridges consume that
 workspace contract; the installer links `CODEX_HOME/node_modules` to the
-workspace rather than copying a second telemetry source file. The native spawn
-script/SSE helper is `runtime/src/agents/spawn-tools.ts`, and the Antigravity and
-Copilot bridges' per-turn `autodev_spawn` server launches the shared
-`runtime/src/mcp/spawn-shim.ts`. Claude children are `router_alias` spawns: a Claude
-orchestrator spawns through Codex, so its children are ordinary
-`autodev/<role>` requests.
+workspace rather than copying a second telemetry source file. Every
+orchestrator spawns through Codex's `exec`, so bridged children are
+`router_alias` spawns -- ordinary `autodev/<role>` requests -- exactly like a
+Codex-served orchestrator's.
 
 ### Reasoning effort on the Antigravity bridge
 
@@ -2602,17 +2521,14 @@ the workspace (observed 2026-09-18, worker thread
   given with `--strict-mcp-config`. The CLI runs with `--tools ""`: no built-in
   tool, except `WebSearch`/`WebFetch` on turns where Codex offered its hosted
   `web_search`, which no tool script can perform.
-- **Delegation.** The mirrored `exec` tool is Codex's, so a Claude model can only
-  reach `multi_agent_v1__spawn_agent` through it -- and a turn Codex offered no
-  tools to has no `exec` cell at all. The bridge therefore offers a second
-  server of its own, `autodev_spawn`, written by the shared shim owner
-  (`runtime/src/agents/spawn-shim-server.ts`), and hands it to the CLI with
-  `--strict-mcp-config` whether or not Codex offered any tools. The model calls
-  `mcp__autodev_spawn__spawn_subagent`; the bridge collects the children and,
-  when the turn completes, emits one `exec` call of its own -- the script the
-  Runtime builds, not one the model wrote -- so Codex creates real child
-  threads. A leaf turn is offered no such server and is told nothing about
-  delegating.
+- **Delegation.** The mirrored `exec` tool is Codex's, so a Claude model
+  reaches `multi_agent_v1__spawn_agent` through it exactly as a Codex-served
+  orchestrator does; the CLI is given only the `codex` server
+  (`--allowed-tools mcp__codex`). The bridge offers no spawn server of its own
+  and writes no `exec` call on the model's behalf. A turn Codex offered no
+  tools to has no `exec` cell, and therefore no way to delegate -- Codex only
+  offers the multi-agent tools to an orchestrator, which it always gives
+  `exec`.
 - **Parking.** When Claude calls a mirrored tool, the shim blocks and the bridge
   (`runtime/src/providers/claude-turn.ts`) emits the call as a `custom_tool_call` or
   `function_call` item, completes the response, and keeps the CLI parked. Codex
@@ -3711,9 +3627,8 @@ installer is the only supported materialization path into
   - Role TOMLs, and the Antigravity and Copilot bridges, take their launch
     definitions from that generated output. A Claude turn reaches MCP servers
     through Codex's tools, so it needs none.
-  - `autodev_spawn` is injected by the Antigravity/Copilot bridges, not a
-    Rulesync or native Codex MCP. Keep it out of leaf role TOMLs; the root
-    orchestrator capability and provider-specific shim injection own it.
+  - There is no spawn MCP server. Every provider spawns through Codex's own
+    `exec` tool, which the bridges mirror through the `codex` MCP shim.
 - User-level provider/runtime configuration: `config/config.autodev.toml` is
   the authoritative portable source for AutoDev-owned provider/runtime settings that RuleSync does not model, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `runtime/src/config/compose-user-config.ts`. The former

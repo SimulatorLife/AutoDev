@@ -29,7 +29,7 @@ Keep the `agy` CLI only as the subscription-authenticated model transport unless
 
 Do **not** complete this migration by merely adding Codex tools alongside Antigravity's native workspace-affecting tools. The migration is successful only when a bridged Antigravity turn cannot bypass the Codex tool boundary
 
-The current Antigravity `codex-shim` delegation path is the first slice of this target architecture, not the final state
+Delegation already follows this target: an Antigravity orchestrator spawns through Codex's own `exec` tool, mirrored by the `codex` MCP shim, exactly as every other provider does
 
 ---
 
@@ -87,18 +87,15 @@ provider (`antigravity-gemini`, `antigravity-argon`, `antigravity-claude-gpt`):
 "antigravity-gemini": {
   "spawnTools": ["invoke_subagent"],
   "permissionMode": "configured",
-  "delegation": "codex-shim"
+  "delegation": "codex"
 }
 ```
 
-The `autodev_spawn` MCP shim lets an Antigravity orchestrator request delegation while the bridge converts that request into a synthetic Codex `exec` call. Codex then executes `multi_agent_v1__spawn_agent`, creating real Codex child threads
+An Antigravity orchestrator calls `tools.multi_agent_v1__spawn_agent` inside the mirrored `exec` tool (through agy's `call_mcp_tool` on the `codex` server). Codex executes it, creating real Codex child threads. The bridge has no spawn server or spawn path of its own; the separate `autodev_spawn` shim that once converted agy requests into a bridge-written `exec` call was removed on 2026-11-20
 
 Relevant implementation:
 
-- `runtime/src/agents/bridge-spawn-session.ts`
-- `runtime/src/agents/spawn-tools.ts`
-- `runtime/src/mcp/spawn-shim.ts`
-- `.rulesync/mcp.jsonc`
+- `runtime/src/mcp/codex-tools-shim.ts`
 - `runtime/src/providers/antigravity.ts`
 
 This is preferable to an `agy`-native child because the child becomes a real Codex session, is visible in the app, routes through AutoDev normally, and inherits the same lifecycle/accounting semantics as other Codex subagents
@@ -739,11 +736,9 @@ Exit condition: a bridge run cannot execute a forbidden native action even when 
 
 ### Phase 2 — make Codex delegation canonical
 
-Keep the existing `autodev_spawn` -> synthetic Codex `exec` -> `multi_agent_v1__spawn_agent` path
+Done for the spawn surface: the orchestrator calls Codex's `exec` -> `multi_agent_v1__spawn_agent` directly, and the bridge-side `autodev_spawn` path is gone
 
-Remove or disable fallback to Antigravity-native children after parity is established
-
-Update stale documentation that still describes Antigravity as `bridge-native` when the generated execution contract says `codex-shim`
+Remove or disable fallback to Antigravity-native children (`invoke_subagent`) after parity is established
 
 Exit condition: all AutoDev Antigravity child agents are real Codex child threads
 
@@ -924,7 +919,7 @@ The final switch should be an explicit execution-mode change, not an accidental 
 
 The current repository contains transitional terminology
 
-`config/execution-contract.json` identifies Antigravity delegation as `codex-shim`, while portions of `docs/provider-routing.md` still describe Antigravity as `bridge-native`
+`config/execution-contract.json` identifies Antigravity delegation as `codex`; `docs/provider-routing.md` still uses `bridge-native` for the telemetry of agy's own `invoke_subagent` children
 
 As implementation phases land, update the canonical routing documentation so it describes the actual execution path rather than preserving the historical model
 
@@ -956,8 +951,7 @@ AutoDev:
 - `runtime/src/providers/claude.ts`
 - `runtime/src/providers/claude-codex-tools.ts`
 - `runtime/src/providers/claude-turn.ts`
-- `runtime/src/agents/bridge-spawn-session.ts`
-- `runtime/src/agents/spawn-tools.ts`
+- `runtime/src/mcp/codex-tools-shim.ts`
 - `runtime/src/platform/antigravity-settings.ts`
 - `config/execution-contract.json`
 - `.rulesync/hooks.jsonc`

@@ -431,7 +431,7 @@ test("model enablement removes a model from every tier it serves and survives re
       default: [["claude", "minimax"]],
       smart: [["claude"]],
       // The orchestrator fallback must be a provider that can delegate.
-      orchestrator: [["claude"], ["copilot"]]
+      orchestrator: [["claude"], ["antigravity-gemini"]]
     },
     providers: {
       claude: {
@@ -442,7 +442,9 @@ test("model enablement removes a model from every tier it serves and survives re
         }
       },
       minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } },
-      copilot: { models: { default: "copilot", orchestrator: "copilot" } }
+      "antigravity-gemini": {
+        models: { default: "gemini-test", orchestrator: "gemini-test" }
+      }
     },
     roles: {
       default: { tier: "default" },
@@ -476,8 +478,8 @@ test("model enablement removes a model from every tier it serves and survives re
       tiers: ["default"]
     },
     {
-      model: "copilot",
-      provider: "copilot",
+      model: "gemini-test",
+      provider: "antigravity-gemini",
       tiers: ["default", "orchestrator"]
     }
   ]);
@@ -488,7 +490,7 @@ test("model enablement removes a model from every tier it serves and survives re
     policy
       .orchestratorCandidates(seeded(3))
       .map(({ provider, model }) => [provider, model]),
-    [["copilot", "copilot"]]
+    [["antigravity-gemini", "gemini-test"]]
   );
   assert.deepEqual(policy.roleCandidates("smart", seeded(3)), []);
   assert.ok(
@@ -745,7 +747,7 @@ test("the providers a tier cannot use are named, and why", () => {
 });
 
 test("the orchestrator tier admits only providers that can delegate, however they are ranked", (t) => {
-  // Every shipped provider can delegate; this contract says MiniMax cannot.
+  // Copilot cannot delegate, and this contract says MiniMax cannot either.
   t.after(useNonDelegatingContract("minimax"));
   const policy = assignmentTestPolicy();
   policy.setProviderAssignment("minimax", "orchestrator", {
@@ -758,7 +760,7 @@ test("the orchestrator tier admits only providers that can delegate, however the
   });
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
-    ["claude", "copilot"]
+    ["claude"]
   );
   // opencli delegates through Codex's own exec tool, so it may orchestrate.
   policy.setProviderAssignment("opencli-gemini", "orchestrator", {
@@ -767,7 +769,7 @@ test("the orchestrator tier admits only providers that can delegate, however the
   });
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
-    ["claude", "copilot", "opencli-gemini"]
+    ["claude", "opencli-gemini"]
   );
 });
 

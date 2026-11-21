@@ -153,23 +153,34 @@
         "codex",
         "antigravity-claude-gpt",
         "claude",
-        "copilot",
-        "antigravity-argon",
-        "antigravity-gemini"
-      ],
-      [
-        "codex",
-        "claude",
-        "antigravity-claude-gpt",
-        "antigravity-argon",
         "antigravity-gemini",
-        "copilot"
+        "antigravity-argon"
+      ],
+      [
+        "codex",
+        "claude",
+        "antigravity-claude-gpt",
+        "antigravity-gemini",
+        "antigravity-argon"
       ],
       [
         "codex",
         "antigravity-claude-gpt",
         "claude",
-        "copilot",
+        "antigravity-gemini",
+        "antigravity-argon"
+      ],
+      [
+        "codex",
+        "antigravity-claude-gpt",
+        "claude",
+        "antigravity-argon",
+        "antigravity-gemini"
+      ],
+      [
+        "codex",
+        "claude",
+        "antigravity-claude-gpt",
         "antigravity-argon",
         "antigravity-gemini"
       ],
@@ -178,38 +189,19 @@
         "antigravity-claude-gpt",
         "claude",
         "antigravity-argon",
-        "copilot",
         "antigravity-gemini"
       ],
       [
         "codex",
         "claude",
         "antigravity-claude-gpt",
-        "antigravity-argon",
-        "copilot",
-        "antigravity-gemini"
+        "antigravity-gemini",
+        "antigravity-argon"
       ],
       [
         "codex",
         "antigravity-claude-gpt",
         "claude",
-        "copilot",
-        "antigravity-argon",
-        "antigravity-gemini"
-      ],
-      [
-        "codex",
-        "antigravity-claude-gpt",
-        "claude",
-        "copilot",
-        "antigravity-argon",
-        "antigravity-gemini"
-      ],
-      [
-        "codex",
-        "claude",
-        "antigravity-claude-gpt",
-        "copilot",
         "antigravity-argon",
         "antigravity-gemini"
       ]
@@ -298,7 +290,6 @@
       "codex",
       "claude",
       "antigravity-claude-gpt",
-      "copilot",
       "antigravity-gemini",
       "antigravity-argon"
     ],

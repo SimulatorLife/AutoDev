@@ -282,6 +282,13 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/role-sandbox.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
+  // The bridge-side spawn surface, replaced by Codex's own `exec` spawn tools
+  // on every provider.
+  "src/agents/bridge-delegation.ts",
+  "src/agents/bridge-spawn-session.ts",
+  "src/agents/spawn-shim-server.ts",
+  "src/agents/spawn-tools.ts",
+  "src/mcp/spawn-shim.ts",
   "src/providers/quota-discovery.ts",
   "src/shared/otel-resource-context.ts",
   "src/router/otel.ts",

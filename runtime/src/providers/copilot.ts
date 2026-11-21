@@ -96,7 +96,6 @@ const STARTUP_TIMEOUT_MS = Number.parseInt(
 );
 const PROJECT_ROOT =
   process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
-const AUTH_TOKEN = process.env.CODEX_ROUTER_COPILOT_API_KEY ?? "";
 
 // Provider/CLI payloads are JSON-shaped but intentionally retain fields this
 // bridge does not own (the Copilot CLI's event stream is not a formally

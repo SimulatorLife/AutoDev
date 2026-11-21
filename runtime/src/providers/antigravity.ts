@@ -3495,18 +3495,9 @@ function prepareTurnPromptAndTools(args: {
   readonly payload: JsonObject;
   readonly cwd: string;
   readonly agentRole: string | null;
-  readonly requestId: string | null;
   readonly agentEvents: AgentEventReporter | null;
 }) {
-  const {
-    compaction,
-    request,
-    payload,
-    cwd,
-    agentRole,
-    requestId,
-    agentEvents
-  } = args;
+  const { compaction, request, payload, cwd, agentRole, agentEvents } = args;
   if (compaction) {
     return {
       codexTools: [] as ReturnType<typeof codexToolSurface>["tools"],
@@ -3587,7 +3578,6 @@ function prepareResponsesTurn(
     payload,
     cwd,
     agentRole,
-    requestId,
     agentEvents
   });
   const home = process.env.HOME ?? "";
