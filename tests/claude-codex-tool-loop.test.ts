@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
@@ -11,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import { NODE_SHEBANG } from "./node-shebang.ts";
+import { freePort } from "./support/test-helpers.ts";
 
 // The Claude bridge serves Claude as the model behind a Codex turn: every
 // action is a Codex tool call Codex executes and the app renders. These tests
@@ -104,21 +104,6 @@ for (const step of JSON.parse(process.env.CLAUDE_FAKE_SCRIPT)) {
 }
 server?.kill();
 `;
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("no port"));
-        return;
-      }
-      server.close(() => resolve(address.port));
-    });
-  });
-}
 
 function parseSse(
   text: string

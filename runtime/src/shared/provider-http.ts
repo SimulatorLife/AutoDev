@@ -1,8 +1,9 @@
 import type { ServerResponse } from "node:http";
 
-import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
+import {
+  isRecord,
+  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
 
-import { isRecord } from "./object-guards.ts";
 import { writeErrorLine } from "./output.ts";
 import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
 

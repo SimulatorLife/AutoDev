@@ -1,12 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -19,16 +12,8 @@ import {
   runsNatively
 } from "@simulatorlife/autodev-runtime/platform/host-arch";
 
+import { withTempDir } from "../support/test-helpers.ts";
 import { executableHeader } from "./executable-header.ts";
-
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-host-arch-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
 
 function writeExecutable(
   directory: string,

@@ -1,5 +1,6 @@
 /** Deterministic selection and validation for bounded confirmatory analyst evidence packets. */
 
+import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   type PlaytestAdapterEpisode,
@@ -29,7 +30,6 @@ import {
   assertUniqueTraceEventIds,
   buildBoundedEvidenceWindows,
   hasMandatoryEventEvidenceValue,
-  isCount,
   isPlaytestEvidencePacketId,
   isText,
   MAX_EVIDENCE_PACKET_BYTES,
@@ -46,7 +46,6 @@ import {
   assertPlaytestExecutionProvenance
 } from "./execution-provenance.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
-import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestMetricRegistry } from "./registry.ts";
 import { samplePlaytestSurveillance } from "./sampling.ts";
 import {
@@ -543,7 +542,7 @@ function assertPlaytestEvidencePacketInputs(
     input.tokenBudget === 0 ||
     !isCount(input.maxPacketBytes ?? MAX_PACKET_BYTES, MAX_PACKET_BYTES) ||
     (input.maxPacketBytes ?? MAX_PACKET_BYTES) === 0 ||
-    !isPlainObject(input.frameHashes) ||
+    !isRecord(input.frameHashes) ||
     Object.values(input.frameHashes).some(
       (hash) => typeof hash !== "string" || !SHA256_PATTERN.test(hash)
     )
@@ -667,7 +666,7 @@ function validPacketOutcomeAndMeasurement(
     PLAYTESTS_GAME_OUTCOMES.includes(
       value.outcome as PlaytestGameOutcomeKind
     ) &&
-    isPlainObject(value.outcomeMetrics) &&
+    isRecord(value.outcomeMetrics) &&
     Object.values(value.outcomeMetrics).every(
       (metric) =>
         metric === null ||
@@ -716,14 +715,14 @@ export function assertPlaytestEvidencePacket(
   value: unknown
 ): asserts value is PlaytestEvidencePacket {
   const packetKeys =
-    isPlainObject(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
+    isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
       ? PACKET_V1_KEYS
-      : isPlainObject(value) &&
+      : isRecord(value) &&
           value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
         ? PACKET_V4_KEYS
         : PACKET_KEYS;
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== packetKeys.size ||
     Object.keys(value).some((key) => !packetKeys.has(key))
   ) {
@@ -759,7 +758,7 @@ export function assertPlaytestEvidencePacket(
   assertPlaytestNumericResults(value.metrics);
   const ordered = (value.selectedWindows as unknown[]).map((window) => {
     if (
-      !isPlainObject(window) ||
+      !isRecord(window) ||
       Object.keys(window).length !== 4 ||
       Object.keys(window).some(
         (key) =>
@@ -820,7 +819,7 @@ export function assertPlaytestEvidencePacket(
     ...ordered.map((range) => ({ ...range, kind: "selected" as const })),
     ...(value.omittedWindows as unknown[]).map((window) => {
       if (
-        !isPlainObject(window) ||
+        !isRecord(window) ||
         Object.keys(window).length !== 3 ||
         Object.keys(window).some(
           (key) => !["startStep", "endStep", "reason"].includes(key)
@@ -885,7 +884,7 @@ function assertPacketMetricIntent(
   const metricIds = new Set<string>();
   for (const intent of value) {
     if (
-      !isPlainObject(intent) ||
+      !isRecord(intent) ||
       Object.keys(intent).length !== keys.size ||
       Object.keys(intent).some((key) => !keys.has(key)) ||
       !isText(intent.metricId) ||
@@ -940,7 +939,7 @@ function assertCrossSessionContext(
   packet: Record<string, unknown>
 ): asserts value is PlaytestEvidenceCrossSessionContext {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !SHA256_PATTERN.test(String(value.inventoryHash))
   ) {
     throw new TypeError("Evidence packet cross-session context is malformed.");
@@ -994,7 +993,7 @@ function assertCrossSessionContext(
   const assignmentIds = new Set<string>();
   for (const session of value.sessions) {
     if (
-      !isPlainObject(session) ||
+      !isRecord(session) ||
       Object.keys(session).length !== 15 ||
       ![
         "workspaceId",
@@ -1028,7 +1027,7 @@ function assertCrossSessionContext(
       !PLAYTESTS_GAME_OUTCOMES.includes(
         session.outcome as PlaytestGameOutcomeKind
       ) ||
-      !isPlainObject(session.outcomeMetrics) ||
+      !isRecord(session.outcomeMetrics) ||
       Object.values(session.outcomeMetrics).some(
         (metric) =>
           metric !== null &&
@@ -1054,7 +1053,7 @@ function assertCrossSessionContext(
     const metricKeys = new Set<string>();
     for (const metric of session.metrics) {
       if (
-        !isPlainObject(metric) ||
+        !isRecord(metric) ||
         Object.keys(metric).length !== 10 ||
         ![
           "metricId",

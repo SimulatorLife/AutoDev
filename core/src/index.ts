@@ -17,6 +17,8 @@ export * from "./prompts/types.ts";
 export * from "./reconciliation/index.ts";
 export * from "./routing/antigravity.ts";
 export * from "./routing/types.ts";
+export * from "./shared/control-characters.ts";
+export * from "./shared/object-guards.ts";
 export * from "./shared/sha256.ts";
 export * from "./skills/scope.ts";
 export * from "./skills/types.ts";

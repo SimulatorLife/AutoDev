@@ -17,9 +17,9 @@ import {
   WORKSPACE_ID_PATTERN,
   workspaceAdmitsRole,
   WorkspaceCatalogError
-} from "../data/src/config/workspace-catalog.ts";
+} from "../src/config/workspace-catalog.ts";
 
-const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const ownerPath = path.join(
   repositoryRoot,
   "data",

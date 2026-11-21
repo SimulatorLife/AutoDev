@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import type { PlaytestBenchmark } from "../src/playtesting/artifacts.ts";
@@ -7,10 +6,7 @@ import {
   assertPlaytestBenchmark,
   playtestBenchmarkHashInput
 } from "../src/playtesting/benchmark.ts";
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
+import { sha256 } from "./support/hash.ts";
 
 function benchmarkInput() {
   return {

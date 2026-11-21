@@ -10,8 +10,9 @@
  * regardless of concurrent inserts.
  */
 
+import { isRecord } from "@simulatorlife/autodev-core";
+
 import { PlaytestInvalidCursorError } from "./errors.ts";
-import { isRecord } from "./object-guards.ts";
 
 export interface PlaytestKeysetCursor {
   /** The ISO-8601 value of the row's primary ORDER BY column. */

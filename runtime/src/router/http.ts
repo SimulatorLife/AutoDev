@@ -7,14 +7,17 @@ import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 import {
+  type ClientSurface,
+  clientSurfaceFromOriginator,
+  clientSurfaceFromUserAgent,
   type ControlApiLiveAgentCounts,
   type ControlApiProviderCheck,
   type ControlApiProviderCheckResponse,
   type ControlApiProviderCooldown,
   type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
-  SIGN_IN_REQUIRED_FAILURE_CLASS
-} from "@simulatorlife/autodev-core";
+  isRecord,
+  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
   resolveAgentActivityTtlMs
@@ -477,10 +480,6 @@ const ROUTING_POLICY_PERSISTENCE_SECTIONS = new Set([
   "providerLimits",
   "agentModels"
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
 
 function warnDiscarded(restored: boolean, state: string): void {
   if (!restored)
@@ -1318,6 +1317,27 @@ export function resolveTurnMetadataHeader(
 }
 
 /**
+ * Resolve the client surface that originated an HTTP request from Codex's
+ * `originator` header, falling back to the product token of `User-Agent`.
+ * Returns `null` when neither header carries an observable originator.
+ */
+export function requestClientSurface(
+  request: IncomingMessage
+): ClientSurface | null {
+  const rawOriginator = request.headers.originator;
+  const originator = Array.isArray(rawOriginator)
+    ? rawOriginator[0]
+    : rawOriginator;
+  const fromOriginator = clientSurfaceFromOriginator(originator);
+  if (fromOriginator !== null) return fromOriginator;
+  const rawUserAgent = request.headers["user-agent"];
+  const userAgent = Array.isArray(rawUserAgent)
+    ? rawUserAgent[0]
+    : rawUserAgent;
+  return clientSurfaceFromUserAgent(userAgent);
+}
+
+/**
  * Who is asking: the session (a Codex root thread and its whole agent tree
  * share it) and the thread itself. Codex 0.154.0 sends both on every request
  * -- `session-id`/`thread-id` headers, `client_metadata`, and turn metadata --
@@ -1344,7 +1364,10 @@ export function requestSession(
   thread: string | null;
   /** The source session identity; a thread-only fallback is not a session ID. */
   sessionId?: string;
+  /** The observed client surface from request headers, or null when absent. */
+  clientSurface: ClientSurface | null;
 } {
+  const clientSurface = requestClientSurface(request);
   // Canonical Codex 0.154.0+ header takes precedence so a request that only
   // carries `session-id` (e.g. an auto_compact continuation that is
   // metadata-less) still resolves to the same identified session and the
@@ -1386,12 +1409,14 @@ export function requestSession(
       key: sessionKey,
       scope: "identified",
       thread,
+      clientSurface,
       ...(explicitSession ? { sessionId: explicitSession } : {})
     };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
     scope: "process-fallback",
-    thread: null
+    thread: null,
+    clientSurface
   };
 }
 
@@ -1872,12 +1897,23 @@ async function handleResponseRequest(
   }
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   const session = requestSession(request, payload, turnMetadataHeader);
+  if (session.sessionId && session.clientSurface) {
+    getDefaultUsageTracker().noteSessionClientSurface(
+      session.sessionId,
+      session.clientSurface
+    );
+  }
   const activitySubject = activitySubjectFor(requestId, session, {
     subagentOfKnownSession:
       !isOrchestratorRequest &&
       Boolean(role && orchestratorProviderForSession(session.key))
   });
-  noteRequestIdentity(requestId, session.thread, activitySubject);
+  noteRequestIdentity(
+    requestId,
+    session.thread,
+    activitySubject,
+    session.clientSurface
+  );
   const effectiveTurnMetadataHeader = workspaceMetadataForSession(
     payload,
     turnMetadataHeader,

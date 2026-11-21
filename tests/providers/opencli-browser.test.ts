@@ -13,12 +13,13 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { OpencliCommandError } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
+
 import {
   OpencliBrowser,
   OpencliBrowserUnavailableError,
   resolveOpencliBrowserExecutable
 } from "../../runtime/src/providers/opencli-browser.ts";
-import { OpencliCommandError } from "../../runtime/src/providers/opencli-turn.ts";
 
 type Target = { id: string; webSocketDebuggerUrl: string };
 type FakeChild = ChildProcess &

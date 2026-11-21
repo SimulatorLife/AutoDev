@@ -8,6 +8,7 @@ import {
   assertPlaytestVisualObservation,
   assertWorkspaceVisualPlaytestTargetApproval,
   canonicalPlaytestJson,
+  isRecord,
   PLAYTEST_PLAYER_FOCUS_OUTCOMES,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_SAFE_KEYS,
@@ -20,9 +21,7 @@ import {
   type PlaytestVisualHistoryEntry,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
-  type WorkspaceVisualPlaytestTargetApproval
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
 import { isDirectory } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 
 const SMART_MODEL_ALIAS = "autodev/smart" as const;

@@ -252,3 +252,32 @@ test("the session aggregates sum each thread's skill reads and keep its prompt m
     cleanup();
   }
 });
+
+test("session report exposes the root thread clientSurface without fabricating child surfaces", async () => {
+  const { home, routerLog, cleanup } = fixture();
+  try {
+    const result = await report(home, routerLog);
+    assert.equal(isSessionDiagnosticsReport(result), true);
+    assert.equal(result.clientSurface, "codex_desktop");
+    const byId = new Map(result.threads.map((thread) => [thread.id, thread]));
+    assert.equal(byId.get(ROOT)?.clientSurface, "codex_desktop");
+    assert.equal(byId.get(CHILD)?.clientSurface, null);
+    const missing = await buildSessionDiagnosticsReport({
+      id: "01a0b699-0000-7000-8000-000000000999",
+      codexHome: home,
+      routerLog,
+      includeEfficiency: false,
+      includeEvents: false,
+      includeItems: false,
+      eventsLimit: 10,
+      eventsOffset: 0,
+      itemsLimit: 10,
+      itemsOffset: 0,
+      offline: true
+    });
+    assert.equal(missing.found, false);
+    assert.equal(missing.clientSurface, null);
+  } finally {
+    cleanup();
+  }
+});

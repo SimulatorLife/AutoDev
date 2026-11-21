@@ -28,6 +28,8 @@ import {
   assertPlaytestVisualObservation,
   assertWorkspaceVisualPlaytestTargetApproval,
   canonicalPlaytestJson,
+  hasControlCharacters,
+  isRecord,
   type PlaytestVisualAction,
   type PlaytestVisualCandidate,
   type PlaytestVisualDecision,
@@ -38,9 +40,7 @@ import {
   type PlaytestVisualHistoryEntry,
   type PlaytestVisualPolicy,
   type PlaytestVisualPolicyUsage,
-  type WorkspaceVisualPlaytestTargetApproval
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
 
 /** The upstream `qev` server's System One endpoint, relative to the base. */
 const SYSTEMONE_PATH = "/v1/systemone";
@@ -388,14 +388,6 @@ type DecisionPlan =
       /** The frame's path under the image root, as the upstream resolves it. */
       readonly framePath: string;
     };
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code < 32 || code === 127) return true;
-  }
-  return false;
-}
 
 function isBoundedText(value: unknown, maximum: number): value is string {
   return (

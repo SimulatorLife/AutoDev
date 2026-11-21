@@ -102,6 +102,7 @@ import {
   type ControlApiWorkspacesResponse,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
   type ConvergenceStatus,
+  isClientSurface,
   isExperienceOutcome,
   isMemoryAuthority,
   isMemoryExecutionMode,
@@ -109,6 +110,7 @@ import {
   isMemoryOutcomeReportKind,
   isMemoryOutcomeReportReasonCode,
   isMemoryUseKind,
+  isRecord,
   isSandboxMode,
   isSessionDiagnosticsReport,
   isSessionFleetScanResponse,
@@ -129,8 +131,7 @@ import {
   type SessionHookDenialsResponse,
   type SessionRecentListResponse,
   type WorkspaceConfigurationHealth,
-  type WorkspaceRuntimeAvailability
-} from "@simulatorlife/autodev-core";
+  type WorkspaceRuntimeAvailability} from "@simulatorlife/autodev-core";
 import {
   DelegateBackoff,
   handleWhen,
@@ -2869,10 +2870,6 @@ export async function fetchTools(
     : invalidResponse("Tools", "autodev-control-tools-v2");
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -3149,7 +3146,8 @@ function isControlApiLiveSessions(
             "lastActivityAt",
             "provider",
             "model",
-            "role"
+            "role",
+            "clientSurface"
           ].includes(key)
       ) ||
       typeof candidate.sessionId !== "string" ||
@@ -3165,7 +3163,9 @@ function isControlApiLiveSessions(
       ![candidate.provider, candidate.model, candidate.role].every(
         (field) =>
           field === null || (typeof field === "string" && field.length > 0)
-      )
+      ) ||
+      candidate.clientSurface !== null &&
+        !isClientSurface(candidate.clientSurface)
     ) {
       return false;
     }

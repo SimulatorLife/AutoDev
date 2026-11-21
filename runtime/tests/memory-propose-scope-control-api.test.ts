@@ -9,6 +9,7 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  errorCode,
   makeRequest,
   type RecordedResponse,
   responseBody,
@@ -136,11 +137,6 @@ async function propose(
     else process.env.AUTODEV_MEMORY_READ_GLOBAL = previousGlobal;
   }
   return { response, body: responseBody(response), calls };
-}
-
-function errorCode(response: RecordedResponse): unknown {
-  const body = responseBody(response) as { error?: { code?: unknown } } | null;
-  return body?.error?.code;
 }
 
 const EVIDENCE = [{ kind: "file", uri: "runs/42/result.json" }];

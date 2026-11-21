@@ -7,6 +7,7 @@
  * persistence/model exposure, and resolve semantic control IDs again at the
  * input boundary.
  */
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
@@ -14,7 +15,6 @@ import {
   type WorkspaceVisualPlaytestInput,
   type WorkspaceVisualPlaytestTargetApproval
 } from "../workspaces/visual-playtesting.ts";
-import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestArtifactReference } from "./protocol-types.ts";
 
 export const PLAYTEST_VISUAL_OBSERVATION_SCHEMA =
@@ -267,7 +267,7 @@ function validBounds(
   viewport: PlaytestVisualViewport
 ): boolean {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !hasOnlyKeys(value, ["x", "y", "width", "height"]) ||
     !isFiniteNumber(value.x) ||
     !isFiniteNumber(value.y) ||
@@ -288,7 +288,7 @@ function validBounds(
 
 function validViewport(value: unknown): value is PlaytestVisualViewport {
   return (
-    isPlainObject(value) &&
+    isRecord(value) &&
     hasOnlyKeys(value, ["width", "height", "deviceScaleFactor"]) &&
     Number.isSafeInteger(value.width) &&
     Number(value.width) > 0 &&
@@ -304,7 +304,7 @@ function validViewport(value: unknown): value is PlaytestVisualViewport {
 
 function validArtifactReference(value: unknown, maxBytes: number): boolean {
   return (
-    isPlainObject(value) &&
+    isRecord(value) &&
     Object.keys(value).every((key) =>
       ["artifactId", "sha256", "bytes", "mediaType", "revision"].includes(key)
     ) &&
@@ -327,7 +327,7 @@ function assertVisualControl(
   viewport: PlaytestVisualViewport
 ): asserts value is PlaytestVisualControl {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !hasOnlyKeys(value, [
       "controlId",
       "role",
@@ -382,7 +382,7 @@ export function assertPlaytestVisualObservation(
     "phaseEvidence",
     "progressEvidence"
   ];
-  if (!isPlainObject(value) || !hasOnlyKeys(value, fields)) {
+  if (!isRecord(value) || !hasOnlyKeys(value, fields)) {
     throw new TypeError("Visual observation has an unsupported shape.");
   }
   const viewport = value.viewport;
@@ -436,7 +436,7 @@ export function assertPlaytestVisualObservation(
 export function assertPlaytestVisualAction(
   value: unknown
 ): asserts value is PlaytestVisualAction {
-  if (!isPlainObject(value) || value.schema !== PLAYTEST_VISUAL_ACTION_SCHEMA) {
+  if (!isRecord(value) || value.schema !== PLAYTEST_VISUAL_ACTION_SCHEMA) {
     throw new TypeError("Visual action has an unsupported schema.");
   }
   if (

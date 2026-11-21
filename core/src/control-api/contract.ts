@@ -136,11 +136,14 @@
  * role attribution, with null retained when an activity record did not supply
  * that dimension. Each dimension selects its newest non-null observation;
  * equal timestamps resolve to the lexically smallest value.
+ * v37: live-session identities publish the first observed client surface
+ * (`clientSurface`) for each session, with null retained when no originator or
+ * User-Agent surface was observed.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 36
+  version: 37
 } as const;
 
 export type ControlApiContractResponse = {

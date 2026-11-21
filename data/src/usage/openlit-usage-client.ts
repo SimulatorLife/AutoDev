@@ -3,6 +3,7 @@ import {
   deriveProviderHopRatePercent,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
+  isRecord,
   safeAutoDevSessionId,
   USAGE_VARIABLE_IDS,
   type UsageBreakdownCount,
@@ -28,8 +29,7 @@ import {
   type UsageVariableId,
   type UsageWidgetId,
   type UsageWorkspaceRequestBreakdown,
-  type UsageWorkspaceRequestCount
-} from "@simulatorlife/autodev-core";
+  type UsageWorkspaceRequestCount} from "@simulatorlife/autodev-core";
 
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
@@ -639,10 +639,6 @@ function parseOpenLITSessionUsage(
       spans
     }
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {

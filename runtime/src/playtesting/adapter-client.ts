@@ -32,7 +32,7 @@ import {
   assertPlaytestJsonRpcNotification,
   assertPlaytestJsonRpcRequest,
   assertPlaytestJsonRpcResponse,
-  isPlainObject,
+  isRecord,
   type PlaytestAdapterErrorCode,
   type PlaytestAdapterMethod,
   type PlaytestAdapterNotification,
@@ -763,7 +763,7 @@ export class PlaytestAdapterClient {
       );
       return;
     }
-    if (!isPlainObject(parsed) || parsed.jsonrpc !== "2.0") {
+    if (!isRecord(parsed) || parsed.jsonrpc !== "2.0") {
       this.recordDiagnostic({
         kind: "wrong-version",
         message: `Envelope missing or wrong jsonrpc version: ${String(
@@ -837,7 +837,7 @@ export class PlaytestAdapterClient {
       episodeId !== this.currentEpisodeId ||
       !isBoundedRevision(revision) ||
       !isBoundedRevision(sequence) ||
-      !isPlainObject(event) ||
+      !isRecord(event) ||
       typeof event.eventId !== "string" ||
       event.eventId.length === 0 ||
       typeof event.type !== "string" ||
@@ -846,7 +846,7 @@ export class PlaytestAdapterClient {
       event.revision !== revision ||
       (event.phaseId !== null && typeof event.phaseId !== "string") ||
       (event.actor !== null && typeof event.actor !== "string") ||
-      !isPlainObject(event.fields)
+      !isRecord(event.fields)
     ) {
       this.recordDiagnostic({
         kind: "malformed",
@@ -1069,7 +1069,7 @@ export class PlaytestAdapterClient {
         .code as (typeof PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)[keyof typeof PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES]
     );
     const dataDisposition =
-      isPlainObject(data) &&
+      isRecord(data) &&
       (data.episodeDisposition === "unchanged" ||
         data.episodeDisposition === "aborted" ||
         data.episodeDisposition === "unknown")

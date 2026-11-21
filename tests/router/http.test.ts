@@ -123,6 +123,7 @@ test("workspace and session resolution prefer explicit continuity metadata", () 
     key: "session-7",
     scope: "identified",
     thread: null,
+    clientSurface: null,
     sessionId: "session-7"
   });
   assert.equal(
@@ -353,6 +354,7 @@ test("canonical Codex session-id header identifies metadata-less continuation an
       key: sessionKey,
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: sessionKey
     });
 
@@ -397,7 +399,8 @@ test("Codex thread-id header identifies metadata-less continuation and restores 
     assert.deepEqual(session, {
       key: threadId,
       scope: "identified",
-      thread: threadId
+      thread: threadId,
+      clientSurface: null
     });
 
     // The pre-0.154 x-codex-thread-id alias is retired; use the canonical

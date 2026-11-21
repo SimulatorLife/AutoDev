@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -15,16 +14,7 @@ import {
   updateAntigravitySkills
 } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(
-    join(tmpdir(), "autodev-antigravity-settings-")
-  );
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "../support/test-helpers.ts";
 
 test("normalizes Antigravity read roots without allowing duplicates", () =>
   withTempDir((directory) => {

@@ -14,6 +14,7 @@ import {
   classifyPlaytestMetricComparison,
   type GameCaptureEvent,
   type GameMetricEvaluation,
+  isRecord,
   type PlaytestAdapterEpisode,
   type PlaytestAssignmentBranch,
   type PlaytestCapabilityAdvertisement,
@@ -31,8 +32,7 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
   type WorkspacePlaytestApproval,
-  type WorkspacePlaytestBuild
-} from "@simulatorlife/autodev-core";
+  type WorkspacePlaytestBuild} from "@simulatorlife/autodev-core";
 
 import type {
   PlaytestAdapterExit,
@@ -731,10 +731,6 @@ function runOptions(
         : null,
     ...overrides
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 test("episode runner executes one approved episode, filters hidden observation/event/outcome fields, and records provenance", async () => {

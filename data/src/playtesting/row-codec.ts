@@ -20,6 +20,7 @@ import {
   type HumanPlaytestStudy,
   isPlaytestEvidencePacketId,
   isPlaytestFindingId,
+  isRecord,
   legacyPlaytestExecutionProvenance,
   migratePlaytestCrossSessionSynthesisV1,
   PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
@@ -90,7 +91,6 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSourceUnavailableError } from "./errors.ts";
-import { isRecord } from "./object-guards.ts";
 import type {
   PlaytestHumanAggregateRecord,
   PlaytestReviewClaimSummary,

@@ -14,6 +14,7 @@ import test from "node:test";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  errorCode,
   type RecordedResponse,
   responseBody,
   responseRecorder
@@ -63,13 +64,6 @@ const SESSION_ID = "session-transcript";
 interface CallResult {
   readonly status: number;
   readonly body: Record<string, unknown> | null;
-}
-
-function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.error;
-  return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>).code
-    : undefined;
 }
 
 function errorMessage(body: Record<string, unknown> | null): string {

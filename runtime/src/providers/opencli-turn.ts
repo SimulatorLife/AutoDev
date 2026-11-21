@@ -24,9 +24,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_SITES,

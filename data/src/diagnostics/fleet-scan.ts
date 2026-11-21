@@ -224,6 +224,7 @@ export async function scanRecentSessions(
 
   for (const session of recent) {
     const traces = tracedBySession.get(session.id) ?? [];
+    const rootTrace = traces.find((trace) => trace.parentId === null);
     const acc: SessionFleetAccumulator = {
       failureCounts: new Map(),
       row: {
@@ -231,6 +232,7 @@ export async function scanRecentSessions(
         started: session.started,
         lastWrite: session.lastWrite,
         cwd: session.cwd,
+        clientSurface: rootTrace?.clientSurface ?? session.clientSurface,
         threads: traces.length > 0 ? traces.length : session.threads,
         totalTokens: 0,
         inputTokens: 0,

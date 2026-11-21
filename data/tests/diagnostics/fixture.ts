@@ -76,6 +76,7 @@ export function fixture(): Fixture {
       thread_source: "user",
       model_provider: "local_model_router",
       cli_version: "0.169.0",
+      originator: "Codex Desktop",
       cwd: "/tmp/repo",
       timestamp: "2026-09-18T21:18:00.000Z"
     }),

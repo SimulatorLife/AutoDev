@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+import { findSessionRollouts } from "../../src/diagnostics/rollout-discovery.ts";
 import {
   countCodePoints,
   redactSecrets,
@@ -383,4 +384,18 @@ test("a code point count treats a surrogate pair as one and an unpaired surrogat
     assert.equal(countCodePoints(sample), Array.from(sample).length, sample);
   assert.equal(countCodePoints("a\uD800b"), 3);
   assert.equal(countCodePoints("e\u0301"), 2, "not a grapheme count");
+});
+
+test("traceThread derives clientSurface from each thread session_meta originator without inheriting", () => {
+  const { sessionsRoot, cleanup } = fixture();
+  try {
+    const rollouts = findSessionRollouts(sessionsRoot, ROOT);
+    const traces = rollouts.map((file) => traceThread(file, { items: false }));
+    const root = traces.find((trace) => trace.id === ROOT);
+    const child = traces.find((trace) => trace.id === CHILD);
+    assert.equal(root?.clientSurface, "codex_desktop");
+    assert.equal(child?.clientSurface, null);
+  } finally {
+    cleanup();
+  }
 });

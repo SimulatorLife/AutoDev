@@ -8,7 +8,8 @@
  * checkout's latest committed build, resolved by the Runtime at batch start
  * and recorded as that batch's {@link WorkspacePlaytestBuild}.
  */
-
+import { hasControlCharacters } from "../shared/control-characters.ts";
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 
 export const WORKSPACE_PLAYTEST_APPROVAL_SCHEMA =
@@ -101,10 +102,6 @@ function assertAdapterCommand(command: unknown): void {
   }
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function onlyKeys(
   value: Readonly<Record<string, unknown>>,
   allowed: readonly string[]
@@ -115,14 +112,6 @@ function onlyKeys(
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function assertRevocationMetadata(

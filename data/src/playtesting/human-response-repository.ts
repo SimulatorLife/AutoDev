@@ -34,6 +34,7 @@ import {
   type HumanStudyResponse,
   importHumanStudyPreferenceResponses,
   importHumanStudyResponses,
+  isRecord,
   parseHumanStudyExportRows,
   type PlaytestHumanPreferenceCounts,
   PLAYTESTS_HUMAN_INSTRUMENTS,
@@ -41,8 +42,6 @@ import {
   PLAYTESTS_MEASUREMENT_VERSION,
   samePlaytestBuild
 } from "@simulatorlife/autodev-core";
-
-import { isRecord } from "./object-guards.ts";
 
 const FORMAT = "autodev-restricted-human-study-v2";
 const LEGACY_FORMAT = "autodev-restricted-human-study-v1";

@@ -1,4 +1,5 @@
-import { isPlainObject } from "./object-guards.ts";
+import { hasControlCharacters } from "../shared/control-characters.ts";
+import { isRecord } from "../shared/object-guards.ts";
 import {
   type PlaytestDiscoverySignal,
   type PlaytestGameMode,
@@ -132,13 +133,6 @@ function assertPositiveInteger(
   }
 }
 
-function hasControlCharacters(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 31 || code === 127;
-  });
-}
-
 function assertRelativeConfigPath(
   value: unknown,
   name: string
@@ -175,7 +169,7 @@ function assertReviewSelection(
   value: unknown,
   maxReviewedSessions: number
 ): void {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(
       "analysis.reviewSelection must declare explicit surveillance and discovery budgets."
     );
@@ -211,7 +205,7 @@ function assertReviewSelection(
   }
   const signal = value.discoverySignal;
   if (signal === null) return;
-  if (!isPlainObject(signal)) {
+  if (!isRecord(signal)) {
     throw new TypeError(
       "analysis.reviewSelection.discoverySignal must be null or a versioned metric signal."
     );
@@ -245,7 +239,7 @@ function assertReviewSelection(
 export function assertPlaytestGameConfiguration(
   value: unknown
 ): asserts value is PlaytestGameConfiguration {
-  if (!isPlainObject(value))
+  if (!isRecord(value))
     throw new TypeError("Playtest configuration must be an object.");
   assertOnlyKeys(
     value,
@@ -265,7 +259,7 @@ export function assertPlaytestGameConfiguration(
   if (value.schemaVersion !== 1)
     throw new TypeError("Playtest schemaVersion must be 1.");
 
-  if (!isPlainObject(value.adapter))
+  if (!isRecord(value.adapter))
     throw new TypeError("Playtest adapter configuration must be an object.");
   assertOnlyKeys(value.adapter, ["transport", "command"], "Playtest adapter");
   if (value.adapter.transport !== "stdio-jsonl") {
@@ -293,7 +287,7 @@ export function assertPlaytestGameConfiguration(
     throw new TypeError("Playtest modes must be unique.");
   }
   assertUniqueStrings(value.scenarios, "Playtest scenarios");
-  if (!isPlainObject(value.scenarioFamilies)) {
+  if (!isRecord(value.scenarioFamilies)) {
     throw new TypeError(
       "Playtest scenarioFamilies must map every scenario to a family."
     );
@@ -317,7 +311,7 @@ export function assertPlaytestGameConfiguration(
   }
   assertUniqueStrings(value.policies, "Playtest policies");
 
-  if (!isPlainObject(value.budget))
+  if (!isRecord(value.budget))
     throw new TypeError("Playtest budget must be an object.");
   assertOnlyKeys(
     value.budget,
@@ -337,7 +331,7 @@ export function assertPlaytestGameConfiguration(
     1440
   );
 
-  if (!isPlainObject(value.analysis))
+  if (!isRecord(value.analysis))
     throw new TypeError("Playtest analysis must be an object.");
   assertOnlyKeys(
     value.analysis,
@@ -407,7 +401,7 @@ export function assertPlaytestGameConfiguration(
     "analysis.humanCalibration"
   );
 
-  if (!isPlainObject(value.reporting))
+  if (!isRecord(value.reporting))
     throw new TypeError("Playtest reporting must be an object.");
   assertOnlyKeys(value.reporting, ["githubIssues"], "Playtest reporting");
   assertOneOf(

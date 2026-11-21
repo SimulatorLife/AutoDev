@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import test from "node:test";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import { resolveMcpCommand } from "@simulatorlife/autodev-runtime/mcp";
 import {
   agyArgs,
@@ -26,10 +27,6 @@ import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-co
 import { NODE_SHEBANG } from "./node-shebang.ts";
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function stringList(value: unknown, label: string): string[] {
   assert.ok(Array.isArray(value), label + " must be an array");

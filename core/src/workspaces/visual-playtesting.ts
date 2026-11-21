@@ -1,3 +1,6 @@
+import { hasControlCharacters } from "../shared/control-characters.ts";
+import { isRecord } from "../shared/object-guards.ts";
+
 /** Workspaces-owned approval for one rendered game target. */
 export const WORKSPACE_VISUAL_PLAYTEST_TARGET_SCHEMA =
   "autodev-workspace-visual-playtest-target-v1" as const;
@@ -112,10 +115,6 @@ const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function hasOnlyKeys(
   value: Readonly<Record<string, unknown>>,
   keys: readonly string[]
@@ -131,14 +130,6 @@ function nonEmptyBounded(value: unknown, maximum: number): value is string {
     value.length <= maximum &&
     !hasControlCharacters(value)
   );
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function isLoopbackHost(hostname: string): boolean {

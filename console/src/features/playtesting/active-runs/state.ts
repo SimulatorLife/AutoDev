@@ -6,6 +6,8 @@
  */
 import {
   type ControlApiPlaytestingRunRecord,
+  isCount,
+  isRecord,
   type PlaytestCompletionCounts,
   playtestEpisodeRecordId,
   type PlaytestJsonValue,
@@ -13,8 +15,7 @@ import {
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_GAME_OUTCOMES,
   type PlaytestSessionReference,
-  playtestVisualEpisodeRecordId
-} from "@simulatorlife/autodev-core";
+  playtestVisualEpisodeRecordId} from "@simulatorlife/autodev-core";
 
 /** Terminal states are read once, then that batch stops being polled. */
 const TERMINAL_RUN_STATES = new Set([
@@ -42,14 +43,6 @@ export interface PlaytestingActiveRun {
   readonly createdAt: string;
   readonly sessions: readonly PlaytestSessionReference[];
   readonly record: ControlApiPlaytestingRunRecord;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function parseSessionReferences(

@@ -18,6 +18,7 @@
 
 import {
   type HumanPlaytestStudy,
+  isRecord,
   type PlaytestArtifactReference,
   type PlaytestBatch,
   type PlaytestBenchmark,
@@ -43,7 +44,6 @@ import {
 } from "../openlit/clickhouse-config.ts";
 import { decodePlaytestCursor, encodePlaytestCursor } from "./cursor.ts";
 import { PlaytestSourceUnavailableError } from "./errors.ts";
-import { isRecord } from "./object-guards.ts";
 import {
   appendCursorClause,
   type BoundWhereClause,

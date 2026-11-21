@@ -66,7 +66,11 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
-import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
+import {
+  ATTR_AUTODEV_CLIENT_SURFACE,
+  type ClientSurface,
+  isClientSurface,
+  safeAutoDevSessionId} from "@simulatorlife/autodev-core";
 import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import type { ProviderPhaseTiming } from "@simulatorlife/autodev-runtime/telemetry/provider-phases";
 import {
@@ -75,6 +79,7 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 import {
   PROVIDER_HOP_FAILURE_CLASSES,
   type ProviderHop
@@ -540,6 +545,7 @@ function metricAttributes(options: {
   workspace?: { key?: string | null | undefined } | null | undefined;
   role?: string | null | undefined;
   providerRole?: string | null | undefined;
+  clientSurface?: ClientSurface | null | undefined;
 }): Record<string, string> {
   const attributes: Record<string, string> = {};
   const provider = safeProviderName(options.provider);
@@ -555,6 +561,12 @@ function metricAttributes(options: {
     options.providerRole === "subagent"
   ) {
     attributes["autodev.router.provider_role"] = options.providerRole;
+  }
+  if (options.clientSurface !== undefined) {
+    attributes[ATTR_AUTODEV_CLIENT_SURFACE] = safeMetricLabel(
+      isClientSurface(options.clientSurface) ? options.clientSurface : null,
+      "unknown"
+    );
   }
   return attributes;
 }
@@ -900,6 +912,7 @@ export interface RecordContextCompactionOptions {
   providerRole?: string | null | undefined;
   workspace?: { key?: string | null | undefined } | null | undefined;
   compaction?: CompactionMetadata | null | undefined;
+  clientSurface?: ClientSurface | null | undefined;
 }
 
 function claimCompactionRequestId(
@@ -963,7 +976,10 @@ function compactionMetricAttributes(
     model: options.model,
     workspace: options.workspace,
     role: options.role,
-    providerRole: options.providerRole
+    providerRole: options.providerRole,
+    ...(options.clientSurface === undefined
+      ? {}
+      : { clientSurface: options.clientSurface })
   });
   if (options.compaction) {
     addCompactionMetricDimensions(attributes, options.compaction);
@@ -1132,6 +1148,11 @@ export interface LogicalRequestSpanOptions {
    * an unrelated set of requests is never attributed to one conversation.
    */
   sessionId?: string | null | undefined;
+  /**
+   * The observed client surface that originated the request (from the
+   * `originator` header or `User-Agent`), or null when absent.
+   */
+  clientSurface?: ClientSurface | null | undefined;
 }
 
 type LogicalSpanAttributes = Record<string, string | number | boolean>;
@@ -1149,6 +1170,7 @@ function addAutoDevSpanContext(
     readonly workspace?: { readonly key?: string | null } | null | undefined;
     readonly role?: string | null | undefined;
     readonly sessionId?: string | null | undefined;
+    readonly clientSurface?: ClientSurface | null | undefined;
   }
 ): void {
   const workspace = safeAutoDevWorkspaceKey(requestContext.workspace?.key);
@@ -1157,6 +1179,10 @@ function addAutoDevSpanContext(
   if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
   const sessionId = safeAutoDevSessionId(requestContext.sessionId);
   if (sessionId) attributes[ATTR_AUTODEV_SESSION_ID] = sessionId;
+  const clientSurface = isClientSurface(requestContext.clientSurface)
+    ? requestContext.clientSurface
+    : null;
+  if (clientSurface) attributes[ATTR_AUTODEV_CLIENT_SURFACE] = clientSurface;
 }
 
 function addCompactionSpanAttributes(
@@ -1219,7 +1245,8 @@ export function startLogicalRequestSpan(
       model,
       workspace: options.workspace,
       role: options.role,
-      providerRole: options.providerRole
+      providerRole: options.providerRole,
+      clientSurface: options.clientSurface ?? null
     }),
     startedAt: performance.now(),
     requestId: options.requestId,
@@ -1307,6 +1334,11 @@ export function endLogicalRequestSpan(
           providerRole:
             (metricContext.attributes["autodev.router.provider_role"] as
               "orchestrator" | "subagent" | null) ?? null,
+          clientSurface: isClientSurface(
+            metricContext.attributes[ATTR_AUTODEV_CLIENT_SURFACE]
+          )
+            ? metricContext.attributes[ATTR_AUTODEV_CLIENT_SURFACE]
+            : null,
           compaction: metricContext.compactionSignal.compaction
         });
       }
@@ -1396,6 +1428,8 @@ export interface AttemptSpanOptions {
   sessionId?: string | null | undefined;
   /** Source-confirmed Codex thread served by this physical attempt. */
   threadId?: string | null | undefined;
+  /** The observed client surface that originated this attempt, or null. */
+  clientSurface?: ClientSurface | null | undefined;
 }
 
 /**
@@ -1431,7 +1465,8 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
         provider: options.provider,
         model: options.model,
         ...(options.workspace ? { workspace: options.workspace } : {}),
-        ...(options.role ? { role: options.role } : {})
+        ...(options.role ? { role: options.role } : {}),
+        clientSurface: options.clientSurface ?? null
       }),
       [ATTR_GEN_AI_OPERATION_NAME]: "chat"
     },

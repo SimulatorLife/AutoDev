@@ -1,32 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
 import { NODE_SHEBANG } from "./node-shebang.ts";
+import { freePort } from "./support/test-helpers.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const BRIDGE = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 const BRIDGE_TOKEN = "claude-bridge-token";
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("test server did not expose a TCP address"));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => (error ? reject(error) : resolve(port)));
-    });
-  });
-}
 
 function waitForListening(child: any): Promise<void> {
   return new Promise((resolve, reject) => {

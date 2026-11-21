@@ -26,6 +26,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 
 import { NODE_SHEBANG } from "./node-shebang.ts";
+import { freePort } from "./support/test-helpers.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/antigravity.ts");
@@ -69,22 +70,6 @@ function replaceTokens(value: any): any {
       Object.entries(value).map(([key, nested]) => [key, replaceTokens(nested)])
     );
   return value;
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("test server did not expose a TCP address"));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => (error ? reject(error) : resolve(port)));
-    });
-  });
 }
 
 function waitForListening(child: any): Promise<void> {

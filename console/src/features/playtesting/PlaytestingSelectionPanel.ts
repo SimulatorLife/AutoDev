@@ -4,8 +4,8 @@
 import {
   type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
-  PLAYTESTS_MAX_ANALYSIS_SESSIONS
-} from "@simulatorlife/autodev-core";
+  isRecord,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS} from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
@@ -21,10 +21,6 @@ import { PlaytestingAnalysisResults } from "./PlaytestingAnalysisResults.ts";
 const ANALYSIS_STATUS_POLL_MS = 1500;
 const ANALYSIS_STATUS_MAX_POLL_MS = 8000;
 const ANALYSIS_RUN_COLLATOR = new Intl.Collator(undefined, { numeric: true });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export async function dispatchAnalystReview(
   workspaceId: string,

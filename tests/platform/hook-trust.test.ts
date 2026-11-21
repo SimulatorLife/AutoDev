@@ -1,12 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -17,14 +10,7 @@ import {
   syncHookTrust
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-hook-trust-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "../support/test-helpers.ts";
 
 test("CANONICAL_HOOK_HASHES contains every canonical hook", () => {
   const keys = Object.keys(CANONICAL_HOOK_HASHES).sort();

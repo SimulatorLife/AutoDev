@@ -26,6 +26,7 @@ import {
   type HookEvent,
   type HookEventDeclaration,
   isHookEvent,
+  isRecord,
   type McpServerDefinition,
   type McpServerLaunchConfiguration,
   type McpServerTransport,
@@ -51,7 +52,6 @@ import { parse as parseYaml } from "yaml";
 import { atomicWrite } from "../files/atomic-write.ts";
 import {
   COMMANDS_SOURCE,
-  isRecord,
   parseRuleSyncCommand,
   type RuleSyncCommand,
   RuleSyncCommandValidationError

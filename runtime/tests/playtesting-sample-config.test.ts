@@ -18,6 +18,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
+import { sha256 } from "./support/hash.ts";
 
 const FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
@@ -25,10 +26,6 @@ const FIXTURE_ROOT = fileURLToPath(
 
 function readJson(name: string): unknown {
   return JSON.parse(readFileSync(join(FIXTURE_ROOT, name), "utf8"));
-}
-
-function sha256(bytes: Uint8Array | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 test("checked-in synthetic playtest config binds a valid rubric, observation, and immutable benchmark", () => {

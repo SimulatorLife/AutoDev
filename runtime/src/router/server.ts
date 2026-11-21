@@ -16,6 +16,7 @@ import {
   persistRouterStateNow,
   scheduleRouterStatePersist
 } from "@simulatorlife/autodev-runtime/router/persistence";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import type { QuotaAxiResponse } from "quota-axi";
 
@@ -312,7 +313,9 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null
     )
   );
-  setControlApiLiveSessionsSource((now) => agentActivity.listLiveSessions(now));
+  setControlApiLiveSessionsSource(
+    (now) => getDefaultUsageTracker().listLiveSessions(now, agentActivity)!
+  );
   // The Control API runs inside the router, so the diagnostics read the live
   // status from this process rather than calling the router over loopback.
   setControlApiDiagnosticsRouterStatusSource(() => getRouterStatus());
@@ -494,6 +497,7 @@ export {
   limitsStatus,
   loadCatalog,
   refreshCodexState,
+  requestClientSurface,
   requestSession,
   resetRouterTelemetry,
   resolveTurnMetadataHeader,

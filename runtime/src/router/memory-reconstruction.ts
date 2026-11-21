@@ -1,5 +1,7 @@
 import { context as otelContext, propagation } from "@opentelemetry/api";
-import type { MemoryRecord } from "@simulatorlife/autodev-core";
+import {
+  isRecord,
+  type MemoryRecord} from "@simulatorlife/autodev-core";
 import {
   type CurrentStateAssessment,
   MAX_CLAIM_LENGTH,
@@ -9,7 +11,6 @@ import {
   type MemoryReconstructor
 } from "@simulatorlife/autodev-runtime/memory";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 const MAX_EVIDENCE_REFERENCES = 12;
 const MAX_ISSUE_OBSERVATIONS = 4;

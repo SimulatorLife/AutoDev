@@ -18,6 +18,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { atomicWriteSync } from "../files/atomic-write.ts";
+import { isPathWithin } from "../files/path-containment.ts";
 
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -68,16 +69,8 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== "..")
-  );
-}
-
 function ensurePrivateDirectory(directory: string, root: string): void {
-  if (!isWithin(root, directory)) {
+  if (!isPathWithin(root, directory)) {
     throw new WorkspaceVisualPlaytestTargetStoreError(
       "Visual target approval directory escaped its Workspaces root."
     );
@@ -93,7 +86,7 @@ function ensurePrivateDirectory(directory: string, root: string): void {
     );
   }
   const canonical = realpathSync(directory);
-  if (!isWithin(root, canonical)) {
+  if (!isPathWithin(root, canonical)) {
     throw new WorkspaceVisualPlaytestTargetStoreError(
       "Visual target approval directory resolves outside its Workspaces root."
     );
@@ -300,7 +293,7 @@ export class WorkspaceVisualPlaytestTargetRepository {
       );
     }
     const canonical = realpathSync(file);
-    if (!isWithin(directory, canonical)) {
+    if (!isPathWithin(directory, canonical)) {
       throw new WorkspaceVisualPlaytestTargetStoreError(
         "Visual target approval record resolves outside its target directory."
       );

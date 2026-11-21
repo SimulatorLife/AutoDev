@@ -46,6 +46,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import {
   isOrchestratorRole,
@@ -60,7 +61,6 @@ import {
   type OpencliCommand,
   resolveOpencliCommand
 } from "@simulatorlife/autodev-runtime/shared/executables";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   opencliBrowserSettingFile,
   readOpencliDedicatedBrowser

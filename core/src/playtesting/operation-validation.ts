@@ -1,5 +1,5 @@
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
-import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestCapabilityAdvertisement } from "./protocol.ts";
 import type {
   GameCaptureEvent,
@@ -56,7 +56,7 @@ function objectWithKeys(
   keys: readonly string[],
   field: string
 ): Readonly<Record<string, unknown>> {
-  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
+  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
   exactKeys(value, keys, field);
   return value;
 }
@@ -143,7 +143,7 @@ function assertGameEvent(
   nonNegativeInteger(event.step, field + ".step");
   nonNegativeInteger(event.revision, field + ".revision");
   if (event.actor !== null) nonEmptyString(event.actor, field + ".actor");
-  if (!isPlainObject(event.fields))
+  if (!isRecord(event.fields))
     throw new TypeError(field + ".fields must be an object.");
 }
 
@@ -371,7 +371,7 @@ function assertLegalActionsResult(
         "game.legalActions action description must be a string."
       );
     }
-    if (item.features !== undefined && !isPlainObject(item.features)) {
+    if (item.features !== undefined && !isRecord(item.features)) {
       throw new TypeError(
         "game.legalActions action features must be an object."
       );
@@ -503,7 +503,7 @@ function assertOutcomeResult(
     throw new TypeError("game.outcome outcome must be JSON data or null.");
   }
   if (
-    !isPlainObject(value.metrics) ||
+    !isRecord(value.metrics) ||
     Object.values(value.metrics).some(
       (metric) =>
         metric !== null &&
@@ -855,6 +855,6 @@ function isJsonValue(value: unknown, depth = 0): value is PlaytestJsonValue {
   if (typeof value === "number") return Number.isFinite(value);
   if (Array.isArray(value))
     return value.every((entry) => isJsonValue(entry, depth + 1));
-  if (!isPlainObject(value)) return false;
+  if (!isRecord(value)) return false;
   return Object.values(value).every((entry) => isJsonValue(entry, depth + 1));
 }

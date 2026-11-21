@@ -4,10 +4,10 @@ import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
   type ControlApiWorkspaceRecord,
+  isRecord,
   type ReconciliationView,
   type WorkspacePlaytestApproval,
-  type WorkspaceVisualPlaytestTargetApproval
-} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
@@ -274,10 +274,6 @@ function ApprovalUnavailableNotice({
     },
     `Playtesting approval status could not be loaded (${unavailable.code}): ${unavailable.message}`
   );
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function approvalStateFromResponse(

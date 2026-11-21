@@ -13,6 +13,7 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  errorCode,
   makeRequest,
   type RecordedResponse,
   responseBody,
@@ -284,12 +285,6 @@ test("POST /control/memory/records refuses a viewer with 403", async () => {
   assert.equal(response.statusCode, 403);
   assert.equal(errorCode(response), "autodev_memory_viewer_forbidden");
 });
-
-/** `errorBody` nests the machine-readable code one level down. */
-function errorCode(response: RecordedResponse): unknown {
-  const body = responseBody(response) as { error?: { code?: unknown } } | null;
-  return body?.error?.code;
-}
 
 test("GET /control/memory/records/:id returns the record", async () => {
   const { response, body } = await callRoute(

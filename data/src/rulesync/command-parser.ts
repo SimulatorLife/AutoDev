@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { PromptAsset } from "@simulatorlife/autodev-core";
+import { isRecord, type PromptAsset } from "@simulatorlife/autodev-core";
 import { parse as parseYaml } from "yaml";
 
 /**
@@ -39,10 +39,6 @@ export class RuleSyncCommandValidationError extends Error {
     super(message);
     this.name = "RuleSyncCommandValidationError";
   }
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

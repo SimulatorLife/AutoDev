@@ -16,6 +16,7 @@ import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
+  clientSurfaceFromOriginator,
   type RecentSessionSummary,
   safeAutoDevSessionId,
   SESSION_RECENT_LIST_SCHEMA,
@@ -34,6 +35,7 @@ export interface SessionMetaPayload {
   agent_nickname?: string;
   model_provider?: string;
   cli_version?: string;
+  originator?: string;
   cwd?: string;
   timestamp?: string;
   [key: string]: unknown;
@@ -69,6 +71,7 @@ export function parseSessionMetaPayload(raw: unknown): SessionMetaPayload {
   if (typeof raw.model_provider === "string")
     meta.model_provider = raw.model_provider;
   if (typeof raw.cli_version === "string") meta.cli_version = raw.cli_version;
+  if (typeof raw.originator === "string") meta.originator = raw.originator;
   if (typeof raw.cwd === "string") meta.cwd = raw.cwd;
   if (typeof raw.timestamp === "string") meta.timestamp = raw.timestamp;
   return meta;
@@ -201,18 +204,26 @@ function addRecentSession(
         : "";
   if (!sessionId) return;
   const modified = statSync(file).mtime.toISOString();
+  const isRoot = meta.id === sessionId;
+  const observedSurface = isRoot
+    ? clientSurfaceFromOriginator(
+        typeof meta.originator === "string" ? meta.originator : null
+      )
+    : null;
   const entry = sessions.get(sessionId) ?? {
     id: sessionId,
     started: typeof meta.timestamp === "string" ? meta.timestamp : "",
     lastWrite: modified,
     threads: 0,
-    cwd: typeof meta.cwd === "string" ? meta.cwd : null
+    cwd: typeof meta.cwd === "string" ? meta.cwd : null,
+    clientSurface: observedSurface
   };
   entry.threads += 1;
   if (modified > entry.lastWrite) entry.lastWrite = modified;
-  if (meta.id === sessionId) {
+  if (isRoot) {
     if (typeof meta.timestamp === "string") entry.started = meta.timestamp;
     if (typeof meta.cwd === "string") entry.cwd = meta.cwd;
+    entry.clientSurface = observedSurface;
   }
   sessions.set(sessionId, entry);
 }

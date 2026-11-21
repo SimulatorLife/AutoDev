@@ -7,8 +7,8 @@ import {
   trace,
   type Tracer
 } from "@opentelemetry/api";
+import { isRecord } from "@simulatorlife/autodev-core";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "@simulatorlife/autodev-data";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 
 import {
   type MemoryEmbeddingProvider,

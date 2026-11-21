@@ -1,6 +1,6 @@
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
-import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
 import type {
   GameRngCheckpoint,
@@ -1147,7 +1147,7 @@ function assertNonEmptyArtifactString(
 }
 
 function assertObservationField(value: unknown, seenPaths: Set<string>): void {
-  if (!isPlainObject(value))
+  if (!isRecord(value))
     throw new TypeError("Observation allowlist entry must be an object.");
   assertOnlyKeys(value, OBSERVATION_FIELD_PROPERTIES, "Observation field");
   const fieldPath = value.fieldPath;
@@ -1197,7 +1197,7 @@ function assertObservationField(value: unknown, seenPaths: Set<string>): void {
 export function assertPlaytestObservationContract(
   value: unknown
 ): asserts value is PlaytestObservationContract {
-  if (!isPlainObject(value))
+  if (!isRecord(value))
     throw new TypeError("Observation contract must be an object.");
   assertOnlyKeys(value, OBSERVATION_CONTRACT_FIELDS, "Observation contract");
   if (value.schemaVersion !== 1)

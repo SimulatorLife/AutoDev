@@ -1,6 +1,7 @@
 /** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
 import {
   assertWorkspaceVisualPlaytestLimits,
+  hasControlCharacters,
   isPlaytestVisualPolicyId,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   type PlaytestLaunchAssignment,
@@ -138,14 +139,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     { kind: "ok", data: result.data },
     { status: 200, headers: { "cache-control": "no-store" } }
   );
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function boundedText(value: unknown, maximum: number): string | null {

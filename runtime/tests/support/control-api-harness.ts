@@ -68,6 +68,28 @@ export function responseBody(
   }
 }
 
+function isRecordedResponse(
+  value: RecordedResponse | Record<string, unknown> | null
+): value is RecordedResponse {
+  return value instanceof ResponseRecorder;
+}
+
+/**
+ * Extract the machine-readable `error.code` field from either a recorded
+ * response or an already-parsed JSON response body.
+ */
+export function errorCode(
+  responseOrBody: RecordedResponse | Record<string, unknown> | null
+): unknown {
+  const body = isRecordedResponse(responseOrBody)
+    ? responseBody(responseOrBody)
+    : responseOrBody;
+  const envelope = body?.error;
+  return typeof envelope === "object" && envelope !== null
+    ? (envelope as Record<string, unknown>).code
+    : undefined;
+}
+
 /** A request the route can read without a socket; a `body` is sent as JSON. */
 export function makeRequest(
   method: string,

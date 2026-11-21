@@ -4078,7 +4078,8 @@ test("requestSession derives identity from caller-supplied headers and payload f
   assert.deepEqual(noSignal, {
     key: PROCESS_FALLBACK_SESSION_KEY,
     scope: "process-fallback",
-    thread: null
+    thread: null,
+    clientSurface: null
   });
 
   assert.deepEqual(
@@ -4090,6 +4091,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-header-1",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-header-1"
     }
   );
@@ -4102,6 +4104,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-header-2",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-header-2"
     }
   );
@@ -4114,6 +4117,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-header-3",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-header-3"
     }
   );
@@ -4123,6 +4127,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-body-1",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-body-1"
     }
   );
@@ -4135,6 +4140,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-body-2",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-body-2"
     }
   );
@@ -4147,6 +4153,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-meta-1",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-meta-1"
     }
   );
@@ -4159,6 +4166,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-meta-2",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-meta-2"
     }
   );
@@ -4172,6 +4180,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-turn-metadata",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-turn-metadata"
     }
   );
@@ -4182,7 +4191,8 @@ test("requestSession derives identity from caller-supplied headers and payload f
     {
       key: PROCESS_FALLBACK_SESSION_KEY,
       scope: "process-fallback",
-      thread: null
+      thread: null,
+      clientSurface: null
     }
   );
   assert.deepEqual(
@@ -4190,7 +4200,8 @@ test("requestSession derives identity from caller-supplied headers and payload f
     {
       key: PROCESS_FALLBACK_SESSION_KEY,
       scope: "process-fallback",
-      thread: null
+      thread: null,
+      clientSurface: null
     }
   );
 
@@ -4204,6 +4215,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "sess-header",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "sess-header"
     }
   );
@@ -4222,6 +4234,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
     key: "root-1",
     scope: "identified",
     thread: "child-1",
+    clientSurface: null,
     sessionId: "root-1"
   });
   assert.equal(
@@ -4256,6 +4269,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "root-canon-only",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "root-canon-only"
     }
   );
@@ -4281,6 +4295,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "root-canon",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "root-canon"
     }
   );
@@ -4295,6 +4310,7 @@ test("requestSession derives identity from caller-supplied headers and payload f
       key: "root-alias-only",
       scope: "identified",
       thread: null,
+      clientSurface: null,
       sessionId: "root-alias-only"
     }
   );
@@ -4307,7 +4323,8 @@ test("requestSession derives identity from caller-supplied headers and payload f
   assert.deepEqual(threadOnly, {
     key: "root-thread-only",
     scope: "identified",
-    thread: "root-thread-only"
+    thread: "root-thread-only",
+    clientSurface: null
   });
   assert.equal(
     Object.hasOwn(threadOnly, "sessionId"),

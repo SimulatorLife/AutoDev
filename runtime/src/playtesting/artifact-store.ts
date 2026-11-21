@@ -57,10 +57,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import {
-  isPlainObject,
+  isRecord,
   type PlaytestArtifactReference,
   SHA256_PATTERN
 } from "@simulatorlife/autodev-core";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 function encodeWindowEntries(
   entries: readonly unknown[],
@@ -657,7 +658,7 @@ function assertExistingBlobCompatible(
 
 function assertNotHumanEntry(entry: unknown): void {
   if (
-    isPlainObject(entry) &&
+    isRecord(entry) &&
     ("pseudonymousParticipantId" in entry ||
       entry.schema === "autodev-human-experience-response-v1" ||
       entry.schema === "autodev-human-playtest-study-v1" ||
@@ -668,18 +669,6 @@ function assertNotHumanEntry(entry: unknown): void {
       "Human responses must not enter this generic LLM artifact store; participant data is governed by a separate consent-scoped store."
     );
   }
-}
-
-function isWithin(parent: string, child: string): boolean {
-  const resolvedParent = path.resolve(parent);
-  const resolvedChild = path.resolve(child);
-  if (resolvedParent === resolvedChild) return true;
-  const relative = path.relative(resolvedParent, resolvedChild);
-  return (
-    relative !== "" &&
-    !relative.startsWith(`..${path.sep}`) &&
-    relative !== ".."
-  );
 }
 
 function resolveCanonicalRoot(
@@ -745,7 +734,7 @@ function ensureOwnedDirectory(
   root: string,
   fileSystem: PlaytestArtifactFileSystem
 ): void {
-  if (!isWithin(root, directory)) {
+  if (!isPathWithin(root, directory)) {
     throw new PlaytestArtifactConfigurationError(
       `Path ${directory} escapes the canonical root.`
     );
@@ -782,7 +771,7 @@ function safeJoin(root: string, ...segments: readonly string[]): string {
     }
   }
   const joined = path.join(root, ...segments);
-  if (!isWithin(root, joined)) {
+  if (!isPathWithin(root, joined)) {
     throw new PlaytestArtifactConfigurationError(
       `Path ${joined} escapes the canonical root.`
     );
@@ -847,7 +836,7 @@ function readMetadata(
       `Artifact metadata at ${metadataFile} is not valid JSON: ${(error as Error).message}`
     );
   }
-  if (!isPlainObject(parsed)) {
+  if (!isRecord(parsed)) {
     throw new PlaytestArtifactFormatError(
       "Artifact metadata must be a JSON object."
     );
@@ -1786,7 +1775,7 @@ export class PlaytestArtifactStore {
   }
 
   private removeOwnedFile(target: string): void {
-    if (!isWithin(appendSeparator(this.root), target)) {
+    if (!isPathWithin(appendSeparator(this.root), target)) {
       throw new PlaytestArtifactConfigurationError(
         `Refusing to remove path ${target} outside the canonical root.`
       );

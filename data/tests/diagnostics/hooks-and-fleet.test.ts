@@ -8,7 +8,7 @@ import {
   hookDenialsResponse,
   summarizeHookDenials
 } from "../../src/diagnostics/hook-denials.ts";
-import { fixture, hookLine } from "./fixture.ts";
+import { fixture, hookLine, OTHER } from "./fixture.ts";
 
 const NOW = Date.parse("2026-09-19T12:00:00.000Z");
 
@@ -114,6 +114,9 @@ test("the fleet scan aggregates the newest sessions into one row each", async ()
     assert.equal(root.topFailureCategory, "transport-closed");
     assert.equal(root.routerRequests, 2);
     assert.equal(root.routerFailures, 1);
+    assert.equal(root.clientSurface, "codex_desktop");
+    const other = scan.sessions.find((session) => session.id === OTHER);
+    assert.equal(other?.clientSurface, null);
   } finally {
     cleanup();
   }

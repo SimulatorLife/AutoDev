@@ -18,6 +18,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { atomicWriteSync } from "../files/atomic-write.ts";
+import { isPathWithin } from "../files/path-containment.ts";
 
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const OWNER_DIRECTORY_MODE = 0o700;
@@ -88,20 +89,12 @@ function assertWorkspaceId(workspaceId: string): void {
   }
 }
 
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== "..")
-  );
-}
-
 function workspaceKey(workspaceId: string): string {
   return createHash("sha256").update(workspaceId).digest("hex");
 }
 
 function ensurePrivateDirectory(directory: string, root: string): void {
-  if (!isWithin(root, directory)) {
+  if (!isPathWithin(root, directory)) {
     throw new WorkspacePlaytestApprovalStoreError(
       "Approval directory escaped its local Workspaces root."
     );
@@ -117,7 +110,7 @@ function ensurePrivateDirectory(directory: string, root: string): void {
     );
   }
   const canonical = realpathSync(directory);
-  if (!isWithin(root, canonical)) {
+  if (!isPathWithin(root, canonical)) {
     throw new WorkspacePlaytestApprovalStoreError(
       "Workspace approval directory resolves outside its local root."
     );
@@ -179,7 +172,7 @@ export class WorkspacePlaytestApprovalRepository {
       );
     }
     const canonical = realpathSync(file);
-    if (!isWithin(directory, canonical)) {
+    if (!isPathWithin(directory, canonical)) {
       throw new WorkspacePlaytestApprovalStoreError(
         "Workspace approval record resolves outside its workspace directory."
       );

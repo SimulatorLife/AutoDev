@@ -1,6 +1,7 @@
 import {
   type EvaluationMetric,
-  type EvaluationResult
+  type EvaluationResult,
+  isRecord
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -65,10 +66,6 @@ function verdictPass(verdict: string | undefined): boolean | null {
   if (PASSING_VERDICTS.has(normalized)) return true;
   if (FAILING_VERDICTS.has(normalized)) return false;
   return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The identity and timing every row needs before it can describe a run. */

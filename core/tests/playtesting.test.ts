@@ -35,7 +35,6 @@ import {
   expandPlaytestRegistry,
   fixtureAgencyDimensionRubric,
   groupByStratum,
-  isPlainObject,
   isValidPlaytestInterval,
   lookupPlaytestMetric,
   type PlaytestKnownEvidenceIndex,
@@ -51,18 +50,6 @@ import { assertWorkspacePlaytestApproval } from "../src/workspaces/playtesting.t
 
 const WORKSPACE_ID = "fixture-game";
 const MEASUREMENT_VERSION = "fixture-v1";
-
-test("isPlainObject preserves structural object guard behavior", () => {
-  assert.equal(isPlainObject({}), true);
-  assert.equal(isPlainObject(Object.create(null)), true);
-  assert.equal(isPlainObject(new Date()), true);
-  assert.equal(isPlainObject(Object.create({ inherited: true })), true);
-  assert.equal(isPlainObject(new (class Fixture {})()), true);
-  assert.equal(isPlainObject(null), false);
-  assert.equal(isPlainObject([]), false);
-  assert.equal(isPlainObject("object"), false);
-  assert.equal(isPlainObject(1), false);
-});
 
 // --- §1 fixture registry ---------------------------------------------------
 

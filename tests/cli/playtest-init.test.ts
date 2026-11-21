@@ -15,7 +15,8 @@ import {
   expandPlaytestRegistry,
   type PlaytestMetricRegistryInput,
   PLAYTESTS_REGISTRY_SCHEMA
-} from "../../core/src/playtesting/index.ts";
+} from "@simulatorlife/autodev-core";
+
 import {
   checkPlaytestIntegration,
   dispatchPlaytestCommand,

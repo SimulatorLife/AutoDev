@@ -51,8 +51,8 @@
  * `contentHash` computation to its caller.
  */
 
+import { isRecord } from "../shared/object-guards.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestCoverageModality,
   PLAYTESTS_COVERAGE_MODALITIES
@@ -274,11 +274,11 @@ const SCOPE_KEYS = ["scenarioFamily", "phase", "modality"] as const;
 export function buildPlaytestFindingIdentity(
   input: PlaytestFindingIdentityInput
 ): PlaytestFindingIdentity {
-  if (!isPlainObject(input)) {
+  if (!isRecord(input)) {
     throw new TypeError("Finding identity input must be an object.");
   }
   assertOnlyKeys(input, TOP_LEVEL_KEYS, "Finding identity");
-  if (!isPlainObject(input.failureSignature)) {
+  if (!isRecord(input.failureSignature)) {
     throw new TypeError("Finding identity failureSignature must be an object.");
   }
   assertOnlyKeys(
@@ -286,7 +286,7 @@ export function buildPlaytestFindingIdentity(
     FAILURE_SIGNATURE_KEYS,
     "Finding identity failureSignature"
   );
-  if (!isPlainObject(input.scope)) {
+  if (!isRecord(input.scope)) {
     throw new TypeError("Finding identity scope must be an object.");
   }
   assertOnlyKeys(input.scope, SCOPE_KEYS, "Finding identity scope");

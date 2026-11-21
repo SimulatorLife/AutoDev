@@ -36,6 +36,7 @@ import {
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 import type {
   PlaytestAdapterExit,
@@ -210,14 +211,6 @@ export interface PlaytestSandboxLaunchOptions {
   readonly now?: () => number;
 }
 
-function isWithin(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== "..")
-  );
-}
-
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const SNAPSHOT_COMMAND_TIMEOUT_MS = 180_000;
 /**
@@ -302,7 +295,7 @@ function assertSnapshotDirectory(
     !info.isDirectory() ||
     info.isSymbolicLink() ||
     canonical !== absolute ||
-    !isWithin(privateWorkspaceDirectory, canonical)
+    !isPathWithin(privateWorkspaceDirectory, canonical)
   ) {
     throw new PlaytestSandboxApprovalError(
       "Committed build snapshot must be a real directory inside its private workspace snapshot root."
@@ -461,7 +454,7 @@ function resolveCommittedBuildCheckout(
     );
   }
   if (
-    !isWithin(root, workingDirectory) ||
+    !isPathWithin(root, workingDirectory) ||
     !statSync(workingDirectory).isDirectory()
   ) {
     throw new PlaytestSandboxApprovalError(
@@ -843,7 +836,7 @@ export function readStagedPlaytestArtifact(
     } catch {
       continue;
     }
-    if (!isWithin(root, candidate) || realArtifactPath !== candidate) {
+    if (!isPathWithin(root, candidate) || realArtifactPath !== candidate) {
       throw new PlaytestSandboxExecutionError(
         "The staged adapter artifact escaped its private output directory.",
         { category: ARTIFACT_ERROR_CATEGORY }

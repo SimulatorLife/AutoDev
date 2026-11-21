@@ -294,7 +294,7 @@ Add `diagnostics: "/control/diagnostics"` to `CONTROL_API_PATHS` and typed serve
 
 Pure server-rendered React component using only shared dark theme tokens and primitives from `console/src/components/` (`StatGrid`, `StatCard`, `BarChart`, `DataTable`, `TabNav`, `Pagination`, `DetailGrid`, `Callout`, `Tag`, `NavigationLink`) — zero `"use client"`, zero hooks, verified by [`console/tests/style-vocabulary.test.ts`](../console/tests/style-vocabulary.test.ts):
 
-- **Session Context Header & Alert Strip:** Resolved root session ID (noting when matched via child thread ID), workspace (`cwd`), start/end timestamps + duration, CLI version, live/open-turn status badge, **Clear session** link, and warning callouts for bridge alerts, deployment drift, or `found: false`.
+- **Session Context Header & Alert Strip:** Resolved root session ID (noting when matched via child thread ID), workspace (`cwd`), start/end timestamps + duration, CLI version, client surface (`clientSurface` from `session_meta.originator`, see `docs/autodev-console-target-state.md` **Client surface**), live/open-turn status badge, **Clear session** link, and warning callouts for bridge alerts, deployment drift, or `found: false`.
 - **`TabNav` (preserving `sessionId` and `range` in URL):**
   - **`Overview`**:
     - Session KPI `StatGrid`s (Total Tokens & Reasoning %, Cache-Read Rate / Cache Drops / Peak Input, Router Requests / Failures / Skipped / Retries, Estimated Cost from OpenLIT spans, Turns & 60s+ Gaps, Context Compactions & Replacement Size/Images, Prompt & Skill Overhead, Tool Calls / Failures / `PreToolUse` Hook Blocks).

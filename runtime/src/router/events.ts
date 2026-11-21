@@ -1,4 +1,7 @@
-import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
+import {
+  type ClientSurface,
+  isClientSurface,
+  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,
@@ -36,6 +39,8 @@ export interface RouterEvent {
   thread: string | null;
   /** Canonical live-agent identity; differs from thread for delegated threads. */
   activitySubject?: string | null;
+  /** The Codex client surface that originated the request, when observed. */
+  clientSurface?: ClientSurface | null;
   phase: string;
   role: string | null;
   /**
@@ -71,6 +76,8 @@ export interface RecordRouterEventInput {
   thread?: string | null | undefined;
   /** Canonical live-agent identity used for active-session joins. */
   activitySubject?: string | null | undefined;
+  /** Observed Codex client surface for this request, if any. */
+  clientSurface?: ClientSurface | null | undefined;
   role?: string | null | undefined;
   requestedModel?: string | null | undefined;
   provider?: string | null | undefined;
@@ -163,7 +170,11 @@ export class RouterEventRecorder {
   // canonical activity subject. Bounded, oldest first.
   private readonly requestIdentities = new Map<
     string,
-    { thread: string | null; activitySubject: string | null }
+    {
+      thread: string | null;
+      activitySubject: string | null;
+      clientSurface: ClientSurface | null;
+    }
   >();
   private readonly maxRecentEvents: number;
   private readonly routerInstanceId: string;
@@ -204,20 +215,31 @@ export class RouterEventRecorder {
   restore(events: unknown[]): void {
     this.clear();
     if (!Array.isArray(events)) return;
-    const valid = events.filter(
-      (e): e is RouterEvent => e !== null && typeof e === "object"
-    );
+    const valid = events
+      .filter((e): e is RouterEvent => e !== null && typeof e === "object")
+      .map((e) => {
+        if (!Object.hasOwn(e, "clientSurface")) return e;
+        if (isClientSurface(e.clientSurface)) return e;
+        const { clientSurface: _discarded, ...rest } = e;
+        return rest as RouterEvent;
+      });
     this.recentEvents.push(...valid.slice(-this.maxRecentEvents));
   }
 
   noteRequestIdentity(
     requestId: string,
     thread: string | null,
-    activitySubject: string
+    activitySubject: string,
+    clientSurface: ClientSurface | null = null
   ): void {
-    if (!thread && !activitySubject) return;
+    const validSurface = isClientSurface(clientSurface) ? clientSurface : null;
+    if (!thread && !activitySubject && !validSurface) return;
     this.requestIdentities.delete(requestId);
-    this.requestIdentities.set(requestId, { thread, activitySubject });
+    this.requestIdentities.set(requestId, {
+      thread,
+      activitySubject,
+      clientSurface: validSurface
+    });
     while (this.requestIdentities.size > 4096) {
       const oldest = this.requestIdentities.keys().next().value;
       if (oldest === undefined) break;
@@ -232,6 +254,13 @@ export class RouterEventRecorder {
       : undefined;
     const activitySubject =
       input.activitySubject ?? requestIdentity?.activitySubject ?? null;
+    const rawClientSurface =
+      input.clientSurface === undefined
+        ? (requestIdentity?.clientSurface ?? null)
+        : input.clientSurface;
+    const clientSurface = isClientSurface(rawClientSurface)
+      ? rawClientSurface
+      : null;
     const rawWorkspace = input.workspace;
     let workspaceKey: string | null = null;
     let cwd: string | null = input.cwd ?? null;
@@ -257,6 +286,7 @@ export class RouterEventRecorder {
       routerInstanceId: this.routerInstanceId,
       requestId: input.requestId ?? null,
       ...(activitySubject ? { activitySubject } : {}),
+      ...(clientSurface ? { clientSurface } : {}),
       thread: input.thread ?? requestIdentity?.thread ?? null,
       phase: input.phase,
       role: effectiveRole,
@@ -329,12 +359,14 @@ export function recordRouterEvent(input: RecordRouterEventInput): RouterEvent {
 export function noteRequestIdentity(
   requestId: string,
   thread: string | null,
-  activitySubject: string
+  activitySubject: string,
+  clientSurface: ClientSurface | null = null
 ): void {
   getDefaultRouterEventRecorder().noteRequestIdentity(
     requestId,
     thread,
-    activitySubject
+    activitySubject,
+    clientSurface
   );
 }
 

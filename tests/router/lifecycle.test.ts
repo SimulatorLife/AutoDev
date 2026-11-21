@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:http";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +11,8 @@ import { fileURLToPath } from "node:url";
 
 import * as lifecycleModule from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { RouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
+
+import { freePort } from "../support/test-helpers.ts";
 
 test("the lifecycle module publishes one path into the capability", () => {
   // The owner and the accessor that reaches it are the whole surface. The
@@ -38,21 +39,6 @@ const ROUTER_SERVER = fileURLToPath(
 const QUOTA_AXI_SNAPSHOT = fileURLToPath(
   new URL("../fixtures/quota-axi-snapshot.json", import.meta.url)
 );
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("port server did not expose an address"));
-        return;
-      }
-      server.close(() => resolve(address.port));
-    });
-  });
-}
 
 test("RouterLifecycle initializes in ready state and tracks status", () => {
   const lifecycle = new RouterLifecycle({

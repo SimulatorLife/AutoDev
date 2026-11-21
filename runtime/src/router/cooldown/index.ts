@@ -1,4 +1,6 @@
-import type { ProviderRole } from "@simulatorlife/autodev-core";
+import {
+  isRecord,
+  type ProviderRole} from "@simulatorlife/autodev-core";
 import {
   isHardLimitClass,
   normalizeResetsAt
@@ -498,10 +500,6 @@ function liveEntry(
   if (entry.until > now) return entry;
   entries.delete(key);
   return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export const COOLDOWNS = new ProviderCooldowns();

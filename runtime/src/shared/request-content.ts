@@ -9,7 +9,7 @@
  * carries an image" means.
  */
 
-import { isRecord } from "./object-guards.ts";
+import { isRecord } from "@simulatorlife/autodev-core";
 
 const DATA_URL_PATTERN = /^data:([^;,]+);base64,(.*)$/su;
 

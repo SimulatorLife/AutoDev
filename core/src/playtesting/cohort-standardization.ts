@@ -59,9 +59,9 @@
  *   the exact frozen benchmark that produced the comparison.
  */
 
+import { isRecord } from "../shared/object-guards.ts";
 import type { PlaytestBenchmark } from "./artifacts.ts";
 import { assertPlaytestCohortWeights } from "./benchmark.ts";
-import { isPlainObject } from "./object-guards.ts";
 
 export const PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA =
   "autodev-playtest-cohort-standardization-v1" as const;
@@ -211,7 +211,7 @@ function assertPlaytestCohortObservation(
   value: unknown,
   label: string
 ): asserts value is PlaytestCohortObservation {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
   assertNonNegativeSafeInteger(value.numerator, `${label}.numerator`);
@@ -236,13 +236,13 @@ function assertPlaytestBuildCohortObservations(
   label: string,
   benchmarkKeys: ReadonlySet<string>
 ): asserts value is PlaytestBuildCohortObservations {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
   if (!nonEmptyString(value.buildId)) {
     throw new TypeError(`${label}.buildId must be a non-empty string.`);
   }
-  if (!isPlainObject(value.cohortObservations)) {
+  if (!isRecord(value.cohortObservations)) {
     throw new TypeError(`${label}.cohortObservations must be an object.`);
   }
   const cohortKeys = Object.keys(value.cohortObservations);
@@ -282,10 +282,10 @@ function assertPlaytestCohortStandardizationInput(
   value: unknown,
   label: string
 ): asserts value is PlaytestCohortStandardizationInput {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`${label} must be an object.`);
   }
-  if (!isPlainObject(value.benchmark)) {
+  if (!isRecord(value.benchmark)) {
     throw new TypeError(`${label}.benchmark must be an object.`);
   }
   // Re-validate cohortWeights defensively. The canonical validator lives
@@ -332,7 +332,7 @@ function assertPlaytestCohortStandardizationInput(
   for (let index = 0; index < value.builds.length; index += 1) {
     const build = value.builds[index];
     const labelForBuild = `${label}.builds[${String(index)}]`;
-    if (!isPlainObject(build)) {
+    if (!isRecord(build)) {
       throw new TypeError(`${labelForBuild} must be an object.`);
     }
     if (!nonEmptyString(build.buildId)) {

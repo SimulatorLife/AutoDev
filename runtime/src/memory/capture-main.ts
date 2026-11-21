@@ -12,13 +12,14 @@ import {
   EXPERIENCE_VALIDATION_STATES,
   type ExperienceEnvelope,
   type ExperienceOutcome,
+  isRecord,
   MEMORY_EVIDENCE_KINDS,
   type MemoryActor,
   type MemoryExecutionMode,
   type MemoryReadContext,
   parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 import { createPostgresMemoryRuntime } from "./postgres.ts";
 import {
@@ -431,13 +432,13 @@ async function readTranscriptSource(
   try {
     root = await realpath(configuration.transcriptRoot);
     const candidate = path.resolve(root, configuration.transcriptRelativePath);
-    if (!isWithin(root, candidate)) {
+    if (candidate === root || !isPathWithin(root, candidate)) {
       throw new MemoryCaptureConfigurationError(
         "Native transcript path must remain beneath its configured root."
       );
     }
     file = await realpath(candidate);
-    if (!isWithin(root, file)) {
+    if (file === root || !isPathWithin(root, file)) {
       throw new MemoryCaptureConfigurationError(
         "Native transcript resolves outside its configured root."
       );
@@ -473,16 +474,6 @@ async function readTranscriptSource(
       "Configured native transcript could not be read."
     );
   }
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return Boolean(
-    relative &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
 }
 
 function captureExperienceId(input: {

@@ -9,7 +9,7 @@
  * orchestrator bootstrap recovery.
  */
 
-import { isRecord } from "./object-guards.ts";
+import { isRecord } from "@simulatorlife/autodev-core";
 
 export const ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER =
   "# Root orchestrator bootstrap";

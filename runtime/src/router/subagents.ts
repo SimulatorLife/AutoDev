@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import {
   type AgentActivityTracker,
   PROCESS_FALLBACK_SESSION_KEY
@@ -10,7 +11,6 @@ import {
   type ExecutionContract,
   type RoleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import type { RecordRouterEventInput } from "./events.ts";

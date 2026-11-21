@@ -11,6 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 import { NODE_SHEBANG } from "./node-shebang.ts";
+import { freePort } from "./support/test-helpers.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "runtime/src/providers/claude.ts");
@@ -48,22 +49,6 @@ function replaceTokens(value: any): any {
       Object.entries(value).map(([key, nested]) => [key, replaceTokens(nested)])
     );
   return value;
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("port server did not expose an address"));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => (error ? reject(error) : resolve(port)));
-    });
-  });
 }
 
 async function waitForHealth(

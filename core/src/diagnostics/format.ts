@@ -302,7 +302,7 @@ function renderThreadSection(
   } = {}
 ): string[] {
   const lines: string[] = [
-    `${THREAD_HEADING}${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? DASH} model=${thread.model ?? DASH} codex=${thread.cliVersion ?? DASH}`,
+    `${THREAD_HEADING}${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? DASH} model=${thread.model ?? DASH} codex=${thread.cliVersion ?? DASH} client=${thread.clientSurface ?? DASH}`,
     `${INDENT}session=${thread.sessionId ?? DASH} parent=${thread.parentId ?? DASH} ${thread.start ?? QUESTION} → ${thread.end ?? QUESTION}`,
     `${INDENT}file=${thread.file}`
   ];
@@ -473,7 +473,7 @@ export function renderRecentSessions(
   return response.sessions
     .map(
       (session) =>
-        `${session.lastWrite} ${session.id} threads=${session.threads} started=${session.started} cwd=${session.cwd ?? DASH}`
+        `${session.lastWrite} ${session.id} threads=${session.threads} client=${session.clientSurface ?? DASH} started=${session.started} cwd=${session.cwd ?? DASH}`
     )
     .join("\n");
 }
@@ -491,7 +491,7 @@ export function renderFleetSessionRow(row: FleetSessionRow): string {
     0
   );
   return (
-    `${INDENT}${row.lastWrite.slice(0, 16)} ${row.id} [${repo}] th=${row.threads} tok=${formatCompactNumber(row.totalTokens)} ` +
+    `${INDENT}${row.lastWrite.slice(0, 16)} ${row.id} [${repo}] client=${row.clientSurface ?? DASH} th=${row.threads} tok=${formatCompactNumber(row.totalTokens)} ` +
     `cache=${row.cacheHitPct ?? QUESTION}${PERCENT} drops=${row.cacheDrops} comp=${row.compactions} skills<=${row.maxSkillsLoaded} ` +
     `fail=${row.toolFailures}${topFail} hooks=${row.preToolUseBlocks} skip=${skipCount} req=${providerSummary || DASH}`
   );

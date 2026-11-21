@@ -1,12 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  lstatSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -15,14 +8,7 @@ import {
   ensureRouterAuth
 } from "@simulatorlife/autodev-runtime/platform/install-state";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-install-state-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "../support/test-helpers.ts";
 
 test("router auth creates a private token, preserves existing env content, and is idempotent", () =>
   withTempDir((directory) => {

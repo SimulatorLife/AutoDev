@@ -86,6 +86,7 @@ function report(): SessionDiagnosticsReport {
     requestedId: SESSION_ID,
     rootSessionId: SESSION_ID,
     matchedByThreadId: false,
+    clientSurface: "codex_desktop",
     threads: [
       {
         id: THREAD_ID,
@@ -96,6 +97,7 @@ function report(): SessionDiagnosticsReport {
         model: "autodev/worker",
         modelProvider: "claude",
         cliVersion: "1.2.3",
+        clientSurface: "codex_desktop",
         cwd: "/repo",
         file: "/repo/.rollout.jsonl",
         start: "2026-11-10T12:00:00.000Z",
@@ -256,7 +258,8 @@ function recentList(): SessionRecentListResponse {
         started: "2026-11-10T12:00:00.000Z",
         lastWrite: "2026-11-10T12:00:10.000Z",
         threads: 2,
-        cwd: "/repo"
+        cwd: "/repo",
+        clientSurface: "codex_desktop"
       }
     ]
   };
@@ -288,6 +291,7 @@ function fleetScan(): SessionFleetScanResponse {
         started: "2026-11-10T12:00:00.000Z",
         lastWrite: "2026-11-10T12:00:10.000Z",
         cwd: "/repo",
+        clientSurface: "codex_desktop",
         threads: 2,
         totalTokens: 1000,
         inputTokens: 800,
@@ -531,13 +535,58 @@ test("the recent-sessions text lists the session and its thread count", () => {
   const text = renderRecentSessions(recentList());
   assert.match(text, /01a0ba14-d54c-78f2-9367-3f80e9a8f75f/u);
   assert.match(text, /threads=2/u);
+  assert.match(text, /client=codex_desktop/u);
 });
 
 test("the fleet scan text carries the totals and the per-session row", () => {
   const text = renderFleetScanReport(fleetScan());
   assert.match(text, /fleet scan \(1 sessions, 2 threads\)/u);
+  assert.match(text, /client=codex_desktop/u);
   assert.match(text, /tokens=/u);
   assert.match(text, /pretooluse-hook/u);
+});
+
+test("diagnostics guards reject unrecognised clientSurface values and accept null", () => {
+  assert.equal(
+    isSessionDiagnosticsReport({ ...report(), clientSurface: null }),
+    true
+  );
+  assert.equal(
+    isSessionDiagnosticsReport({ ...report(), clientSurface: "bogus" }),
+    false
+  );
+  assert.equal(
+    isSessionDiagnosticsReport({
+      ...report(),
+      threads: [{ ...report().threads[0]!, clientSurface: "bogus" }]
+    }),
+    false
+  );
+  assert.equal(
+    isSessionRecentListResponse({
+      ...recentList(),
+      sessions: [{ ...recentList().sessions[0]!, clientSurface: "bogus" }]
+    }),
+    false
+  );
+  assert.equal(
+    isSessionFleetScanResponse({
+      ...fleetScan(),
+      sessions: [{ ...fleetScan().sessions[0]!, clientSurface: "bogus" }]
+    }),
+    false
+  );
+});
+
+test("thread text rendering carries clientSurface or dash when unobserved", () => {
+  const observed = renderSessionDiagnosticsReport(report());
+  assert.match(observed, /codex=1\.2\.3 client=codex_desktop/u);
+  const unobserved = renderSessionDiagnosticsReport({
+    ...report(),
+    clientSurface: null,
+    threads: [{ ...report().threads[0]!, clientSurface: null }]
+  });
+  assert.match(unobserved, /codex=1\.2\.3 client=-/u);
 });
 
 test("the hook denial text separates an empty window from a populated one", () => {

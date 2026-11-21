@@ -14,6 +14,7 @@
 
 import {
   type FleetSessionRow,
+  formatClientSurface,
   type SessionFleetScanResponse,
   type SessionHookDenialsResponse
 } from "@simulatorlife/autodev-core";
@@ -140,9 +141,20 @@ function sessionColumns(
       meta: { weight: 260, align: "tokens" }
     },
     {
+      id: "client",
+      header: "Client",
+      cell: ({ row: { original: row } }) =>
+        formatClientSurface(row.clientSurface),
+      meta: { weight: 150, align: "tokens" }
+    },
+    {
       id: "lastWrite",
       header: "Last write",
-      cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.lastWrite, label: "Last write" }),
+      cell: ({ row: { original: row } }) =>
+        React.createElement(InstantDisplay, {
+          value: row.lastWrite,
+          label: "Last write"
+        }),
       meta: { weight: 180, align: "tokens" }
     },
     {
@@ -327,7 +339,15 @@ function renderHookDenials(
         React.createElement(StatCard, {
           title: "PreToolUse denials",
           value: count(summary.preToolUseDenials),
-          subtitle: React.createElement(React.Fragment, null, "Since ", React.createElement(InstantDisplay, { value: summary.cutoff, label: "Since" }))
+          subtitle: React.createElement(
+            React.Fragment,
+            null,
+            "Since ",
+            React.createElement(InstantDisplay, {
+              value: summary.cutoff,
+              label: "Since"
+            })
+          )
         }),
         React.createElement(StatCard, {
           title: "Prompt submits",

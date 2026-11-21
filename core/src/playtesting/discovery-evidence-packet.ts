@@ -16,6 +16,7 @@
  * artifact mechanics as the confirmatory packet so an analyst can cite
  * observations by {kind,id} across packet families.
  */
+import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
   type PlaytestDiscoverySessionReview,
@@ -41,7 +42,6 @@ import {
   assertUniqueSelectedEventIds,
   buildBoundedEvidenceWindows,
   type EvidenceWindowLimits,
-  isCount,
   isJson,
   isPlaytestEvidencePacketId,
   isText,
@@ -53,7 +53,6 @@ import {
   suppliedArtifactsFor
 } from "./evidence-trace-selection.ts";
 import { assertPlaytestVisualEpisode } from "./execution-provenance.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   assertPlaytestPlayerDebrief,
   type PlaytestPlayerDebriefV1
@@ -825,7 +824,7 @@ export function buildPlaytestDiscoveryEvidencePacket(
       PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS
     ) ||
     input.tokenBudget === 0 ||
-    !isPlainObject(input.frameHashes)
+    !isRecord(input.frameHashes)
   ) {
     throw new TypeError("Discovery packet identity or budget is invalid.");
   }
@@ -1043,7 +1042,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
 ): asserts value is PlaytestDiscoveryEvidencePacket {
   const flags = discoveryPacketFlags(value);
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     (value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA &&
       !flags.isV2 &&
       !flags.isV3) ||
@@ -1070,7 +1069,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
     !PLAYTESTS_EPISODE_STATES.includes(
       value.episodeStatus as PlaytestEpisode["status"]
     ) ||
-    !isPlainObject(value.termination) ||
+    !isRecord(value.termination) ||
     !PLAYTESTS_EPISODE_TERMINATION_REASONS.includes(
       value.termination.reason as PlaytestEpisode["termination"]["reason"]
     ) ||
@@ -1190,12 +1189,12 @@ interface DiscoveryPacketFlags {
 
 function discoveryPacketFlags(value: unknown): DiscoveryPacketFlags {
   const isV3 =
-    isPlainObject(value) &&
+    isRecord(value) &&
     value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3;
   const isV2 =
-    isPlainObject(value) &&
+    isRecord(value) &&
     value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
-  const hasAreasOfFocus = isPlainObject(value) && "areasOfFocus" in value;
+  const hasAreasOfFocus = isRecord(value) && "areasOfFocus" in value;
   const packetKeys =
     isV3 || isV2
       ? DISCOVERY_PACKET_V2_KEYS
@@ -1280,7 +1279,7 @@ function assertDiscoveryPacketOmittedFrameRecords(
 ): void {
   for (const omitted of omittedFrames) {
     if (
-      !isPlainObject(omitted) ||
+      !isRecord(omitted) ||
       Object.keys(omitted).length !== 3 ||
       Object.keys(omitted).some(
         (key) => !["frameId", "step", "reason"].includes(key)
@@ -1312,7 +1311,7 @@ function assertDiscoveryPacketOmittedWindows(
 ): void {
   for (const window of windows) {
     if (
-      !isPlainObject(window) ||
+      !isRecord(window) ||
       Object.keys(window).length !== 3 ||
       Object.keys(window).some(
         (key) => !["startStep", "endStep", "reason"].includes(key)
@@ -1413,7 +1412,7 @@ function assertTarget(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket["target"] {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 4 ||
     Object.keys(value).some(
       (key) =>
@@ -1439,7 +1438,7 @@ function assertPolicy(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket["policy"] {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 3 ||
     Object.keys(value).some(
       (key) => !["policyId", "policyVersion", "cohortId"].includes(key)
@@ -1458,7 +1457,7 @@ function assertModel(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket["model"] {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 3 ||
     Object.keys(value).some(
       (key) => !["modelId", "modelRevision", "promptHash"].includes(key)
@@ -1480,7 +1479,7 @@ function assertSessionContext(
   expectedBatchId: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket["sessionContext"] {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 4 ||
     Object.keys(value).some(
       (key) => !["status", "reason", "batchId", "reviewSelection"].includes(key)
@@ -1495,7 +1494,7 @@ function assertSessionContext(
   }
   const review = value.reviewSelection;
   if (
-    !isPlainObject(review) ||
+    !isRecord(review) ||
     Object.keys(review).length !== 2 ||
     review.status !== "unavailable" ||
     review.reason !== VISUAL_DISCOVERY_SESSION_LEVEL
@@ -1510,7 +1509,7 @@ function assertFrame(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidenceFrame {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !isText(value.frameId) ||
     !isCount(value.step) ||
     !isCount(value.frameIndex) ||
@@ -1534,7 +1533,7 @@ function assertSelectedWindow(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidenceWindow {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 4 ||
     Object.keys(value).some(
       (key) =>
@@ -1575,7 +1574,7 @@ function assertDiscoveryWindowStep(
   expectedStep: number
 ): asserts value is PlaytestDiscoveryEvidenceWindowStep {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 4 ||
     Object.keys(value).some(
       (key) => !["step", "phaseId", "events", "frameRefs"].includes(key)
@@ -1600,7 +1599,7 @@ function assertStepEvidenceV2(
   value: unknown
 ): asserts value is PlaytestDiscoveryStepEvidenceV2 {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !isCount(value.step) ||
     !["structured", "visual-only"].includes(
       value.observationVisibility as string
@@ -1626,7 +1625,7 @@ function assertStepEvidenceV2(
   }
   if (
     value.preActionPrediction !== null &&
-    (!isPlainObject(value.preActionPrediction) ||
+    (!isRecord(value.preActionPrediction) ||
       !isText(
         (value.preActionPrediction as Record<string, unknown>).intention
       ) ||
@@ -1649,7 +1648,7 @@ function assertStepEvidenceV2(
   }
   for (const note of value.observationNotes) {
     if (
-      !isPlainObject(note) ||
+      !isRecord(note) ||
       !isText(note.noteId) ||
       !isCount(note.step) ||
       !isText(note.label) ||
@@ -1665,7 +1664,7 @@ function assertStepEvidenceV2(
   }
   for (const affordance of value.affordanceNotes) {
     if (
-      !isPlainObject(affordance) ||
+      !isRecord(affordance) ||
       !isText(affordance.noteId) ||
       !isCount(affordance.step) ||
       !isText(affordance.controlId)
@@ -1685,7 +1684,7 @@ function assertStepEvidence(
   value: unknown
 ): asserts value is PlaytestDiscoveryStepEvidence {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !isCount(value.step) ||
     !["structured", "visual-only"].includes(
       value.observationVisibility as string
@@ -1711,7 +1710,7 @@ function assertStepEvidence(
   }
   if (
     value.preActionPrediction !== null &&
-    (!isPlainObject(value.preActionPrediction) ||
+    (!isRecord(value.preActionPrediction) ||
       !isText(
         (value.preActionPrediction as Record<string, unknown>).intention
       ) ||
@@ -1734,7 +1733,7 @@ function assertStepEvidence(
   }
   for (const note of value.observationNotes) {
     if (
-      !isPlainObject(note) ||
+      !isRecord(note) ||
       !isText(note.noteId) ||
       !isCount(note.step) ||
       !isText(note.label) ||
@@ -1757,7 +1756,7 @@ export function assertPlaytestDiscoveryVisibleState(
   value: unknown
 ): asserts value is PlaytestDiscoveryVisibleState {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 10 ||
     Object.keys(value).some(
       (key) =>
@@ -1777,7 +1776,7 @@ export function assertPlaytestDiscoveryVisibleState(
     !isText(value.capturedAt) ||
     !Number.isFinite(Date.parse(String(value.capturedAt))) ||
     (value.viewport !== null &&
-      (!isPlainObject(value.viewport) ||
+      (!isRecord(value.viewport) ||
         Object.keys(value.viewport).length !== 3 ||
         !isCount(value.viewport.width) ||
         !isCount(value.viewport.height) ||
@@ -1802,7 +1801,7 @@ export function assertPlaytestDiscoveryVisibleState(
   }
   for (const control of value.controls) {
     if (
-      !isPlainObject(control) ||
+      !isRecord(control) ||
       Object.keys(control).length !== 4 ||
       Object.keys(control).some(
         (key) => !["controlId", "role", "name", "enabled"].includes(key)
@@ -1831,7 +1830,7 @@ function assertActionReceipt(
   value: unknown
 ): asserts value is PlaytestDiscoveryActionReceipt {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !isText(value.receiptId) ||
     !isCount(value.step) ||
     !isText(value.observationId) ||
@@ -1847,7 +1846,7 @@ function assertActionReceipt(
     (value.controlId !== null && !isText(value.controlId)) ||
     (value.safeKey !== null && !isText(value.safeKey)) ||
     (value.coordinates !== null &&
-      (!isPlainObject(value.coordinates) ||
+      (!isRecord(value.coordinates) ||
         !Number.isFinite(value.coordinates.x) ||
         !Number.isFinite(value.coordinates.y) ||
         (value.coordinates.x as number) < 0 ||
@@ -1862,7 +1861,7 @@ function assertActionReceipt(
 
 function isHypothesis(value: unknown): value is PlaytestDiscoveryHypothesis {
   return (
-    isPlainObject(value) &&
+    isRecord(value) &&
     isText(value.hypothesisId) &&
     PLAYTESTS_DISCOVERY_HYPOTHESIS_STATUSES.includes(
       value.status as PlaytestDiscoveryHypothesisStatus
@@ -1894,7 +1893,7 @@ function isExperiment(
   value: unknown
 ): value is PlaytestDiscoveryReviewExperiment {
   return (
-    isPlainObject(value) &&
+    isRecord(value) &&
     Object.keys(value).length === 5 &&
     Object.keys(value).every((key) =>
       [
@@ -1976,7 +1975,7 @@ export function assertPlaytestDiscoveryReviewDraft(
   value: unknown
 ): asserts value is PlaytestDiscoveryReviewDraft {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== PLAYTESTS_DISCOVERY_REVIEW_DRAFT_KEYS.size ||
     Object.keys(value).some(
       (key) => !PLAYTESTS_DISCOVERY_REVIEW_DRAFT_KEYS.has(key)
@@ -2037,7 +2036,7 @@ export function assertPlaytestDiscoverySessionReview(
   value: unknown
 ): asserts value is PlaytestDiscoverySessionReview {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== DISCOVERY_SESSION_REVIEW_KEYS.size ||
     Object.keys(value).some((key) => !DISCOVERY_SESSION_REVIEW_KEYS.has(key))
   ) {
@@ -2063,10 +2062,10 @@ export function assertPlaytestDiscoverySessionReview(
     (value.status !== "hypothesis" && value.status !== "not observed") ||
     !isText(value.createdAt) ||
     Number.isNaN(Date.parse(value.createdAt)) ||
-    !isPlainObject(packetReference) ||
+    !isRecord(packetReference) ||
     Object.keys(packetReference).length !== 2 ||
     !isText(packetReference.packetId) ||
-    !isPlainObject(packetReference.artifact) ||
+    !isRecord(packetReference.artifact) ||
     Object.keys(packetReference.artifact).length !== 4 ||
     !isText(packetReference.artifact.artifactId) ||
     !SHA256_PATTERN.test(String(packetReference.artifact.sha256)) ||

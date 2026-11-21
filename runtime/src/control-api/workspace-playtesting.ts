@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
+  hasControlCharacters,
   WORKSPACE_PLAYTEST_APPROVAL_SCHEMA,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
@@ -480,14 +481,6 @@ async function revokeWorkspace(
       "Workspace approval storage is unavailable."
     );
   }
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function requiredString(

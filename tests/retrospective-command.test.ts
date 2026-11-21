@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { parseRuleSyncCommand } from "../data/src/rulesync/command-parser.ts";
+import { parseRuleSyncCommand } from "@simulatorlife/autodev-data/rulesync-parser";
 
 type ReviewStatus =
   "NO_CHANGE" | "INSUFFICIENT_EVIDENCE" | "PROPOSED" | "APPLIED" | "BLOCKED";

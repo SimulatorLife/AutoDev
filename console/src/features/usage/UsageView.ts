@@ -1,5 +1,6 @@
 import {
   CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
+  formatClientSurface,
   USAGE_VARIABLE_IDS,
   type UsageActiveSessions,
   type UsageFilterOptions,
@@ -235,6 +236,15 @@ const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
     meta: {
       weight: 120,
       align: "tokens"
+    }
+  },
+  {
+    id: "client-surface",
+    header: "Client",
+    cell: ({ row: { original: session } }) =>
+      formatClientSurface(session.clientSurface),
+    meta: {
+      weight: 140
     }
   },
   {

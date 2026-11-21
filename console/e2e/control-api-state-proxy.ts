@@ -24,6 +24,8 @@ import {
   type ServerResponse
 } from "node:http";
 
+import { isRecord } from "@simulatorlife/autodev-core";
+
 const PORT = Number(process.env.AUTODEV_STATE_PROXY_PORT ?? 4370);
 const UPSTREAM =
   process.env.AUTODEV_STATE_PROXY_UPSTREAM ?? "http://127.0.0.1:4368";
@@ -143,10 +145,6 @@ const CATALOGUE_ROUTES: Readonly<Record<string, string>> = {
   "/control/prompts": ".rulesync/prompts",
   "/control/skills": ".rulesync/skills"
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * The catalogue answer a broken declaration produces.

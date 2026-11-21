@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -11,6 +10,7 @@ import {
   PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS,
   PLAYTESTS_FINDING_IDENTITY_SCHEMA
 } from "../src/playtesting/index.ts";
+import { sha256 } from "./support/hash.ts";
 
 /**
  * Fixtures for the stable PlaytestFinding identity/fingerprint contract
@@ -21,10 +21,6 @@ import {
  * excluded provenance field (seed/batch/episode/run ID/build SHA/policy
  * ID/model ID/timestamps) can ever enter or influence it.
  */
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 function fingerprintOf(input: PlaytestFindingIdentityInput): string {
   return sha256(

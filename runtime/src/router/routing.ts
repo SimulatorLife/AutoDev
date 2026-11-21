@@ -4,17 +4,16 @@ import path from "node:path";
 import {
   ANTIGRAVITY_PROVIDERS,
   type ControlApiDiscoveredProviderModel,
+  isRecord,
   PROVIDER_ROLES,
   type ProviderAgentLimits,
   type ProviderRole,
   type ProviderRoleAssignment,
-  type RoutingPolicyState
-} from "@simulatorlife/autodev-core";
+  type RoutingPolicyState} from "@simulatorlife/autodev-core";
 import {
   providerInjectsRoleMcp,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import {
   ANTIGRAVITY_PROVIDER_PATTERNS,
   CLAUDE_MODEL_PATTERN,

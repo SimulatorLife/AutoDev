@@ -1,5 +1,8 @@
 /** Same-origin, typed owner decision; Runtime remains the authoritative writer. */
-import type { ControlApiPlaytestingComparisonDecisionRequest } from "@simulatorlife/autodev-core";
+import {
+  type ControlApiPlaytestingComparisonDecisionRequest,
+  hasControlCharacters
+} from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { jsonErrorResponse } from "../../../../../../src/lib/server/api-response.ts";
@@ -20,13 +23,6 @@ const MAX_BODY_BYTES = 8192;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const COMPARISON_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const VERSION_PATTERN = /^[1-9]\d{0,15}$/u;
-
-function hasControlCharacters(value: string): boolean {
-  return [...value].some((character) => {
-    const point = character.codePointAt(0) ?? 0;
-    return point < 32 || point === 127;
-  });
-}
 
 function failureStatus(
   result: Exclude<

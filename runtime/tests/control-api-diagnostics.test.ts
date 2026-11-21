@@ -346,6 +346,6 @@ test("the live router status is read in-process, not over loopback", async () =>
 });
 
 test("the diagnostics routes use the current Control API contract", () => {
-  assert.equal(CONTROL_API_CONTRACT.version, 36);
+  assert.equal(CONTROL_API_CONTRACT.version, 37);
   assert.equal(CONTROL_API_CONTRACT.path, "/control/contracts");
 });

@@ -20,6 +20,7 @@ import path from "node:path";
 
 import {
   classifyToolFailure,
+  clientSurfaceFromOriginator,
   type SessionInvestigation,
   type SessionThreadEfficiency,
   type SessionThreadTrace
@@ -1301,6 +1302,9 @@ function buildThreadTrace(
     modelProvider:
       typeof meta.model_provider === "string" ? meta.model_provider : null,
     cliVersion: typeof meta.cli_version === "string" ? meta.cli_version : null,
+    clientSurface: clientSurfaceFromOriginator(
+      typeof meta.originator === "string" ? meta.originator : null
+    ),
     cwd: typeof meta.cwd === "string" ? meta.cwd : null,
     file,
     start,

@@ -10,7 +10,7 @@
 // conversation prefix followed by a run of tool outputs, which is what a turn
 // with many parallel tool calls looks like.
 
-import { awaitedToolResults } from "../runtime/src/shared/responses-continuation.ts";
+import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 function buildInput(tailOutputs, prefixPairs = 300) {
   const input = [];

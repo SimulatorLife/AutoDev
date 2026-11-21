@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import {
+  type ClientSurface,
+  type ControlApiLiveSessions,
+  isClientSurface,
+  safeAutoDevSessionId} from "@simulatorlife/autodev-core";
+import {
   AGENT_ACTIVITY_KINDS,
   AGENT_ACTIVITY_STATES
 } from "@simulatorlife/autodev-runtime/agents";
@@ -913,6 +918,8 @@ export class UsageTracker {
   // Not part of usageTelemetry, never persisted, and pruned to the live
   // subject set whenever activeUsageSnapshot() is called.
   private readonly activeUsageBySubject: Map<string, SubjectUsageAccumulator>;
+  // First observed client surface per validated session ID. Bounded, oldest first.
+  private readonly sessionClientSurfaces: Map<string, ClientSurface>;
   readonly workspaceIdRegistry: Map<string, string>;
   readonly workspaceIdConflicts: Set<string>;
   readonly attributionDiagnostics: AttributionDiagnostics;
@@ -931,6 +938,7 @@ export class UsageTracker {
     };
     this.inFlightUsage = new Map();
     this.activeUsageBySubject = new Map();
+    this.sessionClientSurfaces = new Map();
     this.workspaceIdRegistry = new Map();
     this.workspaceIdConflicts = new Set();
     this.attributionDiagnostics = {
@@ -947,6 +955,54 @@ export class UsageTracker {
 
   setActivityTracker(tracker: AgentActivityTracker): void {
     this.activityTracker = tracker;
+  }
+
+  /**
+   * Record the client surface a session was started from. First observed wins:
+   * later requests for the same session never overwrite the recorded surface.
+   */
+  noteSessionClientSurface(
+    sessionId: string | null | undefined,
+    clientSurface: ClientSurface | null | undefined
+  ): void {
+    const validSessionId = safeAutoDevSessionId(sessionId);
+    if (!validSessionId || !isClientSurface(clientSurface)) return;
+    if (this.sessionClientSurfaces.has(validSessionId)) return;
+    this.sessionClientSurfaces.set(validSessionId, clientSurface);
+    while (this.sessionClientSurfaces.size > 4096) {
+      const oldest = this.sessionClientSurfaces.keys().next().value;
+      if (oldest === undefined) break;
+      this.sessionClientSurfaces.delete(oldest);
+    }
+  }
+
+  /** Return the first observed client surface for a session, or null. */
+  sessionClientSurface(
+    sessionId: string | null | undefined
+  ): ClientSurface | null {
+    const validSessionId = safeAutoDevSessionId(sessionId);
+    if (!validSessionId) return null;
+    return this.sessionClientSurfaces.get(validSessionId) ?? null;
+  }
+
+  /**
+   * Project live session identities from the activity tracker, attaching each
+   * session's first observed client surface (or null when absent).
+   */
+  listLiveSessions(
+    now: number = Date.now(),
+    tracker?: AgentActivityTracker
+  ): ControlApiLiveSessions | null {
+    const activityTracker = tracker ?? this.activityTracker;
+    if (!activityTracker) return null;
+    const projection = activityTracker.listLiveSessions(now);
+    return {
+      ...projection,
+      identitiesObserved: projection.identitiesObserved.map((identity) => ({
+        ...identity,
+        clientSurface: this.sessionClientSurface(identity.sessionId)
+      }))
+    };
   }
 
   usageBucket(
@@ -1378,6 +1434,7 @@ export class UsageTracker {
     this.usageTelemetry.byWorkspace = {};
     this.inFlightUsage.clear();
     this.activeUsageBySubject.clear();
+    this.sessionClientSurfaces.clear();
     this.workspaceIdRegistry.clear();
     this.workspaceIdConflicts.clear();
     this.resetAttributionDiagnostics();

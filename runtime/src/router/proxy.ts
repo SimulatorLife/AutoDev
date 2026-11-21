@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
 import type { Span } from "@opentelemetry/api";
-import { SIGN_IN_REQUIRED_FAILURE_CLASS } from "@simulatorlife/autodev-core";
+import {
+  type ClientSurface,
+  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
 import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
@@ -491,6 +493,8 @@ export interface RouterSession {
   thread?: string | null;
   /** The exact caller-supplied session ID; absent when only a thread ID exists. */
   sessionId?: string;
+  /** The observed client surface from request headers, or null when absent. */
+  clientSurface?: ClientSurface | null;
 }
 
 /**
@@ -1938,6 +1942,8 @@ export interface AttemptTelemetryOptions {
   sessionId?: string | null;
   /** The source-confirmed Codex thread served by this attempt. */
   threadId?: string | null;
+  /** The observed client surface that originated this attempt, or null. */
+  clientSurface?: ClientSurface | null;
 }
 
 async function authForRoute(
@@ -2118,7 +2124,9 @@ export async function fetchUpstream(
         role: attemptTelemetry.role ?? null,
         workspace: attemptTelemetry.workspace ?? null,
         sessionId: attemptTelemetry.sessionId ?? null,
-        threadId: attemptTelemetry.threadId ?? null
+        threadId: attemptTelemetry.threadId ?? null,
+        clientSurface:
+          attemptTelemetry.clientSurface ?? session?.clientSurface ?? null
       })
     : null;
   let upstream: Response;
@@ -3073,7 +3081,8 @@ export async function proxyConcreteResponse(
     subject: "concrete request",
     requestedModel: modelName,
     turnMetadataHeader,
-    sessionId: session?.sessionId ?? null
+    sessionId: session?.sessionId ?? null,
+    clientSurface: session?.clientSurface ?? null
   });
 
   const disabledReason = ROUTING_POLICY.routeDisabledReason(
@@ -4056,6 +4065,7 @@ export async function proxyFallbackChain(
     requestedModel: modelName || null,
     turnMetadataHeader,
     sessionId: session?.sessionId ?? null,
+    clientSurface: session?.clientSurface ?? null,
     ...(isOrchestratorTurn
       ? {
           memoryMode: currentRouterMemoryMode({

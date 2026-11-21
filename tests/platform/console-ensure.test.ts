@@ -8,7 +8,7 @@ import {
   type ConsoleEnsureOptions,
   ensureConsole,
   resolveConsoleEnsureOptions
-} from "../../runtime/src/platform/console-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/console-ensure";
 
 function options(
   overrides: Partial<ConsoleEnsureOptions> = {}

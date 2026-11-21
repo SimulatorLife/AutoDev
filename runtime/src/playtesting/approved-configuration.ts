@@ -30,6 +30,7 @@ import {
   usesGenericPlaytestAdapter,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 import { observationSchemaHash, playtestManifestHash } from "./hash-chain.ts";
 
@@ -81,14 +82,6 @@ export interface ApprovedPlaytestDefinition {
   readonly rubricHash: string;
   readonly benchmark: PlaytestBenchmark | null;
   readonly benchmarkHash: string | null;
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== "..")
-  );
 }
 
 function fail(category: ApprovedConfigurationFailure, message: string): never {
@@ -145,7 +138,7 @@ function openApprovedWorkspaceFile(
     );
   }
   try {
-    if (!isWithin(root, realpathSync(file))) {
+    if (!isPathWithin(root, realpathSync(file))) {
       fail(category, `${label} escaped its approved checkout.`);
     }
     return openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -198,7 +191,7 @@ function readApprovedWorkspaceFile(
 ): Buffer {
   const category = targetFileCategory(isConfig, false);
   const file = path.resolve(root, relativePath);
-  if (!isWithin(root, file) || file === root) {
+  if (!isPathWithin(root, file) || file === root) {
     fail(category, `${label} must resolve inside the approved checkout.`);
   }
   assertNoSymlinkPath(root, file, label, category);
@@ -226,7 +219,7 @@ function readConfigRelativeManifest(
   label: string
 ): Buffer {
   const resolved = path.resolve(configDirectory, declaredPath);
-  if (!isWithin(configDirectory, resolved)) {
+  if (!isPathWithin(configDirectory, resolved)) {
     fail(
       "target-file-unavailable",
       `${label} must stay inside the ${CONFIG_LABEL} directory.`

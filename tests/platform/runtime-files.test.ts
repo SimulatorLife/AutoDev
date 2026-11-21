@@ -3,14 +3,12 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,16 +27,9 @@ import {
   writeRepoInstallCache
 } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 
-const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+import { withTempDir } from "../support/test-helpers.ts";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-runtime-files-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 test("runtime targets preserve relative depth for scripts and source files", () => {
   assert.equal(

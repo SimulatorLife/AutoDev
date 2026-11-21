@@ -1,4 +1,4 @@
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 import { MAX_INLINE_IMAGE_CHAR_ESTIMATE } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   dropUnresolvableReasoning,

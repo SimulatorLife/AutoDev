@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 import {
   existsSync,
   lstatSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -18,14 +15,7 @@ import {
   resolveLaunchAgentValues
 } from "@simulatorlife/autodev-runtime/platform/launchagent";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-launchagent-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "../support/test-helpers.ts";
 
 test("launchagent rendering replaces placeholders without replacement-string interpolation", () =>
   withTempDir((directory) => {

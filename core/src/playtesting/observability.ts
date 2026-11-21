@@ -1,5 +1,5 @@
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
-import { isPlainObject } from "./object-guards.ts";
 import type { PlaytestJsonValue } from "./protocol-types.ts";
 import { PLAYTESTS_SEVERITIES, type PlaytestSeverity } from "./types.ts";
 
@@ -84,7 +84,7 @@ function assertOnlyKeys(
 }
 
 function assertEventSource(source: unknown): void {
-  if (!isPlainObject(source)) {
+  if (!isRecord(source)) {
     throw new TypeError(
       "Event source must be game-owned or a versioned detector."
     );
@@ -114,7 +114,7 @@ function assertEventSource(source: unknown): void {
 
 function assertExpectedOccurrenceRange(value: unknown): void {
   if (value === null) return;
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Expected occurrence range must be an object or null.");
   }
   assertOnlyKeys(value, ["minimum", "maximum"], "Expected occurrence range");
@@ -131,7 +131,7 @@ function assertExpectedOccurrenceRange(value: unknown): void {
 }
 
 function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
-  if (!isPlainObject(value))
+  if (!isRecord(value))
     throw new TypeError("Event definition must be an object.");
   assertOnlyKeys(value, EVENT_DEFINITION_KEYS, "Event definition");
   for (const key of [
@@ -163,7 +163,7 @@ function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
     );
   }
   assertEventSource(value.source);
-  if (!isPlainObject(value.thresholds))
+  if (!isRecord(value.thresholds))
     throw new TypeError("Event thresholds must be a JSON object.");
   if (!isSeverity(value.severity))
     throw new TypeError("Event severity is invalid.");
@@ -174,7 +174,7 @@ function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
 export function assertPlaytestEventTaxonomy(
   value: unknown
 ): asserts value is PlaytestEventTaxonomy {
-  if (!isPlainObject(value))
+  if (!isRecord(value))
     throw new TypeError("Event taxonomy must be an object.");
   assertOnlyKeys(value, EVENT_TAXONOMY_KEYS, "Event taxonomy");
   if (value.schemaVersion !== 1)

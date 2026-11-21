@@ -426,7 +426,8 @@ test("Usage active-session stats and detail use the shared section spacing", () 
             lastActivityAt: 1_760_000_000_000,
             provider: "claude",
             model: "opus",
-            role: "orchestrator"
+            role: "orchestrator",
+            clientSurface: "codex_desktop"
           },
           {
             sessionId: "session-fixture-b",
@@ -434,7 +435,8 @@ test("Usage active-session stats and detail use the shared section spacing", () 
             lastActivityAt: 1_760_000_001_000,
             provider: null,
             model: null,
-            role: null
+            role: null,
+            clientSurface: null
           },
           {
             sessionId: "abc",
@@ -442,7 +444,8 @@ test("Usage active-session stats and detail use the shared section spacing", () 
             lastActivityAt: 1_760_000_002_000,
             provider: null,
             model: null,
-            role: null
+            role: null,
+            clientSurface: "codex_exec"
           }
         ],
         sessionIdentitiesPartial: false,
@@ -465,9 +468,12 @@ test("Usage active-session stats and detail use the shared section spacing", () 
   assert.match(markup, /sessionId=session-fixture-a/u);
   assert.match(markup, /Live Runtime sessions/u);
   for (const value of [
+    "Client",
     "Provider",
     "Model",
     "Role",
+    "Codex app",
+    "codex exec",
     "claude",
     "opus",
     "orchestrator"

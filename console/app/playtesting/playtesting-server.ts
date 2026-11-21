@@ -32,6 +32,8 @@ import {
   type ControlApiPlaytestingWindowResponse,
   type HumanPlaytestStudy,
   isControlApiPlaytestingRunState,
+  isCount,
+  isRecord,
   type PlaytestBatch,
   type PlaytestBenchmark,
   type PlaytestComparison,
@@ -57,8 +59,7 @@ import {
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReference,
-  type PlaytestSessionReview
-} from "@simulatorlife/autodev-core";
+  type PlaytestSessionReview} from "@simulatorlife/autodev-core";
 
 import {
   PLAYTESTING_FILTERS_BY_RESOURCE,
@@ -217,16 +218,8 @@ export interface PlaytestingWindowRequest {
   readonly endStep: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function isJsonValue(value: unknown, depth = 0): value is PlaytestJsonValue {

@@ -7,7 +7,6 @@
  * unmeasured policy into one that may speak for a person.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -21,9 +20,7 @@ import {
   playtestPolicyValidityHashInput
 } from "@simulatorlife/autodev-core";
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
+import { sha256 } from "./support/hash.ts";
 
 /** A valid frozen benchmark, used only to prove the citation is accepted. */
 function benchmarkFixture(): PlaytestBenchmark {

@@ -25,7 +25,7 @@ import {
   responseTextFromSse,
   rewriteResponseValue,
   summarizeBufferedSse
-} from "../runtime/src/router/responses.ts";
+} from "@simulatorlife/autodev-runtime/router/responses";
 
 const PUBLIC_MODEL = "autodev/orchestrator";
 const SSE_LINE_WITH_NEWLINE = /(\r?\n)/;

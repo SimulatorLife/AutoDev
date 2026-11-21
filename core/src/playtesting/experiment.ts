@@ -21,11 +21,11 @@
  * automatically re-queued into running.
  */
 
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlaytestExperiment } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { isPlaytestFindingId } from "./finding-identity.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestExperimentState,
   PLAYTESTS_EXPERIMENT_SCHEMA,
@@ -45,7 +45,7 @@ function objectWithKeys(
   keys: readonly string[],
   field: string
 ): Readonly<Record<string, unknown>> {
-  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
+  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
   const allowed = new Set(keys);
   const actual = Object.keys(value);
   if (
@@ -148,7 +148,7 @@ function stringRecord(
   value: unknown,
   field: string
 ): Readonly<Record<string, string>> {
-  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
+  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
   for (const [key, entry] of Object.entries(value)) {
     if (key.trim().length === 0) {
       throw new TypeError(field + " keys must be non-empty.");
@@ -172,7 +172,7 @@ function assertVersionedRef(
   value: unknown,
   field: string
 ): asserts value is PlaytestVersionedRef {
-  if (!isPlainObject(value)) throw new TypeError(field + " must be an object.");
+  if (!isRecord(value)) throw new TypeError(field + " must be an object.");
   const allowed = new Set(["id", "version", "contentHash"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new TypeError(field + " contains an unsupported field.");

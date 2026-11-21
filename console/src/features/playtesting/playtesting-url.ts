@@ -1,6 +1,7 @@
 /** Shareable, workspace-scoped address state for Playtesting lists and replay. */
 import {
   type ControlApiPlaytestingResource,
+  hasControlCharacters,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS
 } from "@simulatorlife/autodev-core";
 
@@ -181,14 +182,6 @@ function parseSessionSelection(value: string | undefined): {
     return { episodeIds: [], invalid: true };
   }
   return { episodeIds, invalid: false };
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function singleValue(

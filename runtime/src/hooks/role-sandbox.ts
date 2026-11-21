@@ -31,6 +31,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import {
   evaluateOrchestratorToolCall,
   isRootOrchestratorModel
@@ -39,7 +40,6 @@ import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/
 import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { type HookDenialPolicy, logPreToolUseDenial } from "./hook-log.ts";

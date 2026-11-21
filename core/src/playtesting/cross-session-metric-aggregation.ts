@@ -1,4 +1,5 @@
 /** Deterministic, bounded aggregation of exact frozen playtest metric packets. */
+import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCrossSessionMetricAggregate,
@@ -10,7 +11,6 @@ import { PLAYTESTS_MAX_ANALYSIS_SESSIONS } from "./batch-run.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestEvidencePacket } from "./evidence-packet.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestMissingReason,
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
@@ -34,9 +34,6 @@ function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
 }
 
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -619,7 +616,7 @@ function assertMetricAggregationEnvelope(
   workspaceId: string,
   analysisId: string
 ): asserts value is MetricAggregationEnvelope {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Cross-session metric aggregation is malformed.");
   }
   assertMetricAggregationIdentity(value, workspaceId, analysisId);
@@ -713,7 +710,7 @@ function isMetricPacketReference(
   readonly packetId: string;
 } {
   return (
-    isPlainObject(value) &&
+    isRecord(value) &&
     Object.keys(value).length === 3 &&
     !Object.keys(value).some(
       (key) => !["episodeId", "batchId", "packetId"].includes(key)
@@ -775,7 +772,7 @@ function assertOmittedMetric(
   value: unknown
 ): asserts value is PlaytestCrossSessionMetricAggregation["omittedMetrics"][number] {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== 3 ||
     Object.keys(value).some(
       (key) => !["metricId", "metricVersion", "reason"].includes(key)
@@ -812,7 +809,7 @@ function assertMetricAggregateRow(
   value: unknown,
   sourcePacketCount: number
 ): string {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Cross-session metric aggregate row is malformed.");
   }
   assertMetricAggregateKeys(value);

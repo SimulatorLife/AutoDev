@@ -3,9 +3,9 @@
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
+  isRecord,
   playtestVisualProgressPolicy,
-  type WorkspaceVisualPlaytestTargetApproval
-} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
 import React, { useEffect, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
@@ -51,10 +51,6 @@ const DEFAULT_LIMITS = {
   screenshotCountPerEpisode: 160,
   artifactBytesPerEpisode: 64 * 1024 * 1024
 } as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function workspaceTargetsFromResponse(
   value: unknown,

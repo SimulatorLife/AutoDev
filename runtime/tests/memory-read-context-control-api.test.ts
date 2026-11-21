@@ -9,6 +9,7 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  errorCode,
   makeRequest,
   type RecordedResponse,
   responseBody,
@@ -107,11 +108,6 @@ async function read(
     body: responseBody(response),
     context: contexts.at(-1) ?? null
   };
-}
-
-function errorCode(response: RecordedResponse): unknown {
-  const body = responseBody(response) as { error?: { code?: unknown } } | null;
-  return body?.error?.code;
 }
 
 test("a read filter set becomes the context the read actually runs under", async () => {

@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
-import type {
-  GithubActionsRunStats,
-  GithubWorkflowRun
+import {
+  type GithubActionsRunStats,
+  type GithubWorkflowRun,
+  isRecord
 } from "@simulatorlife/autodev-core";
 
 import { computeRunStats } from "./github-run-stats.ts";
@@ -214,10 +215,6 @@ function invalidSuccessPayload(
   return isRecord(data) && Array.isArray(data[collectionField])
     ? undefined
     : "invalid_payload";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 interface CollectionPage {

@@ -7,5 +7,6 @@
  * this shape.
  */
 
+export * from "./client-surface.ts";
 export * from "./format.ts";
 export * from "./types.ts";

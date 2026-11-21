@@ -4,12 +4,9 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -17,6 +14,8 @@ import {
   launchAgentMatches,
   renderLaunchAgent
 } from "@simulatorlife/autodev-runtime/platform/launchagent";
+
+import { withTempDir } from "../support/test-helpers.ts";
 
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
 const plistPath = join(
@@ -28,15 +27,6 @@ const ensureScriptPath = join(
   repositoryRoot,
   "scripts/ensure-codex-console.sh"
 );
-
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-console-test-"));
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
 
 test("console LaunchAgent plist matches label, loopback service requirements and placeholder contract", () => {
   const content = readFileSync(plistPath, "utf8");

@@ -2,13 +2,13 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type {
-  AntigravityProvider,
-  ControlApiDiscoveredProviderModel,
-  ControlApiProviderModelDiscovery,
-  ControlApiProviderModelsResponse
+import {
+  type AntigravityProvider,
+  type ControlApiDiscoveredProviderModel,
+  type ControlApiProviderModelDiscovery,
+  type ControlApiProviderModelsResponse,
+  isRecord
 } from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
 import { providerSignInRequiredMessage } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   ANTIGRAVITY_PROVIDER_PATTERNS,

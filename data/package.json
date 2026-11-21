@@ -10,7 +10,7 @@
     "./rulesync-parser": "./src/rulesync/command-parser.ts",
     "./diagnostics": "./src/diagnostics/index.ts",
     "./evaluations": "./src/evaluations/index.ts",
-    "./files": "./src/files/atomic-write.ts",
+    "./files": "./src/files/index.ts",
     "./openlit": "./src/openlit/index.ts",
     "./usage": "./src/usage/index.ts",
     "./workspaces": "./src/workspaces/index.ts",

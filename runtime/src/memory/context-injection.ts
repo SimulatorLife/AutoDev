@@ -1,10 +1,9 @@
 import { metrics, trace } from "@opentelemetry/api";
-import type {
-  MemoryExecutionMode,
-  MemoryPacket,
-  MemoryReadContext
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import {
+  isRecord,
+  type MemoryExecutionMode,
+  type MemoryPacket,
+  type MemoryReadContext} from "@simulatorlife/autodev-core";
 
 import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
 import { MAX_QUERY_LENGTH, type MemoryService } from "./service.ts";

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 
+import { isRecord } from "@simulatorlife/autodev-core";
+
 import { atomicWrite } from "./files/atomic-write.ts";
 
 /**
@@ -74,10 +76,6 @@ const ROLE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
  */
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const CONTRACT_MAX_BYTES = 1_000_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 export function executionContractRevision(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");

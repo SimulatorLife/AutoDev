@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 
 // Control API's fixed local identity; hooks cannot import Core under the layer rules.
 const LOCAL_CONTROL_API_ACTOR = "autodev-local";

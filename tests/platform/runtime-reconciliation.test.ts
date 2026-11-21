@@ -2,13 +2,10 @@ import assert from "node:assert/strict";
 import {
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   writeFileSync
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -17,16 +14,7 @@ import {
   stalePaths
 } from "@simulatorlife/autodev-runtime/platform/runtime-reconciliation";
 
-function withTempDir<T>(callback: (directory: string) => T): T {
-  const directory = mkdtempSync(
-    join(tmpdir(), "autodev-runtime-reconciliation-")
-  );
-  try {
-    return callback(directory);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "../support/test-helpers.ts";
 
 test("stale path detection uses lstat and preserves input order", () =>
   withTempDir((directory) => {

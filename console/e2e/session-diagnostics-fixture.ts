@@ -88,6 +88,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
     requestedId: DIAGNOSTICS_SESSION_ID,
     rootSessionId: DIAGNOSTICS_SESSION_ID,
     matchedByThreadId: false,
+    clientSurface: "codex_desktop",
     threads: [
       {
         id: DIAGNOSTICS_ROOT_THREAD_ID,
@@ -98,6 +99,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
         model: "autodev/orchestrator",
         modelProvider: "claude",
         cliVersion: "0.169.0",
+        clientSurface: "codex_desktop",
         cwd: "/repo",
         file: "/repo/rollout-root.jsonl",
         start: SESSION_START,
@@ -136,6 +138,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
         model: WORKER_MODEL,
         modelProvider: "claude",
         cliVersion: "0.169.0",
+        clientSurface: null,
         cwd: "/repo",
         file: "/repo/rollout-worker.jsonl",
         start: WORKER_START,
@@ -338,14 +341,16 @@ export function recentSessionsResponse(): Record<string, unknown> {
         started: SESSION_START,
         lastWrite: SESSION_END,
         threads: 2,
-        cwd: "/repo"
+        cwd: "/repo",
+        clientSurface: "codex_desktop"
       },
       {
         id: "01a0ba20-d54c-78f2-9367-3f80e9a8f75f",
         started: "2026-11-09T09:00:00.000Z",
         lastWrite: "2026-11-09T09:30:00.000Z",
         threads: 1,
-        cwd: "/repo"
+        cwd: "/repo",
+        clientSurface: null
       }
     ]
   };
@@ -362,6 +367,7 @@ export function fleetScanResponse(): Record<string, unknown> {
         started: SESSION_START,
         lastWrite: SESSION_END,
         cwd: "/repo",
+        clientSurface: "codex_desktop",
         threads: 2,
         totalTokens: 13_300,
         inputTokens: 10_000,

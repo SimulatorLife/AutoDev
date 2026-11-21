@@ -9,7 +9,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 import { parse as parseToml } from "smol-toml";
 
 const MAX_BINDING_FILE_BYTES = 32 * 1024;

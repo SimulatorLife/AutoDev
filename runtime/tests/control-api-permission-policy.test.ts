@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
@@ -9,9 +8,11 @@ import test from "node:test";
 
 import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import {
+  errorCode,
   responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
+import { sha256 } from "./support/hash.ts";
 
 const SERVICE_TOKEN = "p".repeat(64);
 const OPERATOR_ACTOR = "permission-policy-operator";
@@ -151,15 +152,6 @@ async function call(
     statusCode: response.statusCode,
     body: responseBody(response) as Record<string, unknown> | null
   };
-}
-
-function errorCode(body: Record<string, unknown> | null): string | undefined {
-  const error = body?.error as { readonly code?: string } | undefined;
-  return error?.code;
-}
-
-function sha256(bytes: Buffer | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 test("the permissions read publishes the policy the canonical source states", async () => {

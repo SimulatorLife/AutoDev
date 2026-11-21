@@ -14,6 +14,8 @@
  * beside these types so a CLI and an HTTP response cannot drift apart.
  */
 
+import { type ClientSurface, isClientSurface } from "./client-surface.ts";
+
 /** The schema of one session's full diagnostics report. */
 export const SESSION_DIAGNOSTICS_SCHEMA = "autodev-session-diagnostics-v1";
 
@@ -202,6 +204,7 @@ export interface SessionThreadTrace {
   readonly model: string | null;
   readonly modelProvider: string | null;
   readonly cliVersion: string | null;
+  readonly clientSurface: ClientSurface | null;
   readonly cwd: string | null;
   readonly file: string;
   readonly start: string | null;
@@ -435,6 +438,8 @@ export interface SessionDiagnosticsReport {
   readonly rootSessionId: string | null;
   /** True when the id named a child thread rather than the session root. */
   readonly matchedByThreadId: boolean;
+  /** The client surface observed on the session's root thread, if any. */
+  readonly clientSurface: ClientSurface | null;
   readonly threads: readonly SessionThreadTrace[];
   readonly router: readonly SessionRouterSummary[];
   readonly logs: readonly SessionLogFileSummary[];
@@ -453,6 +458,7 @@ export interface RecentSessionSummary {
   readonly lastWrite: string;
   readonly threads: number;
   readonly cwd: string | null;
+  readonly clientSurface: ClientSurface | null;
 }
 
 /** The recent-sessions listing. */
@@ -468,6 +474,7 @@ export interface FleetSessionRow {
   readonly started: string;
   readonly lastWrite: string;
   readonly cwd: string | null;
+  readonly clientSurface: ClientSurface | null;
   readonly threads: number;
   readonly totalTokens: number;
   readonly inputTokens: number;
@@ -633,6 +640,12 @@ function isStringList(value: unknown): value is readonly string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
   );
+}
+
+function isNullableClientSurface(
+  value: unknown
+): value is ClientSurface | null {
+  return value === null || isClientSurface(value);
 }
 
 function isStringMap(value: unknown): value is Record<string, string> {
@@ -803,6 +816,7 @@ function hasSessionThreadIdentity(value: Record<string, unknown>): boolean {
     isNullableString(value.model) &&
     isNullableString(value.modelProvider) &&
     isNullableString(value.cliVersion) &&
+    isNullableClientSurface(value.clientSurface) &&
     isNullableString(value.cwd) &&
     typeof value.file === "string" &&
     isNullableString(value.start) &&
@@ -1152,7 +1166,8 @@ function hasSessionReportIdentity(value: Record<string, unknown>): boolean {
     typeof value.found === "boolean" &&
     typeof value.requestedId === "string" &&
     isNullableString(value.rootSessionId) &&
-    typeof value.matchedByThreadId === "boolean"
+    typeof value.matchedByThreadId === "boolean" &&
+    isNullableClientSurface(value.clientSurface)
   );
 }
 
@@ -1182,7 +1197,8 @@ function isRecentSessionSummary(value: unknown): boolean {
     typeof value.started === "string" &&
     typeof value.lastWrite === "string" &&
     isNumber(value.threads) &&
-    isNullableString(value.cwd)
+    isNullableString(value.cwd) &&
+    isNullableClientSurface(value.clientSurface)
   );
 }
 
@@ -1218,6 +1234,7 @@ function isFleetSessionRow(value: unknown): boolean {
     typeof value.started === "string" &&
     typeof value.lastWrite === "string" &&
     isNullableString(value.cwd) &&
+    isNullableClientSurface(value.clientSurface) &&
     isNumber(value.toolFailures) &&
     isNumber(value.preToolUseBlocks) &&
     (value.topFailureCategory === null ||

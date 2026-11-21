@@ -5,11 +5,11 @@ import {
   type ApprovalPolicy,
   codexSandboxMode,
   isCodexSandboxMode,
+  isRecord,
   isSandboxMode,
   type PermissionPolicy,
   productSandboxMode,
-  type SandboxMode
-} from "@simulatorlife/autodev-core";
+  type SandboxMode} from "@simulatorlife/autodev-core";
 import { parse as parseToml } from "smol-toml";
 
 import { atomicWriteSync } from "../files/atomic-write.ts";
@@ -191,10 +191,6 @@ export function approvalPolicyFromConfig(
 ): ApprovalPolicy | null {
   if (typeof value !== "string") return null;
   return CONFIG_APPROVAL_POLICIES.has(value) ? (value as ApprovalPolicy) : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 
 import { codexHome } from "./hook-roots.ts";
 

@@ -19,6 +19,7 @@ import {
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
   type ControlApiPlaytestingVisualTargetReadiness,
+  hasControlCharacters,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS,
@@ -642,14 +643,6 @@ function sendMethodNotAllowed(response: ServerResponse, allow: string): void {
     "autodev_control_playtesting_method_not_allowed",
     "The requested playtest run operation does not support this method."
   );
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function workspaceQuery(

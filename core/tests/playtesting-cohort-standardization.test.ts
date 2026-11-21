@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import type { PlaytestBenchmark } from "../src/playtesting/artifacts.ts";
@@ -10,6 +9,7 @@ import {
   PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA,
   standardizePlaytestCohortRates
 } from "../src/playtesting/index.ts";
+import { sha256 } from "./support/hash.ts";
 
 /**
  * Synthetic three-build mix-shift fixture mirroring
@@ -27,10 +27,6 @@ import {
  */
 const COHORT_EASY = "easy";
 const COHORT_HARD = "hard";
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 /**
  * Minimal-but-typed PlaytestBenchmark fixture. The standardizer only

@@ -1,6 +1,7 @@
 import type { QuotaAxiResponse } from "quota-axi";
 
 import type { AgentEnablementState } from "../agents/types.ts";
+import type { ClientSurface } from "../diagnostics/client-surface.ts";
 import type { EvaluationResult } from "../evaluations/types.ts";
 import type {
   GithubActionsRunStats,
@@ -1854,6 +1855,8 @@ export interface ControlApiLiveSessionIdentity {
   readonly provider: string | null;
   readonly model: string | null;
   readonly role: string | null;
+  /** First observed client surface for this session; null if absent. */
+  readonly clientSurface: ClientSurface | null;
 }
 
 export interface ControlApiLiveSessions {

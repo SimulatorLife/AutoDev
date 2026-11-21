@@ -1,3 +1,4 @@
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCrossSessionEvidenceRef,
@@ -6,7 +7,6 @@ import type {
 } from "./artifacts.ts";
 import { PLAYTESTS_MAX_ANALYSIS_SESSIONS } from "./batch-run.ts";
 import { assertPlaytestCrossSessionMetricAggregation } from "./cross-session-metric-aggregation.ts";
-import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestEvidenceLocator } from "./protocol.ts";
 import {
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
@@ -82,7 +82,7 @@ function assertEvidenceReferences(
   }
   for (const reference of value) {
     if (
-      !isPlainObject(reference) ||
+      !isRecord(reference) ||
       !isIdentifier(reference.episodeId) ||
       !isIdentifier(reference.packetId) ||
       contributors.get(reference.episodeId) !== reference.packetId
@@ -180,7 +180,7 @@ export function migratePlaytestCrossSessionSynthesisV1(
   value: unknown
 ): PlaytestCrossSessionSynthesis {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     value.schema !== PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1 ||
     Object.keys(value).length !== SYNTHESIS_V1_KEYS.size ||
     Object.keys(value).some((key) => !SYNTHESIS_V1_KEYS.has(key))
@@ -210,7 +210,7 @@ function assertSynthesisIdentity(
   value: unknown
 ): asserts value is Record<string, unknown> {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).some((key) => !SYNTHESIS_KEYS.has(key)) ||
     value.schema !== PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA ||
     !isIdentifier(value.synthesisId) ||
@@ -278,7 +278,7 @@ function assertSynthesisContributors(
   const contributors = new Map<string, string>();
   for (const contributor of value) {
     if (
-      !isPlainObject(contributor) ||
+      !isRecord(contributor) ||
       !isIdentifier(contributor.episodeId) ||
       !isIdentifier(contributor.batchId) ||
       !isIdentifier(contributor.packetId) ||
@@ -304,7 +304,7 @@ function assertSynthesisClaims(
   }
   for (const claim of value) {
     if (
-      !isPlainObject(claim) ||
+      !isRecord(claim) ||
       !["pattern", "counterexample", "confounder"].includes(String(claim.kind))
     ) {
       throw new TypeError("Cross-session synthesis claim kind is invalid.");
@@ -334,7 +334,7 @@ function assertSynthesisExperiments(
     );
   }
   for (const experiment of value) {
-    if (!isPlainObject(experiment) || !Array.isArray(experiment.controls)) {
+    if (!isRecord(experiment) || !Array.isArray(experiment.controls)) {
       throw new TypeError("Cross-session synthesis experiment is malformed.");
     }
     assertText(

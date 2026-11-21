@@ -1,3 +1,4 @@
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestAdapterEpisode,
@@ -10,7 +11,6 @@ import {
   PLAYTEST_EXECUTION_MODES,
   type PlaytestExecutionMode
 } from "./launch-request.ts";
-import { isPlainObject } from "./object-guards.ts";
 import { assertPlaytestPlayerDebriefForEpisode } from "./player-debrief.ts";
 
 export const PLAYTEST_EPISODE_EXECUTION_MODES = [
@@ -211,7 +211,7 @@ function assertModeChannels(
 function assertDerivedFrom(value: unknown): void {
   if (value === null) return;
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     typeof value.episodeId !== "string" ||
     !RECORD_ID_PATTERN.test(value.episodeId) ||
     !Number.isSafeInteger(value.stepId) ||
@@ -228,7 +228,7 @@ function assertDerivedFrom(value: unknown): void {
 export function assertPlaytestExecutionProvenance(
   value: unknown
 ): asserts value is PlaytestExecutionProvenance {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Execution provenance must be an object.");
   }
   const source = value.source;
@@ -236,7 +236,7 @@ export function assertPlaytestExecutionProvenance(
     !PLAYTEST_EPISODE_EXECUTION_MODES.includes(
       value.mode as PlaytestEpisodeExecutionMode
     ) ||
-    !isPlainObject(source) ||
+    !isRecord(source) ||
     !PLAYTEST_EXECUTION_SOURCE_KINDS.includes(
       source.kind as PlaytestExecutionSourceKind
     ) ||
@@ -291,7 +291,7 @@ export function assertPlaytestEpisodeIdentityForMode(
   identity: unknown,
   provenance: PlaytestExecutionProvenance
 ): asserts identity is PlaytestEpisodeIdentity {
-  if (!isPlainObject(identity)) {
+  if (!isRecord(identity)) {
     throw new TypeError("Playtest episode identity must be an object.");
   }
   const workspaceId = identity.workspaceId;

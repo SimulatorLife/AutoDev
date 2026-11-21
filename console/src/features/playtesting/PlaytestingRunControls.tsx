@@ -6,10 +6,10 @@ import {
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   isControlApiPlaytestingRunState,
+  isRecord,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   type PlaytestLaunchRequest,
-  type PlaytestSessionReference
-} from "@simulatorlife/autodev-core";
+  type PlaytestSessionReference} from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 
@@ -822,10 +822,6 @@ type RecoverablePlaytestLaunchRequest =
 export type PlaytestLaunchRequestDraft =
   | AdapterPlaytestLaunchRequestDraft
   | Omit<AutonomousVisualPlaytestLaunchRequest, "requestId">;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isSessionReferenceList(
   value: unknown,

@@ -1146,6 +1146,15 @@ A provider bridge that can tell where an attempt's time went reports it on its c
 
 Target Usage may show the hop count, its rate over the same scope and time range as the logical-request denominator, a time series, and bounded breakdowns by provider pair, by the provider that now serves the agent, by agent/role, by workspace and by reason. A hop rate is valid only when the hop numerator and the logical-request denominator are defined for the same scope and time range. Unsupported/unobserved signals remain unavailable, never zero.
 
+### Client surface
+
+Every session records the client surface it was started from, so origin-specific behaviour, failures and usage patterns can be compared. Codex names its own client in the `originator` it sends with every model request (the `originator` header, and the product token of its `User-Agent`) and records the same value in each rollout's `session_meta`. `core/src/diagnostics/client-surface.ts` is the single owner of mapping that observed value onto the closed `ClientSurface` set: `codex_desktop` (the Codex app), `codex_cli` (the interactive CLI), `codex_exec`, `codex_vscode` (the VS Code extension) and `other` (an originator that was observed but is not recognised). A session that carried no originator has no surface (`null`, shown as **Not observed**); it is never guessed from the provider, the model or the rollout's `source`.
+
+- The router resolves a request's surface at ingress (`originator` header first, then `User-Agent`) and records it as `autodev.client.surface` on the request spans, as a bounded dimension of the request and usage metrics (`unknown` when not observed), on the persisted router event (`clientSurface`) and on the live session identity (first observed wins; Control API contract v37). The attribute is span-scoped, not a Resource attribute: the router is a shared daemon serving every client.
+- Session diagnostics read the surface from each rollout's `session_meta.originator`: every thread carries its own observed value, and the session report, the recent-sessions list and the fleet scan expose the root thread's.
+- The Console shows it as **Client** in the live sessions table on Usage, in the session diagnostics header beside the CLI version, and as a column of the recent-sessions table.
+- Claude Code, Antigravity, Copilot and the opencli sites are providers behind the router, not client surfaces; a session started outside Codex does not pass through the router and is out of scope until a producer can report its own origin.
+
 ### Git change metrics
 
 Git change-output telemetry is a target requirement for Usage and for bounded per-resource aggregate views. It answers "what did the work actually produce" next to "what did it cost".

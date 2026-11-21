@@ -21,7 +21,9 @@
  * in a telemetry panel is worse than no number at all.
  */
 
-import type { UsageWorkspaceRequestBreakdown } from "@simulatorlife/autodev-core";
+import {
+  isRecord,
+  type UsageWorkspaceRequestBreakdown} from "@simulatorlife/autodev-core";
 
 /** The version of the contract this Console speaks. */
 export const USAGE_API_SCHEMA = "autodev-console-usage-v1";
@@ -187,10 +189,6 @@ export function usageApiUrl(
 ): string {
   const search = new URLSearchParams({ scope, ...params });
   return `/api/usage?${search.toString()}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 /** The numeric contract shared by every count in a scoped Usage payload. */

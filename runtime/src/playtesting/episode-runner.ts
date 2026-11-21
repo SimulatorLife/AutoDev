@@ -15,6 +15,7 @@ import {
   type GameResetResult,
   type GameSnapshotResult,
   type GameStepResult,
+  isRecord,
   normalizeGameMetricEvaluations,
   type PlaytestAdapterEpisode,
   type PlaytestArtifactReference,
@@ -39,9 +40,7 @@ import {
   samePlaytestRngCheckpoint,
   SHA256_PATTERN,
   type WorkspacePlaytestApproval,
-  type WorkspacePlaytestBuild
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+  type WorkspacePlaytestBuild} from "@simulatorlife/autodev-core";
 
 import {
   type PlaytestAdapterCallResult,

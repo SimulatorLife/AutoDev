@@ -14,8 +14,8 @@
  * key. The result is one place where the registry vocabulary is written.
  */
 
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestCoverageModality,
   type PlaytestDimensionRubric,
@@ -348,7 +348,7 @@ function assertDefaultsBlock(
   value: unknown,
   field: string
 ): asserts value is PlaytestRegistryDefaults {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`Registry field "${field}" must be a plain object.`);
   }
   assertNonEmptyString(value.audience, `${field}.audience`);
@@ -416,7 +416,7 @@ function assertScoreBand(
   band: unknown,
   field: string
 ): asserts band is PlaytestScoreBand {
-  if (!isPlainObject(band)) {
+  if (!isRecord(band)) {
     throw new TypeError(`Score band ${field} must be a plain object.`);
   }
   const score = band.score;
@@ -450,7 +450,7 @@ function assertDimensionRubric(
   value: unknown,
   field: string
 ): asserts value is PlaytestDimensionRubric {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`Dimension rubric ${field} must be a plain object.`);
   }
   for (const required of DIMENSION_RUBRIC_REQUIRED_FIELDS) {
@@ -729,7 +729,7 @@ function assertMetricDefinition(
   value: unknown,
   field: string
 ): asserts value is PlaytestMetricDefinitionInput {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(`Metric definition ${field} must be a plain object.`);
   }
   assertMetricIdentity(value, field);
@@ -753,7 +753,7 @@ function expandCoverageRequirements(
   const seen = new Set<string>();
   return raw.map((entry, index) => {
     const field = "coverageRequirements[" + String(index) + "]";
-    if (!isPlainObject(entry))
+    if (!isRecord(entry))
       throw new TypeError(field + " must be an object.");
     const keys = [
       "coverageMetricId",
@@ -858,7 +858,7 @@ function expandCoverageRequirements(
 
 /** Validate a metric-registry input and return the expanded form. */
 export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
-  if (!isPlainObject(input)) {
+  if (!isRecord(input)) {
     throw new TypeError("Metric registry must be a plain object.");
   }
   for (const key of Object.keys(input)) {

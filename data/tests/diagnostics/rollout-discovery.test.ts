@@ -6,6 +6,7 @@ import {
   findSessionRollouts,
   listRecentSessions,
   listRecentSessionsResponse,
+  parseSessionMetaPayload,
   readHeadMeta,
   rolloutFiles,
   rolloutRoots
@@ -110,9 +111,23 @@ test("the recent-sessions listing groups the threads of one session", () => {
     const root = recent.find((session) => session.id === ROOT);
     assert.equal(root?.threads, 2);
     assert.equal(root?.cwd, "/tmp/repo");
+    assert.equal(root?.clientSurface, "codex_desktop");
+    const other = recent.find((session) => session.id === OTHER);
+    assert.equal(other?.clientSurface, null);
   } finally {
     cleanup();
   }
+});
+
+test("parseSessionMetaPayload preserves string originator and ignores non-strings", () => {
+  assert.equal(
+    parseSessionMetaPayload({ originator: "Codex Desktop" }).originator,
+    "Codex Desktop"
+  );
+  assert.equal(
+    typeof parseSessionMetaPayload({ originator: 42 }).originator === "string",
+    false
+  );
 });
 
 test("the recent-sessions response carries the contract's schema and limit", () => {

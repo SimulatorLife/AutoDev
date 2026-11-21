@@ -102,7 +102,6 @@
     "./shared/executables": "./src/shared/executables.ts",
     "./shared/execution-contract": "./src/shared/execution-contract.ts",
     "./shared/installed-skills": "./src/shared/installed-skills.ts",
-    "./shared/object-guards": "./src/shared/object-guards.ts",
     "./shared/opencli-browser-setting": "./src/shared/opencli-browser-setting.ts",
     "./shared/output": "./src/shared/output.ts",
     "./shared/provider-http": "./src/shared/provider-http.ts",

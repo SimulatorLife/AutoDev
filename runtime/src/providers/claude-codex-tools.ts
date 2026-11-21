@@ -22,7 +22,7 @@
  * as `wait`. Captured from Codex 0.154.0 with the request-capture skill.
  */
 
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 import {
   requestContentParts,
   type RequestImage,

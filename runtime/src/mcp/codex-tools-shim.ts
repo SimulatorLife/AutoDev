@@ -25,7 +25,7 @@ import { request as httpRequest } from "node:http";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+import { isRecord } from "@simulatorlife/autodev-core";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot

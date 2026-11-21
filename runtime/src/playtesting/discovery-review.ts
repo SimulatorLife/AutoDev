@@ -4,6 +4,7 @@ import {
   assertPlaytestDiscoveryEvidencePacket,
   buildPlaytestDiscoveryEvidencePacket,
   canonicalPlaytestJson,
+  isRecord,
   type PlaytestArtifactReference,
   type PlaytestDiscoveryActionReceipt,
   type PlaytestDiscoveryEvidenceFrame,
@@ -17,9 +18,7 @@ import {
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP,
-  type PlaytestVisualBatch
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+  type PlaytestVisualBatch} from "@simulatorlife/autodev-core";
 
 import {
   type PlaytestArtifactStore,

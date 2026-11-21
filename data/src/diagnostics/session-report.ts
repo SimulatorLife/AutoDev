@@ -460,6 +460,7 @@ export async function buildSessionDiagnosticsReport(
     rootThread?.sessionId ?? rootThread?.id ?? threads[0]?.sessionId ?? null;
   const matchedByThreadId =
     rootSessionId !== null && options.id !== rootSessionId;
+  const clientSurface = rootThread?.clientSurface ?? null;
 
   const allEvents = sessionRouterEvents(threads, rows);
   const events = options.threadId
@@ -478,6 +479,7 @@ export async function buildSessionDiagnosticsReport(
     requestedId: options.id,
     rootSessionId,
     matchedByThreadId,
+    clientSurface,
     threads,
     router,
     logs: readLogSummaries(options.codexHome),

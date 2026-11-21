@@ -131,6 +131,7 @@ import {
 } from "../src/features/evaluations/evaluations-url.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderStatusBadge } from "../src/features/providers/provider-status.ts";
+import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
@@ -220,7 +221,6 @@ import {
   withControlFailure,
   WorkspacesView
 } from "../src/index.ts";
-import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import {
   CONSOLE_BUILD_DIST_DIR,
   CONSOLE_DEV_DIST_DIR,
@@ -5178,9 +5178,9 @@ test("live session state projects Runtime counters without inventing defaults", 
       concurrency: { activeSessions: 3, activeSubagentThreads: 1 },
       liveSessions: {
         identitiesObserved: [
-          { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker" },
-          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null },
-          { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null }
+          { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker", clientSurface: "codex_desktop" },
+          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null, clientSurface: null },
+          { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null, clientSurface: "codex_exec" }
         ],
         identifiedSessionCount: 3,
         partial: false,
@@ -5196,9 +5196,9 @@ test("live session state projects Runtime counters without inventing defaults", 
       activeSubagentThreads: 1,
       inFlightRequests: 2,
       sessionIdentities: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker" },
-        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null },
-        { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null }
+        { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker", clientSurface: "codex_desktop" },
+        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null, clientSurface: null },
+        { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null, clientSurface: "codex_exec" }
       ],
       sessionIdentitiesPartial: false,
       unattributedLiveActivityCount: 0
@@ -5224,7 +5224,7 @@ test("live session state projects Runtime counters without inventing defaults", 
     concurrency: { activeSessions: 3 },
     liveSessions: {
       identitiesObserved: [
-        { sessionId: "session-known", state: "active", lastActivityAt: 10, provider: null, model: null, role: null }
+        { sessionId: "session-known", state: "active", lastActivityAt: 10, provider: null, model: null, role: null, clientSurface: null }
       ],
       identifiedSessionCount: 1,
       partial: false,
@@ -17622,7 +17622,7 @@ test("Console rejects a runtime response that does not match the v3 contract", a
             (_, index) => ({
               sessionId: `session-${String(index).padStart(3, "0")}`,
               state: "active",
-              lastActivityAt: index, provider: null, model: null, role: null
+              lastActivityAt: index, provider: null, model: null, role: null, clientSurface: null
             })
           ),
           identifiedSessionCount: CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT + 1,
@@ -17774,6 +17774,25 @@ test("Console rejects a runtime response that does not match the v3 contract", a
         ],
         identifiedSessionCount: 2,
         partial: true,
+        unattributedLiveActivityCount: 0
+      }
+    },
+    {
+      ...valid,
+      liveSessions: {
+        identitiesObserved: [
+          {
+            sessionId: "session-a",
+            state: "active",
+            lastActivityAt: 1,
+            provider: null,
+            model: null,
+            role: null,
+            clientSurface: "not_a_surface"
+          }
+        ],
+        identifiedSessionCount: 1,
+        partial: false,
         unattributedLiveActivityCount: 0
       }
     }

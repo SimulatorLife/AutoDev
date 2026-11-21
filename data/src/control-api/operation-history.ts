@@ -14,10 +14,10 @@
  * shape before forwarding.
  */
 
-import type {
-  OperationHistoryEntry,
-  ReconciliationDiff
-} from "@simulatorlife/autodev-core";
+import {
+  isRecord,
+  type OperationHistoryEntry,
+  type ReconciliationDiff} from "@simulatorlife/autodev-core";
 
 const AUDIT_SCHEMA = "autodev-control-api-audit-v1";
 const RESOURCE_MAX_LEN = 200;
@@ -28,10 +28,6 @@ const ERROR_MAX_LEN = 160;
 function bound(value: string | null, max: number): string | null {
   if (value === null) return null;
   return value.length > max ? value.slice(0, max) : value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function readOutcome(value: unknown): "ok" | "denied" | "error" | null {

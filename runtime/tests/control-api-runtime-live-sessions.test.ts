@@ -10,6 +10,7 @@ import {
   handleControlApiRequest,
   setControlApiLiveSessionsSource
 } from "../src/control-api/request-handler.ts";
+import { UsageTracker } from "../src/router/usage.ts";
 import {
   responseBody,
   responseRecorder
@@ -65,7 +66,7 @@ test("runtime distinguishes unavailable session evidence from an observed empty 
       unattributedLiveActivityCount: 0
     });
     // `liveSessions` arrived in contract v31.
-    assert.ok(CONTROL_API_CONTRACT.version >= 36);
+    assert.ok(CONTROL_API_CONTRACT.version >= 37);
   } finally {
     setControlApiLiveSessionsSource(null);
     if (previousToken === undefined)
@@ -83,6 +84,10 @@ test("runtime publishes explicit distinct tracker session identities and unattri
   process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
   process.env.AUTODEV_CONTROL_OPERATORS = "runtime-session-test";
   const tracker = createAgentActivityTracker({ now: () => 10 });
+  const usage = new UsageTracker({ activityTracker: tracker });
+  usage.noteSessionClientSurface("session-a", "codex_desktop");
+  // First observed wins: a subsequent request from another surface does not overwrite.
+  usage.noteSessionClientSurface("session-a", "codex_cli");
   tracker.beginRequest("request-subject-a", {
     requestId: "request-a",
     sessionId: "session-a",
@@ -107,12 +112,20 @@ test("runtime publishes explicit distinct tracker session identities and unattri
     sessionId: "session-a", state: "active", lastActivityAt: 20,
     provider: "provider-z", model: "model-x", role: "worker"
   });
-  setControlApiLiveSessionsSource((now) => tracker.listLiveSessions(now));
+  setControlApiLiveSessionsSource((now) => usage.listLiveSessions(now)!);
   try {
     const runtime = await readRuntime();
     assert.deepEqual(runtime?.liveSessions, {
       identitiesObserved: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 20, provider: "provider-z", model: "model-x", role: "worker" }
+        {
+          sessionId: "session-a",
+          state: "active",
+          lastActivityAt: 20,
+          provider: "provider-z",
+          model: "model-x",
+          role: "worker",
+          clientSurface: "codex_desktop"
+        }
       ],
       identifiedSessionCount: 1,
       partial: false,

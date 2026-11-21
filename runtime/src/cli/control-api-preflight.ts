@@ -1,9 +1,8 @@
 import {
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
-  LOCAL_CONTROL_API_ACTOR
-} from "@simulatorlife/autodev-core";
-import { isRecord } from "@simulatorlife/autodev-runtime/shared/object-guards";
+  isRecord,
+  LOCAL_CONTROL_API_ACTOR} from "@simulatorlife/autodev-core";
 
 const CONTROL_API_PROBE_TIMEOUT_MS = 10_000;
 const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";

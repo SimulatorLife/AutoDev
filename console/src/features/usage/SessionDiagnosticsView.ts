@@ -15,6 +15,7 @@
  */
 
 import {
+  formatClientSurface,
   type SessionDiagnosticsReport,
   type SessionRouterEventRow,
   type SessionRouterSummary,
@@ -383,6 +384,11 @@ function renderContextHeader(
       DetailValue,
       { label: "CLI version" },
       root?.cliVersion ?? NOT_OBSERVED_LABEL
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Client" },
+      formatClientSurface(report.clientSurface)
     ),
     React.createElement(
       DetailValue,
@@ -803,14 +809,22 @@ function turnColumns(): readonly ColumnDef<
       id: "started",
       header: "Started",
       cell: ({ row: { original: turn } }) =>
-        React.createElement(InstantDisplay, { value: turn.started, label: "Turn start" }),
+        React.createElement(InstantDisplay, {
+          value: turn.started,
+          label: "Turn start"
+        }),
       meta: { weight: 170, align: "tokens" }
     },
     {
       id: "ended",
       header: "Ended",
       cell: ({ row: { original: turn } }) =>
-        turn.ended ? React.createElement(InstantDisplay, { value: turn.ended, label: "Turn end" }) : "open",
+        turn.ended
+          ? React.createElement(InstantDisplay, {
+              value: turn.ended,
+              label: "Turn end"
+            })
+          : "open",
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -842,7 +856,11 @@ function gapColumns(): readonly ColumnDef<
     {
       id: "at",
       header: "At",
-      cell: ({ row: { original: gap } }) => React.createElement(InstantDisplay, { value: gap.at, label: "Gap time" }),
+      cell: ({ row: { original: gap } }) =>
+        React.createElement(InstantDisplay, {
+          value: gap.at,
+          label: "Gap time"
+        }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -865,7 +883,11 @@ function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
     {
       id: "at",
       header: "At",
-      cell: ({ row: { original: item } }) => React.createElement(InstantDisplay, { value: item.at, label: "Item time" }),
+      cell: ({ row: { original: item } }) =>
+        React.createElement(InstantDisplay, {
+          value: item.at,
+          label: "Item time"
+        }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -1126,7 +1148,11 @@ function failureColumns(): readonly ColumnDef<FailureRow, unknown>[] {
     {
       id: "at",
       header: TIME_UTC_HEADER,
-      cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.at, label: "Request time" }),
+      cell: ({ row: { original: row } }) =>
+        React.createElement(InstantDisplay, {
+          value: row.at,
+          label: "Request time"
+        }),
       meta: { weight: 170, align: "tokens" }
     },
     {
@@ -1237,7 +1263,11 @@ function renderFailures(
           {
             id: "at",
             header: TIME_UTC_HEADER,
-            cell: ({ row: { original: row } }) => React.createElement(InstantDisplay, { value: row.at, label: "Request time" }),
+            cell: ({ row: { original: row } }) =>
+              React.createElement(InstantDisplay, {
+                value: row.at,
+                label: "Request time"
+              }),
             meta: { weight: 170, align: "tokens" }
           },
           {
@@ -1401,7 +1431,11 @@ function renderRequests(
             {
               id: "at",
               header: TIME_UTC_HEADER,
-              cell: ({ row: { original: event } }) => React.createElement(InstantDisplay, { value: event.at, label: "Event time" }),
+              cell: ({ row: { original: event } }) =>
+                React.createElement(InstantDisplay, {
+                  value: event.at,
+                  label: "Event time"
+                }),
               meta: { weight: 170, align: "tokens" }
             },
             {
@@ -1468,7 +1502,11 @@ function spanColumns(): readonly ColumnDef<UsageSessionSpanSummary, unknown>[] {
     {
       id: "time",
       header: TIME_UTC_HEADER,
-      cell: ({ row: { original: span } }) => React.createElement(InstantDisplay, { value: span.timestamp, label: "Span time" }),
+      cell: ({ row: { original: span } }) =>
+        React.createElement(InstantDisplay, {
+          value: span.timestamp,
+          label: "Span time"
+        }),
       meta: { weight: 180, align: "tokens" }
     },
     {
@@ -1631,10 +1669,7 @@ export function SessionDiagnosticsView({
     }
     switch (state.tab) {
       case "threads": {
-        return renderThreads(
-          report,
-          state
-        );
+        return renderThreads(report, state);
       }
       case "failures": {
         return renderFailures(report, state);
@@ -1649,11 +1684,7 @@ export function SessionDiagnosticsView({
         return React.createElement(
           "div",
           { className: PAGE_SECTION_STACK_CLASS },
-          ...renderOverview(
-            report,
-            spans,
-            state
-          )
+          ...renderOverview(report, spans, state)
         );
       }
     }

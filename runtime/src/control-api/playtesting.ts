@@ -10,6 +10,7 @@ import {
   type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingVisualAssignment,
   type ControlApiPlaytestingWindowResponse,
+  hasControlCharacters,
   isPlaytestFindingId,
   type PlaytestBatch,
   type PlaytestEpisode,
@@ -297,14 +298,6 @@ function routeFor(pathname: string): ParsedRoute | null {
       : { resource: "episodes", id, windowId: null, mediaId: assetId };
   }
   return null;
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function oneValue(

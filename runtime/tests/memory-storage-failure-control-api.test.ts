@@ -9,6 +9,7 @@ import {
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  errorCode,
   makeRequest,
   type RecordedResponse,
   responseBody,
@@ -46,13 +47,6 @@ interface CallResult {
   readonly status: number;
   readonly body: Record<string, unknown> | null;
   readonly audits: AuditEntry[];
-}
-
-function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.error;
-  return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>).code
-    : undefined;
 }
 
 async function call(

@@ -1,12 +1,12 @@
 /** Frozen per-batch coverage plans and counts for game-owned metric cells. */
 
+import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCoverageManifest,
   PlaytestCoverageManifestCell
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
-import { isPlainObject } from "./object-guards.ts";
 import type {
   PlaytestCoverageRequirement,
   PlaytestMetricRegistry
@@ -119,9 +119,6 @@ export interface PlaytestCoverageEpisode {
   readonly metrics: readonly PlaytestNumericResult[];
 }
 
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
 
 function isText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -472,7 +469,7 @@ function assertCoverageCellShape(
   value: unknown
 ): asserts value is Record<string, unknown> {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     Object.keys(value).length !== CELL_KEYS.size ||
     Object.keys(value).some((key) => !CELL_KEYS.has(key))
   ) {
@@ -590,7 +587,7 @@ function assertCoverageCell(
 export function assertPlaytestCoverageManifest(
   value: unknown
 ): asserts value is PlaytestCoverageManifest {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Playtest coverage manifest must be an object.");
   }
   assertCoverageManifestIdentity(value);

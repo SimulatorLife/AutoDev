@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isSessionDiagnosticsReport } from "@simulatorlife/autodev-core";
+import {
+  isSessionDiagnosticsReport,
+  isSessionFleetScanResponse
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   DIAGNOSTICS_SESSION_ID,
+  fleetScanResponse,
   sessionDiagnosticsReport
 } from "../e2e/session-diagnostics-fixture.ts";
 import {
@@ -21,6 +25,7 @@ import {
   SessionDiagnosticsView,
   type SessionDiagnosticsViewState
 } from "../src/features/usage/SessionDiagnosticsView.ts";
+import { UsageFleetDiagnosticsView } from "../src/features/usage/UsageFleetDiagnosticsView.ts";
 
 function render(
   tab: string,
@@ -120,16 +125,12 @@ test("an unknown provider remains visible as a gap in the routed sequence", () =
   assert.ok(summary);
   const markup = render("overview", undefined, {
     ...report,
-    router: [
-      { ...summary, providerSequence: ["claude", "?", "openai"] }
-    ]
+    router: [{ ...summary, providerSequence: ["claude", "?", "openai"] }]
   });
   assert.match(markup, />claude → Unknown provider → openai</);
   const requestMarkup = render("requests", undefined, {
     ...report,
-    router: [
-      { ...summary, providerSequence: ["claude", "?", "openai"] }
-    ]
+    router: [{ ...summary, providerSequence: ["claude", "?", "openai"] }]
   });
   assert.match(requestMarkup, />claude → Unknown provider → openai</);
 });
@@ -210,4 +211,42 @@ test("each thread lists the skills it read and the session lists which threads u
   const detail = render("threads", "01a0ba16-d54c-78f2-9367-3f80e9a8f75f");
   assert.match(detail, /Skills loaded by root/);
   assert.match(detail, /\/repo\/\.agents\/skills: 2/);
+});
+
+test("SessionDiagnosticsView renders the observed client surface and falls back to Not observed", () => {
+  const observed = render("overview");
+  assert.match(observed, />CLI version<\/dt><dd[^>]*>0\.169\.0</);
+  assert.match(observed, />Client<\/dt><dd[^>]*>Codex app</);
+
+  const base = sessionDiagnosticsReport();
+  assert.ok(isSessionDiagnosticsReport(base));
+  const unobserved = render("overview", undefined, {
+    ...base,
+    clientSurface: null
+  });
+  assert.match(unobserved, />Client<\/dt><dd[^>]*>Not observed</);
+});
+
+test("UsageFleetDiagnosticsView recent sessions table renders a Client column", () => {
+  const scan = fleetScanResponse();
+  assert.ok(isSessionFleetScanResponse(scan));
+  const unobservedRow = {
+    ...scan.sessions[0]!,
+    id: "01a0ba20-d54c-78f2-9367-3f80e9a8f75f",
+    clientSurface: null
+  };
+  const markup = renderToStaticMarkup(
+    UsageFleetDiagnosticsView({
+      view: "sessions",
+      range: "24H",
+      scan: { ...scan, sessions: [scan.sessions[0]!, unobservedRow] },
+      scanFailure: null,
+      hooks: null,
+      hooksFailure: null,
+      hooksSinceDays: 7
+    })
+  );
+  assert.match(markup, />Client</);
+  assert.match(markup, />Codex app</);
+  assert.match(markup, />Not observed</);
 });

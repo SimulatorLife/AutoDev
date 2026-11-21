@@ -12,8 +12,8 @@
  * a downstream caller could silently drop.
  */
 
+import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
-import { isPlainObject } from "./object-guards.ts";
 import {
   type PlaytestAdapterErrorCode,
   type PlaytestAdapterMethod,
@@ -137,7 +137,7 @@ function isApplicationErrorCode(value: number): boolean {
 export function assertPlaytestJsonRpcRequest(
   value: unknown
 ): asserts value is PlaytestJsonRpcRequest {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError(
       "JSON-RPC request must be a plain object; batch arrays are unsupported."
     );
@@ -160,7 +160,7 @@ export function assertPlaytestJsonRpcRequest(
       `JSON-RPC method must be one of ${PLAYTESTS_ADAPTER_METHODS.join(", ")}; received ${String(value.method)}.`
     );
   }
-  if (!isPlainObject(value.params)) {
+  if (!isRecord(value.params)) {
     throw new TypeError("JSON-RPC params must be a plain object.");
   }
 }
@@ -169,7 +169,7 @@ export function assertPlaytestJsonRpcRequest(
 export function assertPlaytestJsonRpcNotification(
   value: unknown
 ): asserts value is PlaytestJsonRpcNotification {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("JSON-RPC notification must be a plain object.");
   }
   if (!hasOnlyKeys(value, ["jsonrpc", "method", "params"])) {
@@ -190,7 +190,7 @@ export function assertPlaytestJsonRpcNotification(
       "JSON-RPC notification method must be game.event or game.progress."
     );
   }
-  if (!isPlainObject(value.params)) {
+  if (!isRecord(value.params)) {
     throw new TypeError("JSON-RPC notification params must be a plain object.");
   }
 }
@@ -200,7 +200,7 @@ export function assertPlaytestJsonRpcSuccess(
   value: unknown
 ): asserts value is PlaytestJsonRpcSuccess {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !hasOnlyKeys(value, ["jsonrpc", "id", "result"])
   ) {
     throw new TypeError(
@@ -225,7 +225,7 @@ export function assertPlaytestJsonRpcError(
   value: unknown
 ): asserts value is PlaytestJsonRpcError {
   if (
-    !isPlainObject(value) ||
+    !isRecord(value) ||
     !hasOnlyKeys(value, ["jsonrpc", "id", "error"])
   ) {
     throw new TypeError(
@@ -240,7 +240,7 @@ export function assertPlaytestJsonRpcError(
   }
   const error = value.error;
   if (
-    !isPlainObject(error) ||
+    !isRecord(error) ||
     !hasOnlyKeys(error, ["code", "message", "data"])
   ) {
     throw new TypeError(
@@ -267,7 +267,7 @@ export function assertPlaytestJsonRpcError(
     }
     const data = error.data;
     if (
-      !isPlainObject(data) ||
+      !isRecord(data) ||
       !hasOnlyKeys(data, ["category", "retryable", "episodeDisposition"])
     ) {
       throw new TypeError(
@@ -296,7 +296,7 @@ export function assertPlaytestJsonRpcError(
 export function assertPlaytestJsonRpcResponse(
   value: unknown
 ): asserts value is PlaytestJsonRpcResponse {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("JSON-RPC response must be a plain object.");
   }
   if ("result" in value && "error" in value) {
@@ -356,7 +356,7 @@ export function assertPlaytestCapabilityAdvertisement(
     "quotas",
     "deterministic"
   ];
-  if (!isPlainObject(value) || !hasOnlyKeys(value, allowedKeys)) {
+  if (!isRecord(value) || !hasOnlyKeys(value, allowedKeys)) {
     throw new TypeError(
       "Capability advertisement must match the complete v1 schema."
     );
@@ -378,7 +378,7 @@ export function assertPlaytestCapabilityAdvertisement(
     "actionSchema",
     "eventSchema"
   ] as const) {
-    if (!isPlainObject(value[schemaField])) {
+    if (!isRecord(value[schemaField])) {
       throw new TypeError(
         `Capability advertisement ${schemaField} must be a JSON Schema object.`
       );
@@ -405,7 +405,7 @@ export function assertPlaytestCapabilityAdvertisement(
     );
   }
   if (
-    !isPlainObject(value.quotas) ||
+    !isRecord(value.quotas) ||
     !hasOnlyKeys(value.quotas, [
       "maxMessageBytes",
       "maxQueuedRequests",
@@ -433,7 +433,7 @@ export function assertPlaytestCapabilityAdvertisement(
     }
   }
   if (
-    !isPlainObject(value.deterministic) ||
+    !isRecord(value.deterministic) ||
     !hasOnlyKeys(value.deterministic, [
       "seededRuns",
       "rngVersion",
@@ -474,7 +474,7 @@ export function assertPlaytestCapabilityAdvertisement(
 export function assertPlaytestEvidenceLocator(
   value: unknown
 ): asserts value is PlaytestEvidenceLocator {
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     throw new TypeError("Evidence locator must be a plain object.");
   }
   if (!isPlaytestLocatorKind(value.kind)) {
