@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { renderRuntimeMirrorPackage } from "@simulatorlife/autodev-runtime/platform/runtime-mirror-package";
+import {
+  renderRuntimeMirrorPackage,
+  renderTransitionalRuntimeMirrorPackage
+} from "@simulatorlife/autodev-runtime/platform/runtime-mirror-package";
 
 const RUNTIME_PACKAGE = {
   name: "@simulatorlife/autodev-runtime",
@@ -113,4 +116,106 @@ test("a module imported by package name and by path is one module in the install
     true,
     "the installed tree loaded two copies of one Runtime module"
   );
+});
+
+/**
+ * The failure this guards: an install copied an updated module that imported
+ * a new subpath before it rewrote the manifest, and a bridge launchd restarted
+ * in between crashed with `ERR_PACKAGE_PATH_NOT_EXPORTED`. While files are
+ * replaced, the manifest must export the subpaths of both versions.
+ */
+test("the transitional manifest exports the installed and the next subpaths", () => {
+  const installed = renderRuntimeMirrorPackage({
+    runtimePackage: {
+      name: "@simulatorlife/autodev-runtime",
+      exports: {
+        "./router/routing": "./src/router/routing.ts",
+        "./shared/retired": "./src/shared/retired.ts"
+      }
+    },
+    materialized: new Set([
+      "runtime/src/router/routing.ts",
+      "runtime/src/shared/retired.ts"
+    ])
+  });
+  const next = renderRuntimeMirrorPackage({
+    runtimePackage: {
+      name: "@simulatorlife/autodev-runtime",
+      exports: {
+        "./router/routing": "./src/router/routing-next.ts",
+        "./shared/compaction": "./src/shared/compaction.ts"
+      }
+    },
+    materialized: new Set([
+      "runtime/src/router/routing-next.ts",
+      "runtime/src/shared/compaction.ts"
+    ])
+  });
+
+  const manifest = JSON.parse(
+    renderTransitionalRuntimeMirrorPackage(next, installed)
+  ) as { name: string; type: string; exports: Record<string, string> };
+
+  assert.equal(manifest.name, "@simulatorlife/autodev-runtime");
+  assert.equal(manifest.type, "module");
+  assert.deepEqual(manifest.exports, {
+    "./router/routing": "./router/routing-next.ts",
+    "./shared/retired": "./shared/retired.ts",
+    "./shared/compaction": "./shared/compaction.ts"
+  });
+});
+
+test("the transitional manifest is the next manifest when none is installed or readable", () => {
+  const next = renderRuntimeMirrorPackage({
+    runtimePackage: RUNTIME_PACKAGE,
+    materialized: new Set(["runtime/src/router/routing.ts"])
+  });
+  assert.deepEqual(
+    JSON.parse(renderTransitionalRuntimeMirrorPackage(next, null)),
+    JSON.parse(next)
+  );
+  assert.deepEqual(
+    JSON.parse(renderTransitionalRuntimeMirrorPackage(next, "{ not json")),
+    JSON.parse(next)
+  );
+});
+
+test("a module importing a new subpath resolves under the transitional manifest", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-mirror-"));
+  const installed = path.join(root, "src");
+  mkdirSync(path.join(installed, "shared"), { recursive: true });
+  const runtimePackage = (subpaths: string[]) => ({
+    name: "@simulatorlife/autodev-runtime",
+    exports: Object.fromEntries(
+      subpaths.map((subpath) => [`./shared/${subpath}`, `./src/shared/${subpath}.ts`])
+    )
+  });
+  const materialized = (subpaths: string[]) =>
+    new Set(subpaths.map((subpath) => `runtime/src/shared/${subpath}.ts`));
+  const before = renderRuntimeMirrorPackage({
+    runtimePackage: runtimePackage(["output"]),
+    materialized: materialized(["output"])
+  });
+  const next = renderRuntimeMirrorPackage({
+    runtimePackage: runtimePackage(["output", "compaction"]),
+    materialized: materialized(["output", "compaction"])
+  });
+  // Mid-install: the new module and an updated importer have landed.
+  writeFileSync(
+    path.join(installed, "shared", "compaction.ts"),
+    "export const compacted = true;\n"
+  );
+  writeFileSync(
+    path.join(installed, "shared", "output.ts"),
+    'export { compacted } from "@simulatorlife/autodev-runtime/shared/compaction";\n'
+  );
+  writeFileSync(
+    path.join(installed, "package.json"),
+    renderTransitionalRuntimeMirrorPackage(next, before)
+  );
+
+  const output = await import(
+    pathToFileURL(path.join(installed, "shared", "output.ts")).href
+  );
+  assert.equal(output.compacted, true);
 });

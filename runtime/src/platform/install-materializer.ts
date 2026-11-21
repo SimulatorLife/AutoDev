@@ -63,7 +63,8 @@ import {
 } from "./runtime-files.ts";
 import {
   readRuntimePackageManifest,
-  renderRuntimeMirrorPackage
+  renderRuntimeMirrorPackage,
+  renderTransitionalRuntimeMirrorPackage
 } from "./runtime-mirror-package.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
@@ -1191,10 +1192,6 @@ function removeObsoleteRuntimeArtifacts(
   ];
   removeStalePaths(obsoletePaths, OBSOLETE_RUNTIME_PATH_REASON);
   removeStalePaths(
-    OBSOLETE_RUNTIME_MODULES.map((filePath) => path.join(codexHome, filePath)),
-    OBSOLETE_RUNTIME_PATH_REASON
-  );
-  removeStalePaths(
     OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
     "obsolete-runtime-hook"
   );
@@ -1223,42 +1220,68 @@ function removeObsoleteRuntimeArtifacts(
 
 type FileTarget = (filePath: string) => string;
 
-function materializeRuntimeSources(
+/**
+ * Install the Runtime source tree and its package manifest.
+ *
+ * Bridges run from the installed tree under launchd `KeepAlive`, so one can
+ * restart at any point of an install and resolve its imports against whatever
+ * is on disk then. Copying every file before rewriting the manifest left a
+ * window in which an updated module imported a subpath the old manifest did
+ * not export; the restarted bridge crashed with `ERR_PACKAGE_PATH_NOT_EXPORTED`
+ * and `KeepAlive` crash-looped it until the manifest landed. The steps are
+ * ordered so that every state between them resolves:
+ *
+ * 1. Files new to the installed tree: nothing installed imports them yet.
+ * 2. A manifest exporting both the installed and the next subpaths.
+ * 3. Files that changed: each subpath they import is exported and present.
+ * 4. The next manifest: nothing installed imports a retired subpath now.
+ * 5. Retired modules: nothing exports or imports them.
+ */
+function materializeRuntimeTree(
+  repositoryRoot: string,
+  codexHome: string,
   source: FileTarget,
   target: FileTarget
 ): void {
-  for (const filePath of RUNTIME_MODULES)
+  const files = [
+    ...RUNTIME_MODULES,
+    ...PROMPT_ROLES.map((role) => `agents/prompts/roles/${role}.md`)
+  ];
+  const added = new Set(files.filter((filePath) => !exists(target(filePath))));
+  for (const filePath of added)
     materializeRuntimeFile(source(filePath), target(filePath), 0o644);
-  for (const role of PROMPT_ROLES)
-    materializeRuntimeFile(
-      source(`agents/prompts/roles/${role}.md`),
-      target(`agents/prompts/roles/${role}.md`),
-      0o644
-    );
-}
 
-/**
- * Write the installed tree's package manifest.
- *
- * The Runtime imports its own modules through the workspace package name, so
- * the installed copy has to declare the package it mirrors. Without a name and
- * an exports map those imports resolve against the repository checkout, the
- * Runtime loads two copies of every such module, and module-scoped state --
- * the routing policy, provider discovery, cooldowns -- splits across them.
- */
-function materializeRuntimeMirrorPackage(
-  repositoryRoot: string,
-  codexHome: string
-): void {
+  const manifestPath = path.join(codexHome, "src", "package.json");
   const manifest = renderRuntimeMirrorPackage({
     runtimePackage: readRuntimePackageManifest(repositoryRoot),
     materialized: new Set<string>(RUNTIME_MODULES)
   });
   materializeRuntimeContent(
-    manifest,
-    path.join(codexHome, "src", "package.json"),
+    renderTransitionalRuntimeMirrorPackage(
+      manifest,
+      readInstalledManifest(manifestPath)
+    ),
+    manifestPath,
     0o644
   );
+  for (const filePath of files)
+    if (!added.has(filePath))
+      materializeRuntimeFile(source(filePath), target(filePath), 0o644);
+  materializeRuntimeContent(manifest, manifestPath, 0o644);
+  removeStalePaths(
+    OBSOLETE_RUNTIME_MODULES.map((filePath) => path.join(codexHome, filePath)),
+    OBSOLETE_RUNTIME_PATH_REASON
+  );
+}
+
+/** The installed tree's package manifest, or null when there is none. */
+function readInstalledManifest(manifestPath: string): string | null {
+  try {
+    return readFileSync(manifestPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 function materializeScripts(hooks: string, source: FileTarget): void {
@@ -2037,7 +2060,7 @@ function prepareRunLogs(codexHome: string): void {
  * Re-render the execution contract from `agents/roles/*.toml` against the
  * freshly-generated rulesync projection. The result is written in place to
  * the repo's `config/execution-contract.json` so the existing
- * `materializeRuntimeSources` step copies the fresh copy to the runtime
+ * `materializeRuntimeTree` step copies the fresh copy to the runtime
  * target on the next loop. Idempotent: same inputs produce the same output.
  */
 function renderAndMaterializeContract(
@@ -2271,8 +2294,12 @@ export function materializeInstallation(options: MaterializeOptions): void {
     path.join(options.repositoryRoot, filePath);
   const target: FileTarget = (filePath) =>
     runtimeTarget(filePath, options.codexHome, hooks);
-  materializeRuntimeSources(source, target);
-  materializeRuntimeMirrorPackage(options.repositoryRoot, options.codexHome);
+  materializeRuntimeTree(
+    options.repositoryRoot,
+    options.codexHome,
+    source,
+    target
+  );
   materializeScripts(hooks, source);
   runModelCatalog(
     source("config/model-routing.json"),
