@@ -94,6 +94,7 @@ every event and looked like "the router logged nothing".
 | Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
 | Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
 | Did Codex load the command rules? | `node "$SKILL_DIR/scripts/rule-loading-probe.ts" --codex "$(command -v codex)"` — a real Codex run against an isolated `CODEX_HOME`; `ls -l "$CODEX_HOME/rules/default.rules"` must show a regular file, and `bash scripts/install.sh --check` reports a symlink or stale copy as drift |
+| Can this session write to `.git`? | `node "$SKILL_DIR/scripts/git-write-access-probe.ts" --codex "$(command -v codex)"` — the same real-Codex harness against a throwaway Git repository, staging one file through each command form and reporting which forms keep the write access |
 | What `PreToolUse` hooks blocked? | `$CODEX_HOME/hooks/hooks.log` (`event="PreToolUse"`, `decision="deny"`, `policy`, `role`, `reason`, `commandHead`); summarize via `node "$SKILL_DIR/scripts/session-trace.ts" --hooks --since 7`, or scan historical rollouts via `--scan-recent [N]` |
 | Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json` stores per-turn SHA-256 dedupe hashes (`session-trace.ts --efficiency` reports the count), while rollout tool inputs reading `SKILL.md` give exact skill names |
 
@@ -226,6 +227,33 @@ every event and looked like "the router logged nothing".
   reproduce it with `node "$SKILL_DIR/scripts/rule-loading-probe.ts"`. Verified
   2026-11-17 against `codex-cli 0.154.0` and `0.169.0-alpha.11.1`; the write-up is
   in `docs/local-setup.md` ("Codex command rules").
+- **"`.git` is read-only for this session" is usually a wrong diagnosis.** The
+  write access is granted per command, not per session, and it is real: a
+  standalone `git add <path>` writes the index. What loses it is the *shape* of
+  the command. Codex judges a chain as a whole, so a chain is only allowed when
+  every part of it matches a rule; a shell construct (`cd ... &&`, `2>&1`, `|`,
+  a `for` loop) breaks the chain even around an allowed command. Verified
+  2026-11-21 against `codex-cli 0.171.0-alpha.13`: `git add f && git status`
+  failed with `.git/index.lock: Operation not permitted` while `git add f` on
+  its own staged the file. The rules now allow the read-only inspection
+  commands, so that chain works; `cd ... &&`, a pipe, a redirection and a
+  shell loop still do not.
+- **`touch .git/<file>` is not a probe of the write access.** It matches no
+  rule, so it is sandboxed by design and always fails with `Operation not
+  permitted` — including in a session that stages successfully. A session that
+  probed that way and concluded it could not commit had never tried a real
+  `git add`. The one signal that tells a sandboxed command from an unsandboxed
+  one is the noise the login shell makes when it is sandboxed (on this
+  machine, `/Users/<user>/.rvm/scripts/rvm: line 15: /bin/ps: Operation not
+  permitted`): its absence means the command ran outside the sandbox.
+- **An explicit `shell` on `exec_command` can cost the write access.**
+  Codex resolves the shell by *name* through `PATH`, ignoring the directory in
+  the path you give it, and on an Apple Silicon machine `bash` is often a
+  Homebrew x86_64 build that runs translated; macOS keeps the sandbox on a
+  translated shell, so an allowed command still cannot write `.git`. Verified
+  2026-11-21: `shell: "/bin/bash"` (which resolved to the x86_64 Homebrew
+  bash) could not stage, while the default shell, `/bin/zsh`, `/bin/sh` and
+  the system arm64 `/bin/bash` could. Use the default shell.
 - **Zero `ROUTER FAILURE`s does not mean Priority-1 stayed selected.** A single `ROUTER SKIPPED` event (`probe_unavailable`, `quota_exhausted`, `session_limit`, etc.) can pin a long session onto a fallback provider with zero failed requests; always check `ROUTER SKIPPED` and `ROUTER RETRIES` in `session-trace.ts`.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.

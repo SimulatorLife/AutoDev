@@ -828,6 +828,64 @@ sandbox cannot be applied at all.
 `tests/config/command-rules.test.ts` pins the installer side: the installed
 rules file must be a regular file with the tracked content.
 
+### Codex command rules: the exemption is granted per command, not per session
+
+The `allow` rules in `agents/rules/default.rules` are what let an agent stage
+and commit. Codex's `workspace-write` sandbox keeps `<root>/.git` read-only, so
+an allowed command runs outside the sandbox and an unallowed one cannot write
+the index at all — it fails with `.git/index.lock: Operation not permitted`.
+
+That exemption is decided **per command**, and Codex judges a chain as a
+whole: the chain runs outside the sandbox only when **every** part of it
+matches a rule. So the shape of the command decides whether the agent can
+commit:
+
+| Command form                                                | Can write `.git` |
+| ----------------------------------------------------------- | ---------------- |
+| `git add <path>`                                             | yes              |
+| `git add -- <paths>` (many paths, one command)               | yes              |
+| `git add <path> && git status --short`                       | yes              |
+| `git add <path>; git status --short`                         | yes              |
+| `git add <path> && git commit -m "…"`                        | yes              |
+| `cd <dir> && git add <path>`                                 | no               |
+| `git add <path> 2>&1`                                        | no               |
+| `git add <path> \| cat`                                      | no               |
+| `for f in <paths>; do git add "$f"; done`                    | no               |
+| any of the above with `shell: "/bin/bash"`                   | no               |
+
+The last row is a separate mechanism: Codex resolves the `shell` argument by
+**name** through `PATH`, ignoring the directory in the path you give it. On an
+Apple Silicon machine `bash` is often a Homebrew x86_64 build that runs
+translated, and macOS keeps the sandbox on a translated shell, so the
+exemption never applies. The default shell works.
+
+The read-only inspection commands (`git status`, `git diff`, `git rev-parse`,
+`git ls-files`, `git branch`) are allowed so that the natural
+`git add … && git status` chain works. `git log` and `git show` are not: the
+root orchestrator's own policy refuses to read Git history at all.
+
+**Do not probe the write access with `touch .git/<file>`.** It matches no
+rule, so it is sandboxed by design and always fails, including in a session
+that stages successfully — a session that read that failure as ".git is
+read-only" had never tried a real `git add`. On this machine the tell for a
+sandboxed command is the noise the login shell makes when it is sandboxed
+(`/Users/<user>/.rvm/scripts/rvm: line 15: /bin/ps: Operation not permitted`);
+its absence means the command ran outside the sandbox.
+
+**Verified how.** The same harness as the rule-loading probe: a real Codex
+against a throwaway Git repository and an isolated `CODEX_HOME` holding the
+tracked rules file, with a scripted fake provider (no API key, no network).
+The probe stages one file through each command form and reports which forms
+keep the write access:
+
+```bash
+node .rulesync/skills/autodev-session-diagnostics/scripts/git-write-access-probe.ts --codex "$(command -v codex)"
+```
+
+Observed on 2026-11-21 with `codex-cli 0.171.0-alpha.13` (the Codex app
+bundle): the table above, with the `&& git status` chain failing before the
+read-only inspection rules were added and passing after.
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`. The model

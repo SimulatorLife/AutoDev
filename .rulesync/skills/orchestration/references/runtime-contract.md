@@ -123,18 +123,35 @@ work in progress.
 The root owns commits; delegated roles never stage or commit. Codex's
 workspace-write sandbox keeps `.git` read-only, and AutoDev's command rules
 (`agents/rules/default.rules`) run exactly `git add`, `git commit`, `git mv`,
-`git rm`, `git restore --staged`, `git switch -c` and `git worktree add`
-outside it. Other agents edit the same checkout concurrently, so:
+`git rm`, `git restore --staged`, `git switch -c`, `git worktree add` and the
+read-only inspection commands (`git status`, `git diff`, `git rev-parse`,
+`git ls-files`, `git branch`) outside it. Other agents edit the same checkout
+concurrently, so:
 
 - stage only the paths this task changed (`git add <path>...`), never
   `git add -A` or `git add .`
 - make a new commit; never `--amend` (the rules require approval for it)
 - run **every** `.git`-writing command (`git add`, `git commit`, `git mv`,
   `git rm`, `git restore --staged`, `git switch -c`, `git worktree add`) as its
-  own standalone command with `workdir` set — never chain it with `&&`, `;`,
-  `|`, `2>&1`, `cd ... &&`, or `set -e;`. Compound shell commands fail to match
-  the `allow` prefix rule and stay inside the `workspace-write` sandbox, where
-  `.git/index.lock` fails with `Operation not permitted`
+  own standalone command with `workdir` set. The exemption is granted per
+  command, and a chain is judged as a whole: it runs outside the sandbox only
+  when **every** part of it matches a rule. `git add <paths> && git status` is
+  therefore fine, but `git add <paths> && <anything the rules do not list>`
+  puts the whole chain back inside the `workspace-write` sandbox, where
+  `.git/index.lock` fails with `Operation not permitted`. A shell construct
+  breaks the chain the same way, even around a command that is allowed on its
+  own: `cd <dir> && git add <path>`, `git add <path> 2>&1`,
+  `git add <path> | cat` and `for f in <paths>; do git add "$f"; done` all
+  lose the write access.
+- do not pass an explicit `shell` to `exec_command`. Codex resolves the shell
+  by **name** through `PATH`, ignoring the directory in the path you give it,
+  and on an Apple Silicon machine `bash` is often a Homebrew x86_64 build that
+  runs translated: macOS keeps the sandbox on a translated shell, so the
+  exemption never applies and `.git` stays read-only. The default shell is the
+  one that works.
+- do not probe the sandbox with `touch .git/<file>`. That command matches no
+  rule, so it is sandboxed by design; it proves nothing about staging. The
+  only probe is a real `git add` of a path you changed.
 ## Workspace and role resolution
 
 Keep delegated work in the parent-selected repository or worktree. Do not let

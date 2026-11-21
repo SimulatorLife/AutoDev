@@ -144,6 +144,32 @@ prefix_rule(
         "git -c core.hooksPath=x commit",
     ],
 )
+# Codex judges a chained command as a whole: the most restrictive decision
+# across the parts of the chain wins. One companion command that no rule
+# matches therefore drops a staging command back into the workspace-write
+# sandbox, where `.git` is read-only, and the staging fails with
+# `.git/index.lock: Operation not permitted` -- even though the staging command
+# on its own is allowed. These are the read-only Git commands an agent chains
+# with staging to check the result, so allowing them keeps
+# `git add ... && git status` working. They read the repository, and `git status`
+# at most refreshes the index. `git log` and `git show` are not here: the root
+# orchestrator's own policy refuses to read Git history at all.
+prefix_rule(
+    pattern = ["git", ["status", "diff", "rev-parse", "ls-files", "branch"]],
+    decision = "allow",
+    justification = "Read-only Git inspection commands are chained with the staging commands they verify, and a chain is allowed only when every part of it is.",
+    match = [
+        "git status --short",
+        "git diff --cached",
+        "git rev-parse --short HEAD",
+        "git ls-files runtime/src",
+        "git branch --show-current",
+    ],
+    not_match = [
+        "git push",
+        "git config core.hooksPath hooks",
+    ],
+)
 prefix_rule(
     pattern = ["git", "restore", "--staged"],
     decision = "allow",
