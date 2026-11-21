@@ -72,6 +72,8 @@ export interface WriteAccessCase {
   readonly intent: string;
   /** Whether the command is meant to write to `.git` at all. */
   readonly writes: boolean;
+  /** A command run in the work dir after the run; its output means the write happened. */
+  readonly check?: string;
 }
 
 /**
@@ -176,6 +178,20 @@ export function writeAccessCases(): readonly WriteAccessCase[] {
       writes: true
     },
     {
+      arguments: { cmd: "touch .git/probe-write" },
+      command: "touch .git/probe-write",
+      intent: "a non-git command writing into .git",
+      writes: true,
+      check: "test -f .git/probe-write && echo yes"
+    },
+    {
+      arguments: { cmd: "git config core.hooksPath /tmp/evil-hooks" },
+      command: "git config core.hooksPath /tmp/evil-hooks",
+      intent: "a command that plants a hook in .git/config",
+      writes: true,
+      check: "git config --get core.hooksPath"
+    },
+    {
       arguments: { cmd: "git status --short" },
       command: "git status --short",
       intent: "a read-only command on its own",
@@ -199,6 +215,10 @@ export interface WriteAccessOptions {
   readonly codex: string;
   readonly rules: string;
   readonly keep: boolean;
+  /** A Codex permission profile to add to the probe's own config. */
+  readonly permissionProfile?: string;
+  /** Extra sandbox writable roots; "%WORK%" is the case's work directory. */
+  readonly writableRoots?: readonly string[];
   /** Only run the cases whose command contains this text. */
   readonly filter?: string;
 }
@@ -219,13 +239,16 @@ export function writeAccessTurns(
   return parseTurnsFile(JSON.parse(replaced) as unknown);
 }
 
-function configToml(port: number): string {
+function configToml(port: number, writableRoots: readonly string[] = []): string {
   return [
     'model = "MiniMax-M3"',
     'model_provider = "probe"',
     "model_catalog_json = " + JSON.stringify(MODEL_CATALOG),
     'sandbox_mode = "workspace-write"',
     'approval_policy = "never"',
+    "",
+    "[sandbox_workspace_write]",
+    "writable_roots = [" + writableRoots.map((root) => JSON.stringify(root)).join(", ") + "]",
     "",
     "[model_providers.probe]",
     'name = "probe recorder"',
@@ -297,7 +320,11 @@ async function runCodex(
  * Whether the write reached the repository: something is in the index, or the
  * command committed it.
  */
-export function writeReachedRepository(work: string): boolean {
+export function writeReachedRepository(work: string, check?: string): boolean {
+  if (check !== undefined) {
+    const result = spawnSync("sh", ["-c", check], { cwd: work, encoding: "utf8" });
+    return result.status === 0 && result.stdout.trim() !== "";
+  }
   const staged = spawnSync("git", ["diff", "--cached", "--name-only"], {
     cwd: work,
     encoding: "utf8"
@@ -349,11 +376,20 @@ async function runCase(
   const address = server.address();
   const port =
     typeof address === "object" && address !== null ? address.port : 0;
-  writeFileSync(path.join(home, "config.toml"), configToml(port));
+  const roots = (options.writableRoots ?? []).map((root) =>
+    root.replaceAll("%WORK%", work)
+  );
+  writeFileSync(
+    path.join(home, "config.toml"),
+    configToml(port, roots) +
+      (options.permissionProfile === undefined
+        ? ""
+        : "\n" + readFileSync(options.permissionProfile, "utf8"))
+  );
   const run = await runCodex(options.codex, home, work);
   await closeServer(server);
 
-  const staged = writeReachedRepository(work);
+  const staged = writeReachedRepository(work, testCase.check);
   const detail = recordedToolOutput(record) ?? run.stderr.trim();
   if (options.keep) process.stderr.write("kept " + root + "\n");
   else
@@ -417,6 +453,8 @@ async function main(argv: readonly string[]): Promise<number> {
   let rules = REPOSITORY_RULES;
   let keep = false;
   let filter: string | undefined;
+  let permissionProfile: string | undefined;
+  const writableRoots: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--codex") {
@@ -436,6 +474,24 @@ async function main(argv: readonly string[]): Promise<number> {
       rules = path.resolve(value);
       index += 1;
     } else if (argument === "--keep") keep = true;
+    else if (argument === "--writable-root") {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        process.stderr.write("--writable-root needs a path\n");
+        return 2;
+      }
+      writableRoots.push(value);
+      index += 1;
+    }
+    else if (argument === "--permission-profile") {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        process.stderr.write("--permission-profile needs a path\n");
+        return 2;
+      }
+      permissionProfile = path.resolve(value);
+      index += 1;
+    }
     else if (argument === "--filter") {
       const value = argv[index + 1];
       if (value === undefined) {
@@ -451,7 +507,14 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   process.stdout.write("codex: " + (await codexVersion(codex)) + "\n");
   process.stdout.write("rules:  " + rules + "\n\n");
-  const results = await probeWriteAccess({ codex, rules, keep, filter });
+  const results = await probeWriteAccess({
+    codex,
+    rules,
+    keep,
+    filter,
+    permissionProfile,
+    writableRoots
+  });
   for (const result of results) process.stdout.write(describe(result) + "\n\n");
   const writing = results.filter((result) => result.writes);
   const writable = writing.filter((result) => result.staged);
