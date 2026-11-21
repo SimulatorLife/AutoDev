@@ -2088,13 +2088,23 @@ or unrecognized header fails closed to the bounded policy. The
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
 delegation policy no matter which provider serves it. The Antigravity and
 Copilot bridges share `runtime/src/agents/bridge-role.ts`; the Claude bridge takes the
-same prompts from Codex's context. The installer materializes Runtime-owned modules from `runtime/src/` into the
-established `$CODEX_HOME/src/` paths and script-backed bridge assets under the
-hooks runtime, so a bridge uses the same relative layout in a checkout and an
-installation: `../src/…` for typed modules and `./codex/prompts/…` for prompt
-assets. That is what makes the bridges runnable and importable straight from a
-checkout, so their pure request-shaping helpers can be unit-tested rather than
-asserted against source text.
+same prompts from Codex's context. The installer publishes the Runtime-owned
+modules from `runtime/src/` as an immutable, content-addressed generation at
+`$CODEX_HOME/.src-<hash>/` (`runtime/src/platform/runtime-source-generation.ts`)
+and atomically repoints the `$CODEX_HOME/src` symlink at it, while materializing
+script-backed bridge assets under the hooks runtime. Because generations are
+siblings at depth 1 in `$CODEX_HOME`, a bridge uses the same relative layout in
+a checkout and an installation (`../src/…` for typed modules and
+`./codex/prompts/…` for prompt assets, with `../..` from `.src-<hash>/<dir>/`
+still landing at `$CODEX_HOME`), and Node's realpath resolution pins every
+process to the generation it started on for its entire lifetime — including lazy
+`import()` calls — so an install can never mix modules from two versions in a
+launchd `KeepAlive` service. Replaced generations are retained for 7 days
+(`GENERATION_RETENTION_MS`) so long-lived Codex sessions and MCP servers finish
+on the generation they booted from. That shared relative layout is also what
+makes the bridges runnable and importable straight from a checkout, so their
+pure request-shaping helpers can be unit-tested rather than asserted against
+source text.
 
 Because the copies keep their relative layout, the `RUNTIME_MODULES` manifest in
 `runtime/src/platform/install-materializer.ts` must be closed under relative imports: a
@@ -2112,10 +2122,11 @@ nothing Runtime declares. That is how the router crash-looped on
 `runtime/src/control-api/playtesting-human-studies.ts`: it resolved in the checkout
 and not under `$CODEX_HOME`. `nodeModuleLinks()` is the one place that pairs each
 `node_modules` tree with the `CODEX_HOME` path a copied module's walk-up reaches --
-the repository root, which resolves the workspace packages
-(`@simulatorlife/autodev-core`, `@simulatorlife/autodev-data`), and
-`runtime/node_modules` beside the `$CODEX_HOME/src/` mirror root, which resolves
-Runtime's own dependencies. `install --check` verifies both links, and
+the repository root (`$CODEX_HOME/node_modules`), which resolves the workspace
+packages (`@simulatorlife/autodev-core`, `@simulatorlife/autodev-data`), and
+`runtime/node_modules` inside each `.src-<hash>/` generation
+(`$CODEX_HOME/src/node_modules`), which resolves Runtime's own dependencies and
+is built into the generation before the `$CODEX_HOME/src` symlink swaps. `install --check` verifies the generation symlink, its `package.json`, and both `node_modules` links, and
 `tests/platform/runtime-manifest.test.ts` resolves every bare import of every
 manifest module through that link set, so dropping or misplacing a link fails in
 the test rather than in a supervised service.

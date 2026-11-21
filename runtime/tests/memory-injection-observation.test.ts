@@ -14,7 +14,7 @@ import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   type OrchestratorMemoryRequest
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * The injection observation — the record every outcome and use cohort is built

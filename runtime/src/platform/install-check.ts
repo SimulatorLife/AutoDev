@@ -59,6 +59,7 @@ import {
   ROLES,
   RULES,
   RUNTIME_MODULES,
+  runtimeSourceTree,
   staleUserSkillLinks
 } from "./install-materializer.ts";
 import {
@@ -74,6 +75,12 @@ import {
   skillLinkMatches
 } from "./runtime-files.ts";
 import { stalePaths } from "./runtime-reconciliation.ts";
+import {
+  currentRuntimeSourceGeneration,
+  RUNTIME_SOURCE_LINK,
+  runtimeSourceGenerationName,
+  type RuntimeSourceTree
+} from "./runtime-source-generation.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
 
 export interface InstallCheckOptions {
@@ -470,10 +477,68 @@ function checkRulesAndSkills(
     check(`no stale skill link ${stale}`, false, failures);
 }
 
+/**
+ * Verify that the installed Runtime source generation is the content-addressed
+ * tree this checkout expects, and that its package manifest and `node_modules`
+ * link inside the generation match.
+ */
+export function checkRuntimeSourceGeneration(
+  codexHome: string,
+  tree: RuntimeSourceTree
+): {
+  readonly generation: boolean;
+  readonly manifest: boolean;
+  readonly nodeModules: boolean;
+} {
+  const generation =
+    currentRuntimeSourceGeneration(codexHome) ===
+    runtimeSourceGenerationName(tree);
+  const manifestPath = path.join(
+    codexHome,
+    RUNTIME_SOURCE_LINK,
+    "package.json"
+  );
+  const expectedManifest = tree.files.get("package.json");
+  let manifest = false;
+  if (expectedManifest !== undefined) {
+    try {
+      const stat = lstatSync(manifestPath);
+      manifest =
+        stat.isFile() &&
+        !stat.isSymbolicLink() &&
+        readFileSync(manifestPath).equals(Buffer.from(expectedManifest));
+    } catch {
+      manifest = false;
+    }
+  }
+  const nodeModules = runtimeLinkMatches(
+    tree.nodeModules,
+    path.join(codexHome, RUNTIME_SOURCE_LINK, "node_modules")
+  );
+  return { generation, manifest, nodeModules };
+}
+
 function checkRuntimeAndOt(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
+  // The installed tree is the generation this checkout's sources and package
+  // manifest name; anything else is an install that did not finish or a tree
+  // edited in place.
+  const sourceGeneration = checkRuntimeSourceGeneration(
+    paths.codexHome,
+    runtimeSourceTree(paths.repositoryRoot, paths.codexHome)
+  );
+  check(
+    `runtime source generation ${RUNTIME_SOURCE_LINK}`,
+    sourceGeneration.generation,
+    failures
+  );
+  check(
+    `runtime ${RUNTIME_SOURCE_LINK}/package.json`,
+    sourceGeneration.manifest,
+    failures
+  );
   for (const filePath of RUNTIME_MODULES) {
     check(
       `runtime ${filePath}`,

@@ -6,14 +6,15 @@ import {
   MIN_EMBEDDING_TIMEOUT_MS,
   OpenAICompatibleMemoryEmbeddingProvider
 } from "@simulatorlife/autodev-runtime/memory";
-import {
-  configuredMemoryEmbeddingProvider,
-  embeddingTimeoutMs
-} from "@simulatorlife/autodev-runtime/router/memory-embedding";
 import type {
   ProviderRoute,
   RoutingPolicy
 } from "@simulatorlife/autodev-runtime/router/routing";
+
+import {
+  configuredMemoryEmbeddingProvider,
+  embeddingTimeoutMs
+} from "../src/router/memory/embedding.ts";
 
 const apiRoute: ProviderRoute = {
   provider: "test-provider",

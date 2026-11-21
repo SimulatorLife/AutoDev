@@ -152,7 +152,8 @@ function configureMemoryMcp(
     "runtime",
     "src",
     "router",
-    "memory-mcp-main.ts"
+    "memory",
+    "mcp-main.ts"
   );
   return {
     args: [

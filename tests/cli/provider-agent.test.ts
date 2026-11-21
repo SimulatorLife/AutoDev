@@ -462,7 +462,8 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
             "runtime",
             "src",
             "router",
-            "memory-mcp-main.ts"
+            "memory",
+            "mcp-main.ts"
           )
         ]);
         return true;

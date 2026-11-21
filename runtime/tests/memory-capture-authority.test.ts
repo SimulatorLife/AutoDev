@@ -5,7 +5,7 @@ import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   trustedMemoryContextForSession
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * The authority lookup the native capture route depends on.

@@ -26,7 +26,7 @@ import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   type OrchestratorMemoryRequest
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * The failure classification on a failed injection observation, and the promise

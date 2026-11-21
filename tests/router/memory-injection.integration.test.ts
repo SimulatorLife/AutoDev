@@ -28,7 +28,7 @@ import {
   clearTrustedMemoryContextsForTest,
   closeOrchestratorMemoryHost,
   injectOrchestratorMemory
-} from "@simulatorlife/autodev-runtime/router/memory-injection";
+} from "@simulatorlife/autodev-runtime/router/memory";
 
 const databaseUrl = process.env.AUTODEV_MEMORY_ROUTER_TEST_DATABASE_URL;
 

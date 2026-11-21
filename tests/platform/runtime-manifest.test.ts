@@ -10,8 +10,8 @@ import {
   OBSOLETE_DASHBOARD,
   OBSOLETE_LAUNCH,
   OBSOLETE_RUNTIME_DATA_FILES,
-  OBSOLETE_RUNTIME_MODULES,
-  RUNTIME_MODULES
+  RUNTIME_MODULES,
+  runtimeSourceTree
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import { runtimeTarget } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 import * as ts from "typescript";
@@ -134,22 +134,6 @@ function assertInstalledSourceDependencies(
   }
 }
 
-/**
- * The installed tree owns `<codexHome>/src/...`. A legacy install path is
- * stale only when the installed tree no longer owns it: the installer
- * overwrites a materialized module at its own path and removes the obsolete
- * flat paths that the Runtime moved elsewhere.
- */
-function assertInstallPathOwnership(legacyPath: string): void {
-  const listed = new Set<string>(RUNTIME_MODULES);
-  const obsolete = OBSOLETE_RUNTIME_MODULES as readonly string[];
-  assert.equal(
-    obsolete.includes(legacyPath),
-    !listed.has(`runtime/${legacyPath}`),
-    `${legacyPath} must be listed as obsolete only while the installed tree does not own it`
-  );
-}
-
 test("every manifest entry exists in the repository", () => {
   const absent = [...RUNTIME_MODULES].filter(
     (modulePath) => !existsSync(join(repositoryRoot, modulePath))
@@ -161,18 +145,21 @@ test("every manifest entry exists in the repository", () => {
   );
 });
 
-test("installer removes stale CODEX_HOME copies of Runtime-owned source", () => {
-  const runtimeModules = RUNTIME_MODULES as readonly string[];
-  const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
-  for (const legacyPath of obsoleteModules) {
-    assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
-    assert.equal(runtimeModules.includes(legacyPath), false);
-  }
-  const materializer = readFileSync(
-    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
-    "utf8"
+/**
+ * The installed tree is rebuilt whole on every install and swapped in, so it
+ * holds exactly the manifest's `runtime/src` modules and its package manifest:
+ * a module removed from the manifest has no stale copy left to clean up.
+ */
+test("the installed source tree is exactly the manifest's runtime/src modules", () => {
+  const tree = runtimeSourceTree(repositoryRoot, "/codex-home");
+  const expected = (RUNTIME_MODULES as readonly string[])
+    .filter((modulePath) => modulePath.startsWith("runtime/src/"))
+    .map((modulePath) => modulePath.slice("runtime/src/".length));
+  assert.deepEqual(
+    [...tree.files.keys()].sort(),
+    [...expected, "package.json"].sort()
   );
-  assert.match(materializer, /OBSOLETE_RUNTIME_MODULES\.map/);
+  assert.equal(tree.nodeModules, join(repositoryRoot, "runtime", "node_modules"));
 });
 
 test("runtime manifest closure follows runtime imports but ignores erased type-only imports", () => {
@@ -405,7 +392,6 @@ test("configuration tools are Runtime-owned behind a workspace export", () => {
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.equal(runtimeModules.includes(runtimePath), true);
     assert.equal(runtimeModules.includes(legacyPath), false);
-    assertInstallPathOwnership(legacyPath);
   }
   assert.equal(existsSync(join(repositoryRoot, "src/config")), false);
   assert.doesNotMatch(
@@ -609,7 +595,6 @@ test("MCP implementations are Runtime-owned and installed at canonical paths", (
     assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.ok(runtimeModules.includes(runtimePath));
-    assertInstallPathOwnership(legacyPath);
     assert.equal(runtimeModules.includes(legacyPath), false);
     assert.ok(mcpExports.includes(`from "./${name}"`));
   }
@@ -645,7 +630,6 @@ test("router events and live feed are Runtime-owned behind workspace subpaths", 
     assert.equal(existsSync(join(repositoryRoot, migration.legacyPath)), false);
     assert.equal(modules.includes(migration.runtimePath), true);
     assert.equal(modules.includes(migration.legacyPath), false);
-    assertInstallPathOwnership(migration.legacyPath);
   }
 });
 
@@ -655,9 +639,6 @@ test("remaining router implementations are Runtime-owned and installed from Runt
   ) as { exports: Record<string, string> };
   const moduleNames = [
     "http",
-    "memory-embedding",
-    "memory-injection",
-    "memory-reconstruction",
     "correlation",
     "proxy",
     "responses",
@@ -668,8 +649,6 @@ test("remaining router implementations are Runtime-owned and installed from Runt
   ];
   const packageExports = new Set([
     "http",
-    "memory-injection",
-    "memory-reconstruction",
     "correlation",
     "proxy",
     "responses",
@@ -685,7 +664,6 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.ok(modules.includes(runtimePath));
-    assertInstallPathOwnership(legacyPath);
     assert.equal(modules.includes(legacyPath), false);
     if (packageExports.has(name))
       assert.equal(
@@ -756,7 +734,6 @@ test("router routing policy is Runtime-owned behind its workspace subpath", () =
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
     false
   );
-  assertInstallPathOwnership(legacyPath);
 });
 
 test("router persistence is Runtime-owned behind its workspace subpath", () => {
@@ -779,7 +756,6 @@ test("router persistence is Runtime-owned behind its workspace subpath", () => {
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
     false
   );
-  assertInstallPathOwnership(legacyPath);
 });
 
 test("router authorization is Runtime-owned behind its workspace subpath", () => {
@@ -799,7 +775,6 @@ test("router authorization is Runtime-owned behind its workspace subpath", () =>
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
     false
   );
-  assertInstallPathOwnership(legacyPath);
 });
 
 test("router status projection is Runtime-owned behind its workspace subpath", () => {
@@ -822,7 +797,6 @@ test("router status projection is Runtime-owned behind its workspace subpath", (
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
     false
   );
-  assertInstallPathOwnership(legacyPath);
 });
 
 test("router concurrency policy is Runtime-owned behind its workspace subpath", () => {
@@ -845,7 +819,6 @@ test("router concurrency policy is Runtime-owned behind its workspace subpath", 
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
     false
   );
-  assertInstallPathOwnership(legacyPath);
 });
 
 test("router state collection and MCP process lifecycle are Runtime-owned", () => {
@@ -876,7 +849,6 @@ test("router state collection and MCP process lifecycle are Runtime-owned", () =
     assert.equal(existsSync(join(repositoryRoot, migration.legacyPath)), false);
     assert.equal(modules.includes(migration.runtimePath), true);
     assert.equal(modules.includes(migration.legacyPath), false);
-    assertInstallPathOwnership(migration.legacyPath);
   }
 });
 
@@ -921,8 +893,6 @@ test("CLI implementations are Runtime-owned behind workspace subpaths", () => {
     ),
     true
   );
-  assertInstallPathOwnership("src/cli/router-status.ts");
-  assertInstallPathOwnership("src/cli/router-status-client.ts");
   assert.equal(existsSync(join(repositoryRoot, "src")), false);
 });
 
@@ -1050,7 +1020,6 @@ test("platform host and installation primitives are Runtime-owned behind package
     assert.equal(existsSync(join(repositoryRoot, migration.legacyPath)), false);
     assert.ok(modules.includes(migration.runtimePath));
     assert.equal(modules.includes(migration.legacyPath), false);
-    assertInstallPathOwnership(migration.legacyPath);
   }
   assert.doesNotMatch(
     readFileSync(join(repositoryRoot, "runtime/src/platform/index.ts"), "utf8"),
@@ -1082,7 +1051,6 @@ test("Agents implementations are Runtime-owned behind the workspace package", ()
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.equal(runtimeModules.includes(runtimePath), true);
     assert.equal(runtimeModules.includes(legacyPath), false);
-    assertInstallPathOwnership(legacyPath);
     assert.ok(agentsIndex.includes(`from "./${filename}"`));
   }
   assert.equal(existsSync(join(repositoryRoot, "src/agents")), false);
@@ -1172,6 +1140,26 @@ test("telemetry helpers are Runtime-owned behind the telemetry workspace export"
     ),
     /from "\.\/agent-events\.ts"/
   );
+});
+
+test("router memory is one Runtime component behind a single entrypoint", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  assert.equal(
+    runtimePackage.exports["./router/memory"],
+    "./src/router/memory/index.ts"
+  );
+  const modules = RUNTIME_MODULES as readonly string[];
+  for (const name of ["index", "embedding", "reconstruction"])
+    assert.ok(modules.includes(`runtime/src/router/memory/${name}.ts`));
+  // Embedding selection and routed reconstruction are internal to the component,
+  // so the package publishes no subpath for them.
+  for (const name of ["embedding", "injection", "reconstruction"]) {
+    const flatPath = `src/router/memory-${name}.ts`;
+    assert.equal(runtimePackage.exports[`./router/memory-${name}`], undefined);
+    assert.equal(existsSync(join(repositoryRoot, "runtime", flatPath)), false);
+  }
 });
 
 test("tool-call ownership is Runtime-owned and imported through its workspace subpath", () => {
@@ -1268,7 +1256,6 @@ test("obsolete Claude quota snapshots are removed from CODEX_HOME", () => {
 
 test("AutoDev standalone OTel Collector is decommissioned with no replacement sidecar", () => {
   const runtimeModules = RUNTIME_MODULES as readonly string[];
-  const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
 
   // Repository no longer contains any AutoDev-owned standalone Collector
   // implementation, provisioning, configuration, scripts, or LaunchAgent.
@@ -1296,35 +1283,6 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
     );
   }
 
-  // Stale CODEX_HOME installs from prior versions are tracked in
-  // OBSOLETE_RUNTIME_MODULES so the installer removes them on next run.
-  const staleAutoDevPaths = [
-    "src/platform/otel-collector.ts",
-    "src/platform/otel-provision.ts",
-    "src/providers/quota-discovery.ts"
-  ];
-  for (const legacyPath of staleAutoDevPaths) {
-    assert.equal(
-      existsSync(join(repositoryRoot, legacyPath)),
-      false,
-      `${legacyPath} must not be reintroduced as a legacy install source`
-    );
-    assert.ok(
-      obsoleteModules.includes(legacyPath),
-      `${legacyPath} must remain in OBSOLETE_RUNTIME_MODULES so stale CODEX_HOME copies are cleaned`
-    );
-  }
-
-  // The installer must still drive the obsolete-path cleanup loop.
-  const materializer = readFileSync(
-    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
-    "utf8"
-  );
-  assert.match(
-    materializer,
-    /OBSOLETE_RUNTIME_MODULES\.map\(\(filePath\) => path\.join\(codexHome, filePath\)\)/,
-    "stale CODEX_HOME copies of the removed Collector must still be removed by the installer"
-  );
   const collectorLabel = "com.codex.otel-collector" as const;
   assert.equal(
     (LAUNCH_LABELS as readonly string[]).includes(collectorLabel),
@@ -1334,6 +1292,10 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
   assert.ok(
     OBSOLETE_LAUNCH.includes(collectorLabel),
     "old Collector launchd state must still be unloaded once during migration"
+  );
+  const materializer = readFileSync(
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
+    "utf8"
   );
   assert.match(
     materializer,
@@ -1377,7 +1339,6 @@ test("Memory implementations are Runtime-owned behind the workspace package", ()
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.equal(runtimeModules.includes(runtimePath), true);
     assert.equal(runtimeModules.includes(legacyPath), false);
-    assertInstallPathOwnership(legacyPath);
   }
 });
 

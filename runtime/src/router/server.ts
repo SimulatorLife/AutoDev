@@ -57,7 +57,7 @@ import {
   recordProviderSignIn,
   refreshCodexState
 } from "./http.ts";
-import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
+import { closeOrchestratorMemoryHost } from "./memory/index.ts";
 import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,

@@ -8,7 +8,6 @@ import {
   type CurrentStateAssessment,
   latestUserTask
 } from "@simulatorlife/autodev-runtime/memory";
-import { RoutedMemoryReconstructor } from "@simulatorlife/autodev-runtime/router/memory-reconstruction";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   endLogicalRequestSpan,
@@ -18,6 +17,8 @@ import {
   startLogicalRequestSpan,
   withExtractedTraceContext
 } from "@simulatorlife/autodev-runtime/router/telemetry";
+
+import { RoutedMemoryReconstructor } from "../src/router/memory/reconstruction.ts";
 
 const savedOtelEnv = {
   endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -40,7 +41,7 @@ test.after(() => {
 
 const evidence = {
   kind: "file" as const,
-  uri: "file:///workspace/repo/runtime/src/router/memory-reconstruction.ts"
+  uri: "file:///workspace/repo/runtime/src/router/memory/reconstruction.ts"
 };
 const memory: MemoryRecord = {
   id: "memory-procedure",

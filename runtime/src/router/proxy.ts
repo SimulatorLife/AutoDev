@@ -99,7 +99,7 @@ import { recordMcpExposure } from "./correlation.ts";
 import {
   currentRouterMemoryMode,
   injectOrchestratorMemory
-} from "./memory-injection.ts";
+} from "./memory/index.ts";
 import {
   observeProviderServed,
   type ProviderHopOutcome

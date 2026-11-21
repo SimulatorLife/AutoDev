@@ -76,7 +76,7 @@ import {
   currentRouterMemoryMode,
   observeMemoryStorageStatus,
   trustedMemoryContextForSession
-} from "../router/memory-injection.ts";
+} from "../router/memory/index.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";
 import { readControlApiJsonObject } from "./body.ts";
 import {

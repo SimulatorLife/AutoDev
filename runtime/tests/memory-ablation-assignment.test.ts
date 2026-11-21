@@ -9,7 +9,7 @@ import {
   isTrustedSession,
   resolveRouterMemoryMode,
   type RouterMemoryModeContext
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * The controlled-ablation gates: who gets an arm, and what happens to everyone

@@ -15,7 +15,7 @@ import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   type OrchestratorMemoryRequest
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * What the router injection does when it cannot place the workspace, cannot

@@ -1,3 +1,13 @@
+/**
+ * The router's orchestrator-memory component: whether a turn gets memory, the
+ * injection itself, the trusted session context later Control API writes are
+ * authorized against, and the shared memory host's lifecycle.
+ *
+ * Embedding selection (./embedding.ts) and routed reconstruction
+ * (./reconstruction.ts) are internal modules with no package subpath;
+ * ./mcp-main.ts is the standalone memory MCP process entry point.
+ */
+
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -26,9 +36,9 @@ import {
 import { isCompactionRequest } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
-import { configuredMemoryEmbeddingProvider } from "./memory-embedding.ts";
-import { RoutedMemoryReconstructor } from "./memory-reconstruction.ts";
-import { routerTelemetryTracer } from "./telemetry.ts";
+import { routerTelemetryTracer } from "../telemetry.ts";
+import { configuredMemoryEmbeddingProvider } from "./embedding.ts";
+import { RoutedMemoryReconstructor } from "./reconstruction.ts";
 
 const RUNTIME_INJECTION_RECORDED_BY = "autodev-router-memory-injection";
 const MEMORY_EXPERIMENT_ID_PATTERN = /^[a-z\d][a-z\d._-]{0,127}$/iu;

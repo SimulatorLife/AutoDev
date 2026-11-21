@@ -18,7 +18,7 @@ import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 import {
   makeRequest,
   type RecordedResponse,

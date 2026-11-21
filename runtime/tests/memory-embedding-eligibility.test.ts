@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   configuredMemoryEmbeddingProvider,
   embeddingTimeoutMs
-} from "../src/router/memory-embedding.ts";
+} from "../src/router/memory/embedding.ts";
 import type { ProviderRoute, RoutingPolicy } from "../src/router/routing.ts";
 
 /**

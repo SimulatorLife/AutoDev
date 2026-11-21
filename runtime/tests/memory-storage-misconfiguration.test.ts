@@ -5,7 +5,7 @@ import {
   closeOrchestratorMemoryHost,
   createOrchestratorMemoryService,
   observeMemoryStorageStatus
-} from "../src/router/memory-injection.ts";
+} from "../src/router/memory/index.ts";
 
 /**
  * The answers memory storage can give an operator, and the mistakes behind them.

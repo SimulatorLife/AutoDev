@@ -1169,7 +1169,10 @@ three places, and each one is live at a different moment:
   fires: run `opencli daemon stop` after a patch. The dedicated browser has no
   daemon.
 - The **bridge and browser owner** (`runtime/src/providers/opencli*.ts`) runs
-  from the copy the installer writes to `$CODEX_HOME/src/providers/`, the file
+  from the generation the installer publishes behind the `$CODEX_HOME/src`
+  symlink (`$CODEX_HOME/.src-<hash>/providers/`, swapped atomically so a
+  restarting process never observes a half-written tree and retained for 7 days
+  after replacement for in-flight sessions), the path
   `run-codex-opencli-proxy.sh` executes. With the dedicated browser on, the
   bridge owns Chrome for Testing's lifecycle and CDP target pool; its private
   profile remains in `CODEX_HOME` across restarts. The normal installer

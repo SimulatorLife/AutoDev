@@ -7,7 +7,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 import type { CurrentStateAssessment } from "../src/memory/service.ts";
-import { RoutedMemoryReconstructor } from "../src/router/memory-reconstruction.ts";
+import { RoutedMemoryReconstructor } from "../src/router/memory/reconstruction.ts";
 
 /**
  * The router's reconstruction step — the model call that decides whether a

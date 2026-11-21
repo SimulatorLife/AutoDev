@@ -63,10 +63,13 @@ import {
 } from "./runtime-files.ts";
 import {
   readRuntimePackageManifest,
-  renderRuntimeMirrorPackage,
-  renderTransitionalRuntimeMirrorPackage
+  renderRuntimeMirrorPackage
 } from "./runtime-mirror-package.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
+import {
+  materializeRuntimeSourceGeneration,
+  type RuntimeSourceTree
+} from "./runtime-source-generation.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
@@ -82,13 +85,13 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/responses.ts",
   "runtime/src/router/agent-event-ingest.ts",
   "runtime/src/router/upstream-shape-hooks.ts",
-  "runtime/src/router/memory-injection.ts",
+  "runtime/src/router/memory/index.ts",
   "runtime/src/control-api/memory.ts",
   "runtime/src/control-api/claude-code-binding.ts",
   "runtime/src/control-api/body.ts",
   "runtime/src/control-api/diagnostics.ts",
-  "runtime/src/router/memory-reconstruction.ts",
-  "runtime/src/router/memory-embedding.ts",
+  "runtime/src/router/memory/reconstruction.ts",
+  "runtime/src/router/memory/embedding.ts",
   "runtime/src/router/routing.ts",
   "runtime/src/control-api/playtesting.ts",
   "runtime/src/control-api/workspace-playtesting.ts",
@@ -261,6 +264,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-mirror-package.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
+  "runtime/src/platform/runtime-source-generation.ts",
   "runtime/src/platform/user-level-skills.ts",
   "runtime/src/platform/service-restart.ts",
   "runtime/src/platform/usage-stack.ts",
@@ -280,34 +284,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/block-ccc-cli.ts",
   "runtime/src/hooks/entry-point.ts",
   "runtime/src/hooks/role-sandbox.ts"
-] as const;
-export const OBSOLETE_RUNTIME_MODULES = [
-  // The bridge-side spawn surface, replaced by Codex's own `exec` spawn tools
-  // on every provider.
-  "src/agents/bridge-delegation.ts",
-  "src/agents/bridge-spawn-session.ts",
-  "src/agents/spawn-shim-server.ts",
-  "src/agents/spawn-tools.ts",
-  "src/mcp/spawn-shim.ts",
-  "src/providers/quota-discovery.ts",
-  "src/shared/object-guards.ts",
-  "src/shared/otel-resource-context.ts",
-  "src/router/otel.ts",
-  "src/router/otel-attributes.ts",
-  "src/router/workspace-attribution.ts",
-  "src/router/cooldown.ts",
-  "src/router/lifecycle.ts",
-  "src/router/tool-call-ownership.ts",
-  "src/router/mcp-process-registry.ts",
-  "src/router/concurrency.ts",
-  "src/router/persistence.ts",
-  "src/router/control-api-body.ts",
-  "src/router/control-api.ts",
-  "src/router/memory-control-api.ts",
-  "src/platform/otel-collector.ts",
-  "src/platform/otel-provision.ts",
-  "src/platform/sync-rulesync-workspaces.ts",
-  "src/router/state-collector.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
   path.join("run", "claude-rate-limit.json")
@@ -1175,8 +1151,6 @@ function removeObsoleteRuntimeArtifacts(
       path.join(home, "Library", "LaunchAgents", `${label}.plist`)
     ),
     path.join(hooks, OBSOLETE_DASHBOARD),
-    path.join(codexHome, "src", "router", "dashboard.html"),
-    path.join(codexHome, "src", "router", "lookback-aggregator.ts"),
     ...OBSOLETE_RUNTIME_DATA_FILES.map((filePath) =>
       path.join(codexHome, filePath)
     ),
@@ -1220,22 +1194,45 @@ function removeObsoleteRuntimeArtifacts(
 
 type FileTarget = (filePath: string) => string;
 
+/** The prefix of every manifest entry installed into the source generation. */
+const RUNTIME_SOURCE_PREFIX = "runtime/src/";
+
 /**
- * Install the Runtime source tree and its package manifest.
+ * The installed Runtime source tree: every `runtime/src` manifest module at
+ * its path under `$CODEX_HOME/src`, the mirror package manifest, and the
+ * `node_modules` the tree resolves Runtime's own dependencies through.
+ */
+export function runtimeSourceTree(
+  repositoryRoot: string,
+  codexHome: string
+): RuntimeSourceTree {
+  const files = new Map<string, string | Buffer>();
+  for (const filePath of RUNTIME_MODULES)
+    if (filePath.startsWith(RUNTIME_SOURCE_PREFIX))
+      files.set(
+        filePath.slice(RUNTIME_SOURCE_PREFIX.length),
+        readFileSync(path.join(repositoryRoot, filePath))
+      );
+  files.set(
+    "package.json",
+    renderRuntimeMirrorPackage({
+      runtimePackage: readRuntimePackageManifest(repositoryRoot),
+      materialized: new Set<string>(RUNTIME_MODULES)
+    })
+  );
+  const nodeModules = nodeModuleLinks({ repositoryRoot, codexHome }).find(
+    (link) => link.owner === "source-generation"
+  )!.source;
+  return { files, nodeModules };
+}
+
+/**
+ * Install the Runtime-owned files.
  *
- * Bridges run from the installed tree under launchd `KeepAlive`, so one can
- * restart at any point of an install and resolve its imports against whatever
- * is on disk then. Copying every file before rewriting the manifest left a
- * window in which an updated module imported a subpath the old manifest did
- * not export; the restarted bridge crashed with `ERR_PACKAGE_PATH_NOT_EXPORTED`
- * and `KeepAlive` crash-looped it until the manifest landed. The steps are
- * ordered so that every state between them resolves:
- *
- * 1. Files new to the installed tree: nothing installed imports them yet.
- * 2. A manifest exporting both the installed and the next subpaths.
- * 3. Files that changed: each subpath they import is exported and present.
- * 4. The next manifest: nothing installed imports a retired subpath now.
- * 5. Retired modules: nothing exports or imports them.
+ * Everything outside `runtime/src` -- prompts and the vendored playtest core
+ * -- is written file by file before the source tree changes, so the new tree
+ * finds them in place. The source tree itself is published as one generation
+ * and swapped in atomically: see `runtime-source-generation.ts`.
  */
 function materializeRuntimeTree(
   repositoryRoot: string,
@@ -1244,44 +1241,17 @@ function materializeRuntimeTree(
   target: FileTarget
 ): void {
   const files = [
-    ...RUNTIME_MODULES,
+    ...RUNTIME_MODULES.filter(
+      (filePath) => !filePath.startsWith(RUNTIME_SOURCE_PREFIX)
+    ),
     ...PROMPT_ROLES.map((role) => `agents/prompts/roles/${role}.md`)
   ];
-  const added = new Set(files.filter((filePath) => !exists(target(filePath))));
-  for (const filePath of added)
-    materializeRuntimeFile(source(filePath), target(filePath), 0o644);
-
-  const manifestPath = path.join(codexHome, "src", "package.json");
-  const manifest = renderRuntimeMirrorPackage({
-    runtimePackage: readRuntimePackageManifest(repositoryRoot),
-    materialized: new Set<string>(RUNTIME_MODULES)
-  });
-  materializeRuntimeContent(
-    renderTransitionalRuntimeMirrorPackage(
-      manifest,
-      readInstalledManifest(manifestPath)
-    ),
-    manifestPath,
-    0o644
-  );
   for (const filePath of files)
-    if (!added.has(filePath))
-      materializeRuntimeFile(source(filePath), target(filePath), 0o644);
-  materializeRuntimeContent(manifest, manifestPath, 0o644);
-  removeStalePaths(
-    OBSOLETE_RUNTIME_MODULES.map((filePath) => path.join(codexHome, filePath)),
-    OBSOLETE_RUNTIME_PATH_REASON
+    materializeRuntimeFile(source(filePath), target(filePath), 0o644);
+  materializeRuntimeSourceGeneration(
+    codexHome,
+    runtimeSourceTree(repositoryRoot, codexHome)
   );
-}
-
-/** The installed tree's package manifest, or null when there is none. */
-function readInstalledManifest(manifestPath: string): string | null {
-  try {
-    return readFileSync(manifestPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
 }
 
 function materializeScripts(hooks: string, source: FileTarget): void {
@@ -1336,6 +1306,12 @@ export function materializeCommandRules(
 export interface NodeModuleLink {
   readonly source: string;
   readonly target: string;
+  /**
+   * Who creates the link: the installer, directly under `$CODEX_HOME`, or the
+   * source generation, which carries its own link so it is complete before it
+   * is swapped in.
+   */
+  readonly owner: "codex-home" | "source-generation";
 }
 
 /**
@@ -1355,7 +1331,8 @@ export function nodeModuleLinks(
   return [
     {
       source: path.join(options.repositoryRoot, "node_modules"),
-      target: path.join(options.codexHome, "node_modules")
+      target: path.join(options.codexHome, "node_modules"),
+      owner: "codex-home"
     },
     {
       source: path.join(options.repositoryRoot, "runtime", "node_modules"),
@@ -1365,15 +1342,17 @@ export function nodeModuleLinks(
       target: path.join(
         runtimeTarget("runtime/src", options.codexHome),
         "node_modules"
-      )
+      ),
+      owner: "source-generation"
     }
   ];
 }
 
 function linkNodeModules(options: MaterializeOptions): void {
-  for (const { source, target } of nodeModuleLinks(options)) {
+  for (const { source, target, owner } of nodeModuleLinks(options)) {
     if (!exists(source))
       throw new Error(`missing ${source}; run pnpm install --frozen-lockfile`);
+    if (owner !== "codex-home") continue;
     if (exists(target) && !isSymlink(target)) {
       rmSync(target, { recursive: true, force: true });
     }
@@ -2059,9 +2038,8 @@ function prepareRunLogs(codexHome: string): void {
 /**
  * Re-render the execution contract from `agents/roles/*.toml` against the
  * freshly-generated rulesync projection. The result is written in place to
- * the repo's `config/execution-contract.json` so the existing
- * `materializeRuntimeTree` step copies the fresh copy to the runtime
- * target on the next loop. Idempotent: same inputs produce the same output.
+ * the repo's `config/execution-contract.json` and to its installed copy under
+ * `$CODEX_HOME/config`. Idempotent: same inputs produce the same output.
  */
 function renderAndMaterializeContract(
   repositoryRoot: string,

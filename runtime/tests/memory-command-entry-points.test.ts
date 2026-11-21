@@ -30,7 +30,7 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const COMMANDS = [
   {
-    entry: "src/router/memory-mcp-main.ts",
+    entry: "src/router/memory/mcp-main.ts",
     prefix: "memory-mcp:",
     /** What a launcher with no database URL is told to fix. */
     expected: /database URL/iu

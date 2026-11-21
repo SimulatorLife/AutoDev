@@ -10,7 +10,7 @@ import {
   type ProviderRoute,
   ROUTING_POLICY,
   type RoutingPolicy
-} from "./routing.ts";
+} from "../routing.ts";
 
 const LOCAL_ROUTER_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 

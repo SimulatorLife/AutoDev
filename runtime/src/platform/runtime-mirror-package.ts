@@ -92,55 +92,6 @@ export function renderRuntimeMirrorPackage(
   )}\n`;
 }
 
-/**
- * The manifest an install writes while it replaces the installed tree's files.
- *
- * Bridges run from the installed tree under launchd `KeepAlive`, so one can
- * restart at any moment of an install. A restart that read the old manifest
- * after an updated module landed failed on its first import of a subpath the
- * update introduced (`ERR_PACKAGE_PATH_NOT_EXPORTED: './shared/compaction'`);
- * one that read the new manifest before the files it drops were rewritten
- * failed the same way on a subpath the update retired. This manifest exports
- * both sets -- the next manifest's subpaths, plus every subpath the installed
- * manifest still exports -- so modules of either version resolve while the
- * files are replaced. Where both export a subpath, the next target wins.
- *
- * `installed` is the manifest on disk, or null when there is none yet. One
- * that cannot be read contributes nothing: there is no old version to keep
- * resolving.
- */
-export function renderTransitionalRuntimeMirrorPackage(
-  next: string,
-  installed: string | null
-): string {
-  const nextManifest = JSON.parse(next) as {
-    readonly exports: Readonly<Record<string, string>>;
-  };
-  const exports: Record<string, string> = {
-    ...installedExports(installed),
-    ...nextManifest.exports
-  };
-  return `${JSON.stringify({ ...nextManifest, exports }, null, 2)}\n`;
-}
-
-function installedExports(installed: string | null): Record<string, string> {
-  if (installed === null) return {};
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(installed);
-  } catch {
-    return {};
-  }
-  const exports = (manifest as { readonly exports?: unknown } | null)?.exports;
-  if (typeof exports !== "object" || exports === null || Array.isArray(exports))
-    return {};
-  return Object.fromEntries(
-    Object.entries(exports).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string"
-    )
-  );
-}
-
 /** Read the workspace package manifest that the installed tree mirrors. */
 export function readRuntimePackageManifest(repositoryRoot: string): unknown {
   return JSON.parse(

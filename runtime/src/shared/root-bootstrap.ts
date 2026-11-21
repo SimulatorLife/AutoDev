@@ -4,15 +4,36 @@ import path from "node:path";
 import { ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER } from "./compaction.ts";
 import { installedSkillDirectory } from "./installed-skills.ts";
 
-export { ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER } from "./compaction.ts";
-
 export interface RootOrchestratorBootstrap {
   marker: string;
   content: string;
 }
 
+/**
+ * The orchestrator prompt and its bootstrap marker (the prompt's first line,
+ * or the canonical marker for an empty prompt), or null when the prompt file is
+ * missing. The hook's transcript check and the injected block both read the
+ * marker here, so they can never disagree about it.
+ */
+function readOrchestratorPrompt(
+  repoRoot: string
+): { prompt: string; marker: string } | null {
+  const promptFile = path.join(
+    repoRoot,
+    "agents",
+    "prompts",
+    "orchestrator.md"
+  );
+  if (!existsSync(promptFile)) return null;
+  const prompt = readFileSync(promptFile, "utf8").trim();
+  const firstLineEnd = prompt.indexOf("\n");
+  const firstLine =
+    firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd);
+  return { prompt, marker: firstLine || ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER };
+}
+
 /** Keep this exceptional-path reminder compact; the orchestration skill owns the full procedure. */
-export function buildRecoveryContext(parentId: string | null): string {
+function buildRecoveryContext(parentId: string | null): string {
   if (!parentId) return "";
   return (
     "\n\n## Current-parent recovery preflight\n" +
@@ -26,17 +47,7 @@ export function buildRecoveryContext(parentId: string | null): string {
 
 /** Read only the bootstrap marker line from `agents/prompts/orchestrator.md`, or null if missing. */
 export function readRootBootstrapMarker(repoRoot: string): string | null {
-  const promptFile = path.join(
-    repoRoot,
-    "agents",
-    "prompts",
-    "orchestrator.md"
-  );
-  if (!existsSync(promptFile)) return null;
-  const prompt = readFileSync(promptFile, "utf8").trim();
-  const firstLineEnd = prompt.indexOf("\n");
-  const marker = firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd);
-  return marker || ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER;
+  return readOrchestratorPrompt(repoRoot)?.marker ?? null;
 }
 
 function buildPostCompactionContent({
@@ -80,23 +91,13 @@ export function buildRootOrchestratorBootstrap({
   parentSessionId?: string | null;
   postCompaction?: boolean;
 }): RootOrchestratorBootstrap | null {
-  const promptFile = path.join(
-    repoRoot,
-    "agents",
-    "prompts",
-    "orchestrator.md"
-  );
-  if (!existsSync(promptFile)) return null;
+  const orchestratorPrompt = readOrchestratorPrompt(repoRoot);
+  if (!orchestratorPrompt) return null;
+  const { prompt, marker } = orchestratorPrompt;
 
   const skillDirectory = installedSkillDirectory("orchestration", skillsHome);
   const skillFile = path.join(skillDirectory, "SKILL.md");
   const normalizedParent = parentSessionId?.trim() || null;
-
-  const prompt = readFileSync(promptFile, "utf8").trim();
-  const firstLineEnd = prompt.indexOf("\n");
-  const marker =
-    (firstLineEnd === -1 ? prompt : prompt.slice(0, firstLineEnd)) ||
-    ROOT_ORCHESTRATOR_BOOTSTRAP_MARKER;
 
   if (postCompaction) {
     return {

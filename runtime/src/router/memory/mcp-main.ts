@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 
 import type { MemoryEmbeddingProvider } from "@simulatorlife/autodev-runtime/memory";
 
-import { startMemoryMcpFromEnvironment } from "../memory/mcp-main.ts";
+import { startMemoryMcpFromEnvironment } from "../../memory/mcp-main.ts";
 
 async function optionalEmbeddingProvider(): Promise<
   MemoryEmbeddingProvider | undefined
@@ -11,7 +11,7 @@ async function optionalEmbeddingProvider(): Promise<
   if (process.env.AUTODEV_MEMORY_EMBEDDING_MODEL?.trim()) {
     try {
       const { configuredMemoryEmbeddingProvider } =
-        await import("./memory-embedding.ts");
+        await import("./embedding.ts");
       embedder = configuredMemoryEmbeddingProvider();
     } catch {
       try {

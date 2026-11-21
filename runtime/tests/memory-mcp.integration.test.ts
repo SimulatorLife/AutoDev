@@ -20,7 +20,7 @@ test(
     await migrationPool.end();
 
     const serverPath = fileURLToPath(
-      new URL("../src/router/memory-mcp-main.ts", import.meta.url)
+      new URL("../src/router/memory/mcp-main.ts", import.meta.url)
     );
     const env: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(

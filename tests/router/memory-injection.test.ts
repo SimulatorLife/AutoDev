@@ -37,7 +37,7 @@ import {
   isTrustedSession,
   resolveRouterMemoryMode,
   trustedMemoryContextForSession
-} from "@simulatorlife/autodev-runtime/router/memory-injection";
+} from "@simulatorlife/autodev-runtime/router/memory";
 import {
   endLogicalRequestSpan,
   flushTelemetryMetrics,

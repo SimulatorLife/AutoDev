@@ -23,7 +23,7 @@ const MAX_RETRIEVAL_ONLY_EVIDENCE = 4;
  * the two numbers cannot need to agree.
  *
  * Named for the packet rather than reusing the storage names, which meant
- * something else entirely: `memory-reconstruction.ts` had module-local
+ * something else entirely: `router/memory/reconstruction.ts` had module-local
  * constants of the *same* names at 512 and 128, so the two sets were one
  * rename away from a silent collision in the package's `export *`.
  */
