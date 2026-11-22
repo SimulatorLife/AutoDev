@@ -28,6 +28,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveCodeGraphContextBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   writeErrorLine,
@@ -322,7 +323,7 @@ export function ensureCodeGraph(
   return root;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   const [flag, root] = process.argv.slice(2);
   if (flag !== WORKER_FLAG || !root) {
     writeErrorLine(`usage: code-graph-ensure.ts ${WORKER_FLAG} <repo-root>`);

@@ -13,7 +13,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import {
   assertPlaytestObservationContract,
@@ -22,6 +22,7 @@ import {
   PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
   PLAYTESTS_INTEGRATION_DIR
 } from "@simulatorlife/autodev-core";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import {
   type GenericAdapterHostOptions,
@@ -201,7 +202,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 // The adapter image runs this file as its entrypoint. Without this block the
 // process would import the module, export `main`, and exit — the Runtime would
 // wait on a stdout that never opens rather than seeing an adapter failure.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).catch((error: unknown) => {
     process.stderr.write(
       `autodev-playtest-adapter: ${error instanceof Error ? error.message : String(error)}\n`

@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
@@ -674,7 +675,7 @@ export const __testing = {
   resolveRouterEnsureOptionsFromEnv
 };
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   const options = resolveRouterEnsureOptionsFromEnv(process.env, process.pid);
   runRouterEnsure(createDefaultRouterEnsureDeps(options), options)
     .then((result) => {

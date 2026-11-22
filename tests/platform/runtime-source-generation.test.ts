@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   utimesSync,
@@ -16,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { checkRuntimeSourceGeneration } from "@simulatorlife/autodev-runtime/platform/install-check";
 import {
@@ -49,7 +51,10 @@ test("an install publishes the tree as a generation and points src at it", () =>
   const home = codexHome();
   const result = materializeRuntimeSourceGeneration(
     home,
-    tree({ "router/server.ts": "export const v = 1;\n", "package.json": "{}\n" }),
+    tree({
+      "router/server.ts": "export const v = 1;\n",
+      "package.json": "{}\n"
+    }),
     1000
   );
 
@@ -64,7 +69,10 @@ test("an install publishes the tree as a generation and points src at it", () =>
     readlinkSync(path.join(home, "src", "node_modules")),
     "/nonexistent/node_modules"
   );
-  assert.equal(lstatSync(path.join(home, "src", "package.json")).mode & 0o777, 0o644);
+  assert.equal(
+    lstatSync(path.join(home, "src", "package.json")).mode & 0o777,
+    0o644
+  );
   assert.deepEqual(generations(home), [result.generation]);
 });
 
@@ -109,7 +117,10 @@ test("changed content swaps src to a new generation and keeps the replaced one",
   assert.notEqual(second.generation, first.generation);
   assert.equal(second.swapped, true);
   assert.equal(readlinkSync(path.join(home, "src")), second.generation);
-  assert.deepEqual(generations(home), [first.generation, second.generation].sort());
+  assert.deepEqual(
+    generations(home),
+    [first.generation, second.generation].sort()
+  );
   // The replaced generation's mtime is when it stopped being current.
   assert.equal(lstatSync(path.join(home, first.generation)).mtimeMs, 2000);
 });
@@ -127,7 +138,9 @@ test("a plain src directory from an earlier install is moved aside as a generati
 
   assert.equal(lstatSync(path.join(home, "src")).isSymbolicLink(), true);
   assert.equal(readlinkSync(path.join(home, "src")), result.generation);
-  const retired = generations(home).filter((name) => name !== result.generation);
+  const retired = generations(home).filter(
+    (name) => name !== result.generation
+  );
   assert.deepEqual(retired, [".src-directory-5000"]);
   assert.equal(
     readFileSync(path.join(home, retired[0]!, "router", "old.ts"), "utf8"),
@@ -137,7 +150,11 @@ test("a plain src directory from an earlier install is moved aside as a generati
 
 test("generations past their retention, and abandoned builds, are collected", () => {
   const home = codexHome();
-  const old = materializeRuntimeSourceGeneration(home, tree({ "a.ts": "1" }), 0);
+  const old = materializeRuntimeSourceGeneration(
+    home,
+    tree({ "a.ts": "1" }),
+    0
+  );
   const recent = materializeRuntimeSourceGeneration(
     home,
     tree({ "a.ts": "2" }),
@@ -179,7 +196,11 @@ test("generations past their retention, and abandoned builds, are collected", ()
 
 test("the current generation is never collected, however old", () => {
   const home = codexHome();
-  const only = materializeRuntimeSourceGeneration(home, tree({ "a.ts": "1" }), 0);
+  const only = materializeRuntimeSourceGeneration(
+    home,
+    tree({ "a.ts": "1" }),
+    0
+  );
   utimesSync(path.join(home, only.generation), new Date(0), new Date(0));
 
   const result = materializeRuntimeSourceGeneration(
@@ -252,7 +273,10 @@ test("a process started before a swap keeps importing from its own generation", 
 test("install-check verifies the generation symlink, package.json and node_modules link", () => {
   const home = codexHome();
   const expected = tree(
-    { "router/server.ts": "export const v = 1;\n", "package.json": '{\n  "name": "x"\n}\n' },
+    {
+      "router/server.ts": "export const v = 1;\n",
+      "package.json": '{\n  "name": "x"\n}\n'
+    },
     "/expected/node_modules"
   );
   materializeRuntimeSourceGeneration(home, expected, 1000);
@@ -292,4 +316,34 @@ test("install-check verifies the generation symlink, package.json and node_modul
     manifest: false,
     nodeModules: false
   });
+});
+
+test("a process started through the generation symlink satisfies isEntryPoint", () => {
+  const home = codexHome();
+  try {
+    const entryPointUrl = pathToFileURL(
+      path.resolve(
+        import.meta.dirname,
+        "../../runtime/src/shared/entry-point.ts"
+      )
+    ).href;
+    const entrySource = [
+      `import { isEntryPoint } from ${JSON.stringify(entryPointUrl)};`,
+      `process.stdout.write(String(isEntryPoint(import.meta.url)));`
+    ].join("\n");
+    materializeRuntimeSourceGeneration(
+      home,
+      tree({ "router/server.ts": entrySource }),
+      1000
+    );
+
+    const output = execFileSync(
+      process.execPath,
+      [path.join(home, "src", "router", "server.ts")],
+      { encoding: "utf8" }
+    );
+    assert.equal(output, "true");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

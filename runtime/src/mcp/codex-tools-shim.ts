@@ -23,9 +23,9 @@
 
 import { request as httpRequest } from "node:http";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
@@ -311,9 +311,6 @@ export function runStdio(): void {
   });
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isEntryPoint(import.meta.url)) {
   runStdio();
 }

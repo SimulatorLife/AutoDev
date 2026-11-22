@@ -8,7 +8,7 @@ import {
   type ServerResponse
 } from "node:http";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import {
@@ -17,6 +17,7 @@ import {
   scheduleRouterStatePersist
 } from "@simulatorlife/autodev-runtime/router/persistence";
 import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import type { QuotaAxiResponse } from "quota-axi";
 
@@ -65,9 +66,7 @@ import {
 } from "./proxy.ts";
 import { QUOTA_POLL, quotaAxiArgs } from "./quota-poll.ts";
 
-const IS_MAIN = Boolean(
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-);
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 let fatalExitPromise: Promise<void> | null = null;
 
@@ -313,8 +312,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       modelDiscovery ? (name) => modelDiscovery.refreshProvider(name) : null
     )
   );
-  setControlApiLiveSessionsSource(
-    (now) => getDefaultUsageTracker().listLiveSessions(now, agentActivity)!
+  setControlApiLiveSessionsSource((now) =>
+    getDefaultUsageTracker().listLiveSessions(now, agentActivity)!
   );
   // The Control API runs inside the router, so the diagnostics read the live
   // status from this process rather than calling the router over loopback.

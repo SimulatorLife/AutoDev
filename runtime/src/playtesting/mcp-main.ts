@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { fileURLToPath } from "node:url";
 
 import {
   assertPlaytestCrossSessionMetricAggregation,
@@ -12,6 +11,7 @@ import {
 } from "@simulatorlife/autodev-data";
 import { PlaytestRepository } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import { errorMessage } from "../shared/error-message.ts";
 import { writeErrorLine } from "../shared/output.ts";
@@ -322,7 +322,7 @@ export async function main(
   await servePlaytestMcpStdio(server);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     writeErrorLine("playtest-mcp: " + errorMessage(error));
     process.exitCode = 1;

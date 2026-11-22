@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { logPreToolUseDenial } from "./hook-log.ts";
@@ -332,7 +332,7 @@ export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
   return 0;
 }
 
-if (isHookEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = runBlockCccCli();
   } catch {

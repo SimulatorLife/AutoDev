@@ -5,7 +5,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
 import {
   createDefaultRouterEnsureDeps,
   ensureCodeGraph,
@@ -15,6 +14,7 @@ import {
   type RouterEnsureResult,
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import { repositoryRoot } from "./hook-roots.ts";
 
@@ -94,6 +94,6 @@ export function createSessionStart(
 export const runSessionStart: (input?: Buffer | string) => Promise<number> =
   createSessionStart();
 
-if (isHookEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = await runSessionStart();
 }

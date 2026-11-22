@@ -286,12 +286,13 @@ SYSTEM_LOG_RETENTION_TIMEOUT_SECONDS=3600
 # itself means a log ClickHouse only creates on demand is covered without
 # this script having to know the name.
 clickhouse_system_log_tables() {
+	local window="$1"
 	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
 		clickhouse-client \
 		--user="${OPENLIT_DB_USER:-default}" \
 		--password="$OPENLIT_DB_PASSWORD" \
-		--query="SELECT name FROM system.tables WHERE database = 'system' AND engine = 'MergeTree' ORDER BY name" \
-		2>/dev/null | tr '\n' ' ' | tr -s '[:space:]' ' '
+		--query="SELECT name, position(create_table_query, 'TTL event_date + toIntervalSecond(${window})') > 0 FROM system.tables WHERE database = 'system' AND engine = 'MergeTree' ORDER BY name FORMAT TSV" \
+		2>/dev/null || true
 }
 
 # Give ClickHouse's own diagnostic logs a bounded retention.
@@ -306,7 +307,7 @@ clickhouse_system_log_tables() {
 # holds the very rows the widgets ask for.
 #
 # The statements re-assert the window the configuration gives a table
-# created after it, so running them on every startup is idempotent.
+# created after it, skipping tables whose DDL already declares that exact TTL.
 ensure_system_log_retention() {
 	echo "==> Bounding ClickHouse's diagnostic log retention"
 	local windows
@@ -324,19 +325,33 @@ ensure_system_log_retention() {
 		echo "up.sh: found ${count}: ${windows:-none}" >&2
 		return 1
 	fi
-	local tables
-	tables="$(clickhouse_system_log_tables)"
-	if [[ -z "${tables// /}" ]]; then
+	local table_rows
+	table_rows="$(clickhouse_system_log_tables "$window")"
+	local statements="$WORK_DIR/system-log-retention.sql"
+	: >"$statements"
+	local total=0
+	local unbounded=0
+	local table bounded
+	while IFS=$'\t' read -r table bounded; do
+		table="${table//[[:space:]]/}"
+		bounded="${bounded//[[:space:]]/}"
+		[[ -z "$table" ]] && continue
+		total=$((total + 1))
+		if [[ "$bounded" == "1" ]]; then
+			continue
+		fi
+		unbounded=$((unbounded + 1))
+		printf 'ALTER TABLE system.%s MODIFY TTL event_date + INTERVAL %s SECOND;\n' \
+			"$table" "$window" >>"$statements"
+	done <<<"$table_rows"
+	if [[ "$total" -eq 0 ]]; then
 		echo "up.sh: ClickHouse reported no diagnostic log tables to bound." >&2
 		return 1
 	fi
-	local statements="$WORK_DIR/system-log-retention.sql"
-	: >"$statements"
-	local table
-	for table in $tables; do
-		printf 'ALTER TABLE system.%s MODIFY TTL event_date + INTERVAL %s SECOND;\n' \
-			"$table" "$window" >>"$statements"
-	done
+	if [[ "$unbounded" -eq 0 ]]; then
+		echo "    Diagnostic log retention is already bounded ($total tables)."
+		return 0
+	fi
 	if ! "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
 		clickhouse-client \
 		--user="${OPENLIT_DB_USER:-default}" \
@@ -451,11 +466,17 @@ echo "==> Verifying the deployed AutoDev Usage response contract"
 AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
 	pnpm --filter @simulatorlife/autodev-runtime openlit:verify-usage
 
-echo "==> Synchronizing AutoDev provider models & pricing catalog"
-pnpm --filter @simulatorlife/autodev-data openlit:sync-models || echo "Warning: model synchronization failed" >&2
-
-echo "==> Synchronizing AutoDev project and workspace architecture"
-pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces || echo "Warning: workspace synchronization failed" >&2
+echo "==> Synchronizing AutoDev provider models, pricing, and workspace architecture"
+pnpm --filter @simulatorlife/autodev-data openlit:sync-models &
+sync_models_pid=$!
+pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces &
+sync_workspaces_pid=$!
+if ! wait "$sync_models_pid"; then
+	echo "Warning: model synchronization failed" >&2
+fi
+if ! wait "$sync_workspaces_pid"; then
+	echo "Warning: workspace synchronization failed" >&2
+fi
 
 echo "==> OpenLIT HTTP and ClickHouse are ready for the AutoDev Console."
 echo "    Image tag:       $IMAGE_TAG"

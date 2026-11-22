@@ -1857,6 +1857,54 @@ function assertClickHouseRequestTimeoutStated(dir: string): void {
   );
 }
 
+function assertDockerfileBuildCacheOptimized(dir: string): void {
+  const dockerfile = readFileSync(join(dir, "src/Dockerfile"), "utf8");
+  const packageCopyIndex = dockerfile.indexOf(
+    "COPY ./client/package.json ./client/package-lock.json ./"
+  );
+  const npmCiIndex = dockerfile.indexOf("npm ci ");
+  const clientCopyIndex = dockerfile.indexOf("COPY ./client/ .");
+  assert.ok(
+    packageCopyIndex !== -1,
+    "Dockerfile must copy lockfile manifests separately"
+  );
+  assert.ok(
+    npmCiIndex > packageCopyIndex,
+    "Dockerfile must run npm ci after manifest copy"
+  );
+  assert.ok(
+    clientCopyIndex > npmCiIndex,
+    "Dockerfile must install lockfile dependencies before copying client source"
+  );
+  assert.match(dockerfile, /--mount=type=cache,[^\\\n]*target=\/root\/\.npm/u);
+  assert.match(
+    dockerfile,
+    /--mount=type=cache,[^\\\n]*target=\/root\/\.cache\/prisma/u
+  );
+  assert.match(
+    dockerfile,
+    /--mount=type=cache,[^\\\n]*target=\/app\/client\/\.next\/cache/u
+  );
+  assert.doesNotMatch(dockerfile, /\b(?:rust|cargo|build-base)\b/u);
+  const otelCopyIndex = dockerfile.indexOf(
+    "COPY --from=otel-downloader /tmp/otelcol-contrib /app/otel/otelcol-contrib"
+  );
+  const builderCopyIndex = dockerfile.indexOf("COPY --from=builder");
+  assert.ok(otelCopyIndex !== -1 && builderCopyIndex !== -1);
+  assert.ok(
+    otelCopyIndex < builderCopyIndex,
+    "otelcol-contrib must be copied before volatile builder outputs"
+  );
+  assert.equal(
+    dockerfile.match(/apt-get update/gu)?.length ?? 0,
+    1,
+    "final stage must run apt-get update only once"
+  );
+
+  const dockerignore = readFileSync(join(dir, "src/.dockerignore"), "utf8");
+  assert.match(dockerignore, /^client\/\*\*\/__tests__$/mu);
+}
+
 function assertDeadClientModulesRemoved(dir: string): void {
   assertPathsRemoved(
     dir,
@@ -2915,6 +2963,10 @@ test(
     // own ceiling, so the widest Usage range stops being abandoned under
     // load and the Console's client is written against a known number.
     assertClickHouseRequestTimeoutStated(dir);
+
+    if (patches.some((p) => p.startsWith("82-"))) {
+      assertDockerfileBuildCacheOptimized(dir);
+    }
   }
 );
 
@@ -3149,6 +3201,10 @@ test(
         /"autodev"/u,
         "23-autodev-memory-visible-connector must add autodev to VISIBLE_CONNECTOR_TYPES"
       );
+
+      if (patches.some((p) => p.startsWith("82-"))) {
+        assertDockerfileBuildCacheOptimized(workDirectory);
+      }
 
       const status = run("git", ["status", "--short"], workDirectory);
       assert.doesNotMatch(

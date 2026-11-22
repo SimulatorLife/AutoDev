@@ -32,8 +32,8 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   writeErrorLine,
   writeLine
@@ -459,9 +459,7 @@ function check(root: string): boolean {
   return false;
 }
 
-const IS_MAIN =
-  Boolean(process.argv[1]) &&
-  import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 if (IS_MAIN) {
   const root = resolveRuntimeSourceRoot(import.meta.dirname);

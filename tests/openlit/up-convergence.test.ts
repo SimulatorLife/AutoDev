@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -177,7 +178,11 @@ case "\${1:-}" in
       fi
       # The diagnostic log discovery lists the persistent system logs.
       if [[ "$*" == *"engine = 'MergeTree'"* ]]; then
-        printf '%s\\n' processors_profile_log query_log trace_log
+        if [[ -n "\${STUB_SYSTEM_LOG_ROWS:-}" ]]; then
+          printf '%s\\n' "$STUB_SYSTEM_LOG_ROWS"
+        else
+          printf '%s\\n' processors_profile_log query_log trace_log
+        fi
         exit 0
       fi
       # The retention statements are read from stdin; keep them so a test can
@@ -249,6 +254,8 @@ interface RunOptions {
    * states none, or two, is the case the runner has to refuse.
    */
   readonly clickhouseConfiguration?: string;
+  /** Optional TSV rows returned for ClickHouse system log discovery. */
+  readonly systemLogRows?: string;
 }
 
 function runUp(fixture: Fixture, options: RunOptions = {}) {
@@ -291,6 +298,9 @@ function runUp(fixture: Fixture, options: RunOptions = {}) {
         STUB_COMPOSE_FAILURES: String(options.composeFailures ?? 0),
         STUB_COMPOSE_ERROR:
           options.composeError ?? ENGINE_TIMEOUT_COMPOSE_ERROR,
+        ...(options.systemLogRows === undefined
+          ? {}
+          : { STUB_SYSTEM_LOG_ROWS: options.systemLogRows }),
         AUTODEV_OPENLIT_COMPOSE_ATTEMPTS: "3",
         AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS: "2",
         AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS: "2",
@@ -549,6 +559,52 @@ test("the OpenLIT runner refuses a configuration that states two retention windo
         result.output,
         /must state exactly one retention window/u,
         "the failure must say the configuration is the cause"
+      );
+    }
+  );
+});
+
+test("the OpenLIT runner skips ALTER TABLE when diagnostic logs already declare the configured TTL", () => {
+  withFixture(
+    {
+      systemLogRows: [
+        "processors_profile_log\t1",
+        "query_log\t1",
+        "trace_log\t1"
+      ].join("\n")
+    },
+    (fixture, result) => {
+      assert.equal(result.status, 0, result.output);
+      assert.match(
+        result.output,
+        /Diagnostic log retention is already bounded \(3 tables\)/u
+      );
+      assert.equal(
+        existsSync(join(fixture.state, "retention-statements.sql")),
+        false,
+        "up.sh must not invoke clickhouse-client --queries-file when all tables are bounded"
+      );
+    }
+  );
+
+  withFixture(
+    {
+      systemLogRows: [
+        "processors_profile_log\t1",
+        "query_log\t0",
+        "trace_log\t1"
+      ].join("\n")
+    },
+    (fixture, result) => {
+      assert.equal(result.status, 0, result.output);
+      const statements = readFileSync(
+        join(fixture.state, "retention-statements.sql"),
+        "utf8"
+      );
+      assert.doesNotMatch(statements, /processors_profile_log|trace_log/u);
+      assert.match(
+        statements,
+        /ALTER TABLE system\.query_log MODIFY TTL event_date \+ INTERVAL 604800 SECOND;/u
       );
     }
   );

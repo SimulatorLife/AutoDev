@@ -12,7 +12,6 @@ import {
 import { homedir } from "node:os";
 import pathApi from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 
 import {
   bridgeSkillContext,
@@ -34,6 +33,7 @@ import {
   isCompactionRequest,
   isInvalidCompactionResponse
 } from "@simulatorlife/autodev-runtime/shared/compaction";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   findCodexAppMcpServer,
   resolveCopilotBinary
@@ -83,8 +83,7 @@ import {
 // Bind the port only when run as a program, so this file can be imported for
 // its pure helpers without taking the port from the running bridge. Mirrors
 // the MiniMax adapter's guard.
-const IS_MAIN =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003");

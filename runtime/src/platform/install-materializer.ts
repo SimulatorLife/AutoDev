@@ -13,7 +13,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
@@ -27,6 +26,7 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   writeErrorLine,
@@ -152,6 +152,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/provider-limits.ts",
   "runtime/src/shared/provider-reset-headers.ts",
   "runtime/src/shared/compaction.ts",
+  "runtime/src/shared/entry-point.ts",
   "runtime/src/shared/root-bootstrap.ts",
   "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
@@ -282,7 +283,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/hooks/root-delegation.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
-  "runtime/src/hooks/entry-point.ts",
   "runtime/src/hooks/role-sandbox.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
@@ -2338,7 +2338,7 @@ function isSymlink(filePath: string): boolean {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const env = process.env;
     const repositoryRoot =

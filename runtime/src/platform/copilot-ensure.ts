@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -70,7 +71,7 @@ export function ensureCopilotProxy(
   );
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   ensureCopilotProxy()
     .then((ready) => {
       if (!ready)

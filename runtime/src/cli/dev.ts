@@ -4,7 +4,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   ensureUsageStack,
@@ -13,6 +12,7 @@ import {
   sleep,
   waitForProbe
 } from "@simulatorlife/autodev-runtime/platform";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   writeErrorLine,
   writeLine
@@ -21,9 +21,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 import { verifyControlApiCompatibility } from "./control-api-preflight.ts";
 
-export const IS_MAIN =
-  Boolean(process.argv[1]) &&
-  import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+export const IS_MAIN = isEntryPoint(import.meta.url);
 
 export const repoRoot = path.resolve(
   resolveRuntimeSourceRoot(import.meta.dirname)

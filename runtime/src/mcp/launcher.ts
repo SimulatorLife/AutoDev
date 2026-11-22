@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   isExecutable,
   resolveCocoIndexBinary,
@@ -249,7 +249,7 @@ export function runMcp(
   return result.status ?? 1;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const repoRoot = resolveRuntimeSourceRoot(
       import.meta.dirname,

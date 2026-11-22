@@ -10,6 +10,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { SERVICE_TEMPORARY_FAILURE_EXIT_CODE } from "@simulatorlife/autodev-runtime/shared/service-lifecycle";
@@ -699,15 +700,19 @@ function retryingReason(job: JobState): string {
  *
  * A service that stops because a backend it reads has not come up yet exits
  * with the temporary-failure status, and launchd restarts it -- the job is on
- * its way up, not broken. Any other non-zero exit means the service cannot
- * start, and waiting out the readiness budget on it only delays the report.
+ * its way up, not broken. Any exit with status 0 or another non-zero code in a
+ * KeepAlive service means the process stopped immediately instead of serving,
+ * and waiting out the readiness budget on it only delays the report.
  */
 function crashLoop(job: JobState): ServiceCheck | null {
-  if (job.lastExitCode === null || job.lastExitCode === 0) return null;
+  if (job.lastExitCode === null) return null;
   if (job.lastExitCode === SERVICE_TEMPORARY_FAILURE_EXIT_CODE) return null;
   return {
     ready: false,
-    reason: `exited with code ${job.lastExitCode}`,
+    reason:
+      job.lastExitCode === 0
+        ? "exited immediately with code 0 instead of staying up"
+        : `exited with code ${job.lastExitCode}`,
     stderrPath: job.stderrPath
   };
 }
@@ -1091,7 +1096,7 @@ export async function restartServices(
   return verifySupervisedServices(deps, options, logOffsets);
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   restartServices()
     .then((status) => {
       process.exitCode = status;

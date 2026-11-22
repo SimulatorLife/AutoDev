@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -230,7 +231,7 @@ function lstatSafe(path: string): boolean {
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values, flags } = parseArgs(process.argv.slice(2));
     process.exitCode = runCompose(

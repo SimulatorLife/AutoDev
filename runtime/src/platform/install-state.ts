@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
@@ -117,7 +118,7 @@ function cli(argv: string[]): number {
   throw new Error("usage: install-state auth <env-file>");
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = cli(process.argv.slice(2));
   } catch (error) {

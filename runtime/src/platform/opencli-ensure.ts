@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { findOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -62,7 +63,7 @@ export function ensureOpencliProxy(
   return ensureOptionalBridge(options, deps);
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   ensureOpencliProxy()
     .then((ready) => {
       if (!ready)

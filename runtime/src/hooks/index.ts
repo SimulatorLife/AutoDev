@@ -1,5 +1,4 @@
 export * from "./block-ccc-cli.ts";
-export * from "./entry-point.ts";
 export * from "./hook-log.ts";
 export * from "./hook-roots.ts";
 export * from "./lifecycle.ts";

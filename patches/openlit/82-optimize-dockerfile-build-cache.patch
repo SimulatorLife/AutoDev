@@ -1,0 +1,123 @@
+diff --git a/src/.dockerignore b/src/.dockerignore
+index 9301e8d..d435eb2 100644
+--- a/src/.dockerignore
++++ b/src/.dockerignore
+@@ -32,10 +32,13 @@ client/.Python
+ .DS_Store
+ 
+ # Testing
++client/**/__tests__
+ client/**/*.test.ts
+ client/**/*.test.tsx
+ client/**/*.spec.ts
+ client/**/*.spec.tsx
++client/jest.config.*
++client/jest.setup.*
+ client/coverage
+ client/.coverage
+ 
+diff --git a/src/Dockerfile b/src/Dockerfile
+index de2b022..9a3a634 100644
+--- a/src/Dockerfile
++++ b/src/Dockerfile
+@@ -1,15 +1,13 @@
+-# Node.js builder - Node 20 Alpine (OpenPlait adapters require >=20)
+-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
++# Node.js dependency + Prisma stage - Node 20 Alpine (OpenPlait adapters require >=20)
++FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS deps
+ 
+-# Installing extra packages (openssl needed for Prisma engine detection on Alpine)
+-RUN apk add --no-cache rust cargo build-base openssl
++# OpenSSL is needed for Prisma engine detection on Alpine; all native npm
++# packages ship prebuilt musl binaries so no Rust/C++ toolchain is needed.
++RUN apk add --no-cache openssl
+ 
+ # Set the working directory in the container
+ WORKDIR /app/client
+ 
+-# Copy package.json and package-lock.json to the working directory & the rest of the application code
+-COPY ./client/ .
+-
+ # Bake Prisma CLI/Schema engines for the Alpine builder and the Debian
+ # bookworm runtime (OpenSSL 3). schema.prisma `binaryTargets` only covers the
+ # Query Engine; CLI engines are resolved at install time for the builder
+@@ -19,8 +17,28 @@ COPY ./client/ .
+ # / `prisma generate`) downloads from binaries.prisma.sh and fails air-gapped.
+ ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x,linux-musl-arm64-openssl-3.0.x,debian-openssl-3.0.x,linux-arm64-openssl-3.0.x
+ 
+-# Install dependencies, generate Prisma client & Build the Next.js application
+-RUN npm install && npx prisma generate && npm run build
++# Install dependencies from the lockfile alone so source-only changes reuse
++# this layer without re-running npm or re-downloading Prisma engines.
++COPY ./client/package.json ./client/package-lock.json ./
++RUN --mount=type=cache,id=openlit-npm,target=/root/.npm \
++    --mount=type=cache,id=openlit-prisma,target=/root/.cache/prisma \
++    npm ci --prefer-offline --no-audit --no-fund
++
++# Generate Prisma client in its own cached layer keyed only by schema changes.
++COPY ./client/prisma ./prisma
++RUN --mount=type=cache,id=openlit-prisma,target=/root/.cache/prisma \
++    npx prisma generate
++
++
++# Next.js build stage - reuses cached deps + Prisma and persists .next/cache
++FROM deps AS builder
++
++# Copy the rest of the application code
++COPY ./client/ .
++
++# Build the Next.js application with persistent cache
++RUN --mount=type=cache,id=openlit-next-cache,target=/app/client/.next/cache \
++    NEXT_TELEMETRY_DISABLED=1 npm run build
+ 
+ 
+ # OpenTelemetry Collector Contrib download - pinned with digest
+@@ -68,32 +86,34 @@ RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --n
+     openssl \
+     ca-certificates \
+     cron \
++    file \
+     && rm -rf /var/lib/apt/lists/*
+ 
+ # Set the working directory in the container
+ WORKDIR /app/client
+ 
+-# Copy only necessary files from the builder stages
++# Copy and verify the first-party OpenTelemetry Collector receiver before
++# volatile client layers so it stays cached across client rebuilds.
++COPY --from=otel-downloader /tmp/otelcol-contrib /app/otel/otelcol-contrib
++RUN echo "Runtime architecture: $(uname -m)" && \
++    file /app/otel/otelcol-contrib && \
++    chmod +x /app/otel/otelcol-contrib
++
++# Copy Prisma schema, client, and CLI from the cached deps stage before
++# volatile Next.js build outputs so these layers also stay cached.
++COPY --from=deps /app/client/prisma ./prisma
++COPY --from=deps /app/client/node_modules/@prisma ./node_modules/@prisma
++COPY --from=deps /app/client/node_modules/.bin ./node_modules/.bin
++COPY --from=deps /app/client/node_modules/prisma ./node_modules/prisma
+ 
+ # Copying the standalone next.js build
+ COPY --from=builder /app/client/.next/standalone ./
+-# Standalone build doesn't copy public, static, prisma, scripts
++# Standalone build doesn't copy public, static, scripts
+ COPY --from=builder /app/client/public ./public
+ COPY --from=builder /app/client/.next/static ./.next/static
+-COPY --from=builder /app/client/prisma ./prisma
+ COPY --from=builder /app/client/scripts ./scripts
+-# Copying prisma client, prisma and prisma cli (.bin) from builder stage
+-COPY --from=builder /app/client/node_modules/@prisma ./node_modules/@prisma
+-COPY --from=builder /app/client/node_modules/.bin ./node_modules/.bin
+-COPY --from=builder /app/client/node_modules/prisma ./node_modules/prisma
+ 
+-# Copy and verify the first-party OpenTelemetry Collector receiver.
+-COPY --from=otel-downloader /tmp/otelcol-contrib /app/otel/otelcol-contrib
+-RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends file && \
+-    echo "Runtime architecture: $(uname -m)" && \
+-    file /app/otel/otelcol-contrib && \
+-    rm -rf /var/lib/apt/lists/*
+-RUN chmod +x ./scripts/entrypoint.sh /app/otel/otelcol-contrib
++RUN chmod +x ./scripts/entrypoint.sh
+ 
+ # Expose the port that Next.js will run on
+ EXPOSE ${DOCKER_PORT:-3000}

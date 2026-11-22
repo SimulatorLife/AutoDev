@@ -3,10 +3,10 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isRootOrchestratorModel } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   buildRootOrchestratorBootstrap,
@@ -269,6 +269,6 @@ export function runRootDelegation(raw = readFileSync(0, "utf8")): number {
   return 0;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = runRootDelegation();
 }

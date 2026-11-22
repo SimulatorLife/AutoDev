@@ -22,6 +22,7 @@ import {
 } from "node:worker_threads";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   writeErrorLine,
   writeLine
@@ -635,7 +636,7 @@ function cli(argv: string[]): number {
   );
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = cli(process.argv.slice(2));
   } catch (error) {

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { httpHealthProbe } from "./health-probe.ts";
@@ -159,7 +160,7 @@ export async function ensureConsole(
   return startFallback(options, deps);
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   ensureConsole()
     .then((status) => {
       process.exitCode = status;

@@ -22,7 +22,6 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
-import { pathToFileURL } from "node:url";
 
 import {
   readOnlySystemPromptInjection,
@@ -32,6 +31,7 @@ import {
   COMPACTION_SYSTEM_PROMPT,
   isCompactionRequest
 } from "@simulatorlife/autodev-runtime/shared/compaction";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { sendUnsupportedRequestFailure } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
@@ -62,8 +62,7 @@ const TRAILING_CR_REGEX = /\r$/u;
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
 // out from under the running proxy. Mirrors the Antigravity bridge.
-const IS_MAIN =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 const host = process.env.MINIMAX_PROXY_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.MINIMAX_PROXY_PORT ?? "18765");

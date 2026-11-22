@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { resolveConsolePort } from "../console-ensure.ts";
@@ -141,7 +142,7 @@ function cli(argv: string[]): number {
   return 0;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = cli(process.argv.slice(2));
   } catch (error) {

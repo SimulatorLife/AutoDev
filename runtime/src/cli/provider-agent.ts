@@ -13,7 +13,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   parseTomlFile,
@@ -25,6 +24,7 @@ import {
   resolveRouterEnsureOptions,
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
@@ -1527,7 +1527,7 @@ export async function runProviderAgent(
   return execute(options.codexBinary, args, memory.environment, false);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = await runProviderAgent();
   } catch (error: unknown) {

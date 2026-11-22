@@ -3,9 +3,9 @@
 /** Stdio MCP policy boundary that exposes only the tools assigned to a role. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
@@ -136,10 +136,7 @@ function runToolFilter(args: string[]): void {
   }
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isEntryPoint(import.meta.url)) {
   try {
     runToolFilter(process.argv.slice(2));
   } catch (error) {

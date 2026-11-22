@@ -26,7 +26,6 @@ import {
   type ServerResponse
 } from "node:http";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 
 import {
   bridgeSkillContext,
@@ -38,6 +37,7 @@ import {
   COMPACTION_SYSTEM_PROMPT,
   isCompactionRequest
 } from "@simulatorlife/autodev-runtime/shared/compaction";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveClaudeBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -95,8 +95,7 @@ import { CodexToolTurnRegistry } from "./codex-tool-turns.ts";
 // Bind the port only when run as a program, so this file can be imported for
 // its pure helpers without taking the port out from under the running bridge.
 // Mirrors the Antigravity, MiniMax, and Copilot adapters.
-const IS_MAIN =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 const HOST = process.env.CLAUDE_BRIDGE_HOST ?? "127.0.0.1";
 // Overridable so a second instance can be exercised without taking the port out

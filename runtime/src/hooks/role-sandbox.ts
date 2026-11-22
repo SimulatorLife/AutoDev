@@ -37,7 +37,7 @@ import {
   isRootOrchestratorModel
 } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/read-only-policy";
-import { isHookEntryPoint } from "@simulatorlife/autodev-runtime/hooks/entry-point";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -194,7 +194,7 @@ export function runRoleSandboxHook(raw = readFileSync(0, "utf8")): number {
   return 2;
 }
 
-if (isHookEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = runRoleSandboxHook();
   } catch (error) {

@@ -5,7 +5,7 @@
  * in an immutable release; never run it from a mutable checkout in production.
  * Worker code is loaded only in independently spawned child processes.
  */
-import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import { RouterIngress } from "./ingress.ts";
 import { RouterIngressSupervisor } from "./ingress-control.ts";
@@ -43,10 +43,7 @@ export async function startRouterIngressProcess(
   return { ingress, supervisor };
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isEntryPoint(import.meta.url)) {
   void startRouterIngressProcess().catch((error: unknown) => {
     process.stderr.write(
       "Ingress startup failed: " +

@@ -1,4 +1,6 @@
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createPgMemoryPool } from "./pg-pool.ts";
 import { applyMemoryMigrations } from "./schema.ts";
@@ -20,7 +22,22 @@ export async function migrateMemoryDatabase(
 }
 
 const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) {
+if (
+  entryPoint &&
+  (() => {
+    try {
+      return (
+        realpathSync(entryPoint) ===
+        realpathSync(fileURLToPath(import.meta.url))
+      );
+    } catch {
+      return (
+        path.resolve(entryPoint) ===
+        path.resolve(fileURLToPath(import.meta.url))
+      );
+    }
+  })()
+) {
   try {
     await migrateMemoryDatabase(process.env.AUTODEV_MEMORY_DATABASE_URL);
   } catch (error) {

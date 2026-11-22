@@ -23,7 +23,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import pathApi from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 
 import { type AntigravityProvider } from "@simulatorlife/autodev-core";
 import {
@@ -56,6 +55,7 @@ import {
   isCompactionRequest,
   isInvalidCompactionResponse
 } from "@simulatorlife/autodev-runtime/shared/compaction";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -126,8 +126,7 @@ import {
 // Bind the port only when run as a program. The shared request-shaping helpers
 // below are pure and worth testing directly; importing this file must not take
 // the port out from under the running bridge.
-const IS_MAIN =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002");

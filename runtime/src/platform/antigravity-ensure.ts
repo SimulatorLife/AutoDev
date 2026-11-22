@@ -3,6 +3,7 @@ import { existsSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
@@ -163,7 +164,7 @@ export async function ensureAntigravityProxy(
  * ensured at all, so the Antigravity bridge was silently never started by the
  * one path that is supposed to start it.
  */
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   ensureAntigravityProxy()
     .then((status) => {
       process.exitCode = status;

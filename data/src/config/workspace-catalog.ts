@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -915,7 +915,16 @@ function runCli(argv: readonly string[]): void {
 
 const invokedDirectly =
   process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  (() => {
+    try {
+      return (
+        realpathSync(process.argv[1]) ===
+        realpathSync(fileURLToPath(import.meta.url))
+      );
+    } catch {
+      return path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+    }
+  })();
 
 if (invokedDirectly) {
   try {

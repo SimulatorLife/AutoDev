@@ -44,7 +44,6 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
@@ -55,6 +54,7 @@ import {
   resolveAgentRole,
   roleInstructions
 } from "@simulatorlife/autodev-runtime/agents";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -2702,9 +2702,7 @@ export function createOpencliBridge(
 /** How often the bridge looks for a changed browser setting. */
 const SETTING_POLL_MS = 1000;
 
-const IS_MAIN =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+const IS_MAIN = isEntryPoint(import.meta.url);
 
 if (IS_MAIN) {
   const host = process.env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1";

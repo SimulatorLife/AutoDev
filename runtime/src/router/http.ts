@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 import {
@@ -17,7 +16,8 @@ import {
   type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
   isRecord,
-  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
+  SIGN_IN_REQUIRED_FAILURE_CLASS
+} from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
   resolveAgentActivityTtlMs
@@ -77,6 +77,7 @@ import {
   ROUTING_CONFIG_FILE,
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   isDirectory,
@@ -622,10 +623,7 @@ export function providerState(provider: string) {
  * running router: state was written only at shutdown, and a router that was
  * killed lost everything it had learned since it started.
  */
-const IS_ROUTER_PROCESS =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) ===
-    fileURLToPath(new URL("server.ts", import.meta.url));
+const IS_ROUTER_PROCESS = isEntryPoint(new URL("server.ts", import.meta.url));
 
 const routerPersistence = new RouterPersistence({
   stateFile: () => effectiveStateFile(),

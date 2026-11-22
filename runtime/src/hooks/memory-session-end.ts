@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 // Control API's fixed local identity; hooks cannot import Core under the layer rules.
 const LOCAL_CONTROL_API_ACTOR = "autodev-local";
@@ -251,19 +251,6 @@ function controlApiPort(env: NodeJS.ProcessEnv): number {
 
 export const runMemorySessionEnd = createMemorySessionEndHandler();
 
-function isEntrypoint(): boolean {
-  const argument = process.argv[1];
-  if (!argument) return false;
-  const modulePath = fileURLToPath(import.meta.url);
-  try {
-    // macOS resolves /tmp to /private/tmp in import.meta.url. Compare real
-    // paths so the materialized CODEX_HOME copy still runs from either path.
-    return realpathSync(argument) === realpathSync(modulePath);
-  } catch {
-    return path.resolve(argument) === path.resolve(modulePath);
-  }
-}
-
-if (isEntrypoint()) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = await runMemorySessionEnd();
 }

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -203,7 +204,7 @@ export function renderAgentDirectory(
   return sources.map((name) => path.join(outputDir, name));
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values } = parseArgs(process.argv.slice(2));
     const rendered = renderAgentDirectory(

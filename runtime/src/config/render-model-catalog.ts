@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -379,7 +380,7 @@ export function runModelCatalog(
   return 0;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values, flags } = parseArgs(process.argv.slice(2));
     process.exitCode = runModelCatalog(

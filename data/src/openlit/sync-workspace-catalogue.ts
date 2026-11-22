@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -390,7 +390,20 @@ export async function syncWorkspaceCatalogue(
   return result;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  (() => {
+    try {
+      return (
+        realpathSync(process.argv[1]) ===
+        realpathSync(fileURLToPath(import.meta.url))
+      );
+    } catch {
+      return path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+    }
+  })();
+
+if (invokedDirectly) {
   syncWorkspaceCatalogue()
     .then((result) => {
       process.stdout.write(

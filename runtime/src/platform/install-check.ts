@@ -18,6 +18,7 @@ import {
   runCompose,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -1229,7 +1230,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = runInstallCheck();
   } catch (error) {

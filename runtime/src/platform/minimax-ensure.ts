@@ -9,6 +9,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { isProviderRequestModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
@@ -152,7 +153,7 @@ export async function ensureMiniMaxProxy(
   return (await waitForProbe(deps, options.readyTimeoutMs)) ? 0 : 1;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   ensureMiniMaxProxy()
     .then((status) => {
       process.exitCode = status;

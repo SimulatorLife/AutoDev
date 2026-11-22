@@ -1,6 +1,5 @@
-import { pathToFileURL } from "node:url";
-
 import type { MemoryEmbeddingProvider } from "@simulatorlife/autodev-runtime/memory";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import { startMemoryMcpFromEnvironment } from "../../memory/mcp-main.ts";
 
@@ -30,8 +29,7 @@ async function start(): Promise<void> {
   await startMemoryMcpFromEnvironment(await optionalEmbeddingProvider());
 }
 
-const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     await start();
   } catch (error) {

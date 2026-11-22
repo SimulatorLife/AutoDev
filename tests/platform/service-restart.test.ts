@@ -1083,3 +1083,35 @@ test("failure log tailing is scoped to output written after reload instead of re
   assert.doesNotMatch(stderr, /BUILD_ID is missing/u);
   assert.doesNotMatch(stderr, /stale earlier error line/u);
 });
+
+test("a KeepAlive service that exits immediately with code 0 fails fast instead of exhausting the readiness budget", async () => {
+  const fake = deps(
+    {},
+    {
+      jobLines: { [LABEL_MODEL_ROUTER]: "\tlast exit code = 0" }
+    }
+  );
+  let routerProbes = 0;
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 80 }), {
+      ...fake,
+      probe: async (url, jsonBody) => {
+        if (url.includes("/health/readiness")) {
+          routerProbes += 1;
+          return false;
+        }
+        return fake.probe(url, jsonBody);
+      }
+    })
+  );
+  assert.equal(status, 1);
+  assert.equal(
+    routerProbes,
+    1,
+    "a service exiting immediately with code 0 must be reported on the first check"
+  );
+  assert.match(
+    stderr,
+    /com\.codex\.model-router is not running: exited immediately with code 0 instead of staying up/u
+  );
+});

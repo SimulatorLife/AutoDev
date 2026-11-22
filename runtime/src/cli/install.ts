@@ -2,6 +2,7 @@ import {
   runInstallCheck,
   runInstallCommand
 } from "@simulatorlife/autodev-runtime/platform";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export interface InstallCommandBackend {
@@ -22,7 +23,7 @@ export function dispatchInstallCommand(
   return backend.install(args);
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = dispatchInstallCommand(undefined, process.argv.slice(2));
   } catch (error) {

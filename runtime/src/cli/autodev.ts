@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   ConfigError,
@@ -13,6 +12,7 @@ import {
   runExecutionContract,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   writeErrorLine,
   writeLine
@@ -351,7 +351,7 @@ export function runMain(
   );
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exitCode = await runMain();
   } catch (error) {
