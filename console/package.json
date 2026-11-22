@@ -17,21 +17,21 @@
     "@ariakit/react": "0.4.43",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
-    "@tanstack/react-table": "8.21.3",
+    "@tanstack/react-table": "9.3.1",
     "cockatiel": "4.0.0",
-    "next": "15.5.27",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "react-markdown": "10.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0-alpha-2026-08-31",
-    "@tailwindcss/postcss": "4.3.3",
-    "@types/node": "24.13.5",
+    "@playwright/test": "1.65.1",
+    "@tailwindcss/postcss": "4.3.5",
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "tailwindcss": "4.3.3",
-    "typescript": "5.9.3"
+    "tailwindcss": "4.3.5",
+    "typescript": "6.0.3"
   },
   "postcss": {
     "plugins": {
