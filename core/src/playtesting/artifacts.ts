@@ -194,6 +194,8 @@ export interface PlaytestEpisode {
   readonly replayStatus: PlaytestReplayStatus;
   readonly trace: PlaytestEvidenceLocator | null;
   readonly frames: readonly PlaytestEvidenceLocator[];
+  /** Bounded animated highlight GIFs synthesized from recorded step frames. */
+  readonly highlightClips?: readonly PlaytestHighlightClip[];
   readonly stepCount: number;
   readonly metrics: readonly PlaytestNumericResult[];
   readonly findingIds: readonly string[];
@@ -1191,6 +1193,127 @@ function assertObservationField(value: unknown, seenPaths: Set<string>): void {
     );
   }
   seenPaths.add(fieldPath);
+}
+
+export const PLAYTEST_HIGHLIGHT_MEDIA_TYPE = "image/gif" as const;
+export const PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE = 4;
+export const PLAYTEST_HIGHLIGHT_MAX_FRAMES_PER_CLIP = 12;
+export const PLAYTEST_HIGHLIGHT_MAX_BYTES = 8 * 1024 * 1024;
+
+export const PLAYTEST_HIGHLIGHT_REASONS = [
+  "anomaly-or-termination",
+  "event-sequence",
+  "progress-milestone",
+  "session-summary"
+] as const;
+
+export type PlaytestHighlightReason = (typeof PLAYTEST_HIGHLIGHT_REASONS)[number];
+
+/** Bounded animated GIF clip highlighting an important playtest sequence. */
+export interface PlaytestHighlightClip {
+  readonly id: string;
+  readonly mediaType: typeof PLAYTEST_HIGHLIGHT_MEDIA_TYPE;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly title: string;
+  readonly reason: PlaytestHighlightReason;
+  readonly startStep: number;
+  readonly endStep: number;
+  readonly frameCount: number;
+  readonly durationMs: number;
+  readonly frameIds: readonly string[];
+}
+
+const HIGHLIGHT_CLIP_KEYS = [
+  "id",
+  "mediaType",
+  "sha256",
+  "bytes",
+  "title",
+  "reason",
+  "startStep",
+  "endStep",
+  "frameCount",
+  "durationMs",
+  "frameIds"
+] as const;
+
+const MAX_HIGHLIGHT_TITLE_LENGTH = 160;
+const MAX_HIGHLIGHT_ID_LENGTH = 256;
+
+/** Core validation for episode highlight GIF clip descriptors. */
+export function assertPlaytestHighlightClips(
+  value: unknown
+): asserts value is readonly PlaytestHighlightClip[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Playtest highlightClips must be an array.");
+  }
+  if (value.length > PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE) {
+    throw new TypeError("Playtest highlightClips exceeds maximum clips per episode.");
+  }
+  const seenIds = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)) {
+      throw new TypeError("Playtest highlight clip entry must be an object.");
+    }
+    assertOnlyKeys(item, HIGHLIGHT_CLIP_KEYS, "Playtest highlight clip");
+    assertNonEmptyArtifactString(item.id, "Playtest highlight clip id");
+    if (item.id.length > MAX_HIGHLIGHT_ID_LENGTH) {
+      throw new TypeError("Playtest highlight clip id exceeds maximum length.");
+    }
+    if (seenIds.has(item.id)) {
+      throw new TypeError("Playtest highlight clip ids must be unique.");
+    }
+    seenIds.add(item.id);
+    if (item.mediaType !== PLAYTEST_HIGHLIGHT_MEDIA_TYPE) {
+      throw new TypeError("Playtest highlight clip mediaType must be image/gif.");
+    }
+    if (typeof item.sha256 !== "string" || !SHA256_PATTERN.test(item.sha256)) {
+      throw new TypeError("Playtest highlight clip sha256 must be a SHA-256 hex digest.");
+    }
+    if (
+      !Number.isSafeInteger(item.bytes) ||
+      (item.bytes as number) < 6 ||
+      (item.bytes as number) > PLAYTEST_HIGHLIGHT_MAX_BYTES
+    ) {
+      throw new TypeError("Playtest highlight clip bytes is out of bounds.");
+    }
+    assertNonEmptyArtifactString(item.title, "Playtest highlight clip title");
+    if (item.title.length > MAX_HIGHLIGHT_TITLE_LENGTH) {
+      throw new TypeError("Playtest highlight clip title exceeds maximum length.");
+    }
+    if (!(PLAYTEST_HIGHLIGHT_REASONS as readonly unknown[]).includes(item.reason)) {
+      throw new TypeError("Playtest highlight clip reason is unsupported.");
+    }
+    if (!Number.isSafeInteger(item.startStep) || (item.startStep as number) < 0) {
+      throw new TypeError("Playtest highlight clip startStep must be a non-negative integer.");
+    }
+    if (
+      !Number.isSafeInteger(item.endStep) ||
+      (item.endStep as number) < (item.startStep as number)
+    ) {
+      throw new TypeError("Playtest highlight clip endStep must be >= startStep.");
+    }
+    if (
+      !Number.isSafeInteger(item.frameCount) ||
+      (item.frameCount as number) < 1 ||
+      (item.frameCount as number) > PLAYTEST_HIGHLIGHT_MAX_FRAMES_PER_CLIP
+    ) {
+      throw new TypeError("Playtest highlight clip frameCount is out of bounds.");
+    }
+    if (!Number.isSafeInteger(item.durationMs) || (item.durationMs as number) <= 0) {
+      throw new TypeError("Playtest highlight clip durationMs must be a positive integer.");
+    }
+    if (!Array.isArray(item.frameIds) || item.frameIds.length !== item.frameCount) {
+      throw new TypeError("Playtest highlight clip frameIds must match frameCount.");
+    }
+    for (const frameId of item.frameIds) {
+      assertNonEmptyArtifactString(frameId, "Playtest highlight clip frameId");
+      if (frameId.length > MAX_HIGHLIGHT_ID_LENGTH) {
+        throw new TypeError("Playtest highlight clip frameId exceeds maximum length.");
+      }
+    }
+  }
 }
 
 /** Core validation for a game-owned, player-visible observation allowlist. */

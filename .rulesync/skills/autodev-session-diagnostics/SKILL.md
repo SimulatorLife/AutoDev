@@ -254,6 +254,23 @@ every event and looked like "the router logged nothing".
   2026-11-21: `shell: "/bin/bash"` (which resolved to the x86_64 Homebrew
   bash) could not stage, while the default shell, `/bin/zsh`, `/bin/sh` and
   the system arm64 `/bin/bash` could. Use the default shell.
+- **Three mechanisms make `.git` writable, and they are not
+  interchangeable.** Measured 2026-11-21 with `codex-cli 0.171.0-alpha.13`
+  (`git-write-access-probe.ts --writable-root` / `--permission-profile` /
+  `--no-sandbox-mode`): the sandbox alone writes nothing; an execpolicy
+  `allow` rule lets *that one command* out of the sandbox; a sandbox
+  `writable_roots` entry makes the whole directory writable for every command
+  (and a **file** path as a writable root has no effect, so
+  `writable_roots = ["<repo>/.git/index"]` grants nothing while
+  `["<repo>/.git"]` grants everything, `git config` included); a Codex
+  **permission profile** is path-scoped *with specificity*, so
+  `".git/**" = "write"` plus `".git/config" = "read"` lets every command stage
+  while `.git/config` stays read-only. A selected profile also **overrides**
+  `sandbox_mode`, which is why AutoDev does not let Rulesync generate it: one
+  global profile flattens the per-role tiers. When a profile is supplied to a
+  probe, its top-level keys must come **before** any table header or Codex
+  never selects it ("config defines `[permissions]` profiles but does not set
+  `default_permissions`").
 - **Zero `ROUTER FAILURE`s does not mean Priority-1 stayed selected.** A single `ROUTER SKIPPED` event (`probe_unavailable`, `quota_exhausted`, `session_limit`, etc.) can pin a long session onto a fallback provider with zero failed requests; always check `ROUTER SKIPPED` and `ROUTER RETRIES` in `session-trace.ts`.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.

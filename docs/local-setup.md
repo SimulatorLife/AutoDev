@@ -886,6 +886,44 @@ Observed on 2026-11-21 with `codex-cli 0.171.0-alpha.13` (the Codex app
 bundle): the table above, with the `&& git status` chain failing before the
 read-only inspection rules were added and passing after.
 
+### How `.git` becomes writable: three mechanisms, measured
+
+The exemption above is one of three ways an agent can write `.git`, and they
+are not interchangeable. Measured on 2026-11-21 with `codex-cli 0.171.0-alpha.13`
+(the probe drives a real Codex against a throwaway repository; `--writable-root`,
+`--permission-profile` and `--no-sandbox-mode` select the configuration):
+
+| Mechanism | Who can write `.git` | `git add … && git status` | `git config core.hooksPath` |
+| --- | --- | --- | --- |
+| the sandbox alone (`workspace-write`) | nobody | no | no |
+| an execpolicy `allow` rule | that one command, outside the sandbox | yes, when every part of the chain is allowed | no |
+| `[sandbox_workspace_write] writable_roots = ["<repo>/.git"]` | every command | yes | **yes** |
+| `writable_roots = ["<repo>/.git/index"]` (a file) | nobody — a writable root is a directory | no | no |
+| a Codex permission profile, `".git/**" = "write"` | every command | yes | **yes** |
+| a permission profile, `".git/**" = "write"` + `".git/config" = "read"` | every command except `.git/config` | yes | no |
+
+Two facts follow from the table:
+
+- **A writable root is a directory, and a permission profile is not.** The
+  sandbox's `writable_roots` cannot say "writable `.git/index`, not
+  `.git/config`": a file path as a writable root has no effect, so the smallest
+  grant that works is the whole `.git` directory, and that lets any command
+  plant a hook. A Codex permission profile (`default_permissions` plus
+  `[permissions.<name>.filesystem]`) is path-scoped *with specificity*: the more
+  specific `".git/config" = "read"` wins over the broader `".git/**" = "write"`,
+  so staging works while `.git/config` stays read-only.
+- **A selected permission profile overrides the sandbox.** With
+  `default_permissions` set, the profile's filesystem table decides what is
+  writable — `sandbox_mode` and `[sandbox_workspace_write]` no longer do. That
+  is also why AutoDev does not let Rulesync generate the Codex permission
+  profile: one global profile flattens the per-role tiers
+  (`config/config.autodev.toml` + `config/execution-contract.json`), which is
+  the 2026-11-11 incident recorded above.
+
+The execpolicy `allow` rule stays the mechanism AutoDev uses: it is per
+command, so every other command keeps `.git` read-only, and it does not
+disturb the sandbox the roles run in.
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`. The model

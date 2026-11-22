@@ -39,6 +39,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { parse as parseToml } from "smol-toml";
+
 import {
   parseTurnsFile,
   type SseEvent,
@@ -151,7 +153,8 @@ export function writeAccessCases(): readonly WriteAccessCase[] {
       arguments: { cmd: "git add file.txt && git commit -m probe-commit" },
       command: "git add file.txt && git commit -m probe-commit",
       intent: "the staging command chained with the commit",
-      writes: true
+      writes: true,
+      check: "git log --oneline"
     },
     {
       arguments: { cmd: "cd . && git add file.txt" },
@@ -216,11 +219,13 @@ export interface WriteAccessOptions {
   readonly rules: string;
   readonly keep: boolean;
   /** A Codex permission profile to add to the probe's own config. */
-  readonly permissionProfile?: string;
+  readonly permissionProfile?: string | undefined;
+  /** Drop "sandbox_mode" from the probe's config, so a profile is the only policy. */
+  readonly noSandboxMode?: boolean | undefined;
   /** Extra sandbox writable roots; "%WORK%" is the case's work directory. */
-  readonly writableRoots?: readonly string[];
+  readonly writableRoots?: readonly string[] | undefined;
   /** Only run the cases whose command contains this text. */
-  readonly filter?: string;
+  readonly filter?: string | undefined;
 }
 
 /** The scripted turns the fake provider serves: one command, then one message. */
@@ -239,25 +244,79 @@ export function writeAccessTurns(
   return parseTurnsFile(JSON.parse(replaced) as unknown);
 }
 
-function configToml(port: number, writableRoots: readonly string[] = []): string {
-  return [
-    'model = "MiniMax-M3"',
-    'model_provider = "probe"',
-    "model_catalog_json = " + JSON.stringify(MODEL_CATALOG),
-    'sandbox_mode = "workspace-write"',
-    'approval_policy = "never"',
-    "",
-    "[sandbox_workspace_write]",
-    "writable_roots = [" + writableRoots.map((root) => JSON.stringify(root)).join(", ") + "]",
-    "",
-    "[model_providers.probe]",
-    'name = "probe recorder"',
-    'base_url = "http://127.0.0.1:' + port + '/v1"',
-    'env_key = "PROBE_API_KEY"',
-    'wire_api = "responses"',
-    "requires_openai_auth = false",
-    ""
-  ].join("\n");
+const BARE_TOML_KEY = /^[A-Za-z0-9_-]+$/u;
+
+/** A TOML key: bare when it can be, quoted when it cannot. */
+function tomlKey(key: string): string {
+  return BARE_TOML_KEY.test(key) ? key : JSON.stringify(key);
+}
+
+/** A TOML table, recursively. */
+function emitTomlTable(header: string, body: unknown): string {
+  const lines = [`[${header}]`];
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      lines.push(emitTomlTable(`${header}.${tomlKey(key)}`, value));
+      continue;
+    }
+    lines.push(`${tomlKey(key)} = ${JSON.stringify(value)}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * A Codex permission profile, split into the top-level keys and the tables.
+ * TOML needs the top-level keys before the first table header, so the two
+ * halves cannot simply be appended.
+ */
+export function splitProfile(profile: string): {
+  readonly scalars: readonly string[];
+  readonly tables: readonly string[];
+} {
+  const parsed = parseToml(profile) as Record<string, unknown>;
+  const scalars: string[] = [];
+  const tables: string[] = [];
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === "permissions" && value !== null && typeof value === "object") {
+      for (const [name, body] of Object.entries(
+        value as Record<string, unknown>
+      )) {
+        tables.push(emitTomlTable(`permissions.${name}`, body));
+      }
+      continue;
+    }
+    scalars.push(`${key} = ${JSON.stringify(value)}`);
+  }
+  return { scalars, tables };
+}
+
+function configToml(
+  port: number,
+  writableRoots: readonly string[] = []
+): { readonly scalars: readonly string[]; readonly tables: readonly string[] } {
+  return {
+    scalars: [
+      'model = "MiniMax-M3"',
+      'model_provider = "probe"',
+      "model_catalog_json = " + JSON.stringify(MODEL_CATALOG),
+      process.env.AUTODEV_PROBE_NO_SANDBOX === "1"
+        ? ""
+        : 'sandbox_mode = "workspace-write"',
+      'approval_policy = "never"'
+    ].filter((line) => line !== ""),
+    tables: [
+      "[sandbox_workspace_write]",
+      "writable_roots = [" +
+        writableRoots.map((root) => JSON.stringify(root)).join(", ") +
+        "]",
+      "[model_providers.probe]",
+      'name = "probe recorder"',
+      'base_url = "http://127.0.0.1:' + port + '/v1"',
+      'env_key = "PROBE_API_KEY"',
+      'wire_api = "responses"',
+      "requires_openai_auth = false"
+    ]
+  };
 }
 
 /** The tool result the model saw, which is where the failure shows up. */
@@ -322,7 +381,10 @@ async function runCodex(
  */
 export function writeReachedRepository(work: string, check?: string): boolean {
   if (check !== undefined) {
-    const result = spawnSync("sh", ["-c", check], { cwd: work, encoding: "utf8" });
+    const result = spawnSync("sh", ["-c", check], {
+      cwd: work,
+      encoding: "utf8"
+    });
     return result.status === 0 && result.stdout.trim() !== "";
   }
   const staged = spawnSync("git", ["diff", "--cached", "--name-only"], {
@@ -376,15 +438,32 @@ async function runCase(
   const address = server.address();
   const port =
     typeof address === "object" && address !== null ? address.port : 0;
-  const roots = (options.writableRoots ?? []).map((root) =>
-    root.replaceAll("%WORK%", work)
+  const roots = (options.writableRoots ?? []).map((writableRoot) =>
+    writableRoot.replaceAll("%WORK%", work)
+  );
+  if (options.noSandboxMode === true)
+    process.env.AUTODEV_PROBE_NO_SANDBOX = "1";
+  const profile =
+    options.permissionProfile === undefined
+      ? { scalars: [] as string[], tables: [] as string[] }
+      : splitProfile(readFileSync(options.permissionProfile, "utf8"));
+  const probeConfig = configToml(port, roots);
+  // The probe's own keys win: a profile that also carries an approval policy
+  // would otherwise make Codex ask, and the probe cannot answer.
+  const probeKeys = new Set(
+    probeConfig.scalars.map((line) => line.slice(0, line.indexOf("=")).trim())
+  );
+  const profileScalars = profile.scalars.filter(
+    (line) => !probeKeys.has(line.slice(0, line.indexOf("=")).trim())
   );
   writeFileSync(
     path.join(home, "config.toml"),
-    configToml(port, roots) +
-      (options.permissionProfile === undefined
-        ? ""
-        : "\n" + readFileSync(options.permissionProfile, "utf8"))
+    [
+      ...probeConfig.scalars,
+      ...profileScalars,
+      ...probeConfig.tables,
+      ...profile.tables
+    ].join("\n") + "\n"
   );
   const run = await runCodex(options.codex, home, work);
   await closeServer(server);
@@ -412,9 +491,14 @@ export async function probeWriteAccess(
   options: WriteAccessOptions
 ): Promise<WriteAccessResult[]> {
   const results: WriteAccessResult[] = [];
+  const needles =
+    options.filter === undefined
+      ? []
+      : options.filter.split(",").filter((needle) => needle !== "");
   const cases = writeAccessCases().filter(
     (testCase) =>
-      options.filter === undefined || testCase.command.includes(options.filter)
+      needles.length === 0 ||
+      needles.some((needle) => testCase.command.includes(needle))
   );
   for (const testCase of cases) {
     // eslint-disable-next-line no-await-in-loop -- one real Codex at a time: concurrent probes would compete for the machine and make a sandbox verdict noisy
@@ -448,63 +532,80 @@ function codexVersion(binary: string): Promise<string> {
   });
 }
 
-async function main(argv: readonly string[]): Promise<number> {
-  let codex = "codex";
-  let rules = REPOSITORY_RULES;
-  let keep = false;
-  let filter: string | undefined;
-  let permissionProfile: string | undefined;
-  const writableRoots: string[] = [];
+interface ProbeArguments {
+  readonly codex: string;
+  readonly rules: string;
+  readonly keep: boolean;
+  readonly filter: string | undefined;
+  readonly permissionProfile: string | undefined;
+  readonly writableRoots: readonly string[];
+  readonly noSandboxMode: boolean;
+}
+
+/** Read one option's value, or report that it is missing. */
+function optionValue(
+  argv: readonly string[],
+  index: number,
+  name: string
+): { readonly value: string; readonly next: number } | null {
+  const value = argv[index + 1];
+  if (value === undefined) {
+    process.stderr.write(name + " needs a value\n");
+    return null;
+  }
+  return { value, next: index + 1 };
+}
+
+export function parseArguments(argv: readonly string[]): ProbeArguments | null {
+  const values = new Map<string, string[]>();
+  const flags = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--codex") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        process.stderr.write("--codex needs a binary path\n");
-        return 2;
-      }
-      codex = value;
-      index += 1;
-    } else if (argument === "--rules") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        process.stderr.write("--rules needs a path\n");
-        return 2;
-      }
-      rules = path.resolve(value);
-      index += 1;
-    } else if (argument === "--keep") keep = true;
-    else if (argument === "--writable-root") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        process.stderr.write("--writable-root needs a path\n");
-        return 2;
-      }
-      writableRoots.push(value);
-      index += 1;
+    if (argument === undefined) continue;
+    if (argument === "--keep" || argument === "--no-sandbox-mode") {
+      flags.add(argument);
+      continue;
     }
-    else if (argument === "--permission-profile") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        process.stderr.write("--permission-profile needs a path\n");
-        return 2;
-      }
-      permissionProfile = path.resolve(value);
-      index += 1;
-    }
-    else if (argument === "--filter") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        process.stderr.write("--filter needs a value\n");
-        return 2;
-      }
-      filter = value;
-      index += 1;
-    } else {
+    const parsed = optionValue(argv, index, argument);
+    if (parsed === null) return null;
+    values.set(argument, [...(values.get(argument) ?? []), parsed.value]);
+    index = parsed.next;
+  }
+  const known = new Set([
+    "--codex",
+    "--rules",
+    "--writable-root",
+    "--permission-profile",
+    "--filter"
+  ]);
+  for (const argument of values.keys()) {
+    if (!known.has(argument)) {
       process.stderr.write("unknown argument " + argument + "\n");
-      return 2;
+      return null;
     }
   }
+  const first = (argument: string): string | undefined =>
+    values.get(argument)?.[0];
+  const rulesValue = first("--rules");
+  const profileValue = first("--permission-profile");
+  return {
+    codex: first("--codex") ?? "codex",
+    rules:
+      rulesValue === undefined ? REPOSITORY_RULES : path.resolve(rulesValue),
+    keep: flags.has("--keep"),
+    filter: first("--filter"),
+    permissionProfile:
+      profileValue === undefined ? undefined : path.resolve(profileValue),
+    writableRoots: values.get("--writable-root") ?? [],
+    noSandboxMode: flags.has("--no-sandbox-mode")
+  };
+}
+
+async function main(argv: readonly string[]): Promise<number> {
+  const arguments_ = parseArguments(argv);
+  if (arguments_ === null) return 2;
+  const { codex, rules, keep, filter, permissionProfile, writableRoots } =
+    arguments_;
   process.stdout.write("codex: " + (await codexVersion(codex)) + "\n");
   process.stdout.write("rules:  " + rules + "\n\n");
   const results = await probeWriteAccess({
@@ -513,7 +614,8 @@ async function main(argv: readonly string[]): Promise<number> {
     keep,
     filter,
     permissionProfile,
-    writableRoots
+    writableRoots,
+    noSandboxMode: arguments_.noSandboxMode
   });
   for (const result of results) process.stdout.write(describe(result) + "\n\n");
   const writing = results.filter((result) => result.writes);
