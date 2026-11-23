@@ -22,8 +22,12 @@ import {
   roleInstructions
 } from "@simulatorlife/autodev-runtime/agents";
 import { promptFromInput } from "@simulatorlife/autodev-runtime/providers/antigravity";
-import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
+import { renderCodexContentBlocks } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import { inputText } from "@simulatorlife/autodev-runtime/providers/copilot";
+import {
+  elidePriorTurnsForNativePayload,
+  renderCodexTranscript
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import {
   AGENT_ROLE_HEADER,
   SANDBOX_MODE_HEADER,
@@ -719,4 +723,169 @@ test("code and orchestration prompts surface the macOS Seatbelt MachPortRendezvo
     assert.match(instructions, /playwright\.config\.\*/);
     assert.match(instructions, /single-process/i);
   }
+});
+
+test("mid-turn steering keeps the active turn intact across renderCodexTranscript, Antigravity, Copilot, and Claude", () => {
+  const input = [
+    { type: "message", role: "user", content: "Build feature X" },
+    { type: "message", role: "assistant", content: "Inspecting code first." },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_steer_1",
+      input: "rg -n featureX src/"
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_steer_1",
+      output: "src/x.ts:1: export const x = 1;"
+    },
+    { type: "message", role: "user", content: "Wait, also check Y." }
+  ];
+
+  const transcript = renderCodexTranscript(input);
+  assert.doesNotMatch(transcript, /<conversation_history/);
+  assert.match(transcript, /<user>\nBuild feature X\n<\/user>/);
+  assert.match(transcript, /call_steer_1/);
+  assert.match(
+    transcript,
+    /<mid_turn_steer>\nWait, also check Y\.\n<\/mid_turn_steer>/
+  );
+
+  const agyPrompt = promptFromInput(input, "sys");
+  const copilotPrompt = inputText(input, "sys");
+  const claudeBlocks = renderCodexContentBlocks(input);
+  assert.match(
+    agyPrompt,
+    /<mid_turn_steer>\nWait, also check Y\.\n<\/mid_turn_steer>/
+  );
+  assert.match(
+    copilotPrompt,
+    /<mid_turn_steer>\nWait, also check Y\.\n<\/mid_turn_steer>/
+  );
+  assert.equal(claudeBlocks[0]?.type, "text");
+  if (claudeBlocks[0]?.type === "text") {
+    assert.equal(claudeBlocks[0].text, transcript);
+  }
+});
+
+test("follow-up framing bounds oversized older replies and providerHop elides earlier active-turn tools", () => {
+  const longOlderReply = "A".repeat(2000);
+  const input = [
+    { type: "message", role: "user", content: "Old task 1" },
+    { type: "message", role: "assistant", content: longOlderReply },
+    { type: "message", role: "user", content: "Old task 2" },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_old_2",
+      input: "echo old2"
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_old_2",
+      output: "old2-output"
+    },
+    { type: "message", role: "assistant", content: "Task 2 summary." },
+    { type: "message", role: "user", content: "Follow up on Task 2" },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_cur_1",
+      input: "1"
+    },
+    { type: "custom_tool_call_output", call_id: "call_cur_1", output: "out1" },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_cur_2",
+      input: "2"
+    },
+    { type: "custom_tool_call_output", call_id: "call_cur_2", output: "out2" },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_cur_3",
+      input: "3"
+    },
+    { type: "custom_tool_call_output", call_id: "call_cur_3", output: "out3" }
+  ];
+
+  const normal = renderCodexTranscript(input);
+  assert.match(normal, /Use them as context for follow-ups/);
+  assert.match(normal, /\[\.\.\. 750 chars of earlier reply omitted \.\.\.\]/);
+  assert.match(normal, /<assistant>\nTask 2 summary\.\n<\/assistant>/);
+  assert.match(normal, /call_cur_1/);
+  assert.match(normal, /call_cur_3/);
+
+  const hopped = renderCodexTranscript(input, { providerHop: true });
+  assert.match(
+    hopped,
+    /\[earlier current-turn tool activity omitted: 1 call\(s\), 1 output\(s\)\]/
+  );
+  assert.doesNotMatch(hopped, /call_cur_1/);
+  assert.match(hopped, /call_cur_2/);
+  assert.match(hopped, /call_cur_3/);
+  assert.match(
+    promptFromInput(input, "sys", { providerHop: true }),
+    /\[earlier current-turn tool activity omitted: 1 call\(s\), 1 output\(s\)\]/
+  );
+  assert.match(
+    inputText(input, "sys", { providerHop: true }),
+    /\[earlier current-turn tool activity omitted: 1 call\(s\), 1 output\(s\)\]/
+  );
+});
+
+test("elidePriorTurnsForNativePayload strips prior tool pairs while keeping call_id pairing in active tail", () => {
+  const input = [
+    { type: "message", role: "user", content: "Old task" },
+    { type: "function_call", call_id: "c_old", name: "exec", arguments: "{}" },
+    {
+      type: "function_call_output",
+      call_id: "c_old",
+      output: "huge old output"
+    },
+    { type: "message", role: "assistant", content: "Old task complete." },
+    { type: "message", role: "user", content: "New task" },
+    { type: "function_call", call_id: "c_1", name: "exec", arguments: "{}" },
+    { type: "function_call_output", call_id: "c_1", output: "out1" },
+    { type: "function_call", call_id: "c_2", name: "exec", arguments: "{}" },
+    { type: "function_call_output", call_id: "c_2", output: "out2" },
+    { type: "function_call", call_id: "c_3", name: "exec", arguments: "{}" },
+    { type: "function_call_output", call_id: "c_3", output: "out3" }
+  ];
+  const compacted = elidePriorTurnsForNativePayload(input) as Array<
+    Record<string, unknown>
+  >;
+  const serialized = JSON.stringify(compacted);
+  assert.doesNotMatch(serialized, /c_old/);
+  assert.doesNotMatch(serialized, /huge old output/);
+  assert.match(
+    serialized,
+    /prior tool activity omitted: 1 call\(s\), 1 output\(s\)/
+  );
+  assert.doesNotMatch(serialized, /c_1/);
+  assert.match(serialized, /c_2/);
+  assert.match(serialized, /c_3/);
+  // Every retained function_call_output has its matching function_call.
+  const calls = new Set(
+    compacted.filter((i) => i.type === "function_call").map((i) => i.call_id)
+  );
+  for (const out of compacted.filter(
+    (i) => i.type === "function_call_output"
+  )) {
+    assert.ok(
+      calls.has(out.call_id),
+      `missing call for ${String(out.call_id)}`
+    );
+  }
+});
+
+test("codex-code-mode documents target/targets parameters for agent lifecycle calls", () => {
+  const codexCodeMode = read(
+    ".rulesync/skills/orchestration/references/codex-code-mode.md"
+  );
+  assert.match(codexCodeMode, /multi_agent_v1__send_input\(\{\s*target:/);
+  assert.match(codexCodeMode, /multi_agent_v1__wait_agent\(\{\s*targets:/);
+  assert.match(codexCodeMode, /multi_agent_v1__close_agent\(\{\s*target:/);
 });

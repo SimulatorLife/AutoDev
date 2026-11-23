@@ -8,6 +8,18 @@ export const SANDBOX_MODE_HEADER = "x-autodev-sandbox-mode";
  */
 export const SKILL_CONTEXT_HEADER = "x-autodev-skill-context";
 export const CODEX_SESSION_HEADER = "x-autodev-codex-session";
+export const PROVIDER_HOP_HEADER = "x-autodev-provider-hop";
+
+/**
+ * True when the router flagged this request as an orchestrator hop to a
+ * different provider than the one that previously served the thread/turn.
+ */
+export function isProviderHopHeader(headers: unknown): boolean {
+  const value = contextHeaderValue(headers, PROVIDER_HOP_HEADER, {
+    lowercase: true
+  });
+  return value === "1" || value === "true";
+}
 
 /**
  * The raw value of one inbound context header, or undefined when it was not

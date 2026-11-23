@@ -54,6 +54,7 @@ import {
   resolveAgentRole,
   roleInstructions
 } from "@simulatorlife/autodev-runtime/agents";
+import { isProviderHopHeader } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
@@ -100,8 +101,9 @@ import { type ProviderRoute, ROUTES } from "../router/routing.ts";
 import {
   type CodexTool,
   codexToolCallEvents,
-  codexToolSurface
-} from "./claude-codex-tools.ts";
+  codexToolSurface,
+  isTaskUserPrompt
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import { turnId } from "./codex-tool-turns.ts";
 import {
   OpencliBrowser,
@@ -113,6 +115,7 @@ import {
   compactCodexTools,
   compactTranscript,
   describeTranscriptBytes,
+  framedTranscriptEntries,
   GEMINI_THINKING_LEVELS,
   geminiConversationId,
   OPENCLI_SITE_SPECS,
@@ -339,6 +342,30 @@ export interface OpencliBridgeOptions {
   readonly wedgedTimeoutMs?: number;
   /** The clock, for a test that moves an upload window. */
   readonly now?: () => number;
+  /**
+   * Minimum seen segment count on an open web chat before starting a new
+   * user task intentionally resets to `--new true` with compact history.
+   */
+  readonly newTaskChatResetSegments?: number;
+}
+
+const DEFAULT_NEW_TASK_CHAT_RESET_SEGMENTS = 16;
+
+function deltaStartsNewTask(
+  entries: readonly TranscriptEntry[],
+  seen: number
+): boolean {
+  if (seen <= 0 || entries[seen - 1]?.kind !== "assistant") return false;
+  for (let i = seen; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (entry.kind === "tool_call" || entry.kind === "tool_output")
+      return false;
+    if (entry.kind === "user") {
+      const inner = entry.text.replace(/^<user>\n|\n<\/user>$/g, "");
+      if (isTaskUserPrompt(inner)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1843,6 +1870,9 @@ export function createOpencliBridge(
     // The role section renders the bootstrap the hook also injected, so the
     // hook's copy leaves the conversation (every turn alike, so the chat
     // ledger's digests stay stable).
+    const transcriptOptions = {
+      providerHop: isProviderHopHeader(request.headers)
+    };
     const entries = orchestrator
       ? withoutHookBootstrap(
           transcriptEntries(payload.input),
@@ -1850,6 +1880,14 @@ export function createOpencliBridge(
         )
       : transcriptEntries(payload.input);
     const segments = entries.map((entry) => entry.text);
+    const framedSegments = () =>
+      (orchestrator
+        ? withoutHookBootstrap(
+            framedTranscriptEntries(payload.input, transcriptOptions),
+            orchestratorBootstrapHeading()
+          )
+        : framedTranscriptEntries(payload.input, transcriptOptions)
+      ).map((entry) => entry.text);
     const scope: OpencliChatScope = {
       site,
       thread: codexThread(request, payload)
@@ -1878,7 +1916,7 @@ export function createOpencliBridge(
         site,
         spec,
         tools,
-        segments,
+        framedSegments(),
         instructions,
         role
       );
@@ -1893,6 +1931,13 @@ export function createOpencliBridge(
           orchestrator
         )
       : null;
+    const newTaskResetSegments =
+      options.newTaskChatResetSegments ?? DEFAULT_NEW_TASK_CHAT_RESET_SEGMENTS;
+    const resetForHeavyNewTask =
+      recorded !== null &&
+      recorded.seen >= newTaskResetSegments &&
+      deltaStartsNewTask(entries, recorded.seen) &&
+      fits(fullPrompt());
     // A chat that fell behind -- the session's turns went to another route
     // while this site was unavailable -- has the whole gap to catch up on,
     // and a command line cannot carry it: an opencli-gemini root was refused
@@ -1900,15 +1945,16 @@ export function createOpencliBridge(
     // was 95 KB. Such a turn starts a new chat with that first prompt.
     const resume =
       recorded &&
-      continuation !== null &&
-      !fits(continuation) &&
-      fits(fullPrompt())
+      (resetForHeavyNewTask ||
+        (continuation !== null && !fits(continuation) && fits(fullPrompt())))
         ? null
         : recorded;
     if (recorded && resume === null) {
       ledger.consume(scope, recorded.digest);
       writeErrorLine(
-        `opencli ${site} chat ${recorded.conversationId} is ${Buffer.byteLength(continuation ?? "")} bytes behind; starting a new chat`
+        resetForHeavyNewTask
+          ? `opencli ${site} chat ${recorded.conversationId} reset for new task after ${recorded.seen} segments; starting a new chat`
+          : `opencli ${site} chat ${recorded.conversationId} is ${Buffer.byteLength(continuation ?? "")} bytes behind; starting a new chat`
       );
     }
     const prompt =

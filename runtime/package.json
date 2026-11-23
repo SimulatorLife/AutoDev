@@ -96,6 +96,7 @@
     "./router/usage": "./src/router/usage.ts",
     "./shared/agent-context-headers": "./src/shared/agent-context-headers.ts",
     "./shared/bundled-plugins": "./src/shared/bundled-plugins.ts",
+    "./shared/codex-transcript": "./src/shared/codex-transcript.ts",
     "./shared/compaction": "./src/shared/compaction.ts",
     "./shared/entry-point": "./src/shared/entry-point.ts",
     "./shared/env": "./src/shared/env.ts",

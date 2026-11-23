@@ -4,7 +4,8 @@ import type { ServerResponse } from "node:http";
 import type { Span } from "@opentelemetry/api";
 import {
   type ClientSurface,
-  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
+  SIGN_IN_REQUIRED_FAILURE_CLASS
+} from "@simulatorlife/autodev-core";
 import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
@@ -37,6 +38,7 @@ import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-
 import {
   AGENT_ROLE_HEADER,
   CODEX_SESSION_HEADER,
+  PROVIDER_HOP_HEADER,
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
@@ -49,9 +51,11 @@ import {
   responseOutputText
 } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { elidePriorTurnsForNativePayload } from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import {
   providerInjectsRoleMcp,
   resolveSandboxMode,
+  roleAllowsProviderHop,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -654,6 +658,7 @@ export function downstreamHeadersWithSkillContext(
     skillContext?: string | null;
     codexSessionId?: string | null;
     workspace?: { key?: string | null } | null;
+    providerHop?: boolean;
   } = {}
 ): Record<string, string> {
   const headers = downstreamHeaders(
@@ -690,6 +695,9 @@ export function downstreamHeadersWithSkillContext(
   }
   if (loopbackTarget && workspaceKey) {
     headers[AUTODEV_WORKSPACE_KEY_HEADER] = workspaceKey;
+  }
+  if (loopbackTarget && options.providerHop) {
+    headers[PROVIDER_HOP_HEADER] = "1";
   }
   return headers;
 }
@@ -1046,9 +1054,17 @@ export async function providerAvailable(
 
 export function payloadForCandidate(
   payload: Record<string, unknown>,
-  candidate: { model: string; reasoningEffort?: string | null }
+  candidate: {
+    provider?: string;
+    model: string;
+    reasoningEffort?: string | null;
+  },
+  options: { readonly providerHop?: boolean } = {}
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...payload, model: candidate.model };
+  if (options.providerHop && candidate.provider === "minimax") {
+    next.input = elidePriorTurnsForNativePayload(payload.input);
+  }
   if (candidate.reasoningEffort) {
     const base =
       payload.reasoning &&
@@ -1964,6 +1980,8 @@ export interface AttemptTelemetryOptions {
   threadId?: string | null;
   /** The observed client surface that originated this attempt, or null. */
   clientSurface?: ClientSurface | null;
+  /** True when the orchestrator hopped from another provider onto this candidate. */
+  providerHop?: boolean;
 }
 
 async function authForRoute(
@@ -2163,7 +2181,8 @@ export async function fetchUpstream(
         {
           skillContext: extractSelectedSkillContext(payload),
           codexSessionId: codexSessionIdFromPayload(payload),
-          workspace: attemptTelemetry?.workspace ?? null
+          workspace: attemptTelemetry?.workspace ?? null,
+          providerHop: Boolean(attemptTelemetry?.providerHop)
         }
       ),
       signal,
@@ -5122,9 +5141,13 @@ function fetchCandidate(
         receivedResponse = false;
         if (ctx.clientSignal?.aborted)
           throw new Error("client aborted before candidate upstream fetch");
+        const providerHop =
+          ctx.isOrchestratorTurn &&
+          ctx.preferredProvider !== null &&
+          ctx.preferredProvider !== route.provider;
         const result = await fetchUpstream(
           route,
-          payloadForCandidate(ctx.payload, route),
+          payloadForCandidate(ctx.payload, route, { providerHop }),
           ctx.wantsStream,
           ctx.turnMetadataHeader,
           ctx.clientSignal,
@@ -5139,7 +5162,8 @@ function fetchCandidate(
             role: ctx.effectiveRole,
             workspace: ctx.workspace,
             sessionId: ctx.session?.sessionId ?? null,
-            threadId: ctx.session?.thread ?? null
+            threadId: ctx.session?.thread ?? null,
+            providerHop
           },
           attemptSignal
         );
@@ -5483,17 +5507,25 @@ export function proxyRoleResponse(
   session: RouterSession | null = null
 ): Promise<void> {
   // The provider that issued the calls being answered comes first; otherwise
-  // the agent stays with the provider that last served it. Continuity is the
-  // agent's own -- its thread's -- never its session's: siblings and the
-  // orchestrator share the session, and inheriting their provider put every
-  // new subagent ahead of the providers ranked above it.
+  // the agent stays with the provider that last served it. Subagents must not
+  // hop providers once started: if their pinned provider fails or cools down,
+  // the subagent stops/fails cleanly so the orchestrator can spawn a new one.
   const preferred =
     TOOL_CALL_OWNERSHIP.ownerFor(payload) ??
     subagentProviderForThread(subagentAgentKey(session));
+  const roleCandidates = ROUTING_POLICY.roleCandidates(
+    role,
+    Math.random,
+    preferred
+  );
+  const candidates =
+    preferred !== null && !roleAllowsProviderHop(role)
+      ? roleCandidates.filter((candidate) => candidate.provider === preferred)
+      : roleCandidates;
   return proxyFallbackChain(
     response,
     {
-      candidates: ROUTING_POLICY.roleCandidates(role, Math.random, preferred),
+      candidates,
       role,
       agentRole: role,
       subject: `role ${role}`,

@@ -17,8 +17,31 @@
  */
 
 import { randomBytes } from "node:crypto";
+import type { ServerResponse } from "node:http";
+
+import {
+  mcpResultFromCodexOutput,
+  renderCodexTranscript
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
+import type { AwaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 type JsonRecord = Record<string, unknown>;
+
+/** Formats one Responses SSE event line pair. */
+export function formatSseEvent(eventName: string, body: object): string {
+  return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
+}
+
+/** Sends standard non-buffered SSE response headers for parked/streamed bridges. */
+export function writeSseStreamHeaders(response: ServerResponse): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "close"
+  });
+  response.flushHeaders();
+  response.shouldKeepAlive = false;
+}
 
 /** The minimum a parked turn must offer to live in the registry. */
 export interface ParkableTurn {
@@ -119,4 +142,67 @@ export class CodexToolTurnRegistry<T extends ParkableTurn> {
   status(): { turns: number; maxTurns: number } {
     return { turns: this.turns.size, maxTurns: this.maxTurns };
   }
+}
+
+export interface AwaitingBridgeCall {
+  resolve(result: JsonRecord): void;
+}
+
+/**
+ * Shared continuation handler for parked CLI bridges (`antigravity`, `claude`):
+ * resolves awaiting MCP tool calls against Codex's `outputs`, appends any
+ * mid-turn `messages` (steers / `<subagent_notification>`) onto the trailing
+ * tool result, and fails any un-answered awaiting calls cleanly.
+ */
+export function resolveAwaitedBridgeTools<T extends AwaitingBridgeCall>(args: {
+  readonly awaiting: Map<string, T>;
+  readonly outputs: AwaitedToolResults["outputs"];
+  readonly messages: AwaitedToolResults["messages"];
+  readonly fallbackErrorText: string;
+  readonly extraMessageContent?: (
+    messages: AwaitedToolResults["messages"]
+  ) => JsonRecord[];
+  readonly onResolved?: (
+    callId: string,
+    call: T,
+    result: JsonRecord,
+    rawOutput: unknown
+  ) => void;
+}): void {
+  const resolved: Array<{
+    callId: string;
+    call: T;
+    result: JsonRecord;
+    rawOutput: unknown;
+  }> = [];
+  for (const [callId, output] of args.outputs) {
+    const call = args.awaiting.get(callId);
+    if (!call) continue;
+    args.awaiting.delete(callId);
+    resolved.push({
+      callId,
+      call,
+      result: mcpResultFromCodexOutput(output),
+      rawOutput: output
+    });
+  }
+  const last = resolved.at(-1)?.result;
+  if (last && args.messages.length > 0 && Array.isArray(last.content)) {
+    const content = last.content as JsonRecord[];
+    content.push({
+      type: "text",
+      text: `Codex added to the conversation while this ran:\n\n${renderCodexTranscript(args.messages)}`
+    });
+    if (args.extraMessageContent) {
+      content.push(...args.extraMessageContent(args.messages));
+    }
+  }
+  for (const { callId, call, result, rawOutput } of resolved) {
+    call.resolve(result);
+    args.onResolved?.(callId, call, result, rawOutput);
+  }
+  for (const call of args.awaiting.values()) {
+    call.resolve(toolErrorResult(args.fallbackErrorText));
+  }
+  args.awaiting.clear();
 }

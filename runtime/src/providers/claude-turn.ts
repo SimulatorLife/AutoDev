@@ -28,20 +28,22 @@ import { requestImages } from "@simulatorlife/autodev-runtime/shared/request-con
 import type { AwaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 import {
-  claudeMcpImageContent,
   codexOutputFailed,
   type CodexTool,
   codexToolCallEvents,
   codexToolCallItem,
-  mcpResultFromCodexOutput,
-  mcpToolDefinition,
-  renderCodexTranscript
-} from "./claude-codex-tools.ts";
+  mcpToolDefinition
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
+
+import { claudeMcpImageContent } from "./claude-codex-tools.ts";
 import {
   CodexToolsUnreachableError,
   type CodexToolTurnRegistry,
+  formatSseEvent,
+  resolveAwaitedBridgeTools,
   toolErrorResult,
-  turnId
+  turnId,
+  writeSseStreamHeaders
 } from "./codex-tool-turns.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -190,7 +192,10 @@ export class ResponseStream {
 
   private emit(eventName: string, body: JsonRecord): void {
     if (!this.options.streaming || !this.writable()) return;
-    const line = `event: ${eventName}\ndata: ${JSON.stringify({ ...body, sequence_number: ++this.sequence })}\n\n`;
+    const line = formatSseEvent(eventName, {
+      ...body,
+      sequence_number: ++this.sequence
+    });
     if (!this.started) {
       this.pending.push(line);
       return;
@@ -206,13 +211,7 @@ export class ResponseStream {
     if (this.started || !this.options.streaming || !this.writable()) return;
     this.started = true;
     const { response } = this.options;
-    response.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "close"
-    });
-    response.flushHeaders();
-    response.shouldKeepAlive = false;
+    writeSseStreamHeaders(response);
     for (const line of this.pending.splice(0)) {
       try {
         response.write(line);
@@ -643,51 +642,29 @@ export class ClaudeTurn {
       this.options.registry.remove(this);
       return;
     }
-    const results: Array<[AwaitingCall, JsonRecord]> = [];
-    for (const [callId, output] of awaited.outputs) {
-      const call = this.awaiting.get(callId);
-      if (!call) continue;
-      this.awaiting.delete(callId);
-      reporter.toolExecuted(
-        call.tool.name,
-        callId,
-        Date.now() - call.emittedAt,
-        codexOutputFailed(output) ? "error" : "ok"
-      );
-      results.push([call, mcpResultFromCodexOutput(output)]);
-    }
-    // What Codex added while the calls ran -- a subagent's notification, the
-    // user steering the turn -- reaches the model with the results, in order,
-    // instead of being lost to a CLI that only ever sees tool output.
-    const last = results.at(-1)?.[1];
-    if (last && awaited.messages.length > 0) {
-      const content = last.content as JsonRecord[];
-      content.push({
-        type: "text",
-        text: `Codex added to the conversation while this ran:\n\n${renderCodexTranscript(awaited.messages)}`
-      });
-      // An image the user attached while the call ran is delivered as an
-      // image: the tool result is the channel the CLI renders a picture on,
-      // and a word standing in for one is not the picture.
-      for (const image of requestImages(awaited.messages)) {
-        content.push(
-          claudeMcpImageContent(image) ?? {
-            type: "text",
-            text: "An image added to the conversation could not be delivered: the request carries a reference to it and none of its bytes."
-          }
+    resolveAwaitedBridgeTools({
+      awaiting: this.awaiting,
+      outputs: awaited.outputs,
+      messages: awaited.messages,
+      fallbackErrorText:
+        "Codex returned no result for this call; the call may not have run.",
+      extraMessageContent: (messages) =>
+        requestImages(messages).map(
+          (image) =>
+            claudeMcpImageContent(image) ?? {
+              type: "text",
+              text: "An image added to the conversation could not be delivered: the request carries a reference to it and none of its bytes."
+            }
+        ),
+      onResolved: (callId, call, _result, rawOutput) => {
+        reporter.toolExecuted(
+          call.tool.name,
+          callId,
+          Date.now() - call.emittedAt,
+          codexOutputFailed(rawOutput) ? "error" : "ok"
         );
       }
-    }
-    for (const [call, result] of results) call.resolve(result);
-    // Codex moved on without answering these: the model must not wait on them.
-    for (const [callId, call] of this.awaiting) {
-      this.awaiting.delete(callId);
-      call.resolve(
-        toolErrorResult(
-          `Codex returned no result for ${call.tool.name}; the call may not have run.`
-        )
-      );
-    }
+    });
     this.scheduleGather();
   }
 
@@ -789,10 +766,7 @@ export class ClaudeTurn {
     if (this.options.tools.length > 0 && !this.toolsReached) {
       this.fail(
         this.options.describeFailure(
-          new CodexToolsUnreachableError(
-            "Claude",
-            "never reached the turn"
-          )
+          new CodexToolsUnreachableError("Claude", "never reached the turn")
         )
       );
       return;

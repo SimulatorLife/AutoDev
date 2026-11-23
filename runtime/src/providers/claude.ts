@@ -39,6 +39,7 @@ import {
   filesystemMcpServer,
   type StdioMcpServerLaunch
 } from "@simulatorlife/autodev-runtime/mcp/filesystem-server";
+import { isProviderHopHeader } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
   COMPACTION_SYSTEM_PROMPT,
   isCompactionRequest
@@ -85,13 +86,16 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import {
-  type ClaudeContentBlock,
-  claudeUserMessage,
   CODEX_TOOLS_SERVER,
   codexToolReference,
   FILE_SURFACE_GUIDANCE,
   type CodexToolSurface,
-  codexToolSurface,
+  codexToolSurface
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
+
+import {
+  type ClaudeContentBlock,
+  claudeUserMessage,
   renderCodexContentBlocks
 } from "./claude-codex-tools.ts";
 import {
@@ -1402,7 +1406,9 @@ function startResponsesTurn(
   turn.attach(stream, reporter);
   void turn.run(
     runClaudeStream(
-      renderCodexContentBlocks(payload.input ?? ""),
+      renderCodexContentBlocks(payload.input ?? "", {
+        providerHop: isProviderHopHeader(request.headers)
+      }),
       model,
       effort,
       {

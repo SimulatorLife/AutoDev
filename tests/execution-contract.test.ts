@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   resolveSandboxMode,
+  roleAllowsProviderHop,
   roleSandboxMode
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
@@ -72,4 +73,13 @@ void test("resolveSandboxMode: empty / unknown / null returns null", () => {
 void test("resolveSandboxMode: case-insensitive role keys", () => {
   assert.equal(resolveSandboxMode("Explorer"), "read-only");
   assert.equal(resolveSandboxMode("VALIDATOR"), "workspace-write");
+});
+
+void test("roleAllowsProviderHop: only orchestrator allows cross-provider hops", () => {
+  assert.equal(roleAllowsProviderHop("orchestrator"), true);
+  assert.equal(roleAllowsProviderHop("ORCHESTRATOR"), true);
+  assert.equal(roleAllowsProviderHop("worker"), false);
+  assert.equal(roleAllowsProviderHop("explorer"), false);
+  assert.equal(roleAllowsProviderHop("smart"), false);
+  assert.equal(roleAllowsProviderHop(null), false);
 });

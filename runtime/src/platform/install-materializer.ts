@@ -160,6 +160,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
   "runtime/src/shared/responses-continuation.ts",
+  "runtime/src/shared/codex-transcript.ts",
   "runtime/src/shared/responses-item-ids.ts",
   "runtime/src/shared/tool-names.ts",
   "runtime/src/shared/skill-reads.ts",

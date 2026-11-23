@@ -319,3 +319,112 @@ test("a streaming compaction request completes cleanly without crashing the Anti
   assert.match(prompt, /initial answer/);
   assert.match(prompt, /# Context Compaction/);
 });
+
+test("multi-turn continuation after incomplete and failed queued turns isolates the current request and elides prior tool payloads", async () => {
+  // Observed 2026-11-23 in 01a20669-eae3-7591-8353-020f3439fe9c: Turn 1 ended
+  // `[Incomplete: ...]`, Turns 2-4 failed with no assistant reply, and
+  // `renderCodexTranscript` flattened all turns and tool outputs into one
+  // untagged stream. `agy` resumed Turn 1 across Turns 5-10.
+  const prompt = await promptForTurn([
+    CODEX_TOOLS,
+    {
+      type: "message",
+      role: "user",
+      content: "The Right CRT field hierarchy must stay 1-column."
+    },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_old_1",
+      input: 'await tools.exec_command({ cmd: "rg -n standings-panel src/" });'
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_old_1",
+      output: "src/styles/race.css:419: .standings-panel {}"
+    },
+    {
+      type: "message",
+      role: "assistant",
+      content:
+        "[Incomplete: The antigravity-gemini provider ran out of usage and this turn stopped here.]"
+    },
+    {
+      type: "message",
+      role: "user",
+      content: "Fix outstanding lint errors."
+    },
+    {
+      type: "message",
+      role: "user",
+      content: "## Refactor Component Encapsulation"
+    }
+  ]);
+
+  assert.match(prompt, /<conversation_history /);
+  assert.match(
+    prompt,
+    /\[prior tool activity omitted: 1 call\(s\), 1 output\(s\)\]/
+  );
+  assert.doesNotMatch(prompt, /call_old_1/);
+  assert.doesNotMatch(prompt, /src\/styles\/race\.css:419/);
+  assert.match(
+    prompt,
+    /<queued_user_request status="unanswered_prior_turn">\nFix outstanding lint errors\.\n<\/queued_user_request>/
+  );
+  assert.match(
+    prompt,
+    /## Current User Request\nRespond ONLY to the request below\.\n\n<user>\n## Refactor Component Encapsulation\n<\/user>/
+  );
+});
+
+test("mid-turn continuation after prior completed turns preserves current-turn tool outputs and subagent notifications", async () => {
+  const prompt = await promptForTurn([
+    CODEX_TOOLS,
+    { type: "message", role: "user", content: "Old completed task" },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_prev_turn",
+      input: 'await tools.exec_command({ cmd: "echo old" });'
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_prev_turn",
+      output: "old"
+    },
+    { type: "message", role: "assistant", content: "Old task complete." },
+    {
+      type: "message",
+      role: "user",
+      content: "Add gap between wheels and wings"
+    },
+    {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "call_cur_turn",
+      input:
+        'await tools.multi_agent_v1__spawn_agent({ agent_type: "worker", message: "gap" });'
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_cur_turn",
+      output: '{"agent_id":"01a206f8-4074-7401-a4f9-5edd1ce64c15"}'
+    },
+    {
+      type: "message",
+      role: "user",
+      content:
+        '<subagent_notification>\n{"agent_path":"01a206f8-4074-7401-a4f9-5edd1ce64c15","status":{"completed":"done"}}\n</subagent_notification>'
+    }
+  ]);
+
+  assert.doesNotMatch(prompt, /call_prev_turn/);
+  assert.match(
+    prompt,
+    /## Current User Request\nRespond ONLY to the request below\.\n\n<user>\nAdd gap between wheels and wings\n<\/user>/
+  );
+  assert.match(prompt, /call_cur_turn/);
+  assert.match(prompt, /01a206f8-4074-7401-a4f9-5edd1ce64c15/);
+  assert.match(prompt, /<subagent_notification>/);
+});

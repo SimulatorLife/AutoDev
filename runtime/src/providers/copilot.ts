@@ -27,9 +27,10 @@ import {
   readBridgeMcpCatalogue
 } from "@simulatorlife/autodev-runtime/mcp/filesystem-server";
 import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
-import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
+import { formatCodexBridgePrompt } from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import {
   contextHeaderValue,
+  isProviderHopHeader,
   readContextHeader,
   SANDBOX_MODE_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
@@ -441,60 +442,15 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
-const CONVERSATION_HISTORY_ITEM_TYPES = new Set([
-  "custom_tool_call",
-  "function_call",
-  "custom_tool_call_output",
-  "function_call_output"
-]);
-
-function hasConversationHistory(items: readonly unknown[]): boolean {
-  return items.some(
-    (item) =>
-      isJsonRecord(item) &&
-      (item.role === "assistant" ||
-        CONVERSATION_HISTORY_ITEM_TYPES.has(String(item.type ?? "")))
-  );
-}
-
-function inputText(input: unknown, instructions: string): string {
-  if (typeof input === "string")
-    return `${instructions}\n\nDelegated task:\n${input}`;
-  if (!Array.isArray(input))
-    return `${instructions}\n\nDelegated task:\n${String(input ?? "")}`;
-  if (hasConversationHistory(input)) {
-    const transcript = renderCodexTranscript(
-      input.filter(
-        (item) =>
-          !isJsonRecord(item) ||
-          !["developer", "system"].includes(String(item.role ?? ""))
-      )
-    );
-    if (transcript.length > 0)
-      return `${instructions}\n\nDelegated task:\n${transcript}`;
-  }
-  const userItems = input.filter(
-    (item) => item && typeof item === "object" && item.role === "user"
-  );
-  const items =
-    userItems.length > 0
-      ? userItems
-      : input.filter(
-          (item) =>
-            !item ||
-            typeof item !== "object" ||
-            !["developer", "system"].includes(item.role)
-        );
-  const task = items
-    .map((item) =>
-      typeof item === "string"
-        ? item
-        : item && typeof item === "object"
-          ? contentText(item.content ?? item.text ?? "")
-          : String(item ?? "")
-    )
-    .join("\n\n");
-  return `${instructions}\n\nDelegated task:\n${task}`;
+function inputText(
+  input: unknown,
+  instructions: string,
+  options: { readonly providerHop?: boolean } = {}
+): string {
+  return formatCodexBridgePrompt(input, instructions, {
+    ...options,
+    taskPrefix: "Delegated task:\n"
+  });
 }
 
 // The Copilot CLI's `report_intent` tool exists to narrate what the agent is
@@ -1654,7 +1610,9 @@ function prepareCopilotRequest(
         skillContextHeader +
         "\n"
       : "");
-  const prompt = inputText(payload.input, finalPrompt);
+  const prompt = inputText(payload.input, finalPrompt, {
+    providerHop: isProviderHopHeader(request.headers)
+  });
   const bootstrapContract = copilotRoleContract(
     agentRole,
     workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])

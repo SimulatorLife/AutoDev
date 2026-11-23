@@ -6,6 +6,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 export interface RoleContract {
   mcp: string[];
+  allowProviderHop?: boolean;
   /**
    * The sandbox this role declares, in the product's vocabulary.
    *
@@ -183,6 +184,17 @@ export function roleScopedMcp(role: unknown): string[] {
 /** Whether a provider bridge owns MCP startup and role-specific tool filtering. */
 export function providerInjectsRoleMcp(provider: string): boolean {
   return providerContract(provider).roleMcpInjection === true;
+}
+
+/**
+ * Whether a role may hop across providers after its first request has been
+ * served by one provider. Only roles declaring `allowProviderHop: true` in
+ * `config/execution-contract.json` (currently `orchestrator`) may hop; leaf
+ * subagents stay pinned to their initial provider and fail cleanly instead.
+ */
+export function roleAllowsProviderHop(role: unknown): boolean {
+  if (typeof role !== "string" || !role.trim()) return false;
+  return CONTRACT.roles[contractRoleKey(role)]?.allowProviderHop === true;
 }
 
 /**

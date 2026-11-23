@@ -41,10 +41,11 @@ import {
 import {
   type CodexTool,
   codexToolCallItem,
+  type CodexTranscriptOptions,
   codexToolReference,
   nestedToolNames,
-  renderCodexTranscript
-} from "./claude-codex-tools.ts";
+  renderCodexTranscriptSegments
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -885,37 +886,37 @@ export interface TranscriptEntry {
 }
 
 /**
- * The kind of an item `renderCodexTranscript` rendered to text. It renders
- * only messages, tool calls and tool outputs, so a rendered item that is
- * neither of the first two is a tool output.
+ * Immutable per-item segments used by `OpencliConversationLedger` so prefix
+ * digests stay stable when continuing an existing web chat (`--conversation`).
  */
-function transcriptItemKind(item: unknown): TranscriptItemKind {
-  if (!isRecord(item)) return "user";
-  const type = typeof item.type === "string" ? item.type : "message";
-  if (type === "message")
-    return item.role === "assistant" ||
-      item.role === "developer" ||
-      item.role === "system"
-      ? item.role
-      : "user";
-  if (type === "custom_tool_call" || type === "function_call")
-    return "tool_call";
-  return "tool_output";
+export function transcriptEntries(input: unknown): TranscriptEntry[] {
+  if (!Array.isArray(input)) {
+    return renderCodexTranscriptSegments(input).map((segment) => ({
+      kind: segment.kind,
+      text: segment.text
+    }));
+  }
+  const entries: TranscriptEntry[] = [];
+  for (const item of input) {
+    for (const segment of renderCodexTranscriptSegments([item])) {
+      entries.push({ kind: segment.kind, text: segment.text });
+    }
+  }
+  return entries;
 }
 
 /**
- * Each conversation item with the text it renders to, skipping items that
- * render to nothing (reasoning, the tool surface itself).
+ * Framed multi-turn transcript segments (with prior-turn tool elision and
+ * mid-turn hop compression) used whenever `opencli` starts a fresh web chat.
  */
-export function transcriptEntries(input: unknown): TranscriptEntry[] {
-  if (!Array.isArray(input))
-    return [{ kind: "user", text: renderCodexTranscript(input) }];
-  const entries: TranscriptEntry[] = [];
-  for (const item of input) {
-    const text = renderCodexTranscript([item]);
-    if (text) entries.push({ kind: transcriptItemKind(item), text });
-  }
-  return entries;
+export function framedTranscriptEntries(
+  input: unknown,
+  options: CodexTranscriptOptions = {}
+): TranscriptEntry[] {
+  return renderCodexTranscriptSegments(input, options).map((segment) => ({
+    kind: segment.kind,
+    text: segment.text
+  }));
 }
 
 const RECOVERY_PREFLIGHT_HEADING = "## Current-parent recovery preflight";

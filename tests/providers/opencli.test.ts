@@ -1792,7 +1792,8 @@ interface FakeRun {
 async function withBridge(
   replies: Array<JsonRecord | Error>,
   body: (baseUrl: string, runs: FakeRun) => Promise<void>,
-  authToken = ""
+  authToken = "",
+  extraOptions: { readonly newTaskChatResetSegments?: number } = {}
 ): Promise<void> {
   const runs: FakeRun = { requests: [], prompts: [] };
   const tempRoot = mkdtempSync(join(tmpdir(), "autodev-opencli-test-"));
@@ -1803,6 +1804,7 @@ async function withBridge(
     tempRoot,
     sessionBusyRetryMs: 1,
     unsentRetryMs: 1,
+    ...extraOptions,
     run: async (request) => {
       // Model switches and listings are answered here, not from `replies`.
       if (request.args[1] === "model")
@@ -3590,4 +3592,152 @@ test("browser-unavailable health is distinct from site sign-in and never reports
     assert.equal(health.error, "dedicated_browser_unavailable");
     assert.equal(health.message, "CDP startup failed");
   }
+});
+
+test("unified transcript segmentation elides prior-turn tools and frames fresh web chats after provider hops", async () => {
+  await withBridge(
+    [
+      {
+        conversation_id: "chat-t2",
+        response:
+          '<tool_call name="exec" call_id="call_t2">\nrg -n featureB src/\n</tool_call>'
+      },
+      { conversation_id: "chat-t2", response: "Task 2 finished." }
+    ],
+    async (baseUrl, runs) => {
+      // Turn 2 arrives on opencli after Turn 1 ran on another provider (no ledger entry):
+      // starts a fresh chat with elided prior-turn tool history and ## Current User Request.
+      const firstReply = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: [
+            userMessage("Build feature A"),
+            {
+              type: "custom_tool_call",
+              name: "exec",
+              call_id: "call_t1",
+              input: "rg -n featureA src/"
+            },
+            {
+              type: "custom_tool_call_output",
+              call_id: "call_t1",
+              output: "src/a.ts:1: const a = 1;"
+            },
+            { type: "message", role: "assistant", content: "Task 1 finished." },
+            userMessage("Now build feature B")
+          ]
+        },
+        { "x-autodev-session-id": "sess-1" }
+      );
+      const firstBody = (await firstReply.json()) as { output: JsonRecord[] };
+      assert.ok(runs.requests[0]!.args.includes("--new"));
+      assert.match(
+        runs.prompts[0]!,
+        /\[prior tool activity omitted: 1 call\(s\), 1 output\(s\)\]/
+      );
+      assert.doesNotMatch(runs.prompts[0]!, /src\/a\.ts:1/);
+      assert.match(
+        runs.prompts[0]!,
+        /## Current User Request[\s\S]*Now build feature B/
+      );
+
+      // Mid-turn continuation within Turn 2: reuses chat-t2 via --conversation
+      await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: [
+            userMessage("Build feature A"),
+            {
+              type: "custom_tool_call",
+              name: "exec",
+              call_id: "call_t1",
+              input: "rg -n featureA src/"
+            },
+            {
+              type: "custom_tool_call_output",
+              call_id: "call_t1",
+              output: "src/a.ts:1: const a = 1;"
+            },
+            { type: "message", role: "assistant", content: "Task 1 finished." },
+            userMessage("Now build feature B"),
+            ...firstBody.output,
+            {
+              type: "custom_tool_call_output",
+              call_id: "call_t2",
+              output: "src/b.ts:1: const b = 2;"
+            }
+          ]
+        },
+        { "x-autodev-session-id": "sess-1" }
+      );
+      const convIdx = runs.requests[1]!.args.indexOf("--conversation");
+      assert.notEqual(convIdx, -1);
+      assert.equal(runs.requests[1]!.args[convIdx + 1], "chat-t2");
+      assert.match(runs.prompts[1]!, /src\/b\.ts:1/);
+    }
+  );
+});
+
+test("opencli resets heavy open web chats on a new user task while continuing mid-turn", async () => {
+  await withBridge(
+    [
+      {
+        conversation_id: "chat-heavy-1",
+        response: '<tool_call name="exec" call_id="c1">\necho 1\n</tool_call>'
+      },
+      { conversation_id: "chat-heavy-1", response: "Turn 1 complete." },
+      { conversation_id: "chat-fresh-2", response: "Turn 2 started." }
+    ],
+    async (baseUrl, runs) => {
+      const t1Prompt = userMessage("Task 1");
+      const r1 = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: [t1Prompt]
+        },
+        { "x-autodev-session-id": "sess-heavy" }
+      );
+      const b1 = (await r1.json()) as { output: JsonRecord[] };
+      assert.ok(runs.requests[0]!.args.includes("--new"));
+
+      const t1Mid = [
+        t1Prompt,
+        ...b1.output,
+        { type: "custom_tool_call_output", call_id: "c1", output: "out-1" }
+      ];
+      const r1b = await post(
+        baseUrl,
+        { model: "opencli-chatgpt-balanced", tools: [EXEC_TOOL], input: t1Mid },
+        { "x-autodev-session-id": "sess-heavy" }
+      );
+      const b1b = (await r1b.json()) as { output: JsonRecord[] };
+      assert.ok(runs.requests[1]!.args.includes("--conversation"));
+
+      // Turn 2 starts a brand new task after 4+ seen segments -> resets to --new true
+      await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [EXEC_TOOL],
+          input: [...t1Mid, ...b1b.output, userMessage("Task 2 independent")]
+        },
+        { "x-autodev-session-id": "sess-heavy" }
+      );
+      assert.ok(runs.requests[2]!.args.includes("--new"));
+      assert.equal(runs.requests[2]!.args.includes("--conversation"), false);
+      assert.match(
+        runs.prompts[2]!,
+        /## Current User Request[\s\S]*Task 2 independent/
+      );
+      assert.doesNotMatch(runs.prompts[2]!, /out-1/);
+    },
+    "",
+    { newTaskChatResetSegments: 4 }
+  );
 });

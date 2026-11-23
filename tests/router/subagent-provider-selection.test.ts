@@ -6,7 +6,11 @@ import test from "node:test";
 import type { ProviderRoleAssignment } from "@simulatorlife/autodev-core";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getRecentRouterEvents } from "@simulatorlife/autodev-runtime/router/events";
-import { proxyRoleResponse } from "@simulatorlife/autodev-runtime/router/proxy";
+import {
+  payloadForCandidate,
+  proxyOrchestratorResponse,
+  proxyRoleResponse
+} from "@simulatorlife/autodev-runtime/router/proxy";
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import { agentActivity } from "@simulatorlife/autodev-runtime/router/server";
 import {
@@ -14,6 +18,7 @@ import {
   resetSubagentTelemetry,
   subagentProviderForThread
 } from "@simulatorlife/autodev-runtime/router/subagents";
+import { PROVIDER_HOP_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
 const CLAUDE_HOST = "127.0.0.1:4000";
 const MINIMAX_HOST = "127.0.0.1:18765";
@@ -365,4 +370,170 @@ test("agentLimitReason admits continuing agents and counts per session and acros
     if (previous) ROUTING_POLICY.setProviderLimits(provider, previous);
     else ROUTING_POLICY.clearProviderLimits(provider);
   }
+});
+
+test(
+  "a subagent pinned to a provider never hops to a fallback provider when its pinned provider fails",
+  { concurrency: false },
+  async () => {
+    await withSubagentRouting({}, async (contacted) => {
+      const root = "root-subagent-no-hop";
+      // First request places child-no-hop on Claude.
+      await spawnRequest(root, "child-no-hop", "req-nh-1");
+      assert.deepEqual(servedHosts(contacted), [CLAUDE_HOST]);
+      assert.equal(subagentProviderForThread("child-no-hop"), "claude");
+
+      // Now Claude returns a fallbackable 503; the subagent must fail cleanly
+      // instead of hopping to MiniMax.
+      contacted.length = 0;
+      const prevFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = String(input);
+        contacted.push(url);
+        if (url.startsWith(`http://${CLAUDE_HOST}`)) {
+          return new Response(
+            JSON.stringify({
+              error: { message: "overloaded", type: "server_error" }
+            }),
+            { status: 503, headers: { "content-type": "application/json" } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: "resp_should_not_run",
+            status: "completed",
+            output: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }) as typeof fetch;
+
+      try {
+        const res = responseRecorder();
+        await proxyRoleResponse(
+          res,
+          "worker",
+          { model: "autodev/worker", input: [], stream: false },
+          false,
+          "req-nh-2",
+          null,
+          null,
+          null,
+          {
+            key: root,
+            scope: "identified",
+            thread: "child-no-hop",
+            sessionId: root
+          }
+        );
+        assert.ok(
+          res.statusCode >= 500,
+          "subagent failure must surface to caller"
+        );
+        assert.equal(
+          servedHosts(contacted).filter((h) => h === MINIMAX_HOST).length,
+          0,
+          "subagent must never hop to MiniMax after starting on Claude"
+        );
+      } finally {
+        globalThis.fetch = prevFetch;
+      }
+    });
+  }
+);
+
+test(
+  "an orchestrator hop emits x-autodev-provider-hop header to local fallback bridges",
+  { concurrency: false },
+  async () => {
+    await withSubagentRouting({}, async () => {
+      const root = "root-orch-hop-header";
+      noteOrchestratorSession(root, "claude");
+      const seenHeaders: Array<{ url: string; hop: string | null }> = [];
+      const prevFetch = globalThis.fetch;
+      globalThis.fetch = (async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+        if (url.endsWith("/responses")) {
+          seenHeaders.push({ url, hop: headers.get(PROVIDER_HOP_HEADER) });
+          if (url.startsWith(`http://${CLAUDE_HOST}`)) {
+            return new Response(
+              JSON.stringify({
+                error: { message: "quota", type: "rate_limit_error" }
+              }),
+              { status: 429, headers: { "content-type": "application/json" } }
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              id: "resp_orch_ok",
+              status: "completed",
+              output: []
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        return prevFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const res = responseRecorder();
+        await proxyOrchestratorResponse(
+          res,
+          { model: "autodev/orchestrator", input: [], stream: false },
+          false,
+          "req-orch-hop-1",
+          null,
+          null,
+          null,
+          { key: root, scope: "identified", thread: root, sessionId: root }
+        );
+        const hopAttempt = seenHeaders.find(
+          (entry) => !entry.url.startsWith(`http://${CLAUDE_HOST}`)
+        );
+        assert.ok(
+          hopAttempt,
+          "orchestrator must fall back to another provider"
+        );
+        assert.equal(hopAttempt.hop, "1");
+      } finally {
+        globalThis.fetch = prevFetch;
+      }
+    });
+  }
+);
+
+test("payloadForCandidate elides prior-turn tools on minimax provider hops while leaving codex intact", () => {
+  const payload = {
+    model: "autodev/orchestrator",
+    input: [
+      { type: "message", role: "user", content: "Old task" },
+      {
+        type: "function_call",
+        call_id: "c_old",
+        name: "exec",
+        arguments: "{}"
+      },
+      { type: "function_call_output", call_id: "c_old", output: "old output" },
+      { type: "message", role: "assistant", content: "Done." },
+      { type: "message", role: "user", content: "New task" }
+    ]
+  };
+  const minimaxHop = payloadForCandidate(
+    payload,
+    { provider: "minimax", model: "MiniMax-M3.1-Flash" },
+    { providerHop: true }
+  );
+  assert.doesNotMatch(JSON.stringify(minimaxHop.input), /old output/);
+  assert.match(JSON.stringify(minimaxHop.input), /prior tool activity omitted/);
+
+  const codexHop = payloadForCandidate(
+    payload,
+    { provider: "codex", model: "gpt-6-luna" },
+    { providerHop: true }
+  );
+  assert.match(JSON.stringify(codexHop.input), /old output/);
 });

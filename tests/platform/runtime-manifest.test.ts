@@ -159,7 +159,10 @@ test("the installed source tree is exactly the manifest's runtime/src modules", 
     [...tree.files.keys()].sort(),
     [...expected, "package.json"].sort()
   );
-  assert.equal(tree.nodeModules, join(repositoryRoot, "runtime", "node_modules"));
+  assert.equal(
+    tree.nodeModules,
+    join(repositoryRoot, "runtime", "node_modules")
+  );
 });
 
 test("runtime manifest closure follows runtime imports but ignores erased type-only imports", () => {
@@ -420,6 +423,12 @@ test("Runtime shared contracts are Runtime-owned and loaded through workspace ex
       exportTarget: "./src/shared/responses-continuation.ts",
       runtimeFile: "runtime/src/shared/responses-continuation.ts",
       legacyFile: "src/shared/responses-continuation.ts"
+    },
+    {
+      exportPath: "./shared/codex-transcript",
+      exportTarget: "./src/shared/codex-transcript.ts",
+      runtimeFile: "runtime/src/shared/codex-transcript.ts",
+      legacyFile: "src/shared/codex-transcript.ts"
     },
     {
       exportPath: "./shared/provider-limits",

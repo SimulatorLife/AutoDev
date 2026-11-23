@@ -142,6 +142,7 @@ Differences from a role request:
   the sticky session preference so Priority 1 is re-probed while the prompt
   cache is already cold. Whichever provider serves that post-compaction turn
   becomes the session's newly pinned provider for subsequent turns.
+- **Orchestrator-only provider hops & lean hop handoff**: Only roles declaring `"allowProviderHop": true` in `config/execution-contract.json` (`roleAllowsProviderHop` in `runtime/src/shared/execution-contract.ts`, currently only `orchestrator`) may hop across providers after starting; when the orchestrator hops to a different local bridge, `proxy.ts` sets `x-autodev-provider-hop: 1` so `renderCodexTranscriptSegments` elides earlier mid-turn tool activity beyond the trailing 4 tool items (and `payloadForCandidate` applies `elidePriorTurnsForNativePayload` for native `minimax` hops). Once a subagent has been assigned a provider (via `TOOL_CALL_OWNERSHIP` or `subagentProviderForThread`), `proxyRoleResponse` pins its candidate list strictly to that provider—if it fails or cools down, the subagent stops/fails cleanly so the orchestrator can spawn a replacement rather than hopping mid-task and burning cross-provider context.
 
 #### Active-subagent routing protection
 

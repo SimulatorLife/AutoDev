@@ -29,6 +29,11 @@ the children that did fit keep running. Close finished children with
 `tools.multi_agent_v1__close_agent` to free their slots (see
 `references/runtime-contract.md`).
 
+Lifecycle argument shapes (do **not** pass `id` — use `target`/`targets`):
+- `tools.multi_agent_v1__wait_agent({ targets: [agentId], timeout_ms: 120000 })`
+- `tools.multi_agent_v1__send_input({ target: agentId, message: "..." })`
+- `tools.multi_agent_v1__close_agent({ target: agentId })`
+
 ## Writing the spawn message
 
 Write `message` as a double-quoted JavaScript string with `"`, `\` and line

@@ -155,6 +155,7 @@
     },
     "orchestrator": {
       "kind": "orchestrator",
+      "allowProviderHop": true,
       "sandboxMode": "unrestricted",
       "mcp": [
         "filesystem",

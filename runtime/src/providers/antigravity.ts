@@ -47,13 +47,13 @@ import {
   codexToolReferenceForDispatcher,
   codexToolSurface,
   FILE_SURFACE_GUIDANCE,
-  mcpResultFromCodexOutput,
-  mcpToolDefinition,
-  renderCodexTranscript
-} from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
+  formatCodexBridgePrompt,
+  mcpToolDefinition
+} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import { MCP_SERVER_FILESYSTEM } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   contextHeaderValue,
+  isProviderHopHeader,
   readContextHeader,
   SANDBOX_MODE_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
@@ -127,9 +127,12 @@ import {
 import {
   CodexToolsUnreachableError,
   CodexToolTurnRegistry,
+  formatSseEvent,
   type ParkableTurn,
+  resolveAwaitedBridgeTools,
   toolErrorResult,
-  turnId
+  turnId,
+  writeSseStreamHeaders
 } from "./codex-tool-turns.ts";
 
 // Bind the port only when run as a program. The shared request-shaping helpers
@@ -1660,60 +1663,12 @@ ${files}
 `;
 }
 
-const CONVERSATION_HISTORY_ITEM_TYPES = new Set([
-  "custom_tool_call",
-  "function_call",
-  "custom_tool_call_output",
-  "function_call_output"
-]);
-
-function hasConversationHistory(items: readonly unknown[]): boolean {
-  return items.some(
-    (item) =>
-      isJsonRecord(item) &&
-      (item.role === "assistant" ||
-        CONVERSATION_HISTORY_ITEM_TYPES.has(String(item.type ?? "")))
-  );
-}
-
-function promptFromInput(value: unknown, instructions?: unknown): string {
-  if (typeof value === "string") return `${instructions}\n\n${value}`;
-  if (!Array.isArray(value))
-    return `${instructions}\n\n${JSON.stringify(value)}`;
-  if (hasConversationHistory(value)) {
-    const transcript = renderCodexTranscript(
-      value.filter(
-        (item) =>
-          !isJsonRecord(item) ||
-          !["developer", "system"].includes(String(item.role ?? ""))
-      )
-    );
-    if (transcript.length > 0) return `${instructions}\n\n${transcript}`;
-  }
-  const userItems = value.filter(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      (item.role === "user" ||
-        (item.type === "message" && item.role === "user"))
-  );
-  const items =
-    userItems.length > 0
-      ? userItems
-      : value.filter(
-          (item) =>
-            item &&
-            typeof item === "object" &&
-            !["developer", "system"].includes(item.role)
-        );
-  const task = items
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (!item || typeof item !== "object") return JSON.stringify(item);
-      return contentText(item.content ?? item.text ?? "");
-    })
-    .join("\n\n");
-  return `${instructions}\n\n${task}`;
+function promptFromInput(
+  value: unknown,
+  instructions?: unknown,
+  options: { readonly providerHop?: boolean } = {}
+): string {
+  return formatCodexBridgePrompt(value, instructions, options);
 }
 
 function responseMessageItem(text: string, itemId: string): JsonRecord {
@@ -1913,10 +1868,6 @@ const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
 const EVENT_RESPONSE_COMPLETED = "response.completed";
 const EVENT_REASONING_SUMMARY_TEXT_DELTA =
   "response.reasoning_summary_text.delta";
-
-function sseLine(eventName: string, body: object): string {
-  return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
-}
 
 const ANTIGRAVITY_WEB_RESEARCH_TOOLS = new Set([
   "search_web",
@@ -3532,6 +3483,7 @@ function prepareTurnPromptAndTools(args: {
   }
   const codexTools = codexToolSurface(payload).tools;
   const toolTurnId = payload.stream ? turnId(12) : null;
+  const providerHop = isProviderHopHeader(request.headers);
   const prompt = promptFromInput(
     payload.input ?? "",
     [
@@ -3541,7 +3493,8 @@ function prepareTurnPromptAndTools(args: {
         : ""
     ]
       .filter((section) => section.length > 0)
-      .join("\n\n")
+      .join("\n\n"),
+    { providerHop }
   );
   const bootstrapContract = antigravityRoleContract(
     agentRole,
@@ -3797,7 +3750,7 @@ class ResponseEventStream {
   // `body` is serialized immediately: internal JSON records, typed payloads
   // from sibling modules, and shared terminal events all pass through here.
   emit(eventName: string, body: object): void {
-    const event = sseLine(eventName, {
+    const event = formatSseEvent(eventName, {
       ...body,
       sequence_number: ++this.sequenceNumber
     });
@@ -3809,13 +3762,7 @@ class ResponseEventStream {
   start(): void {
     if (this.streamStarted || !this.isWritable()) return;
     this.streamStarted = true;
-    this.response.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "close"
-    });
-    this.response.flushHeaders();
-    this.response.shouldKeepAlive = false;
+    writeSseStreamHeaders(this.response);
     for (const event of this.pending.splice(0)) {
       if (!this.isWritable()) break;
       this.write(event);
@@ -4449,45 +4396,22 @@ class StreamingTurn implements ParkableTurn {
     outputs: Map<string, unknown>,
     messages: AwaitedToolResults["messages"] = []
   ): void {
-    const resolved: Array<{
-      call: AwaitingCodexCall;
-      callId: string;
-      result: ShimJson;
-    }> = [];
-    for (const [callId, output] of outputs) {
-      const call = this.awaiting.get(callId);
-      if (!call) continue;
-      this.awaiting.delete(callId);
-      resolved.push({
-        call,
-        callId,
-        result: mcpResultFromCodexOutput(output)
-      });
-    }
-    const last = resolved.at(-1)?.result;
-    if (last && messages.length > 0 && Array.isArray(last.content)) {
-      (last.content as ShimJson[]).push({
-        type: "text",
-        text: `Codex added to the conversation while this ran:\n\n${renderCodexTranscript(messages)}`
-      });
-    }
-    for (const { call, callId, result } of resolved) {
-      call.resolve(result);
-      this.turn.toolObserver.observeShimOutput(
-        call.tool.name,
-        callId,
-        call.emittedAt,
-        result.isError === true,
-        call.args
-      );
-    }
-    for (const call of this.awaiting.values())
-      call.resolve(
-        toolErrorResult(
-          "Codex returned no result for this call; it may not have run."
-        )
-      );
-    this.awaiting.clear();
+    resolveAwaitedBridgeTools({
+      awaiting: this.awaiting,
+      outputs,
+      messages,
+      fallbackErrorText:
+        "Codex returned no result for this call; it may not have run.",
+      onResolved: (callId, call, result) => {
+        this.turn.toolObserver.observeShimOutput(
+          call.tool.name,
+          callId,
+          call.emittedAt,
+          result.isError === true,
+          call.args
+        );
+      }
+    });
     this.clearParkTimer();
   }
 
