@@ -3100,10 +3100,37 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.deepEqual(context7.targetOverrides, [
       { target: "codexcli", enabled: false }
     ]);
+    const googleDeveloperKnowledge = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "googleDeveloperKnowledge"
+    );
+    assert.ok(googleDeveloperKnowledge);
+    assert.equal(googleDeveloperKnowledge.enabled, true);
+    assert.equal(
+      googleDeveloperKnowledge.url,
+      "https://developerknowledge.googleapis.com/mcp"
+    );
+    assert.deepEqual(googleDeveloperKnowledge.targetOverrides, [
+      { target: "codexcli", enabled: false }
+    ]);
+    // The public /control/mcps summary omits authentication headers and env
+    // var names so no credential or auth reference leaks into the listing.
     assert.doesNotMatch(
       JSON.stringify(mcps.body),
-      /CONTEXT7_API_KEY|MCP_TOKEN|bearer_token/u
+      /CONTEXT7_API_KEY|GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY|MCP_TOKEN|bearer_token/u
     );
+    // The canonical launch declaration carries the environment reference in
+    // httpHeaders rather than a credential value.
+    const declaredCodexLaunch = new RuleSyncRepository().loadMcpLaunchState(
+      "codexcli"
+    );
+    assert.equal(declaredCodexLaunch.valid, true);
+    const declaredGdk = declaredCodexLaunch.servers.find(
+      (server) => server.name === "googleDeveloperKnowledge"
+    );
+    assert.ok(declaredGdk);
+    assert.deepEqual(declaredGdk.httpHeaders, {
+      "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+    });
 
     // 5. Tools: composite read model joining RuleSync MCP declarations with
     // the execution-contract role projection; per-tool historical use/error

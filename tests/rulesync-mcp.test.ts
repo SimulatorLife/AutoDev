@@ -136,6 +136,19 @@ test("portable Codex config declares no MCP servers", () => {
   assert.equal(Object.hasOwn(config, "mcp_servers"), false);
 });
 
+function toPlain(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toPlain);
+  if (value && typeof value === "object") {
+    const plain: JsonObject = {};
+    for (const [key, entry] of Object.entries(value))
+      plain[key] = toPlain(entry);
+    return plain;
+  }
+  return value;
+}
+
+const ENVIRONMENT_REFERENCE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
+
 test("source declares each launch definition consistently", () => {
   const document = source();
   const shared = serverMap(document.mcpServers);
@@ -148,11 +161,19 @@ test("source declares each launch definition consistently", () => {
     "codegraphcontext",
     "context7",
     "filesystem",
+    "googleDeveloperKnowledge",
     "lsp",
     "openaiDeveloperDocs"
   ]);
   assert.equal(shared.context7?.url, "https://mcp.context7.com/mcp");
   assert.equal(shared.context7?.bearer_token_env_var, "CONTEXT7_API_KEY");
+  assert.equal(
+    shared.googleDeveloperKnowledge?.url,
+    "https://developerknowledge.googleapis.com/mcp"
+  );
+  assert.deepEqual(shared.googleDeveloperKnowledge?.headers, {
+    "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+  });
   for (const target of [
     "codexcli",
     "claudecode",
@@ -217,8 +238,33 @@ test("Codex projection matches the Codex declaration without mutating the portab
       "enabled_tools"
     ])
       if (Object.hasOwn(server, key)) projected[key] = server[key];
+    // RuleSync translates a canonical `headers` entry whose whole value is a
+    // `${VAR}` reference into Codex's native `env_http_headers` table, leaving
+    // literal header values in `http_headers`.
+    if (
+      Object.hasOwn(server, "headers") &&
+      server.headers &&
+      typeof server.headers === "object" &&
+      !Array.isArray(server.headers)
+    ) {
+      const envHeaders: Record<string, string> = {};
+      const httpHeaders: Record<string, string> = {};
+      for (const [header, value] of Object.entries(
+        server.headers as Record<string, string>
+      )) {
+        const match = ENVIRONMENT_REFERENCE.exec(value);
+        if (match?.[1]) envHeaders[header] = match[1];
+        else httpHeaders[header] = value;
+      }
+      if (Object.keys(envHeaders).length > 0)
+        projected.env_http_headers = envHeaders;
+      if (Object.keys(httpHeaders).length > 0)
+        projected.http_headers = httpHeaders;
+    }
     if (server.disabled) projected.enabled = false;
-    assert.deepEqual(generated[name], projected);
+    // smol-toml returns null-prototype objects; normalise before strict deep
+    // comparison so structural equality is checked without dropping keys.
+    assert.deepEqual(toPlain(generated[name]), projected);
   }
   assert.deepEqual(readFileSync(portableConfig), portableBefore);
 });

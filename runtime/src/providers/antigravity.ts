@@ -2248,9 +2248,15 @@ function bridgeHttpMcpEntry(
   if (headers !== undefined) {
     if (!headers || typeof headers !== "object" || Array.isArray(headers))
       throw new Error(`MCP server ${name} has invalid HTTP headers`);
+    const stringHeaders: Record<string, string> = {};
+    for (const [headerName, headerValue] of Object.entries(headers)) {
+      if (typeof headerValue !== "string")
+        throw new TypeError(`MCP server ${name} has invalid HTTP headers`);
+      stringHeaders[headerName] = headerValue;
+    }
     // A header the catalogue names as an environment reference is resolved
     // here, because Antigravity sends header values as they are.
-    entry.headers = resolveEnvironmentHeaders({ ...headers });
+    entry.headers = resolveEnvironmentHeaders(stringHeaders);
   }
   return entry;
 }

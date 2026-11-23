@@ -176,14 +176,24 @@ test("browser roles get the pinned Playwright launcher with the role's tool allo
   }
   assert.deepEqual(parse(copilotMcpArgs("browser-tester")).disabled.sort(), [
     "cocoindex-code",
-    "context7"
+    "context7",
+    "googleDeveloperKnowledge"
   ]);
-  const docsAdditional = parse(copilotMcpArgs("docs-researcher")).additional
-    .openaiDeveloperDocs;
+  const docsParsed = parse(copilotMcpArgs("docs-researcher"));
+  const docsAdditional = docsParsed.additional.openaiDeveloperDocs;
   const docsCatalogue = catalogue.openaiDeveloperDocs;
   assert.ok(docsAdditional);
   assert.ok(docsCatalogue);
   assert.deepEqual(docsAdditional.url, docsCatalogue.url);
+  assert.ok(
+    docsParsed.allowed.includes("googleDeveloperKnowledge"),
+    "docs-researcher must allow googleDeveloperKnowledge"
+  );
+  assert.equal(
+    docsParsed.disabled.includes("googleDeveloperKnowledge"),
+    false,
+    "docs-researcher must not disable googleDeveloperKnowledge"
+  );
 });
 
 test("LSP is added per session so normal implementation roles get their scoped allowlist", () => {

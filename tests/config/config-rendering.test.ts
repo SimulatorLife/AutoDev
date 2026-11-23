@@ -283,17 +283,24 @@ test("the portable Codex configuration exports its telemetry to OpenLIT without 
 
 test("bridge MCP catalogues are deterministic and preserve launch authentication", async () => {
   const directory = await mkdtemp(join(tmpdir(), "autodev-mcp-"));
+  const savedKey = process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+  process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY = "do-not-leak-credential";
   try {
     const source = join(directory, "mcp.toml");
     await writeFile(
       source,
-      '[mcp_servers.zed]\ncommand = "z"\n\n[mcp_servers.alpha]\ncommand = "a"\nargs = ["--stdio"]\ncwd = "/plugin"\n\n[mcp_servers.context7]\nurl = "https://example.invalid/mcp"\nbearer_token_env_var = "CONTEXT7_API_KEY"\nhttp_headers = { "X-Test" = "placeholder" }\n'
+      '[mcp_servers.zed]\ncommand = "z"\n\n[mcp_servers.alpha]\ncommand = "a"\nargs = ["--stdio"]\ncwd = "/plugin"\n\n[mcp_servers.context7]\nurl = "https://example.invalid/mcp"\nbearer_token_env_var = "CONTEXT7_API_KEY"\nhttp_headers = { "X-Test" = "placeholder" }\n\n[mcp_servers.googleDeveloperKnowledge]\nurl = "https://developerknowledge.googleapis.com/mcp"\nenv_http_headers = { "X-Goog-Api-Key" = "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY" }\n'
     );
+    const rendered = renderBridgeMcpCatalogue(source);
     assert.equal(
-      renderBridgeMcpCatalogue(source),
-      '{\n  "alpha": {\n    "command": "a",\n    "args": [\n      "--stdio"\n    ],\n    "cwd": "/plugin"\n  },\n  "context7": {\n    "url": "https://example.invalid/mcp",\n    "bearer_token_env_var": "CONTEXT7_API_KEY",\n    "http_headers": {\n      "X-Test": "placeholder"\n    }\n  },\n  "zed": {\n    "command": "z"\n  }\n}\n'
+      rendered,
+      '{\n  "alpha": {\n    "command": "a",\n    "args": [\n      "--stdio"\n    ],\n    "cwd": "/plugin"\n  },\n  "context7": {\n    "url": "https://example.invalid/mcp",\n    "bearer_token_env_var": "CONTEXT7_API_KEY",\n    "http_headers": {\n      "X-Test": "placeholder"\n    }\n  },\n  "googleDeveloperKnowledge": {\n    "url": "https://developerknowledge.googleapis.com/mcp",\n    "http_headers": {\n      "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"\n    }\n  },\n  "zed": {\n    "command": "z"\n  }\n}\n'
     );
+    assert.equal(rendered.includes("do-not-leak-credential"), false);
   } finally {
+    if (savedKey === undefined)
+      delete process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+    else process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY = savedKey;
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -429,9 +436,10 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
 
   // Per-role MCP ordering must respect MCP_ORDER (filesystem=0, lsp=1,
   // cocoindex-code=2, codegraphcontext=3, playwright=4, openaiDeveloperDocs=5,
-  // context7=6, codex_app=7): within each role's mcp list, known servers
-  // appear in ascending MCP_ORDER index; unknown keys sort lexicographically after
-  // them. This protects against accidental reorderings.
+  // context7=6, googleDeveloperKnowledge=7, codex_app=8): within each role's
+  // mcp list, known servers appear in ascending MCP_ORDER index; unknown keys
+  // sort lexicographically after them. This protects against accidental
+  // reorderings.
   const ORDER: Record<string, number> = {
     filesystem: 0,
     lsp: 1,
@@ -440,7 +448,8 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     playwright: 4,
     openaiDeveloperDocs: 5,
     context7: 6,
-    codex_app: 7
+    googleDeveloperKnowledge: 7,
+    codex_app: 8
   };
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
     const mcp = roleCfg.mcp ?? [];
@@ -453,6 +462,36 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
       );
       last = index;
     }
+  }
+});
+
+test("googleDeveloperKnowledge is enabled on the documentation roles only", () => {
+  // Freeze the per-role googleDeveloperKnowledge boundary. docs-researcher and
+  // smart are the only roles that enable Google Developer Knowledge; every
+  // other role (including the root orchestrator, browser-tester, explorer,
+  // implementation roles, and playtest roles) must not list it in its mcp set.
+  // This test reads the live contract so a render failure surfaces here before
+  // it reaches install --check.
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as { roles: Record<string, { mcp?: string[] }> };
+
+  const enabledRoles = new Set(["docs-researcher", "smart"]);
+  for (const roleName of enabledRoles) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      (roleCfg.mcp ?? []).includes("googleDeveloperKnowledge"),
+      `${roleName} must enable googleDeveloperKnowledge`
+    );
+  }
+
+  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
+    if (enabledRoles.has(roleName)) continue;
+    assert.ok(
+      !(roleCfg.mcp ?? []).includes("googleDeveloperKnowledge"),
+      `${roleName} must not enable googleDeveloperKnowledge`
+    );
   }
 });
 

@@ -8,7 +8,10 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 
 test("a header value that is exactly one environment reference names its variable", () => {
-  assert.equal(environmentVariableName("${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"), "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY");
+  assert.equal(
+    environmentVariableName("${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"),
+    "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY"
+  );
   assert.equal(environmentVariableName("${_PRIVATE_1}"), "_PRIVATE_1");
   // A literal, a partial reference and a fallback are all values the server
   // receives as they are: only a whole reference can be sourced.
@@ -19,7 +22,9 @@ test("a header value that is exactly one environment reference names its variabl
 
 test("Codex's environment-sourced header table becomes AutoDev's references", () => {
   assert.deepEqual(
-    codexEnvironmentHeaders({ "X-Goog-Api-Key": "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY" }),
+    codexEnvironmentHeaders({
+      "X-Goog-Api-Key": "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY"
+    }),
     { "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}" }
   );
   assert.deepEqual(codexEnvironmentHeaders({}), {});

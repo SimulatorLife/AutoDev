@@ -5,7 +5,7 @@ description: Audit one confirmed dead-code candidate and remove it with evidence
 
 # Audit one confirmed dead-code candidate
 
-Perform a conservative audit of the repository to locate **confirmed unused or legacy items**, such as:
+Perform a conservative audit of the repository to locate **confirmed unused/dead or legacy items**, such as:
 - Functions, variables, or classes that are never referenced or imported; 
 - Files, assets, or documentation sections that are redundant or superseded; 
 - Commented-out code blocks; 

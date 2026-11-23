@@ -242,10 +242,13 @@ servers and must not be represented as enabled-only role tables.
 
 `.rulesync/mcp.jsonc` declares the `codegraphcontext`, `lsp`, `cocoindex-code`,
 and `playwright` MCP servers through the installed `run-autodev-mcp.sh` launcher,
-`openaiDeveloperDocs` by URL, and `context7` by URL. `context7` is the hosted
+`openaiDeveloperDocs` by URL, and `context7` and `googleDeveloperKnowledge` by URL.
+`context7` is the hosted
 `https://mcp.context7.com/mcp` server that resolves third-party library IDs and
 returns version-pinned docs and source snippets; the operator supplies the
-`CONTEXT7_API_KEY` env var and Codex's `bearer_token_env_var` plumbing forwards
+`CONTEXT7_API_KEY` env var — exported in the environment AutoDev runs in, or
+written to `$CODEX_HOME/.env`, which the runtime loads into the role process
+environment — and Codex's `bearer_token_env_var` plumbing forwards
 it as the bearer token, so the key never leaves the operator's shell. The
 `context7` entry is registered at user-level but the role TOMLs explicitly
 gate it: `docs-researcher` and `explorer` enable it (their bounded work
@@ -253,7 +256,27 @@ frequently needs to answer "how do I call method X on library Y" or "what's the
 current signature for API Z"); `orchestrator` and `browser-tester` explicitly
 disable it so the root turn never picks it up and the UI-testing role never
 diverts from Playwright. Other roles (`default`, `worker`, `validator`,
-`smart`) intentionally omit `context7` and follow their existing MCP surface. The launcher resolves binaries from
+`smart`) intentionally omit `context7` and follow their existing MCP surface.
+`googleDeveloperKnowledge` is Google's official Developer Knowledge MCP at
+`https://developerknowledge.googleapis.com/mcp`, whose `search_documents`,
+`get_documents`, and `answer_query` tools serve Google's own documentation
+corpus. Its credential is a Google API key sent in the `X-Goog-Api-Key` header,
+and the declaration names the variable rather than the key:
+`"headers": { "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}" }`.
+A `${VAR}` header value is AutoDev's convention for "this header's value comes
+from the environment variable VAR" (the same convention RuleSync uses);
+RuleSync gives the Codex projection Codex's native `env_http_headers` spelling
+for it, Codex reads the variable from its own process environment, and every
+AutoDev-owned surface (the bridge MCP catalogue, the Control API's declared and
+applied MCP state) keeps the `${VAR}` reference, so no tracked file and no
+catalogue holds the key. The operator supplies
+`GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY` the same way as `CONTEXT7_API_KEY`, in the
+environment AutoDev runs in or in `$CODEX_HOME/.env`. The role TOMLs gate it the
+way they gate `context7`: `docs-researcher` and `smart` enable it,
+`orchestrator` explicitly disables it so documentation research is delegated
+rather than done by the root turn, and every other role omits it. Without a key
+the server still starts and answers authentication failures, so its tools are
+simply unusable. The launcher resolves binaries from
 AutoDev's pinned devDependencies while preserving the active workspace as the
 MCP process cwd, so a target repository does not need to duplicate those
 packages.
@@ -335,11 +358,12 @@ automation, and TypeScript language-server dependencies so this repository can
 launch and use them with `pnpm exec`. Other active repositories need to expose
 the same `lsp-mcp-server` and `playwright-mcp` commands through their package
 manager for the user-level MCP entries to work there. The `docs-researcher`
-role enables the OpenAI Developer Docs MCP and Codex's native `web_search`
-tool, which includes web fetching/opening and is the appropriate search/open/read
-path for authoritative websites. Do not add a separate Codex `web_fetch` tool.
-Its rendered remote MCP entry sets `transport = "streamable_http"`, which the
-installed Codex 0.153.x role loader requires even when `url` is present.
+role enables the OpenAI Developer Docs, Context7, and Google Developer
+Knowledge MCPs and Codex's native `web_search` tool, which includes web
+fetching/opening and is the appropriate search/open/read path for authoritative
+websites. Do not add a separate Codex `web_fetch` tool. Their rendered remote
+MCP entries set `transport = "streamable_http"`, which the installed Codex
+0.153.x role loader requires even when `url` is present.
 The Playwright MCP remains strictly for UI and browser testing roles and is disabled
 for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
 `smart` and `orchestrator` follow the web-research policy. A Claude-served turn acts only

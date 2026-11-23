@@ -122,6 +122,12 @@ function createFixtureEnvironment(): {
       bearer_token_env_var: "CONTEXT7_API_KEY",
       http_headers: { "X-Test": "placeholder" }
     },
+    googleDeveloperKnowledge: {
+      url: "https://developerknowledge.googleapis.com/mcp",
+      http_headers: {
+        "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+      }
+    },
     codex_app: {
       command: "node",
       args: ["./server.mjs"]
@@ -370,6 +376,9 @@ test("the home the bridge hands the launcher is the one it resolves the tools fr
 
 test("remote MCP authentication launch settings survive catalog conversion", () => {
   const env = createFixtureEnvironment();
+  const savedKey = process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+  process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY =
+    "fixture-google-knowledge-key";
   try {
     const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
@@ -379,6 +388,7 @@ test("remote MCP authentication launch settings survive catalog conversion", () 
     assert.deepEqual(Object.keys(config.mcpServers).sort(), [
       "context7",
       "filesystem",
+      "googleDeveloperKnowledge",
       "openaiDeveloperDocs"
     ]);
     assert.deepEqual(config.mcpServers.context7, {
@@ -386,14 +396,26 @@ test("remote MCP authentication launch settings survive catalog conversion", () 
       bearer_token_env_var: "CONTEXT7_API_KEY",
       headers: { "X-Test": "placeholder" }
     });
+    // Environment-referenced headers in the catalogue are resolved against the
+    // bridge's own environment when building the provider's MCP config.
+    assert.deepEqual(config.mcpServers.googleDeveloperKnowledge, {
+      serverUrl: "https://developerknowledge.googleapis.com/mcp",
+      headers: { "X-Goog-Api-Key": "fixture-google-knowledge-key" }
+    });
   } finally {
+    if (savedKey === undefined)
+      delete process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+    else process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY = savedKey;
     env.cleanup();
   }
 });
 
 test("remote MCP config keeps environment-backed and custom HTTP authentication", () => {
   const env = createFixtureEnvironment();
+  const savedKey = process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
   try {
+    process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY =
+      "fixture-google-knowledge-key";
     const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
       codexHome: env.codexHome,
@@ -404,10 +426,30 @@ test("remote MCP config keeps environment-backed and custom HTTP authentication"
       bearer_token_env_var: "CONTEXT7_API_KEY",
       headers: { "X-Test": "placeholder" }
     });
+    assert.deepEqual(config.mcpServers.googleDeveloperKnowledge, {
+      serverUrl: "https://developerknowledge.googleapis.com/mcp",
+      headers: { "X-Goog-Api-Key": "fixture-google-knowledge-key" }
+    });
     assert.deepEqual(config.mcpServers.openaiDeveloperDocs, {
       serverUrl: "https://developers.openai.com/mcp"
     });
+
+    // When the bridge environment does not set the referenced variable, the
+    // canonical `${VAR}` reference is passed through unchanged.
+    delete process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+    const unresolved = buildInvocationMcpConfig("docs-researcher", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
+    });
+    assert.deepEqual(unresolved.mcpServers.googleDeveloperKnowledge, {
+      serverUrl: "https://developerknowledge.googleapis.com/mcp",
+      headers: { "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}" }
+    });
   } finally {
+    if (savedKey === undefined)
+      delete process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+    else process.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY = savedKey;
     env.cleanup();
   }
 });

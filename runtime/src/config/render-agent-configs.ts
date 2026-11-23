@@ -108,9 +108,12 @@ export function fillLaunchKeys(
           ? (roleValue as TomlTable)
           : {};
       const generatedTable = generated as TomlTable;
-      const lines = LAUNCH_KEYS.filter(
-        (key) => key in generatedTable && !(key in role)
-      ).map((key) => `${key} = ${tomlValue(generatedTable[key])}`);
+      const lines: string[] = [];
+      for (const key of LAUNCH_KEYS) {
+        const value = generatedTable[key];
+        if (value !== undefined && !Object.hasOwn(role, key))
+          lines.push(`${key} = ${tomlValue(value)}`);
+      }
       if ("url" in generated && !("transport" in role))
         lines.push('transport = "streamable_http"');
       return [header, ...lines].join("\n");
