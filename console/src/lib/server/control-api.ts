@@ -102,6 +102,7 @@ import {
   type ControlApiWorkspacesResponse,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
   type ConvergenceStatus,
+  isApprovalPolicy,
   isClientSurface,
   isExperienceOutcome,
   isMemoryAuthority,
@@ -111,7 +112,6 @@ import {
   isMemoryOutcomeReportReasonCode,
   isMemoryUseKind,
   isRecord,
-  isSandboxMode,
   isSessionDiagnosticsReport,
   isSessionFleetScanResponse,
   isSessionHookDenialsResponse,
@@ -131,7 +131,8 @@ import {
   type SessionHookDenialsResponse,
   type SessionRecentListResponse,
   type WorkspaceConfigurationHealth,
-  type WorkspaceRuntimeAvailability} from "@simulatorlife/autodev-core";
+  type WorkspaceRuntimeAvailability
+} from "@simulatorlife/autodev-core";
 import {
   DelegateBackoff,
   handleWhen,
@@ -3164,8 +3165,8 @@ function isControlApiLiveSessions(
         (field) =>
           field === null || (typeof field === "string" && field.length > 0)
       ) ||
-      candidate.clientSurface !== null &&
-        !isClientSurface(candidate.clientSurface)
+      (candidate.clientSurface !== null &&
+        !isClientSurface(candidate.clientSurface))
     ) {
       return false;
     }
@@ -3500,31 +3501,15 @@ export function patchHookEvent(
  * Narrows the permissions policy.
  *
  * `isRecord(value.policy)` was the whole check, and a policy with no members at
- * all passed it. That produced four wrong cards on one row: `approvalPolicy`
- * rendered as an empty box -- React draws nothing for `undefined`, so the card
- * was simply blank -- while `networkAccess ? "Allowed" : "Blocked"` and
- * `webSearch ? "Enabled" : "Disabled"` read `undefined` as `false` and stated
- * two confident claims, and `sandboxLabel(undefined)` produced a third. An
- * unreadable policy must not be able to say "Blocked".
- *
- * Both closed vocabularies are checked exactly rather than as plain strings,
- * because a drifted value has to fail closed rather than render as a novel
- * policy name. `sandboxMode` is checked with Core's `isSandboxMode`, so the
- * accepted set is the one the type is derived from and the two cannot drift.
- *
- * The policy carries no `defaultToolsApprovalMode`: no canonical source
- * declared one, so the field was a value the product invented, and the
- * Console rendered it beside a policy that was not the policy the product ran.
+ * all passed it. Checking the closed approval-policy set and primitive types
+ * ensures drifted or partial objects fail closed instead of rendering blank or
+ * fabricated labels.
  */
 function isPermissionsPolicy(value: unknown): boolean {
   return (
     isRecord(value) &&
-    (value.approvalPolicy === "never" ||
-      value.approvalPolicy === "always" ||
-      value.approvalPolicy === "on-demand") &&
-    isSandboxMode(value.sandboxMode) &&
+    isApprovalPolicy(value.approvalPolicy) &&
     typeof value.approvalsReviewer === "string" &&
-    typeof value.networkAccess === "boolean" &&
     typeof value.webSearch === "boolean"
   );
 }
@@ -3565,17 +3550,7 @@ function isControlApiPermissionsResponse(
   return Object.values(value.rolePermissions).every(
     (entry) =>
       isRecord(entry) &&
-      // A role's sandbox is what it actually runs in, and a role whose
-      // declaration could not be read has no observed sandbox. The check is
-      // exact so a drifted mode fails closed instead of being rendered as the
-      // nearest mode the Console knows.
-      (entry.sandboxMode === null || isSandboxMode(entry.sandboxMode)) &&
-      // The mode the role declares for itself is published beside the
-      // effective one, so a role that asks for more than the session allows
-      // is visible rather than folded away. It is checked exactly too: a
-      // drifted declaration must not be rendered as a mode the Console knows.
-      (entry.declaredSandboxMode === null ||
-        isSandboxMode(entry.declaredSandboxMode)) &&
+      typeof entry.readOnly === "boolean" &&
       // The capability matrix must be a real projection. An absent list is
       // missing evidence, not "no MCP servers", so it fails closed instead of
       // letting the Console print a fabricated `None`.

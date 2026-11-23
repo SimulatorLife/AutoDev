@@ -25,9 +25,7 @@ const ACTION = "/api/permissions";
 
 const POLICY = {
   approvalPolicy: "never" as const,
-  sandboxMode: "workspace-write" as const,
   approvalsReviewer: "user",
-  networkAccess: true,
   webSearch: true
 };
 
@@ -39,10 +37,6 @@ function markup(
     readonly roleMatrices?: readonly {
       readonly role: string;
       readonly readOnly: boolean;
-      readonly sandboxMode:
-        "read-only" | "workspace-write" | "unrestricted" | null;
-      readonly declaredSandboxMode:
-        "read-only" | "workspace-write" | "unrestricted" | null;
       readonly allowedMcpServers: readonly string[];
       readonly allowedSkills: readonly string[];
       readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
@@ -69,8 +63,6 @@ function markup(
         {
           role: "orchestrator",
           readOnly: false,
-          sandboxMode: "unrestricted",
-          declaredSandboxMode: "unrestricted",
           allowedMcpServers: ["lsp"],
           allowedSkills: [],
           allowedMcpTools: {}
@@ -89,14 +81,11 @@ test("the control writes the policy through the same-origin route", () => {
   assert.match(rendered, /method="POST"/u);
   // The write is decided on the revision the page was rendered with.
   assert.match(rendered, new RegExp(`value="${REVISION}"`, "u"));
-  // Every setting of the policy is a control, and each one carries the
-  // product's own vocabulary rather than the canonical source's.
   assert.match(rendered, /name="approvalPolicy"/u);
-  assert.match(rendered, /name="sandboxMode"/u);
   assert.match(rendered, /name="approvalsReviewer"/u);
-  assert.match(rendered, /name="networkAccess"/u);
   assert.match(rendered, /name="webSearch"/u);
-  assert.match(rendered, /value="unrestricted"/u);
+  assert.doesNotMatch(rendered, /name="sandboxMode"/u);
+  assert.doesNotMatch(rendered, /name="networkAccess"/u);
   // A select commits on change, so the policy has no second Apply control.
   assert.doesNotMatch(rendered, /type="submit"/u);
 });
@@ -118,31 +107,24 @@ test("a policy that could not be read leaves the control in place, disabled, wit
   assert.doesNotMatch(rendered, /value="never"/u);
 });
 
-test("a role whose sandbox was not observed is shown as not observed", () => {
-  const rendered = markup({
+test("a role's access level is rendered from its readOnly flag", () => {
+  const readOnlyMarkup = markup({
     roleMatrices: [
       {
-        role: "mystery",
-        readOnly: false,
-        sandboxMode: null,
-        declaredSandboxMode: null,
+        role: "explorer",
+        readOnly: true,
         allowedMcpServers: [],
         allowedSkills: [],
         allowedMcpTools: {}
       }
     ]
   });
-  // The column used to answer every mode but the read-only one with
-  // "Unrestricted", so a role whose declaration could not be read was shown as
-  // the product's most privileged sandbox.
-  assert.match(rendered, /Not observed/u);
-  assert.match(rendered, /data-permission-mode="not-observed"/u);
-});
+  assert.match(readOnlyMarkup, /data-permission-access="read-only"/u);
+  assert.match(readOnlyMarkup, /Read-only/u);
 
-test("a role's sandbox is the mode its own declaration states", () => {
-  const rendered = markup();
-  assert.match(rendered, /data-permission-mode="unrestricted"/u);
-  assert.match(rendered, /Unrestricted/u);
+  const readWriteMarkup = markup();
+  assert.match(readWriteMarkup, /data-permission-access="read-write"/u);
+  assert.match(readWriteMarkup, /Read \/ Write/u);
 });
 
 test("the applied state is shown beside the canonical source", () => {

@@ -2,6 +2,7 @@ export * from "./antigravity-ensure.ts";
 export * from "./antigravity-settings.ts";
 export * from "./claude-ensure.ts";
 export * from "./code-graph-ensure.ts";
+export * from "./codex-permissions-source.ts";
 export * from "./console-ensure.ts";
 export * from "./copilot-ensure.ts";
 export * from "./dependencies.ts";

@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
+  type ApprovalPolicy,
   buildReconciliationView,
   CONTROL_API_CONTRACT,
   CONTROL_API_REVISION_PATTERN,
@@ -64,12 +65,11 @@ import {
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacesResponse,
-  effectiveSandboxMode,
   type HookAction,
   type HookEvent,
   isAntigravityProvider,
+  isApprovalPolicy,
   isHookEvent,
-  isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type OperationHistoryEntry,
@@ -81,7 +81,6 @@ import {
   type ReconciliationEvidence,
   type ReconciliationStatus,
   type ReconciliationView,
-  type SandboxMode,
   type SkillScopeFacts,
   type ToolCatalogItem,
   type ToolCatalogView,
@@ -104,6 +103,7 @@ import {
   permissionPolicyGeneration,
   PermissionPolicyValidationError,
   PlaytestRepository,
+  readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
@@ -2707,7 +2707,7 @@ function agentsView(
           : isOrchestrator
             ? "orchestrator"
             : "leaf";
-      const readOnly = raw?.sandboxMode === "read-only";
+      const readOnly = raw?.readOnly === true;
       const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
       const skills = Array.isArray(raw?.skills) ? raw.skills : [];
       const roleType = isOrchestrator ? "orchestrator" : "subagent";
@@ -2844,7 +2844,7 @@ function agentDetailView(
       : isOrchestrator
         ? "orchestrator"
         : "leaf";
-  const readOnly = raw?.sandboxMode === "read-only";
+  const readOnly = raw?.readOnly === true;
   const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
   const skills = Array.isArray(raw?.skills) ? raw.skills : [];
   const promptPath = path.join(
@@ -3723,9 +3723,7 @@ function permissionPolicyAppliedState(
 const PERMISSION_POLICY_UPDATE_KEYS = new Set([
   "expectedRevision",
   "approvalPolicy",
-  "sandboxMode",
   "approvalsReviewer",
-  "networkAccess",
   "webSearch"
 ]);
 
@@ -3743,14 +3741,9 @@ type PermissionPolicySetting =
 function permissionPolicyApprovalPolicy(
   value: unknown
 ): PermissionPolicySetting {
-  if (value !== "never" && value !== "always" && value !== "on-demand") {
+  if (!isApprovalPolicy(value)) {
     return { ok: false };
   }
-  return { ok: true, value };
-}
-
-function permissionPolicySandboxMode(value: unknown): PermissionPolicySetting {
-  if (!isSandboxMode(value)) return { ok: false };
   return { ok: true, value };
 }
 
@@ -3793,14 +3786,7 @@ function permissionPolicyUpdateFromBody(body: Record<string, unknown>): {
   if (approvalPolicy !== undefined) {
     const read = permissionPolicyApprovalPolicy(approvalPolicy);
     if (!read.ok || typeof read.value !== "string") return null;
-    update.approvalPolicy = read.value as "never" | "always" | "on-demand";
-    fields += 1;
-  }
-  const sandboxMode = body.sandboxMode;
-  if (sandboxMode !== undefined) {
-    const read = permissionPolicySandboxMode(sandboxMode);
-    if (!read.ok || typeof read.value !== "string") return null;
-    update.sandboxMode = read.value as SandboxMode;
+    update.approvalPolicy = read.value as ApprovalPolicy;
     fields += 1;
   }
   const approvalsReviewer = body.approvalsReviewer;
@@ -3808,13 +3794,6 @@ function permissionPolicyUpdateFromBody(body: Record<string, unknown>): {
     const read = permissionPolicyApprovalsReviewer(approvalsReviewer);
     if (!read.ok || typeof read.value !== "string") return null;
     update.approvalsReviewer = read.value;
-    fields += 1;
-  }
-  const networkAccess = body.networkAccess;
-  if (networkAccess !== undefined) {
-    const read = permissionPolicyBoolean(networkAccess);
-    if (!read.ok || typeof read.value !== "boolean") return null;
-    update.networkAccess = read.value;
     fields += 1;
   }
   const webSearch = body.webSearch;
@@ -4032,10 +4011,10 @@ function permissionPolicyState(
   readonly appliedRevision: string | null;
 } {
   const repository = new ConfigRepository(repositoryRoot);
-  const source = "config/config.autodev.toml";
+  const source = ".rulesync/permissions.jsonc";
   const read = readPermissionPolicyFile(repository.permissionPolicyPath());
   const appliedSource = path.join(codexHome, CODEX_USER_CONFIG_FILE);
-  const appliedRead = readPermissionPolicyFile(appliedSource);
+  const appliedRead = readAppliedPermissionPolicyFile(appliedSource);
   return {
     source,
     revision: read.status === "unavailable" ? null : read.revision,
@@ -4070,30 +4049,14 @@ function permissionsView(
   // it is the ceiling every role runs under: a role may narrow the sandbox it
   // runs in, never widen it. A role that declares no sandbox runs in the
   // session's; a role that declares a wider one runs in the session's too.
-  const sessionSandbox = state.policy?.sandboxMode ?? null;
-  // Typed as the contract's own entry rather than `Record<string, unknown>`:
-  // the anonymous shape above *is* the published one, and writing it out here is
-  // what stops the two from drifting without a compiler noticing. Mutable
-  // because the published type is `Readonly` and this loop is what fills it.
   const rolePermissions: Record<
     string,
     ControlApiPermissionsResponse["rolePermissions"][string]
   > = {};
   for (const [role, raw] of Object.entries(roles)) {
     const entry = (raw ?? {}) as Record<string, unknown>;
-    const declared = isSandboxMode(entry.sandboxMode)
-      ? entry.sandboxMode
-      : null;
     rolePermissions[role] = {
-      // What the role actually runs in: the stricter of what it declared and
-      // what the session allows. Null when neither could be observed -- it is
-      // not the read-only mode and it is not the unrestricted one, because both
-      // would be a claim the source does not support.
-      sandboxMode: effectiveSandboxMode(declared, sessionSandbox),
-      // What the role asked for, kept beside the effective mode so a role that
-      // declares more than the session allows is visible rather than folded
-      // away.
-      declaredSandboxMode: declared,
+      readOnly: entry.readOnly === true,
       // Same execution-contract join `/control/agents` uses, so the effective
       // capability matrix never contradicts the Agents surface.
       mcp: Array.isArray(entry.mcp) ? entry.mcp : [],

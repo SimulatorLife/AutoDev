@@ -143,14 +143,9 @@ const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
  * It is the ceiling every role runs under: a role may narrow the sandbox it
  * runs in, never widen it.
  */
-const SESSION_SANDBOX_MODE = "workspace-write";
-
 const permissionPolicy = {
-  approvalPolicy: "on-demand" as "never" | "always" | "on-demand",
-  sandboxMode: SESSION_SANDBOX_MODE as
-    "read-only" | "workspace-write" | "unrestricted",
+  approvalPolicy: "on-request" as "never" | "on-request",
   approvalsReviewer: "operator",
-  networkAccess: false,
   webSearch: false,
   revision: "9".repeat(64)
 };
@@ -3939,16 +3934,12 @@ async function applyWorkspaceConfigurationWrite(
  */
 function permissionPolicyRecord(): {
   approvalPolicy: string;
-  sandboxMode: string;
   approvalsReviewer: string;
-  networkAccess: boolean;
   webSearch: boolean;
 } {
   return {
     approvalPolicy: permissionPolicy.approvalPolicy,
-    sandboxMode: permissionPolicy.sandboxMode,
     approvalsReviewer: permissionPolicy.approvalsReviewer,
-    networkAccess: permissionPolicy.networkAccess,
     webSearch: permissionPolicy.webSearch
   };
 }
@@ -3997,15 +3988,13 @@ async function applyPermissionPolicyWrite(
   const before = JSON.stringify(permissionPolicyRecord());
   const settings: readonly string[] = [
     "approvalPolicy",
-    "sandboxMode",
     "approvalsReviewer",
-    "networkAccess",
     "webSearch"
   ];
   for (const setting of settings) {
     if (!(setting in body)) continue;
     const value = body[setting];
-    if (setting === "networkAccess" || setting === "webSearch") {
+    if (setting === "webSearch") {
       if (typeof value !== "boolean") {
         sendJson(
           response,
@@ -4079,10 +4068,8 @@ function configurePermissionPolicyFixture(
   }
   const state = url.searchParams.get("state");
   if (state === "reset") {
-    permissionPolicy.approvalPolicy = "on-demand";
-    permissionPolicy.sandboxMode = "workspace-write";
+    permissionPolicy.approvalPolicy = "on-request";
     permissionPolicy.approvalsReviewer = "operator";
-    permissionPolicy.networkAccess = false;
     permissionPolicy.webSearch = false;
     permissionPolicy.revision = INITIAL_PERMISSION_POLICY_REVISION;
   } else if (state === FIXTURE_STATE_REVISION_MOVED) {
@@ -5727,34 +5714,24 @@ function handleCatalogResourceRead(
       appliedSource: "/fixture/codex/config.toml",
       policy: {
         approvalPolicy: permissionPolicy.approvalPolicy,
-        sandboxMode: permissionPolicy.sandboxMode,
-        networkAccess: permissionPolicy.networkAccess,
         webSearch: permissionPolicy.webSearch,
         approvalsReviewer: permissionPolicy.approvalsReviewer
       },
       rolePermissions: {
         default: {
-          sandboxMode: SESSION_SANDBOX_MODE,
-          declaredSandboxMode: SESSION_SANDBOX_MODE,
+          readOnly: false,
           mcp: ["lsp"],
           skills: ["code-review"],
           mcpTools: { lsp: ["lsp_goto_definition"] }
         },
         worker: {
-          sandboxMode: "read-only",
-          declaredSandboxMode: "read-only",
+          readOnly: true,
           mcp: [],
           skills: ["code-review"],
           mcpTools: {}
         },
-        // A role that declares more than the session allows. The session runs
-        // `workspace-write`, so the role runs `workspace-write` too -- a role
-        // may narrow the sandbox it runs in, never widen it -- and the matrix
-        // shows the declaration beside the effective mode so the narrowing is
-        // visible rather than folded away.
         orchestrator: {
-          sandboxMode: SESSION_SANDBOX_MODE,
-          declaredSandboxMode: "unrestricted",
+          readOnly: false,
           mcp: [],
           skills: [],
           mcpTools: {}

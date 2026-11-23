@@ -94,7 +94,7 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
       string,
       {
         kind: string;
-        sandboxMode: string | null;
+        readOnly: boolean;
         mcp: string[];
         skills: string[];
         mcpTools?: Record<string, string[]>;
@@ -106,9 +106,7 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
   const playtester = contract.roles.playtester;
   assert.ok(playtester, "playtester must be declared in execution contract");
   assert.equal(playtester.kind, "leaf");
-  // The contract projects the sandbox a role declares, not a boolean: the
-  // playtest roles declare `read-only`, and the mode says which one.
-  assert.equal(playtester.sandboxMode, "read-only");
+  assert.equal(playtester.readOnly, true);
   assert.deepEqual(playtester.mcp, ["playtest"]);
   assert.deepEqual(playtester.skills, ["game-playtesting"]);
   assert.deepEqual(playtester.mcpTools?.playtest, [
@@ -126,7 +124,7 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
   const analyst = contract.roles["playtest-analyst"];
   assert.ok(analyst, "playtest-analyst must be declared in execution contract");
   assert.equal(analyst.kind, "leaf");
-  assert.equal(analyst.sandboxMode, "read-only");
+  assert.equal(analyst.readOnly, true);
   assert.deepEqual(analyst.mcp, ["playtest"]);
   assert.deepEqual(analyst.skills, ["playtest-analysis"]);
   assert.deepEqual(analyst.mcpTools?.playtest, [

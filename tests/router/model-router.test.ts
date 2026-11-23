@@ -8151,8 +8151,8 @@ test("contract rendering fails when a research role is missing webResearch or ha
     await writeFile(
       join(rolesDir, "docs-researcher.toml"),
       `
+# role-access: read-only
 name = "docs-researcher"
-sandbox_mode = "read-only"
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
 url = "https://developers.openai.com/mcp"
@@ -8206,8 +8206,8 @@ transport = "streamable_http"
     await writeFile(
       join(rolesDir, "docs-researcher.toml"),
       `
+# role-access: read-only
 name = "docs-researcher"
-sandbox_mode = "read-only"
 [tools]
 web_search = "invalid-not-bool"
 [mcp_servers.openaiDeveloperDocs]

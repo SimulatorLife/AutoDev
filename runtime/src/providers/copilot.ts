@@ -32,7 +32,7 @@ import {
   contextHeaderValue,
   isProviderHopHeader,
   readContextHeader,
-  SANDBOX_MODE_HEADER
+  READ_ONLY_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
   COMPACTION_SYSTEM_PROMPT,
@@ -156,11 +156,13 @@ interface CopilotRoleMcpContext {
   readonly readOnly?: boolean;
 }
 
-function readOnlyHeaderValue(
-  headers: Record<string, unknown>
-): "read-only" | "workspace-write" | null {
-  const single = readContextHeader(headers, SANDBOX_MODE_HEADER);
-  return single === "read-only" || single === "workspace-write" ? single : null;
+function readOnlyHeaderValue(headers: Record<string, unknown>): boolean | null {
+  const raw = readContextHeader(headers, READ_ONLY_HEADER);
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") return true;
+  if (normalized === "0" || normalized === "false") return false;
+  return null;
 }
 
 const REPO_ROOT = resolveRuntimeSourceRoot(
@@ -982,7 +984,7 @@ function runCopilot(
   cwd: string,
   onEvent: OnRunCopilotEvent | null = null,
   agentRole: string | null = null,
-  sandboxMode: "read-only" | "workspace-write" | null = null,
+  readOnlyHeader: boolean | null = null,
   workspaceKey: unknown = null,
   requestId: string | null = null,
   compaction = false
@@ -1007,10 +1009,10 @@ function runCopilot(
         "--no-ask-user"
       );
     } else {
-      // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+      // The router forwards read-only status via x-autodev-read-only. We
       // trust that header over the role's own declaration because the header is
       // the authoritative wire signal for this turn.
-      const readOnly = turnIsReadOnly(sandboxMode, agentRole);
+      const readOnly = turnIsReadOnly(readOnlyHeader, agentRole);
       args.push(
         ...copilotMcpArgs(agentRole, {
           requestId,
@@ -1159,7 +1161,7 @@ interface CopilotRequestContext {
   agentEvents: AgentReporter | null;
   cwd: string;
   prompt: string;
-  sandboxModeHeader: "read-only" | "workspace-write" | null;
+  readOnlyHeader: boolean | null;
   compaction: boolean;
 }
 
@@ -1595,7 +1597,7 @@ function prepareCopilotRequest(
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const agentEvents = resolveAgentEventReporter(headers);
   const compaction = isCompactionRequest(payload);
-  const sandboxModeHeader = readOnlyHeaderValue(headers);
+  const readOnlyHeader = readOnlyHeaderValue(headers);
   const skillContextHeader = compaction ? null : bridgeSkillContext(headers);
   const sandboxInjection = compaction
     ? ""
@@ -1647,7 +1649,7 @@ function prepareCopilotRequest(
     agentEvents,
     cwd,
     prompt,
-    sandboxModeHeader,
+    readOnlyHeader,
     compaction
   };
 }
@@ -1678,7 +1680,7 @@ async function sendCopilotNonStreamingResponse(
           reportToolObservation(context.agentEvents, event);
         },
         context.agentRole,
-        context.sandboxModeHeader,
+        context.readOnlyHeader,
         context.workspaceKey,
         context.requestId,
         context.compaction
@@ -1731,7 +1733,7 @@ async function streamCopilotResponse(
       context.cwd,
       (event) => stream.acceptEvent(event),
       context.agentRole,
-      context.sandboxModeHeader,
+      context.readOnlyHeader,
       context.workspaceKey,
       context.requestId,
       context.compaction

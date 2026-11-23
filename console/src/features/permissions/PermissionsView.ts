@@ -67,36 +67,8 @@ export interface PermissionsViewProps {
  */
 const NOT_OBSERVED = "Not observed";
 
-/**
- * How a sandbox mode reads in prose, so the column is not raw config text.
- *
- * A mode that was not observed reads as not observed. The column used to
- * answer every mode but the read-only one with "Unrestricted", so a role whose
- * declaration could not be read was shown as the product's most privileged
- * sandbox -- and a drifted mode was shown the same way.
- */
-function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
-  if (mode === "read-only") return "Read-only";
-  if (mode === "workspace-write") return "Workspace write";
-  if (mode === "unrestricted") return "Unrestricted";
-  return NOT_OBSERVED;
-}
-
-/**
- * How a declared sandbox reads in prose.
- *
- * A role that declares no sandbox inherits the session's, which is a
- * declaration in its own right -- "not declared" and "not observed" are
- * different facts, and only one of them is a claim about the role.
- */
-function declaredSandboxLabel(
-  mode: RoleCapabilityMatrix["declaredSandboxMode"]
-): string {
-  if (mode === null) return "Inherits session";
-  if (mode === "read-only") return "Read-only";
-  if (mode === "workspace-write") return "Workspace write";
-  if (mode === "unrestricted") return "Unrestricted";
-  return NOT_OBSERVED;
+function accessLabel(readOnly: RoleCapabilityMatrix["readOnly"]): string {
+  return readOnly ? "Read-only" : "Read / Write";
 }
 
 /**
@@ -115,9 +87,7 @@ function appliedStateLabel(
   if (applied === null) return "Pending";
   const same =
     applied.approvalPolicy === policy.approvalPolicy &&
-    applied.sandboxMode === policy.sandboxMode &&
     applied.approvalsReviewer === policy.approvalsReviewer &&
-    applied.networkAccess === policy.networkAccess &&
     applied.webSearch === policy.webSearch;
   return same ? "Converged" : "Pending";
 }
@@ -144,47 +114,15 @@ export function PermissionsView({
       }
     },
     {
-      id: "sandboxMode",
-      header: "Sandbox Mode",
+      id: "readOnly",
+      header: "Access",
       cell: ({ row: { original: r } }) =>
         React.createElement(Tag, {
           className: CHIP_TONE_CLASS,
           dataAttributes: {
-            // The mode is the fact the column shows, so the attribute carries
-            // the mode itself rather than a boolean derived from it. The
-            // orchestrator is declared `danger-full-access`, and the column
-            // used to report it as a workspace-write role.
-            "data-permission-mode": r.sandboxMode ?? "not-observed",
-            // The mode is the effective one: the stricter of what the role
-            // declared and what the session allows. A role whose declaration
-            // was narrowed by the session's sandbox says so in the cell, so
-            // the matrix does not read as if the role had asked for the mode
-            // it runs in.
-            ...(r.declaredSandboxMode !== null &&
-            r.declaredSandboxMode !== r.sandboxMode
-              ? { "data-permission-narrowed": "true" }
-              : {})
+            "data-permission-access": r.readOnly ? "read-only" : "read-write"
           },
-          children: sandboxLabel(r.sandboxMode)
-        }),
-      meta: {
-        weight: 160
-      }
-    },
-    {
-      id: "declaredSandboxMode",
-      header: "Declared Sandbox",
-      cell: ({ row: { original: r } }) =>
-        React.createElement(Tag, {
-          className: CHIP_TONE_CLASS,
-          dataAttributes: {
-            // The declaration is published beside the effective mode because
-            // the two answer different questions: what the role may do, and
-            // what it asked for.
-            "data-permission-declared-mode":
-              r.declaredSandboxMode ?? "not-declared"
-          },
-          children: declaredSandboxLabel(r.declaredSandboxMode)
+          children: accessLabel(r.readOnly)
         }),
       meta: {
         weight: 160

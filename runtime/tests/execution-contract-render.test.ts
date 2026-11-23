@@ -53,17 +53,16 @@ const CONTRACT_TEMPLATE = {
  * The role files every contract needs.
  *
  * The renderer requires an orchestrator and the three research roles, and it
- * reads each role's sandbox from its own file.
+ * derives `readOnly` from `# role-access: read-only` or `AUTODEV_MCP_READ_ONLY`.
  */
 function roleFiles(): Record<string, string> {
   return {
     orchestrator:
-      '# role-kind: orchestrator\nname = "orchestrator"\nsandbox_mode = "danger-full-access"\n\n[tools]\nweb_search = true\n',
-    smart:
-      'name = "smart"\nsandbox_mode = "danger-full-access"\n\n[tools]\nweb_search = true\n',
+      '# role-kind: orchestrator\nname = "orchestrator"\n\n[tools]\nweb_search = true\n',
+    smart: 'name = "smart"\n\n[tools]\nweb_search = true\n',
     "docs-researcher":
-      'name = "docs-researcher"\nsandbox_mode = "read-only"\n\n[tools]\nweb_search = true\n',
-    explorer: 'name = "explorer"\nsandbox_mode = "read-only"\n',
+      '# role-access: read-only\nname = "docs-researcher"\n\n[tools]\nweb_search = true\n',
+    explorer: '# role-access: read-only\nname = "explorer"\n',
     default: 'name = "default"\n'
   };
 }
@@ -84,52 +83,29 @@ function fixture(roles: Record<string, string>): Fixture {
   return { rolesDirectory, contractPath, rootConfigPath };
 }
 
-test("a role's declared sandbox is projected as the mode it states", () => {
+test("a role's readOnly capability flag is projected from role access declarations", () => {
   const options = fixture(roleFiles());
   const contract = renderExecutionContract(
     options.rolesDirectory,
     options.rootConfigPath,
     options.contractPath
   );
-  // The product names the unsandboxed mode "unrestricted"; the file names it
-  // `danger-full-access`.
-  assert.equal(contract.roles.orchestrator?.sandboxMode, "unrestricted");
-  assert.equal(contract.roles.explorer?.sandboxMode, "read-only");
-  // A role that declares no sandbox declares none: it inherits the session's.
-  assert.equal(contract.roles.default?.sandboxMode, null);
+  assert.equal(contract.roles.orchestrator?.readOnly, false);
+  assert.equal(contract.roles.explorer?.readOnly, true);
+  assert.equal(contract.roles["docs-researcher"]?.readOnly, true);
+  assert.equal(contract.roles.default?.readOnly, false);
 });
 
-test("the projection carries no read-only boolean", () => {
-  const options = fixture(roleFiles());
-  const contract = renderExecutionContract(
-    options.rolesDirectory,
-    options.rootConfigPath,
-    options.contractPath
-  );
-  for (const [role, entry] of Object.entries(contract.roles)) {
-    assert.equal(
-      Object.hasOwn(entry as Record<string, unknown>, "readOnly"),
-      false,
-      `role ${role} must not project a read-only boolean`
-    );
-  }
-});
-
-test("a role that declares a sandbox the product does not support is refused", () => {
+test("a role carrying AUTODEV_MCP_READ_ONLY in filesystem env_vars projects readOnly = true", () => {
   const options = fixture({
     ...roleFiles(),
-    explorer: 'name = "explorer"\nsandbox_mode = "somewhere-else"\n'
+    explorer:
+      'name = "explorer"\n\n[mcp_servers.filesystem]\nenabled = true\nenv_vars = ["AUTODEV_MCP_READ_ONLY"]\n'
   });
-  // A declaration the product cannot honour is refused rather than read as
-  // the nearest mode the product knows: a role that cannot be sandboxed the
-  // way it asks is not a role whose sandbox is known.
-  assert.throws(
-    () =>
-      renderExecutionContract(
-        options.rolesDirectory,
-        options.rootConfigPath,
-        options.contractPath
-      ),
-    /sandbox_mode must be one of/u
+  const contract = renderExecutionContract(
+    options.rolesDirectory,
+    options.rootConfigPath,
+    options.contractPath
   );
+  assert.equal(contract.roles.explorer?.readOnly, true);
 });

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/permissions-schema.json",
+  // Canonical source for portable tool, command, and CLI permissions.
+  //
+  // Scope boundary:
+  // - Applied to `codexcli` ($CODEX_HOME/config.toml permission/tool keys and
+  //   $CODEX_HOME/rules/rulesync.rules) and `antigravity-cli`
+  //   (~/.gemini/antigravity-cli/settings.json, merged with dynamic machine-local
+  //   workspace read roots `AUTODEV_AGY_READ_ROOTS`).
+  // - Per-role capability & read-only enforcement (MCP/tool allowlists,
+  //   shell_tool = false, AUTODEV_MCP_READ_ONLY) remain in `agents/roles/*.toml`
+  //   -> `config/execution-contract.json` and Runtime hooks (`role-sandbox.ts`,
+  //   `block-ccc-cli.ts`, `file-surface.ts`).
+  "permission": {
+    "webfetch": {
+      "*": "allow"
+    },
+    "bash": {
+      "ccc *": "deny",
+      "sudo *": "deny",
+      "su *": "deny",
+      "doas *": "deny",
+      "dd *": "deny",
+      "mkfs *": "deny",
+      "fdisk *": "deny",
+      "git checkout *": "deny",
+      "git reset *": "deny",
+      "git stash *": "deny",
+      "git-checkout *": "deny",
+      "git-reset *": "deny",
+      "git-stash *": "deny",
+      "git clean *": "deny",
+      "git rebase *": "deny",
+      "git restore . *": "deny",
+      "git branch -D *": "deny",
+      "git branch --delete-force *": "deny",
+      "git push -f *": "deny",
+      "git push --force *": "deny",
+      "git push --force-with-lease *": "deny",
+      "git commit --amend *": "ask",
+      "rm -rf / *": "deny",
+      "rm -rf ~ *": "deny",
+      "rm -rf . *": "deny",
+      "rm -rf .. *": "deny",
+      "rm -rf .git *": "deny",
+      "rm -fr / *": "deny",
+      "rm -fr ~ *": "deny",
+      "rm -fr . *": "deny",
+      "rm -fr .. *": "deny",
+      "rm -fr .git *": "deny"
+    },
+    "mcp__cocoindex-code__search": {
+      "*": "allow"
+    },
+    "mcp__codegraphcontext__list_indexed_repositories": {
+      "*": "allow"
+    },
+    "mcp__codegraphcontext__find_code": {
+      "*": "allow"
+    },
+    "mcp__codegraphcontext__analyze_code_relationships": {
+      "*": "allow"
+    },
+    "mcp__codegraphcontext__get_repository_stats": {
+      "*": "allow"
+    },
+    "mcp__lsp": {
+      "*": "allow"
+    },
+    "mcp__openaiDeveloperDocs": {
+      "*": "allow"
+    },
+    "mcp__playwright": {
+      "*": "deny"
+    }
+  },
+  "codexcli": {
+    "base_permission_profile": ":danger-full-access",
+    "approval_policy": "never",
+    "approvals_reviewer": "user",
+    "tools": {
+      "web_search": true
+    }
+  },
+  "antigravity-cli": {
+    "agentMode": "accept-edits",
+    "permission": {
+      "read": {
+        "~/.agents/**": "allow",
+        "~/.codex/**": "allow"
+      },
+      "unsandboxed": {
+        "pwd *": "allow",
+        "pnpm test *": "allow",
+        "regex:python3 -m unittest discover -s tests -p test_.*\\.py": "allow",
+        "ccc *": "deny"
+      }
+    }
+  }
+}

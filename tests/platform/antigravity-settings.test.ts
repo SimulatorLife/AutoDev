@@ -5,11 +5,10 @@ import test from "node:test";
 
 import {
   antigravitySkillsStatus,
-  DENIED_COMMAND_PERMISSIONS,
   expectedPermissionGrants,
   missingAntigravityPermissions,
   normalizedReadRoots,
-  REQUIRED_MCP_PERMISSIONS,
+  projectedAntigravityBaseline,
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
@@ -24,20 +23,25 @@ test("normalizes Antigravity read roots without allowing duplicates", () =>
       normalizedReadRoots([workspace, workspace, "~/project"], home),
       [workspace, join(home, "project")]
     );
-    assert.deepEqual(expectedPermissionGrants([workspace], home).slice(-6), [
+    const grants = expectedPermissionGrants([workspace], home);
+    assert.ok(grants.includes(`read_file(${join(home, ".agents")})`));
+    assert.ok(grants.includes(`read_file(${join(home, ".codex")})`));
+    assert.deepEqual(grants.slice(-2), [
       `read_file(${workspace})`,
-      `read_file(${workspace}/**)`,
-      `read_file(${join(home, ".agents")})`,
-      `read_file(${join(home, ".agents")}/**)`,
-      `read_file(${join(home, ".codex")})`,
-      `read_file(${join(home, ".codex")}/**)`
+      `read_file(${workspace}/**)`
     ]);
   }));
 
-test("permission update preserves user grants, removes disabled Playwright grants, populates deny list, and is idempotent", () =>
+test("permission update projects .rulesync/permissions.jsonc, preserves user grants, prunes disabled MCPs, and is idempotent", () =>
   withTempDir((directory) => {
     const path = join(directory, "settings.json");
     const home = join(directory, "home");
+    const baseline = projectedAntigravityBaseline(home);
+    assert.ok(baseline.deny.includes("command(ccc)"));
+    assert.ok(baseline.deny.includes("unsandboxed(ccc)"));
+    assert.ok(baseline.deny.includes("mcp(playwright/*)"));
+    assert.equal(baseline.topLevelOverrides.agentMode, "accept-edits");
+
     writeFileSync(
       path,
       JSON.stringify({
@@ -53,20 +57,36 @@ test("permission update preserves user grants, removes disabled Playwright grant
         other: true
       })
     );
-    assert.deepEqual(
-      missingAntigravityPermissions(path, [directory], home).slice(-4),
-      [...DENIED_COMMAND_PERMISSIONS]
+    const missingBefore = missingAntigravityPermissions(
+      path,
+      [directory],
+      home
     );
+    for (const denial of baseline.deny) {
+      assert.ok(
+        missingBefore.includes(denial),
+        `expected missing denial ${denial}`
+      );
+    }
+    assert.ok(missingBefore.includes('agentMode="accept-edits"'));
+
     updateAntigravityPermissions(path, [directory], home);
     const first = readFileSync(path, "utf8");
     updateAntigravityPermissions(path, [directory, directory], home);
     const second = readFileSync(path, "utf8");
     assert.equal(second, first);
+
     const config = JSON.parse(second) as {
+      agentMode: string;
       permissions: { allow: string[]; deny: string[] };
       other: boolean;
     };
     assert.equal(config.other, true);
+    assert.equal(config.agentMode, "accept-edits");
+    assert.ok(config.permissions.allow.includes("user-grant"));
+    assert.ok(config.permissions.allow.includes("read_url"));
+    assert.ok(config.permissions.allow.includes("unsandboxed(pwd)"));
+    assert.ok(config.permissions.allow.includes("unsandboxed(pnpm test)"));
     assert.deepEqual(
       config.permissions.allow.filter((entry) =>
         entry.startsWith("mcp(playwright")
@@ -74,12 +94,12 @@ test("permission update preserves user grants, removes disabled Playwright grant
       []
     );
     assert.deepEqual(
-      config.permissions.allow.filter((entry) =>
-        entry.startsWith("mcp(codegraphcontext/")
-      ),
-      REQUIRED_MCP_PERMISSIONS.filter((entry) =>
-        entry.startsWith("mcp(codegraphcontext/")
-      )
+      config.permissions.allow
+        .filter((entry) => entry.startsWith("mcp(codegraphcontext/"))
+        .sort((a, b) => a.localeCompare(b)),
+      baseline.allow
+        .filter((entry) => entry.startsWith("mcp(codegraphcontext/"))
+        .sort((a, b) => a.localeCompare(b))
     );
     assert.equal(
       config.permissions.allow.filter(
@@ -87,7 +107,12 @@ test("permission update preserves user grants, removes disabled Playwright grant
       ).length,
       1
     );
-    assert.deepEqual(config.permissions.deny, [...DENIED_COMMAND_PERMISSIONS]);
+    for (const denial of baseline.deny) {
+      assert.ok(
+        config.permissions.deny.includes(denial),
+        `expected denial ${denial}`
+      );
+    }
     assert.deepEqual(
       missingAntigravityPermissions(path, [directory], home),
       []

@@ -63,12 +63,11 @@ export class ConfigRepository {
   /**
    * Where the canonical permission policy lives under this repository root.
    *
-   * The policy's rules live in the module that owns them; the file is the
-   * portable source the Runtime composes into the user configuration, and the
-   * owner is what says what it states.
+   * The policy lives in `.rulesync/permissions.jsonc` (`codexcli` section)
+   * and is composed into `$CODEX_HOME/config.toml` via RuleSync.
    */
   permissionPolicyPath(): string {
-    return path.join(this.repositoryRoot, "config", "config.autodev.toml");
+    return path.join(this.repositoryRoot, ".rulesync", "permissions.jsonc");
   }
 
   /**

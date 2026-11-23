@@ -1,5 +1,13 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
@@ -8,43 +16,35 @@ import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+
+import { runRulesyncGenerate } from "./runtime-files.ts";
 
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 
-export const REQUIRED_MCP_PERMISSIONS = [
-  "mcp(cocoindex-code)",
-  "mcp(cocoindex-code/search)",
-  "mcp(codegraphcontext)",
-  "mcp(codegraphcontext/list_indexed_repositories)",
-  "mcp(codegraphcontext/find_code)",
-  "mcp(codegraphcontext/analyze_code_relationships)",
-  "mcp(codegraphcontext/get_repository_stats)",
-  "mcp(lsp)",
-  "mcp(lsp/*)",
-  "read_url(*)",
-  "mcp(openaiDeveloperDocs)",
-  "mcp(openaiDeveloperDocs/*)",
-  "unsandboxed(pwd)",
-  "unsandboxed(pnpm test)",
-  "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')"
-] as const;
-export const DISABLED_MCP_PERMISSIONS = [
-  "mcp(playwright)",
-  "mcp(playwright/*)"
-] as const;
-export const DENIED_COMMAND_PERMISSIONS = [
-  "run_command(ccc *)",
-  "run_command(ccc)",
-  "unsandboxed(ccc *)",
-  "unsandboxed(ccc)"
-] as const;
 export const MANAGED_CODE_SKILLS = [
   "ccc",
   "lsp-mcp-server",
   "orchestration"
 ] as const;
+
+const ANTIGRAVITY_CLI_SETTINGS_RELATIVE = path.join(
+  ".gemini",
+  "antigravity-cli",
+  "settings.json"
+);
+const PERMISSIONS_SOURCE_RELATIVE = path.join(".rulesync", "permissions.jsonc");
+const TRAILING_SLASH_PATTERN = /\/+$/u;
+
+interface ProjectedAntigravityBaseline {
+  readonly allow: readonly string[];
+  readonly deny: readonly string[];
+  readonly topLevelOverrides: Readonly<Record<string, JsonValue>>;
+}
+
+const BASELINE_CACHE = new Map<string, ProjectedAntigravityBaseline>();
 
 type JsonMap = { [key: string]: JsonValue };
 function asObject(value: JsonValue | undefined): JsonMap {
@@ -76,6 +76,151 @@ function expandHome(value: string, home: string): string {
       : value;
 }
 
+function resolveRepositoryRoot(repositoryRoot?: string): string {
+  return path.resolve(
+    repositoryRoot ??
+      process.env.AUTODEV_REPO_ROOT ??
+      resolveRuntimeSourceRoot(import.meta.dirname)
+  );
+}
+
+function normalizePosixHome(home: string): string {
+  return path
+    .resolve(home)
+    .replaceAll("\\", "/")
+    .replace(TRAILING_SLASH_PATTERN, "");
+}
+
+/**
+ * Rewrite `read_file(...)` targets rooted at the throwaway Rulesync staging
+ * home back to the caller's real `home` directory. Rulesync expands `~/`
+ * against `outputRoot` (`HOME`), which during staged projection is the temp dir.
+ */
+function rewriteProjectedHomeEntry(
+  entry: JsonValue,
+  projectedHome: string,
+  targetHome: string
+): JsonValue {
+  if (typeof entry !== "string") return entry;
+  const fromHome = normalizePosixHome(projectedHome);
+  const toHome = normalizePosixHome(targetHome);
+  if (fromHome === toHome) return entry;
+  const exact = `read_file(${fromHome})`;
+  if (entry === exact) return `read_file(${toHome})`;
+  const prefix = `read_file(${fromHome}/`;
+  if (entry.startsWith(prefix)) {
+    return `read_file(${toHome}/${entry.slice(prefix.length)}`;
+  }
+  return entry;
+}
+
+function stringEntries(value: JsonValue | undefined, label: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function runAntigravityPermissionsProjection(
+  repositoryRoot: string,
+  home: string,
+  existingSettings?: JsonObject
+): JsonObject {
+  const sourceDirectory = path.join(repositoryRoot, ".rulesync");
+  const sourceFile = path.join(repositoryRoot, PERMISSIONS_SOURCE_RELATIVE);
+  if (!existsSync(sourceFile)) {
+    throw new Error(
+      `Missing canonical RuleSync permissions file: ${sourceFile}`
+    );
+  }
+  const projectedHome = mkdtempSync(
+    path.join(tmpdir(), "autodev-agy-permissions-")
+  );
+  try {
+    const projectedSettingsPath = path.join(
+      projectedHome,
+      ANTIGRAVITY_CLI_SETTINGS_RELATIVE
+    );
+    if (existingSettings !== undefined) {
+      mkdirSync(path.dirname(projectedSettingsPath), {
+        recursive: true,
+        mode: 0o700
+      });
+      writeFileSync(
+        projectedSettingsPath,
+        `${JSON.stringify(existingSettings, null, 2)}\n`
+      );
+    }
+    runRulesyncGenerate(
+      repositoryRoot,
+      {
+        global: true,
+        inputRoots: [sourceDirectory],
+        targets: ["antigravity-cli"],
+        features: ["permissions"],
+        silent: true
+      },
+      projectedHome
+    );
+    const projected = readObject(projectedSettingsPath);
+    const permissions = asObject(projected.permissions);
+    if (Array.isArray(permissions.allow)) {
+      permissions.allow = permissions.allow.map((entry) =>
+        rewriteProjectedHomeEntry(entry, projectedHome, home)
+      );
+    }
+    if (Array.isArray(permissions.deny)) {
+      permissions.deny = permissions.deny.map((entry) =>
+        rewriteProjectedHomeEntry(entry, projectedHome, home)
+      );
+    }
+    if (Object.keys(permissions).length > 0) {
+      projected.permissions = permissions;
+    }
+    return projected;
+  } finally {
+    rmSync(projectedHome, { recursive: true, force: true });
+  }
+}
+
+export function projectedAntigravityBaseline(
+  home = process.env.HOME?.trim() || homedir(),
+  repositoryRoot?: string
+): ProjectedAntigravityBaseline {
+  const resolvedRoot = resolveRepositoryRoot(repositoryRoot);
+  const resolvedHome = path.resolve(home);
+  const sourceFile = path.join(resolvedRoot, PERMISSIONS_SOURCE_RELATIVE);
+  if (!existsSync(sourceFile)) {
+    throw new Error(
+      `Missing canonical RuleSync permissions file: ${sourceFile}`
+    );
+  }
+  const digest = createHash("sha256")
+    .update(readFileSync(sourceFile))
+    .digest("hex");
+  const cacheKey = `${resolvedRoot}\0${resolvedHome}\0${digest}`;
+  const cached = BASELINE_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const projected = runAntigravityPermissionsProjection(
+    resolvedRoot,
+    resolvedHome
+  );
+  const permissions = asObject(projected.permissions);
+  const topLevelOverrides: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(projected)) {
+    if (key !== "permissions") topLevelOverrides[key] = value;
+  }
+  const baseline: ProjectedAntigravityBaseline = {
+    allow: stringEntries(permissions.allow, "Antigravity permissions.allow"),
+    deny: stringEntries(permissions.deny, "Antigravity permissions.deny"),
+    topLevelOverrides
+  };
+  BASELINE_CACHE.set(cacheKey, baseline);
+  return baseline;
+}
+
 export function normalizedReadRoots(
   readRoots: readonly string[],
   home = process.env.HOME?.trim() || homedir()
@@ -92,13 +237,16 @@ export function normalizedReadRoots(
 
 export function expectedPermissionGrants(
   readRoots: readonly string[],
-  home = process.env.HOME?.trim() || homedir()
+  home = process.env.HOME?.trim() || homedir(),
+  repositoryRoot?: string
 ): string[] {
-  const grants: string[] = [...REQUIRED_MCP_PERMISSIONS];
-  for (const root of normalizedReadRoots(readRoots, home))
-    grants.push(`read_file(${root})`, `read_file(${root}/**)`);
-  for (const shared of [path.join(home, ".agents"), path.join(home, ".codex")])
-    grants.push(`read_file(${shared})`, `read_file(${shared}/**)`);
+  const baseline = projectedAntigravityBaseline(home, repositoryRoot);
+  const grants: string[] = [...baseline.allow];
+  for (const root of normalizedReadRoots(readRoots, home)) {
+    for (const entry of [`read_file(${root})`, `read_file(${root}/**)`]) {
+      if (!grants.includes(entry)) grants.push(entry);
+    }
+  }
   return grants;
 }
 
@@ -113,51 +261,63 @@ function permissionList(config: JsonObject): JsonValue[] {
 export function updateAntigravityPermissions(
   filePath: string,
   readRoots: readonly string[],
-  home = process.env.HOME?.trim() || homedir()
+  home = process.env.HOME?.trim() || homedir(),
+  repositoryRoot?: string
 ): void {
-  const config = readObject(filePath);
-  const permissions = asObject(config.permissions);
-  const requiredMcpPermissions = new Set<string>(REQUIRED_MCP_PERMISSIONS);
-  const allow = permissionList(config).filter((entry) => {
-    if (typeof entry !== "string") return true;
-    if (
-      DISABLED_MCP_PERMISSIONS.includes(
-        entry as (typeof DISABLED_MCP_PERMISSIONS)[number]
-      )
-    )
-      return false;
-    if (entry.startsWith("mcp(codegraphcontext/"))
-      return requiredMcpPermissions.has(entry);
-    return true;
-  });
-  for (const grant of expectedPermissionGrants(readRoots, home))
-    if (!allow.includes(grant)) allow.push(grant);
+  const resolvedRoot = resolveRepositoryRoot(repositoryRoot);
+  const resolvedHome = path.resolve(home);
+  const existing = readObject(filePath);
+  const existingAllow = permissionList(existing);
+  const existingReadFiles = existingAllow.filter(
+    (entry): entry is string =>
+      typeof entry === "string" && entry.startsWith("read_file(")
+  );
+  const projected = runAntigravityPermissionsProjection(
+    resolvedRoot,
+    resolvedHome,
+    existing
+  );
+  const permissions = asObject(projected.permissions);
+  const allow = permissionList(projected);
+  // Preserve user-authored read_file grants alongside Rulesync's ~/.agents and
+  // ~/.codex rules and the dynamic machine-local workspace read roots.
+  for (const entry of existingReadFiles) {
+    if (!allow.includes(entry)) allow.push(entry);
+  }
+  for (const root of normalizedReadRoots(readRoots, resolvedHome)) {
+    for (const grant of [`read_file(${root})`, `read_file(${root}/**)`]) {
+      if (!allow.includes(grant)) allow.push(grant);
+    }
+  }
   permissions.allow = allow;
-  const deny = Array.isArray(permissions.deny) ? [...permissions.deny] : [];
-  for (const denial of DENIED_COMMAND_PERMISSIONS)
-    if (!deny.includes(denial)) deny.push(denial);
-  permissions.deny = deny;
-  config.permissions = permissions;
-  writeObject(filePath, config);
+  projected.permissions = permissions;
+  writeObject(filePath, projected);
 }
 
 export function missingAntigravityPermissions(
   filePath: string,
   readRoots: readonly string[],
-  home = process.env.HOME?.trim() || homedir()
+  home = process.env.HOME?.trim() || homedir(),
+  repositoryRoot?: string
 ): string[] {
   const obj = readObject(filePath);
   const allow = permissionList(obj);
-  const missingAllow = expectedPermissionGrants(readRoots, home).filter(
-    (grant) => !allow.includes(grant)
-  );
+  const baseline = projectedAntigravityBaseline(home, repositoryRoot);
+  const missingAllow = expectedPermissionGrants(
+    readRoots,
+    home,
+    repositoryRoot
+  ).filter((grant) => !allow.includes(grant));
   const deny = Array.isArray(asObject(obj.permissions).deny)
     ? (asObject(obj.permissions).deny as JsonValue[])
     : [];
-  const missingDeny = DENIED_COMMAND_PERMISSIONS.filter(
-    (denial) => !deny.includes(denial)
-  );
-  return [...missingAllow, ...missingDeny];
+  const missingDeny = baseline.deny.filter((denial) => !deny.includes(denial));
+  const missingOverrides = Object.entries(baseline.topLevelOverrides)
+    .filter(
+      ([key, expected]) => JSON.stringify(obj[key]) !== JSON.stringify(expected)
+    )
+    .map(([key, expected]) => `${key}=${JSON.stringify(expected)}`);
+  return [...missingAllow, ...missingDeny, ...missingOverrides];
 }
 
 function entryPath(entry: JsonValue): string | null {

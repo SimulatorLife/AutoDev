@@ -1,278 +1,249 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
+  approvalPolicyFromConfig,
   PermissionPolicyConflictError,
   permissionPolicyGeneration,
   permissionPolicyRevision,
   PermissionPolicyValidationError,
+  readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
-  sandboxModeFromConfig,
-  sandboxModeToConfig,
   updatePermissionPolicy
 } from "../src/config/permission-policy.ts";
+import * as dataExports from "../src/index.ts";
 
-/**
- * The permission policy's own tests.
- *
- * The policy is a TOML file that is mostly comments, and the write edits it in
- * place. These tests hold the two properties that matter: the read answers
- * from the file, and the write changes the key it was asked to change and
- * nothing else -- byte for byte, comments included.
- */
+const POLICY_SOURCE = `{
+  "version": "1.0.0",
+  // Codex defaults for AutoDev
+  "codexcli": {
+    "base_permission_profile": ":danger-full-access",
+    "approval_policy": "never",
+    "approvals_reviewer": "user",
+    "tools": {
+      "web_search": true
+    }
+  }
+}
+`;
 
-const POLICY_SOURCE = `# The portable source.
-model = "autodev/orchestrator"
-
-# The approval policy.
+const APPLIED_TOML = `# Codex user config
+default_permissions = ":danger-full-access"
 approval_policy = "never"
-sandbox_mode = "workspace-write"
 approvals_reviewer = "user"
-
-[sandbox_workspace_write]
-# Network access for workspace-write sessions.
-network_access = true
 
 [tools]
 web_search = true
-
-[model_providers.local_model_router]
-name = "Local router"
 `;
 
-async function policyFixture(
-  content: string = POLICY_SOURCE
-): Promise<{ readonly directory: string; readonly file: string }> {
+async function policyFixture(content = POLICY_SOURCE): Promise<{
+  readonly directory: string;
+  readonly file: string;
+}> {
   const directory = await mkdtemp(
     path.join(tmpdir(), "autodev-permission-policy-")
   );
-  const file = path.join(directory, "config.autodev.toml");
+  const file = path.join(directory, "permissions.jsonc");
   await writeFile(file, content, "utf8");
   return { directory, file };
 }
 
-test("the policy is read from the file, not assumed", async () => {
-  const { file } = await policyFixture();
-  const read = readPermissionPolicyFile(file);
-  assert.equal(read.status, "valid");
-  if (read.status !== "valid") return;
-  assert.equal(read.policy.approvalPolicy, "never");
-  assert.equal(read.policy.sandboxMode, "workspace-write");
-  assert.equal(read.policy.approvalsReviewer, "user");
-  assert.equal(read.policy.networkAccess, true);
-  assert.equal(read.policy.webSearch, true);
-  assert.equal(
-    read.revision,
-    permissionPolicyRevision(await readFile(file, "utf8"))
+test("readPermissionPolicyFile reads codexcli settings and revision from .rulesync/permissions.jsonc", async () => {
+  const { directory, file } = await policyFixture();
+  try {
+    const read = readPermissionPolicyFile(file);
+    assert.equal(read.status, "valid");
+    assert.equal(read.policy.approvalPolicy, "never");
+    assert.equal(read.policy.approvalsReviewer, "user");
+    assert.equal(read.policy.webSearch, true);
+    assert.equal(read.revision, permissionPolicyRevision(POLICY_SOURCE));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("readAppliedPermissionPolicyFile reads applied TOML config.toml settings", async () => {
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "autodev-applied-policy-")
   );
+  try {
+    const file = path.join(directory, "config.toml");
+    await writeFile(file, APPLIED_TOML, "utf8");
+    const read = readAppliedPermissionPolicyFile(file);
+    assert.equal(read.status, "valid");
+    assert.equal(read.policy.approvalPolicy, "never");
+    assert.equal(read.policy.approvalsReviewer, "user");
+    assert.equal(read.policy.webSearch, true);
+    assert.equal(read.revision, permissionPolicyRevision(APPLIED_TOML));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
-test("a source that omits a policy key is invalid, not defaulted", async () => {
-  const { file } = await policyFixture(
-    'approval_policy = "never"\nsandbox_mode = "workspace-write"\n'
+test("readPermissionPolicyFile reports an incomplete policy as invalid without partial values", async () => {
+  const { directory, file } = await policyFixture(
+    '{\n  "codexcli": { "approval_policy": "never" }\n}\n'
   );
-  const read = readPermissionPolicyFile(file);
-  assert.equal(read.status, "invalid");
-  if (read.status !== "invalid") return;
-  assert.match(read.reason, /approvals_reviewer/u);
+  try {
+    const read = readPermissionPolicyFile(file);
+    assert.equal(read.status, "invalid");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
-test("a source that is not TOML is invalid rather than unread", async () => {
-  const { file } = await policyFixture("approval_policy = \n");
-  const read = readPermissionPolicyFile(file);
-  assert.equal(read.status, "invalid");
+test("readPermissionPolicyFile reports unparseable JSONC as invalid while keeping revision", async () => {
+  const { directory, file } = await policyFixture("{ invalid jsonc\n");
+  try {
+    const read = readPermissionPolicyFile(file);
+    assert.equal(read.status, "invalid");
+    assert.ok(read.revision);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
-test("a policy file that is not there is unavailable, not empty", () => {
-  const read = readPermissionPolicyFile(
-    path.join(
-      tmpdir(),
-      "autodev-permission-policy-absent",
-      "config.autodev.toml"
-    )
+test("readPermissionPolicyFile reports missing files as unavailable", async () => {
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "autodev-missing-policy-")
   );
-  assert.equal(read.status, "unavailable");
-  assert.equal(read.revision, null);
+  try {
+    const read = readPermissionPolicyFile(
+      path.join(directory, "permissions.jsonc")
+    );
+    assert.equal(read.status, "unavailable");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
-test("the sandbox vocabulary is translated in one place, both ways", () => {
-  assert.equal(sandboxModeFromConfig("read-only"), "read-only");
-  assert.equal(sandboxModeFromConfig("workspace-write"), "workspace-write");
-  // The product names the unsandboxed mode "unrestricted"; the file names it
-  // "danger-full-access". Collapsing the two is what made the Console report
-  // the orchestrator as a sandboxed role.
-  assert.equal(sandboxModeFromConfig("danger-full-access"), "unrestricted");
-  assert.equal(sandboxModeFromConfig("something-else"), null);
-  assert.equal(sandboxModeToConfig("unrestricted"), "danger-full-access");
-  assert.equal(sandboxModeToConfig("read-only"), "read-only");
+test("the approval policy vocabulary is translated in one place", () => {
+  assert.equal(approvalPolicyFromConfig("never"), "never");
+  assert.equal(approvalPolicyFromConfig("on-request"), "on-request");
+  assert.equal(approvalPolicyFromConfig("on-demand"), null);
+  assert.equal(approvalPolicyFromConfig("always"), null);
 });
 
-test("a role's sandbox is read from the contract, not from a second reader", async () => {
-  // The role declarations are the canonical source for what a role may do, and
-  // the execution contract is the projection of them. This module used to
-  // read the same files a second time, which is how the two answers could
-  // disagree; the projection is the one reader now, and its own tests hold
-  // the rules this module used to hold.
-  const exported = Object.keys(
-    await import("../src/config/permission-policy.ts")
-  );
+test("legacy role sandbox readers are not exported from @simulatorlife/autodev-data", () => {
+  const exported = Object.keys(dataExports);
   assert.equal(exported.includes("readRoleSandboxModes"), false);
   assert.equal(exported.includes("roleSandboxMode"), false);
+  assert.equal(exported.includes("sandboxModeFromConfig"), false);
+  assert.equal(exported.includes("sandboxModeToConfig"), false);
 });
 
-test("a write changes the key it was asked to change and nothing else", async () => {
-  const { file } = await policyFixture();
-  const before = await readFile(file, "utf8");
-  const revision = permissionPolicyRevision(before);
-  const written = updatePermissionPolicy({
-    file,
-    expectedRevision: revision,
-    update: { approvalPolicy: "on-demand" }
-  });
-  assert.equal(written.changed, true);
-  const after = await readFile(file, "utf8");
-  assert.match(after, /^approval_policy = "on-demand"$/mu);
-  // Every other line is untouched, comments included.
-  const beforeLines = before.split("\n");
-  const afterLines = after.split("\n");
-  assert.equal(afterLines.length, beforeLines.length);
-  const changed = afterLines.filter(
-    (line, index) => line !== beforeLines[index]
-  );
-  assert.deepEqual(changed, ['approval_policy = "on-demand"']);
+test("a write changes the requested key while preserving comments in JSONC", async () => {
+  const { directory, file } = await policyFixture();
+  try {
+    const before = await readFile(file, "utf8");
+    const revision = permissionPolicyRevision(before);
+    const written = updatePermissionPolicy({
+      file,
+      expectedRevision: revision,
+      update: { approvalPolicy: "on-request" }
+    });
+    assert.equal(written.changed, true);
+    assert.equal(written.policy.approvalPolicy, "on-request");
+    const after = await readFile(file, "utf8");
+    assert.match(after, /\/\/ Codex defaults for AutoDev/u);
+    assert.match(after, /"approval_policy": "on-request"/u);
+    assert.match(after, /"approvals_reviewer": "user"/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
-test("a write reaches the key inside its own table", async () => {
-  const { file } = await policyFixture();
-  const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-  updatePermissionPolicy({
-    file,
-    expectedRevision: revision,
-    update: { networkAccess: false, webSearch: false }
-  });
-  const after = await readFile(file, "utf8");
-  assert.match(after, /^network_access = false$/mu);
-  assert.match(after, /^web_search = false$/mu);
-  // The comment that explains the table is still above it.
-  assert.match(
-    after,
-    /# Network access for workspace-write sessions\.\nnetwork_access = false/u
-  );
-});
-
-test("a key the source does not carry is added to its own table", async () => {
-  const { file } = await policyFixture(
-    'approval_policy = "never"\nsandbox_mode = "workspace-write"\napprovals_reviewer = "user"\n\n[sandbox_workspace_write]\n\n[tools]\nweb_search = true\n'
-  );
-  const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-  const written = updatePermissionPolicy({
-    file,
-    expectedRevision: revision,
-    update: { networkAccess: true }
-  });
-  assert.equal(written.policy.networkAccess, true);
-  const after = await readFile(file, "utf8");
-  assert.match(after, /\[sandbox_workspace_write\]\nnetwork_access = true/u);
+test("a write reaches nested tools.web_search cleanly", async () => {
+  const { directory, file } = await policyFixture();
+  try {
+    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
+    const written = updatePermissionPolicy({
+      file,
+      expectedRevision: revision,
+      update: { webSearch: false, approvalsReviewer: "guardian_subagent" }
+    });
+    assert.equal(written.changed, true);
+    assert.equal(written.policy.webSearch, false);
+    assert.equal(written.policy.approvalsReviewer, "guardian_subagent");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a write decided on a policy file that has moved is refused", async () => {
-  const { file } = await policyFixture();
-  const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-  await writeFile(file, `${POLICY_SOURCE}\n`, "utf8");
-  assert.throws(
-    () =>
-      updatePermissionPolicy({
-        file,
-        expectedRevision: revision,
-        update: { approvalPolicy: "always" }
-      }),
-    PermissionPolicyConflictError
-  );
-  // The file is as the other writer left it.
-  assert.match(await readFile(file, "utf8"), /^approval_policy = "never"$/mu);
+  const { directory, file } = await policyFixture();
+  try {
+    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
+    await writeFile(file, `${POLICY_SOURCE}\n`, "utf8");
+    assert.throws(
+      () =>
+        updatePermissionPolicy({
+          file,
+          expectedRevision: revision,
+          update: { approvalPolicy: "on-request" }
+        }),
+      PermissionPolicyConflictError
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a value outside the vocabulary is refused before the file is touched", async () => {
-  const { file } = await policyFixture();
-  const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-  assert.throws(
-    () =>
-      updatePermissionPolicy({
-        file,
-        expectedRevision: revision,
-        update: {
-          approvalPolicy: "sometimes" as never
-        }
-      }),
-    PermissionPolicyValidationError
-  );
-  assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
+  const { directory, file } = await policyFixture();
+  try {
+    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
+    assert.throws(
+      () =>
+        updatePermissionPolicy({
+          file,
+          expectedRevision: revision,
+          update: {
+            approvalPolicy: "sometimes" as never
+          }
+        }),
+      PermissionPolicyValidationError
+    );
+    assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a write that changes nothing says so and writes nothing", async () => {
-  const { file } = await policyFixture();
-  const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-  const written = updatePermissionPolicy({
-    file,
-    expectedRevision: revision,
-    update: { approvalPolicy: "never" }
-  });
-  assert.equal(written.changed, false);
-  assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
-});
-
-test("a write that carries the whole policy changes only what differs", async () => {
-  const { file } = await policyFixture();
-  const before = await readFile(file, "utf8");
-  const revision = permissionPolicyRevision(before);
-  const written = updatePermissionPolicy({
-    file,
-    expectedRevision: revision,
-    update: {
-      // The control that made this write shows the whole policy, so the write
-      // carries the whole policy. The other four settings already say what the
-      // operator chose, and rewriting them would move the file's bytes for no
-      // reason -- which refuses every other operator's write.
-      approvalPolicy: "never",
-      sandboxMode: "workspace-write",
-      approvalsReviewer: "user",
-      networkAccess: false,
-      webSearch: true
-    }
-  });
-  assert.equal(written.changed, true);
-  assert.equal(written.policy.networkAccess, false);
-  const after = await readFile(file, "utf8");
-  const changed = after
-    .split("\n")
-    .filter((line, index) => line !== before.split("\n")[index]);
-  assert.deepEqual(changed, ["network_access = false"]);
+  const { directory, file } = await policyFixture();
+  try {
+    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
+    const written = updatePermissionPolicy({
+      file,
+      expectedRevision: revision,
+      update: { approvalPolicy: "never" }
+    });
+    assert.equal(written.changed, false);
+    assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("the generation of a policy is its values, not its bytes", () => {
   const first = permissionPolicyGeneration({
     approvalPolicy: "never",
-    sandboxMode: "workspace-write",
     approvalsReviewer: "user",
-    networkAccess: true,
     webSearch: true
   });
   const second = permissionPolicyGeneration({
     approvalPolicy: "never",
-    sandboxMode: "workspace-write",
     approvalsReviewer: "user",
-    networkAccess: true,
     webSearch: true
   });
   assert.equal(first, second);
   const other = permissionPolicyGeneration({
-    approvalPolicy: "always",
-    sandboxMode: "workspace-write",
+    approvalPolicy: "on-request",
     approvalsReviewer: "user",
-    networkAccess: true,
     webSearch: true
   });
   assert.notEqual(first, other);

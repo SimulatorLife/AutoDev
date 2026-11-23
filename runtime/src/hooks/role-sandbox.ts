@@ -39,7 +39,7 @@ import {
 import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/read-only-policy";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
-import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { isReadOnlyRole } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { type HookDenialPolicy, logPreToolUseDenial } from "./hook-log.ts";
@@ -138,8 +138,7 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
         };
   }
 
-  const declared = roleSandboxMode(role);
-  if (declared !== "read-only") return emptyEvaluation();
+  if (!isReadOnlyRole(role)) return emptyEvaluation();
 
   const decision = evaluateReadOnlyToolCall(call);
   if (decision.allowed) return emptyEvaluation();

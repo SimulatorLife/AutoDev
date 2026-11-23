@@ -66,13 +66,24 @@ function applyRootRole(mcp: TomlTable, rootRole: TomlTable): TomlTable {
 export function loadPortable(
   portablePath: string,
   mcpPath: string,
-  rootRolePath: string
+  rootRolePath: string,
+  permissionsPath?: string
 ): TomlTable {
   const portable = parseTomlFile(portablePath, "portable source");
   if ("mcp_servers" in portable)
     throw new ConfigError(
       `portable source must not declare mcp_servers: ${portablePath} (declare MCP servers in .rulesync/mcp.jsonc)`
     );
+  for (const forbidden of ["sandbox_mode", "sandbox_workspace_write"]) {
+    if (forbidden in portable) {
+      throw new ConfigError(
+        `portable source must not declare ${forbidden}: ${portablePath}`
+      );
+    }
+  }
+  const permissions = permissionsPath
+    ? parseTomlFile(permissionsPath, "permissions source")
+    : {};
   const mcp = parseTomlFile(mcpPath, "MCP source").mcp_servers;
   if (
     !mcp ||
@@ -84,6 +95,7 @@ export function loadPortable(
   const rootRole = parseTomlFile(rootRolePath, "root role");
   return {
     ...portable,
+    ...permissions,
     mcp_servers: applyRootRole(mcp as TomlTable, rootRole)
   };
 }
@@ -184,6 +196,8 @@ export interface ComposeOptions {
    * named in the composed config, disabled.
    */
   readonly bundledPlugins?: readonly string[];
+  /** Path to the RuleSync-projected Codex permissions TOML (`config.toml`). */
+  readonly permissionsSource?: string;
 }
 
 /** Only the user's hook trust `state` survives; hook definitions are managed. */
@@ -215,7 +229,12 @@ function composedPortableValue(
  * workspace-write with no network. The portable source owns the permission
  * policy, so these keys are never carried over from existing state.
  */
-const PERMISSION_PROFILE_KEYS = new Set(["default_permissions", "permissions"]);
+const REMOVED_PERMISSION_KEYS = new Set([
+  "default_permissions",
+  "permissions",
+  "sandbox_mode",
+  "sandbox_workspace_write"
+]);
 
 export function compose(
   portable: TomlTable,
@@ -234,7 +253,7 @@ export function compose(
     if (composed !== undefined) result[key] = composed;
   }
   for (const [key, value] of Object.entries(existing)) {
-    if (key in portable || PERMISSION_PROFILE_KEYS.has(key)) continue;
+    if (key in portable || REMOVED_PERMISSION_KEYS.has(key)) continue;
     if (key === "hooks") {
       const kept = hooksState(value);
       if (kept !== undefined) result[key] = kept;
@@ -264,7 +283,7 @@ export function runCompose(
 ): number {
   const rendered = serializeToml(
     compose(
-      loadPortable(portable, mcp, rootRole),
+      loadPortable(portable, mcp, rootRole, options.permissionsSource),
       loadExisting(existing),
       options
     )
@@ -323,7 +342,12 @@ if (isEntryPoint(import.meta.url)) {
       flags.has("check"),
       // The plugin cache lives beside the user config, so the bundled
       // plugins Codex installed are the ones under that directory.
-      { bundledPlugins: listBundledPlugins(path.dirname(existingConfig)) }
+      {
+        bundledPlugins: listBundledPlugins(path.dirname(existingConfig)),
+        ...(values["permissions-source"]
+          ? { permissionsSource: values["permissions-source"] }
+          : {})
+      }
     );
   } catch (error) {
     writeErrorLine(`compose-user-config: ${errorMessage(error)}`);

@@ -13,7 +13,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  bridgeSandboxMode,
+  bridgeReadOnly,
   bridgeSkillContext,
   composeProviderPrompt,
   isOrchestratorRole,
@@ -30,7 +30,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import {
   AGENT_ROLE_HEADER,
-  SANDBOX_MODE_HEADER,
+  READ_ONLY_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
@@ -77,10 +77,8 @@ test("the agent role is read only from the router-generated header", () => {
   );
   assert.equal(resolveAgentRole({}), null);
   assert.equal(resolveAgentRole(null), null);
-  assert.equal(
-    bridgeSandboxMode({ [SANDBOX_MODE_HEADER]: "read-only" }),
-    "read-only"
-  );
+  assert.equal(bridgeReadOnly({ [READ_ONLY_HEADER]: "1" }), true);
+  assert.equal(bridgeReadOnly({ [READ_ONLY_HEADER]: "0" }), false);
   assert.equal(
     bridgeSkillContext({ [SKILL_CONTEXT_HEADER]: "# skill" }),
     "# skill"
@@ -110,7 +108,7 @@ test("only the exact orchestrator role escapes the leaf policy", () => {
 
 test("the execution contract preserves role-specific capabilities across bridge prompts", () => {
   assert.equal(EXECUTION_CONTRACT.version, 1);
-  assert.equal(roleContract("explorer").sandboxMode, "read-only");
+  assert.equal(roleContract("explorer").readOnly, true);
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("explorer").mcp.includes("codegraphcontext"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
@@ -647,27 +645,27 @@ test("web research policy and Playwright boundaries are enforced in role prompts
   assert.match(browserTester, /Remain Playwright-only/);
 });
 
-test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively", async () => {
-  const { resolveSandboxModeFromHeaders } =
+test("resolveReadOnlyFromHeaders reads the read-only header case-insensitively", async () => {
+  const { resolveReadOnlyFromHeaders } =
     await import("@simulatorlife/autodev-runtime/agents");
   assert.equal(
-    resolveSandboxModeFromHeaders({
-      "x-autodev-sandbox-mode": "read-only"
+    resolveReadOnlyFromHeaders({
+      "x-autodev-read-only": "1"
     }),
-    "read-only"
+    true
   );
   assert.equal(
-    resolveSandboxModeFromHeaders({
-      "X-Autodev-Sandbox-Mode": "workspace-write"
+    resolveReadOnlyFromHeaders({
+      "X-Autodev-Read-Only": "0"
     }),
-    "workspace-write"
+    false
   );
-  assert.equal(resolveSandboxModeFromHeaders({}), null);
-  assert.equal(resolveSandboxModeFromHeaders(null), null);
+  assert.equal(resolveReadOnlyFromHeaders({}), null);
+  assert.equal(resolveReadOnlyFromHeaders(null), null);
   // Unknown values are ignored.
   assert.equal(
-    resolveSandboxModeFromHeaders({
-      "x-autodev-sandbox-mode": "full-access"
+    resolveReadOnlyFromHeaders({
+      "x-autodev-read-only": "full-access"
     }),
     null
   );

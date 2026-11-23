@@ -3254,27 +3254,37 @@ test("Control API surfaces all 13 typed resource families", async () => {
     });
     assert.equal(permissions.response.statusCode, 200);
     assert.equal(permissions.body.schema, "autodev-control-permissions-v2");
-    // The policy is read from the canonical source that states it. The
-    // portable source declares these two, and the response used to publish
-    // literals that happened to agree with it -- so a policy the operator had
-    // changed was still published as the old one.
-    const canonicalPolicy = parse(
-      readFileSync(
-        join(
-          fileURLToPath(new URL("../../", import.meta.url)),
-          "config",
-          "config.autodev.toml"
-        ),
-        "utf8"
-      )
-    ) as Record<string, unknown>;
+    const permissionsRaw = readFileSync(
+      join(
+        fileURLToPath(new URL("../../", import.meta.url)),
+        ".rulesync",
+        "permissions.jsonc"
+      ),
+      "utf8"
+    )
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+    const canonicalPolicy = (
+      JSON.parse(permissionsRaw) as {
+        codexcli: {
+          approval_policy: string;
+          approvals_reviewer: string;
+          tools: { web_search: boolean };
+        };
+      }
+    ).codexcli;
     assert.equal(
       permissions.body.policy.approvalPolicy,
       canonicalPolicy.approval_policy
     );
     assert.equal(
-      permissions.body.policy.sandboxMode,
-      canonicalPolicy.sandbox_mode
+      permissions.body.policy.approvalsReviewer,
+      canonicalPolicy.approvals_reviewer
+    );
+    assert.equal(
+      permissions.body.policy.webSearch,
+      canonicalPolicy.tools.web_search
     );
     assert.equal(permissions.body.policyStatus, "valid");
     assert.ok(
@@ -3310,40 +3320,17 @@ test("Control API surfaces all 13 typed resource families", async () => {
         (entry.skills as unknown[]).every((value) => typeof value === "string"),
         `role ${role} skill entries must be strings`
       );
-      // A role's sandbox is published as the effective mode: the stricter of
-      // what the role declared and what the session allows. A role may narrow
-      // the sandbox it runs in, never widen it.
-      assert.ok(
-        entry.sandboxMode === null ||
-          ["read-only", "workspace-write", "unrestricted"].includes(
-            entry.sandboxMode as string
-          ),
-        `role ${role} must publish a sandbox the product supports`
-      );
-      // The declaration is published beside it, in the same vocabulary, so a
-      // role that asks for more than the session allows is visible.
-      assert.ok(
-        entry.declaredSandboxMode === null ||
-          ["read-only", "workspace-write", "unrestricted"].includes(
-            entry.declaredSandboxMode as string
-          ),
-        `role ${role} must publish a declared sandbox the product supports`
+      assert.equal(
+        typeof entry.readOnly,
+        "boolean",
+        `role ${role} must publish readOnly boolean`
       );
     }
-    // The orchestrator declares `danger-full-access` and the session runs
-    // `workspace-write`, so the orchestrator runs in the session's sandbox:
-    // the declaration is published beside the effective mode rather than
-    // folded into it.
     assert.equal(
-      permissions.body.rolePermissions.orchestrator?.sandboxMode,
-      "workspace-write",
-      "the orchestrator may not widen the session's sandbox"
+      permissions.body.rolePermissions.orchestrator?.readOnly,
+      false
     );
-    assert.equal(
-      permissions.body.rolePermissions.orchestrator?.declaredSandboxMode,
-      "unrestricted",
-      "the orchestrator declares danger-full-access"
-    );
+    assert.equal(permissions.body.rolePermissions.explorer?.readOnly, true);
     const agentsForComparison = await call("GET", CONTROL_API_PATHS.agents, {
       actor: "viewer-a"
     });

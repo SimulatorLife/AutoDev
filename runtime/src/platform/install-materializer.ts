@@ -40,6 +40,7 @@ import {
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
+import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
@@ -202,7 +203,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/config/render-bridge-mcp-catalogue.ts",
   "runtime/src/config/render-execution-contract.ts",
   "runtime/src/config/render-model-catalog.ts",
-  "runtime/src/config/role-sandbox-mode.ts",
   "runtime/src/memory/index.ts",
   "runtime/src/memory/context-injection.ts",
   "runtime/src/memory/git-curation.ts",
@@ -288,6 +288,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/install-check.ts",
   "runtime/src/platform/codex-mcp-source.ts",
+  "runtime/src/platform/codex-permissions-source.ts",
   "runtime/src/hooks/root-delegation.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
   "runtime/src/hooks/role-sandbox.ts",
@@ -354,7 +355,7 @@ export const PROMPT_ROLES = [...ROLES, "orchestrator"] as const;
  * target and manages its generated projection.
  */
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
-export const RULES = ["default.rules"] as const;
+export const RULES = ["rulesync.rules"] as const;
 export const LAUNCH_LABELS = [
   "com.codex.autodev-console",
   "com.codex.model-router",
@@ -1168,9 +1169,9 @@ function removeObsoleteRuntimeArtifacts(
     path.join(codexHome, "run", "autodev-otel-collector.pid"),
     // The ingress mode the router used to read before the telemetry cutover.
     path.join(codexHome, "otel-ingress.mode"),
-    // A `rulesync generate --features permissions` projection; Codex's
-    // command rules are `agents/rules/default.rules` alone.
-    path.join(codexHome, "rules", "rulesync.rules")
+    // Legacy command rules file before `.rulesync/permissions.jsonc` took over
+    // Codex command rules as `rules/rulesync.rules`.
+    path.join(codexHome, "rules", "default.rules")
   ];
   removeStalePaths(obsoletePaths, OBSOLETE_RUNTIME_PATH_REASON);
   removeStalePaths(
@@ -1301,14 +1302,27 @@ function linkRuntimeConfigs(codexHome: string, source: FileTarget): void {
  */
 export function materializeCommandRules(
   repositoryRoot: string,
-  rules: string
+  rules: string,
+  rulesSource?: string
 ): void {
-  for (const name of RULES)
-    materializeRuntimeFile(
-      path.join(repositoryRoot, "agents/rules", name),
-      path.join(rules, name),
-      0o644
-    );
+  if (rulesSource) {
+    for (const name of RULES) {
+      materializeRuntimeFile(rulesSource, path.join(rules, name), 0o644);
+    }
+    return;
+  }
+  const projection = createCodexPermissionsSource(repositoryRoot);
+  try {
+    for (const name of RULES) {
+      materializeRuntimeFile(
+        projection.rulesSource,
+        path.join(rules, name),
+        0o644
+      );
+    }
+  } finally {
+    rmSync(projection.root, { recursive: true, force: true });
+  }
 }
 
 export interface NodeModuleLink {
@@ -1483,6 +1497,7 @@ export function materializeMcpConfiguration(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
   readonly codexMcpSource: string;
+  readonly codexPermissionsSource?: string;
 }): void {
   materializeRenderedAgents(
     options.repositoryRoot,
@@ -1496,15 +1511,29 @@ export function materializeMcpConfiguration(options: {
   const configPath = path.join(options.codexHome, CONFIG_TOML_FILE);
   if (isSymlink(configPath))
     throw new Error(`refusing-symlinked-user-config ${configPath}`);
-  runCompose(
-    path.join(options.repositoryRoot, "config/config.autodev.toml"),
-    options.codexMcpSource,
-    path.join(options.repositoryRoot, "agents/roles/orchestrator.toml"),
-    configPath,
-    configPath,
-    false,
-    { bundledPlugins: listBundledPlugins(options.codexHome) }
-  );
+  const permissionsProjection = options.codexPermissionsSource
+    ? null
+    : createCodexPermissionsSource(options.repositoryRoot);
+  try {
+    const permissionsSource =
+      options.codexPermissionsSource ?? permissionsProjection!.configSource;
+    runCompose(
+      path.join(options.repositoryRoot, "config/config.autodev.toml"),
+      options.codexMcpSource,
+      path.join(options.repositoryRoot, "agents/roles/orchestrator.toml"),
+      configPath,
+      configPath,
+      false,
+      {
+        bundledPlugins: listBundledPlugins(options.codexHome),
+        permissionsSource
+      }
+    );
+  } finally {
+    if (permissionsProjection) {
+      rmSync(permissionsProjection.root, { recursive: true, force: true });
+    }
+  }
 }
 
 /**
@@ -1707,13 +1736,23 @@ export function materializeCurrentMcpConfiguration(options: {
   readonly codexHome: string;
 }): void {
   const projection = createCodexMcpSource(options.repositoryRoot);
+  const permissionsProjection = createCodexPermissionsSource(
+    options.repositoryRoot
+  );
   try {
+    materializeCommandRules(
+      options.repositoryRoot,
+      path.join(options.codexHome, "rules"),
+      permissionsProjection.rulesSource
+    );
     materializeMcpConfiguration({
       repositoryRoot: options.repositoryRoot,
       codexHome: options.codexHome,
-      codexMcpSource: projection.source
+      codexMcpSource: projection.source,
+      codexPermissionsSource: permissionsProjection.configSource
     });
   } finally {
+    rmSync(permissionsProjection.root, { recursive: true, force: true });
     rmSync(projection.root, { recursive: true, force: true });
   }
 }
@@ -2004,7 +2043,8 @@ function applyAntigravityIfInstalled(
   updateAntigravityPermissions(
     path.join(options.home, ".gemini", "antigravity-cli", "settings.json"),
     roots(options),
-    options.home
+    options.home,
+    options.repositoryRoot
   );
   updateAntigravitySkills(
     path.join(options.home, ".gemini", "config", "skills.json"),
@@ -2294,13 +2334,25 @@ export function materializeInstallation(options: MaterializeOptions): void {
     source("config/catalogs/codex-model-catalog.json")
   );
   linkRuntimeConfigs(options.codexHome, source);
-  materializeCommandRules(options.repositoryRoot, rules);
-  replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
-  materializeMcpConfiguration({
-    repositoryRoot: options.repositoryRoot,
-    codexHome: options.codexHome,
-    codexMcpSource: options.codexMcpSource
-  });
+  const permissionsProjection = createCodexPermissionsSource(
+    options.repositoryRoot
+  );
+  try {
+    materializeCommandRules(
+      options.repositoryRoot,
+      rules,
+      permissionsProjection.rulesSource
+    );
+    replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
+    materializeMcpConfiguration({
+      repositoryRoot: options.repositoryRoot,
+      codexHome: options.codexHome,
+      codexMcpSource: options.codexMcpSource,
+      codexPermissionsSource: permissionsProjection.configSource
+    });
+  } finally {
+    rmSync(permissionsProjection.root, { recursive: true, force: true });
+  }
   generateRepositoryRulesync(options.repositoryRoot);
   const updatedPrompts = materializeCommands(options, prompts);
   // The Codex desktop app reads $CODEX_HOME/prompts once, when its window

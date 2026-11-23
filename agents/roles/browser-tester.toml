@@ -1,10 +1,10 @@
+# role-access: read-only
 name = "browser-tester"
 description = "Read-only Playwright tester for browser behavior, accessibility, and runtime evidence."
 nickname_candidates = ["BrowserTester", "PlaywrightTester", "UiVerifier"]
 
 model_provider = "local_model_router"
 model = "autodev/browser-tester"
-sandbox_mode = "read-only"
 
 developer_instructions = """
 {{AUTODEV_BASE_PROMPT}}

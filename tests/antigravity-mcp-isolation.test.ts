@@ -1404,11 +1404,11 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "gemini-3.8-flash-medium",
         "medium",
         "default",
-        "read-only"
+        true
       );
       assert.ok(
         explicitReadOnlyArgs.includes("--sandbox"),
-        "explicit read-only sandbox mode must receive --sandbox"
+        "explicit read-only header must receive --sandbox"
       );
       assert.ok(
         explicitReadOnlyArgs.includes("--dangerously-skip-permissions"),

@@ -34,6 +34,7 @@ import {
 } from "./antigravity-settings.ts";
 import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
+import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
   checkCocoIndex,
   checkCodeGraphContext,
@@ -449,13 +450,14 @@ function resolveRunInstallPaths(
 
 function checkRulesAndSkills(
   paths: RunInstallPaths,
+  permissionsProjection: ReturnType<typeof createCodexPermissionsSource>,
   failures: { value: number }
 ): void {
   for (const name of RULES)
     check(
       `rule file ${name}`,
       runtimeFileMatches(
-        path.join(paths.repositoryRoot, "agents/rules", name),
+        permissionsProjection.rulesSource,
         path.join(paths.rules, name)
       ),
       failures
@@ -789,6 +791,7 @@ function checkPortableConfig(
 function checkUserConfigAndAgents(
   paths: RunInstallPaths,
   projection: ReturnType<typeof createCodexMcpSource>,
+  permissionsProjection: ReturnType<typeof createCodexPermissionsSource>,
   failures: { value: number }
 ): void {
   check(
@@ -800,7 +803,10 @@ function checkUserConfigAndAgents(
       path.join(paths.codexHome, USER_CONFIG_FILE),
       path.join(paths.codexHome, USER_CONFIG_FILE),
       true,
-      { bundledPlugins: listBundledPlugins(paths.codexHome) }
+      {
+        bundledPlugins: listBundledPlugins(paths.codexHome),
+        permissionsSource: permissionsProjection.configSource
+      }
     ) === 0,
     failures
   );
@@ -996,7 +1002,8 @@ function checkAntigravityCli(
     const missing = missingAntigravityPermissions(
       settingsPath,
       readRoots,
-      home
+      home,
+      paths.repositoryRoot
     );
     if (missing.length > 0) {
       writeLine(
@@ -1201,14 +1208,22 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   const paths = resolveRunInstallPaths(overrides);
   const failures = { value: 0 };
   const projection = createCodexMcpSource(paths.repositoryRoot);
+  const permissionsProjection = createCodexPermissionsSource(
+    paths.repositoryRoot
+  );
   try {
-    checkRulesAndSkills(paths, failures);
+    checkRulesAndSkills(paths, permissionsProjection, failures);
     checkRuntimeAndOt(paths, failures);
     checkCommands(paths, failures);
     checkScripts(paths, failures);
     checkProfilesAndCatalogs(paths, failures);
     checkPortableConfig(paths, failures);
-    checkUserConfigAndAgents(paths, projection, failures);
+    checkUserConfigAndAgents(
+      paths,
+      projection,
+      permissionsProjection,
+      failures
+    );
     checkRulesync(paths, failures);
     checkOtelIngress(paths, failures);
     checkObsoleteSkillPaths(paths, failures);
@@ -1228,6 +1243,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkLaunchAgents(paths, failures);
     return failures.value;
   } finally {
+    rmSync(permissionsProjection.root, { recursive: true, force: true });
     rmSync(projection.root, { recursive: true, force: true });
   }
 }

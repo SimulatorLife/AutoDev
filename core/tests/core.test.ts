@@ -2,25 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  APPROVAL_POLICIES,
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   CANONICAL_SECTION_PURPOSE,
   canonicalNavGroupOf,
   canonicalSectionPurpose,
-  CODEX_SANDBOX_MODES,
-  codexSandboxMode,
-  effectiveSandboxMode,
+  isApprovalPolicy,
   isCanonicalNavGroupId,
   isCanonicalNavSection,
-  isCodexSandboxMode,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
-  isSandboxMode,
   isSkillEligibleForRole,
   navOrderOf,
-  productSandboxMode,
-  SANDBOX_MODES,
-  tighterSandboxMode,
   validateAgentDefinition
 } from "../src/index.ts";
 
@@ -189,121 +183,31 @@ test("OpenTelemetry trace and span identifiers require valid non-zero W3C ids", 
   assert.equal(isOpenTelemetrySpanId(null), false);
 });
 
-test("SANDBOX_MODES is the one place the sandbox vocabulary is written", () => {
-  // `SandboxMode` is derived from this list, so the guard accepts exactly what
-  // the type admits. A consumer that validates with `isSandboxMode` therefore
-  // cannot end up narrower than the type (rejecting a mode it should allow) or
-  // wider (accepting one it should not) -- which is what a hand-written
-  // `=== "read-only" || ...` chain in a consumer allowed to happen silently.
-  assert.ok(SANDBOX_MODES.length > 0, "the vocabulary must not be empty");
-  assert.equal(
-    new Set(SANDBOX_MODES).size,
-    SANDBOX_MODES.length,
-    "the vocabulary must not repeat a mode"
-  );
-  for (const mode of SANDBOX_MODES) {
-    assert.equal(isSandboxMode(mode), true, `${mode} must validate`);
+test("APPROVAL_POLICIES is the one place the approval vocabulary is written", () => {
+  assert.deepEqual([...APPROVAL_POLICIES], ["never", "on-request"]);
+  for (const policy of APPROVAL_POLICIES) {
+    assert.equal(isApprovalPolicy(policy), true, `${policy} must validate`);
   }
 });
 
-test("isSandboxMode fails fast on anything outside the vocabulary", () => {
-  // Near-misses matter more than nonsense here: a drifted mode reaching the UI
-  // renders as a confident novel policy name rather than an error.
+test("isApprovalPolicy fails fast on anything outside the vocabulary", () => {
   for (const invalid of [
     "",
-    "Read-Only",
-    "READ-ONLY",
-    "workspace_write",
-    "workspaceWrite",
-    "workspace-write ",
-    "anything-goes",
+    "always",
+    "on-demand",
+    "Never",
+    "ON_REQUEST",
     null,
     undefined,
     0,
     false,
     {},
-    ["read-only"]
+    ["never"]
   ]) {
     assert.equal(
-      isSandboxMode(invalid),
+      isApprovalPolicy(invalid),
       false,
       `${JSON.stringify(invalid) ?? String(invalid)} must be rejected`
     );
   }
-});
-
-test("the two sandbox vocabularies are related by one translation", () => {
-  // The portable source and the role declarations name the modes the way
-  // Codex configures a session in; the product names them its own way. The
-  // translation lives here, so no reader can invent a third one.
-  assert.deepEqual(
-    [...CODEX_SANDBOX_MODES],
-    ["read-only", "workspace-write", "danger-full-access"]
-  );
-  for (const mode of CODEX_SANDBOX_MODES) {
-    assert.equal(isCodexSandboxMode(mode), true, `${mode} must validate`);
-  }
-  for (const invalid of [
-    "",
-    "unrestricted",
-    "Read-Only",
-    "workspace_write",
-    null,
-    undefined,
-    0,
-    {}
-  ]) {
-    assert.equal(
-      isCodexSandboxMode(invalid),
-      false,
-      `${JSON.stringify(invalid) ?? String(invalid)} must be rejected`
-    );
-  }
-  assert.equal(productSandboxMode("read-only"), "read-only");
-  assert.equal(productSandboxMode("workspace-write"), "workspace-write");
-  assert.equal(productSandboxMode("danger-full-access"), "unrestricted");
-  assert.equal(codexSandboxMode("unrestricted"), "danger-full-access");
-  assert.equal(codexSandboxMode("read-only"), "read-only");
-  assert.equal(codexSandboxMode("workspace-write"), "workspace-write");
-});
-
-test("a role may narrow the sandbox it runs in, never widen it", () => {
-  // The stricter of the two modes is the effective one, and a role that
-  // declares more than the session allows gets the session's.
-  assert.equal(tighterSandboxMode("read-only", "workspace-write"), "read-only");
-  assert.equal(tighterSandboxMode("workspace-write", "read-only"), "read-only");
-  assert.equal(
-    tighterSandboxMode("workspace-write", "unrestricted"),
-    "workspace-write"
-  );
-  assert.equal(
-    tighterSandboxMode("unrestricted", "workspace-write"),
-    "workspace-write"
-  );
-  assert.equal(tighterSandboxMode("read-only", "unrestricted"), "read-only");
-  assert.equal(
-    effectiveSandboxMode("read-only", "workspace-write"),
-    "read-only",
-    "a role that declares less runs in what it declared"
-  );
-  assert.equal(
-    effectiveSandboxMode("unrestricted", "workspace-write"),
-    "workspace-write",
-    "a role that declares more runs in the session's sandbox"
-  );
-  assert.equal(
-    effectiveSandboxMode(null, "workspace-write"),
-    "workspace-write",
-    "a role that declares nothing inherits the session's sandbox"
-  );
-  assert.equal(
-    effectiveSandboxMode("read-only", null),
-    "read-only",
-    "without a session sandbox the declaration is the whole of it"
-  );
-  assert.equal(
-    effectiveSandboxMode(null, null),
-    null,
-    "an unobserved sandbox is neither the read-only mode nor the unrestricted one"
-  );
 });

@@ -43,8 +43,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_FORM_BODY_BYTES = 16_384;
-const APPROVAL_POLICIES = new Set(["never", "always", "on-demand"]);
-const SANDBOX_MODES = new Set(["read-only", "workspace-write", "unrestricted"]);
+const APPROVAL_POLICIES = new Set(["never", "on-request"]);
 
 /**
  * The redirect back to the surface the write came from.
@@ -103,10 +102,8 @@ function saveOutcomeForFailure(
  * setting the operator did not touch keeps the file's own bytes.
  */
 interface PolicyUpdate {
-  readonly approvalPolicy?: "never" | "always" | "on-demand";
-  readonly sandboxMode?: "read-only" | "workspace-write" | "unrestricted";
+  readonly approvalPolicy?: "never" | "on-request";
   readonly approvalsReviewer?: string;
-  readonly networkAccess?: boolean;
   readonly webSearch?: boolean;
 }
 
@@ -131,15 +128,6 @@ const INVALID: SettingRead<never> = { present: true, ok: false };
 function readApprovalPolicy(value: string | null): SettingRead<string> {
   if (value === null) return ABSENT;
   if (!APPROVAL_POLICIES.has(value)) return INVALID;
-  return { present: true, ok: true, value };
-}
-
-/**
- * The sandbox mode the form carries.
- */
-function readSandboxMode(value: string | null): SettingRead<string> {
-  if (value === null) return ABSENT;
-  if (!SANDBOX_MODES.has(value)) return INVALID;
   return { present: true, ok: true, value };
 }
 
@@ -171,10 +159,8 @@ function readBoolean(value: string | null): SettingRead<boolean> {
  */
 function policyUpdateFromForm(form: URLSearchParams): PolicyUpdate | null {
   const update: {
-    approvalPolicy?: "never" | "always" | "on-demand";
-    sandboxMode?: "read-only" | "workspace-write" | "unrestricted";
+    approvalPolicy?: "never" | "on-request";
     approvalsReviewer?: string;
-    networkAccess?: boolean;
     webSearch?: boolean;
   } = {};
   let fields = 0;
@@ -182,15 +168,7 @@ function policyUpdateFromForm(form: URLSearchParams): PolicyUpdate | null {
   const approvalPolicy = readApprovalPolicy(form.get("approvalPolicy"));
   if (approvalPolicy.present) {
     if (!approvalPolicy.ok) return null;
-    update.approvalPolicy = approvalPolicy.value as
-      "never" | "always" | "on-demand";
-    fields += 1;
-  }
-  const sandboxMode = readSandboxMode(form.get("sandboxMode"));
-  if (sandboxMode.present) {
-    if (!sandboxMode.ok) return null;
-    update.sandboxMode = sandboxMode.value as
-      "read-only" | "workspace-write" | "unrestricted";
+    update.approvalPolicy = approvalPolicy.value as "never" | "on-request";
     fields += 1;
   }
   const approvalsReviewer = readApprovalsReviewer(
@@ -199,12 +177,6 @@ function policyUpdateFromForm(form: URLSearchParams): PolicyUpdate | null {
   if (approvalsReviewer.present) {
     if (!approvalsReviewer.ok) return null;
     update.approvalsReviewer = approvalsReviewer.value;
-    fields += 1;
-  }
-  const networkAccess = readBoolean(form.get("networkAccess"));
-  if (networkAccess.present) {
-    if (!networkAccess.ok) return null;
-    update.networkAccess = networkAccess.value;
     fields += 1;
   }
   const webSearch = readBoolean(form.get("webSearch"));

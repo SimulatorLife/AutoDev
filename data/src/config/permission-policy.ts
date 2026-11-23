@@ -3,78 +3,44 @@ import { readFileSync, statSync } from "node:fs";
 
 import {
   type ApprovalPolicy,
-  codexSandboxMode,
-  isCodexSandboxMode,
+  isApprovalPolicy,
   isRecord,
-  isSandboxMode,
-  type PermissionPolicy,
-  productSandboxMode,
-  type SandboxMode} from "@simulatorlife/autodev-core";
+  type PermissionPolicy
+} from "@simulatorlife/autodev-core";
+import {
+  applyEdits,
+  type FormattingOptions,
+  modify,
+  parse as parseJsonc,
+  type ParseError,
+  printParseErrorCode
+} from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 
 import { atomicWriteSync } from "../files/atomic-write.ts";
 
 /**
- * The permission policy's one owner.
- *
- * The permission policy of a Codex session is declared in the portable source
- * (`config/config.autodev.toml`). Nothing else states it, so this module is the
- * only place that decides what that file means, what a policy value is, and
- * how a policy is changed. A role's own sandbox is declared beside it, in
- * `agents/roles/<role>.toml`, and reaches the product as the execution
- * contract's projection of those declarations rather than as a second reading
- * of the same files.
- *
- * It used to be two places that said the same thing without reading either
- * file: the Runtime published a policy block of literals while naming the
- * portable source as its origin, and Data's config repository published the
- * same literals to nobody. The literals happened to agree with the file, which
- * is what hid them: changing `sandbox_mode` in the portable source changed
- * nothing the Console displayed, and the Control API kept naming a file it had
- * never read. A role's sandbox was worse than a constant -- it was derived
- * from a boolean, so a role declared `danger-full-access` was reported as
- * `workspace-write`, and the Console named the most privileged roles in the
- * product as sandboxed.
- *
- * The vocabulary is the file's, not this module's: the portable source states
- * `sandbox_mode` in the vocabulary Codex configures sessions in, and the
- * product's own vocabulary (`core`'s `SandboxMode`) is what the Console shows.
- * The translation between the two lives in `core`, once, so no reader can
- * invent a third one.
- */
+The permission policy's one owner.
 
-/** The approval policies the portable source declares. */
-const CONFIG_APPROVAL_POLICIES = new Set<string>([
-  "never",
-  "always",
-  "on-demand"
-]);
+The permission policy of a Codex session is declared in `.rulesync/permissions.jsonc`
+under `codexcli` (`approval_policy`, `approvals_reviewer`, `tools.web_search`),
+and applied into `$CODEX_HOME/config.toml` via RuleSync + `compose-user-config`.
+*/
 
-/**
- * The policy keys, and where each one lives in the portable source.
- *
- * Three are top-level keys and two live inside a table, which is why a write
- * has to know the section a key belongs to rather than search for the key's
- * name anywhere in the file.
- */
 const POLICY_KEYS = {
-  approvalPolicy: { key: "approval_policy", section: null },
-  sandboxMode: { key: "sandbox_mode", section: null },
-  approvalsReviewer: { key: "approvals_reviewer", section: null },
-  networkAccess: {
-    key: "network_access",
-    section: "sandbox_workspace_write"
-  },
-  webSearch: { key: "web_search", section: "tools" }
-} as const satisfies Record<
-  string,
-  { readonly key: string; readonly section: string | null }
->;
+  approvalPolicy: ["codexcli", "approval_policy"],
+  approvalsReviewer: ["codexcli", "approvals_reviewer"],
+  webSearch: ["codexcli", "tools", "web_search"]
+} as const satisfies Record<string, readonly string[]>;
 
 export type PermissionPolicyKey = keyof typeof POLICY_KEYS;
 
-/** The file's own bound: a policy file that is larger than this is not one. */
 const POLICY_MAX_BYTES = 1_000_000;
+const JSONC_FORMATTING: FormattingOptions = {
+  tabSize: 2,
+  insertSpaces: true,
+  eol: "\n"
+};
 
 export class PermissionPolicyConflictError extends Error {
   constructor(message: string) {
@@ -90,12 +56,16 @@ export class PermissionPolicyValidationError extends Error {
   }
 }
 
-/** What a read of the portable source found. */
+/**
+What a read of a policy source found.
+*/
 export type PermissionPolicyRead =
   | {
       readonly status: "valid";
       readonly policy: PermissionPolicy;
-      /** The sha256 of the file's exact bytes: the token a write is decided on. */
+      /**
+      The sha256 of the file's exact bytes: the token a write is decided on.
+      */
       readonly revision: string;
     }
   | {
@@ -109,12 +79,12 @@ export type PermissionPolicyRead =
       readonly revision: null;
     };
 
-/** The policy keys a write may change. */
+/**
+The policy keys a write may change.
+*/
 export interface PermissionPolicyUpdate {
   readonly approvalPolicy?: ApprovalPolicy | undefined;
-  readonly sandboxMode?: SandboxMode | undefined;
   readonly approvalsReviewer?: string | undefined;
-  readonly networkAccess?: boolean | undefined;
   readonly webSearch?: boolean | undefined;
 }
 
@@ -124,34 +94,16 @@ export interface PermissionPolicyWrite {
   readonly changed: boolean;
 }
 
-/**
- * The revision of a source file: the sha256 of its exact bytes.
- *
- * The bytes, not the meaning: a reformatting edit that changes no policy is
- * still a change to the file, and a write decided on the older file has to be
- * refused rather than applied over it.
- */
 export function permissionPolicyRevision(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
-/**
- * The generation of a policy's values.
- *
- * The revision and the generation answer two different questions. The revision
- * is "has this file changed?", and it is what a write is decided on. The
- * generation is "do these values agree?", and it is what the desired state and
- * the applied state are compared by: the applied file is a different file with
- * different bytes, so its revision can never equal the canonical file's.
- */
 export function permissionPolicyGeneration(policy: PermissionPolicy): string {
   return createHash("sha256")
     .update(
       JSON.stringify([
         policy.approvalPolicy,
-        policy.sandboxMode,
         policy.approvalsReviewer,
-        policy.networkAccess,
         policy.webSearch
       ]),
       "utf8"
@@ -159,179 +111,150 @@ export function permissionPolicyGeneration(policy: PermissionPolicy): string {
     .digest("hex");
 }
 
-/**
- * The sandbox mode the portable source's vocabulary names, or null.
- *
- * A mode this module does not know is not a mode it may report: the product
- * names three, and a fourth would be a configuration the product cannot honour.
- */
-export function sandboxModeFromConfig(value: unknown): SandboxMode | null {
-  if (!isCodexSandboxMode(value)) return null;
-  return productSandboxMode(value);
-}
-
-/**
- * The portable source's vocabulary for a sandbox mode.
- *
- * The inverse of {@link sandboxModeFromConfig}, and the only place the product's
- * vocabulary is turned back into the file's.
- */
-export function sandboxModeToConfig(mode: SandboxMode): string {
-  if (!isSandboxMode(mode)) {
-    throw new PermissionPolicyValidationError(
-      `Unsupported sandbox mode: ${mode}`
-    );
-  }
-  return codexSandboxMode(mode);
-}
-
-/** The approval policy the portable source declares, or null. */
 export function approvalPolicyFromConfig(
   value: unknown
 ): ApprovalPolicy | null {
-  if (typeof value !== "string") return null;
-  return CONFIG_APPROVAL_POLICIES.has(value) ? (value as ApprovalPolicy) : null;
+  return isApprovalPolicy(value) ? value : null;
 }
 
-/**
- * The policy the portable source states.
- *
- * Every key is required. A portable source that omits one has not said what
- * that key is, and a policy that fills the gap with a default would report a
- * setting the operator never chose.
- */
-function policyFromParsed(parsed: Record<string, unknown>): {
+function emptyPolicy(): PermissionPolicy {
+  return {
+    approvalPolicy: "never",
+    approvalsReviewer: "",
+    webSearch: false
+  };
+}
+
+function policyFromCodexSection(section: Record<string, unknown>): {
   readonly policy: PermissionPolicy;
   readonly reason?: string;
 } {
-  const approvalPolicy = approvalPolicyFromConfig(parsed.approval_policy);
+  const approvalPolicy = approvalPolicyFromConfig(section.approval_policy);
   if (approvalPolicy === null) {
     return {
       policy: emptyPolicy(),
-      reason: "approval_policy must be one of never, always or on-demand"
+      reason: "codexcli.approval_policy must be one of never or on-request"
     };
   }
-  const sandboxMode = sandboxModeFromConfig(parsed.sandbox_mode);
-  if (sandboxMode === null) {
-    return {
-      policy: emptyPolicy(),
-      reason:
-        "sandbox_mode must be one of read-only, workspace-write or danger-full-access"
-    };
-  }
-  const approvalsReviewer = parsed.approvals_reviewer;
+  const approvalsReviewer = section.approvals_reviewer;
   if (
     typeof approvalsReviewer !== "string" ||
     approvalsReviewer.trim() === ""
   ) {
     return {
       policy: emptyPolicy(),
-      reason: "approvals_reviewer must be a non-empty string"
+      reason: "codexcli.approvals_reviewer must be a non-empty string"
     };
   }
-  const workspaceWrite = parsed.sandbox_workspace_write;
-  if (
-    !isRecord(workspaceWrite) ||
-    typeof workspaceWrite.network_access !== "boolean"
-  ) {
-    return {
-      policy: emptyPolicy(),
-      reason: "sandbox_workspace_write.network_access must be a boolean"
-    };
-  }
-  const tools = parsed.tools;
+  const tools = section.tools;
   if (!isRecord(tools) || typeof tools.web_search !== "boolean") {
     return {
       policy: emptyPolicy(),
-      reason: "tools.web_search must be a boolean"
+      reason: "codexcli.tools.web_search must be a boolean"
     };
   }
   return {
     policy: {
       approvalPolicy,
-      sandboxMode,
       approvalsReviewer,
-      networkAccess: workspaceWrite.network_access,
       webSearch: tools.web_search
     }
   };
 }
 
-/**
- * The policy a source that states nothing may be read as.
- *
- * Only ever returned beside a reason: a caller that gets this has failed to
- * read a policy, and the values are there so the shape of the answer is the
- * same, not so a caller can render them.
- */
-function emptyPolicy(): PermissionPolicy {
-  return {
-    approvalPolicy: "never",
-    sandboxMode: "workspace-write",
-    approvalsReviewer: "",
-    networkAccess: false,
-    webSearch: false
-  };
+function parseJsoncObject(content: string): {
+  readonly value: Record<string, unknown> | null;
+  readonly reason?: string;
+} {
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(content, errors, {
+    allowTrailingComma: true
+  });
+  if (errors.length > 0) {
+    const first = errors[0]!;
+    return {
+      value: null,
+      reason: `The permission policy is not valid JSONC: ${printParseErrorCode(first.error)} at offset ${first.offset}`
+    };
+  }
+  if (!isRecord(parsed)) {
+    return {
+      value: null,
+      reason: "The permission policy must be a JSONC object."
+    };
+  }
+  return { value: parsed };
 }
 
-/**
- * Read the permission policy from the portable source.
- *
- * The read refuses as loudly as the write: a policy that cannot be read is not
- * a policy with default values, and reporting defaults for a file that exists
- * but cannot be parsed would answer a question the operator never asked.
- */
-export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
+function readRegularPolicyFile(
+  file: string
+):
+  | { readonly ok: true; readonly content: string }
+  | { readonly ok: false; readonly result: PermissionPolicyRead } {
   let content: string;
   try {
     if (!statSync(file).isFile()) {
       return {
-        status: "unavailable",
-        reason: "The permission policy is not a regular file.",
-        revision: null
+        ok: false,
+        result: {
+          status: "unavailable",
+          reason: "The permission policy is not a regular file.",
+          revision: null
+        }
       };
     }
     content = readFileSync(file, "utf8");
   } catch (error) {
     return {
-      status: "unavailable",
-      reason:
-        error instanceof Error && "code" in error
-          ? `The permission policy could not be read (${String((error as NodeJS.ErrnoException).code)}).`
-          : "The permission policy could not be read.",
-      revision: null
+      ok: false,
+      result: {
+        status: "unavailable",
+        reason:
+          error instanceof Error && "code" in error
+            ? `The permission policy could not be read (${String((error as NodeJS.ErrnoException).code)}).`
+            : "The permission policy could not be read.",
+        revision: null
+      }
     };
   }
   if (Buffer.byteLength(content, "utf8") > POLICY_MAX_BYTES) {
     return {
-      status: "invalid",
-      reason:
-        "The permission policy exceeds its safe size bound and was not read.",
-      revision: permissionPolicyRevision(content)
+      ok: false,
+      result: {
+        status: "invalid",
+        reason:
+          "The permission policy exceeds its safe size bound and was not read.",
+        revision: permissionPolicyRevision(content)
+      }
     };
   }
-  const revision = permissionPolicyRevision(content);
-  let parsed: unknown;
-  try {
-    parsed = parseToml(content);
-  } catch (error) {
+  return { ok: true, content };
+}
+
+/**
+Read the canonical permission policy from `.rulesync/permissions.jsonc`.
+*/
+export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
+  const read = readRegularPolicyFile(file);
+  if (!read.ok) return read.result;
+  const revision = permissionPolicyRevision(read.content);
+  const parsed = parseJsoncObject(read.content);
+  if (parsed.value === null) {
     return {
       status: "invalid",
-      reason:
-        error instanceof Error
-          ? `The permission policy is not valid TOML: ${error.message}`
-          : "The permission policy is not valid TOML.",
+      reason: parsed.reason ?? "The permission policy is not valid JSONC.",
       revision
     };
   }
-  if (!isRecord(parsed)) {
+  const codexcli = parsed.value.codexcli;
+  if (!isRecord(codexcli)) {
     return {
       status: "invalid",
-      reason: "The permission policy is not a TOML table.",
+      reason: "The permission policy must declare a codexcli section.",
       revision
     };
   }
-  const { policy, reason } = policyFromParsed(parsed);
+  const { policy, reason } = policyFromCodexSection(codexcli);
   if (reason !== undefined) {
     return { status: "invalid", reason, revision };
   }
@@ -339,234 +262,78 @@ export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
 }
 
 /**
- * A line of the portable source, and the section it belongs to.
- *
- * The section is what makes a write safe: `network_access` appears in the
- * portable source under `sandbox_workspace_write`, and a key of the same name
- * in another table is a different key.
- */
-/** A table header, or an array-of-tables header. */
-const SECTION_HEADER_PATTERN = /^\s*\[\[?([^\]]+)\]?\]\s*$/u;
-/** A key's own line. */
-const ENTRY_PATTERN = /^\s*([A-Za-z0-9_-]+)\s*=/u;
-
-/**
- * A table in the source: the lines that belong to one header.
- *
- * The root table is the lines before the first header, and a header ends the
- * table above it. An array-of-tables header ends the table above it too: the
- * entries under one belong to that array, not to the table before it.
- */
-interface SourceBlock {
-  /** The table's name, or null for the root table. */
-  readonly name: string | null;
-  /** An array-of-tables header, whose entries are not the table's keys. */
-  readonly isArray: boolean;
-  /** The first line of the table's entries. */
-  readonly start: number;
-  /** The line after the table's last entry. */
-  readonly end: number;
-}
-
-/** The source's tables, in the order they appear. */
-function sourceBlocks(lines: readonly string[]): SourceBlock[] {
-  const blocks: SourceBlock[] = [];
-  let current: { name: string | null; isArray: boolean; start: number } = {
-    name: null,
-    isArray: false,
-    start: 0
-  };
-  for (const [index, line] of lines.entries()) {
-    const header = SECTION_HEADER_PATTERN.exec(line ?? "");
-    if (!header) continue;
-    const name = header[1];
-    if (name === undefined) continue;
-    blocks.push({ ...current, end: index });
-    current = {
-      name: name.trim(),
-      isArray: header[0].includes("[["),
-      start: index + 1
+Read the applied permission policy from `$CODEX_HOME/config.toml`.
+*/
+export function readAppliedPermissionPolicyFile(
+  file: string
+): PermissionPolicyRead {
+  const read = readRegularPolicyFile(file);
+  if (!read.ok) return read.result;
+  const revision = permissionPolicyRevision(read.content);
+  let parsed: unknown;
+  try {
+    parsed = parseToml(read.content);
+  } catch (error) {
+    return {
+      status: "invalid",
+      reason:
+        error instanceof Error
+          ? `The applied permission policy is not valid TOML: ${error.message}`
+          : "The applied permission policy is not valid TOML.",
+      revision
     };
   }
-  blocks.push({ ...current, end: lines.length });
-  return blocks;
-}
-
-/**
- * How much a line opens or closes.
- *
- * Brackets inside a string are not brackets: a value like
- * `exporter = { otlp-http = { endpoint = "http://x" } }` carries a colon and
- * slashes that mean nothing to the counter.
- */
-function bracketDepth(text: string): number {
-  let depth = 0;
-  let inString = false;
-  for (const character of text) {
-    if (inString) {
-      if (character === "\\") continue;
-      if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-      continue;
-    }
-    if (character === "[" || character === "{") depth += 1;
-    else if (character === "]" || character === "}") depth -= 1;
+  if (!isRecord(parsed)) {
+    return {
+      status: "invalid",
+      reason: "The applied permission policy is not a TOML table.",
+      revision
+    };
   }
-  return depth;
-}
-
-/**
- * The lines an entry occupies.
- *
- * A value may span lines -- an array of tools, a table written across lines --
- * so an entry ends where its brackets and braces balance. Replacing only the
- * first line of such an entry would leave the rest of the old value behind.
- */
-function entryExtent(lines: readonly string[], start: number): number {
-  let depth = 0;
-  for (let index = start; index < lines.length; index += 1) {
-    depth += bracketDepth(lines[index] ?? "");
-    if (depth <= 0) return index + 1;
+  const { policy, reason } = policyFromCodexSection(parsed);
+  if (reason !== undefined) {
+    return { status: "invalid", reason, revision };
   }
-  return lines.length;
+  return { status: "valid", policy, revision };
 }
 
-/** A TOML string literal, escaped. */
-function tomlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`)}"`;
-}
-
-/** How a policy value is written into the source. */
-function tomlValue(key: PermissionPolicyKey, value: unknown): string {
+function validateKeyValue(
+  key: PermissionPolicyKey,
+  value: unknown
+): ApprovalPolicy | string | boolean {
   if (key === "approvalPolicy") {
-    if (!approvalPolicyFromConfig(value)) {
+    const parsed = approvalPolicyFromConfig(value);
+    if (parsed === null) {
       throw new PermissionPolicyValidationError(
-        "approval_policy must be one of never, always or on-demand"
+        "codexcli.approval_policy must be one of never or on-request"
       );
     }
-    return tomlString(String(value));
-  }
-  if (key === "sandboxMode") {
-    if (sandboxModeFromConfig(value) === null) {
-      throw new PermissionPolicyValidationError(
-        "sandbox_mode must be one of read-only, workspace-write or danger-full-access"
-      );
-    }
-    return tomlString(sandboxModeToConfig(value as SandboxMode));
+    return parsed;
   }
   if (key === "approvalsReviewer") {
     if (typeof value !== "string" || value.trim() === "") {
       throw new PermissionPolicyValidationError(
-        "approvals_reviewer must be a non-empty string"
+        "codexcli.approvals_reviewer must be a non-empty string"
       );
     }
-    return tomlString(value);
+    return value;
   }
   if (typeof value !== "boolean") {
     throw new PermissionPolicyValidationError(
-      `${POLICY_KEYS[key].key} must be a boolean`
+      "codexcli.tools.web_search must be a boolean"
     );
   }
-  return value ? "true" : "false";
+  return value;
 }
 
 /**
- * The table a policy key lives in.
- *
- * The root table holds the keys that are not inside one, and a key that
- * belongs to a table is looked up in that table only: `network_access` in
- * another table is a different key.
- */
-function policyBlock(
-  blocks: readonly SourceBlock[],
-  section: string | null
-): SourceBlock | undefined {
-  return section === null
-    ? blocks.find((candidate) => candidate.name === null)
-    : blocks.find(
-        (candidate) => candidate.name === section && !candidate.isArray
-      );
-}
+Change the permission policy in `.rulesync/permissions.jsonc`.
 
-/** The line the key's own entry starts on, or -1 when the table has none. */
-function findEntryStart(
-  lines: readonly string[],
-  block: SourceBlock,
-  name: string
-): number {
-  for (let index = block.start; index < block.end; index += 1) {
-    const match = ENTRY_PATTERN.exec(lines[index] ?? "");
-    if (!match || match[1] !== name) continue;
-    return index;
-  }
-  return -1;
-}
-
-/**
- * The line a key that the table does not carry is added at.
- *
- * It goes after the table's last entry, so it lands inside the table rather
- * than after the table's trailing comments -- a comment explains what follows
- * it, and a key inserted between the two would detach it from the thing it
- * explains.
- */
-function insertPosition(lines: readonly string[], block: SourceBlock): number {
-  for (let index = block.end - 1; index >= block.start; index -= 1) {
-    if (!ENTRY_PATTERN.test(lines[index] ?? "")) continue;
-    return index + 1;
-  }
-  return block.start;
-}
-
-/**
- * The source with one policy key set.
- *
- * The edit is made on the text rather than by re-serialising the parsed
- * document, because the portable source is mostly comments: they are the
- * explanation of what each key means, and a serializer would drop every one of
- * them. Only the key's own lines change; everything else is copied byte for
- * byte.
- */
-function setPolicyKey(
-  content: string,
-  key: PermissionPolicyKey,
-  value: unknown
-): string {
-  const { key: name, section } = POLICY_KEYS[key];
-  const literal = tomlValue(key, value);
-  const lines = content.split("\n");
-  const block = policyBlock(sourceBlocks(lines), section);
-  if (!block) {
-    throw new PermissionPolicyValidationError(
-      `The permission policy has no ${section ?? "root"} table to change ${name} in.`
-    );
-  }
-
-  const entryStart = findEntryStart(lines, block, name);
-  const at = entryStart >= 0 ? entryStart : insertPosition(lines, block);
-  const end = entryStart >= 0 ? entryExtent(lines, entryStart) : at;
-  return [
-    ...lines.slice(0, at),
-    `${name} = ${literal}`,
-    ...lines.slice(end)
-  ].join("\n");
-}
-
-/**
- * Change the permission policy in the portable source.
- *
- * The write is a compare-and-swap on the file's revision, so a change decided
- * on a policy file that has since moved is refused rather than applied over
- * the newer one. The values are validated before the file is touched, and the
- * result is parsed again before it is written, so a source that would not
- * parse is never written.
- */
+Uses compare-and-swap on the file's sha256 revision and edits via `jsonc-parser`
+so existing comments and formatting outside the changed values survive.
+*/
 export function updatePermissionPolicy(input: {
   readonly file: string;
-  /** The policy file's own revision, so a stale read cannot overwrite a newer one. */
   readonly expectedRevision: string;
   readonly update: PermissionPolicyUpdate;
 }): PermissionPolicyWrite {
@@ -579,7 +346,7 @@ export function updatePermissionPolicy(input: {
     );
   }
   for (const [key] of keys) {
-    if (!(key in POLICY_KEYS)) {
+    if (!Object.hasOwn(POLICY_KEYS, key)) {
       throw new PermissionPolicyValidationError(
         `Unknown permission policy setting: ${key}`
       );
@@ -614,18 +381,13 @@ export function updatePermissionPolicy(input: {
   const current = readPermissionPolicyFile(input.file);
   const currentPolicy = current.status === "valid" ? current.policy : null;
 
-  // Only the settings that differ are written. A write carries the whole
-  // policy, because the control that made it shows the whole policy, and
-  // rewriting a key that already says what the operator chose would change
-  // the file's bytes for no reason -- and a file whose bytes moved for no
-  // reason refuses every other operator's write.
   const changed = keys.filter(([key]) => {
     if (currentPolicy === null) return true;
     const value = input.update[key as PermissionPolicyKey];
     if (value === undefined) return false;
     return currentPolicy[key as PermissionPolicyKey] !== value;
   });
-  if (changed.length === 0 && currentPolicy !== null) {
+  if (currentPolicy !== null && changed.length === 0) {
     return {
       revision: permissionPolicyRevision(content),
       policy: currentPolicy,
@@ -634,28 +396,22 @@ export function updatePermissionPolicy(input: {
   }
 
   let next = content;
-  for (const [key, value] of changed) {
-    next = setPolicyKey(next, key as PermissionPolicyKey, value);
+  for (const [key, rawValue] of changed) {
+    const typedKey = key as PermissionPolicyKey;
+    const validated = validateKeyValue(typedKey, rawValue);
+    const edits = modify(next, [...POLICY_KEYS[typedKey]], validated, {
+      formattingOptions: JSONC_FORMATTING
+    });
+    next = applyEdits(next, edits);
   }
 
-  // The new source is parsed before it is written, so a source that would not
-  // parse is never written.
-  let parsed: unknown;
-  try {
-    parsed = parseToml(next);
-  } catch (error) {
+  const parsed = parseJsoncObject(next);
+  if (parsed.value === null || !isRecord(parsed.value.codexcli)) {
     throw new PermissionPolicyValidationError(
-      error instanceof Error
-        ? `The permission policy change would not produce a valid source: ${error.message}`
-        : "The permission policy change would not produce a valid source."
+      "The permission policy change would not produce a valid codexcli section."
     );
   }
-  if (!isRecord(parsed)) {
-    throw new PermissionPolicyValidationError(
-      "The permission policy change would not produce a valid source."
-    );
-  }
-  const { policy, reason } = policyFromParsed(parsed);
+  const { policy, reason } = policyFromCodexSection(parsed.value.codexcli);
   if (reason !== undefined) {
     throw new PermissionPolicyValidationError(
       `The permission policy change would not produce a valid policy: ${reason}`
@@ -678,14 +434,6 @@ export function updatePermissionPolicy(input: {
   };
 }
 
-/**
- * Write through a temporary file and rename over the target, then confirm the
- * bytes landed.
- *
- * The rename is what makes this a replace rather than a truncate, so a reader
- * never observes half a policy file. The confirmation is separate because the
- * write reporting success is not evidence that it succeeded.
- */
 function persistPolicyFile(file: string, next: string): void {
   atomicWriteSync(file, next, { mode: 0o644 });
   const persisted = readFileSync(file, "utf8");

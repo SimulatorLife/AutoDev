@@ -7,21 +7,20 @@
 import {
   CODEX_SESSION_HEADER,
   contextHeaderValue,
-  SANDBOX_MODE_HEADER,
+  READ_ONLY_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
-import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { isReadOnlyRole } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
-export type BridgeSandboxMode = "read-only" | "workspace-write" | null;
-
-/** Read the bridge sandbox mode from a request's headers. */
-export function bridgeSandboxMode(
+/** Read whether the router flagged this turn read-only (`1`/`true` or `0`/`false`). */
+export function bridgeReadOnly(
   headers: Record<string, unknown> | null | undefined
-): BridgeSandboxMode {
-  const raw = contextHeaderValue(headers, SANDBOX_MODE_HEADER, {
+): boolean | null {
+  const raw = contextHeaderValue(headers, READ_ONLY_HEADER, {
     lowercase: true
   });
-  if (raw === "read-only" || raw === "workspace-write") return raw;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
   return null;
 }
 
@@ -29,16 +28,15 @@ export function bridgeSandboxMode(
  * Whether a bridged turn runs read-only.
  *
  * The header the router forwards is the authoritative wire signal: it says
- * which sandbox the turn was routed under. The role contract is the fallback
- * for a request that carries none, and it answers the same question from the
- * role's own declared sandbox.
+ * whether the turn was routed read-only. The role contract is the fallback
+ * for a request that carries none.
  */
 export function turnIsReadOnly(
-  sandboxMode: BridgeSandboxMode,
+  readOnlyHeader: boolean | null,
   agentRole: string | null
 ): boolean {
-  if (sandboxMode !== null) return sandboxMode === "read-only";
-  return roleSandboxMode(agentRole) === "read-only";
+  if (readOnlyHeader !== null) return readOnlyHeader;
+  return isReadOnlyRole(agentRole);
 }
 
 /** Read the orchestrator-propagated selected-skill context. */
@@ -60,7 +58,7 @@ export function bridgeSkillContext(
 export function readOnlySystemPromptInjection(
   headers: Record<string, unknown> | null | undefined
 ): string {
-  if (bridgeSandboxMode(headers) !== "read-only") return "";
+  if (bridgeReadOnly(headers) !== true) return "";
   return [
     "\n\n## Sandbox policy: READ-ONLY",
     "",

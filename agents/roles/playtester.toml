@@ -1,10 +1,10 @@
+# role-access: read-only
 name = "playtester"
 description = "Bounded game-playtesting executor; read-only for source code, no code/issue writes."
 nickname_candidates = ["PlaytestRunner", "GameplaySampler", "PlaytestExecutor"]
 
 model_provider = "local_model_router"
 model = "autodev/playtester"
-sandbox_mode = "read-only"
 
 developer_instructions = """
 {{AUTODEV_BASE_PROMPT}}

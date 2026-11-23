@@ -7,10 +7,7 @@ import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectFi
 import { TextField } from "../../components/forms/TextField.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { permissionPolicyDisabledReason } from "./configuration.ts";
-import {
-  PERMISSION_POLICY_MUTATION_PATH,
-  PERMISSIONS_PATH
-} from "./paths.ts";
+import { PERMISSION_POLICY_MUTATION_PATH, PERMISSIONS_PATH } from "./paths.ts";
 
 /**
  * The control that writes the canonical permission policy.
@@ -48,29 +45,12 @@ export interface PermissionPolicyFormProps {
 
 /** The names the route reads the form's fields by. */
 const APPROVAL_POLICY_FIELD = "approvalPolicy";
-const SANDBOX_MODE_FIELD = "sandboxMode";
 const APPROVALS_REVIEWER_FIELD = "approvalsReviewer";
-const NETWORK_ACCESS_FIELD = "networkAccess";
 const WEB_SEARCH_FIELD = "webSearch";
-
-/**
- * The sandbox modes the policy offers, in the product's own vocabulary.
- *
- * The modes are named the way the product names them, not the way the
- * canonical source names them: the source configures a session in
- * `danger-full-access`, and the operator reads that as the unsandboxed mode it
- * is.
- */
-const SANDBOX_MODE_OPTIONS = [
-  { value: "read-only", label: "Read-only" },
-  { value: "workspace-write", label: "Workspace write" },
-  { value: "unrestricted", label: "Unrestricted" }
-] as const;
 
 const APPROVAL_POLICY_OPTIONS = [
   { value: "never", label: "Never" },
-  { value: "always", label: "Always" },
-  { value: "on-demand", label: "On demand" }
+  { value: "on-request", label: "On request" }
 ] as const;
 
 /**
@@ -165,16 +145,6 @@ export function PermissionPolicyForm({
       ...(disabledReason === null ? {} : { disabledReason }),
       dataAttributes: { "data-permission-policy-approval-policy": "true" }
     }),
-    React.createElement(AutoSubmitSelectField, {
-      name: SANDBOX_MODE_FIELD,
-      id: "permission-policy-sandbox-mode",
-      label: "Default Sandbox",
-      options: observed ? [...SANDBOX_MODE_OPTIONS] : [NOT_OBSERVED_CHOICE],
-      defaultValue: policy?.sandboxMode ?? "",
-      disabled,
-      ...(disabledReason === null ? {} : { disabledReason }),
-      dataAttributes: { "data-permission-policy-sandbox-mode": "true" }
-    }),
     React.createElement(TextField, {
       name: APPROVALS_REVIEWER_FIELD,
       id: "permission-policy-approvals-reviewer",
@@ -184,22 +154,6 @@ export function PermissionPolicyForm({
       dataAttributes: {
         "data-permission-policy-approvals-reviewer": "true"
       }
-    }),
-    React.createElement(AutoSubmitSelectField, {
-      name: NETWORK_ACCESS_FIELD,
-      id: "permission-policy-network-access",
-      label: "Network Access",
-      options: observed
-        ? [
-            { value: "true", label: "Allowed" },
-            { value: "false", label: "Blocked" }
-          ]
-        : [NOT_OBSERVED_CHOICE],
-      defaultValue:
-        policy === null ? "" : policy.networkAccess ? "true" : "false",
-      disabled,
-      ...(disabledReason === null ? {} : { disabledReason }),
-      dataAttributes: { "data-permission-policy-network-access": "true" }
     }),
     React.createElement(AutoSubmitSelectField, {
       name: WEB_SEARCH_FIELD,

@@ -75,6 +75,10 @@ function fixture(declaration: string = DECLARATION): {
     "utf8"
   );
   cpSync(
+    path.join(REPOSITORY_ROOT, ".rulesync", "permissions.jsonc"),
+    path.join(repositoryRoot, ".rulesync", "permissions.jsonc")
+  );
+  cpSync(
     path.join(REPOSITORY_ROOT, "config"),
     path.join(repositoryRoot, "config"),
     { recursive: true }

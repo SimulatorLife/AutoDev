@@ -1,6 +1,6 @@
 /** Authenticated router-to-agent bridge context header names. */
 export const AGENT_ROLE_HEADER = "x-autodev-agent-role";
-export const SANDBOX_MODE_HEADER = "x-autodev-sandbox-mode";
+export const READ_ONLY_HEADER = "x-autodev-read-only";
 
 /**
  * Optional router-to-bridge context carrying the selected skill body for

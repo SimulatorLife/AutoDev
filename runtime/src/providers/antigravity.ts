@@ -55,7 +55,7 @@ import {
   contextHeaderValue,
   isProviderHopHeader,
   readContextHeader,
-  SANDBOX_MODE_HEADER
+  READ_ONLY_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
   COMPACTION_SYSTEM_PROMPT,
@@ -165,7 +165,7 @@ const EFFORTS = new Set(["low", "medium", "high"]);
 // wins and --effort is omitted for models that already carry one.
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 const SAFE_PROVIDER_TOOL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-const READ_URL_PERMISSION_PATTERN = /^read_url\(/i;
+const READ_URL_PERMISSION_PATTERN = /^read_url(?:\(|$)/i;
 
 // The agy CLI's `stream-json` step updates are JSON-shaped but are not a
 // formally specified schema: field names and nesting have moved across CLI
@@ -2098,7 +2098,7 @@ interface IsolatedHomeOptions {
   cwd?: string;
   requestId?: string | null;
   workspaceKey?: unknown;
-  sandboxMode?: "read-only" | "workspace-write" | null;
+  readOnly?: boolean | null;
   isolatedHome?: string;
   /**
    * The turn agy's Codex tools MCP server belongs to, or null to leave that
@@ -2417,7 +2417,7 @@ function buildInvocationMcpConfig(
   mcpServers[MCP_SERVER_FILESYSTEM] = {
     ...filesystemMcpServer({
       workspace: options.cwd,
-      readOnly: turnIsReadOnly(options.sandboxMode ?? null, agentRole),
+      readOnly: turnIsReadOnly(options.readOnly ?? null, agentRole),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
       userHome: options.originalHome ?? process.env.HOME ?? homedir()
     })
@@ -2666,7 +2666,7 @@ function buildInvocationSettings(
 
   const mcpGrants = invocationMcpPermissionGrants(contract, mcpConfig);
 
-  if (turnIsReadOnly(options?.sandboxMode ?? null, agentRole))
+  if (turnIsReadOnly(options?.readOnly ?? null, agentRole))
     return buildReadOnlyInvocationSettings({
       userSettings,
       userPermissions,
@@ -2862,14 +2862,14 @@ function agyArgs(
   model: string,
   effort: string,
   agentRole: string | null = null,
-  sandboxMode: "read-only" | "workspace-write" | null = null,
+  readOnlyHeader: boolean | null = null,
   invocation: AgyInvocation | null = null
 ): string[] {
-  // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+  // The router forwards read-only status via x-autodev-read-only. We
   // trust that header over the role's own declaration because the header is
   // the authoritative wire signal for this turn, and falls back to the
   // contract for bridges that have not been updated to send it yet.
-  const readOnly = turnIsReadOnly(sandboxMode, agentRole);
+  const readOnly = turnIsReadOnly(readOnlyHeader, agentRole);
   // Headless print mode (-p) cannot prompt interactively for tool approvals.
   // AGY_SKIP_PERMISSIONS ("true" by default) auto-approves tool permission
   // requests so the turn does not crash on unpromptable tool confirmations.
@@ -2931,11 +2931,13 @@ function agyInvocationArgs(invocation: AgyInvocation | null): string[] {
 function buildAgyPrompt(
   prompt: string,
   agentRole: string | null,
-  sandboxMode: "read-only" | "workspace-write" | null,
+  readOnlyHeader: boolean | null,
   skillContext: string | null
 ): string {
   const preamble = readOnlySystemPromptInjection(
-    sandboxMode === null ? null : { "x-autodev-sandbox-mode": sandboxMode }
+    readOnlyHeader === null
+      ? null
+      : { [READ_ONLY_HEADER]: readOnlyHeader ? "1" : "0" }
   );
   const skillPreamble = skillContext
     ? `
@@ -2961,7 +2963,7 @@ function runAgy(
   cwd: string,
   onEvent: OnAgyEvent | null,
   agentRole: string | null = null,
-  sandboxMode: "read-only" | "workspace-write" | null = null,
+  readOnlyHeader: boolean | null = null,
   skillContext: string | null = null,
   workspaceKey: unknown = null,
   toolTurnId: string | null = null,
@@ -2975,7 +2977,7 @@ function runAgy(
       cwd,
       requestId,
       workspaceKey,
-      sandboxMode,
+      readOnly: readOnlyHeader,
       toolTurnId,
       attachments,
       compaction
@@ -3010,12 +3012,19 @@ function runAgy(
         : buildAgyPrompt(
             `${prompt}${agyAttachmentPrompt(isolatedState.attachments)}`,
             agentRole,
-            sandboxMode,
+            readOnlyHeader,
             skillContext
           );
       child = spawn(
         CLI,
-        agyArgs(finalPrompt, model, effort, agentRole, sandboxMode, invocation),
+        agyArgs(
+          finalPrompt,
+          model,
+          effort,
+          agentRole,
+          readOnlyHeader,
+          invocation
+        ),
         {
           cwd,
           env: withAutoDevOtelResourceContext(
@@ -3345,19 +3354,19 @@ async function handle(
 }
 
 /** A request header a sibling module has not already decoded for this bridge. */
-function headerSandboxMode(
-  headers: Record<string, unknown>
-): "read-only" | "workspace-write" | null {
-  const single = readContextHeader(headers, SANDBOX_MODE_HEADER);
-  return single === "read-only" || single === "workspace-write" ? single : null;
+function headerReadOnly(headers: Record<string, unknown>): boolean | null {
+  const raw = readContextHeader(headers, READ_ONLY_HEADER);
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") return true;
+  if (normalized === "0" || normalized === "false") return false;
+  return null;
 }
 
-function resolveSandboxMode(
-  headers: Record<string, unknown>
-): "read-only" | "workspace-write" | null {
+function resolveReadOnly(headers: Record<string, unknown>): boolean | null {
   return readOnlySystemPromptInjection(headers) === ""
-    ? headerSandboxMode(headers)
-    : "read-only";
+    ? headerReadOnly(headers)
+    : true;
 }
 
 function reportTurnHeartbeat(agentEvents: AgentReporter | null): void {
@@ -3429,7 +3438,7 @@ interface ResponsesTurn {
   effort: string;
   agentRole: string | null;
   workspaceKey: unknown;
-  sandboxMode: "read-only" | "workspace-write" | null;
+  readOnly: boolean | null;
   skillContext: string | null;
   agentEvents: AgentReporter | null;
   requestId: string | null;
@@ -3525,7 +3534,7 @@ function prepareResponsesTurn(
   const effort = resolveEffort(payload);
   const agentRole = resolveAgentRole(request.headers);
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
-  const sandboxMode = resolveSandboxMode(request.headers);
+  const readOnly = resolveReadOnly(request.headers);
   const agentEvents = resolveAgentEventReporter(request.headers);
   logInboundRequest(payload, request.headers);
   const requestId = contextHeaderValue(request.headers, REQUEST_ID_HEADER);
@@ -3568,7 +3577,7 @@ function prepareResponsesTurn(
     effort,
     agentRole,
     workspaceKey,
-    sandboxMode,
+    readOnly,
     skillContext,
     agentEvents,
     requestId,
@@ -3609,7 +3618,7 @@ function runTurnAgy(
     turn.cwd,
     onEvent,
     turn.agentRole,
-    turn.sandboxMode,
+    turn.readOnly,
     turn.skillContext,
     turn.workspaceKey,
     codexToolsTurnId(turn),

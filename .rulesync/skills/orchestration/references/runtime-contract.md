@@ -77,6 +77,7 @@ rather than closing it.
 
 Completed and parked child sessions occupy concurrency slots in the session
 thread pool. Close parked child handles with `close_agent` when:
+
 1. the assignment is fully complete and no follow-up tasks will occur, or
 2. transitioning to a new wave requiring different roles while at the session's
    concurrency limit (e.g., closing unneeded parked `explorer` handles whose
@@ -90,6 +91,7 @@ parked/terminal children owned by this parent. Never evict, terminate, or
 interrupt active (running) children, and never touch foreign children owned
 by other parents. Never invoke `close_agent` inside a wait or spawn script on
 children that may still be reused or are still running.
+
 ### Terminal result handling and partial results
 
 Treat `agent_id` as an opaque handle and pass the complete value from
@@ -110,7 +112,7 @@ be closed, ensure any useful partial findings produced by the child are
 collected and preserved rather than discarded.
 
 A new user request is a new assignment. Once a child's result has been
-integrated and no follow-up for the *current* request will reuse it, close it
+integrated and no follow-up for the _current_ request will reuse it, close it
 with `close_agent` before reporting: a parked handle from a finished request
 holds a concurrency slot that the next request needs.
 
@@ -120,29 +122,12 @@ work in progress.
 
 ## Commits
 
-The root owns commits; delegated roles never stage or commit. Codex's
-workspace-write sandbox keeps `.git` read-only, and AutoDev's command rules
-(`agents/rules/default.rules`) run exactly `git add`, `git commit`, `git mv`,
-`git rm`, `git restore --staged`, `git switch -c`, `git worktree add` and the
-read-only inspection commands (`git status`, `git diff`, `git rev-parse`,
-`git ls-files`, `git branch`) outside it. Other agents edit the same checkout
-concurrently, so:
+The root owns commits; delegated roles never stage or commit. Codex command rules projected from `.rulesync/permissions.jsonc` (`$CODEX_HOME/rules/rulesync.rules`) block destructive git operations (`git checkout`, `git reset`, `git stash`, `git clean`, `git rebase`, `git restore .`, `git branch -D`, `git push -f`/`--force`) and prompt before `git commit --amend`. Other agents edit the same checkout concurrently, so:
 
 - stage only the paths this task changed (`git add <path>...`), never
   `git add -A` or `git add .`
 - make a new commit; never `--amend` (the rules require approval for it)
-- run **every** `.git`-writing command (`git add`, `git commit`, `git mv`,
-  `git rm`, `git restore --staged`, `git switch -c`, `git worktree add`) as its
-  own standalone command with `workdir` set. The exemption is granted per
-  command, and a chain is judged as a whole: it runs outside the sandbox only
-  when **every** part of it matches a rule. `git add <paths> && git status` is
-  therefore fine, but `git add <paths> && <anything the rules do not list>`
-  puts the whole chain back inside the `workspace-write` sandbox, where
-  `.git/index.lock` fails with `Operation not permitted`. A shell construct
-  breaks the chain the same way, even around a command that is allowed on its
-  own: `cd <dir> && git add <path>`, `git add <path> 2>&1`,
-  `git add <path> | cat` and `for f in <paths>; do git add "$f"; done` all
-  lose the write access.
+- keep commit commands standalone with `workdir` set so concurrent work in the checkout stays clean.
 - do not pass an explicit `shell` to `exec_command`. Codex resolves the shell
   by **name** through `PATH`, ignoring the directory in the path you give it,
   and on an Apple Silicon machine `bash` is often a Homebrew x86_64 build that
@@ -152,6 +137,7 @@ concurrently, so:
 - do not probe the sandbox with `touch .git/<file>`. That command matches no
   rule, so it is sandboxed by design; it proves nothing about staging. The
   only probe is a real `git add` of a path you changed.
+
 ## Workspace and role resolution
 
 Keep delegated work in the parent-selected repository or worktree. Do not let

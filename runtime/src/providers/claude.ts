@@ -28,7 +28,7 @@ import {
 import { createInterface } from "node:readline";
 
 import {
-  bridgeSandboxMode,
+  bridgeReadOnly,
   bridgeSkillContext,
   readOnlySystemPromptInjection,
   resolveAgentRole,
@@ -1378,7 +1378,7 @@ function startResponsesTurn(
       : filesystemMcpServer({
           workspace: cwd,
           readOnly: turnIsReadOnly(
-            bridgeSandboxMode(request.headers as Record<string, unknown>),
+            bridgeReadOnly(request.headers as Record<string, unknown>),
             agentRole
           )
         });

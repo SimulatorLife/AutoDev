@@ -27,11 +27,9 @@ const PORTABLE_PATH = fileURLToPath(
 
 const EXPECTED_SCHEMA = "autodev-portable-autodev-config-v1";
 const EXPECTED_SECTIONS = Object.freeze([
-  "sandbox_workspace_write",
   "otel",
   "analytics",
   "features",
-  "tools",
   "skills",
   "shell_environment_policy",
   "plugins"
@@ -163,7 +161,7 @@ test("portable Codex subprocess policy filters credential-bearing environment na
   assert.equal(policy.filters?.["*PASSWORD*"], "exclude");
 });
 
-test("eight required sections are present and shaped", async () => {
+test("six required sections are present and shaped", async () => {
   const fixture = await readFixture();
   const portable = loadPortable(PORTABLE_PATH);
 

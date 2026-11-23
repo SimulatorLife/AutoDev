@@ -225,14 +225,7 @@ export function permissionsFromControlApi(
   )
     .map(([role, entry]) => ({
       role: role as RoleCapabilityMatrix["role"],
-      // The mode is the fact, and the read-only flag is derived from it in one
-      // place rather than published beside it.
-      readOnly: entry.sandboxMode === "read-only",
-      sandboxMode: entry.sandboxMode,
-      // The mode the role asked for, kept beside the effective one so the
-      // matrix can show that a role's declaration was narrowed by the
-      // session's sandbox rather than silently reporting only the result.
-      declaredSandboxMode: entry.declaredSandboxMode,
+      readOnly: entry.readOnly,
       allowedMcpServers: entry.mcp,
       allowedMcpTools: entry.mcpTools,
       allowedSkills: entry.skills

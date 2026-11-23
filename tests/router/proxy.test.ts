@@ -120,7 +120,7 @@ test("downstream headers and payload candidates preserve router-owned boundaries
   }
 });
 
-test("downstream headers propagate the role sandbox mode for non-orchestrator roles", () => {
+test("downstream headers propagate the role read-only flag for non-orchestrator roles", () => {
   const previousKey = process.env.TEST_PROVIDER_KEY;
   process.env.TEST_PROVIDER_KEY = "sk-test-provider";
   try {
@@ -134,7 +134,7 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
       "req-2",
       { key: "session-2", scope: "identified" }
     );
-    assert.equal(explorerHeaders["x-autodev-sandbox-mode"], "read-only");
+    assert.equal(explorerHeaders["x-autodev-read-only"], "1");
 
     const workerHeaders = downstreamHeaders(
       claudeRoute,
@@ -144,7 +144,7 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
       "req-3",
       { key: "session-3", scope: "identified" }
     );
-    assert.equal(workerHeaders["x-autodev-sandbox-mode"], "workspace-write");
+    assert.equal(workerHeaders["x-autodev-read-only"], "0");
 
     const orchestratorHeaders = downstreamHeaders(
       claudeRoute,
@@ -155,9 +155,9 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
       { key: "session-4", scope: "identified" }
     );
     assert.equal(
-      orchestratorHeaders["x-autodev-sandbox-mode"],
+      orchestratorHeaders["x-autodev-read-only"],
       undefined,
-      "orchestrator must not advertise a sandbox mode"
+      "orchestrator must not advertise a child read-only flag"
     );
 
     assert.deepEqual(

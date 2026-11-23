@@ -85,10 +85,12 @@ const FORBIDDEN_SERVERS = [
   "codex_app"
 ];
 
-test("playtester.toml is sandboxed read-only, leaf-only, and run/read-scoped", () => {
+test("playtester.toml is read-only, leaf-only, and run/read-scoped", () => {
   const role = readToml("agents/roles/playtester.toml");
+  const raw = readText("agents/roles/playtester.toml");
   assert.equal(role.name, "playtester");
-  assert.equal(role.sandbox_mode, "read-only");
+  assert.equal(role.sandbox_mode, undefined);
+  assert.match(raw, /^# role-access: read-only$/mu);
   assert.equal(typeof role.model, "string");
   assert.match(role.model as string, /^autodev\//);
 
@@ -136,8 +138,10 @@ test("playtester.toml is sandboxed read-only, leaf-only, and run/read-scoped", (
 
 test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evidence-scoped access", () => {
   const role = readToml("agents/roles/playtest-analyst.toml");
+  const raw = readText("agents/roles/playtest-analyst.toml");
   assert.equal(role.name, "playtest-analyst");
-  assert.equal(role.sandbox_mode, "read-only");
+  assert.equal(role.sandbox_mode, undefined);
+  assert.match(raw, /^# role-access: read-only$/mu);
   // Reuses the existing reasoning-capable smart model route verbatim; this
   // role never gets its own fixed model tier.
   assert.equal(role.model, "autodev/smart");

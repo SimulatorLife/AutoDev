@@ -3,7 +3,7 @@
   "roles": {
     "browser-tester": {
       "kind": "leaf",
-      "sandboxMode": "read-only",
+      "readOnly": true,
       "mcp": [
         "filesystem",
         "playwright"
@@ -53,7 +53,7 @@
     },
     "default": {
       "kind": "leaf",
-      "sandboxMode": null,
+      "readOnly": false,
       "mcp": [
         "filesystem",
         "lsp",
@@ -106,7 +106,7 @@
     },
     "docs-researcher": {
       "kind": "leaf",
-      "sandboxMode": "read-only",
+      "readOnly": true,
       "mcp": [
         "filesystem",
         "openaiDeveloperDocs",
@@ -124,7 +124,7 @@
     },
     "explorer": {
       "kind": "leaf",
-      "sandboxMode": "read-only",
+      "readOnly": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -155,8 +155,7 @@
     },
     "orchestrator": {
       "kind": "orchestrator",
-      "allowProviderHop": true,
-      "sandboxMode": "unrestricted",
+      "readOnly": false,
       "mcp": [
         "filesystem",
         "lsp",
@@ -192,11 +191,12 @@
         "search": true,
         "fetch": true,
         "optionalMcp": []
-      }
+      },
+      "allowProviderHop": true
     },
     "playtest-analyst": {
       "kind": "leaf",
-      "sandboxMode": "read-only",
+      "readOnly": true,
       "mcp": [
         "playtest"
       ],
@@ -240,7 +240,7 @@
     },
     "playtester": {
       "kind": "leaf",
-      "sandboxMode": "read-only",
+      "readOnly": true,
       "mcp": [
         "playtest"
       ],
@@ -295,7 +295,7 @@
     },
     "smart": {
       "kind": "leaf",
-      "sandboxMode": "unrestricted",
+      "readOnly": false,
       "mcp": [
         "filesystem",
         "lsp",
@@ -361,7 +361,7 @@
     },
     "validator": {
       "kind": "leaf",
-      "sandboxMode": "workspace-write",
+      "readOnly": false,
       "mcp": [
         "filesystem",
         "lsp",
@@ -393,7 +393,7 @@
     },
     "worker": {
       "kind": "leaf",
-      "sandboxMode": "unrestricted",
+      "readOnly": false,
       "mcp": [
         "filesystem",
         "lsp",

@@ -20,8 +20,8 @@ function approvalPolicyControl(page: Page): Locator {
   return page.locator("[data-permission-policy-approval-policy]");
 }
 
-function networkAccessControl(page: Page): Locator {
-  return page.locator("[data-permission-policy-network-access]");
+function webSearchControl(page: Page): Locator {
+  return page.locator("[data-permission-policy-web-search]");
 }
 
 /**
@@ -45,9 +45,7 @@ async function resetPermissionPolicy(
  */
 async function readPermissionPolicy(request: APIRequestContext): Promise<{
   approvalPolicy: string;
-  sandboxMode: string;
   approvalsReviewer: string;
-  networkAccess: boolean;
   webSearch: boolean;
   revision: string;
 }> {
@@ -57,9 +55,7 @@ async function readPermissionPolicy(request: APIRequestContext): Promise<{
     revision: string;
     policy: {
       approvalPolicy: string;
-      sandboxMode: string;
       approvalsReviewer: string;
-      networkAccess: boolean;
       webSearch: boolean;
     };
   };
@@ -85,24 +81,23 @@ test("the policy control writes against the revision it loaded", async ({
   await page.goto(PERMISSIONS_URL);
 
   const approvalPolicy = approvalPolicyControl(page);
-  await expect(approvalPolicy).toHaveValue("on-demand");
-  await expect(networkAccessControl(page)).toHaveValue("false");
+  await expect(approvalPolicy).toHaveValue("on-request");
+  await expect(webSearchControl(page)).toHaveValue("false");
 
   // The write is a form submission, so the page that comes back is the
   // Runtime-confirmed value rather than an optimistic one.
-  await approvalPolicy.selectOption("always");
+  await approvalPolicy.selectOption("never");
 
   // The write is the Runtime's, and it lands after the browser has already
   // changed the select, so the state is polled rather than read once.
   await expect
     .poll(async () => (await readPermissionPolicy(request)).approvalPolicy)
-    .toBe("always");
+    .toBe("never");
   const held = await readPermissionPolicy(request);
   // The revision moved with the policy, so the next write has to carry the
   // new one.
   expect(held.revision).not.toBe("9".repeat(64));
   // The settings the write did not name are the ones the policy already had.
-  expect(held.sandboxMode).toBe("workspace-write");
   expect(held.approvalsReviewer).toBe("operator");
 });
 
@@ -123,7 +118,7 @@ test("a stale policy write is refused rather than overwriting somebody else's ch
   );
   expect(moved.ok()).toBe(true);
 
-  await approvalPolicyControl(page).selectOption("always");
+  await approvalPolicyControl(page).selectOption("never");
 
   // The refusal says what happened: the canonical policy moved under the
   // edit, so the edit was not saved and it is still here.
@@ -139,7 +134,7 @@ test("a stale policy write is refused rather than overwriting somebody else's ch
   expect(after.revision).not.toBe(before.revision);
 });
 
-test("the role matrix names the sandbox each role runs in, and the one it declared", async ({
+test("the role matrix names each role's access level", async ({
   page,
   request
 }) => {
@@ -147,26 +142,8 @@ test("the role matrix names the sandbox each role runs in, and the one it declar
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(PERMISSIONS_URL);
 
-  // The matrix shows the sandbox a role actually runs in: the stricter of the
-  // mode it declared and the mode the session allows. The fixture's worker
-  // declares `read-only` and the session runs `workspace-write`, so it runs
-  // read-only.
-  const worker = page.locator('[data-permission-mode="read-only"]');
-  await expect(worker).toHaveCount(1);
-  // The orchestrator declares `unrestricted`, but a role may narrow the
-  // sandbox it runs in and never widen it, so it runs in the session's
-  // sandbox: two roles run workspace-write, and one of them asked for more.
-  const workspaceWrite = page.locator(
-    '[data-permission-mode="workspace-write"]'
-  );
-  await expect(workspaceWrite).toHaveCount(2);
-  // The declaration is published beside the effective mode, so the narrowing
-  // is visible rather than folded away.
-  const declaredUnrestricted = page.locator(
-    '[data-permission-declared-mode="unrestricted"]'
-  );
-  await expect(declaredUnrestricted).toHaveCount(1);
-  // And the row that was narrowed says so.
-  const narrowed = page.locator('[data-permission-narrowed="true"]');
-  await expect(narrowed).toHaveCount(1);
+  const readOnlyRoles = page.locator('[data-permission-access="read-only"]');
+  await expect(readOnlyRoles).toHaveCount(1);
+  const readWriteRoles = page.locator('[data-permission-access="read-write"]');
+  await expect(readWriteRoles).toHaveCount(2);
 });

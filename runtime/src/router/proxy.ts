@@ -39,7 +39,7 @@ import {
   AGENT_ROLE_HEADER,
   CODEX_SESSION_HEADER,
   PROVIDER_HOP_HEADER,
-  SANDBOX_MODE_HEADER,
+  READ_ONLY_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import {
@@ -53,8 +53,8 @@ import {
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { elidePriorTurnsForNativePayload } from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 import {
+  isReadOnlyRole,
   providerInjectsRoleMcp,
-  resolveSandboxMode,
   roleAllowsProviderHop,
   roleScopedMcp
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -629,8 +629,7 @@ export function downstreamHeaders(
     headers[FORWARDED_REQUEST_HEADERS[0]!] = turnMetadataHeader;
   if (agentRole) headers[AGENT_ROLE_HEADER] = agentRole;
   if (agentRole && agentRole !== ORCHESTRATOR_AGENT_ROLE) {
-    const mode = resolveSandboxMode(agentRole);
-    if (mode) headers[SANDBOX_MODE_HEADER] = mode;
+    headers[READ_ONLY_HEADER] = isReadOnlyRole(agentRole) ? "1" : "0";
   }
   if (session?.key && route.provider !== "codex") {
     headers[SESSION_ID_HEADER] = session.key;

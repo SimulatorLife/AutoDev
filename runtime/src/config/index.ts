@@ -5,4 +5,3 @@ export * from "./render-agent-configs.ts";
 export * from "./render-bridge-mcp-catalogue.ts";
 export * from "./render-execution-contract.ts";
 export * from "./render-model-catalog.ts";
-export * from "./role-sandbox-mode.ts";

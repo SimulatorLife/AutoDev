@@ -40,7 +40,7 @@ import {
   type MemorySessionOutcomeCohortPage,
   type MemoryStatusCounts,
   PROVIDER_ROLES,
-  SANDBOX_MODES,
+  APPROVAL_POLICIES,
   type SkillEligibility,
   type ToolCatalogItem,
   type UsageGitChangeMetrics,
@@ -5182,9 +5182,33 @@ test("live session state projects Runtime counters without inventing defaults", 
       concurrency: { activeSessions: 3, activeSubagentThreads: 1 },
       liveSessions: {
         identitiesObserved: [
-          { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker", clientSurface: "codex_desktop" },
-          { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null, clientSurface: null },
-          { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null, clientSurface: "codex_exec" }
+          {
+            sessionId: "session-a",
+            state: "active",
+            lastActivityAt: 10,
+            provider: "fixture-provider",
+            model: "fixture-model",
+            role: "worker",
+            clientSurface: "codex_desktop"
+          },
+          {
+            sessionId: "session-b",
+            state: "tool_wait",
+            lastActivityAt: 20,
+            provider: null,
+            model: null,
+            role: null,
+            clientSurface: null
+          },
+          {
+            sessionId: "session-c",
+            state: "resumed",
+            lastActivityAt: 30,
+            provider: null,
+            model: null,
+            role: null,
+            clientSurface: "codex_exec"
+          }
         ],
         identifiedSessionCount: 3,
         partial: false,
@@ -5200,9 +5224,33 @@ test("live session state projects Runtime counters without inventing defaults", 
       activeSubagentThreads: 1,
       inFlightRequests: 2,
       sessionIdentities: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 10, provider: "fixture-provider", model: "fixture-model", role: "worker", clientSurface: "codex_desktop" },
-        { sessionId: "session-b", state: "tool_wait", lastActivityAt: 20, provider: null, model: null, role: null, clientSurface: null },
-        { sessionId: "session-c", state: "resumed", lastActivityAt: 30, provider: null, model: null, role: null, clientSurface: "codex_exec" }
+        {
+          sessionId: "session-a",
+          state: "active",
+          lastActivityAt: 10,
+          provider: "fixture-provider",
+          model: "fixture-model",
+          role: "worker",
+          clientSurface: "codex_desktop"
+        },
+        {
+          sessionId: "session-b",
+          state: "tool_wait",
+          lastActivityAt: 20,
+          provider: null,
+          model: null,
+          role: null,
+          clientSurface: null
+        },
+        {
+          sessionId: "session-c",
+          state: "resumed",
+          lastActivityAt: 30,
+          provider: null,
+          model: null,
+          role: null,
+          clientSurface: "codex_exec"
+        }
       ],
       sessionIdentitiesPartial: false,
       unattributedLiveActivityCount: 0
@@ -5228,7 +5276,15 @@ test("live session state projects Runtime counters without inventing defaults", 
     concurrency: { activeSessions: 3 },
     liveSessions: {
       identitiesObserved: [
-        { sessionId: "session-known", state: "active", lastActivityAt: 10, provider: null, model: null, role: null, clientSurface: null }
+        {
+          sessionId: "session-known",
+          state: "active",
+          lastActivityAt: 10,
+          provider: null,
+          model: null,
+          role: null,
+          clientSurface: null
+        }
       ],
       identifiedSessionCount: 1,
       partial: false,
@@ -12820,10 +12876,8 @@ test("an empty list names its resource instead of inheriting a generic sentence"
     React.createElement(PermissionsView, {
       executionContractObserved: true,
       policy: {
-        approvalPolicy: "on-demand",
-        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
         approvalsReviewer: "user",
-        networkAccess: true,
         webSearch: true
       },
       policyStatus: "valid",
@@ -12997,25 +13051,18 @@ test("View adapters translate Control API responses without inventing data", () 
     appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
-      sandboxMode: "workspace-write",
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     rolePermissions: {
       orchestrator: {
-        sandboxMode: "unrestricted",
-        declaredSandboxMode: "unrestricted",
+        readOnly: false,
         mcp: ["cocoindex-code", "lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: ["autodev-session-diagnostics", "ccc"]
       }
     }
   });
-  // The orchestrator declares `danger-full-access`. The matrix used to answer
-  // every role but the read-only ones with "workspace-write", so the product's
-  // unsandboxed role was shown as a sandboxed one.
-  assert.equal(perms.roleMatrices[0]?.sandboxMode, "unrestricted");
   assert.equal(perms.roleMatrices[0]?.readOnly, false);
   // The effective capability matrix must be the projected list, never a
   // placeholder empty list the UI would render as "None".
@@ -13029,18 +13076,13 @@ test("View adapters translate Control API responses without inventing data", () 
   ]);
 });
 
-test("the matrix shows the sandbox a role runs in beside the one it declared", () => {
-  // The effective mode is what the role may do, and the declaration is what
-  // it asked for. A role whose declaration the session narrowed has to show
-  // both, or the matrix reads as if the role had asked for what it got.
+test("the matrix shows each role's access level", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PermissionsView, {
       executionContractObserved: true,
       policy: {
         approvalPolicy: "never",
-        sandboxMode: "workspace-write",
         approvalsReviewer: "user",
-        networkAccess: true,
         webSearch: true
       },
       policyStatus: "valid",
@@ -13052,8 +13094,6 @@ test("the matrix shows the sandbox a role runs in beside the one it declared", (
         {
           role: "orchestrator",
           readOnly: false,
-          sandboxMode: "workspace-write",
-          declaredSandboxMode: "unrestricted",
           allowedMcpServers: [],
           allowedSkills: [],
           allowedMcpTools: {}
@@ -13061,8 +13101,6 @@ test("the matrix shows the sandbox a role runs in beside the one it declared", (
         {
           role: "explorer",
           readOnly: true,
-          sandboxMode: "read-only",
-          declaredSandboxMode: "read-only",
           allowedMcpServers: [],
           allowedSkills: [],
           allowedMcpTools: {}
@@ -13070,26 +13108,13 @@ test("the matrix shows the sandbox a role runs in beside the one it declared", (
       ]
     })
   );
-  assert.match(markup, /data-permission-mode="workspace-write"/u);
-  assert.match(markup, /data-permission-declared-mode="unrestricted"/u);
-  assert.match(markup, /data-permission-declared-mode="read-only"/u);
-  // The role the session narrowed says so.
-  assert.match(markup, /data-permission-narrowed="true"/u);
+  assert.match(markup, /data-permission-access="read-write"/u);
+  assert.match(markup, /data-permission-access="read-only"/u);
 });
 
 test("the capability matrix lists the fixed roles in the one order the app uses", () => {
-  // The matrix sorted roles alphabetically, so it showed `orchestrator` before
-  // `smart` -- an order the target state does not use anywhere. It fixes the
-  // sequence as Default, Smart, Orchestrator, Subagent and calls them the
-  // canonical roles.
-  //
-  // `AgentRole` is an open union, so a Runtime may report roles outside the
-  // four. Those must stay visible -- dropping a role the API sent would hide
-  // evidence -- but they rank after the fixed four and keep a deterministic
-  // order among themselves, so the table cannot churn between reads.
   const role = () => ({
-    sandboxMode: "workspace-write" as const,
-    declaredSandboxMode: "workspace-write" as const,
+    readOnly: false,
     mcp: [],
     mcpTools: {},
     skills: []
@@ -13105,10 +13130,8 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
     applied: null,
     appliedSource: "/tmp/codex/config.toml",
     policy: {
-      approvalPolicy: "on-demand",
-      sandboxMode: "workspace-write",
+      approvalPolicy: "on-request",
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     // Deliberately scrambled, plus two roles outside the fixed four.
@@ -13133,17 +13156,8 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
 });
 
 test("the policy reads as prose rather than raw config values", () => {
-  // The policy's choices render words -- "Workspace write", "Allowed",
-  // "Enabled" -- and the approval policy rendered the enum itself, so
-  // `on-demand` appeared on the page in display-sized type as `on-demand`.
-  //
-  // The policy is a control now, so the prose is the label of the choice the
-  // operator picks rather than a card's value. The enum is still the value the
-  // control submits; what must not happen is the raw value standing on the page
-  // as text.
   for (const [approvalPolicy, expected] of [
-    ["on-demand", "On demand"],
-    ["always", "Always"],
+    ["on-request", "On request"],
     ["never", "Never"]
   ] as const) {
     const markup = renderToStaticMarkup(
@@ -13151,9 +13165,7 @@ test("the policy reads as prose rather than raw config values", () => {
         executionContractObserved: true,
         policy: {
           approvalPolicy,
-          sandboxMode: "workspace-write",
           approvalsReviewer: "user",
-          networkAccess: true,
           webSearch: true
         },
         policyStatus: "valid",
@@ -17625,7 +17637,11 @@ test("Console rejects a runtime response that does not match the v3 contract", a
             (_, index) => ({
               sessionId: `session-${String(index).padStart(3, "0")}`,
               state: "active",
-              lastActivityAt: index, provider: null, model: null, role: null, clientSurface: null
+              lastActivityAt: index,
+              provider: null,
+              model: null,
+              role: null,
+              clientSurface: null
             })
           ),
           identifiedSessionCount: CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT + 1,
@@ -17773,7 +17789,14 @@ test("Console rejects a runtime response that does not match the v3 contract", a
       ...valid,
       liveSessions: {
         identitiesObserved: [
-        { sessionId: "session-a", state: "active", lastActivityAt: 1, provider: 7, model: null, role: null }
+          {
+            sessionId: "session-a",
+            state: "active",
+            lastActivityAt: 1,
+            provider: 7,
+            model: null,
+            role: null
+          }
         ],
         identifiedSessionCount: 2,
         partial: true,
@@ -20723,10 +20746,8 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   // --- a blank Approval Policy card (React draws nothing for `undefined`),
   // --- and "Blocked"/"Disabled" read out of two falsy undefineds.
   const policyRow = {
-    approvalPolicy: "on-demand",
-    sandboxMode: "workspace-write",
+    approvalPolicy: "on-request",
     approvalsReviewer: "user",
-    networkAccess: true,
     webSearch: true
   };
   const permissionsEnvelope = (policy: unknown) => ({
@@ -20748,13 +20769,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "ok",
     "a complete policy is accepted"
   );
-  for (const dropped of [
-    "approvalPolicy",
-    "sandboxMode",
-    "approvalsReviewer",
-    "networkAccess",
-    "webSearch"
-  ]) {
+  for (const dropped of ["approvalPolicy", "approvalsReviewer", "webSearch"]) {
     const incomplete = await fetchPermissions(
       config,
       serve(permissionsEnvelope({ ...policyRow, [dropped]: undefined }))
@@ -20765,45 +20780,31 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       `a policy without "${dropped}" must not reach the view`
     );
   }
-  // Both vocabularies are closed, and a drifted value must fail closed rather
-  // than render as a novel policy name.
-  for (const drifted of [
-    { approvalPolicy: "sometimes" },
-    { sandboxMode: "anything-goes" }
-  ]) {
-    const driftedResult = await fetchPermissions(
-      config,
-      serve(permissionsEnvelope({ ...policyRow, ...drifted }))
-    );
-    assert.equal(
-      driftedResult.kind,
-      "invalid-response",
-      `a drifted policy vocabulary (${JSON.stringify(drifted)}) must fail closed`
-    );
-  }
+  const driftedResult = await fetchPermissions(
+    config,
+    serve(permissionsEnvelope({ ...policyRow, approvalPolicy: "sometimes" }))
+  );
+  assert.equal(
+    driftedResult.kind,
+    "invalid-response",
+    "a drifted policy vocabulary must fail closed"
+  );
 
-  // Every mode Core declares must reach the view, driven from the shared list
-  // rather than restated here. That is what stops the Console from silently
-  // narrowing: a mode added to `SANDBOX_MODES` is accepted on the day it lands,
-  // and one that the Console rejects shows up as this test failing rather than
-  // as a blank policy card in production.
-  for (const mode of SANDBOX_MODES) {
+  for (const approvalPolicy of APPROVAL_POLICIES) {
     const accepted = await fetchPermissions(
       config,
-      serve(permissionsEnvelope({ ...policyRow, sandboxMode: mode }))
+      serve(permissionsEnvelope({ ...policyRow, approvalPolicy }))
     );
     assert.equal(
       accepted.kind,
       "ok",
-      `the supported sandbox mode "${mode}" must be accepted`
+      `the supported approval policy "${approvalPolicy}" must be accepted`
     );
   }
-  // A near-miss of a real mode is the case that used to render as a confident
-  // novel policy name: same letters, wrong case.
-  for (const nearMiss of ["Read-Only", "workspace_write", "workspace-write "]) {
+  for (const nearMiss of ["Never", "on_request", "on-demand", "always"]) {
     const rejected = await fetchPermissions(
       config,
-      serve(permissionsEnvelope({ ...policyRow, sandboxMode: nearMiss }))
+      serve(permissionsEnvelope({ ...policyRow, approvalPolicy: nearMiss }))
     );
     assert.equal(
       rejected.kind,
@@ -23807,22 +23808,18 @@ test("the permissions page answers which tools a role may call, not only which s
     appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
-      sandboxMode: "workspace-write",
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     rolePermissions: {
       worker: {
-        sandboxMode: "workspace-write",
-        declaredSandboxMode: "workspace-write",
+        readOnly: false,
         mcp: ["lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: []
       },
       validator: {
-        sandboxMode: "read-only",
-        declaredSandboxMode: "read-only",
+        readOnly: false,
         // Reaches an MCP server with no tool grants. That is a real state, and
         // it must not read the same as a role whose grants were never reported.
         mcp: ["lsp"],
@@ -23830,8 +23827,7 @@ test("the permissions page answers which tools a role may call, not only which s
         skills: []
       },
       orchestrator: {
-        sandboxMode: "unrestricted",
-        declaredSandboxMode: "unrestricted",
+        readOnly: false,
         mcp: [],
         mcpTools: {},
         skills: []
@@ -23872,10 +23868,8 @@ test("the permissions view says the execution contract was not read", () => {
   // the operator what to go and fix.
   const props = {
     policy: {
-      approvalPolicy: "on-demand" as const,
-      sandboxMode: "workspace-write" as const,
+      approvalPolicy: "on-request" as const,
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     policyStatus: "valid" as const,
@@ -23934,15 +23928,12 @@ test("a permissions page where no role has a tool grant says so instead of rende
     appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
-      sandboxMode: "workspace-write",
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     rolePermissions: {
       default: {
-        sandboxMode: "workspace-write",
-        declaredSandboxMode: "workspace-write",
+        readOnly: false,
         mcp: ["lsp"],
         mcpTools: {},
         skills: []
@@ -23985,15 +23976,12 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
     appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
-      sandboxMode: "workspace-write",
       approvalsReviewer: "user",
-      networkAccess: true,
       webSearch: true
     },
     rolePermissions: {
       default: {
-        sandboxMode: "workspace-write",
-        declaredSandboxMode: "workspace-write",
+        readOnly: false,
         mcp: ["lsp"],
         mcpTools: {},
         skills: []

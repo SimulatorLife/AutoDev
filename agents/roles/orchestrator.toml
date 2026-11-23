@@ -3,7 +3,6 @@
 # autodev/orchestrator model alias and is not installed as a child role; its
 # mcp_servers settings (enabled, enabled_tools, default_tools_approval_mode)
 # are composed into $CODEX_HOME/config.toml by runtime/src/config/compose-user-config.ts.
-sandbox_mode = "danger-full-access"
 
 [mcp_servers.filesystem]
 enabled = true

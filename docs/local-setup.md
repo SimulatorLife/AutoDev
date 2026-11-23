@@ -214,8 +214,8 @@ and the client reports the generic `Connection closed` transport error.
 
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
 
-- **Portable runtime/provider source (`config/config.autodev.toml`):** Contains AutoDev-owned model/provider, telemetry, feature, and shell/runtime settings that are not canonical RuleSync agent-facing configuration. Agent/skill/MCP/hook/permission definitions belong in RuleSync where supported; `.rulesync/mcp.jsonc` is already canonical for MCP declarations.
-- **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source and the Rulesync-generated MCP projection with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved. The exception is a Codex permission profile (`default_permissions`, `[permissions.*]`): Codex applies a selected profile over `sandbox_mode`, `[sandbox_workspace_write]` and every role's `sandbox_mode`, so the composer never carries one over from existing state. A one-off `rulesync generate --features permissions` run once selected `default_permissions = "rulesync"`, and from 2026-11-11 every role, including `danger-full-access` workers, ran workspace-write with no network (`listen EPERM` on any local dev server). Rulesync's `permissions` feature is not generated for Codex; `agents/rules/default.rules` holds the command rules, and the installer removes a leftover `$CODEX_HOME/rules/rulesync.rules`.
+- **Portable runtime/provider source (`config/config.autodev.toml`):** Contains AutoDev-owned model/provider, telemetry, feature, and shell/runtime settings that are not canonical RuleSync agent-facing configuration. Agent/skill/MCP/hook/permission definitions belong in RuleSync where supported; `.rulesync/mcp.jsonc` is canonical for MCP declarations and `.rulesync/permissions.jsonc` is canonical for Codex and Antigravity permissions and command rules (`default_permissions = ":danger-full-access"`, `approval_policy`, `approvals_reviewer`, `tools.web_search`, and `$CODEX_HOME/rules/rulesync.rules`).
+- **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source, the Rulesync-generated Codex MCP projection, and the Rulesync-generated Codex permissions projection (`codexcli`) with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved. Legacy `[permissions.*]`, `sandbox_mode`, and `[sandbox_workspace_write]` keys from older installations are stripped so stale sandboxes cannot linger.
 - **Root role settings:** The root turn is the orchestrator, so the composer overlays `agents/roles/orchestrator.toml`'s per-server settings (`enabled`, `enabled_tools`, `default_tools_approval_mode`) onto each server the MCP projection declares, the same keys a child role's TOML owns for that child. Launch keys stay with the projection. Orchestrator entries the projection does not declare (the plugin-owned `codex_app`) add nothing to `mcp_servers`. This is what gives native and Claude-served root turns the orchestrator's scoped CodeGraphContext tools rather than CGC's full surface.
 - **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills. Codex hooks are written only to `$CODEX_HOME/hooks.json` (a regular file rendered by Rulesync's user-level projection): Codex loads that file and the working project's `.codex/hooks.json`, so a repository copy ran every hook twice in AutoDev sessions; the installer removes it and trusts only the user-level path. `--check` validates those outputs, including that the repository carries no `.codex/hooks.json`. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`; Copilot projects `SubagentStart`, `UserPromptSubmitted`, and `PreToolUse` but not `SessionStart`; Antigravity projects `SessionStart` and `PreToolUse` but not `SubagentStart` or `UserPromptSubmitted`. The root-delegation `beforeSubmitPrompt` hook is declared per target, for `codexcli` and `copilot` only: it injects Codex's orchestrator bootstrap (spawn tools reached through code-mode `exec` cells), and as a shared hook it put about 8 KB of Codex-only instructions into every Claude Code prompt in this repository.
 - **Root delegation context and idempotency:** The hook emits its policy once per context window: when the session's `transcript_path` already carries the injected bootstrap (a Codex developer message or a Claude Code `hook_additional_context` attachment) after its last compaction record (Codex `compacted`, Claude Code `compact_boundary`), later prompts inject nothing, and the first prompt after a compaction (which drops hook context) injects it again. Tool output that only quotes the bootstrap does not count. An unreadable or missing transcript injects. Within a turn it also emits at most once per non-empty `session_id`, `turn_id`, and root model, so duplicate global/workspace submissions do not repeat context. A short-lived, bounded state file under `$CODEX_HOME/hooks` coordinates concurrent processes and stores only hashed turn identities with timestamps (never prompt content). The bootstrap has the root size its task first, points to the enabled orchestration skill (read before the first spawn, not for trivial work the root does itself) rather than copying its full body, keeps the spawn surface and lifecycle details in that canonical skill, bounds command output, keeps the root out of git history, and stays below the observed hook-message truncation limit; the recovery reminder is injected only as a compact exceptional-path summary. Missing identifiers are not deduplicated; different turns/models still receive policy.
@@ -430,20 +430,23 @@ explicit user denies and does not rewrite the global registry or settings.
 CodeGraphContext tool grants remain explicit rather than wildcarded.
 
 Headless subagents run noninteractively and cannot answer interactive permission
-prompts. The installer maintains machine-level permissions in
-`~/.gemini/antigravity-cli/settings.json`; for router-managed turns the bridge
+prompts. The installer projects static Antigravity CLI permissions from
+`.rulesync/permissions.jsonc` (via `rulesync`) into
+`~/.gemini/antigravity-cli/settings.json` and layers dynamic, machine-local
+workspace `read_file` grants on top; for router-managed turns the bridge
 replaces only MCP allow grants in a temporary settings copy with grants from the
 selected role contract. Read-only roles keep the Antigravity sandbox and never
 receive `--dangerously-skip-permissions` or `command(*)`. If a native command is
 not allowed, the leaf prompt directs the model to stop retrying it and return a
 visible summary that records the limitation.
 
-- Web research permissions: `read_url(*)` for headless document and URL inspection.
+- Web research permissions: `read_url` (`webfetch: { "*": "allow" }` in
+  `.rulesync/permissions.jsonc`) for headless document and URL inspection.
 - Scoped literal read grants for shared configuration: `read_file(~/.agents)`,
   `read_file(~/.codex)`, and `read_file(~/.gemini)` (in agy, directory grants provide recursive access without globs).
 - Scoped `read_file(<root>)` grants for every configured workspace.
-- A small fixed `unsandboxed(...)` allowlist for `pwd`, `pnpm test`, and the
-  repository Python test command; this is not a general shell grant.
+- A small fixed `unsandboxed(...)` allowlist (`pwd`, `pnpm test`, and the
+  repository Python test command) declared in `.rulesync/permissions.jsonc`; this is not a general shell grant.
 
 By default, the installer grants read access to the current AutoDev repository root.
 When working across multiple repositories or projects, configure the roots via the
@@ -748,123 +751,32 @@ machine-local values such as projects, notifications, custom MCP
 servers, and trusted hook state. Re-running the installer must be idempotent;
 `bash scripts/install.sh --check` must pass afterward.
 
-Destructive Git commands are enforced by Codex's native rules engine. The
-tracked rules live in `agents/rules/default.rules` and the installer copies
-them to `$CODEX_HOME/rules/default.rules` as a regular file: Codex loads a
-rules entry only when it resolves to a file directly inside
-`$CODEX_HOME/rules/` and skips anything else silently, which leaves every rule
-inert, including the `allow` rule that lets `git add`/`git commit` write the
-otherwise read-only `.git`. `bash scripts/install.sh --check` reports a symlink
-or stale copy as drift, and [Codex command rules](#codex-command-rules-only-entries-inside-the-rules-directory-load)
-records how that was verified. Validate a rule without running the command:
+Destructive Git commands and unsafe shell commands are blocked by Codex's native rules engine (`permission.bash` in `.rulesync/permissions.jsonc`). The installer projects those rules via Rulesync and copies them to `$CODEX_HOME/rules/rulesync.rules` as a regular file: Codex loads a rules entry only when it resolves to a file directly inside `$CODEX_HOME/rules/` and skips symlinks silently, which leaves every rule inert. `bash scripts/install.sh --check` reports a missing, symlinked, or stale `rulesync.rules` file as drift. Validate projected rules without running a command using `codex execpolicy check --pretty --rules "$CODEX_HOME/rules/rulesync.rules" -- git reset --hard HEAD`.
 
-```bash
-codex execpolicy check --pretty \
-  --rules agents/rules/default.rules \
-  -- git reset --hard HEAD
-```
-
-The same rules allow explicit localhost diagnostics such as
-`curl http://127.0.0.1:4100/status`, while remote curl commands remain gated.
-They also deny direct `ccc` CLI execution from agent shell commands. Code-capable
-roles must use the configured `cocoindex-code` MCP server; the configured MCP
-process is still allowed to launch its backend command. Every native and provider
-registration goes through `run-autodev-mcp.sh cocoindex-code`, so minimal provider
-PATH environments do not lose the backend executable. The rules also deny
-destructive Git history/worktree operations, force pushes and branch deletion,
-superuser/raw-disk commands, and catastrophic root/home recursive deletion.
-
-Agents can commit their own work. Codex's `workspace-write` sandbox keeps
-`<root>/.git` read-only inside the writable root, so a sandboxed `git commit`
-fails with `.git/index.lock: Operation not permitted`. An `allow` rule runs a
-matching command outside the sandbox, and the rules allow exactly `git add`,
-`git commit`, `git mv`, `git rm`, `git restore --staged`, `git switch -c` and
-`git worktree add`; `git commit --amend` needs approval. This is a rule rather
-than a `.git` entry in `sandbox_workspace_write.writable_roots` on purpose: a
-writable `.git` lets any sandboxed command plant a hook or a `core.fsmonitor`
-command that later runs unsandboxed in the operator's own shell. A rule
-matches from the first token, so `git -c ... commit` and `env ... git commit`
-stay sandboxed. Commit hooks stored in the worktree (`core.hooksPath`, husky)
-would run unsandboxed under this rule; none is configured. `git push` is not
-allowed and stays subject to the sandbox. `tests/config/command-rules.test.ts`
-pins each decision.
-
-Package-manager caches outside the workspace are writable roots instead:
-`sandbox_workspace_write.writable_roots` in `config/config.autodev.toml` lists
-`~/Library/pnpm/store` and `~/Library/Caches/ms-playwright`, so a
-sandboxed `pnpm install`, `pnpm view` or `pnpm exec playwright install` uses the
-operator's normal store and browser cache rather than a throwaway one in
-`/tmp`. Without them each may fail with `EPERM` (some tools report "root-owned
-files", which is wrong). A writable root rather than an `allow` rule keeps
-package lifecycle scripts sandboxed; the trade-off is that sandboxed commands
-can write the shared pnpm store other projects link from. Codex 0.154.0
-expands `~` in these entries (verified with a replayed `codex exec` turn; the
-`codex sandbox -P :workspace` CLI ignores `writable_roots` and is not a valid
-check).
+The rules deny direct `ccc` CLI execution from agent shell commands (code-capable roles must use the configured `cocoindex-code` MCP server; `run-autodev-mcp.sh cocoindex-code` still launches its backend process), prompt on `git commit --amend`, and deny destructive Git history/worktree operations (`git checkout`, `git reset`, `git stash`, `git clean`, `git rebase`, `git restore .`, `git branch -D`, force pushes), superuser/raw-disk commands, and catastrophic recursive deletion targets (`rm -rf /`, `~`, `.`, `..`, `.git`).
 
 ### Codex command rules: only entries inside the rules directory load
 
-Codex reads command rules from `$CODEX_HOME/rules/*.rules`. It loads an entry
-only when that entry resolves to a file **directly inside
-`$CODEX_HOME/rules/`**. A symlink whose target sits anywhere else — the
-repository checkout, another file in `$CODEX_HOME`, or a subdirectory of
-`rules/` — resolves outside that directory and is skipped **silently**: no
-error, no warning, and no rule from the file takes effect. The whole file
-turns inert in both directions: an `allow` rule stops lifting the
-workspace-write sandbox, so `git add`/`git commit` fail with
-`.git/index.lock: Operation not permitted`, and a `forbidden` rule stops
-blocking, so `git stash` runs.
+Codex reads command rules from `$CODEX_HOME/rules/*.rules`. It loads an entry only when that entry resolves to a file **directly inside `$CODEX_HOME/rules/`**. A symlink whose target sits anywhere else — the repository checkout, another file in `$CODEX_HOME`, or a subdirectory of `rules/` — resolves outside that directory and is skipped **silently**: no error, no warning, and no rule from the file takes effect.
 
-That is why the installer copies `agents/rules/default.rules` into
-`$CODEX_HOME/rules/default.rules` instead of symlinking it: the symlink
-pointed into the checkout, so Codex never loaded a rule from it.
+That is why the installer copies the projected `rulesync.rules` into `$CODEX_HOME/rules/rulesync.rules` as a regular file (`0o644`) instead of symlinking it.
 
-**Detection.** `codex execpolicy check` cannot show this — it resolves the
-path itself and reports the decision the skipped file would have produced
-(`allow` for `git add`). Look at the installed file instead:
+**Detection.** Look at the installed file directly or run `--check`:
 
 ```bash
-ls -l "$CODEX_HOME/rules/default.rules"   # a regular file, not "default.rules -> ..."
-bash scripts/install.sh --check             # reports "rule file default.rules" drift
+ls -l "$CODEX_HOME/rules/rulesync.rules"   # a regular file, not a symlink
+bash scripts/install.sh --check              # reports "rule file rulesync.rules" drift
 ```
 
-`install.sh --check` compares the installed file with
-`agents/rules/default.rules` by content and rejects a symlink, so a drifted
-installation is visible without running Codex at all.
+`install.sh --check` compares the installed file against a fresh projection of `.rulesync/permissions.jsonc` by content and rejects a symlink, so a drifted installation is visible without running Codex at all.
 
-**Verified how.** The behaviour was reproduced against real Codex binaries
-instead of being inferred: an isolated `CODEX_HOME` holding one rule file, a
-throwaway workdir, and a scripted fake provider (no API key, no network). The
-probe is repeatable:
+**Verified how.** The behaviour was reproduced against real Codex binaries (an isolated `CODEX_HOME` holding one rule file, a throwaway workdir, and a scripted fake provider):
 
 ```bash
 node .rulesync/skills/autodev-session-diagnostics/scripts/rule-loading-probe.ts --codex "$(command -v codex)"
 ```
 
-It writes one `forbidden` rule (`touch`), has the fake model run
-`touch probe-marker`, and reads the tool result: a policy rejection means the
-file was loaded. Observed on 2026-11-17 with `codex-cli 0.154.0` (standalone)
-and `codex-cli 0.169.0-alpha.11.1` (the Codex app bundle), identically on
-both:
-
-| `$CODEX_HOME/rules/default.rules`                   | resolves to                         | Codex loads it            |
-| --------------------------------------------------- | ----------------------------------- | ------------------------- |
-| regular file                                        | `.../rules/default.rules`           | yes, the rule is enforced |
-| symlink to a file in the same directory             | `.../rules/source.rules`            | yes, the rule is enforced |
-| symlink to a file in `$CODEX_HOME` outside `rules/` | `.../source.rules`                  | no, skipped silently      |
-| symlink to a file in a subdirectory of `rules/`     | `.../rules/sub/source.rules`        | no, skipped silently      |
-| symlink to the repository checkout                  | `<repo>/agents/rules/default.rules` | no, skipped silently      |
-
-The `allow` direction was reproduced the same way: with the shipped
-`agents/rules/default.rules` copied into the isolated `CODEX_HOME`, the
-model-issued `git add` ran outside the sandbox and staged the file; with the
-same file symlinked into the isolated `CODEX_HOME`, `git add` stayed
-sandboxed and failed — `.git/index.lock: Operation not permitted` on a normal
-machine, `sandbox-exec: sandbox_apply: Operation not permitted` where the
-sandbox cannot be applied at all.
-
-`tests/config/command-rules.test.ts` pins the installer side: the installed
-rules file must be a regular file with the tracked content.
+`tests/config/command-rules.test.ts` pins both the `codex execpolicy check` decisions on projected `rulesync.rules` and the regular-file copy behavior (replacing any symlink).
 
 ### Codex command rules: the exemption is granted per command, not per session
 
@@ -878,18 +790,18 @@ whole: the chain runs outside the sandbox only when **every** part of it
 matches a rule. So the shape of the command decides whether the agent can
 commit:
 
-| Command form                                                | Can write `.git` |
-| ----------------------------------------------------------- | ---------------- |
-| `git add <path>`                                             | yes              |
-| `git add -- <paths>` (many paths, one command)               | yes              |
-| `git add <path> && git status --short`                       | yes              |
-| `git add <path>; git status --short`                         | yes              |
-| `git add <path> && git commit -m "…"`                        | yes              |
-| `cd <dir> && git add <path>`                                 | no               |
-| `git add <path> 2>&1`                                        | no               |
-| `git add <path> \| cat`                                      | no               |
-| `for f in <paths>; do git add "$f"; done`                    | no               |
-| any of the above with `shell: "/bin/bash"`                   | no               |
+| Command form                                   | Can write `.git` |
+| ---------------------------------------------- | ---------------- |
+| `git add <path>`                               | yes              |
+| `git add -- <paths>` (many paths, one command) | yes              |
+| `git add <path> && git status --short`         | yes              |
+| `git add <path>; git status --short`           | yes              |
+| `git add <path> && git commit -m "…"`          | yes              |
+| `cd <dir> && git add <path>`                   | no               |
+| `git add <path> 2>&1`                          | no               |
+| `git add <path> \| cat`                        | no               |
+| `for f in <paths>; do git add "$f"; done`      | no               |
+| any of the above with `shell: "/bin/bash"`     | no               |
 
 The last row is a separate mechanism: Codex resolves the `shell` argument by
 **name** through `PATH`, ignoring the directory in the path you give it. On an
@@ -931,14 +843,14 @@ are not interchangeable. Measured on 2026-11-21 with `codex-cli 0.171.0-alpha.13
 (the probe drives a real Codex against a throwaway repository; `--writable-root`,
 `--permission-profile` and `--no-sandbox-mode` select the configuration):
 
-| Mechanism | Who can write `.git` | `git add … && git status` | `git config core.hooksPath` |
-| --- | --- | --- | --- |
-| the sandbox alone (`workspace-write`) | nobody | no | no |
-| an execpolicy `allow` rule | that one command, outside the sandbox | yes, when every part of the chain is allowed | no |
-| `[sandbox_workspace_write] writable_roots = ["<repo>/.git"]` | every command | yes | **yes** |
-| `writable_roots = ["<repo>/.git/index"]` (a file) | nobody — a writable root is a directory | no | no |
-| a Codex permission profile, `".git/**" = "write"` | every command | yes | **yes** |
-| a permission profile, `".git/**" = "write"` + `".git/config" = "read"` | every command except `.git/config` | yes | no |
+| Mechanism                                                              | Who can write `.git`                    | `git add … && git status`                    | `git config core.hooksPath` |
+| ---------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------- | --------------------------- |
+| the sandbox alone (`workspace-write`)                                  | nobody                                  | no                                           | no                          |
+| an execpolicy `allow` rule                                             | that one command, outside the sandbox   | yes, when every part of the chain is allowed | no                          |
+| `[sandbox_workspace_write] writable_roots = ["<repo>/.git"]`           | every command                           | yes                                          | **yes**                     |
+| `writable_roots = ["<repo>/.git/index"]` (a file)                      | nobody — a writable root is a directory | no                                           | no                          |
+| a Codex permission profile, `".git/**" = "write"`                      | every command                           | yes                                          | **yes**                     |
+| a permission profile, `".git/**" = "write"` + `".git/config" = "read"` | every command except `.git/config`      | yes                                          | no                          |
 
 Two facts follow from the table:
 
@@ -947,7 +859,7 @@ Two facts follow from the table:
   `.git/config`": a file path as a writable root has no effect, so the smallest
   grant that works is the whole `.git` directory, and that lets any command
   plant a hook. A Codex permission profile (`default_permissions` plus
-  `[permissions.<name>.filesystem]`) is path-scoped *with specificity*: the more
+  `[permissions.<name>.filesystem]`) is path-scoped _with specificity_: the more
   specific `".git/config" = "read"` wins over the broader `".git/**" = "write"`,
   so staging works while `.git/config` stays read-only.
 - **A selected permission profile overrides the sandbox.** With
@@ -1038,24 +950,13 @@ name is rejected as an explicit conflict rather than silently choosing precedenc
 this keeps user-level provider routing deterministic while allowing repository-
 specific agents, MCPs, and skills to coexist under distinct names.
 
-### Role sandboxes
+### Role capabilities and read-only isolation
 
-A role's sandbox is declared in its own file under `agents/roles/`, and a
-role may **narrow** the sandbox it runs in but never **widen** it. The
-session's sandbox -- the `sandbox_mode` in `config/config.autodev.toml` -- is
-the ceiling. A role that declares `danger-full-access` under a
-`workspace-write` session runs `workspace-write`; a role that declares
-`read-only` runs `read-only`; a role that declares nothing inherits the
-session's. This is the same rule Codex applies to a spawned child, and it is
-the rule the product's role declarations are read under.
+AutoDev runs Codex without OS-level `sandbox_mode` (`default_permissions = ":danger-full-access"` in `.rulesync/permissions.jsonc`) and enforces per-role access directly at the tool, MCP, and hook boundaries:
 
-Codex cannot narrow the sandbox of a child it spawns: the child thread is
-created from the parent's configuration, and the role layer Codex applies on
-top carries the model, the instructions, the skills and the features, but no
-sandbox. A `sandbox_mode` in a role file therefore parsed and was inert --
-every subagent ran with the parent's sandbox, and a `read-only` role under a
-`workspace-write` session could write to the workspace. AutoDev enforces the
-tier itself at the tool boundary:
+- Read-only role TOMLs declare `# role-access: read-only`, and shell-free roles (`browser-tester`, `playtester`, `playtest-analyst`) set `[features] shell_tool = false` and restrict MCP tools via `enabled_tools`.
+- Read-only roles with file access (`explorer`, `docs-researcher`) pass `AUTODEV_MCP_READ_ONLY` to `filesystem` MCP (`--read-only`), which removes file-mutation tools from the server schema, while `runtime/src/hooks/role-sandbox.ts` + `runtime/src/agents/read-only-policy.ts` enforce the read-only shell allowlist in `PreToolUse`.
+- Across non-Codex provider bridges, the router forwards `x-autodev-read-only` (`"1"` | `"0"`) and the bridges combine it with `isReadOnlyRole` in `config/execution-contract.json` to start `filesystem` with `--read-only`, inject the read-only system instruction, and keep CLI write gates active (such as Antigravity `--sandbox` and Copilot `--deny-tool=write`).
 
 - `runtime/src/hooks/role-sandbox.ts` is a Codex `PreToolUse` hook. Codex runs
   a hook for every tool call, inside the thread that made it, and the hook is
@@ -1227,6 +1128,7 @@ restart.
   permission, not only OpenCLI, so Chrome no longer tells you when any
   extension attaches to your pages. The dedicated browser below never shows
   the banner: it is driven over loopback CDP, not through the extension.
+
 - **On: a dedicated Chrome for Testing.** The normal typed installer always
   installs the pinned headed build into
   `$CODEX_HOME/provider-runtime/opencli/browsers`, without using or altering

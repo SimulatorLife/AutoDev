@@ -11,25 +11,12 @@ model = "autodev/orchestrator"
 model_provider = "local_model_router"
 openai_base_url = "http://127.0.0.1:4100/v1"
 model_verbosity = "low"
-approval_policy = "never"
 model_reasoning_effort = "xhigh"
 personality = "pragmatic"
-sandbox_mode = "workspace-write"
 suppress_unstable_features_warning = true
 service_tier = "default"
 model_catalog_json = "./codex-model-catalog.json"
-approvals_reviewer = "user"
 background_terminal_max_timeout = 600000
-
-[sandbox_workspace_write]
-# Permit diagnostics against localhost services from workspace-write sessions.
-network_access = true
-# Allow pnpm's shared store and Playwright browser downloads in the sandbox.
-# Neither npm nor NVM is part of AutoDev's supported local toolchain.
-writable_roots = [
-  "~/Library/pnpm/store",
-  "~/Library/Caches/ms-playwright",
-]
 
 [otel]
 environment = "autodev"
@@ -59,11 +46,10 @@ prevent_idle_sleep = true
 personality = true
 image_generation = false
 
-[tools]
-# Website research is a native Codex capability. Browser automation is not a
-# root-turn tool; browser-tester/smart role configs enable Playwright only when
-# their bounded UI-testing work requires it.
-web_search = true
+# Permission policy (`default_permissions`, `approval_policy`,
+# `approvals_reviewer`, `[tools].web_search`) is declared in
+# `.rulesync/permissions.jsonc`, and MCP servers are declared in
+# `.rulesync/mcp.jsonc`; the composer merges both into `$CODEX_HOME/config.toml`.
 
 [model_providers.claude_code_subscription]
 name = "Claude Code OAuth subscription bridge"

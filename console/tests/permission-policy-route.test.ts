@@ -41,10 +41,8 @@ function request(
 const FIELDS = {
   expectedRevision: REVISION,
   returnTo: PERMISSIONS_RETURN,
-  approvalPolicy: "on-demand",
-  sandboxMode: "unrestricted",
+  approvalPolicy: "on-request",
   approvalsReviewer: "operator",
-  networkAccess: "true",
   webSearch: "false"
 } as const;
 
@@ -93,10 +91,8 @@ function okResponse(): Response {
       revision: "b".repeat(64),
       changed: true,
       policy: {
-        approvalPolicy: "on-demand",
-        sandboxMode: "unrestricted",
+        approvalPolicy: "on-request",
         approvalsReviewer: "operator",
-        networkAccess: true,
         webSearch: false
       },
       applied: null,
@@ -132,12 +128,8 @@ test("a policy write reaches the Runtime's permissions route with the revision i
   assert.equal(sent[0]?.method, "PATCH");
   const body = JSON.parse(sent[0]?.body ?? "{}") as Record<string, unknown>;
   assert.equal(body.expectedRevision, REVISION);
-  assert.equal(body.approvalPolicy, "on-demand");
-  // The product's vocabulary is what the route forwards, and the Runtime
-  // translates it back into the canonical source's own vocabulary.
-  assert.equal(body.sandboxMode, "unrestricted");
+  assert.equal(body.approvalPolicy, "on-request");
   assert.equal(body.approvalsReviewer, "operator");
-  assert.equal(body.networkAccess, true);
   assert.equal(body.webSearch, false);
 });
 
@@ -216,7 +208,7 @@ test("a write with no revision is refused before it reaches the Runtime", async 
 
 test("a setting outside the vocabulary is refused before it reaches the Runtime", async () => {
   const { sent, result } = await withMockedFetch(okResponse, () =>
-    route.POST(request({ ...FIELDS, sandboxMode: "somewhere-else" }))
+    route.POST(request({ ...FIELDS, approvalPolicy: "somewhere-else" }))
   );
   assert.equal(sent.length, 0, "the Runtime must not be called");
   assert.equal(result.status, 303);

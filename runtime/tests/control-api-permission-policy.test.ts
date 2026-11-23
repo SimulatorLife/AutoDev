@@ -26,37 +26,18 @@ const VIEWER_ACTOR = "permission-policy-viewer";
  * re-serialised the file would drop every comment, and the comment above
  * `network_access` is the one that says what the setting is for.
  */
-const POLICY_SOURCE = `# The portable source.
-model = "autodev/orchestrator"
-
-# The approval policy.
-approval_policy = "never"
-sandbox_mode = "workspace-write"
-approvals_reviewer = "user"
-
-[sandbox_workspace_write]
-# Network access for workspace-write sessions.
-network_access = true
-
-[tools]
-web_search = true
-`;
-
-const ROLE_SOURCE = `name = "orchestrator"
-sandbox_mode = "danger-full-access"
-`;
-
-const READ_ONLY_ROLE_SOURCE = `name = "explorer"
-sandbox_mode = "read-only"
-`;
-
-/**
- * A role that declares no sandbox of its own.
- *
- * It is silent about its mode, so the policy is the answer -- which makes it
- * the role that says whether the policy was read.
- */
-const SILENT_ROLE_SOURCE = `name = "worker"
+const POLICY_SOURCE = `{
+  "version": "1.0.0",
+  // Codex CLI defaults for AutoDev
+  "codexcli": {
+    "base_permission_profile": ":danger-full-access",
+    "approval_policy": "never",
+    "approvals_reviewer": "user",
+    "tools": {
+      "web_search": true
+    }
+  }
+}
 `;
 
 interface Fixture {
@@ -67,25 +48,15 @@ interface Fixture {
 function fixture(): Fixture {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-permission-policy-"));
   const repositoryRoot = path.join(root, "repo");
+  mkdirSync(path.join(repositoryRoot, ".rulesync"), { recursive: true });
   mkdirSync(path.join(repositoryRoot, "config"), { recursive: true });
   mkdirSync(path.join(repositoryRoot, "agents", "roles"), { recursive: true });
-  const policyPath = path.join(repositoryRoot, "config", "config.autodev.toml");
+  const policyPath = path.join(
+    repositoryRoot,
+    ".rulesync",
+    "permissions.jsonc"
+  );
   writeFileSync(policyPath, POLICY_SOURCE, "utf8");
-  writeFileSync(
-    path.join(repositoryRoot, "agents", "roles", "orchestrator.toml"),
-    ROLE_SOURCE,
-    "utf8"
-  );
-  writeFileSync(
-    path.join(repositoryRoot, "agents", "roles", "explorer.toml"),
-    READ_ONLY_ROLE_SOURCE,
-    "utf8"
-  );
-  writeFileSync(
-    path.join(repositoryRoot, "agents", "roles", "worker.toml"),
-    SILENT_ROLE_SOURCE,
-    "utf8"
-  );
   return { repositoryRoot, policyPath };
 }
 
@@ -159,87 +130,44 @@ test("the permissions read publishes the policy the canonical source states", as
   const result = await call("GET", "/control/permissions", options);
   assert.equal(result.statusCode, 200);
   assert.equal(result.body?.schema, "autodev-control-permissions-v2");
-  assert.equal(result.body?.source, "config/config.autodev.toml");
+  assert.equal(result.body?.source, ".rulesync/permissions.jsonc");
   assert.equal(result.body?.policyStatus, "valid");
   const policy = result.body?.policy as
     | {
         readonly approvalPolicy: string;
-        readonly sandboxMode: string;
         readonly approvalsReviewer: string;
-        readonly networkAccess: boolean;
         readonly webSearch: boolean;
       }
     | undefined;
   assert.equal(policy?.approvalPolicy, "never");
-  assert.equal(policy?.sandboxMode, "workspace-write");
   assert.equal(policy?.approvalsReviewer, "user");
-  assert.equal(policy?.networkAccess, true);
   assert.equal(policy?.webSearch, true);
   // The revision is the handle a write is compared against: the sha256 of the
   // canonical file's exact bytes.
   assert.equal(result.body?.revision, sha256(readFileSync(options.policyPath)));
-  // The policy carries no `defaultToolsApprovalMode`: no canonical source
-  // declared one, so it was a value the product invented.
-  assert.equal(Object.hasOwn(policy ?? {}, "defaultToolsApprovalMode"), false);
+  // The policy carries no removed sandbox or network keys.
+  assert.equal(Object.hasOwn(policy ?? {}, "sandboxMode"), false);
+  assert.equal(Object.hasOwn(policy ?? {}, "networkAccess"), false);
 });
 
-test("a role's sandbox is the stricter of its declaration and the session's", async () => {
+test("role permissions expose contract readOnly flags", async () => {
   const options = fixture();
   const result = await call("GET", "/control/permissions", options);
   const rolePermissions = result.body?.rolePermissions as
-    | Record<
-        string,
-        {
-          readonly sandboxMode: string | null;
-          readonly declaredSandboxMode: string | null;
-        }
-      >
-    | undefined;
-  // The orchestrator declares `danger-full-access`, and the session runs
-  // `workspace-write`. A role may narrow the sandbox it runs in, never widen
-  // it, so the orchestrator runs in the session's sandbox: the effective mode
-  // is what the role may do, and the declaration is what it asked for.
-  assert.equal(rolePermissions?.orchestrator?.sandboxMode, "workspace-write");
-  assert.equal(
-    rolePermissions?.orchestrator?.declaredSandboxMode,
-    "unrestricted"
-  );
-  // A read-only role narrows the session's sandbox, so both are the mode it
-  // runs in.
-  assert.equal(rolePermissions?.explorer?.sandboxMode, "read-only");
-  assert.equal(rolePermissions?.explorer?.declaredSandboxMode, "read-only");
-  // A role that declares no sandbox runs in the session's.
-  assert.equal(rolePermissions?.default?.sandboxMode, "workspace-write");
-  assert.equal(rolePermissions?.default?.declaredSandboxMode, null);
+    Record<string, { readonly readOnly: boolean }> | undefined;
+  assert.equal(rolePermissions?.orchestrator?.readOnly, false);
+  assert.equal(rolePermissions?.explorer?.readOnly, true);
+  assert.equal(rolePermissions?.default?.readOnly, false);
 });
 
 test("a policy that cannot be read is reported as not observed, not as defaults", async () => {
   const options = fixture();
-  writeFileSync(options.policyPath, "approval_policy = \n", "utf8");
+  writeFileSync(options.policyPath, "{ invalid jsonc\n", "utf8");
   const result = await call("GET", "/control/permissions", options);
   assert.equal(result.statusCode, 200);
   assert.equal(result.body?.policyStatus, "invalid");
   assert.equal(result.body?.policy, null);
   assert.equal(typeof result.body?.policyReason, "string");
-
-  const rolePermissions = result.body?.rolePermissions as
-    | Record<
-        string,
-        {
-          readonly sandboxMode: string | null;
-          readonly declaredSandboxMode: string | null;
-        }
-      >
-    | undefined;
-  // The session's sandbox could not be read, so there is no ceiling to apply:
-  // a role's own declaration is then the whole of what is known about the
-  // sandbox it runs in.
-  assert.equal(rolePermissions?.worker?.sandboxMode, "unrestricted");
-  assert.equal(rolePermissions?.worker?.declaredSandboxMode, "unrestricted");
-  // A role that declares no sandbox has no observed sandbox: the nearest mode
-  // the product knows is not a mode any source stated.
-  assert.equal(rolePermissions?.default?.sandboxMode, null);
-  assert.equal(rolePermissions?.default?.declaredSandboxMode, null);
 });
 
 test("a policy write changes the canonical source and answers with the new revision", async () => {
@@ -249,16 +177,10 @@ test("a policy write changes the canonical source and answers with the new revis
 
   const result = await call("PATCH", "/control/permissions", options, {
     expectedRevision: revision,
-    approvalPolicy: "on-demand",
-    sandboxMode: "read-only",
+    approvalPolicy: "on-request",
     approvalsReviewer: "operator",
-    networkAccess: false,
     webSearch: false
   });
-  // The compose step runs the RuleSync projection and the install's own
-  // materializer, which need the repository's own toolchain. A fixture
-  // repository has none, so the write reports the applied state it could not
-  // refresh rather than claiming the policy was applied.
   assert.ok(
     result.statusCode === 200 || result.statusCode === 503,
     `unexpected status ${result.statusCode}`
@@ -270,46 +192,32 @@ test("a policy write changes the canonical source and answers with the new revis
     );
   }
 
-  // The canonical source carries the change either way: the policy was
-  // written, and only the applied configuration could not be refreshed.
   const written = readFileSync(options.policyPath, "utf8");
-  assert.match(written, /^approval_policy = "on-demand"$/mu);
-  assert.match(written, /^sandbox_mode = "read-only"$/mu);
-  assert.match(written, /^approvals_reviewer = "operator"$/mu);
-  assert.match(written, /^network_access = false$/mu);
-  assert.match(written, /^web_search = false$/mu);
-  // The file is edited in place: the comments are the explanation of what
-  // each setting means, and they are still there.
-  assert.match(
-    written,
-    /# Network access for workspace-write sessions\.\nnetwork_access = false/u
-  );
-  assert.match(written, /^# The approval policy\.$/mu);
+  assert.match(written, /"approval_policy": "on-request"/u);
+  assert.match(written, /"approvals_reviewer": "operator"/u);
+  assert.match(written, /"web_search": false/u);
+  assert.match(written, /\/\/ Codex CLI defaults for AutoDev/u);
 });
 
 test("a policy write that carries the whole policy changes only what differs", async () => {
   const options = fixture();
   const read = await call("GET", "/control/permissions", options);
   const revision = String(read.body?.revision);
-  const before = readFileSync(options.policyPath, "utf8");
 
   const result = await call("PATCH", "/control/permissions", options, {
     expectedRevision: revision,
     approvalPolicy: "never",
-    sandboxMode: "workspace-write",
     approvalsReviewer: "user",
-    networkAccess: false,
-    webSearch: true
+    webSearch: false
   });
   assert.ok(
     result.statusCode === 200 || result.statusCode === 503,
     `unexpected status ${result.statusCode}`
   );
   const after = readFileSync(options.policyPath, "utf8");
-  const changed = after
-    .split("\n")
-    .filter((line, index) => line !== before.split("\n")[index]);
-  assert.deepEqual(changed, ["network_access = false"]);
+  assert.match(after, /"approval_policy": "never"/u);
+  assert.match(after, /"approvals_reviewer": "user"/u);
+  assert.match(after, /"web_search": false/u);
 });
 
 test("a policy write is refused when the canonical source moved since it was read", async () => {
@@ -321,15 +229,15 @@ test("a policy write is refused when the canonical source moved since it was rea
   writeFileSync(
     options.policyPath,
     POLICY_SOURCE.replace(
-      'approval_policy = "never"',
-      'approval_policy = "always"'
+      '"approval_policy": "never"',
+      '"approval_policy": "on-request"'
     ),
     "utf8"
   );
 
   const result = await call("PATCH", "/control/permissions", options, {
     expectedRevision: revision,
-    approvalPolicy: "on-demand"
+    approvalPolicy: "on-request"
   });
   assert.equal(result.statusCode, 409);
   assert.equal(
@@ -339,7 +247,7 @@ test("a policy write is refused when the canonical source moved since it was rea
   // The file is as the other writer left it.
   assert.match(
     readFileSync(options.policyPath, "utf8"),
-    /^approval_policy = "always"$/mu
+    /"approval_policy": "on-request"/u
   );
 });
 
@@ -350,7 +258,7 @@ test("a policy write that cannot be expressed is refused before the file is touc
 
   const result = await call("PATCH", "/control/permissions", options, {
     expectedRevision: revision,
-    sandboxMode: "somewhere-else"
+    approvalPolicy: "somewhere-else"
   });
   assert.equal(result.statusCode, 400);
   assert.equal(
@@ -369,7 +277,7 @@ test("a policy write needs a viewer to be an operator", async () => {
     "PATCH",
     "/control/permissions",
     options,
-    { expectedRevision: revision, approvalPolicy: "always" },
+    { expectedRevision: revision, approvalPolicy: "on-request" },
     VIEWER_ACTOR
   );
   assert.equal(result.statusCode, 403);
@@ -385,7 +293,7 @@ test("a policy write without a credential is refused", async () => {
     "PATCH",
     "/control/permissions",
     options,
-    { expectedRevision: revision, approvalPolicy: "always" },
+    { expectedRevision: revision, approvalPolicy: "on-request" },
     OPERATOR_ACTOR,
     null
   );

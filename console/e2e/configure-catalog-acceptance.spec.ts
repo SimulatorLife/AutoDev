@@ -391,13 +391,7 @@ test("the Permissions list shows the policy and the role capability matrix", asy
   // each of its settings is a control that shows that value.
   await expect(
     page.locator("[data-permission-policy-approval-policy]")
-  ).toHaveValue("on-demand");
-  await expect(
-    page.locator("[data-permission-policy-sandbox-mode]")
-  ).toHaveValue("workspace-write");
-  await expect(
-    page.locator("[data-permission-policy-network-access]")
-  ).toHaveValue("false");
+  ).toHaveValue("on-request");
   await expect(page.locator("[data-permission-policy-web-search]")).toHaveValue(
     "false"
   );

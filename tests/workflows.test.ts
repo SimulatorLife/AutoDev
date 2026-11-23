@@ -533,11 +533,17 @@ test("the user-level MCP servers are self-sufficient, so no repository needs to 
 });
 
 test("root website research uses native search while Playwright stays role-scoped", async () => {
-  const autodevConfig = await readFile(
-    path.join(root, "config", "config.autodev.toml"),
+  const permissionsRaw = await readFile(
+    path.join(root, ".rulesync", "permissions.jsonc"),
     "utf8"
   );
-  assert.match(autodevConfig, /\[tools\][\s\S]*web_search = true/);
+  const permissions = JSON.parse(
+    permissionsRaw
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n")
+  ) as { codexcli?: { tools?: { web_search?: boolean } } };
+  assert.equal(permissions.codexcli?.tools?.web_search, true);
   const mcp = JSON.parse(
     await readFile(path.join(root, ".rulesync", "mcp.jsonc"), "utf8")
   );
@@ -598,7 +604,12 @@ test("provider bridges explicitly expose code MCP capabilities", async () => {
     path.join(root, "runtime", "src", "platform", "antigravity-settings.ts"),
     "utf8"
   );
-  assert.match(settings, /read_url\(\*\)/);
+  assert.match(settings, /runRulesyncGenerate/);
+  const rulesyncPermissions = await readFile(
+    path.join(root, ".rulesync", "permissions.jsonc"),
+    "utf8"
+  );
+  assert.match(rulesyncPermissions, /"webfetch"/);
   const materializer = await readFile(
     path.join(root, "runtime", "src", "platform", "install-materializer.ts"),
     "utf8"

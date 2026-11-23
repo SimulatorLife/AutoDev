@@ -1863,8 +1863,8 @@ test("a read-only role's turn carries the sandbox policy into the prompt", async
           tools: [EXEC_TOOL, WAIT_TOOL],
           input: [userMessage("Inspect the repository.")]
         },
-        // The router sends the role's tier with every non-orchestrator turn.
-        { "x-autodev-sandbox-mode": "read-only" }
+        // The router sends the role's read-only header with every non-orchestrator turn.
+        { "x-autodev-read-only": "1" }
       );
       assert.equal(response.status, 200);
       // Every other bridge turns this header into a system instruction; the
@@ -1888,7 +1888,7 @@ test("a writable role's turn carries no sandbox policy", async () => {
           tools: [EXEC_TOOL, WAIT_TOOL],
           input: [userMessage("Edit the file.")]
         },
-        { "x-autodev-sandbox-mode": "workspace-write" }
+        { "x-autodev-read-only": "0" }
       );
       assert.equal(response.status, 200);
       assert.doesNotMatch(runs.prompts[0]!, /Sandbox policy: READ-ONLY/u);

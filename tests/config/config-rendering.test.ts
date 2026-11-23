@@ -145,16 +145,16 @@ test("the composed config disables a bundled plugin Codex has installed", async 
   }
 });
 
-test("composition drops a permission profile selected outside the portable source", () => {
-  // Codex applies a selected profile over sandbox_mode, the workspace-write
-  // network setting and every role's sandbox_mode; a stray rulesync profile
-  // ran every AutoDev role workspace-write with no network.
+test("composition drops legacy permission and sandbox keys outside the portable source", () => {
   const result = compose(
     {
-      sandbox_mode: "workspace-write",
-      sandbox_workspace_write: { network_access: true }
+      default_permissions: ":danger-full-access",
+      approval_policy: "never",
+      approvals_reviewer: "user"
     },
     {
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { network_access: true },
       default_permissions: "rulesync",
       permissions: {
         rulesync: {
@@ -165,10 +165,11 @@ test("composition drops a permission profile selected outside the portable sourc
       notify: "desktop"
     }
   );
-  assert.equal(Object.hasOwn(result, "default_permissions"), false);
+  assert.equal(result.default_permissions, ":danger-full-access");
+  assert.equal(result.approval_policy, "never");
   assert.equal(Object.hasOwn(result, "permissions"), false);
-  assert.equal(result.sandbox_mode, "workspace-write");
-  assert.deepEqual(result.sandbox_workspace_write, { network_access: true });
+  assert.equal(Object.hasOwn(result, "sandbox_mode"), false);
+  assert.equal(Object.hasOwn(result, "sandbox_workspace_write"), false);
   assert.equal(result.notify, "desktop");
 });
 

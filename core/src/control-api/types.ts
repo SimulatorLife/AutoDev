@@ -32,7 +32,7 @@ import type {
   MemoryStatusCounts,
   MemoryUseKind
 } from "../memory/types.ts";
-import type { PermissionPolicy, SandboxMode } from "../permissions/types.ts";
+import type { ApprovalPolicy, PermissionPolicy } from "../permissions/types.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
@@ -1395,28 +1395,10 @@ export interface ControlApiPermissionsResponse {
       string,
       {
         /**
-         * The sandbox this role actually runs in.
-         *
-         * A role runs in the stricter of its own declaration and the session's
-         * sandbox: a role may narrow the sandbox it runs in, never widen it.
-         * That rule is the one the enforcement follows, so the matrix answers
-         * the question the operator has -- what may this role do -- rather than
-         * what it asked for.
-         *
-         * Null when neither the declaration nor the session's sandbox could be
-         * read: the sandbox is then not observed, which is neither the
-         * read-only mode nor the unrestricted one.
+         * Whether this role is restricted to read-only capabilities in the
+         * execution contract (`# role-access: read-only` / `AUTODEV_MCP_READ_ONLY`).
          */
-        readonly sandboxMode: SandboxMode | null;
-        /**
-         * The sandbox this role declares for itself.
-         *
-         * The declaration is kept beside the effective mode because the two
-         * answer different questions, and a role that asks for more than the
-         * session allows is a fact an operator wants to see rather than a
-         * value to silently fold into the effective one.
-         */
-        readonly declaredSandboxMode: SandboxMode | null;
+        readonly readOnly: boolean;
         /**
          * MCP servers this role is permitted to reach, projected from the same
          * execution contract that backs `/control/agents`. Kept here so the
@@ -1451,10 +1433,8 @@ export interface ControlApiPermissionsResponse {
 export interface ControlApiPermissionsPatchRequest {
   /** The revision of the canonical policy file the change was decided on. */
   readonly expectedRevision: string;
-  readonly approvalPolicy?: "never" | "always" | "on-demand";
-  readonly sandboxMode?: SandboxMode;
+  readonly approvalPolicy?: ApprovalPolicy;
   readonly approvalsReviewer?: string;
-  readonly networkAccess?: boolean;
   readonly webSearch?: boolean;
 }
 

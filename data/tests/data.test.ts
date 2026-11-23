@@ -1774,7 +1774,7 @@ test("ConfigRepository reads agent role identifiers and workspaces", () => {
   assert.equal(policy.status, "valid");
   if (policy.status === "valid") {
     assert.ok(policy.policy.approvalPolicy);
-    assert.ok(policy.policy.sandboxMode);
+    assert.equal(typeof policy.policy.webSearch, "boolean");
   }
 });
 

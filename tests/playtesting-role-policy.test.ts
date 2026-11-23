@@ -69,11 +69,12 @@ const CODE_WRITE_OR_DELEGATION_SERVERS = [
   "codex_app"
 ];
 
-test("playtester role enforces read-only sandbox and approved run/read tool subset", () => {
+test("playtester role enforces read-only access and approved run/read tool subset", () => {
   const role = readToml("agents/roles/playtester.toml");
+  const raw = readText("agents/roles/playtester.toml");
   assert.equal(role.name, "playtester");
-  assert.equal(role.sandbox_mode, "read-only");
-  assert.notEqual(role.sandbox_mode, "danger-full-access");
+  assert.equal(role.sandbox_mode, undefined);
+  assert.match(raw, /^# role-access: read-only$/mu);
 
   const servers = getMcpServers(role);
   for (const serverName of CODE_WRITE_OR_DELEGATION_SERVERS) {
@@ -154,9 +155,13 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
   assert.equal(analystRole.model, "autodev/smart");
   assert.equal(smartRole.model, "autodev/smart");
 
-  // smart role has danger-full-access sandbox; analyst MUST be read-only:
-  assert.equal(smartRole.sandbox_mode, "danger-full-access");
-  assert.equal(analystRole.sandbox_mode, "read-only");
+  // smart role has write/shell access; analyst MUST be read-only without sandbox_mode:
+  const smartRaw = readText("agents/roles/smart.toml");
+  const analystRaw = readText("agents/roles/playtest-analyst.toml");
+  assert.equal(smartRole.sandbox_mode, undefined);
+  assert.equal(analystRole.sandbox_mode, undefined);
+  assert.doesNotMatch(smartRaw, /^# role-access: read-only$/mu);
+  assert.match(analystRaw, /^# role-access: read-only$/mu);
 
   // smart role has web_search enabled; analyst MUST disable it:
   const smartTools = smartRole.tools as Record<string, unknown> | undefined;

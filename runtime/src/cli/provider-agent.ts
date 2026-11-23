@@ -16,7 +16,7 @@ import path from "node:path";
 
 import {
   parseTomlFile,
-  roleSessionSandboxMode,
+  type TomlTable,
   type TomlValue
 } from "@simulatorlife/autodev-runtime/config";
 import {
@@ -71,7 +71,7 @@ export interface RoleExecutionSettings {
   readonly developerInstructions: string;
   readonly reasoningEffort: string;
   readonly reasoningSummary: string;
-  readonly sandboxMode: string;
+  readonly readOnly: boolean;
 }
 
 export interface ProviderAgentDeps {
@@ -191,6 +191,20 @@ function stringValue(value: TomlValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
+function isReadOnlyRoleDeclaration(roleFile: string, role: TomlTable): boolean {
+  const text = readFileSync(roleFile, "utf8");
+  if (
+    text.split("\n").some((line) => line.trim() === "# role-access: read-only")
+  ) {
+    return true;
+  }
+  const filesystem = tomlRecord(tomlRecord(role.mcp_servers).filesystem);
+  if (tomlRecord(filesystem.env).AUTODEV_MCP_READ_ONLY === "1") {
+    return true;
+  }
+  return stringArray(filesystem.env_vars).includes("AUTODEV_MCP_READ_ONLY");
+}
+
 export function readRoleExecutionSettings(
   roleFile: string
 ): RoleExecutionSettings {
@@ -199,28 +213,8 @@ export function readRoleExecutionSettings(
     developerInstructions: stringValue(config.developer_instructions),
     reasoningEffort: stringValue(config.model_reasoning_effort),
     reasoningSummary: stringValue(config.model_reasoning_summary),
-    sandboxMode: stringValue(config.sandbox_mode)
+    readOnly: isReadOnlyRoleDeclaration(roleFile, config)
   };
-}
-
-/**
- * The sandbox a role-scoped session runs in.
- *
- * The session's own sandbox is the policy the portable source declares, and a
- * role may narrow it but never widen it: a role that declares
- * `danger-full-access` under a workspace-write policy runs workspace-write,
- * exactly as a child spawned inside that session would. That is the same rule
- * Codex applies to a spawned child, and it is what keeps a role-scoped run and
- * the session that spawned it from disagreeing about what a role may do.
- *
- * The composition itself belongs to the configuration layer, which is where
- * the role declarations and the permission policy are read.
- */
-function roleSessionSandbox(roleFile: string, policyFile: string): string {
-  return roleSessionSandboxMode(
-    readRoleExecutionSettings(roleFile).sandboxMode,
-    policyFile
-  );
 }
 
 function readPromptFile(file: string): string {
@@ -596,7 +590,7 @@ function analystCodexOverrides(
   const playtestServer = tomlRecord(roleMcpServers.playtest);
   const enabledTools = stringArray(playtestServer.enabled_tools);
   if (
-    role.sandbox_mode !== "read-only" ||
+    !isReadOnlyRoleDeclaration(roleFile, role) ||
     enabledTools.length === 0 ||
     new Set(enabledTools).size !== enabledTools.length ||
     enabledTools.some((tool) => !tool.startsWith("playtest."))
@@ -1015,7 +1009,7 @@ function browserTesterCodexOverrides(
   if (
     role.name !== BROWSER_TESTER_ROLE ||
     playwrightServer.enabled !== true ||
-    role.sandbox_mode !== "read-only" ||
+    !isReadOnlyRoleDeclaration(options.roleFile, role) ||
     features.shell_tool !== false ||
     features.multi_agent !== false ||
     features.multi_agent_v2 !== false ||
@@ -1115,7 +1109,7 @@ function playtesterCodexOverrides(
   if (
     role.name !== PLAYTESTER_ROLE ||
     playtestServer.enabled !== true ||
-    role.sandbox_mode !== "read-only" ||
+    !isReadOnlyRoleDeclaration(options.roleFile, role) ||
     features.shell_tool !== false ||
     features.multi_agent !== false ||
     features.multi_agent_v2 !== false ||
@@ -1234,16 +1228,6 @@ function providerCodexArguments(
   }
   if (settings.reasoningSummary) {
     args.push("-c", `model_reasoning_summary=${settings.reasoningSummary}`);
-  }
-  // The session runs in the stricter of the policy's sandbox and the role's
-  // own declaration, so a role-scoped run cannot be more privileged than the
-  // session that would have spawned it.
-  const sandboxMode = roleSessionSandbox(
-    options.roleFile,
-    path.join(repositoryRoot, "config/config.autodev.toml")
-  );
-  if (sandboxMode) {
-    args.push("-c", `sandbox_mode=${sandboxMode}`);
   }
   if (analystDispatch) {
     const sourceCodexHome =
@@ -1504,13 +1488,8 @@ export async function runProviderAgent(
     );
   }
   const settings = readRoleExecutionSettings(options.roleFile);
-  if (
-    runtimeEnvironment.analystDispatch &&
-    settings.sandboxMode !== "read-only"
-  ) {
-    throw new Error(
-      "Playtest analyst dispatch requires the read-only sandbox."
-    );
+  if (runtimeEnvironment.analystDispatch && !settings.readOnly) {
+    throw new Error("Playtest analyst dispatch requires a read-only role.");
   }
   const memory = providerCodexEnvironment(
     options,

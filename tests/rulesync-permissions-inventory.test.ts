@@ -14,8 +14,17 @@ const read = (relativePath: string): string => {
   const text = readFileSync(join(repositoryRoot, relativePath), "utf8");
   return relativePath.endsWith(".ts") ? normalizedSource(text) : text;
 };
+const stripJsoncComments = (text: string): string =>
+  text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
 const readJson = (relativePath: string): JsonObject =>
-  JSON.parse(read(relativePath)) as JsonObject;
+  JSON.parse(
+    relativePath.endsWith(".jsonc")
+      ? stripJsoncComments(read(relativePath))
+      : read(relativePath)
+  ) as JsonObject;
 const asObject = (value: unknown): JsonObject => {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as JsonObject;
@@ -25,37 +34,46 @@ const portableConfig = parse(
   read("config/config.autodev.toml")
 ) as unknown as JsonObject;
 const rulesyncMcp = readJson(".rulesync/mcp.jsonc");
+const rulesyncPermissions = readJson(".rulesync/permissions.jsonc");
 
-test("Codex portable permission surface is explicit", () => {
-  // The policy's values are the operator's to choose: the Console writes this
-  // file, through the Runtime, under the compare-and-swap every canonical
-  // source uses. So this asserts that the surface is explicit and that every
-  // value is one the product supports -- not which value it currently is.
-  // Pinning the values would make the policy unchangeable, which is the one
-  // thing a canonical edit surface cannot be.
+test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not config.autodev.toml or role sandbox_mode", () => {
+  const codexcli = asObject(rulesyncPermissions.codexcli);
+  const sharedBash = asObject(asObject(rulesyncPermissions.permission).bash);
+  assert.equal(codexcli.base_permission_profile, ":danger-full-access");
   assert.ok(
-    ["never", "always", "on-demand"].includes(
-      String(portableConfig.approval_policy)
-    ),
-    `approval_policy must be a policy the product supports: ${String(portableConfig.approval_policy)}`
+    ["never", "on-request"].includes(String(codexcli.approval_policy)),
+    `approval_policy must be supported: ${String(codexcli.approval_policy)}`
   );
-  assert.ok(
-    ["read-only", "workspace-write", "danger-full-access"].includes(
-      String(portableConfig.sandbox_mode)
-    ),
-    `sandbox_mode must be a sandbox the product supports: ${String(portableConfig.sandbox_mode)}`
-  );
-  assert.equal(typeof portableConfig.approvals_reviewer, "string");
-  assert.notEqual(portableConfig.approvals_reviewer, "");
-  assert.equal(
-    typeof asObject(portableConfig.sandbox_workspace_write).network_access,
-    "boolean"
-  );
-  assert.equal(typeof asObject(portableConfig.tools).web_search, "boolean");
+  assert.equal(typeof codexcli.approvals_reviewer, "string");
+  assert.notEqual(codexcli.approvals_reviewer, "");
+  assert.equal(typeof asObject(codexcli.tools).web_search, "boolean");
+  assert.equal(sharedBash["sudo *"], "deny");
+  assert.equal(sharedBash["git checkout *"], "deny");
+  assert.equal(sharedBash["git commit --amend *"], "ask");
+  assert.equal(sharedBash["rm -rf .git *"], "deny");
+
+  for (const forbidden of [
+    "approval_policy",
+    "approvals_reviewer",
+    "sandbox_mode",
+    "sandbox_workspace_write",
+    "tools"
+  ]) {
+    assert.equal(
+      Object.hasOwn(portableConfig, forbidden),
+      false,
+      `config/config.autodev.toml must not declare ${forbidden}`
+    );
+  }
   assert.equal(asObject(portableConfig.features).hooks, true);
   assert.equal(
     Object.hasOwn(asObject(portableConfig.features), "permissions"),
     false
+  );
+  assert.equal(
+    existsSync(join(repositoryRoot, "agents/rules/default.rules")),
+    false,
+    "agents/rules/default.rules must be removed in favor of .rulesync/permissions.jsonc"
   );
   for (const provider of Object.values(
     asObject(portableConfig.model_providers)
@@ -101,53 +119,81 @@ test("Claude bridge acts only through Codex tools", () => {
   }
 });
 
-test("Antigravity permissions are dynamic and machine-local", () => {
+test("Antigravity static permissions live in .rulesync/permissions.jsonc and dynamic roots stay machine-local", () => {
   const source = read("runtime/src/platform/antigravity-settings.ts");
   const materializer = read("runtime/src/platform/install-materializer.ts");
+  const canonical = readJson(".rulesync/permissions.jsonc");
+  const sharedPermission = asObject(canonical.permission);
+  const agyOverride = asObject(canonical["antigravity-cli"]);
+  const agyPermission = asObject(agyOverride.permission);
+
+  assert.equal(agyOverride.agentMode, "accept-edits");
+  assert.deepEqual(sharedPermission.webfetch, { "*": "allow" });
+  assert.deepEqual(sharedPermission["mcp__cocoindex-code__search"], {
+    "*": "allow"
+  });
+  assert.deepEqual(sharedPermission.mcp__lsp, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__openaiDeveloperDocs, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__playwright, { "*": "deny" });
+  for (const tool of [
+    "list_indexed_repositories",
+    "find_code",
+    "analyze_code_relationships",
+    "get_repository_stats"
+  ]) {
+    assert.deepEqual(sharedPermission[`mcp__codegraphcontext__${tool}`], {
+      "*": "allow"
+    });
+  }
+  assert.equal(Object.hasOwn(sharedPermission, "mcp__codegraphcontext"), false);
+  assert.equal(
+    Object.hasOwn(sharedPermission, "mcp__codegraphcontext__add_code_to_graph"),
+    false
+  );
+  assert.equal(
+    Object.hasOwn(sharedPermission, "mcp__codegraphcontext__check_job_status"),
+    false
+  );
+  assert.deepEqual(asObject(sharedPermission.bash)["ccc *"], "deny");
+  assert.deepEqual(agyPermission.read, {
+    "~/.agents/**": "allow",
+    "~/.codex/**": "allow"
+  });
+  assert.deepEqual(agyPermission.unsandboxed, {
+    "pwd *": "allow",
+    "pnpm test *": "allow",
+    "regex:python3 -m unittest discover -s tests -p test_.*\\.py": "allow",
+    "ccc *": "deny"
+  });
+
   assert.ok(materializer.includes("updateAntigravityPermissions"));
   for (const marker of [
     "updateAntigravityPermissions",
     "missingAntigravityPermissions",
-    "const permissions = asObject(config.permissions)",
-    "function permissionList(config: JsonObject)",
+    "projectedAntigravityBaseline",
+    "runRulesyncGenerate",
     "normalizedReadRoots",
     "read_file(${root})",
-    "read_file(${root}/**)",
-    'join(home, ".agents")',
-    'join(home, ".codex")',
-    "mcp(cocoindex-code)",
-    "mcp(lsp)",
-    "mcp(codegraphcontext)",
-    "mcp(codegraphcontext/list_indexed_repositories)",
-    "mcp(codegraphcontext/find_code)",
-    "mcp(codegraphcontext/analyze_code_relationships)",
-    "mcp(codegraphcontext/get_repository_stats)",
-    "read_url(*)",
-    "unsandboxed(pwd)",
-    "unsandboxed(pnpm test)",
-    "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
-    "mcp(playwright)",
-    "DENIED_COMMAND_PERMISSIONS",
-    "permissions.deny = deny"
+    "read_file(${root}/**)"
   ])
     assert.ok(source.includes(marker), marker);
-  assert.ok(!source.includes("mcp(codegraphcontext/*)"));
-  assert.ok(!source.includes("mcp(codegraphcontext/add_code_to_graph)"));
-  assert.ok(!source.includes("mcp(codegraphcontext/check_job_status)"));
   assert.ok(source.includes("atomicWriteSync(filePath"));
   assert.ok(source.includes("mode: 0o600"));
 });
 
-test("Rulesync permissions and subagent generation remain deferred", () => {
+test("Codex Rulesync permissions are consolidated while subagent generation remains deferred", () => {
   assert.equal(read("rulesync.jsonc").includes('"permissions"'), false);
   const rulesyncConfig = readJson("rulesync.jsonc");
   const features = rulesyncConfig.features as unknown[];
   assert.equal(features.includes("permissions"), false);
-  // Generating it selects a Codex permission profile that overrides the
-  // portable sandbox policy and every role's sandbox_mode.
   assert.equal(
     existsSync(join(repositoryRoot, ".rulesync", "permissions.jsonc")),
-    false
+    true
+  );
+  const permissionsDocument = readJson(".rulesync/permissions.jsonc");
+  assert.equal(
+    asObject(permissionsDocument.codexcli).base_permission_profile,
+    ":danger-full-access"
   );
   assert.equal(features.includes("subagents"), false);
   assert.equal(
@@ -203,7 +249,8 @@ test("the permission inventory reads sources without changing them", () => {
     "runtime/src/providers/claude.ts",
     "scripts/install.sh",
     "rulesync.jsonc",
-    ".rulesync/mcp.jsonc"
+    ".rulesync/mcp.jsonc",
+    ".rulesync/permissions.jsonc"
   ];
   const before = paths.map(read);
   for (const content of before) assert.ok(content.length > 0);

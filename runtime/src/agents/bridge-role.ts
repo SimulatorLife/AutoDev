@@ -5,7 +5,7 @@ import {
   AGENT_ROLE_HEADER,
   contextHeaderValue,
   readContextHeader,
-  SANDBOX_MODE_HEADER,
+  READ_ONLY_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -60,14 +60,15 @@ const cache = new Map<string, string>();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
 const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
-/** The sandbox mode the router assigned to this request, or null when it sent none. */
-export function resolveSandboxModeFromHeaders(
+/** Whether the router flagged this request read-only, or null when omitted. */
+export function resolveReadOnlyFromHeaders(
   headers: Record<string, unknown> | null | undefined
-): "read-only" | "workspace-write" | null {
-  const raw = contextHeaderValue(headers, SANDBOX_MODE_HEADER, {
+): boolean | null {
+  const raw = contextHeaderValue(headers, READ_ONLY_HEADER, {
     lowercase: true
   });
-  if (raw === "read-only" || raw === "workspace-write") return raw;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
   return null;
 }
 

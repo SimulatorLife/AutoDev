@@ -10,9 +10,8 @@ export {
   type PermissionPolicyUpdate,
   PermissionPolicyValidationError,
   type PermissionPolicyWrite,
+  readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
-  sandboxModeFromConfig,
-  sandboxModeToConfig,
   updatePermissionPolicy
 } from "./config/permission-policy.ts";
 export {

@@ -24,7 +24,6 @@ import {
   readRoleExecutionSettings,
   runProviderAgent
 } from "@simulatorlife/autodev-runtime/cli/provider-agent";
-import { roleSessionSandboxMode } from "@simulatorlife/autodev-runtime/config";
 import { parse as parseToml } from "smol-toml";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -67,9 +66,9 @@ const BROWSER_TESTER_MCP_ENV_ALLOWLIST = [
 function browserTesterRoleToml(): string {
   return (
     [
+      "# role-access: read-only",
       'name = "browser-tester"',
       'developer_instructions = "Test only the authorized rendered UI."',
-      'sandbox_mode = "read-only"',
       "[features]",
       "shell_tool = false",
       "multi_agent = false",
@@ -138,9 +137,9 @@ function playtesterRoleToml(
 ): string {
   return (
     [
+      "# role-access: read-only",
       'name = "playtester"',
       'developer_instructions = "Play only within the approved bounds."',
-      'sandbox_mode = "read-only"',
       "[features]",
       "shell_tool = false",
       "multi_agent = false",
@@ -183,7 +182,7 @@ function fixture(): {
   const roleFile = join(codexHome, "agents", "smart.toml");
   writeFileSync(
     roleFile,
-    'name = "smart"\ndeveloper_instructions = "Use the typed path."\nmodel_reasoning_effort = "high"\nmodel_reasoning_summary = "concise"\nsandbox_mode = "read-only"\n'
+    '# role-access: read-only\nname = "smart"\ndeveloper_instructions = "Use the typed path."\nmodel_reasoning_effort = "high"\nmodel_reasoning_summary = "concise"\n'
   );
   const codex = join(root, "codex");
   writeFileSync(codex, "#!/bin/sh\nexit 0\n");
@@ -254,48 +253,10 @@ test("role settings are read from typed TOML without Python or shell parsing", (
       developerInstructions: "Use the typed path.",
       reasoningEffort: "high",
       reasoningSummary: "concise",
-      sandboxMode: "read-only"
+      readOnly: true
     });
   } finally {
     rmSync(f.root, { recursive: true, force: true });
-  }
-});
-
-test("a role-scoped session runs in the stricter of the role's sandbox and the policy's", () => {
-  const root = mkdtempSync(join(tmpdir(), "autodev-role-session-sandbox-"));
-  try {
-    const policyFile = join(root, "config.autodev.toml");
-    writeFileSync(
-      policyFile,
-      [
-        'approval_policy = "never"',
-        'sandbox_mode = "workspace-write"',
-        'approvals_reviewer = "user"',
-        "",
-        "[sandbox_workspace_write]",
-        "network_access = true",
-        "",
-        "[tools]",
-        "web_search = true",
-        ""
-      ].join("\n")
-    );
-    // A role may narrow the sandbox it runs in, never widen it: a role that
-    // declares the unrestricted sandbox runs in the session's own.
-    assert.equal(
-      roleSessionSandboxMode("danger-full-access", policyFile),
-      "workspace-write"
-    );
-    // A role that narrows runs in what it declared.
-    assert.equal(roleSessionSandboxMode("read-only", policyFile), "read-only");
-    // A role that declares nothing inherits the session's.
-    assert.equal(roleSessionSandboxMode(null, policyFile), "workspace-write");
-    // A policy that cannot be read leaves the role's own declaration as the
-    // whole of what is known.
-    writeFileSync(policyFile, "approval_policy = \n");
-    assert.equal(roleSessionSandboxMode("read-only", policyFile), "read-only");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -437,7 +398,10 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       "model_reasoning_summary=concise",
       "-c"
     ]);
-    assert.ok(calls[0]?.args.includes("sandbox_mode=read-only"));
+    assert.equal(
+      calls[0]?.args.some((arg) => arg.startsWith("sandbox_mode=")),
+      false
+    );
     assert.ok(
       calls[0]?.args.includes("mcp_servers.autodev_memory.enabled=true")
     );
@@ -602,7 +566,7 @@ test("playtest-analyst runs through the provider-neutral role path", () => {
     const roleFile = join(f.root, ".codex", "agents", "playtest-analyst.toml");
     writeFileSync(
       roleFile,
-      'name = "playtest-analyst"\nsandbox_mode = "read-only"\n'
+      '# role-access: read-only\nname = "playtest-analyst"\n'
     );
     const options = parseProviderAgentArgs(
       [
@@ -616,7 +580,7 @@ test("playtest-analyst runs through the provider-neutral role path", () => {
       f.env
     );
     assert.equal(options.role, "playtest-analyst");
-    assert.equal(readRoleExecutionSettings(roleFile).sandboxMode, "read-only");
+    assert.equal(readRoleExecutionSettings(roleFile).readOnly, true);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
@@ -636,8 +600,8 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
     writeFileSync(
       sourceRole,
       [
+        "# role-access: read-only",
         'name = "playtest-analyst"',
-        'sandbox_mode = "read-only"',
         "[mcp_servers.playtest]",
         "enabled = true",
         'enabled_tools = ["playtest.prepareReview", "playtest.submitReview"]',
@@ -715,8 +679,8 @@ test("the analyst trusts AutoDev's configuration root when the Runtime runs from
     writeFileSync(
       sourceRole,
       [
+        "# role-access: read-only",
         'name = "playtest-analyst"',
-        'sandbox_mode = "read-only"',
         "[mcp_servers.playtest]",
         "enabled = true",
         'enabled_tools = ["playtest.prepareReview", "playtest.submitReview"]',
@@ -780,8 +744,8 @@ test("playtest analyst process excludes every Control API credential", async () 
     writeFileSync(
       join(f.root, ".codex", "agents", "playtest-analyst.toml"),
       [
+        "# role-access: read-only",
         'name = "playtest-analyst"',
-        'sandbox_mode = "read-only"',
         "[features]",
         "shell_tool = false",
         "multi_agent = false",
@@ -932,8 +896,8 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
     writeFileSync(
       analystRole,
       [
+        "# role-access: read-only",
         'name = "playtest-analyst"',
-        'sandbox_mode = "read-only"',
         "[features]",
         "shell_tool = false",
         "multi_agent = false",
@@ -1129,8 +1093,8 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
     writeFileSync(
       roleFile,
       [
+        "# role-access: read-only",
         'name = "playtest-analyst"',
-        'sandbox_mode = "read-only"',
         "[features]",
         "shell_tool = false",
         "multi_agent = false",
@@ -1336,14 +1300,13 @@ test("argument parsing accepts the bounded playtester role", () => {
 });
 
 test("the installed browser-tester role file matches its exact read-only MCP contract", () => {
-  const role = parseToml(
-    readFileSync(
-      join(repositoryRoot, "agents", "roles", "browser-tester.toml"),
-      "utf8"
-    )
-  ) as unknown as {
+  const roleText = readFileSync(
+    join(repositoryRoot, "agents", "roles", "browser-tester.toml"),
+    "utf8"
+  );
+  const role = parseToml(roleText) as unknown as {
     readonly name: string;
-    readonly sandbox_mode: string;
+    readonly sandbox_mode?: string;
     readonly features: Record<string, unknown>;
     readonly tools: Record<string, unknown>;
     readonly shell_environment_policy: Record<string, unknown>;
@@ -1356,7 +1319,8 @@ test("the installed browser-tester role file matches its exact read-only MCP con
     };
   };
   assert.equal(role.name, "browser-tester");
-  assert.equal(role.sandbox_mode, "read-only");
+  assert.equal(role.sandbox_mode, undefined);
+  assert.match(roleText, /^# role-access: read-only$/mu);
   assert.deepEqual(role.features, {
     shell_tool: false,
     multi_agent: false,
@@ -1486,14 +1450,13 @@ test("browser-tester provider run injects only its bounded Playwright MCP and st
 });
 
 test("the installed playtester role file matches its exact read-only MCP contract", () => {
-  const role = parseToml(
-    readFileSync(
-      join(repositoryRoot, "agents", "roles", "playtester.toml"),
-      "utf8"
-    )
-  ) as unknown as {
+  const roleText = readFileSync(
+    join(repositoryRoot, "agents", "roles", "playtester.toml"),
+    "utf8"
+  );
+  const role = parseToml(roleText) as unknown as {
     readonly name: string;
-    readonly sandbox_mode: string;
+    readonly sandbox_mode?: string;
     readonly features: Record<string, unknown>;
     readonly tools: Record<string, unknown>;
     readonly shell_environment_policy: Record<string, unknown>;
@@ -1506,7 +1469,8 @@ test("the installed playtester role file matches its exact read-only MCP contrac
     };
   };
   assert.equal(role.name, "playtester");
-  assert.equal(role.sandbox_mode, "read-only");
+  assert.equal(role.sandbox_mode, undefined);
+  assert.match(roleText, /^# role-access: read-only$/mu);
   assert.deepEqual(role.features, {
     shell_tool: false,
     multi_agent: false,

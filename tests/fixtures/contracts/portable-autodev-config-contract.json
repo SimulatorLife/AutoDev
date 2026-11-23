@@ -3,8 +3,6 @@
   "description": "Deterministic portable-source contract for config/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. runtime/src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes. The portable source suppresses Codex plugin families that are irrelevant noise for AutoDev (openai-primary-runtime and openai-curated-remote artifact/site/dev skills) via whole-plugin `[plugins.\"<plugin>@<marketplace>\"]` disables, and disables the openai-bundled family that ships native Codex tools, apart from the Codex App tools plugin it narrows to request_user_input, and disables the irrelevant Codex `.system/` skills (imagegen, plugin-creator, skill-creator, skill-installer) per-skill while keeping openai-docs. Codex 0.154.0 only honours `[[skills.config]]` against user-level skills; plugin-provided skills require whole-plugin disable. `[skills.bundled] enabled = false` would also suppress openai-docs, so it is not used at the user level.",
   "source": "config/config.autodev.toml",
   "portableScalars": [
-    "approval_policy",
-    "approvals_reviewer",
     "background_terminal_max_timeout",
     "model",
     "model_catalog_json",
@@ -13,7 +11,6 @@
     "model_verbosity",
     "openai_base_url",
     "personality",
-    "sandbox_mode",
     "service_tier",
     "suppress_unstable_features_warning"
   ],
@@ -22,34 +19,22 @@
     "model_provider": "local_model_router",
     "openai_base_url": "http://127.0.0.1:4100/v1",
     "model_verbosity": "low",
-    "approval_policy": "never",
     "model_reasoning_effort": "xhigh",
     "personality": "pragmatic",
-    "sandbox_mode": "workspace-write",
     "suppress_unstable_features_warning": true,
     "service_tier": "default",
     "model_catalog_json": "./codex-model-catalog.json",
-    "approvals_reviewer": "user",
     "background_terminal_max_timeout": 600000
   },
   "requiredSections": [
-    "sandbox_workspace_write",
     "otel",
     "analytics",
     "features",
-    "tools",
     "skills",
     "shell_environment_policy",
     "plugins"
   ],
   "sectionShapes": {
-    "sandbox_workspace_write": {
-      "network_access": true,
-      "writable_roots": [
-        "~/Library/pnpm/store",
-        "~/Library/Caches/ms-playwright"
-      ]
-    },
     "otel": {
       "environment": "autodev",
       "exporter": {
@@ -92,9 +77,6 @@
       "prevent_idle_sleep": true,
       "personality": true,
       "image_generation": false
-    },
-    "tools": {
-      "web_search": true
     },
     "skills": {
       "config": [
