@@ -13,6 +13,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { materializeCommandRules } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import {
+  codexCliVersion,
+  findCodexBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
 
 /**
  * `agents/rules/default.rules` is Codex execpolicy: the decision it returns is
@@ -29,12 +33,57 @@ const RULES = path.resolve(
   "../../agents/rules/default.rules"
 );
 
-const codexAvailable =
-  spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
+/**
+ * The Codex CLI the rules are judged by.
+ *
+ * The rules are a Codex contract, so they are checked with the CLI this
+ * machine would actually run: the shared lookup answers with the newest CLI
+ * installed, not with whichever copy a stale PATH entry names. A CLI that
+ * predates the `execpolicy` subcommand cannot judge the rules at all -- it
+ * rejects the check itself and says nothing about them -- so that is reported
+ * as the reason the check could not run rather than as a rule failure.
+ */
+interface CodexLookup {
+  /** The CLI to check with, or null when there is none to check with. */
+  readonly binary: string | null;
+  /** Why the rules cannot be checked, or null when they can. */
+  readonly skip: string | null;
+}
+
+function locateCodex(): CodexLookup {
+  let binary: string | null;
+  try {
+    binary = findCodexBinary();
+  } catch {
+    return {
+      binary: null,
+      skip: "CODEX_BIN names a CLI that is not executable"
+    };
+  }
+  if (!binary) return { binary: null, skip: "codex CLI not installed" };
+  const version = codexCliVersion(binary);
+  const judged = spawnSync(binary, ["execpolicy", "check", "--help"], {
+    encoding: "utf8"
+  });
+  if (judged.status !== 0)
+    return {
+      binary,
+      skip:
+        "the codex CLI at " +
+        binary +
+        (version ? " (version " + version + ")" : " (version unknown)") +
+        " has no execpolicy check subcommand"
+    };
+  return { binary, skip: null };
+}
+
+const codex = locateCodex();
 
 function decide(command: readonly string[]): string | null {
+  const binary = codex.binary;
+  if (!binary) throw new Error("the Codex CLI is not available");
   const result = spawnSync(
-    "codex",
+    binary,
     ["execpolicy", "check", "--rules", RULES, ...command],
     { encoding: "utf8" }
   );
@@ -69,7 +118,7 @@ const GIT_DECISIONS: readonly [string, string | null][] = [
 for (const [command, expected] of GIT_DECISIONS) {
   test(
     `default.rules decides ${JSON.stringify(command)} as ${expected ?? "unmatched"}`,
-    { skip: codexAvailable ? false : "codex CLI not installed" },
+    { skip: codex.skip ?? false },
     () => {
       assert.equal(decide(command.split(" ")), expected);
     }

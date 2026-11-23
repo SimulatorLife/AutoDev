@@ -54,3 +54,71 @@ test("orchestration skill keeps git history out of the root", () => {
   assert.match(skill, /The root does not read git history/);
   assert.match(skill, /role-sandbox hook/);
 });
+
+const readDocument = (relativePath: string): string =>
+  readFileSync(
+    fileURLToPath(new URL(`../${relativePath}`, import.meta.url)),
+    "utf8"
+  );
+
+test("root orchestrator bootstrap stays terse and links to canonical F2-F5 references", () => {
+  const bootstrap = readDocument("agents/prompts/orchestrator.md");
+  assert.ok(bootstrap.length < 3000, `bootstrap is ${bootstrap.length} chars`);
+  assert.match(bootstrap, /`max_output_tokens`\s+of 2000 or less/);
+  assert.match(bootstrap, /references\/codex-code-mode\.md/);
+  assert.match(bootstrap, /`session_id`.*`write_stdin`/);
+  assert.match(bootstrap, /indexed CodeGraphContext first/);
+  assert.match(bootstrap, /do not re-read files or re-run calls/);
+  assert.match(
+    bootstrap,
+    /proportionate validation \(focused, subsystem, or full\)/
+  );
+  assert.match(bootstrap, /references\/validation\.md/);
+});
+
+test("codex-code-mode reference defines F2 bounded discovery, F3 session_id/write_stdin completion, and F5 CGC/no-redundant-read rules", () => {
+  const codeMode = readDocument(
+    ".rulesync/skills/orchestration/references/codex-code-mode.md"
+  );
+  assert.match(codeMode, /Default `max_output_tokens: 2000`/);
+  assert.match(codeMode, /Justified exceptions/);
+  assert.match(codeMode, /list_indexed_repositories/);
+  assert.match(codeMode, /find_code/);
+  assert.match(codeMode, /analyze_code_relationships/);
+  assert.match(codeMode, /No redundant reads/);
+  assert.match(codeMode, /returns a `session_id` without an `exit_code`/);
+  assert.match(
+    codeMode,
+    /tools\.write_stdin\(\{ session_id, yield_time_ms: 60000 \}\)/
+  );
+  assert.match(codeMode, /until\s+`exit_code` is returned/);
+});
+
+test("validation reference defines F4 proportionate validation tiers and repository-state evidence", () => {
+  const validation = readDocument(
+    ".rulesync/skills/orchestration/references/validation.md"
+  );
+  assert.match(validation, /## Proportionate validation/);
+  assert.match(validation, /\*\*Focused:\*\*/);
+  assert.match(validation, /\*\*Subsystem:\*\*/);
+  assert.match(validation, /\*\*Full:\*\*/);
+  assert.match(validation, /### Repository-state evidence/);
+  assert.match(validation, /git rev-parse --short HEAD/);
+  assert.match(validation, /git status --short/);
+});
+
+test("development-lifecycle reference links Discover and Validate to canonical F2-F5 references", () => {
+  const lifecycle = readDocument(
+    ".rulesync/skills/orchestration/references/development-lifecycle.md"
+  );
+  assert.match(
+    lifecycle,
+    /indexed CodeGraphContext \(`list_indexed_repositories`/
+  );
+  assert.match(lifecycle, /references\/codex-code-mode\.md/);
+  assert.match(
+    lifecycle,
+    /proportionate validation tiers\s+\(focused, subsystem, full\)/
+  );
+  assert.match(lifecycle, /references\/validation\.md/);
+});

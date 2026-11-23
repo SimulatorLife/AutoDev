@@ -1,6 +1,11 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import {
+  BUNDLED_PLUGIN_KEY_SUFFIX,
+  listBundledPlugins
+} from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -131,11 +136,55 @@ function mergeServers(portable: TomlTable, existing: TomlTable): TomlTable {
   return result;
 }
 
-const MERGED_TABLE_KEYS = new Set([
-  "skills",
-  "shell_environment_policy",
-  "plugins"
-]);
+const MERGED_TABLE_KEYS = new Set(["skills", "shell_environment_policy"]);
+
+/**
+ * Merge the portable plugin table over the local one, then disable every
+ * bundled plugin the portable source does not enable.
+ *
+ * The portable source stays the single authority for what is allowed: a
+ * bundled plugin it enables stays enabled, and one it does not name is off
+ * even when the local config turns it on. A bundled plugin Codex has
+ * installed but that neither the portable source nor the local config names
+ * is enabled by default, so the installed set is named here as well.
+ */
+function mergePlugins(
+  portable: TomlTable,
+  existing: TomlTable,
+  bundledPlugins: readonly string[]
+): TomlTable {
+  const merged = mergeTable(portable, existing);
+  const allowed = new Set(
+    Object.entries(portable)
+      .filter(([, value]) => table(value).enabled === true)
+      .map(([name]) => name)
+  );
+  const disabled: Record<string, TomlValue> = {};
+  for (const [name, value] of Object.entries(merged)) {
+    if (!name.endsWith(BUNDLED_PLUGIN_KEY_SUFFIX) || allowed.has(name))
+      continue;
+    disabled[name] = { ...table(value), enabled: false };
+  }
+  for (const plugin of bundledPlugins) {
+    const name = `${plugin}${BUNDLED_PLUGIN_KEY_SUFFIX}`;
+    if (allowed.has(name) || name in disabled) continue;
+    disabled[name] = { enabled: false };
+  }
+  return { ...merged, ...disabled };
+}
+
+/**
+ * What the composer knows about the machine it composes for.
+ */
+export interface ComposeOptions {
+  /**
+   * The bundled OpenAI plugins Codex has installed locally, by plugin name.
+   * Codex enables an installed plugin unless the config names it as disabled,
+   * so every installed bundled plugin the portable source does not allow is
+   * named in the composed config, disabled.
+   */
+  readonly bundledPlugins?: readonly string[];
+}
 
 /** Only the user's hook trust `state` survives; hook definitions are managed. */
 function hooksState(value: TomlValue | undefined): TomlTable | undefined {
@@ -146,10 +195,13 @@ function hooksState(value: TomlValue | undefined): TomlTable | undefined {
 function composedPortableValue(
   key: string,
   value: TomlValue,
-  old: TomlValue | undefined
+  old: TomlValue | undefined,
+  bundledPlugins: readonly string[]
 ): TomlValue | undefined {
   if (key === "hooks") return hooksState(old);
   if (key === "mcp_servers") return mergeServers(table(value), table(old));
+  if (key === "plugins")
+    return mergePlugins(table(value), table(old), bundledPlugins);
   if (MERGED_TABLE_KEYS.has(key)) return mergeTable(table(value), table(old));
   return value;
 }
@@ -165,16 +217,38 @@ function composedPortableValue(
  */
 const PERMISSION_PROFILE_KEYS = new Set(["default_permissions", "permissions"]);
 
-export function compose(portable: TomlTable, existing: TomlTable): TomlTable {
+export function compose(
+  portable: TomlTable,
+  existing: TomlTable,
+  options: ComposeOptions = {}
+): TomlTable {
+  const bundledPlugins = options.bundledPlugins ?? [];
   const result: TomlTable = {};
   for (const [key, value] of Object.entries(portable)) {
-    const composed = composedPortableValue(key, value, existing[key]);
+    const composed = composedPortableValue(
+      key,
+      value,
+      existing[key],
+      bundledPlugins
+    );
     if (composed !== undefined) result[key] = composed;
   }
   for (const [key, value] of Object.entries(existing)) {
     if (key in portable || PERMISSION_PROFILE_KEYS.has(key)) continue;
-    const kept = key === "hooks" ? hooksState(value) : value;
-    if (kept !== undefined) result[key] = kept;
+    if (key === "hooks") {
+      const kept = hooksState(value);
+      if (kept !== undefined) result[key] = kept;
+      continue;
+    }
+    if (key === "plugins") {
+      // The portable source omits a plugins table only when it allows no
+      // plugin at all, and the bundled lockdown does not depend on that
+      // table: an installed bundled plugin stays disabled either way.
+      const kept = mergePlugins({}, table(value), bundledPlugins);
+      if (Object.keys(kept).length > 0) result[key] = kept;
+      continue;
+    }
+    if (value !== undefined) result[key] = value;
   }
   return result;
 }
@@ -185,10 +259,15 @@ export function runCompose(
   rootRole: string,
   existing: string,
   output: string,
-  check: boolean
+  check: boolean,
+  options: ComposeOptions = {}
 ): number {
   const rendered = serializeToml(
-    compose(loadPortable(portable, mcp, rootRole), loadExisting(existing))
+    compose(
+      loadPortable(portable, mcp, rootRole),
+      loadExisting(existing),
+      options
+    )
   );
   if (check) {
     if (!existsSync(output)) {
@@ -234,13 +313,17 @@ function lstatSafe(path: string): boolean {
 if (isEntryPoint(import.meta.url)) {
   try {
     const { values, flags } = parseArgs(process.argv.slice(2));
+    const existingConfig = requiredArg(values, "existing-config");
     process.exitCode = runCompose(
       requiredArg(values, "portable-source"),
       requiredArg(values, "mcp-source"),
       requiredArg(values, "root-role"),
-      requiredArg(values, "existing-config"),
+      existingConfig,
       requiredArg(values, "output"),
-      flags.has("check")
+      flags.has("check"),
+      // The plugin cache lives beside the user config, so the bundled
+      // plugins Codex installed are the ones under that directory.
+      { bundledPlugins: listBundledPlugins(path.dirname(existingConfig)) }
     );
   } catch (error) {
     writeErrorLine(`compose-user-config: ${errorMessage(error)}`);

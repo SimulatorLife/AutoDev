@@ -23,6 +23,12 @@
     "context7": {
       "url": "https://mcp.context7.com/mcp",
       "bearer_token_env_var": "CONTEXT7_API_KEY"
+    },
+    "googleDeveloperKnowledge": {
+      "url": "https://developerknowledge.googleapis.com/mcp",
+      "headers": {
+        "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+      }
     }
   },
   "codexcli": {
@@ -54,6 +60,13 @@
       "context7": {
         "url": "https://mcp.context7.com/mcp",
         "bearer_token_env_var": "CONTEXT7_API_KEY",
+        "disabled": true
+      },
+      "googleDeveloperKnowledge": {
+        "url": "https://developerknowledge.googleapis.com/mcp",
+        "headers": {
+          "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+        },
         "disabled": true
       },
       "playwright": {

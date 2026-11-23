@@ -16,6 +16,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import {
+  codexCliVersion,
   findCodexBinary,
   findCopilotBinary,
   findMiniMaxBinary,
@@ -44,6 +45,21 @@ function installExecutable(path: string): string {
 }
 
 /**
+ * A Codex CLI that reports the given version, or one that reports no version
+ * at all when the version is null.
+ */
+function installCodex(path: string, version: string | null): string {
+  mkdirSync(join(path, ".."), { recursive: true });
+  const script =
+    version === null
+      ? `#!/bin/sh\nexit 0\n`
+      : `#!/bin/sh\necho 'codex-cli ${version}'\n`;
+  writeFileSync(path, script, { mode: 0o755 });
+  chmodSync(path, 0o755);
+  return path;
+}
+
+/**
  * A Runtime layout holding a private copy of the resolver module, so the test
  * controls the package symlink it resolves through while that one module
  * instance stays loaded -- the way the long-lived bridge does across an install.
@@ -64,6 +80,10 @@ function runtimeFixture(): {
   copyFileSync(
     new URL("../../runtime/src/shared/executables.ts", import.meta.url),
     modulePath
+  );
+  copyFileSync(
+    new URL("../../runtime/src/shared/bundled-plugins.ts", import.meta.url),
+    join(moduleDir, "bundled-plugins.ts")
   );
   const scope = join(root, "runtime", "node_modules", "@jackwener");
   return {
@@ -272,6 +292,68 @@ test("a missing Codex CLI is reported as absent rather than guessed", (t) => {
   assert.throws(
     () => resolveCodexBinary({ PATH: "" }, fixture.home),
     /Codex CLI not found/
+  );
+});
+
+test("the newest Codex CLI wins over a stale one on PATH", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const current = installCodex(
+    join(fixture.home, ".local", "bin", "codex"),
+    "0.154.0"
+  );
+  const staleDirectory = join(fixture.home, "usr-local-bin");
+  installCodex(join(staleDirectory, "codex"), "0.42.0");
+  assert.equal(
+    resolveCodexBinary({ PATH: staleDirectory }, fixture.home),
+    current,
+    "a stale CLI on the default PATH must not shadow the current one"
+  );
+});
+
+test("an explicit Codex CLI wins over the newest one installed", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  installCodex(join(fixture.home, ".local", "bin", "codex"), "0.154.0");
+  const chosen = installCodex(join(fixture.home, "chosen", "codex"), "0.42.0");
+  assert.equal(
+    resolveCodexBinary({ CODEX_BIN: chosen, PATH: "" }, fixture.home),
+    chosen,
+    "an explicitly configured CLI is the operator's decision and wins"
+  );
+});
+
+test("a Codex CLI that reports no version does not outrank one that does", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const versioned = installCodex(
+    join(fixture.home, ".local", "bin", "codex"),
+    "0.154.0"
+  );
+  const silentDirectory = join(fixture.home, "silent-bin");
+  installCodex(join(silentDirectory, "codex"), null);
+  assert.equal(
+    resolveCodexBinary({ PATH: silentDirectory }, fixture.home),
+    versioned,
+    "a CLI that does not say which release it is cannot claim to be newer"
+  );
+});
+
+test("the Codex CLI version is read from the binary itself", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const binary = installCodex(join(fixture.home, "codex"), "0.154.0");
+  assert.equal(codexCliVersion(binary), "0.154.0");
+  assert.equal(codexCliVersion(join(fixture.home, "missing")), null);
+});
+
+test("a CODEX_BIN that names nothing usable is reported as a misconfiguration", (t) => {
+  const fixture = homeFixture();
+  t.after(fixture.cleanup);
+  const missing = join(fixture.home, "bin", "codex");
+  assert.throws(
+    () => findCodexBinary({ CODEX_BIN: missing, PATH: "" }, fixture.home),
+    /Codex CLI is not executable/
   );
 });
 

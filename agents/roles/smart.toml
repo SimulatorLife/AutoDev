@@ -52,6 +52,12 @@ enabled_tools = [
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
 
+# Google's Developer Knowledge MCP serves the official documentation corpus.
+# The credential is an API key the operator supplies in the environment, so
+# the role never carries the key itself.
+[mcp_servers.googleDeveloperKnowledge]
+enabled = true
+
 [mcp_servers."cocoindex-code"]
 enabled = true
 default_tools_approval_mode = "approve"

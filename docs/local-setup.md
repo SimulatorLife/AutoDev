@@ -536,7 +536,7 @@ that works for each:
   `documents`, `presentations`, `spreadsheets`, `template-creator`),
   `sites`, `openai-developers`, `openai-templates`, and `cloud-environment`
   from `openai-curated-remote`, and `sites`, `browser`, `computer-use`,
-  `unified-computer-use`, and `visualize` from `openai-bundled`. `sites`
+  and `visualize` from `openai-bundled`. `sites`
   ships from two marketplaces that declare the same
   `sites-building`/`sites-hosting` skill names, so both copies must be
   disabled. `plugin-management` is deliberately left enabled as the
@@ -544,6 +544,15 @@ that works for each:
   is explicitly enabled because AutoDev narrows its `codex_app` MCP to
   `request_user_input`. Plugins that declare no skills (for example `github`)
   are not named here at all and stay under the operator's local config.
+- **Bundled-plugin tool lockdown** covers the whole `openai-bundled`
+  marketplace, including the plugins that declare no skills. `unified-computer-use`
+  is the one that ships tools rather than skills: its `cua_repl` MCP server
+  is Codex's native computer-control surface, and its tools reach the model
+  directly. It is disabled in the portable source with the rest of the
+  family, and the composer disables any other bundled plugin the portable
+  source does not enable - including the plugins Codex has installed under
+  `$CODEX_HOME/plugins/cache/openai-bundled/`, which Codex enables when no
+  config names them.
 - **Per-skill disable** (`[[skills.config]] name = "<skill>" enabled = false`)
   works for the four Codex `.system/` skills that are not relevant to
   AutoDev: `imagegen`, `plugin-creator`, `skill-creator`,
@@ -577,7 +586,12 @@ survive: the next install re-asserts `enabled = false`. To use a
 suppressed plugin again, flip it in `config/config.autodev.toml` (or drop
 its entry entirely, which returns ownership of that plugin to the
 operator's local config) and re-run the installer. Only plugins the
-portable source does not name are left to machine-local state.
+portable source does not name are left to machine-local state, with one
+exception: the `openai-bundled` marketplace is off by default, so a bundled
+plugin the portable source does not enable stays disabled even when the
+local config turns it on, and a bundled plugin Codex installs after the last
+install is named - disabled - by the next one. Enabling one of those means
+enabling it in `config/config.autodev.toml` and re-running the installer.
 
 `autodev-codex-request-capture`, `autodev-session-diagnostics`,
 `opentelemetry`, and `writing-agent-skills` are **AutoDev-repository-only**
@@ -1132,6 +1146,17 @@ load the same value; the Copilot CLI subprocess does not inherit it. A
 materialize-only install stages a newly generated key without restarting the
 Router or Copilot proxy, so both services must be reloaded before Copilot can
 serve routed tasks with that key.
+
+The Codex CLI is found by one lookup in `runtime/src/shared/executables.ts`,
+and every surface that runs it uses that lookup: an explicit `CODEX_BIN` wins,
+and otherwise the newest CLI installed wins over a stale one on the default
+`PATH`. The candidates are `~/.local/bin/codex`, the first `codex` on `PATH`,
+and the pnpm-global `PNPM_HOME/bin/codex`. A machine usually holds more than
+one copy -- a stale one in the system bin directory is common -- and the stale
+one rejects the flags the role bridge and the command rules depend on, so the
+newest one is the one that runs. A `CODEX_BIN` that names something unusable
+is reported as the misconfiguration it is, and a machine with no Codex CLI at
+all reports that none is installed rather than guessing at one.
 
 The Copilot CLI itself is found the way the Codex CLI is found, by one lookup
 in `runtime/src/shared/executables.ts`: `COPILOT_BIN` when it is set, then the

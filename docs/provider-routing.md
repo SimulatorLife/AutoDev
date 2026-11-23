@@ -3723,9 +3723,13 @@ installer is the only supported materialization path into
 
 ### Operational notes
 
-- The shared Codex resolver checks `CODEX_BIN`, `PATH`, and the pnpm-global
-  `PNPM_HOME/bin/codex`; the service resolver ranks installed CLI versions.
-  It no longer searches NVM directories.
+- The Codex CLI is resolved once, in `runtime/src/shared/executables.ts`: an
+  explicit `CODEX_BIN` wins, and otherwise the newest CLI installed wins over
+  a stale one on the default `PATH`. The candidates are `~/.local/bin/codex`,
+  the first `codex` on `PATH`, and the pnpm-global `PNPM_HOME/bin/codex`.
+  Every surface that runs the CLI resolves it that way, so none of them can
+  end up on a different copy than another. It no longer searches NVM
+  directories.
 - Profile names are configuration files selected with `codex --profile`, not
   `[profiles.*]` tables.
 - After changing registry or profile configuration, run `codex doctor --json`

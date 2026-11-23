@@ -70,8 +70,14 @@ import {
   ATTR_AUTODEV_CLIENT_SURFACE,
   type ClientSurface,
   isClientSurface,
-  safeAutoDevSessionId} from "@simulatorlife/autodev-core";
+  safeAutoDevSessionId
+} from "@simulatorlife/autodev-core";
 import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import {
+  readOtlpHeaders,
+  readOtlpMetricEndpoint,
+  readOtlpTraceEndpoint
+} from "@simulatorlife/autodev-runtime/telemetry/otlp-config";
 import type { ProviderPhaseTiming } from "@simulatorlife/autodev-runtime/telemetry/provider-phases";
 import {
   safeAutoDevAgentRole,
@@ -233,8 +239,6 @@ const TRACER_NAME = "autodev.router";
 const TRACER_VERSION = "1.0.0";
 const SERVICE_NAME = "autodev-router";
 const ATTR_VALUE_MAX_LENGTH = 64;
-const SIGNAL_ENDPOINT_SUFFIX_PATTERN = /\/v1\/(?:traces|metrics|logs)$/u;
-const TRAILING_SLASH_PATTERN = /\/$/u;
 const METRIC_AGENT_ROLES = new Set([
   "orchestrator",
   "subagent",
@@ -333,58 +337,6 @@ function logTelemetryError(message: string): void {
   }
 }
 
-export function resolveOtlpSignalEndpoint(
-  base: string,
-  signal: "traces" | "metrics"
-): string | null {
-  try {
-    const endpoint = new URL(base);
-    const path = endpoint.pathname.replace(TRAILING_SLASH_PATTERN, "");
-    endpoint.pathname = SIGNAL_ENDPOINT_SUFFIX_PATTERN.test(path)
-      ? path.replace(SIGNAL_ENDPOINT_SUFFIX_PATTERN, `/v1/${signal}`)
-      : `${path}/v1/${signal}`;
-    return endpoint.toString();
-  } catch {
-    return null;
-  }
-}
-
-function readOtlpTraceEndpoint(): string | null {
-  const specific = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim();
-  if (specific) return specific;
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-  return base ? resolveOtlpSignalEndpoint(base, "traces") : null;
-}
-
-function readOtlpMetricEndpoint(): string | null {
-  const specific = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT?.trim();
-  if (specific) return specific;
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-  return base ? resolveOtlpSignalEndpoint(base, "metrics") : null;
-}
-
-function parseOtlpHeaders(
-  ...sources: Array<string | undefined>
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (const source of sources) {
-    if (!source) continue;
-    for (const item of source.split(",")) {
-      const separator = item.indexOf("=");
-      if (separator <= 0) continue;
-      const key = item.slice(0, separator).trim();
-      const encodedValue = item.slice(separator + 1).trim();
-      if (!key || !encodedValue) continue;
-      try {
-        headers[key] = decodeURIComponent(encodedValue);
-      } catch {
-        headers[key] = encodedValue;
-      }
-    }
-  }
-  return headers;
-}
-
 /**
  * Git Usage derives exact time-window counts by subtracting cumulative counter
  * readings. Keep the Router's OTLP stream cumulative even if a process-wide
@@ -407,13 +359,7 @@ function createOtlpMetricReader(): MetricReader | null {
   if (!endpoint) return null;
   try {
     return new PeriodicExportingMetricReader({
-      exporter: createOtlpMetricExporter(
-        endpoint,
-        parseOtlpHeaders(
-          process.env.OTEL_EXPORTER_OTLP_HEADERS,
-          process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS
-        )
-      ),
+      exporter: createOtlpMetricExporter(endpoint, readOtlpHeaders("metrics")),
       exportIntervalMillis: 60_000,
       exportTimeoutMillis: 10_000,
       cardinalityLimits: { default: 500 }
@@ -648,10 +594,7 @@ function buildSpanProcessors(): SpanProcessor[] {
         new BatchSpanProcessor({
           exporter: new OTLPTraceExporter({
             url: endpoint,
-            headers: parseOtlpHeaders(
-              process.env.OTEL_EXPORTER_OTLP_HEADERS,
-              process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS
-            )
+            headers: readOtlpHeaders("traces")
           })
         })
       );

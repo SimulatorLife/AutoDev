@@ -29,6 +29,11 @@ consumers, ownership boundaries, control/data flow, reusable implementations,
 tests, configuration, documentation, and active versus generated/dead/
 transitional paths.
 
+Start from indexed CodeGraphContext (`list_indexed_repositories`, then
+`find_code` / `analyze_code_relationships`) before broad search or file reads,
+keep discovery commands bounded (`references/codex-code-mode.md`), and avoid
+redundant reads of files or outputs already in context.
+
 For implementation-critical behavior owned outside the repository, resolve
 version-sensitive assumptions through the `docs-researcher` before planning.
 
@@ -57,9 +62,10 @@ their canonical source. Avoid unrelated cleanup.
 
 ## 5. Validate
 
-Apply the parent skill's validation policy and the strongest relevant repository
-checks. Validate acceptance criteria, the active path, regressions, and affected
-boundaries. Record unavailable evidence explicitly.
+Apply the parent skill's validation policy and proportionate validation tiers
+(focused, subsystem, full) pinned to repository-state evidence
+(`references/validation.md`). Validate acceptance criteria, the active path,
+regressions, and affected boundaries. Record unavailable evidence explicitly.
 
 **Gate:** available evidence supports the target state with no known blocking
 findings

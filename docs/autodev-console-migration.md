@@ -1505,6 +1505,38 @@ The Console shows the version as small text under the provider's name in the pro
 
 **What remains open:** the live Runtime has to pick up the new source and be restarted before the live Console shows a version rather than **Not observed**; the read has not been exercised against the live machine's CLIs, only against the captured output shapes and a bounded fake.
 
+## The Codex CLI was resolved in two places, and the stale one won
+
+Two answers to "which Codex CLI is this?" existed. The shared lookup in
+`runtime/src/shared/executables.ts` took the first `codex` on `PATH`; the
+launchd service resolver in `platform/host-arch.ts` took the newest CLI on the
+machine. On a machine that holds a stale copy in the system bin directory --
+the common case -- the shared lookup handed that copy to the role bridge and
+to the Providers page, and the command-rules check spawned the bare `codex` on
+`PATH` as well. The stale copy predates the `execpolicy` subcommand, so
+`codex execpolicy check` failed on a machine whose rules were correct:
+`tests/config/command-rules.test.ts` failed on all twenty decisions while the
+rules file itself was right.
+
+There is one answer now, and it lives with the other executable lookups.
+`runtime/src/shared/executables.ts` resolves the Codex CLI for every surface:
+an explicit `CODEX_BIN` wins, and otherwise the newest CLI installed wins
+over a stale one on the default `PATH`, with the candidates
+`~/.local/bin/codex`, the first `codex` on `PATH` and the pnpm-global
+`PNPM_HOME/bin/codex`. A CLI that reports no version never outranks one that
+does. The service resolver and the version helpers it owned are deleted
+rather than kept as a second answer, and `platform/macos/launchagent.ts`
+renders the LaunchAgent pin from the shared lookup, so the pinned service and
+the role bridge name the same file.
+
+**Validation:** `tests/shared/executables.test.ts` passes with the version
+ranking (a stale CLI on `PATH` does not shadow the current one, an explicit
+`CODEX_BIN` still wins, a CLI that reports no version does not outrank one
+that does, and the version is read from the binary itself);
+`tests/config/command-rules.test.ts` passes 21/21 with the rules checked
+against the CLI the shared lookup resolves; `tests/platform/host-arch.test.ts`
+and `tests/platform/launchagent.test.ts` pass with the moved helpers removed.
+
 ## The Prompt Hub was a second authority that could not win
 
 The fork shipped a Prompt Hub: four pages under `/prompt-hub`, six API routes under `/api/prompt`, three components, and a ClickHouse-backed store with its own version and compile history. It looked like a second copy of the Console's Prompts surface, and it was one -- but the duplication was not the interesting part.

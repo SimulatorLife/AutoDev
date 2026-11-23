@@ -239,6 +239,28 @@ test("four model_providers entries are pinned with byte-for-byte attributes", as
   }
 });
 
+test("the bundled OpenAI marketplace is disabled apart from the Codex App tools plugin", () => {
+  const portable = loadPortable(PORTABLE_PATH);
+  const plugins = portable.plugins as
+    Record<string, { enabled?: unknown }> | undefined;
+  assert.ok(plugins, "portable source must declare a plugins table");
+  const bundled = Object.entries(plugins).filter(([name]) =>
+    name.endsWith("@openai-bundled")
+  );
+  assert.ok(bundled.length > 0, "no bundled plugins are declared");
+  for (const [name, entry] of bundled) {
+    if (name === "codex-app-tools@openai-bundled") {
+      assert.equal(entry.enabled, true);
+      continue;
+    }
+    assert.equal(
+      entry.enabled,
+      false,
+      `${name} must be disabled: bundled plugins carry native Codex tools`
+    );
+  }
+});
+
 test("hook declarations stay in Rulesync, not the portable Codex source", async () => {
   const portable = loadPortable(PORTABLE_PATH);
   assert.equal(Object.hasOwn(portable, "hooks"), false);

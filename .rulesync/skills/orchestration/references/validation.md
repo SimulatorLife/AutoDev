@@ -18,6 +18,33 @@ Prefer complementary evidence, such as:
 Treat agent reports as provisional evidence, not authority. The root resolves
 disagreements and determines whether lifecycle gates pass.
 
+## Proportionate validation
+
+Match validation depth to blast radius, regression risk, and failure signals
+rather than running full suites reflexively for isolated edits or skipping
+broader checks for cross-cutting changes:
+
+- **Focused:** targeted unit/contract tests, typecheck, or lint scoped directly
+  to the changed files or symbols. Use during iterative edits and for
+  trivial/bounded changes with strictly local impact.
+- **Subsystem:** package or module test suites, integration tests, or build
+  checks covering the affected subsystem and its immediate callers or
+  contracts. Use for standard changes, interface/boundary edits, or after
+  focused checks pass on non-trivial work.
+- **Full:** repository-wide build, test, lint/typecheck, or multi-perspective
+  validation gates. Use for cross-cutting, shared-infrastructure,
+  config/schema, or high-risk changes, or when subsystem checks reveal wider
+  regressions.
+
+### Repository-state evidence
+
+Pin every validation run to an identified repository state
+(`git rev-parse --short HEAD` plus `git status --short` or the uncommitted diff
+scope). Record the exact commands run, their exit status and pass/fail counts,
+and the repository state they validated. Material edits after a run invalidate
+affected evidence and require re-running the affected tier. Explicitly report
+any skipped or unavailable tiers rather than implying full coverage.
+
 ## Browser verification
 
 Delegate browser verification to `browser-tester` (`playwright-mcp` launches

@@ -267,7 +267,11 @@ in first-party install, build, test, provider bootstrap, or validation paths.
 
 Launchd and hook subprocesses must resolve the installer's explicit
 `AUTODEV_NODE_BIN` or the pnpm-managed `PNPM_HOME/bin/node` even under a
-minimal PATH. Global CLIs may be found under `PNPM_HOME/bin`. Missing pnpm
+minimal PATH. Global CLIs may be found under `PNPM_HOME/bin`. The Codex CLI
+is resolved by one lookup owned by the Runtime
+(`runtime/src/shared/executables.ts`): an explicit `CODEX_BIN` wins, and
+otherwise the newest CLI installed wins over a stale one on the default
+`PATH`, so no surface runs a different CLI than another. Missing pnpm
 tooling is a visible prerequisite failure, never an implicit switch to a
 different package or runtime manager. Installation must not create or rewrite
 the operator's `.zprofile` to select Node. JavaScript target repositories
@@ -352,7 +356,7 @@ console ──> core, data         # data: exported server-only read projections
 - Independent workspaces can be installed/tested without launching the Console, external providers or unrelated services; use injected adapters and deterministic fakes for external boundaries.
 - Keep modules cohesive and files named for their actual responsibilities; avoid oversized mixed-purpose files and one-function forwarding layers without architectural value.
 - The authenticated Control API request handler composes resource owners. Source validation, runtime projection, and resource-specific caches stay with the owning resource rather than accumulating in the request dispatcher.
-- Apply DRY to **behavior and configuration ownership**: one implementation for routing selection, failure classification, capability scope, MCP/skill policy, telemetry events and shared validation. Delete dead/duplicate adapters when a package or shared domain module satisfies the same contract.
+- Apply DRY to **behavior and configuration ownership**: one implementation for routing selection, failure classification, capability scope, MCP/skill policy, telemetry events, shared validation and tool resolution. Delete dead/duplicate adapters when a package or shared domain module satisfies the same contract.
 
 ## 5. Architecture and ownership
 

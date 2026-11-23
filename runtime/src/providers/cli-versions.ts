@@ -102,14 +102,18 @@ function located(
 }
 
 /**
- * The Codex CLI, which is resolved by the shared lookup the MCP launcher
- * uses. The lookup fails loudly when the CLI is missing, so the failure is
- * caught here: a missing CLI is a fact to report, not an error to throw
- * while the page is being built.
+ * The Codex CLI, which is resolved by the shared lookup the role bridge uses.
+ * A CLI that is not installed, and a `CODEX_BIN` that names something
+ * unusable, are both facts to report rather than errors to throw while the
+ * page is being built.
  */
 function locateCodex(env: NodeJS.ProcessEnv): ProviderCliCommand | null {
-  const binary = findCodexBinary(env);
-  return binary ? located("codex", binary) : null;
+  try {
+    const binary = findCodexBinary(env);
+    return binary ? located("codex", binary) : null;
+  } catch {
+    return null;
+  }
 }
 
 const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {

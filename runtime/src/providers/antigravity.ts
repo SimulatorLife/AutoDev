@@ -64,6 +64,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { resolveEnvironmentHeaders } from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   type RoleContract,
@@ -2247,7 +2248,9 @@ function bridgeHttpMcpEntry(
   if (headers !== undefined) {
     if (!headers || typeof headers !== "object" || Array.isArray(headers))
       throw new Error(`MCP server ${name} has invalid HTTP headers`);
-    entry.headers = { ...headers };
+    // A header the catalogue names as an environment reference is resolved
+    // here, because Antigravity sends header values as they are.
+    entry.headers = resolveEnvironmentHeaders({ ...headers });
   }
   return entry;
 }

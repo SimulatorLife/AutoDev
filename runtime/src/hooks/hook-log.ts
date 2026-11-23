@@ -9,10 +9,53 @@ export const MAX_HOOK_REASON_LENGTH = 200;
 export const MAX_COMMAND_HEAD_LENGTH = 120;
 
 export type HookDenialPolicy =
-  | "read-only"
-  | "orchestrator-git-history"
-  | "block-ccc-cli"
-  | "file-surface";
+  "read-only" | "orchestrator-git-history" | "block-ccc-cli" | "file-surface";
+
+export type OrchestrationClassification =
+  "trivial" | "standard" | "high-risk" | "unknown";
+
+export type OrchestrationClassificationSource =
+  "assistant_message" | "structured_event" | "none";
+
+export type OrchestrationTelemetryStatus = "complete" | "incomplete";
+
+export type OrchestrationTelemetryGap =
+  | "missing_transcript_path"
+  | "unreadable_transcript"
+  | "malformed_transcript_lines"
+  | "unresolved_spawn_output"
+  | "missing_turn_identity";
+
+export type OrchestrationComplianceStatus =
+  | "compliant"
+  | "classification_unknown"
+  | "no_delegation_observed"
+  | "delegation_failed"
+  | "incomplete_telemetry";
+
+export interface ObservedSpawnSummary {
+  readonly attempted: number;
+  readonly succeeded: number;
+  readonly failed: number;
+  readonly unresolved: number;
+}
+
+export interface OrchestrationComplianceObservation {
+  readonly classification: OrchestrationClassification;
+  readonly classificationSource: OrchestrationClassificationSource;
+  readonly spawn: ObservedSpawnSummary;
+  readonly telemetryStatus: OrchestrationTelemetryStatus;
+  readonly telemetryGaps: readonly OrchestrationTelemetryGap[];
+  readonly status: OrchestrationComplianceStatus;
+}
+
+export interface OrchestrationComplianceLogEntry extends OrchestrationComplianceObservation {
+  readonly hook: "root-delegation";
+  readonly decision: "observe";
+  readonly model: string | null;
+  readonly session: string | null;
+  readonly turn: string | null;
+}
 
 export interface PreToolUseDenialLogEntry {
   readonly hook: "role-sandbox" | "block-ccc-cli" | "file-surface";
@@ -159,6 +202,34 @@ export function logPreToolUseDenial(
       tool: entry.tool,
       reason: normalizeReason(entry.reason),
       ...(commandHead ? { commandHead } : {})
+    },
+    logFilePath
+  );
+}
+
+/**
+ * Record a structured, non-blocking `OrchestrationCompliance` observation to
+ * `hooks.log`. Uses its own event name so `PreToolUse` denial and
+ * `UserPromptSubmit` counters remain unaffected.
+ */
+export function logOrchestrationCompliance(
+  entry: OrchestrationComplianceLogEntry,
+  logFilePath?: string
+): void {
+  appendHookLogRecord(
+    {
+      event: "OrchestrationCompliance",
+      hook: entry.hook,
+      decision: entry.decision,
+      model: entry.model,
+      session: entry.session,
+      turn: entry.turn,
+      classification: entry.classification,
+      classificationSource: entry.classificationSource,
+      status: entry.status,
+      telemetryStatus: entry.telemetryStatus,
+      telemetryGaps: [...entry.telemetryGaps],
+      spawn: { ...entry.spawn }
     },
     logFilePath
   );

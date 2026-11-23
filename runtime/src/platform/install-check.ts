@@ -18,6 +18,7 @@ import {
   runCompose,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
+import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
@@ -798,7 +799,8 @@ function checkUserConfigAndAgents(
       path.join(paths.repositoryRoot, "agents/roles/orchestrator.toml"),
       path.join(paths.codexHome, USER_CONFIG_FILE),
       path.join(paths.codexHome, USER_CONFIG_FILE),
-      true
+      true,
+      { bundledPlugins: listBundledPlugins(paths.codexHome) }
     ) === 0,
     failures
   );

@@ -26,7 +26,8 @@ const MCP_ORDER: Record<string, number> = {
   playwright: 4,
   openaiDeveloperDocs: 5,
   context7: 6,
-  codex_app: 7
+  googleDeveloperKnowledge: 7,
+  codex_app: 8
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so

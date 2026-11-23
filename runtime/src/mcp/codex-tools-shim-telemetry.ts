@@ -10,8 +10,11 @@
  * The shim uses the official OpenTelemetry JS SDK and OTLP HTTP exporter.
  * It never hand-builds OTLP, never duplicates telemetry from the router,
  * never reads from or writes to the router's telemetry module, and never
- * alters `/status` aggregation. Spans are only exported when a real
- * `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`)
+ * alters `/status` aggregation. The exporter's endpoint and headers
+ * come from the shared OTLP configuration owner
+ * (@simulatorlife/autodev-runtime/telemetry/otlp-config), so this producer
+ * and the router resolve the operator's endpoint the same way. Spans are only
+ * exported when a real `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`)
  * is configured; without an endpoint the OTel API's no-op tracer remains
  * in place and the call path is unchanged.
  *
@@ -83,6 +86,10 @@ import {
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
 import {
+  readOtlpHeaders,
+  readOtlpTraceEndpoint
+} from "@simulatorlife/autodev-runtime/telemetry/otlp-config";
+import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
@@ -104,8 +111,6 @@ const TRACER_NAME = "autodev.codex-tools-mcp";
 const TRACER_VERSION = "1.0.0";
 const SERVICE_NAME = "autodev-codex-tools-mcp";
 const ATTR_VALUE_MAX_LENGTH = 64;
-const TRAILING_SLASH_PATTERN = /\/$/u;
-const SIGNAL_ENDPOINT_SUFFIX_PATTERN = /\/v1\/(?:traces|metrics|logs)$/u;
 
 interface ShimTelemetryState {
   tracer: Tracer;
@@ -177,58 +182,16 @@ function logTelemetryError(message: string): void {
   }
 }
 
-function resolveOtlpTraceEndpoint(): string | null {
-  const specific = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim();
-  if (specific) return specific;
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-  if (!base) return null;
-  try {
-    const endpoint = new URL(base);
-    const path = endpoint.pathname.replace(TRAILING_SLASH_PATTERN, "");
-    endpoint.pathname = SIGNAL_ENDPOINT_SUFFIX_PATTERN.test(path)
-      ? path.replace(SIGNAL_ENDPOINT_SUFFIX_PATTERN, "/v1/traces")
-      : `${path}/v1/traces`;
-    return endpoint.toString();
-  } catch {
-    return null;
-  }
-}
-
-function parseOtlpHeaders(
-  ...sources: Array<string | undefined>
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (const source of sources) {
-    if (!source) continue;
-    for (const item of source.split(",")) {
-      const separator = item.indexOf("=");
-      if (separator <= 0) continue;
-      const key = item.slice(0, separator).trim();
-      const encodedValue = item.slice(separator + 1).trim();
-      if (!key || !encodedValue) continue;
-      try {
-        headers[key] = decodeURIComponent(encodedValue);
-      } catch {
-        headers[key] = encodedValue;
-      }
-    }
-  }
-  return headers;
-}
-
 function buildSpanProcessors(): SpanProcessor[] {
   const processors: SpanProcessor[] = [];
-  const endpoint = resolveOtlpTraceEndpoint();
+  const endpoint = readOtlpTraceEndpoint();
   if (endpoint) {
     try {
       processors.push(
         new BatchSpanProcessor({
           exporter: new OTLPTraceExporter({
             url: endpoint,
-            headers: parseOtlpHeaders(
-              process.env.OTEL_EXPORTER_OTLP_HEADERS,
-              process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS
-            )
+            headers: readOtlpHeaders("traces")
           })
         })
       );

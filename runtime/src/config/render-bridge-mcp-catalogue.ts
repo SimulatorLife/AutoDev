@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import { codexEnvironmentHeaders } from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
@@ -39,6 +40,25 @@ export function renderBridgeMcpCatalogue(source: string): string {
     const serverTable = server as TomlTable;
     for (const key of LAUNCH_KEYS)
       if (serverTable[key] !== undefined) launch[key] = serverTable[key]!;
+    // Codex spells an environment-sourced header `env_http_headers`; the
+    // catalogue keeps AutoDev's `${VAR}` reference so it names the variable
+    // without carrying the credential.
+    if (serverTable.env_http_headers !== undefined) {
+      const environmentHeaders = codexEnvironmentHeaders(
+        serverTable.env_http_headers
+      );
+      if (environmentHeaders === null)
+        throw new ConfigError(
+          `MCP source declares invalid env_http_headers for ${name}`
+        );
+      const headers = launch.http_headers;
+      launch.http_headers = {
+        ...(headers && typeof headers === "object" && !Array.isArray(headers)
+          ? (headers as Record<string, string>)
+          : {}),
+        ...environmentHeaders
+      };
+    }
     catalogue[name] = launch;
   }
   return `${JSON.stringify(catalogue, null, 2)}\n`;

@@ -26,6 +26,12 @@ enabled = false
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
 
+# Google's Developer Knowledge MCP serves the official documentation corpus.
+# The credential is an API key the operator supplies in the environment, so
+# the role never carries the key itself.
+[mcp_servers.googleDeveloperKnowledge]
+enabled = true
+
 # General documentation research uses Codex's native web_search tool. The
 # browser automation MCP is for UI testing/debugging and is intentionally not
 # exposed to this role.

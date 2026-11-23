@@ -110,7 +110,8 @@
       "mcp": [
         "filesystem",
         "openaiDeveloperDocs",
-        "context7"
+        "context7",
+        "googleDeveloperKnowledge"
       ],
       "skills": [
         "source-driven-development"
@@ -300,7 +301,8 @@
         "cocoindex-code",
         "codegraphcontext",
         "playwright",
-        "openaiDeveloperDocs"
+        "openaiDeveloperDocs",
+        "googleDeveloperKnowledge"
       ],
       "skills": [
         "ccc",

@@ -52,7 +52,6 @@ import {
   recordGitCommit,
   resetTelemetryExporter,
   resetTrackedGitCommitsForTest,
-  resolveOtlpSignalEndpoint,
   sanitizeCategoricalLabel,
   setTelemetryExporter,
   setTelemetryMetricExporterForTest,
@@ -171,18 +170,6 @@ function findMetricPoints(metricName: string): Array<{
       });
     });
 }
-
-test("generic OTLP endpoint resolves to distinct signal paths", () => {
-  assert.equal(
-    resolveOtlpSignalEndpoint("http://127.0.0.1:4318/", "traces"),
-    "http://127.0.0.1:4318/v1/traces"
-  );
-  assert.equal(
-    resolveOtlpSignalEndpoint("http://127.0.0.1:4318/v1/logs", "metrics"),
-    "http://127.0.0.1:4318/v1/metrics"
-  );
-  assert.equal(resolveOtlpSignalEndpoint("not-a-url", "metrics"), null);
-});
 
 test("physical attempt spans retain only a source-confirmed conversation thread id", () => {
   installExporter();

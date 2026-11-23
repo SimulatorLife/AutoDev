@@ -54,6 +54,11 @@ enabled = true
 [mcp_servers.context7]
 enabled = false
 
+# Documentation research belongs to the documentation roles, so the root turn
+# never picks the documentation MCP servers up itself.
+[mcp_servers.googleDeveloperKnowledge]
+enabled = false
+
 [[skills.config]]
 name = "code-simplification"
 enabled = false

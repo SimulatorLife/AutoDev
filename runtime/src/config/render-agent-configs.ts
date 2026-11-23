@@ -11,7 +11,12 @@ import {
 import { parse } from "smol-toml";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import { ConfigError, parseTomlFile, type TomlTable } from "./config-files.ts";
+import {
+  ConfigError,
+  parseTomlFile,
+  tomlValue,
+  type TomlTable
+} from "./config-files.ts";
 
 export const BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}";
 export const LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}";
@@ -21,13 +26,16 @@ export const ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}";
 // rendered role TOML so a Codex role loader that only sees `enabled = true`
 // still has the full server definition (url + transport + auth). HTTP MCP
 // servers use `bearer_token_env_var` (Codex-supported, mirrors the bundled
-// github plugin); `http_headers` is propagated for non-bearer HTTP auth.
+// github plugin); `http_headers` is propagated for non-bearer HTTP auth, and
+// `env_http_headers` for a header whose value Codex reads from the
+// environment (the spelling RuleSync gives a canonical `${VAR}` header).
 const LAUNCH_KEYS = [
   "command",
   "args",
   "url",
   "bearer_token_env_var",
-  "http_headers"
+  "http_headers",
+  "env_http_headers"
 ] as const;
 const HTTP_URL_PATTERN = /^(http|https):\/\//;
 const TABLE = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm;
@@ -102,7 +110,7 @@ export function fillLaunchKeys(
       const generatedTable = generated as TomlTable;
       const lines = LAUNCH_KEYS.filter(
         (key) => key in generatedTable && !(key in role)
-      ).map((key) => `${key} = ${JSON.stringify(generatedTable[key])}`);
+      ).map((key) => `${key} = ${tomlValue(generatedTable[key])}`);
       if ("url" in generated && !("transport" in role))
         lines.push('transport = "streamable_http"');
       return [header, ...lines].join("\n");

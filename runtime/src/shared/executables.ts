@@ -1,19 +1,27 @@
 /**
  * Executable lookup shared by the MCP launcher and platform lifecycle code,
  * so every caller resolves a tool's binary the same way.
+ *
+ * The Codex CLI follows one rule here, because a machine usually holds more
+ * than one copy of it: an explicit `CODEX_BIN` wins, and otherwise the
+ * newest CLI installed is the one every surface runs.
  */
 
+import { execFileSync } from "node:child_process";
 import {
   accessSync,
   constants,
   existsSync,
   readdirSync,
   readFileSync,
-  realpathSync
+  realpathSync,
+  statSync
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { BUNDLED_MARKETPLACE } from "./bundled-plugins.ts";
 
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 const OPENCLI_PACKAGE = "@jackwener/opencli";
@@ -58,11 +66,140 @@ export function findPnpmGlobalBinary(
   return isExecutable(candidate) ? candidate : null;
 }
 
-/** Resolve the Codex CLI from its explicit setting, PATH, or version-managed install. */
-export function resolveCodexBinary(
+const CODEX_VERSION_PATTERN = /(\d+)\.(\d+)\.(\d+)/u;
+
+/** The versions this process has read, keyed by the binary they came from. */
+const codexVersionCache = new Map<
+  string,
+  {
+    readonly mtimeMs: number;
+    readonly size: number;
+    readonly version: string | null;
+  }
+>();
+
+function defaultCodexVersionRunner(
+  file: string,
+  args: readonly string[]
+): string {
+  return execFileSync(file, [...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5000
+  });
+}
+
+function probeCodexCliVersion(
+  binary: string,
+  run: (file: string, args: readonly string[]) => string
+): string | null {
+  let output: string;
+  try {
+    output = run(binary, ["--version"]);
+  } catch {
+    return null;
+  }
+  return CODEX_VERSION_PATTERN.exec(output)?.[0] ?? null;
+}
+
+/**
+ * The version a Codex CLI reports, or null when it does not report one.
+ *
+ * The reading is cached against the binary's size and modification time, so
+ * the cost is paid once per install rather than once per lookup.
+ */
+export function codexCliVersion(
+  binary: string,
+  run?: (file: string, args: readonly string[]) => string
+): string | null {
+  if (run) return probeCodexCliVersion(binary, run);
+  let stat: { mtimeMs: number; size: number } | null = null;
+  try {
+    stat = statSync(binary);
+  } catch {
+    /* unavailable */
+  }
+  const cached = stat ? codexVersionCache.get(binary) : undefined;
+  if (
+    stat &&
+    cached &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size
+  ) {
+    return cached.version;
+  }
+  const version = probeCodexCliVersion(binary, defaultCodexVersionRunner);
+  if (stat) {
+    codexVersionCache.set(binary, {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      version
+    });
+  }
+  return version;
+}
+
+/**
+ * Order two Codex versions, newest first.
+ *
+ * A version that could not be read is the oldest one: a CLI that does not say
+ * which release it is cannot claim to be newer than one that does.
+ */
+function compareCodexVersions(
+  left: string | null,
+  right: string | null
+): number {
+  if (left === null) return right === null ? 0 : 1;
+  if (right === null) return -1;
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * The Codex CLI installs this machine has.
+ *
+ * Three places hold one: the standalone install under the local bin
+ * directory, the first `codex` on PATH, and pnpm's global bin directory,
+ * which is the one a launchd service's minimal PATH still names.
+ */
+function codexCandidates(env: NodeJS.ProcessEnv, home: string): string[] {
+  return [
+    ...new Set(
+      [
+        path.join(home, ".local", "bin", "codex"),
+        findExecutable("codex", env.PATH ?? ""),
+        findPnpmGlobalBinary("codex", home, env)
+      ].filter(
+        (candidate): candidate is string =>
+          candidate !== null && isExecutable(candidate)
+      )
+    )
+  ];
+}
+
+/**
+ * The Codex CLI to use: the operator's explicit setting, else the newest CLI
+ * this machine has.
+ *
+ * The newest CLI wins because the first one on PATH is often the wrong one:
+ * a stale install under the system bin directory predates the subcommands the
+ * role bridge and the command rules depend on, and a CLI that rejects them
+ * breaks both at once. An explicit `CODEX_BIN` is the operator's decision
+ * and always wins.
+ *
+ * The answer is null when this machine has no Codex CLI at all. A
+ * `CODEX_BIN` that names something unusable is a misconfiguration rather
+ * than an absence, and is reported as one instead of being quietly ignored.
+ */
+export function findCodexBinary(
   env: NodeJS.ProcessEnv = process.env,
   home = env.HOME?.trim() || homedir()
-): string {
+): string | null {
   const configured = env.CODEX_BIN?.trim();
   if (configured) {
     const resolved = configured.includes(path.sep)
@@ -71,27 +208,27 @@ export function resolveCodexBinary(
     if (resolved && isExecutable(resolved)) return resolved;
     throw new Error(`Codex CLI is not executable: ${configured}`);
   }
-  const fromPath = findExecutable("codex", env.PATH ?? "");
-  if (fromPath) return fromPath;
+  const candidates = codexCandidates(env, home);
+  if (candidates.length === 0) return null;
+  const ranked = candidates
+    .map((candidate) => ({ candidate, version: codexCliVersion(candidate) }))
+    .sort((left, right) => compareCodexVersions(left.version, right.version));
+  return ranked[0]?.candidate ?? null;
+}
 
-  const fromPnpm = findPnpmGlobalBinary("codex", home, env);
-  if (fromPnpm) return fromPnpm;
-
+/**
+ * The same lookup, reported as a failure: where the Codex CLI is, or why it
+ * is not usable.
+ */
+export function resolveCodexBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  home = env.HOME?.trim() || homedir()
+): string {
+  const binary = findCodexBinary(env, home);
+  if (binary) return binary;
   throw new Error(
     "Codex CLI not found; set CODEX_BIN to the current codex executable."
   );
-}
-
-/** The same lookup without the failure: where the Codex CLI is, or null when it is not installed. */
-export function findCodexBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
-): string | null {
-  try {
-    return resolveCodexBinary(env, home);
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -326,7 +463,7 @@ export function findCodexAppMcpServer(
     codeHome,
     "plugins",
     "cache",
-    "openai-bundled",
+    BUNDLED_MARKETPLACE,
     "codex-app-tools"
   );
   if (!existsSync(cacheRoot)) return null;

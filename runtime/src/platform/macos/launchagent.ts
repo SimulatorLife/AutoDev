@@ -3,10 +3,11 @@ import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import { findCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { resolveConsolePort } from "../console-ensure.ts";
-import { resolveServiceCodex, resolveServiceNode } from "../host-arch.ts";
+import { resolveServiceNode } from "../host-arch.ts";
 
 /** The install-wide paths every service LaunchAgent template is rendered against. */
 export interface LaunchAgentPaths {
@@ -21,7 +22,7 @@ export interface LaunchAgentValues {
   readonly repositoryRoot: string;
   /** The Node binary services run on; see resolveServiceNode. */
   readonly nodeBin: string;
-  /** The Codex CLI services run on; see resolveServiceCodex. */
+  /** The Codex CLI services run on; see findCodexBinary. */
   readonly codexBin: string;
   /** The loopback port the Console binds; see resolveConsolePort. */
   readonly consolePort: string;
@@ -43,7 +44,7 @@ export function resolveLaunchAgentValues(
     home: paths.home,
     repositoryRoot: paths.repositoryRoot,
     nodeBin: resolveServiceNode(paths.home),
-    codexBin: resolveServiceCodex(paths.home, env) ?? "",
+    codexBin: findCodexBinary(env, paths.home) ?? "",
     consolePort: String(resolveConsolePort(env.AUTODEV_CONSOLE_PORT))
   };
 }

@@ -26,6 +26,7 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
+import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -138,6 +139,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/statistics/python_script/analysis.py",
   "runtime/src/playtesting/statistics/python_script/library_versions.py",
   "runtime/src/shared/map-concurrent-ordered.ts",
+  "runtime/src/shared/bundled-plugins.ts",
   "runtime/src/shared/provider-model-ids.ts",
   "runtime/src/shared/output.ts",
   "runtime/src/shared/error-message.ts",
@@ -145,6 +147,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/runtime-secrets.ts",
   "runtime/src/shared/runtime-source-root.ts",
   "runtime/src/shared/installed-skills.ts",
+  "runtime/src/shared/mcp-headers.ts",
   "runtime/src/shared/agent-context-headers.ts",
   "runtime/src/shared/env.ts",
   "runtime/src/shared/execution-contract.ts",
@@ -215,6 +218,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/github-metrics.ts",
   "runtime/src/telemetry/provider-phases.ts",
   "runtime/src/telemetry/tracer-provider.ts",
+  "runtime/src/telemetry/otlp-config.ts",
   "runtime/src/providers/minimax.ts",
   "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
@@ -1497,7 +1501,8 @@ export function materializeMcpConfiguration(options: {
     path.join(options.repositoryRoot, "agents/roles/orchestrator.toml"),
     configPath,
     configPath,
-    false
+    false,
+    { bundledPlugins: listBundledPlugins(options.codexHome) }
   );
 }
 

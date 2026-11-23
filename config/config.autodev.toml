@@ -259,6 +259,9 @@ enabled = false
 # every install, so a Codex Desktop plugin-cache regeneration cannot quietly
 # re-expose them. `plugin-management` is deliberately NOT disabled - it is
 # the operator's escape hatch for re-enabling any of the above locally.
+# The `openai-bundled` marketplace has no local escape hatch: compose
+# disables every bundled plugin this source does not enable, so a bundled
+# plugin OpenAI ships later cannot re-expose its native tools.
 [plugins."openai-templates@openai-curated-remote"]
 enabled = false
 
@@ -266,6 +269,13 @@ enabled = false
 enabled = false
 
 [plugins."computer-use@openai-bundled"]
+enabled = false
+
+# `unified-computer-use` declares no skill, so the skill lockdown above
+# never named it, but it ships the `cua_repl` MCP server: Codex's native
+# computer-control surface. Its tools reach the model directly, so it is
+# pinned here with the rest of the bundled family.
+[plugins."unified-computer-use@openai-bundled"]
 enabled = false
 
 [plugins."visualize@openai-bundled"]

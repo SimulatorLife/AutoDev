@@ -28,7 +28,11 @@ Every tool output stays in every later request until compaction, delegated or no
 - Bound each command's output to what the step needs. Pass `max_output_tokens`
   of 2000 or less for searches, listings, and diffs; raise it only for output
   you must read in full. Narrow with `rg -l`, `--max-count`, `head`, or a line
-  range, and never print bundled, generated, or minified files.
+  range, and never print bundled, generated, or minified files. See
+  `references/codex-code-mode.md` for justified exceptions and for completing
+  long-running `session_id` commands via `write_stdin` instead of re-running or
+  tight polling.
 - Answer from current references, tests, and docs. The root does not read git history (`git log`, `git show`, `git blame`, `git reflog`): the `PreToolUse` hook hard-blocks the entire command whenever any history subcommand appears, even chained after `git status` or `git commit`. Use `git status --short`, `git diff`, or `git rev-parse --short HEAD` for current state/HEAD verification, and delegate scoped regression history to one child with symptom, files, and commit range.
-- Do not re-run a call whose output is already in context.
+- Query indexed CodeGraphContext first (`Shared codebase navigation`) and do not re-read files or re-run calls whose output is already in context (`references/codex-code-mode.md`).
+- Run proportionate validation (focused, subsystem, or full) pinned to repository-state evidence; see `references/validation.md`.
 - Browser `MachPortRendezvousServer` error: check `playwright.config.*` for single-process or use `browser-tester`.

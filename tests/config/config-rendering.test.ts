@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   validateProviderContracts
 } from "@simulatorlife/autodev-runtime/config";
 import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
+import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { parse } from "smol-toml";
 
 test("TOML serialization is parseable and ends with one newline", () => {
@@ -54,6 +55,94 @@ test("composition preserves local state while AutoDev-owned keys win", () => {
     "github@openai-curated": { enabled: true }
   });
   assert.equal(result.notify, "desktop");
+});
+
+test("composition disables every bundled OpenAI plugin the portable source does not enable", () => {
+  // The bundled marketplace ships native Codex surfaces (browser control,
+  // computer use, the CUA REPL) that AutoDev does not expose to agents. The
+  // portable source names the bundled plugins it allows; every other bundled
+  // plugin is off even when the local config turns it on, so a plugin OpenAI
+  // ships later cannot re-expose its tools.
+  const result = compose(
+    {
+      plugins: {
+        "codex-app-tools@openai-bundled": { enabled: true },
+        "browser@openai-bundled": { enabled: false }
+      }
+    },
+    {
+      plugins: {
+        "codex-app-tools@openai-bundled": { enabled: false },
+        "unified-computer-use@openai-bundled": {
+          enabled: true,
+          mcp_servers: { cua_repl: { enabled: true } }
+        },
+        "github@openai-curated": { enabled: true }
+      }
+    }
+  );
+  assert.deepEqual(result.plugins, {
+    "codex-app-tools@openai-bundled": { enabled: true },
+    "browser@openai-bundled": { enabled: false },
+    "unified-computer-use@openai-bundled": {
+      enabled: false,
+      mcp_servers: { cua_repl: { enabled: true } }
+    },
+    "github@openai-curated": { enabled: true }
+  });
+});
+
+test("composition names every installed bundled plugin the portable source does not allow", () => {
+  // Codex enables an installed plugin unless the config names it as disabled,
+  // so a bundled plugin it installs after the last install is live for every
+  // agent until a compose names it.
+  const result = compose(
+    {
+      plugins: { "codex-app-tools@openai-bundled": { enabled: true } }
+    },
+    { plugins: {} },
+    {
+      bundledPlugins: ["browser", "codex-app-tools", "unified-computer-use"]
+    }
+  );
+  assert.deepEqual(result.plugins, {
+    "codex-app-tools@openai-bundled": { enabled: true },
+    "browser@openai-bundled": { enabled: false },
+    "unified-computer-use@openai-bundled": { enabled: false }
+  });
+});
+
+test("the bundled lockdown holds even when the portable source declares no plugins", () => {
+  const result = compose(
+    {},
+    { plugins: { "browser@openai-bundled": { enabled: true } } },
+    { bundledPlugins: ["unified-computer-use"] }
+  );
+  assert.deepEqual(result.plugins, {
+    "browser@openai-bundled": { enabled: false },
+    "unified-computer-use@openai-bundled": { enabled: false }
+  });
+});
+
+test("the composed config disables a bundled plugin Codex has installed", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "autodev-bundled-compose-"));
+  try {
+    mkdirSync(
+      join(codexHome, "plugins", "cache", "openai-bundled", "browser", "1.0"),
+      { recursive: true }
+    );
+    const result = compose(
+      { plugins: { "codex-app-tools@openai-bundled": { enabled: true } } },
+      {},
+      { bundledPlugins: listBundledPlugins(codexHome) }
+    );
+    assert.deepEqual(result.plugins, {
+      "codex-app-tools@openai-bundled": { enabled: true },
+      "browser@openai-bundled": { enabled: false }
+    });
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+  }
 });
 
 test("composition drops a permission profile selected outside the portable source", () => {

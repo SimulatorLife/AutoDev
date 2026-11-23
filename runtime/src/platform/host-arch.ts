@@ -1,15 +1,6 @@
 import { execFileSync } from "node:child_process";
-import {
-  accessSync,
-  closeSync,
-  constants,
-  openSync,
-  readSync,
-  statSync
-} from "node:fs";
+import { accessSync, closeSync, constants, openSync, readSync } from "node:fs";
 import path from "node:path";
-
-import { findExecutable, findPnpmGlobalBinary } from "../shared/executables.ts";
 
 export type HostArch = "arm64" | "amd64";
 export type ExecutableArch = HostArch | "universal";
@@ -21,7 +12,6 @@ const MACH_O_CPU_X86_64 = 0x01_00_00_07;
 const ELF_MAGIC = 0x7f_45_4c_46;
 const ELF_MACHINE_X86_64 = 0x3e;
 const ELF_MACHINE_AARCH64 = 0xb7;
-const CODEX_VERSION_PATTERN = /(\d+)\.(\d+)\.(\d+)/u;
 
 /**
  * The machine's architecture, not this process's: a Node running under
@@ -122,121 +112,4 @@ export function resolveServiceNode(
     usable[0] ??
     process.execPath
   );
-}
-
-const defaultCodexVersionCache = new Map<
-  string,
-  {
-    readonly mtimeMs: number;
-    readonly size: number;
-    readonly version: string | null;
-  }
->();
-
-function defaultCodexVersionRunner(
-  file: string,
-  args: readonly string[]
-): string {
-  return execFileSync(file, [...args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5000
-  });
-}
-
-function probeCodexCliVersion(
-  binary: string,
-  run: (file: string, args: readonly string[]) => string
-): string | null {
-  let output: string;
-  try {
-    output = run(binary, ["--version"]);
-  } catch {
-    return null;
-  }
-  return CODEX_VERSION_PATTERN.exec(output)?.[0] ?? null;
-}
-
-/** The version a Codex CLI reports, or null when it does not report one. */
-export function codexCliVersion(
-  binary: string,
-  run?: (file: string, args: readonly string[]) => string
-): string | null {
-  if (!run) {
-    let stat: { mtimeMs: number; size: number } | null = null;
-    try {
-      stat = statSync(binary);
-    } catch {
-      /* unavailable */
-    }
-    const cached = stat ? defaultCodexVersionCache.get(binary) : undefined;
-    if (
-      stat &&
-      cached &&
-      cached.mtimeMs === stat.mtimeMs &&
-      cached.size === stat.size
-    ) {
-      return cached.version;
-    }
-    const version = probeCodexCliVersion(binary, defaultCodexVersionRunner);
-    if (stat) {
-      defaultCodexVersionCache.set(binary, {
-        mtimeMs: stat.mtimeMs,
-        size: stat.size,
-        version
-      });
-    }
-    return version;
-  }
-  return probeCodexCliVersion(binary, run);
-}
-
-function compareVersions(left: string | null, right: string | null): number {
-  if (left === null) return right === null ? 0 : -1;
-  if (right === null) return 1;
-  const leftParts = left.split(".").map(Number);
-  const rightParts = right.split(".").map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
-
-/**
- * The Codex CLI launchd services should run on.
- *
- * The services dispatch roles through the Codex CLI, and the CLI has to be
- * the one the operator's own session runs: launchd's pinned PATH finds
- * `/usr/local/bin/codex` first, which on many machines is an old CLI that
- * rejects the flags the role bridge passes. The newest CLI the machine has
- * wins, so a stale copy on the default PATH cannot shadow the current one.
- */
-export function resolveServiceCodex(
-  home: string,
-  env: NodeJS.ProcessEnv = process.env,
-  versionOf: (binary: string) => string | null = codexCliVersion
-): string | null {
-  const configured = env.CODEX_BIN?.trim();
-  if (configured) {
-    if (isExecutable(configured)) return configured;
-    throw new Error(`Codex CLI is not executable: ${configured}`);
-  }
-  const candidates = [
-    ...new Set(
-      [
-        path.join(home, ".local/bin/codex"),
-        findExecutable("codex", env.PATH),
-        findPnpmGlobalBinary("codex", home, env)
-      ].filter(
-        (candidate): candidate is string =>
-          candidate !== null && isExecutable(candidate)
-      )
-    )
-  ];
-  if (candidates.length === 0) return null;
-  const ranked = candidates
-    .map((candidate) => ({ candidate, version: versionOf(candidate) }))
-    .sort((left, right) => compareVersions(left.version, right.version));
-  return ranked[0]?.candidate ?? null;
 }
