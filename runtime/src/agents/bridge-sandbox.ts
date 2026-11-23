@@ -10,6 +10,7 @@ import {
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { roleSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 export type BridgeSandboxMode = "read-only" | "workspace-write" | null;
 
@@ -22,6 +23,22 @@ export function bridgeSandboxMode(
   });
   if (raw === "read-only" || raw === "workspace-write") return raw;
   return null;
+}
+
+/**
+ * Whether a bridged turn runs read-only.
+ *
+ * The header the router forwards is the authoritative wire signal: it says
+ * which sandbox the turn was routed under. The role contract is the fallback
+ * for a request that carries none, and it answers the same question from the
+ * role's own declared sandbox.
+ */
+export function turnIsReadOnly(
+  sandboxMode: BridgeSandboxMode,
+  agentRole: string | null
+): boolean {
+  if (sandboxMode !== null) return sandboxMode === "read-only";
+  return roleSandboxMode(agentRole) === "read-only";
 }
 
 /** Read the orchestrator-propagated selected-skill context. */

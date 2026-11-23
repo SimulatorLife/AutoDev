@@ -1071,6 +1071,27 @@ role runs in (the effective mode) and the sandbox it declared. A role whose
 declaration the session narrowed shows the narrowing rather than folding it
 away.
 
+### File surface hook
+
+Files are read and edited only through the `filesystem` MCP server
+(`@modelcontextprotocol/server-filesystem`), on every provider; see "File
+interaction surface" in `docs/autodev-console-target-state.md`. For Codex,
+AutoDev's model catalogs leave out `apply_patch_tool_type`, so `apply_patch` is
+not offered. `view_image` cannot be removed by configuration -- Codex 0.171
+offers it whatever `[tools] view_image` or the model's input modalities say --
+so `runtime/src/hooks/file-surface.ts`, a `PreToolUse` hook registered in
+`.rulesync/hooks.jsonc` for `apply_patch|view_image`, refuses both with the
+`filesystem` tool to use instead (`read_media_file`; `edit_file` or
+`write_file`). It also covers `apply_patch` on a model whose catalog AutoDev
+does not render. Refusals are logged to `$CODEX_HOME/hooks/hooks.log` with
+`"hook":"file-surface"`.
+
+The bridges launch the server per turn with `AUTODEV_MCP_WORKSPACE` (the turn's
+workspace) and, on a read-only turn, `AUTODEV_MCP_READ_ONLY=1`; the launcher
+adds `--confine-roots` and the skill roots outside the workspace as
+`--read-only-dir`. A read-only role's Codex config sets the same variable in its
+`[mcp_servers.filesystem]` table.
+
 ### Rulesync shared configuration
 
 `.rulesync/` is the only tracked Rulesync input, and nothing Rulesync generates is tracked as a test fixture. The repository projections use `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`; the separate `copilotcli` target is used for user-level MCP generation. `rulesync.jsonc` is the only RuleSync configuration. A hook in the shared `hooks` section reaches every target, and a per-target section **replaces** the shared section for the event it names rather than adding to it: a `codexcli.hooks.preToolUse` entry leaves Codex without the shared `PreToolUse` hooks, so a hook that belongs to one host only has to be listed there together with the shared ones it needs. **Current state:** its project-mode generation covers repository projections that have reached parity. RuleSync 43.8.0 supports native subagent generation for the four configured targets, but native role TOMLs/execution-contract code remain transitional because those projections do not encode AutoDev's complete shared role contract losslessly; the `subagents` and `permissions` features are not currently enabled. **Target:** move every losslessly representable agent-facing definition into canonical RuleSync sources, then delete the duplicate native authority only after field-level and runtime parity is proven. Do not add another AutoDev-specific declarative schema during that migration.

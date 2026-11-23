@@ -196,7 +196,6 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
-        "filesystem",
         "playtest"
       ],
       "skills": [
@@ -241,7 +240,6 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
-        "filesystem",
         "playtest"
       ],
       "skills": [

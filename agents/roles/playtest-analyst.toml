@@ -19,11 +19,10 @@ developer_instructions = """
 # inherit smart's broad workspace-write/tool surface: sandbox is forced
 # read-only above and every source-write-capable or delegation-capable MCP
 # server below is explicitly disabled rather than assumed off.
+# A sealed role: it works only through its Playtest packet tools, so it has
+# no file surface either.
 [mcp_servers.filesystem]
-enabled = true
-default_tools_approval_mode = "approve"
-# Read-only roles get only the tools that cannot change the filesystem.
-env = { AUTODEV_MCP_READ_ONLY = "1" }
+enabled = false
 
 [mcp_servers.lsp]
 enabled = false

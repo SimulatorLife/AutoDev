@@ -13,7 +13,7 @@ tests all import from there so a rename moves the whole surface together.
 | ------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex code-mode meta-tool             | bare                     | `exec`                                                                                                                                                   |
 | Multi-agent delegation                | `multi_agent_v1__<tool>` | `multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`, `multi_agent_v1__close_agent`, `multi_agent_v1__resume_agent`, `multi_agent_v1__send_input` |
-| MCP tools                             | `mcp__<server>__<tool>`  | `mcp__lsp__lsp_goto_definition`, `mcp__cocoindex-code__search`                                                     |
+| MCP tools                             | `mcp__<server>__<tool>`  | `mcp__filesystem__edit_file`, `mcp__lsp__lsp_goto_definition`, `mcp__cocoindex-code__search`                                                     |
 | Codex-native web research             | bare                     | `web_search`, `web_fetch`                                                                                                                                |
 | Codex App plugin (request_user_input) | bare                     | `request_user_input`                                                                                                                                     |
 

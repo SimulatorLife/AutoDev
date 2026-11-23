@@ -17,12 +17,13 @@
  * Codex runs these models in code mode: the tool surface arrives as an
  * `additional_tools` input item holding a `functions` namespace with the
  * `exec` custom tool (raw JavaScript evaluated against a `tools` global that
- * carries `exec_command`, `apply_patch`, the role's MCP servers, and the
+ * carries `exec_command`, the role's MCP servers, and the
  * orchestrator's `multi_agent_v1__*` functions) plus plain function tools such
  * as `wait`. Captured from Codex 0.154.0 with the request-capture skill.
  */
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { MCP_SERVER_FILESYSTEM } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   requestContentParts,
   type RequestImage,
@@ -50,6 +51,15 @@ export interface CodexToolSurface {
 
 /** The MCP server name the bridge registers; Claude names its tools `mcp__codex__<tool>`. */
 export const CODEX_TOOLS_SERVER = "codex";
+
+/**
+ * How a bridged model works with files: through the `filesystem` MCP server,
+ * the one file surface every provider is offered (see
+ * `runtime/src/mcp/filesystem-server.ts`). The bridge launches it next to the
+ * `codex` server, scoped to the turn's workspace, with only its reading tools
+ * on a read-only turn.
+ */
+export const FILE_SURFACE_GUIDANCE = `Files are read and edited only through the \`${MCP_SERVER_FILESYSTEM}\` MCP server: \`read_text_file\`, \`read_multiple_files\`, \`read_media_file\`, \`list_directory\`, \`directory_tree\`, \`search_files\` and \`get_file_info\` to read, and, unless the turn is read-only, \`edit_file\`, \`write_file\`, \`create_directory\` and \`move_file\` to change them. It is confined to the workspace; give it absolute paths inside it. Run programs with the shell, but do not read or write files with shell commands.`;
 
 // Codex's default namespace. Its members are called by their bare names, as
 // recorded rollouts of Codex-served turns show (`exec`, `wait`).
@@ -185,12 +195,7 @@ export function codexToolReference(tools: readonly CodexTool[]): string {
         nested.length > 0
           ? `\n\nFunctions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.`
           : "";
-      const patchHint =
-        nested.includes("apply_patch") &&
-        !tool.description.includes("*** Begin Patch")
-          ? "\n\n`apply_patch` format (never use unified-diff line numbers like `@@ -10,5 +10,5 @@`): wrap edits in `*** Begin Patch` ... `*** End Patch` using `*** Update File: <path>` / `*** Add File: <path>` / `*** Delete File: <path>`, optional `@@ <context anchor>` headers, and ` ` / `-` / `+` lines."
-          : "";
-      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}${functions}${patchHint}`;
+      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}${functions}`;
     })
     .join("\n\n");
 }
@@ -211,7 +216,7 @@ export function codexToolReferenceForDispatcher(
 ): string {
   return [
     "## Codex tools",
-    `Your file and command tools are not your own: they are the Codex agent's, and they run in its sandbox, under its approvals and with its hooks, so every action they take is recorded against this thread. They live on the \`${CODEX_TOOLS_SERVER}\` MCP server, which you reach through your \`${dispatcher}\` dispatcher: \`ServerName\` is \`${CODEX_TOOLS_SERVER}\`, \`ToolName\` is the tool named below, and \`Arguments\` are that tool's own arguments.`,
+    `Your command tools are not your own: they are the Codex agent's, and they run in its sandbox, under its approvals and with its hooks, so every action they take is recorded against this thread. They live on the \`${CODEX_TOOLS_SERVER}\` MCP server, which you reach through your \`${dispatcher}\` dispatcher: \`ServerName\` is \`${CODEX_TOOLS_SERVER}\`, \`ToolName\` is the tool named below, and \`Arguments\` are that tool's own arguments.`,
     codexToolReference(tools)
   ].join("\n\n");
 }

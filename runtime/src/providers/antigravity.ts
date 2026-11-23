@@ -31,9 +31,14 @@ import {
   isOrchestratorRole,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  roleMcpEnvironment
+  roleMcpEnvironment,
+  turnIsReadOnly
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
+import {
+  filesystemMcpServer,
+  readBridgeMcpCatalogue
+} from "@simulatorlife/autodev-runtime/mcp/filesystem-server";
 import {
   CODEX_TOOLS_SERVER,
   type CodexTool,
@@ -41,10 +46,12 @@ import {
   codexToolCallItem,
   codexToolReferenceForDispatcher,
   codexToolSurface,
+  FILE_SURFACE_GUIDANCE,
   mcpResultFromCodexOutput,
   mcpToolDefinition,
   renderCodexTranscript
 } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
+import { MCP_SERVER_FILESYSTEM } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   contextHeaderValue,
   readContextHeader,
@@ -61,7 +68,6 @@ import { resolveAgyBinary } from "@simulatorlife/autodev-runtime/shared/executab
 import {
   type RoleContract,
   roleContract,
-  roleSandboxMode,
   roleScopedMcp,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
@@ -2192,24 +2198,6 @@ interface IsolatedHomeResult {
   cleanup: () => void;
 }
 
-/** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
-function bridgeMcpCatalogue(codexHome?: string): Record<string, JsonRecord> {
-  const basePath =
-    codexHome ?? process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex");
-  const path = pathApi.join(basePath, "provider-runtime", "mcp-servers.json");
-  try {
-    const raw = readFileSync(path, "utf8");
-    const catalogue = JSON.parse(raw);
-    if (catalogue && typeof catalogue === "object" && !Array.isArray(catalogue))
-      return catalogue;
-  } catch {
-    /* reported below */
-  }
-  throw new Error(
-    `bridge MCP catalogue is missing or invalid: ${path}; rerun scripts/install.sh`
-  );
-}
-
 /**
  * Builds the invocation-scoped Antigravity MCP config containing only the current
  * role contract's declared MCP servers (from the bridge catalogue), plus the
@@ -2375,7 +2363,8 @@ function writeCompactionAgent(isolatedHome: string): string {
 function writeCodexToolsAgent(
   isolatedHome: string,
   attachments: readonly AgyAttachment[],
-  directMcpServers: readonly string[] = []
+  directMcpServers: readonly string[],
+  codexTools: boolean
 ): string {
   const directMcpNote =
     directMcpServers.length > 0
@@ -2389,11 +2378,18 @@ function writeCodexToolsAgent(
       ? [
           "",
           "One file is yours to open directly: the image the user attached to this",
-          "turn. It is below, and it is the only file you may read without asking",
-          "Codex:",
+          "turn. It is below, and it is the only file outside the workspace you may",
+          "read without the filesystem server:",
           ...attachments.map(({ path }) => `- ${path}`)
         ].join("\n")
       : "";
+  const commandNote = codexTools
+    ? [
+        "Commands come from the `codex` MCP server -- running them, and, for an",
+        "orchestrator, spawning and managing subagents through `exec`'s `tools`",
+        "global."
+      ]
+    : ["No Codex tools are offered on this turn."];
   return writeIsolatedAgentMarkdown(isolatedHome, CODEX_TOOLS_AGENT_NAME, [
     "---",
     `name: ${CODEX_TOOLS_AGENT_NAME}`,
@@ -2407,10 +2403,10 @@ function writeCodexToolsAgent(
     "it holds the sandbox, the approvals, and the history, and it executes the",
     "tools you call.",
     "",
-    "Every tool comes from the `codex` MCP server -- reading files, writing",
-    "them, running commands, and, for an orchestrator, spawning and managing",
-    "subagents through `exec`'s `tools` global. Do not describe a tool you",
-    "have not called as done. If a call returns an error, say what failed.",
+    ...commandNote,
+    `${FILE_SURFACE_GUIDANCE} Call its tools through \`call_mcp_tool\` with \`ServerName\` \`${MCP_SERVER_FILESYSTEM}\`.`,
+    "Do not describe a tool you have not called as done. If a call returns an",
+    "error, say what failed.",
     directMcpNote,
     attachmentNote,
     ""
@@ -2445,12 +2441,29 @@ function buildInvocationMcpConfig(
   // servers (`roleScopedMcp`: `playwright` for `browser-tester`, `playtest` for
   // `playtester`) are disabled at Codex root and never propagated by Codex to
   // spawned children, so agy still injects them directly.
+  //
+  // The `filesystem` server is the one file surface, launched for this turn
+  // below with the turn's workspace and sandbox rather than from the
+  // catalogue entry as it stands.
   const scopedMcp = toolTurnId ? new Set(roleScopedMcp(agentRole)) : null;
   const bridgeMcpNames = (contract.mcp ?? []).filter(
-    (name) => !scopedMcp || scopedMcp.has(name)
+    (name) =>
+      name !== MCP_SERVER_FILESYSTEM && (!scopedMcp || scopedMcp.has(name))
   );
+  if (!options?.cwd)
+    throw new Error(
+      "Antigravity invocation requires a validated absolute workspace for its filesystem server"
+    );
+  mcpServers[MCP_SERVER_FILESYSTEM] = {
+    ...filesystemMcpServer({
+      workspace: options.cwd,
+      readOnly: turnIsReadOnly(options.sandboxMode ?? null, agentRole),
+      ...(options.codexHome ? { codexHome: options.codexHome } : {}),
+      userHome: options.originalHome ?? process.env.HOME ?? homedir()
+    })
+  };
   if (bridgeMcpNames.length > 0) {
-    const catalogue = bridgeMcpCatalogue(options?.codexHome);
+    const catalogue = readBridgeMcpCatalogue(options?.codexHome);
     for (const name of bridgeMcpNames) {
       const server = catalogue[name];
       if (!server || typeof server !== "object" || Array.isArray(server))
@@ -2480,7 +2493,8 @@ function buildInvocationMcpConfig(
       });
       mcpServers[name] = bridgeMcpEntry(
         name,
-        server,
+        // Parsed from JSON, so every value in it is a JSON value.
+        server as JsonRecord,
         contract.mcpTools?.[name],
         roleEnvironment
       );
@@ -2510,23 +2524,6 @@ function invocationMcpPermissionGrants(
     }
   }
   return grants;
-}
-
-/**
- * Whether a turn runs read-only.
- *
- * The header the router forwards is the authoritative wire signal: it says
- * which sandbox the turn was routed under. The role contract is the fallback
- * for a bridge that has not been updated to send one, and it answers the same
- * question from the role's own declared sandbox.
- */
-function isReadOnlyRole(
-  agentRole: string | null = null,
-  sandboxMode: "read-only" | "workspace-write" | null = null
-): boolean {
-  if (sandboxMode === "read-only") return true;
-  if (sandboxMode === "workspace-write") return false;
-  return roleSandboxMode(agentRole) === "read-only";
 }
 
 function buildReadOnlyInvocationSettings({
@@ -2709,7 +2706,7 @@ function buildInvocationSettings(
 
   const mcpGrants = invocationMcpPermissionGrants(contract, mcpConfig);
 
-  if (isReadOnlyRole(agentRole, options?.sandboxMode))
+  if (turnIsReadOnly(options?.sandboxMode ?? null, agentRole))
     return buildReadOnlyInvocationSettings({
       userSettings,
       userPermissions,
@@ -2751,6 +2748,9 @@ function symlinkGeminiDirectory(
 
 function symlinkGeminiState(source: string, target: string): void {
   for (const name of readdirSync(source)) {
+    // Do not symlink user-level GEMINI.md instructions into isolated turns;
+    // AutoDev's Codex context and agent definition own all instructions.
+    if (name === "GEMINI.md") continue;
     const sourcePath = pathApi.join(source, name);
     if (name === GEMINI_CONFIG_DIRECTORY) {
       symlinkGeminiDirectory(
@@ -2855,17 +2855,23 @@ function createIsolatedAntigravityHome(
     activeIsolatedHomeCleanups.add(cleanup);
 
     const directMcpServers = Object.keys(mcpConfig.mcpServers).filter(
-      (name) => name !== CODEX_TOOLS_SERVER
+      (name) => name !== CODEX_TOOLS_SERVER && name !== MCP_SERVER_FILESYSTEM
     );
     return {
       isolatedHome: tempHome,
       mcpConfig,
       settings,
+      // Every turn runs as one of AutoDev's agents, never agy's default one:
+      // the default keeps agy's own file and shell tools, which would be a
+      // second file surface outside the turn's sandbox.
       customizationDir: options?.compaction
         ? writeCompactionAgent(tempHome)
-        : toolTurnId
-          ? writeCodexToolsAgent(tempHome, attachments, directMcpServers)
-          : null,
+        : writeCodexToolsAgent(
+            tempHome,
+            attachments,
+            directMcpServers,
+            toolTurnId !== null
+          ),
       attachments,
       cleanup
     };
@@ -2903,7 +2909,7 @@ function agyArgs(
   // trust that header over the role's own declaration because the header is
   // the authoritative wire signal for this turn, and falls back to the
   // contract for bridges that have not been updated to send it yet.
-  const readOnly = isReadOnlyRole(agentRole, sandboxMode);
+  const readOnly = turnIsReadOnly(sandboxMode, agentRole);
   // Headless print mode (-p) cannot prompt interactively for tool approvals.
   // AGY_SKIP_PERMISSIONS ("true" by default) auto-approves tool permission
   // requests so the turn does not crash on unpromptable tool confirmations.
@@ -2947,7 +2953,9 @@ function agyArgs(
 function agyInvocationArgs(invocation: AgyInvocation | null): string[] {
   if (!invocation?.customizationDir) return [];
   return [
-    ...(invocation.compaction ? ["--disable-slash-commands"] : []),
+    // Disable agy's own slash-command and skill expansion on every turn:
+    // Codex owns the skill catalogue and skills are read via `filesystem`.
+    "--disable-slash-commands",
     "--add-dir",
     invocation.customizationDir,
     "--agent",
@@ -3015,8 +3023,8 @@ function runAgy(
   } catch (error) {
     return Promise.reject(error);
   }
-  // The agent exists exactly when the tools shim or compaction agent does, so
-  // a turn never runs with default tools re-enabled when they were excluded.
+  // Every turn has an agent -- the compaction agent or the AutoDev agent -- so
+  // a turn never runs with agy's default tools re-enabled.
   const invocation: AgyInvocation | null = isolatedState.customizationDir
     ? {
         agentName: compaction ? COMPACTION_AGENT_NAME : CODEX_TOOLS_AGENT_NAME,
@@ -4566,10 +4574,7 @@ class StreamingTurn implements ParkableTurn {
     }
     if (codexToolsTurnId(this.turn) !== null && !this.toolsReached) {
       this.fail(
-        new CodexToolsUnreachableError(
-          "Antigravity",
-          "never reached the turn"
-        )
+        new CodexToolsUnreachableError("Antigravity", "never reached the turn")
       );
       return;
     }

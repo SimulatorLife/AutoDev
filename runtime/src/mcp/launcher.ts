@@ -10,6 +10,7 @@ import {
   resolveCodeGraphContextBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveSkillRoots } from "@simulatorlife/autodev-runtime/shared/skill-reads";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
@@ -133,6 +134,45 @@ export function resolveMcpCommand(
   throw new Error(`unsupported AutoDev MCP: ${name || "<missing>"}`);
 }
 
+function isWithin(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+/**
+ * The directories the `filesystem` server may touch: the workspace, and the
+ * skill roots outside it.
+ *
+ * Skills are instructions the model reads, and the user-level ones live
+ * outside any workspace (`~/.agents/skills`, `~/.codex/skills`), so the one
+ * file surface has to reach them to read a skill at all. They are given with
+ * `--read-only-dir`: a turn reads a skill, it does not rewrite the user's
+ * catalogue. A root inside the workspace is left to the workspace, so a
+ * repository's own skills stay as editable as the rest of it.
+ *
+ * `--confine-roots` keeps an MCP client's Roots from replacing these
+ * directories: a client that sends its own roots can narrow them, never widen
+ * them past the workspace.
+ */
+export function filesystemDirectoryArgs(
+  workspace: string,
+  repoRoot: string
+): string[] {
+  const root = physicalPath(workspace);
+  const readOnly = [
+    ...new Set(resolveSkillRoots(repoRoot).map(physicalPath))
+  ].filter((dir) => !isWithin(dir, root) && !isWithin(root, dir));
+  return [
+    "--confine-roots",
+    ...readOnly.flatMap((dir) => ["--read-only-dir", dir]),
+    "--",
+    root
+  ];
+}
+
 /**
  * The directory an MCP server runs in. `ccc mcp` binds its index to the nearest
  * ancestor holding `.cocoindex_code` and refuses to start without one, so a
@@ -254,7 +294,7 @@ export function runMcp(
   }
   const args =
     name === MCP_SERVER_FILESYSTEM
-      ? [...command.args, "--", physicalPath(workspace)]
+      ? [...command.args, ...filesystemDirectoryArgs(workspace, repoRoot)]
       : command.args;
   const result = spawnSync(command.binary, args, {
     cwd: workspace,

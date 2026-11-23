@@ -175,9 +175,12 @@ test("an orchestrator delegates through the mirrored exec tool, with no spawn se
   const turn = await runTurn(ORCHESTRATOR_HEADERS, [EXEC_TOOL]);
   const config = mcpConfigOf(turn.argv);
   assert.ok(config, "the bridge must hand the CLI an MCP config");
-  // The only server is the mirror of Codex's own tools.
-  assert.deepEqual(Object.keys(config.mcpServers), ["codex"]);
-  assert.equal(argValue(turn.argv, "--allowed-tools"), "mcp__codex");
+  // The servers are the file surface and the mirror of Codex's own tools.
+  assert.deepEqual(Object.keys(config.mcpServers), ["filesystem", "codex"]);
+  assert.equal(
+    argValue(turn.argv, "--allowed-tools"),
+    "mcp__filesystem,mcp__codex"
+  );
   const systemPrompt = argValue(turn.argv, "--system-prompt");
   // No provider-specific delegation section: the spawn functions are named
   // where every provider finds them, on exec's tools global.
@@ -188,7 +191,9 @@ test("an orchestrator delegates through the mirrored exec tool, with no spawn se
 
 test("an orchestrator turn Codex offered no tools has no delegation surface to invent", async () => {
   const turn = await runTurn(ORCHESTRATOR_HEADERS);
-  assert.equal(mcpConfigOf(turn.argv), null);
+  assert.deepEqual(Object.keys(mcpConfigOf(turn.argv).mcpServers), [
+    "filesystem"
+  ]);
   const systemPrompt = argValue(turn.argv, "--system-prompt");
   assert.match(systemPrompt, /No Codex tools are available on this turn/);
   assert.doesNotMatch(systemPrompt, /spawn server|spawn_subagent/);

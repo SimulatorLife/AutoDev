@@ -24,6 +24,9 @@ export function resolveSkillRoots(configuredRepoRoot?: string): string[] {
 }
 
 export const SKILL_READ_TOOL_NAMES: ReadonlySet<string> = new Set([
+  // The `filesystem` MCP server's reading tools: the one file surface.
+  "read_text_file",
+  "read_multiple_files",
   "read_file",
   "readfile",
   "read",
@@ -238,13 +241,19 @@ function execReadPath(
   return skillRead ?? candidates[0] ?? null;
 }
 
+const FILESYSTEM_TOOL_PREFIX = /^(?:mcp__)?filesystem(?:__|[-/.])/u;
+
 export function extractSkillReadPath(
   toolName: unknown,
   argsObject: unknown
 ): string | null {
+  // A `filesystem` tool arrives under its MCP name (`mcp__filesystem__…` from
+  // Codex, `filesystem__…`, `filesystem-…` or `filesystem/…` from a bridge);
+  // the bare tool name is what says whether it reads.
   const name = String(toolName ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(FILESYSTEM_TOOL_PREFIX, "");
 
   const isObject =
     argsObject && typeof argsObject === "object" && !Array.isArray(argsObject);

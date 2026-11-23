@@ -147,6 +147,7 @@ test("source declares each launch definition consistently", () => {
     "cocoindex-code",
     "codegraphcontext",
     "context7",
+    "filesystem",
     "lsp",
     "openaiDeveloperDocs"
   ]);

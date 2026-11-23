@@ -22,9 +22,10 @@ const BRIDGE = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 type JsonRecord = Record<string, any>;
 
 // A stand-in for `claude -p --input-format stream-json --output-format
-// stream-json`: reads the turn's user message on stdin, starts the MCP server
-// named in --mcp-config, and follows the script in CLAUDE_FAKE_SCRIPT. `call`
-// blocks on a real MCP tools/call.
+// stream-json`: reads the turn's user message on stdin, starts the `codex` MCP
+// server named in --mcp-config (recording every server the config names), and
+// follows the script in CLAUDE_FAKE_SCRIPT. `call` blocks on a real MCP
+// tools/call.
 const FAKE_CLI = String.raw`${NODE_SHEBANG}
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -53,9 +54,14 @@ function rpc(method, params) {
 const codexServer = process.env.CLAUDE_FAKE_CODEX_SERVER;
 if (codexServer === "failed")
   out({ type: "system", subtype: "init", mcp_servers: [{ name: "codex", status: "failed" }] });
-const config = codexServer ? undefined : flag("--mcp-config");
-if (config) {
-  const [, definition] = Object.entries(JSON.parse(config).mcpServers)[0];
+// "CLAUDE_FAKE_INIT_SERVERS": the init line's server statuses, verbatim.
+if (process.env.CLAUDE_FAKE_INIT_SERVERS)
+  out({ type: "system", subtype: "init", mcp_servers: JSON.parse(process.env.CLAUDE_FAKE_INIT_SERVERS) });
+const configured = JSON.parse(flag("--mcp-config") ?? '{"mcpServers":{}}').mcpServers;
+record.mcpServers = Object.keys(configured);
+writeFileSync(process.env.CLAUDE_FAKE_RECORD, JSON.stringify(record));
+const definition = codexServer ? undefined : configured.codex;
+if (definition) {
   server = spawn(definition.command, definition.args, { env: { ...process.env, ...definition.env }, stdio: ["pipe", "pipe", "inherit"] });
   server.stdout.on("data", (chunk) => {
     buffer += chunk;
@@ -456,6 +462,28 @@ for (const codexServer of ["failed", "silent"]) {
   });
 }
 
+test("a turn whose filesystem server failed fails instead of completing without its file tools", async () => {
+  await withBridge(
+    [{ say: "I am blocked: no file tools are available." }],
+    async ({ port }) => {
+      const body = await (
+        await codexRequest(port, [
+          CODEX_TOOLS,
+          { type: "message", role: "user", content: "fix the bug" }
+        ])
+      ).text();
+      assert.match(body, /codex_tools_unreachable/);
+      assert.match(body, /the filesystem MCP server reported status \\"failed\\"/);
+    },
+    {
+      CLAUDE_FAKE_INIT_SERVERS: JSON.stringify([
+        { name: "codex", status: "connected" },
+        { name: "filesystem", status: "failed" }
+      ])
+    }
+  );
+});
+
 test("a turn without Codex tools does not direct the model to use absent tools", async () => {
   await withBridge(
     [{ say: "I need a tool to continue." }],
@@ -476,6 +504,12 @@ test("a turn without Codex tools does not direct the model to use absent tools",
       assert.match(prompt, /No Codex tools are available on this turn/);
       assert.match(prompt, /Do not write or imitate a tool invocation as text/);
       assert.equal(cli.tools, undefined, "no Codex MCP server is configured");
+      assert.deepEqual(
+        cli.mcpServers,
+        ["filesystem"],
+        "the file surface is offered even when Codex offered no tools"
+      );
+      assert.match(prompt, /`filesystem` MCP server/);
     }
   );
 });

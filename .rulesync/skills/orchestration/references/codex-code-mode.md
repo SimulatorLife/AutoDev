@@ -38,10 +38,13 @@ template literal and fail the whole `exec` cell before any child spawns.
 
 The same rule applies when passing inline Python/Node scripts or shell commands
 to `tools.exec_command`: never wrap them in a JS template literal when they
-contain backticks or `${`, and check `ALL_TOOLS` (or
-`typeof tools.apply_patch === "function"`) before calling `tools.apply_patch` —
-Codex 0.169+ exposes file editing through `exec_command` rather than
-`tools.apply_patch` on some providers.
+contain backticks or `${`.
+
+Files are read and edited only through the `filesystem` MCP server
+(`tools.mcp__filesystem__read_text_file`, `tools.mcp__filesystem__edit_file`,
+`tools.mcp__filesystem__write_file`, …), on every provider. Codex's own
+`apply_patch` and `view_image` are not offered, and a call to either is refused
+by the `file-surface` hook with the `filesystem` tool to use instead.
 
 ## Waiting inside `exec`
 

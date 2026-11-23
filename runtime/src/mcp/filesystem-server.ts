@@ -2,11 +2,12 @@
  * The one file-interaction surface every provider bridge offers its CLI.
  *
  * AutoDev reads and edits files through one MCP server, `filesystem`
- * (`@modelcontextprotocol/server-filesystem`), declared once in
- * `.rulesync/mcp.jsonc`. Codex launches it from its own config; the Claude,
- * Antigravity and Copilot bridges launch it for each turn from the bridge MCP
- * catalogue the installer renders from that same declaration, so every
- * provider runs the same server with the same tools.
+ * (`@modelcontextprotocol/server-filesystem`), declared in
+ * `.rulesync/mcp.jsonc` and started by the typed MCP launcher
+ * (`runtime/src/mcp/launcher.ts`), which owns its command line. Codex starts it
+ * through `run-autodev-mcp.sh`; the Claude and Antigravity bridges start the
+ * same launcher directly for each turn, so every provider runs the same server
+ * with the same tools.
  *
  * What a bridge adds is the turn's own scope, because the CLI process is
  * started per turn and the catalogue entry is not:
@@ -14,18 +15,23 @@
  *   server allows;
  * - `AUTODEV_MCP_READ_ONLY=1` on a read-only turn, which starts the server
  *   with `--read-only` so it lists only its reading tools;
- * - `CODEX_HOME`, `HOME` and `AUTODEV_NODE_BIN`, so the launcher resolves
- *   under a CLI that isolates its own HOME.
+ * - `CODEX_HOME`, `HOME` and `AUTODEV_REPO_ROOT`, so the launcher resolves
+ *   the server and the skill roots under a CLI that isolates its own HOME.
  */
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import { resolveRuntimeSourceRoot } from "../shared/runtime-source-root.ts";
 import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_SERVER_FILESYSTEM
 } from "../shared/tool-names.ts";
+
+/** The typed launcher, a sibling of this module in both runtime layouts. */
+const LAUNCHER = fileURLToPath(new URL("./launcher.ts", import.meta.url));
 
 type JsonRecord = Record<string, unknown>;
 
@@ -45,9 +51,14 @@ export interface FilesystemScope {
   readonly workspace: string;
   /** Whether the turn is read-only; the server then offers only its reading tools. */
   readonly readOnly: boolean;
-  readonly codexHome: string;
+  /** The CODEX_HOME the launcher runs from; the bridge's own by default. */
+  readonly codexHome?: string;
   /** The user's own home, which a CLI's isolated HOME is not. */
   readonly userHome?: string;
+}
+
+function defaultCodexHome(): string {
+  return process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
 }
 
 /** Where the installer writes the bridge MCP catalogue under a CODEX_HOME. */
@@ -60,8 +71,7 @@ export function bridgeMcpCataloguePath(codexHome: string): string {
  * installer from `.rulesync/mcp.jsonc`.
  */
 export function readBridgeMcpCatalogue(
-  codexHome: string = process.env.CODEX_HOME ??
-    path.join(homedir(), ".codex")
+  codexHome: string = defaultCodexHome()
 ): Record<string, JsonRecord> {
   const cataloguePath = bridgeMcpCataloguePath(codexHome);
   try {
@@ -77,37 +87,21 @@ export function readBridgeMcpCatalogue(
 }
 
 /** The `filesystem` server's launch for one turn, scoped to its workspace and sandbox. */
-export function filesystemMcpServer(
-  catalogue: Record<string, JsonRecord>,
-  scope: FilesystemScope
-): StdioMcpServerLaunch {
-  const server = catalogue[MCP_SERVER_FILESYSTEM];
-  if (!isJsonRecord(server) || typeof server.command !== "string")
-    throw new Error(
-      `MCP server ${MCP_SERVER_FILESYSTEM} is not a stdio server in the bridge MCP catalogue; rerun scripts/install.sh`
-    );
+export function filesystemMcpServer(scope: FilesystemScope): StdioMcpServerLaunch {
   if (!path.isAbsolute(scope.workspace))
     throw new Error(
       `the ${MCP_SERVER_FILESYSTEM} MCP server needs an absolute workspace; got "${scope.workspace}"`
     );
-  const args = Array.isArray(server.args)
-    ? server.args.filter((arg): arg is string => typeof arg === "string")
-    : [];
-  const configured = isJsonRecord(server.env)
-    ? Object.fromEntries(
-        Object.entries(server.env).filter(
-          (entry): entry is [string, string] => typeof entry[1] === "string"
-        )
-      )
-    : {};
   return {
-    command: server.command,
-    args,
+    command: process.execPath,
+    args: [LAUNCHER, MCP_SERVER_FILESYSTEM],
     env: {
-      ...configured,
-      CODEX_HOME: scope.codexHome,
+      CODEX_HOME: scope.codexHome ?? defaultCodexHome(),
       HOME: scope.userHome ?? process.env.HOME ?? homedir(),
-      AUTODEV_NODE_BIN: process.env.AUTODEV_NODE_BIN || process.execPath,
+      AUTODEV_REPO_ROOT: resolveRuntimeSourceRoot(
+        import.meta.dirname,
+        process.env.AUTODEV_REPO_ROOT
+      ),
       AUTODEV_MCP_WORKSPACE: scope.workspace,
       ...(scope.readOnly ? { [MCP_FILESYSTEM_READ_ONLY_ENV]: "1" } : {})
     }

@@ -5,6 +5,9 @@ import test from "node:test";
 
 import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import {
+  COPILOT_EXCLUDED_NATIVE_TOOLS,
+  COPILOT_NATIVE_FILE_TOOL_DENY_ARGS,
+  copilotExcludedToolArgs,
   copilotMcpArgs,
   runCopilot
 } from "@simulatorlife/autodev-runtime/providers/copilot";
@@ -286,7 +289,7 @@ test("runCopilot hands the role's MCP arguments to the Copilot CLI", async () =>
   );
 });
 
-test("runCopilot denies the orchestrator Copilot's git-history shell commands, and only the orchestrator", async () => {
+test("runCopilot denies every role Copilot's own file-writing tools, and only the orchestrator its git-history shell commands", async () => {
   const fakeCli = join(homes.root, "fake-copilot-deny.mjs");
   const argsFile = join(homes.root, "copilot-deny-args.json");
   await writeFile(
@@ -311,12 +314,107 @@ test("runCopilot denies the orchestrator Copilot's git-history shell commands, a
     assert.ok(orchestrator.includes("--allow-all-tools"));
 
     const worker = await argsFor("worker");
-    assert.equal(
-      worker.some((argument) => argument.startsWith("--deny-tool=")),
-      false
+    assert.deepEqual(
+      worker.filter((argument) => argument.startsWith("--deny-tool=")),
+      [...COPILOT_NATIVE_FILE_TOOL_DENY_ARGS],
+      "a worker is denied only Copilot's own file-writing tools"
     );
+    for (const deny of COPILOT_NATIVE_FILE_TOOL_DENY_ARGS)
+      assert.ok(orchestrator.includes(deny), `orchestrator is missing ${deny}`);
+
+    for (const args of [orchestrator, worker]) {
+      assert.ok(
+        args.includes("--no-custom-instructions"),
+        "Copilot must disable user/repo custom instruction files"
+      );
+    }
+    const excludedArg = (args: string[]) =>
+      args
+        .find((argument) => argument.startsWith("--excluded-tools="))
+        ?.slice("--excluded-tools=".length)
+        .split(",") ?? [];
+    for (const tool of COPILOT_EXCLUDED_NATIVE_TOOLS) {
+      assert.ok(
+        excludedArg(worker).includes(tool),
+        `worker must exclude native tool ${tool}`
+      );
+      assert.ok(
+        excludedArg(orchestrator).includes(tool),
+        `orchestrator must exclude native tool ${tool}`
+      );
+    }
+    assert.ok(
+      excludedArg(worker).includes("web_search") &&
+        excludedArg(worker).includes("web_fetch"),
+      "non-research worker must exclude native web tools"
+    );
+    assert.equal(
+      excludedArg(orchestrator).includes("web_search"),
+      false,
+      "research-capable orchestrator retains native web_search"
+    );
+
+    assert.deepEqual(copilotExcludedToolArgs("worker"), [
+      `--excluded-tools=${[...COPILOT_EXCLUDED_NATIVE_TOOLS, "web_search", "web_fetch"].join(",")}`
+    ]);
+
+    await runCopilot(
+      "summarize",
+      "copilot",
+      homes.root,
+      () => {},
+      "worker",
+      null,
+      null,
+      null,
+      true
+    ).catch(() => {});
+    const compactionArgs = JSON.parse(
+      await readFile(argsFile, "utf8")
+    ) as string[];
+    assert.ok(compactionArgs.includes("--no-custom-instructions"));
+    assert.ok(compactionArgs.includes("--disable-builtin-mcps"));
+    assert.ok(compactionArgs.includes("--available-tools="));
+    assert.ok(compactionArgs.includes("--no-ask-user"));
   } finally {
     if (saved === undefined) delete process.env.COPILOT_BIN;
     else process.env.COPILOT_BIN = saved;
   }
+});
+
+test("copilotMcpArgs launches filesystem per turn with workspace and read-only scope", () => {
+  const readOnlyParsed = parse(
+    copilotMcpArgs("explorer", {
+      requestId: null,
+      workspaceId: null,
+      workspaceRoot: homes.root,
+      repositoryRoot: homes.root,
+      codeHome: homes.codexHome,
+      readOnly: true
+    })
+  );
+  const roFs = readOnlyParsed.additional.filesystem;
+  assert.ok(roFs, "read-only turn must override user-level filesystem server");
+  assert.equal(roFs.env?.AUTODEV_MCP_WORKSPACE, homes.root);
+  assert.equal(roFs.env?.AUTODEV_MCP_READ_ONLY, "1");
+  assert.equal(
+    readOnlyParsed.disabled.includes("filesystem"),
+    false,
+    "granted filesystem server must not be passed to --disable-mcp-server"
+  );
+
+  const writableParsed = parse(
+    copilotMcpArgs("worker", {
+      requestId: null,
+      workspaceId: null,
+      workspaceRoot: homes.root,
+      repositoryRoot: homes.root,
+      codeHome: homes.codexHome,
+      readOnly: false
+    })
+  );
+  const rwFs = writableParsed.additional.filesystem;
+  assert.ok(rwFs, "writable turn must override user-level filesystem server");
+  assert.equal(rwFs.env?.AUTODEV_MCP_WORKSPACE, homes.root);
+  assert.equal(rwFs.env?.AUTODEV_MCP_READ_ONLY, undefined);
 });

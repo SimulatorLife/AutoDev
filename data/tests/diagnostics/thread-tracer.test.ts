@@ -115,6 +115,53 @@ test("the investigation counts stop at the first file change", () => {
   }
 });
 
+test("filesystem MCP calls are the investigation's reads, searches and first edit", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const dir = path.join(home, "sessions", "2026", "09", "18");
+    const file = path.join(dir, `rollout-2026-09-18T17-00-00-${CHILD}.jsonl`);
+    const mcp = (at: string, tool: string, args: Record<string, unknown>) =>
+      rolloutLine(at, "event_msg", {
+        type: "item_completed",
+        item: { type: "McpToolCall", server: "filesystem", tool, arguments: args }
+      });
+    writeFileSync(
+      file,
+      [
+        rolloutLine("2026-09-18T21:20:00.000Z", "session_meta", {
+          id: CHILD,
+          session_id: ROOT,
+          cwd: "/tmp/repo"
+        }),
+        mcp("2026-09-18T21:20:01.000Z", "read_text_file", {
+          path: "/tmp/repo/README.md"
+        }),
+        mcp("2026-09-18T21:20:02.000Z", "read_multiple_files", {
+          paths: ["/tmp/repo/README.md", "/tmp/repo/src/a.ts"]
+        }),
+        mcp("2026-09-18T21:20:03.000Z", "search_files", {
+          path: "/tmp/repo",
+          pattern: "needle"
+        }),
+        mcp("2026-09-18T21:20:04.000Z", "edit_file", {
+          path: "/tmp/repo/src/a.ts"
+        }),
+        mcp("2026-09-18T21:20:05.000Z", "read_text_file", {
+          path: "/tmp/repo/late.md"
+        })
+      ].join("\n")
+    );
+    const investigation = traceThread(file, { items: false }).investigation;
+    assert.equal(investigation.firstEditAt, "2026-09-18T21:20:04.000Z");
+    assert.equal(investigation.toolCalls, 3);
+    assert.equal(investigation.filesRead, 2);
+    assert.equal(investigation.repeatedReads, 1);
+    assert.equal(investigation.searches, 1);
+  } finally {
+    cleanup();
+  }
+});
+
 test("token usage, cache drops and compactions are accumulated", () => {
   const { home, cleanup } = fixture();
   try {

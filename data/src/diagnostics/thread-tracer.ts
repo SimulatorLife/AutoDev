@@ -121,6 +121,27 @@ const CONTEXT_SERVERS: Readonly<
   codegraphcontext: "cgc",
   lsp: "lsp"
 };
+/**
+ * The `filesystem` MCP server's tools, by what they do to the investigation:
+ * it is the one file surface, so its calls are the file reads, searches and
+ * edits a thread made.
+ */
+const FILESYSTEM_SERVER = "filesystem";
+const FILESYSTEM_READ_TOOLS = new Set([
+  "read_text_file",
+  "read_file",
+  "read_media_file",
+  "read_multiple_files"
+]);
+const FILESYSTEM_SEARCH_TOOLS = new Set(["search_files"]);
+const FILESYSTEM_EDIT_TOOLS = new Set([
+  "write_file",
+  "edit_file",
+  "append_file",
+  "create_directory",
+  "move_file",
+  "copy_file"
+]);
 /** `item_completed` kinds that are not tool calls. */
 const NON_TOOL_ITEMS = new Set([
   "UserMessage",
@@ -900,7 +921,7 @@ function recordInvestigation(
   const item = isRecord(payload.item) ? payload.item : {};
   const kind = typeof item.type === "string" ? item.type : "";
   investigation.observed = true;
-  if (kind === "FileChange") {
+  if (kind === "FileChange" || isFilesystemEdit(kind, item)) {
     investigation.firstEditAt = at ?? "";
     return;
   }
@@ -908,8 +929,37 @@ function recordInvestigation(
   investigation.toolCalls += 1;
   if (kind === "CommandExecution") recordCommandInvestigation(item, acc);
   else if (kind === "McpToolCall" && typeof item.server === "string") {
+    if (item.server === FILESYSTEM_SERVER)
+      recordFilesystemInvestigation(item, acc);
     const server = CONTEXT_SERVERS[item.server];
     if (server) investigation.context[server] += 1;
+  }
+}
+
+function isFilesystemEdit(kind: string, item: Record<string, unknown>): boolean {
+  return (
+    kind === "McpToolCall" &&
+    item.server === FILESYSTEM_SERVER &&
+    typeof item.tool === "string" &&
+    FILESYSTEM_EDIT_TOOLS.has(item.tool)
+  );
+}
+
+/** A `filesystem` read or search, counted like the shell's own. */
+function recordFilesystemInvestigation(
+  item: Record<string, unknown>,
+  acc: ThreadTraceAccumulator
+): void {
+  const tool = typeof item.tool === "string" ? item.tool : "";
+  const args = isRecord(item.arguments) ? item.arguments : {};
+  if (FILESYSTEM_READ_TOOLS.has(tool)) {
+    const paths = Array.isArray(args.paths) ? args.paths : [args.path];
+    for (const file of paths)
+      if (typeof file === "string") recordReadInvestigation(acc.cwd, file, acc);
+  } else if (FILESYSTEM_SEARCH_TOOLS.has(tool)) {
+    const query = typeof args.pattern === "string" ? args.pattern : "";
+    const searchPath = typeof args.path === "string" ? args.path : ".";
+    recordSearchInvestigation(acc.cwd, query, searchPath, acc);
   }
 }
 

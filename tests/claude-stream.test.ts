@@ -58,6 +58,7 @@ process.stdout.write(JSON.stringify({
         waitingOnCodex: () => false,
         systemPrompt: "",
         turnId: null,
+        filesystem: null,
         webSearch: false
       }
     )) {

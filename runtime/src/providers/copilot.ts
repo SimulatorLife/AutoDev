@@ -19,8 +19,13 @@ import {
   isOrchestratorRole,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  roleMcpEnvironment
+  roleMcpEnvironment,
+  turnIsReadOnly
 } from "@simulatorlife/autodev-runtime/agents";
+import {
+  filesystemMcpServer,
+  readBridgeMcpCatalogue
+} from "@simulatorlife/autodev-runtime/mcp/filesystem-server";
 import { copilotOrchestratorDenyToolArgs } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import {
@@ -41,7 +46,6 @@ import {
 import {
   type RoleContract,
   roleContract,
-  roleSandboxMode,
   workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -68,6 +72,7 @@ import {
   matchSkillReadPath,
   normaliseSkillReadPath
 } from "@simulatorlife/autodev-runtime/shared/skill-reads";
+import { MCP_SERVER_FILESYSTEM } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -147,6 +152,7 @@ interface CopilotRoleMcpContext {
   readonly workspaceRoot: string;
   readonly repositoryRoot: string;
   readonly codeHome: string;
+  readonly readOnly?: boolean;
 }
 
 function readOnlyHeaderValue(
@@ -507,6 +513,41 @@ function toolActivityText(data: JsonRecord | null | undefined): string {
   return `Copilot is using ${toolName}.`;
 }
 
+/**
+ * The Copilot CLI's own file-writing tools, denied on every tool-bearing turn
+ * as defense in depth alongside `--excluded-tools`. `write` is the CLI's
+ * permission kind for every tool that modifies files other than the shell; MCP
+ * tools are their server's kind, so the `filesystem` server's write tools are
+ * untouched.
+ */
+export const COPILOT_NATIVE_FILE_TOOL_DENY_ARGS: readonly string[] = [
+  "--deny-tool=write"
+];
+
+/**
+ * Built-in Copilot CLI tools excluded on every tool-bearing turn so files go
+ * strictly through the `filesystem` MCP server and subagents cannot spawn
+ * outside AutoDev (`task`). Non-research roles also exclude `web_search` and
+ * `web_fetch`. Copilot's shell (`bash`) remains active until the bridge mirrors
+ * Codex's `exec` shim (`docs/TODO.md`).
+ */
+export const COPILOT_EXCLUDED_NATIVE_TOOLS: readonly string[] = Object.freeze([
+  "view",
+  "edit",
+  "create",
+  "apply_patch",
+  "glob",
+  "grep",
+  "task"
+]);
+
+export function copilotExcludedToolArgs(agentRole: string | null): string[] {
+  const excluded = isResearchRole(agentRole)
+    ? COPILOT_EXCLUDED_NATIVE_TOOLS
+    : [...COPILOT_EXCLUDED_NATIVE_TOOLS, "web_search", "web_fetch"];
+  return [`--excluded-tools=${excluded.join(",")}`];
+}
+
 const RESEARCH_CAPABLE_ROLES = new Set([
   "docs-researcher",
   "smart",
@@ -517,24 +558,6 @@ function isResearchRole(role: unknown): boolean {
   return (
     typeof role === "string" &&
     RESEARCH_CAPABLE_ROLES.has(role.trim().toLowerCase())
-  );
-}
-
-/** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
-function bridgeMcpCatalogue(): JsonRecord {
-  const path = pathApi.join(
-    process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex"),
-    "provider-runtime",
-    "mcp-servers.json"
-  );
-  try {
-    const catalogue: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (isJsonRecord(catalogue)) return catalogue;
-  } catch {
-    /* reported below */
-  }
-  throw new Error(
-    `bridge MCP catalogue is missing or invalid: ${path}; rerun scripts/install.sh`
   );
 }
 
@@ -624,7 +647,7 @@ function copilotMcpArgs(
 ): string[] {
   const contract = copilotRoleContract(agentRole);
   const granted = contract.mcp ?? [];
-  const catalogue = bridgeMcpCatalogue();
+  const catalogue = readBridgeMcpCatalogue();
   const userServers = new Set(userMcpServerNames());
   const args: string[] = [
     "--disable-builtin-mcps",
@@ -639,6 +662,23 @@ function copilotMcpArgs(
       );
     }
     const tools = contract.mcpTools?.[name];
+    // Launch `filesystem` per session with the turn's workspace and sandbox
+    // mode so `--additional-mcp-config` overrides any unscoped user entry.
+    if (name === MCP_SERVER_FILESYSTEM && roleMcpContext?.workspaceRoot) {
+      const fsLaunch = filesystemMcpServer({
+        workspace: roleMcpContext.workspaceRoot,
+        readOnly: Boolean(roleMcpContext.readOnly),
+        codexHome: roleMcpContext.codeHome
+      });
+      additional[name] = {
+        type: "stdio",
+        command: fsLaunch.command,
+        args: fsLaunch.args,
+        tools: tools ?? ["*"],
+        env: fsLaunch.env
+      };
+      continue;
+    }
     if (userServers.has(name)) {
       if (tools)
         throw new Error(
@@ -995,41 +1035,55 @@ function runCopilot(
     const args = [
       "--no-auto-update",
       "--no-color",
+      "--no-custom-instructions",
       "--output-format",
       "json",
       "--prompt",
       prompt
     ];
     if (compaction) {
-      args.splice(4, 0, "--no-ask-user");
+      args.splice(
+        5,
+        0,
+        "--disable-builtin-mcps",
+        ...disabledUserServerArgs(new Set(userMcpServerNames()), []),
+        "--available-tools=",
+        "--no-ask-user"
+      );
     } else {
+      // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+      // trust that header over the role's own declaration because the header is
+      // the authoritative wire signal for this turn.
+      const readOnly = turnIsReadOnly(sandboxMode, agentRole);
       args.push(
         ...copilotMcpArgs(agentRole, {
           requestId,
           workspaceId: typeof workspaceKey === "string" ? workspaceKey : null,
           workspaceRoot: cwd,
           repositoryRoot: REPO_ROOT,
-          codeHome: process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex")
+          codeHome: process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex"),
+          readOnly
         })
       );
       if (isResearchRole(agentRole))
         args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
-      // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
-      // trust that header over the role's own declaration because the header is
-      // the authoritative wire signal for this turn.
-      const readOnly =
-        sandboxMode === "read-only" ||
-        (sandboxMode !== "workspace-write" &&
-          roleSandboxMode(agentRole) === "read-only");
       if (!readOnly)
         args.splice(
-          4,
+          5,
           0,
           "--allow-all-tools",
           "--allow-all-paths",
           "--allow-all-urls",
           "--no-ask-user"
         );
+      // Files are read and written through the `filesystem` MCP server, the one
+      // file surface every provider is offered; Copilot's own file/search and
+      // built-in subagent tools are excluded from the model's tool list and
+      // `write` stays denied as defense in depth.
+      args.push(
+        ...copilotExcludedToolArgs(agentRole),
+        ...COPILOT_NATIVE_FILE_TOOL_DENY_ARGS
+      );
       // Copilot runs the orchestrator's shell itself, so the root's
       // delegation boundary is applied as the CLI's own deny rules.
       if (isOrchestratorRole(agentRole))

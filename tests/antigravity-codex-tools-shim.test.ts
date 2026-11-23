@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -176,6 +177,10 @@ test("the invocation's own agent runs with Codex's tools and nothing else", () =
         agentName: "autodev-codex-tools",
         customizationDir: dir
       });
+      assert.ok(
+        args.includes("--disable-slash-commands"),
+        "agy must disable native slash-command and skill expansion on every turn"
+      );
       assert.deepEqual(
         args.slice(args.indexOf("--add-dir"), args.indexOf("--add-dir") + 4),
         ["--add-dir", dir, "--agent", "autodev-codex-tools"]
@@ -199,7 +204,10 @@ test("the invocation's own agent runs with Codex's tools and nothing else", () =
   }
 });
 
-test("a turn without the shim is not run as the Codex-tools agent", () => {
+test("a turn without the shim still runs as the AutoDev agent, with only the file surface", () => {
+  // agy's default agent keeps its own file and shell tools, a second file
+  // surface outside the turn's sandbox, so a turn Codex offered no tools runs
+  // as the AutoDev agent too: no codex server, and files through `filesystem`.
   const env = fixtureEnvironment();
   try {
     const isolated = createIsolatedAntigravityHome(ROLE, {
@@ -209,15 +217,44 @@ test("a turn without the shim is not run as the Codex-tools agent", () => {
       toolTurnId: null
     });
     try {
-      assert.equal(
-        isolated.customizationDir,
-        null,
-        "an agent with no tools behind it leaves the model unable to act"
+      const dir = isolated.customizationDir;
+      assert.ok(dir, "every non-compaction turn runs as an AutoDev agent");
+      const definition = readFileSync(
+        join(dir, ".agents", "agents", "autodev-codex-tools", "agent.md"),
+        "utf8"
       );
-      assert.ok(
-        !agyArgs("prompt", "model", "high", ROLE, null, null).includes(
-          "--agent"
-        )
+      assert.match(definition, /^excludeDefaultComponents: true$/m);
+      assert.match(definition, /No Codex tools are offered on this turn/);
+      assert.match(definition, /`filesystem` MCP server/);
+      assert.equal(isolated.mcpConfig.mcpServers.codex, undefined);
+      assert.ok(isolated.mcpConfig.mcpServers.filesystem);
+    } finally {
+      isolated.cleanup();
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("isolated Antigravity home omits user-level GEMINI.md instructions", () => {
+  const env = fixtureEnvironment();
+  try {
+    writeFileSync(
+      join(env.userHome, ".gemini", "GEMINI.md"),
+      "User custom instructions that must not leak into AutoDev turns.\n",
+      { mode: 0o600 }
+    );
+    const isolated = createIsolatedAntigravityHome(ROLE, {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT,
+      toolTurnId: "turn-shim-test"
+    });
+    try {
+      assert.equal(
+        existsSync(join(isolated.isolatedHome, ".gemini", "GEMINI.md")),
+        false,
+        "user-level GEMINI.md must not be symlinked into isolated agy homes"
       );
     } finally {
       isolated.cleanup();

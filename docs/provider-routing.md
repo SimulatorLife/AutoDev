@@ -284,14 +284,25 @@ ladder, and the tests that assert all bridges agree.
 
 **One file surface.** Every file read, write, edit, listing and search, on
 every provider, goes through `@modelcontextprotocol/server-filesystem` (MCP
-server `filesystem`), and every provider-native file tool is disabled: Codex's
-`apply_patch` and `view_image`, the Claude CLI's built-ins, `agy`'s native file
-tools and the Copilot CLI's file tools. Codex, the Claude CLI, `agy` and Copilot
-each launch the server as their own MCP server through
-`run-autodev-mcp.sh filesystem`, confined to the turn's workspace and started
-`--read-only` for read-only roles; MiniMax and opencli reach it through Codex's
-`exec` `tools` global. See "File interaction surface" in
-`docs/autodev-console-target-state.md`.
+server `filesystem`), and every provider-native file tool and default
+prompt/customization is disabled as/where the CLI allows: Codex's
+`apply_patch` is left out of AutoDev's model catalogs, `config.autodev.toml`
+disables unused bundled plugins/skills, and the `file-surface` `PreToolUse` hook
+refuses `view_image`; the Claude CLI runs with `--tools ""` (save `WebSearch`/`WebFetch`
+when offered), `--system-prompt`, `--setting-sources ""`,
+`--disable-slash-commands`, `--strict-mcp-config`, and
+`CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`; `agy` always runs as an AutoDev agent
+with `excludeDefaultComponents`, `--disable-slash-commands`, and an isolated
+`HOME` omitting `GEMINI.md`; Copilot runs with `--excluded-tools` hiding
+`view`, `edit`, `create`, `apply_patch`, `glob`, `grep`, `task` (and
+`web_search`/`web_fetch` on non-research roles), `--deny-tool=write`, and
+`--no-custom-instructions` (its built-in system prompt has no CLI replacement
+flag). Codex declares the server in its configuration; the Claude, Antigravity
+and Copilot bridges launch it per turn through `filesystemMcpServer`
+(`runtime/src/mcp/filesystem-server.ts`, `runtime/src/mcp/launcher.ts`) with the
+turn's workspace, `--read-only` on a read-only turn, and the skill roots as
+`--read-only-dir`; MiniMax and opencli reach it through Codex's `exec` `tools`
+global. See "File interaction surface" in `docs/autodev-console-target-state.md`.
 
 **Tool parity is a requirement, not a routing input.** Every provider must
 have every tool, offered the same way, so any role can be routed to any
@@ -2566,12 +2577,13 @@ the workspace (observed 2026-09-18, worker thread
 - **Tool surface.** `runtime/src/providers/claude-codex-tools.ts` mirrors the tools on
   Codex's request -- in code mode the `functions` namespace inside the
   `additional_tools` input item: the `exec` custom tool (JavaScript against a
-  `tools` global carrying `exec_command`, `apply_patch`, the role's MCP servers,
+  `tools` global carrying `exec_command`, the role's MCP servers,
   and, for an orchestrator, `multi_agent_v1__*`) and function tools such as
   `wait` -- into an MCP server, `runtime/src/mcp/codex-tools-shim.ts`, that the CLI is
-  given with `--strict-mcp-config`. The CLI runs with `--tools ""`: no built-in
-  tool, except `WebSearch`/`WebFetch` on turns where Codex offered its hosted
-  `web_search`, which no tool script can perform.
+  given with `--strict-mcp-config`, next to the turn's `filesystem` server. The
+  CLI runs with `--tools ""`: no built-in tool, except `WebSearch`/`WebFetch` on
+  turns where Codex offered its hosted `web_search`, which no tool script can
+  perform.
 - **Delegation.** The mirrored `exec` tool is Codex's, so a Claude model
   reaches `multi_agent_v1__spawn_agent` through it exactly as a Codex-served
   orchestrator does; the CLI is given only the `codex` server

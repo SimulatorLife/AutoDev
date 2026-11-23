@@ -577,8 +577,10 @@ test("provider bridges explicitly expose code MCP capabilities", async () => {
     "utf8"
   );
   // Claude reaches a role's MCP servers through Codex's own tools (Codex
-  // loads them from the role TOML), and keeps only its native web research.
-  assert.match(claude, /codexToolsMcpConfig/);
+  // loads them from the role TOML), reads and edits files through its own
+  // `filesystem` server, and keeps only its native web research.
+  assert.match(claude, /codexToolsMcpServer/);
+  assert.match(claude, /filesystemMcpServer/);
   assert.doesNotMatch(claude, /bridgeMcpServers/);
   assert.match(claude, /WebSearch/);
   assert.match(claude, /WebFetch/);

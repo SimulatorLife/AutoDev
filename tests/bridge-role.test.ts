@@ -493,7 +493,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
   assert.match(claude, /renderCodexContentBlocks\(payload\.input/);
 });
 
-test("the Claude bridge replaces the CLI's own system prompt instead of appending to it", () => {
+test("the Claude bridge replaces the CLI's own system prompt and disables native settings and skills", async () => {
   const claude = read("runtime/src/providers/claude.ts");
   // Appending leaves Claude Code's default prompt in force, whose harness
   // guidance describes tools a bridged turn does not have.
@@ -504,6 +504,20 @@ test("the Claude bridge replaces the CLI's own system prompt instead of appendin
   assert.match(claude, /Working directory: \$\{cwd\}/);
   // The bundled skill catalogue is a second, unversioned source of policy.
   assert.match(claude, /CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"/);
+
+  const { claudeCliArgs } =
+    await import("@simulatorlife/autodev-runtime/providers/claude");
+  const args = claudeCliArgs("sonnet", "medium", {
+    systemPrompt: "custom-prompt",
+    turnId: "turn-1",
+    filesystem: null,
+    webSearch: false
+  });
+  assert.equal(args[args.indexOf("--tools") + 1], "");
+  assert.ok(args.includes("--strict-mcp-config"));
+  assert.equal(args[args.indexOf("--system-prompt") + 1], "custom-prompt");
+  assert.equal(args[args.indexOf("--setting-sources") + 1], "");
+  assert.ok(args.includes("--disable-slash-commands"));
 });
 
 test("the installer ships every shared module the bridges import", () => {

@@ -225,7 +225,10 @@ test("browser-tester receives Playwright only, with exactly its declared browser
     );
     try {
       // 1. mcp_config.json has Playwright only
-      assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["playwright"]);
+      assert.deepEqual(Object.keys(mcpConfig.mcpServers), [
+        "filesystem",
+        "playwright"
+      ]);
       const playwrightServer = mcpConfig.mcpServers.playwright;
       assert.ok(playwrightServer, "browser-tester must receive Playwright");
       const playwrightArgs = playwrightServer.args;
@@ -308,7 +311,8 @@ test("the MCP servers a turn starts are told the user's own home", () => {
   try {
     const config = buildInvocationMcpConfig("explorer", {
       originalHome: env.userHome,
-      codexHome: env.codexHome
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
     });
     for (const name of ["cocoindex-code", "codegraphcontext"]) {
       const server = config.mcpServers[name];
@@ -343,7 +347,8 @@ test("the home the bridge hands the launcher is the one it resolves the tools fr
     }
     const config = buildInvocationMcpConfig("explorer", {
       originalHome: env.userHome,
-      codexHome: env.codexHome
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
     });
     for (const [name, tool] of [
       ["cocoindex-code", "ccc"],
@@ -368,10 +373,12 @@ test("remote MCP authentication launch settings survive catalog conversion", () 
   try {
     const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
-      codexHome: env.codexHome
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(), [
       "context7",
+      "filesystem",
       "openaiDeveloperDocs"
     ]);
     assert.deepEqual(config.mcpServers.context7, {
@@ -389,7 +396,8 @@ test("remote MCP config keeps environment-backed and custom HTTP authentication"
   try {
     const config = buildInvocationMcpConfig("docs-researcher", {
       originalHome: env.userHome,
-      codexHome: env.codexHome
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
     });
     assert.deepEqual(config.mcpServers.context7, {
       serverUrl: "https://mcp.context7.com/mcp",
@@ -495,7 +503,8 @@ test("children cannot inherit stale or user-global MCP servers", () => {
   try {
     const { mcpConfig, cleanup } = createIsolatedAntigravityHome("default", {
       originalHome: env.userHome,
-      codexHome: env.codexHome
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT
     });
     try {
       const servers = Object.keys(mcpConfig.mcpServers);
@@ -638,7 +647,8 @@ test("fails closed when required role MCP is missing from catalog", () => {
       () =>
         createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
-          codexHome: env.codexHome
+          codexHome: env.codexHome,
+          cwd: REPO_ROOT
         }),
       /MCP server playwright granted to role browser-tester is not in the bridge MCP catalogue/
     );
@@ -663,7 +673,8 @@ test("fails closed when a catalogue stdio server has a non-object environment", 
       () =>
         createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
-          codexHome: env.codexHome
+          codexHome: env.codexHome,
+          cwd: REPO_ROOT
         }),
       /MCP server playwright has an invalid environment/
     );
@@ -686,7 +697,8 @@ test("fails closed when catalogue file is missing or invalid", () => {
       () =>
         createIsolatedAntigravityHome("default", {
           originalHome: env.userHome,
-          codexHome: env.codexHome
+          codexHome: env.codexHome,
+          cwd: REPO_ROOT
         }),
       /bridge MCP catalogue is missing or invalid/
     );
@@ -706,7 +718,8 @@ test("invalid user settings fail closed instead of dropping explicit permissions
       () =>
         createIsolatedAntigravityHome("browser-tester", {
           originalHome: env.userHome,
-          codexHome: env.codexHome
+          codexHome: env.codexHome,
+          cwd: REPO_ROOT
         }),
       /Antigravity settings are invalid.*refusing to drop user permissions/
     );
@@ -880,7 +893,10 @@ test("playtester receives only its allowlisted Playtest MCP with trusted non-sec
       workspaceKey: "SimulatorLife/RacingGame"
     });
     try {
-      assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["playtest"]);
+      assert.deepEqual(Object.keys(mcpConfig.mcpServers), [
+        "filesystem",
+        "playtest"
+      ]);
       const playtestServer = mcpConfig.mcpServers.playtest;
       assert.ok(playtestServer, "playtester must receive the Playtest MCP");
       const args = playtestServer.args;
@@ -1022,7 +1038,7 @@ const res = await runAgy(
   "browser-tester"
 );
 const parsed = JSON.parse(res.text);
-assert.deepEqual(parsed.servers, ["playwright"]);
+assert.deepEqual(parsed.servers, ["filesystem", "playwright"]);
 assert.equal(parsed.hasAutodevSpawn, false);
 assert.equal(parsed.hasBroadPlaywright, false);
 assert.equal(parsed.playwrightAllowsCount, ${roleMcpToolList("browser-tester", "playwright").length});
@@ -1472,7 +1488,10 @@ test("Codex-tools turns register only the codex shim without launching duplicate
       },
       "turn-codex-123"
     );
-    assert.deepEqual(Object.keys(explorerConfig.mcpServers), ["codex"]);
+    assert.deepEqual(Object.keys(explorerConfig.mcpServers), [
+      "filesystem",
+      "codex"
+    ]);
 
     const orchestratorConfig = buildInvocationMcpConfig(
       "orchestrator",
@@ -1484,7 +1503,10 @@ test("Codex-tools turns register only the codex shim without launching duplicate
       "turn-codex-456"
     );
     // The orchestrator's spawn functions ride on the codex shim's exec tool.
-    assert.deepEqual(Object.keys(orchestratorConfig.mcpServers), ["codex"]);
+    assert.deepEqual(Object.keys(orchestratorConfig.mcpServers), [
+      "filesystem",
+      "codex"
+    ]);
   } finally {
     env.cleanup();
   }
@@ -1505,6 +1527,7 @@ test("Codex-tools turns still inject roleScopedMcp servers disabled at Codex roo
     try {
       assert.deepEqual(Object.keys(btHome.mcpConfig.mcpServers).sort(), [
         "codex",
+        "filesystem",
         "playwright"
       ]);
       const allow = stringList(
@@ -1547,6 +1570,7 @@ test("Codex-tools turns still inject roleScopedMcp servers disabled at Codex roo
     );
     assert.deepEqual(Object.keys(ptConfig.mcpServers).sort(), [
       "codex",
+      "filesystem",
       "playtest"
     ]);
   } finally {

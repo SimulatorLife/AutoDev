@@ -270,7 +270,7 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["lsp", "cocoindex-code", "codegraphcontext", "codex_app"],
+    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "codex_app"],
     "orchestrator MCPs must include codex_app in deterministic order"
   );
   assert.deepEqual(
@@ -338,19 +338,20 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     );
   }
 
-  // Per-role MCP ordering must respect MCP_ORDER (lsp=0, cocoindex-code=1,
-  // codegraphcontext=2, playwright=3, openaiDeveloperDocs=4, context7=5,
-  // codex_app=6): within each role's mcp list, known servers
+  // Per-role MCP ordering must respect MCP_ORDER (filesystem=0, lsp=1,
+  // cocoindex-code=2, codegraphcontext=3, playwright=4, openaiDeveloperDocs=5,
+  // context7=6, codex_app=7): within each role's mcp list, known servers
   // appear in ascending MCP_ORDER index; unknown keys sort lexicographically after
   // them. This protects against accidental reorderings.
   const ORDER: Record<string, number> = {
-    lsp: 0,
-    "cocoindex-code": 1,
-    codegraphcontext: 2,
-    playwright: 3,
-    openaiDeveloperDocs: 4,
-    context7: 5,
-    codex_app: 6
+    filesystem: 0,
+    lsp: 1,
+    "cocoindex-code": 2,
+    codegraphcontext: 3,
+    playwright: 4,
+    openaiDeveloperDocs: 5,
+    context7: 6,
+    codex_app: 7
   };
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
     const mcp = roleCfg.mcp ?? [];

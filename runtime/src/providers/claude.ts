@@ -28,11 +28,17 @@ import {
 import { createInterface } from "node:readline";
 
 import {
+  bridgeSandboxMode,
   bridgeSkillContext,
   readOnlySystemPromptInjection,
-  resolveAgentRole
+  resolveAgentRole,
+  turnIsReadOnly
 } from "@simulatorlife/autodev-runtime/agents";
 import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
+import {
+  filesystemMcpServer,
+  type StdioMcpServerLaunch
+} from "@simulatorlife/autodev-runtime/mcp/filesystem-server";
 import {
   COMPACTION_SYSTEM_PROMPT,
   isCompactionRequest
@@ -64,7 +70,10 @@ import {
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
-import { MULTI_AGENT_SPAWN_TOOL } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import {
+  MCP_SERVER_FILESYSTEM,
+  MULTI_AGENT_SPAWN_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 import {
   type AgentEventReporter,
   gitCommitIdentityEnv,
@@ -80,6 +89,7 @@ import {
   claudeUserMessage,
   CODEX_TOOLS_SERVER,
   codexToolReference,
+  FILE_SURFACE_GUIDANCE,
   type CodexToolSurface,
   codexToolSurface,
   renderCodexContentBlocks
@@ -540,47 +550,50 @@ export function systemPrompt(cwd: string, surface: CodexToolSurface): string {
 
 /** What the model is to do with the tools it has. */
 function toolGuidance(surface: CodexToolSurface, names: Set<string>): string {
+  const files = `${FILE_SURFACE_GUIDANCE} Its tools are named mcp__${MCP_SERVER_FILESYSTEM}__<tool>.`;
   if (surface.tools.length === 0)
-    return "No Codex tools are available on this turn; answer from the conversation alone (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly.";
+    return `No Codex tools are available on this turn. ${files} Otherwise answer from the conversation (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly.`;
   return [
-    "You act only through the tools in this session. They are the agent's Codex tools: Codex runs each call in the workspace under the turn's sandbox, approval policy, and hooks, shows it to the user, and returns its output to you.",
+    "You act only through the tools in this session: the agent's Codex tools, which Codex runs in the workspace under the turn's sandbox, approval policy, and hooks, shows to the user, and returns the output of to you; and the file tools.",
+    files,
     "Treat tool-call and tool-output entries in the conversation as history, not as a format for requesting new work. Call Codex tools through the CLI-exposed MCP names in the mcp__codex__<tool> namespace (the reference below uses each tool's bare name and schema). Codex treats invocation-looking assistant text as ordinary text and will not execute it. Do not serialize tool calls in your response; if the native tool interface is unavailable, state that plainly.",
     ...(names.has("exec")
       ? [
-          `\`exec\` runs JavaScript whose \`tools\` global carries the agent's full tool set -- shell commands, file patches, MCP servers, and, for an orchestrator, subagent management (\`tools.${MULTI_AGENT_SPAWN_TOOL}\` and its siblings). Its description lists them. Read files and skills, and spawn subagents, through these tools, as the instructions describe.`
+          `\`exec\` runs JavaScript whose \`tools\` global carries the agent's command tools -- shell commands, MCP servers, and, for an orchestrator, subagent management (\`tools.${MULTI_AGENT_SPAWN_TOOL}\` and its siblings). Its description lists them. Run commands and spawn subagents through these tools, as the instructions describe.`
         ]
       : [])
   ].join(" ");
 }
 
-/** The MCP server that offers this turn Codex's tools. */
-export function codexToolsMcpConfig(
-  turnId: string,
-  environment: NodeJS.ProcessEnv = process.env
-): string {
-  return JSON.stringify({
-    mcpServers: {
-      [CODEX_TOOLS_SERVER]: codexToolsMcpServer(
-        turnId,
-        { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
-        environment
-      )
-    }
-  });
-}
-
-/** The MCP server that offers this turn Codex's tools, or null when Codex offered none. */
+/**
+ * The MCP servers this turn is offered: Codex's tools through the shim, when
+ * Codex offered any, and the `filesystem` server, the one file surface.
+ * Null when the turn has neither.
+ */
 export function bridgeMcpConfig(
   turnId: string | null,
+  filesystem: StdioMcpServerLaunch | null,
   environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  return turnId ? codexToolsMcpConfig(turnId, environment) : null;
+  const mcpServers: JsonRecord = {};
+  if (filesystem) mcpServers[MCP_SERVER_FILESYSTEM] = filesystem;
+  if (turnId)
+    mcpServers[CODEX_TOOLS_SERVER] = codexToolsMcpServer(
+      turnId,
+      { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+      environment
+    );
+  return Object.keys(mcpServers).length > 0
+    ? JSON.stringify({ mcpServers })
+    : null;
 }
 
 export interface ClaudeCliOptions {
   systemPrompt: string;
   /** The turn whose Codex tools the CLI is offered; null when Codex offered none. */
   turnId: string | null;
+  /** The turn's `filesystem` server; null on a compaction turn, which has no tools. */
+  filesystem: StdioMcpServerLaunch | null;
   webSearch: boolean;
 }
 
@@ -594,9 +607,14 @@ export function claudeCliArgs(
   const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : [];
   const allowed = [
     ...builtIns,
+    ...(options.filesystem ? [`mcp__${MCP_SERVER_FILESYSTEM}`] : []),
     ...(options.turnId ? [`mcp__${CODEX_TOOLS_SERVER}`] : [])
   ];
-  const mcpConfig = bridgeMcpConfig(options.turnId, environment);
+  const mcpConfig = bridgeMcpConfig(
+    options.turnId,
+    options.filesystem,
+    environment
+  );
   return [
     CLI,
     "-p",
@@ -604,8 +622,9 @@ export function claudeCliArgs(
     model,
     "--effort",
     effort,
-    // An empty list disables every built-in tool, Agent/Task and the shell
-    // included: those would act inside this process, invisible to Codex.
+    // An empty list disables every built-in tool -- Read/Write/Edit/Glob/Grep,
+    // Agent/Task and the shell included: those would act inside this process,
+    // invisible to Codex, and files are read and edited through `filesystem`.
     "--tools",
     builtIns.join(","),
     // Only the servers named here: user-level ~/.claude.json servers and a
@@ -621,6 +640,12 @@ export function claudeCliArgs(
     // guidance for tools this turn does not have.
     "--system-prompt",
     options.systemPrompt,
+    // Skip user, project, and local Claude settings/hooks/plugins/CLAUDE.md
+    // and disable CLI slash-command/skill expansion: Codex already owns hooks,
+    // instructions (`AGENTS.md`), and the skill catalogue on this turn.
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
     "--output-format",
     "stream-json",
     // The turn arrives as one NDJSON user message rather than as plain text
@@ -977,20 +1002,26 @@ function assertCodexToolsConnected(
   event: JsonRecord,
   options: ClaudeStreamOptions
 ): void {
-  if (!options.turnId) return;
   const servers = Array.isArray(event.mcp_servers) ? event.mcp_servers : [];
-  const server = servers.find(
-    (entry): entry is JsonRecord =>
-      typeof entry === "object" &&
-      entry !== null &&
-      (entry as JsonRecord).name === CODEX_TOOLS_SERVER
-  );
-  const status = typeof server?.status === "string" ? server.status : null;
-  if (status !== null && CODEX_TOOLS_LIVE_STATUSES.has(status)) return;
-  throw new CodexToolsUnreachableError(
-    "Claude",
-    status === null ? "was not started" : `reported status "${status}"`
-  );
+  const required = [
+    ...(options.turnId ? [CODEX_TOOLS_SERVER] : []),
+    ...(options.filesystem ? [MCP_SERVER_FILESYSTEM] : [])
+  ];
+  for (const name of required) {
+    const server = servers.find(
+      (entry): entry is JsonRecord =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as JsonRecord).name === name
+    );
+    const status = typeof server?.status === "string" ? server.status : null;
+    if (status !== null && CODEX_TOOLS_LIVE_STATUSES.has(status)) continue;
+    throw new CodexToolsUnreachableError(
+      "Claude",
+      status === null ? "was not started" : `reported status "${status}"`,
+      name
+    );
+  }
 }
 
 /**
@@ -1335,8 +1366,18 @@ function startResponsesTurn(
   }
 
   let environment: NodeJS.ProcessEnv;
+  let filesystem: StdioMcpServerLaunch | null;
   try {
     environment = claudeEnvironment();
+    filesystem = compaction
+      ? null
+      : filesystemMcpServer({
+          workspace: cwd,
+          readOnly: turnIsReadOnly(
+            bridgeSandboxMode(request.headers as Record<string, unknown>),
+            agentRole
+          )
+        });
   } catch (error) {
     handleNonStreamingError(response, describeFailure(error));
     return;
@@ -1394,6 +1435,7 @@ ${orchestratorSkillContext}
               : ""),
         selectedSkillContext: orchestratorSkillContext,
         turnId: !compaction && surface.tools.length > 0 ? turn.id : null,
+        filesystem,
         webSearch: surface.webSearch
       }
     )

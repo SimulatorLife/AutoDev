@@ -5011,6 +5011,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   );
   assert.deepEqual(codexHeaders, {});
   assert.deepEqual(mcpContractForRole(null), [
+    "filesystem",
     "lsp",
     "cocoindex-code",
     "codegraphcontext"
@@ -5028,6 +5029,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   assert.deepEqual(ws.mcpExposed, [
     { server: "cocoindex-code", count: 1 },
     { server: "codegraphcontext", count: 1 },
+    { server: "filesystem", count: 1 },
     { server: "lsp", count: 1 }
   ]);
   assert.deepEqual(ws.mcpUses, []);

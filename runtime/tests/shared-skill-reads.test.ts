@@ -203,3 +203,29 @@ test("extractSkillReadPath extracts paths across read and exec tool variants", (
     null
   );
 });
+
+test("extractSkillReadPath reads a skill read through the filesystem MCP server under any of its names", () => {
+  for (const name of [
+    "mcp__filesystem__read_text_file",
+    "filesystem__read_text_file",
+    "filesystem-read_text_file",
+    "read_text_file"
+  ])
+    assert.equal(
+      extractSkillReadPath(name, { path: CANONICAL_SKILL }),
+      CANONICAL_SKILL,
+      name
+    );
+  assert.equal(
+    extractSkillReadPath("mcp__filesystem__read_multiple_files", {
+      paths: [CANONICAL_SKILL]
+    }),
+    CANONICAL_SKILL
+  );
+  assert.equal(
+    extractSkillReadPath("mcp__filesystem__write_file", {
+      path: CANONICAL_SKILL
+    }),
+    null
+  );
+});

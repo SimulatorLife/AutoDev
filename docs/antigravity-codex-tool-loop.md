@@ -111,12 +111,12 @@ Both bridges now treat this as a failure of the turn, with `CodexToolsUnreachabl
 
 ### Remaining native Antigravity agency
 
-The ordinary Antigravity turn still runs through `agy` as an agent runtime. Native Antigravity tools execute inside that process rather than through Codex
+The ordinary Antigravity turn still runs through `agy` as an agent runtime. Every non-compaction turn now runs as the AutoDev agent with `excludeDefaultComponents`, so `agy`'s own file tools are not loaded: files are read and edited through the `filesystem` MCP server the bridge launches per turn (see "File interaction surface" in the target state). Any native Antigravity tool that does remain executes inside that process rather than through Codex
 
 Consequences include:
 
 - AutoDev must observe `step_update` events to recover tool telemetry
-- AutoDev must parse successful skill reads because Codex hooks never see native `agy` file access
+- AutoDev must parse successful skill reads because Codex hooks never see `agy`'s file access (now `filesystem` calls rather than native reads)
 - Antigravity's global MCP registry requires a private per-invocation home to enforce each role's MCP allowlist
 - The bridge now enables `browser-tester` with its Playwright allowlist in that isolated home; the global registry remains unchanged
 - Read-only and write-capable roles require Antigravity-specific sandbox and permission handling
