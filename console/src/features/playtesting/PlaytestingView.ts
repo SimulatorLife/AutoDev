@@ -36,6 +36,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
@@ -1128,7 +1129,10 @@ function analystHypotheses(
       ? null
       : (reviews.find((review) => review.reviewId === scope.selectedReviewId) ??
         null);
-  const columns: readonly ColumnDef<ControlApiPlaytestingReview>[] = [
+  const columns: readonly ColumnDef<
+    DataTableFeatures,
+    ControlApiPlaytestingReview
+  >[] = [
     {
       id: "hypothesis",
       header: "Analyst hypothesis",
@@ -1277,7 +1281,7 @@ function findingsTable(
   reviewTotal: number = 0,
   selectedFinding: PlaytestFinding | null = null
 ): React.JSX.Element {
-  const columns: readonly ColumnDef<PlaytestFinding>[] = [
+  const columns: readonly ColumnDef<DataTableFeatures, PlaytestFinding>[] = [
     {
       id: "finding",
       header: "Finding",
@@ -1737,7 +1741,7 @@ function comparisonsTable(
   humanValidation: PlaytestingHumanValidation | undefined,
   ownerActionsAvailable: boolean
 ): React.JSX.Element {
-  const columns: readonly ColumnDef<PlaytestComparison>[] = [
+  const columns: readonly ColumnDef<DataTableFeatures, PlaytestComparison>[] = [
     {
       id: "comparison",
       header: "Comparison",

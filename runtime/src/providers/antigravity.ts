@@ -74,6 +74,7 @@ import {
 import {
   classifyCliLimit,
   INCOMPLETE_REASON_CLIENT_DISCONNECTED,
+  INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   limitPayload,
@@ -117,6 +118,7 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import {
+  CodexToolsUnreachableError,
   CodexToolTurnRegistry,
   type ParkableTurn,
   toolErrorResult,
@@ -296,7 +298,12 @@ function agyFailure(error: unknown): AgyFailure {
       "exitCode" in error && typeof error.exitCode === "number"
         ? error.exitCode
         : null,
-    failureCode: "failureCode" in error ? textOrNull(error.failureCode) : null,
+    failureCode:
+      error instanceof CodexToolsUnreachableError
+        ? error.code
+        : "failureCode" in error
+          ? textOrNull(error.failureCode)
+          : null,
     failurePhase:
       "failurePhase" in error ? textOrNull(error.failurePhase) : null,
     failureTool: "failureTool" in error ? textOrNull(error.failureTool) : null
@@ -1385,7 +1392,6 @@ function decideCloseOnDelegation(delegation: DelegationState): CloseDecision {
 function modelMetadata() {
   return {
     slug: DEFAULT_MODEL,
-    apply_patch_tool_type: "freeform",
     base_instructions: "You are a bounded external-provider Codex agent.",
     display_name: "Antigravity CLI subscription",
     description:
@@ -4249,6 +4255,13 @@ class StreamingTurn implements ParkableTurn {
   // Why the client went away while agy was still delegating, if it did.
   private disconnectDetail: string | null = null;
 
+  /**
+   * Whether the shim reached this turn, listing its tools or calling one. agy
+   * lists an MCP server's tools as it connects, so a turn offered tools that
+   * ends without the shim ever reaching it ran without them.
+   */
+  private toolsReached = false;
+
   private readonly registry: CodexToolTurnRegistry<StreamingTurn>;
 
   constructor(
@@ -4326,6 +4339,7 @@ class StreamingTurn implements ParkableTurn {
 
   /** The MCP tool list the shim offers agy for this turn. */
   toolDefinitions(): ShimJson[] {
+    this.toolsReached = true;
     return this.turn.codexTools.map(mcpToolDefinition);
   }
 
@@ -4351,6 +4365,7 @@ class StreamingTurn implements ParkableTurn {
    * answer on the next request.
    */
   requestTool(name: string, args: unknown): Promise<ShimJson> {
+    this.toolsReached = true;
     const tool = this.turn.codexTools.find(
       (candidate) => candidate.name === name
     );
@@ -4549,6 +4564,15 @@ class StreamingTurn implements ParkableTurn {
       );
       return;
     }
+    if (codexToolsTurnId(this.turn) !== null && !this.toolsReached) {
+      this.fail(
+        new CodexToolsUnreachableError(
+          "Antigravity",
+          "never reached the turn"
+        )
+      );
+      return;
+    }
     this.stream.start();
     const completed = this.stream.emitCompletedItems(
       this.turn.responseModel,
@@ -4618,7 +4642,9 @@ class StreamingTurn implements ParkableTurn {
       text: this.stream.partialText,
       reason: limit
         ? INCOMPLETE_REASON_PROVIDER_LIMIT
-        : INCOMPLETE_REASON_INTERRUPTED,
+        : error instanceof CodexToolsUnreachableError
+          ? INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE
+          : INCOMPLETE_REASON_INTERRUPTED,
       limit,
       providerFailure: agyProviderFailureDiagnostic(error),
       model: this.turn.responseModel

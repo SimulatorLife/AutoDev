@@ -6,7 +6,10 @@ import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DataTable } from "../src/components/tables/DataTable.ts";
+import {
+  DataTable,
+  type DataTableFeatures
+} from "../src/components/tables/DataTable.ts";
 
 /**
  * A table header is a label, and a label has to fit its column.
@@ -26,7 +29,7 @@ interface Row {
   readonly id: string;
 }
 
-const COLUMNS: readonly ColumnDef<Row>[] = [
+const COLUMNS: readonly ColumnDef<DataTableFeatures, Row>[] = [
   {
     id: "availability",
     header: "Availability",

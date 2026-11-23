@@ -23,6 +23,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
@@ -184,7 +185,7 @@ function recentRunsSection({
   readonly listFilters: GithubListFilters;
   readonly runs: readonly GithubWorkflowRun[];
   readonly narrowed: readonly GithubWorkflowRun[];
-  readonly columns: ColumnDef<GithubWorkflowRun>[];
+  readonly columns: ColumnDef<DataTableFeatures, GithubWorkflowRun>[];
   readonly emptyMessage: string;
 }): React.JSX.Element {
   const isNarrowed = listFilters.outcome !== "all";
@@ -273,7 +274,7 @@ function workflowDefinitionsSection({
   readonly narrowed: readonly GithubWorkflowDefinition[];
   readonly stateCounts: Record<WorkflowStateFilter, number>;
   readonly runtimeFactsAvailable: boolean;
-  readonly columns: ColumnDef<GithubWorkflowDefinition>[];
+  readonly columns: ColumnDef<DataTableFeatures, GithubWorkflowDefinition>[];
   readonly emptyMessage: string;
 }): React.JSX.Element {
   const isNarrowed =
@@ -374,7 +375,7 @@ export function GithubView({
     ? `No ${RUN_OUTCOME_LABELS[listFilters.outcome].toLowerCase()} runs were observed in this sample.`
     : "No recent workflow runs observed.";
 
-  const columns: ColumnDef<GithubWorkflowDefinition>[] = [
+  const columns: ColumnDef<DataTableFeatures, GithubWorkflowDefinition>[] = [
     {
       id: "name",
       header: "Workflow",
@@ -570,7 +571,7 @@ export function GithubView({
     });
   }
 
-  const runColumns: ColumnDef<GithubWorkflowRun>[] = [
+  const runColumns: ColumnDef<DataTableFeatures, GithubWorkflowRun>[] = [
     {
       id: "id",
       header: "Run",

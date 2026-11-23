@@ -26,6 +26,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
@@ -378,7 +379,7 @@ function metricTable(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"]
 ): React.JSX.Element {
   type Metric = (typeof episode.metrics)[number];
-  const columns: ColumnDef<Metric, unknown>[] = [
+  const columns: ColumnDef<DataTableFeatures, Metric, unknown>[] = [
     {
       id: "metric",
       header: "Metric",

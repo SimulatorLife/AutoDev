@@ -282,6 +282,39 @@ Adding a new reason is a small but cross-cutting change: the JS-side
 the shared typed `INCOMPLETE_REASON_*` contract, each provider cause
 ladder, and the tests that assert all bridges agree.
 
+**One file surface.** Every file read, write, edit, listing and search, on
+every provider, goes through `@modelcontextprotocol/server-filesystem` (MCP
+server `filesystem`), and every provider-native file tool is disabled: Codex's
+`apply_patch` and `view_image`, the Claude CLI's built-ins, `agy`'s native file
+tools and the Copilot CLI's file tools. Codex, the Claude CLI, `agy` and Copilot
+each launch the server as their own MCP server through
+`run-autodev-mcp.sh filesystem`, confined to the turn's workspace and started
+`--read-only` for read-only roles; MiniMax and opencli reach it through Codex's
+`exec` `tools` global. See "File interaction surface" in
+`docs/autodev-console-target-state.md`.
+
+**Tool parity is a requirement, not a routing input.** Every provider must
+have every tool, offered the same way, so any role can be routed to any
+provider without anyone having to consider which tools it supports (see
+"Tool parity across providers" in `docs/autodev-console-target-state.md`).
+Providers that take Codex's tool surface natively (Codex, MiniMax, opencli)
+receive it unchanged; the Claude and Antigravity bridges mirror it through the
+Codex-tools MCP shim. A bridge whose shim fails to come up fails the turn with
+`codex_tools_unreachable` (`CodexToolsUnreachableError`) instead of completing
+it with only the CLI's built-ins, and the router never skips or prefers a
+provider because of tool support. A provider that cannot carry the full
+surface is a defect in that bridge; Copilot is the open case below.
+
+In the router, `codex_tools_unreachable` (whether carried as an error payload on
+`response.failed` or as `incomplete_details.reason`) classifies as
+`tool_channel_unavailable` (`providerToolChannelUnavailable` /
+`streamFailureClass`) so the chain falls back and cools down the affected route.
+To prevent telemetry dependency failures from breaking the MCP channel in the
+first place, `runtime/src/mcp/codex-tools-shim.ts` imports its OpenTelemetry
+module lazily on `tools/call` and fails open (logging
+`telemetry_module_load_failed` once to stderr) so `initialize`, `tools/list`,
+and tool execution continue uninterrupted.
+
 All providers are treated as capable of MCP and skills; role TOMLs remain the
 sole source for role MCP/skill exposure and normal Codex inheritance. Routing
 does not gate on duplicated provider capability declarations in
@@ -325,9 +358,11 @@ provider serving it must have a delegation path, and there is exactly **one**:
   provider needed its own spawn instructions and every session needed its own
   troubleshooting.
 
-- **Copilot is subagent-only** (`delegation: "none"`). The Copilot CLI cannot
-  be given Codex's `exec` tool, so it never serves the orchestrator tier; the
-  router reports `provider_cannot_delegate` for it and
+- **Copilot is subagent-only** (`delegation: "none"`) today. This is a
+  known parity gap, not the target design: the Copilot bridge still runs the
+  Copilot CLI with its own built-in tools instead of mirroring Codex's `exec`
+  through the Codex-tools MCP shim. Until that is fixed it never serves the
+  orchestrator tier; the router reports `provider_cannot_delegate` for it and
   `config/model-routing.json` lists it in no orchestrator group.
 
 - Antigravity's CLI also has a native `invoke_subagent` that cannot be denied.

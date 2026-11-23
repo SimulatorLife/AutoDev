@@ -14,6 +14,12 @@ developer_instructions = """
 {{AUTODEV_ROLE_PROMPT}}
 """
 
+[mcp_servers.filesystem]
+enabled = true
+default_tools_approval_mode = "approve"
+# Read-only roles get only the tools that cannot change the filesystem.
+env = { AUTODEV_MCP_READ_ONLY = "1" }
+
 [mcp_servers.lsp]
 enabled = false
 

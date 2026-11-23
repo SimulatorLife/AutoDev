@@ -214,6 +214,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/agent-events.ts",
   "runtime/src/telemetry/github-metrics.ts",
   "runtime/src/telemetry/provider-phases.ts",
+  "runtime/src/telemetry/tracer-provider.ts",
   "runtime/src/providers/minimax.ts",
   "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
@@ -231,6 +232,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/codex-tool-turns.ts",
   "runtime/src/mcp/tool-filter.ts",
   "runtime/src/mcp/codex-tools-shim.ts",
+  "runtime/src/mcp/filesystem-server.ts",
   "runtime/src/mcp/codex-tools-shim-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
   "runtime/src/mcp/process-registry.ts",
@@ -283,7 +285,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/hooks/root-delegation.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
-  "runtime/src/hooks/role-sandbox.ts"
+  "runtime/src/hooks/role-sandbox.ts",
+  "runtime/src/hooks/file-surface.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
   path.join("run", "claude-rate-limit.json")

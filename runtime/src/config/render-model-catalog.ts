@@ -15,7 +15,6 @@ import { readJsonFile } from "./config-files.ts";
 
 export interface CatalogModelEntry {
   slug: string;
-  apply_patch_tool_type?: string;
   display_name: string;
   description: string;
   base_instructions?: string;
@@ -143,7 +142,6 @@ export function buildCodexModelEntry(
 
   return {
     slug,
-    apply_patch_tool_type: "freeform",
     display_name: formatDisplayName(slug),
     description,
     base_instructions: "You are a bounded Codex agent.",
@@ -189,7 +187,6 @@ export function buildRoleAliasEntry(roleName: string): CatalogModelEntry {
 
   return {
     slug,
-    apply_patch_tool_type: "freeform",
     display_name: displayName,
     description,
     base_instructions: "You are a bounded provider-neutral AutoDev agent.",

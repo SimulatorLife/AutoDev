@@ -56,6 +56,11 @@ export const INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted";
 // is gone by the time this is known and the SSE socket it would have travelled
 // out of is already closed.
 export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
+// The provider ran without the tools the turn was routed with: its Codex tools
+// or filesystem MCP server never started or never reached the turn. Matches
+// `CodexToolsUnreachableError.code`.
+export const INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE =
+  "codex_tools_unreachable";
 
 // Re-export the canonical Core hard limit classes
 
@@ -229,6 +234,8 @@ function truncationCause(limit: ProviderLimit | null, reason: string): string {
   if (limit?.limitClass === "capacity") return "was over capacity";
   if (reason === INCOMPLETE_REASON_TIMEOUT) return "timed out";
   if (reason === INCOMPLETE_REASON_INTERRUPTED) return "stopped unexpectedly";
+  if (reason === INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE)
+    return "ran without its tools because an MCP server it was given never connected";
   if (reason === INCOMPLETE_REASON_CLIENT_DISCONNECTED)
     return "was disconnected mid-delegation";
   if (limit?.limitClass === "session_limit") return "reached its session limit";

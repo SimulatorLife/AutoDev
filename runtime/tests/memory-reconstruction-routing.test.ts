@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { context, trace } from "@opentelemetry/api";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import type { MemoryRecord } from "@simulatorlife/autodev-core";
 import {
   type CurrentStateAssessment,

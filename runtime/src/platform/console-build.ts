@@ -121,7 +121,10 @@ const SEEDED_CACHE_ENTRIES = [
 ] as const;
 const STAGED_TYPES_INCLUDE_PATTERN =
   /^\.next-staging-[^/]+\/types\/\*\*\/\*\.ts$/u;
+const STAGED_DEV_TYPES_INCLUDE_PATTERN =
+  /^\.next-staging-[^/]+\/dev\/types\/\*\*\/\*\.ts$/u;
 const PRODUCTION_TYPES_INCLUDE = `${PRODUCTION_DIST_DIR}/types/**/*.ts`;
+const PRODUCTION_DEV_TYPES_INCLUDE = `${PRODUCTION_DIST_DIR}/dev/types/**/*.ts`;
 const DIGITS_ONLY_PATTERN = /^\d+$/u;
 
 function parseStagingDirPid(entry: string): number | null {
@@ -160,33 +163,34 @@ function isGeneratedTypesInclude(entry: string): boolean {
   );
 }
 
+function isGeneratedDevTypesInclude(entry: string): boolean {
+  return (
+    STAGED_DEV_TYPES_INCLUDE_PATTERN.test(entry) ||
+    entry === PRODUCTION_DEV_TYPES_INCLUDE
+  );
+}
+
 function filterTsconfigInclude(
   includeList: readonly unknown[],
-  targetTypesInclude: string
+  targetTypesInclude: string,
+  targetDevTypesInclude: string
 ): unknown[] {
   const filtered: unknown[] = [];
   const seen = new Set<string>();
-  let hadGeneratedTypesInclude = false;
   for (const entry of includeList) {
     if (typeof entry !== "string") {
       filtered.push(entry);
       continue;
     }
+    let normalized = entry;
     if (isGeneratedTypesInclude(entry)) {
-      hadGeneratedTypesInclude = true;
-      if (entry !== targetTypesInclude) continue;
+      normalized = targetTypesInclude;
+    } else if (isGeneratedDevTypesInclude(entry)) {
+      normalized = targetDevTypesInclude;
     }
-    if (!seen.has(entry)) {
-      seen.add(entry);
-      filtered.push(entry);
-    }
-  }
-  if (hadGeneratedTypesInclude && !seen.has(targetTypesInclude)) {
-    const devTypesIndex = filtered.indexOf(".next-dev/types/**/*.ts");
-    if (devTypesIndex === -1) {
-      filtered.push(targetTypesInclude);
-    } else {
-      filtered.splice(devTypesIndex + 1, 0, targetTypesInclude);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      filtered.push(normalized);
     }
   }
   return filtered;
@@ -195,7 +199,8 @@ function filterTsconfigInclude(
 function normalizeGeneratedTsconfig(
   consoleRoot: string,
   deps: ConsoleBuildDeps,
-  targetTypesInclude = PRODUCTION_TYPES_INCLUDE
+  targetTypesInclude = PRODUCTION_TYPES_INCLUDE,
+  targetDevTypesInclude = PRODUCTION_DEV_TYPES_INCLUDE
 ): string | null {
   const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
   if (!deps.fileExists(tsconfigPath)) return null;
@@ -215,7 +220,11 @@ function normalizeGeneratedTsconfig(
     return content;
   }
   const record = parsed as { include: unknown[] };
-  record.include = filterTsconfigInclude(record.include, targetTypesInclude);
+  record.include = filterTsconfigInclude(
+    record.include,
+    targetTypesInclude,
+    targetDevTypesInclude
+  );
   const normalized = `${JSON.stringify(record, null, 2)}\n`;
   if (normalized !== content) deps.writeFile(tsconfigPath, normalized);
   return normalized;
@@ -500,7 +509,8 @@ export function buildConsole(
     normalizeGeneratedTsconfig(
       consoleRoot,
       deps,
-      `${stagingDistDir}/types/**/*.ts`
+      `${stagingDistDir}/types/**/*.ts`,
+      `${stagingDistDir}/dev/types/**/*.ts`
     );
     const movedCacheSubdirs = seedStagingBuildCache(
       buildPath,

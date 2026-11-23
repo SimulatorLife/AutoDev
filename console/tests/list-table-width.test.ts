@@ -6,7 +6,10 @@ import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DataTable } from "../src/components/tables/DataTable.ts";
+import {
+  DataTable,
+  type DataTableFeatures
+} from "../src/components/tables/DataTable.ts";
 
 /**
  * A list table has to fit the column it is given.
@@ -55,7 +58,7 @@ test("a table's declared width is the sum of its column weights", () => {
   // The number the acceptance measures is this number: the table tells the
   // browser how wide it wants to be, and the browser gives it that width or
   // the container's, whichever is larger.
-  const columns: readonly ColumnDef<Row>[] = [
+  const columns: readonly ColumnDef<DataTableFeatures, Row>[] = [
     {
       id: "role",
       header: "Role",
@@ -140,7 +143,7 @@ const VIEWS = [
   {
     name: "the agents table",
     path: "../src/features/agents/AgentsView.ts",
-    from: "const columns: ColumnDef<AgentDefinition>[] = [",
+    from: "const columns: ColumnDef<DataTableFeatures, AgentDefinition>[] = [",
     to: "\n  ];"
   },
   {
@@ -152,13 +155,13 @@ const VIEWS = [
   {
     name: "the MCPs table",
     path: "../src/features/mcps/McpsView.ts",
-    from: "const columns: ColumnDef<McpServerResource>[] = [",
+    from: "const columns: ColumnDef<DataTableFeatures, McpServerResource>[] = [",
     to: "\n  ];"
   },
   {
     name: "the workspaces table",
     path: "../src/features/workspaces/WorkspacesView.ts",
-    from: "const columns: ColumnDef<ControlApiWorkspaceRecord>[] = [",
+    from: "const columns: ColumnDef<DataTableFeatures, ControlApiWorkspaceRecord>[] = [",
     to: "\n  ];"
   }
 ] as const;

@@ -70,9 +70,9 @@ import {
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-  type SpanProcessor
-} from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+  type SpanProcessor,
+  type TracerProvider
+} from "@opentelemetry/sdk-trace";
 // Stable attributes come from the versioned package. MCP/GenAI names below
 // are sourced from the pinned Development model, not the package's deprecated
 // redirect entries, and are guarded by the semantic-convention pin test.
@@ -86,6 +86,7 @@ import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
@@ -108,7 +109,7 @@ const SIGNAL_ENDPOINT_SUFFIX_PATTERN = /\/v1\/(?:traces|metrics|logs)$/u;
 
 interface ShimTelemetryState {
   tracer: Tracer;
-  provider: NodeTracerProvider | null;
+  provider: TracerProvider | null;
   initialized: boolean;
   otlpExporterInstalled: boolean;
   testExporter: SpanExporter | null;
@@ -221,15 +222,15 @@ function buildSpanProcessors(): SpanProcessor[] {
   if (endpoint) {
     try {
       processors.push(
-        new BatchSpanProcessor(
-          new OTLPTraceExporter({
+        new BatchSpanProcessor({
+          exporter: new OTLPTraceExporter({
             url: endpoint,
             headers: parseOtlpHeaders(
               process.env.OTEL_EXPORTER_OTLP_HEADERS,
               process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS
             )
           })
-        )
+        })
       );
       state.otlpExporterInstalled = true;
     } catch {
@@ -241,7 +242,7 @@ function buildSpanProcessors(): SpanProcessor[] {
     }
   }
   if (state.testExporter) {
-    processors.push(new SimpleSpanProcessor(state.testExporter));
+    processors.push(new SimpleSpanProcessor({ exporter: state.testExporter }));
   }
   return processors;
 }
@@ -259,11 +260,10 @@ export function ensureOtelInitialized(): Tracer {
   try {
     const spanProcessors = buildSpanProcessors();
     if (spanProcessors.length === 0) return state.tracer;
-    const provider = new NodeTracerProvider({
+    const provider = registerTracerProvider({
       resource: buildResource(),
       spanProcessors
     });
-    provider.register();
     state.provider = provider;
     state.tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
   } catch {
@@ -331,11 +331,12 @@ export async function shutdownTelemetry(): Promise<void> {
  * Reset the global provider for isolated tests. The production process
  * calls `shutdownTelemetry` once, on stdio close.
  *
- * Calling `trace.disable()` is required because the OTel API guards
- * `setGlobalTracerProvider` against duplicate registration: without
- * unregistering the global tracer provider, a follow-up `register()`
- * silently no-ops and the new tracer still delegates to the previous
- * provider's processors.
+ * Calling `trace.disable()`, `context.disable()`, and `propagation.disable()`
+ * is required because the OTel API guards global registration against
+ * duplicates: without unregistering all three globals that
+ * `registerTracerProvider` installs, a follow-up `ensureOtelInitialized()`
+ * silently no-ops and leaves the previous context manager, propagator, or
+ * tracer provider in place.
  */
 export async function shutdownTelemetryForTest(): Promise<void> {
   const provider = state.provider;
@@ -343,10 +344,16 @@ export async function shutdownTelemetryForTest(): Promise<void> {
   state.tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
   state.otlpExporterInstalled = false;
   state.initialized = false;
-  try {
-    trace.disable();
-  } catch {
-    /* ignore disable failures */
+  for (const disable of [
+    () => trace.disable(),
+    () => context.disable(),
+    () => propagation.disable()
+  ]) {
+    try {
+      disable();
+    } catch {
+      /* ignore disable failures */
+    }
   }
   try {
     if (provider) await provider.shutdown();

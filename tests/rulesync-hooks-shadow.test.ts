@@ -46,6 +46,7 @@ const hookPaths: Record<(typeof targets)[number], string> = {
 const sourceCommands = [
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
+  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
   "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
@@ -387,6 +388,7 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   ]);
   assert.deepEqual(commands(copilot), [
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts",
@@ -403,6 +405,10 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   assert.deepEqual(
     copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
     [
+      [
+        "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
+        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts"
+      ],
       [
         "(?i)exec[_ -]?command|bash",
         "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts"
@@ -423,6 +429,7 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "PreToolUse"
   ]);
   assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), [
+    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
     "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
@@ -443,6 +450,12 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
       ];
     }),
     [
+      [
+        "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
+        [
+          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts"
+        ]
+      ],
       [
         "(?i)exec[_ -]?command|bash",
         [

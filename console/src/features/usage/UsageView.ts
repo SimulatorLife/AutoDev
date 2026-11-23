@@ -42,6 +42,7 @@ import {
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
@@ -255,7 +256,10 @@ function redactedSessionLabel(sessionId: string): string {
  * redacted: the id is in the link, and a link's own href is not the same as a
  * table cell that prints an identity in full.
  */
-const LIVE_SESSION_COLUMNS: readonly ColumnDef<UsageActiveSessionIdentity>[] = [
+const LIVE_SESSION_COLUMNS: readonly ColumnDef<
+  DataTableFeatures,
+  UsageActiveSessionIdentity
+>[] = [
   {
     id: "session",
     header: "Session",
@@ -695,7 +699,7 @@ function formatTraceDuration(durationNs: number): string {
 
 function traceAttemptColumns(
   selection: UsageFilterSelection
-): readonly ColumnDef<UsageTraceAttempt>[] {
+): readonly ColumnDef<DataTableFeatures, UsageTraceAttempt>[] {
   return [
     {
       id: "time",
@@ -783,7 +787,7 @@ function traceAttemptColumns(
 function traceSpanColumns(
   selection: UsageFilterSelection,
   selectedSpanId: string
-): readonly ColumnDef<UsageTraceSpan>[] {
+): readonly ColumnDef<DataTableFeatures, UsageTraceSpan>[] {
   return [
     {
       id: "span",
@@ -1509,8 +1513,7 @@ function buildUsageMcpRows(
   servers: readonly McpServerResource[],
   runtime: ControlApiMcpRuntimeResponse | null
 ): readonly UsageMcpServerRow[] {
-  const runtimeObserved =
-    runtime !== null && runtime.observedServers !== null;
+  const runtimeObserved = runtime !== null && runtime.observedServers !== null;
   const observationsByName = new Map(
     (runtime?.servers ?? []).map((server) => [server.name, server] as const)
   );
@@ -1673,7 +1676,7 @@ function renderMcpServersPanel(
     (row) => row.usageState === "exposed-never-used"
   ).length;
 
-  const columns: ColumnDef<UsageMcpServerRow>[] = [
+  const columns: ColumnDef<DataTableFeatures, UsageMcpServerRow>[] = [
     {
       id: "name",
       header: "Server",

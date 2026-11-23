@@ -61,6 +61,7 @@ import {
   providerToolChannelUnavailable
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
+  INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
   isHardLimitClass,
@@ -828,6 +829,29 @@ function coolDownRoute(provider: string, options: CooldownOptions): void {
 }
 
 /**
+ * Map a failed streamed response to its router failure class.
+ *
+ * A provider limit keeps its own class; an incomplete response carrying
+ * `codex_tools_unreachable` classifies as `tool_channel_unavailable` rather
+ * than generic `unavailable`; otherwise the reported error is classified.
+ */
+export function streamFailureClass(
+  responseResult: Pick<
+    StreamWriteResult,
+    "limit" | "incompleteReason" | "error"
+  >
+): string {
+  if (responseResult.limit?.limitClass) return responseResult.limit.limitClass;
+  if (responseResult.incompleteReason) {
+    return responseResult.incompleteReason ===
+      INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE
+      ? "tool_channel_unavailable"
+      : "unavailable";
+  }
+  return classifyReportedFailure(responseResult.error);
+}
+
+/**
  * Cool down the route whose HTTP 200 stream failed before completing, and
  * return the failure class to record. Shared by concrete (pinned) requests and
  * fallback-chain candidates so a mid-stream limit holds the route the same way
@@ -841,11 +865,7 @@ function coolDownFailedStreamResponse(
     "limit" | "incompleteReason" | "error"
   >
 ): string {
-  const failureClass =
-    responseResult.limit?.limitClass ??
-    (responseResult.incompleteReason
-      ? "unavailable"
-      : classifyReportedFailure(responseResult.error));
+  const failureClass = streamFailureClass(responseResult);
   // A route that cannot serve this request is not a broken provider: the
   // prompt never reached it, the provider is healthy, and cooling it down
   // pushes every other agent away from a working route. The refusal is

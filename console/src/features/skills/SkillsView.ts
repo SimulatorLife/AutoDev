@@ -26,6 +26,7 @@ import {
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
@@ -388,7 +389,7 @@ export function SkillsView({
     skills,
     sourceValidity
   });
-  const columns: ColumnDef<ScopedSkillDefinition>[] = [
+  const columns: ColumnDef<DataTableFeatures, ScopedSkillDefinition>[] = [
     {
       id: "name",
       header: "Skill Name",

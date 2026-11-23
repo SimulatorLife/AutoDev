@@ -15,7 +15,9 @@ import {
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
+  MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_FILESYSTEM,
   MCP_SERVER_PLAYTEST
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
@@ -24,6 +26,7 @@ export type McpName =
   | "playwright"
   | "cocoindex-code"
   | typeof MCP_SERVER_CODEGRAPHCONTEXT
+  | typeof MCP_SERVER_FILESYSTEM
   | typeof MCP_SERVER_PLAYTEST;
 /**
  * The physical form of `dir`, as ccc sees it: ccc resolves every path it
@@ -88,6 +91,15 @@ export function resolveMcpCommand(
         "--isolated"
       ],
       pathPrepend: []
+    };
+  if (tool === MCP_SERVER_FILESYSTEM)
+    // The workspace is the one allowed directory; it is appended by
+    // `runMcp`, which resolves it. A read-only role's server lists only the
+    // tools that cannot change the filesystem.
+    return {
+      binary: path.join(repoRoot, "node_modules/.bin/mcp-server-filesystem"),
+      args: env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [],
+      pathPrepend: [path.dirname(process.execPath)]
     };
   if (tool === "cocoindex-code") {
     const binary = resolveCocoIndexBinary(env);
@@ -240,7 +252,11 @@ export function runMcp(
         `AutoDev cocoindex-code has no project under ${workspace}; run \`ccc init\` there or point AUTODEV_MCP_WORKSPACE at an initialized project directory.`
       );
   }
-  const result = spawnSync(command.binary, command.args, {
+  const args =
+    name === MCP_SERVER_FILESYSTEM
+      ? [...command.args, "--", physicalPath(workspace)]
+      : command.args;
+  const result = spawnSync(command.binary, args, {
     cwd: workspace,
     env: childEnv,
     stdio: "inherit"

@@ -19,13 +19,14 @@ import { parseArgs, requiredArg } from "./cli-args.ts";
 import { ConfigError, readJsonFile } from "./config-files.ts";
 
 const MCP_ORDER: Record<string, number> = {
-  lsp: 0,
-  "cocoindex-code": 1,
-  codegraphcontext: 2,
-  playwright: 3,
-  openaiDeveloperDocs: 4,
-  context7: 5,
-  codex_app: 6
+  filesystem: 0,
+  lsp: 1,
+  "cocoindex-code": 2,
+  codegraphcontext: 3,
+  playwright: 4,
+  openaiDeveloperDocs: 5,
+  context7: 6,
+  codex_app: 7
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so

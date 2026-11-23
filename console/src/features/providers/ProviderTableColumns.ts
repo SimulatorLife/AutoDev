@@ -7,6 +7,7 @@ import React from "react";
 
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
+import { type DataTableFeatures } from "../../components/tables/DataTable.ts";
 import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
@@ -92,7 +93,7 @@ export function providerColumns(
   modelDiscovery: ProviderModelDiscoveryState,
   cliVersions: ProviderCliVersionState,
   quota: ProviderQuotaView
-): ColumnDef<ControlApiProviderRecord>[] {
+): ColumnDef<DataTableFeatures, ControlApiProviderRecord>[] {
   return [
     {
       id: "provider",
@@ -248,7 +249,7 @@ export function providerColumns(
 export function modelColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined
-): ColumnDef<ProviderModelRow>[] {
+): ColumnDef<DataTableFeatures, ProviderModelRow>[] {
   return [
     {
       id: "model",

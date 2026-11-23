@@ -34,6 +34,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
@@ -125,13 +126,30 @@ function validityWindowLabel(validity: MemoryValidity): React.ReactNode {
   const from = validity.validFrom;
   const to = validity.validTo;
   if (from !== undefined && to !== undefined) {
-    return React.createElement(React.Fragment, null, "Valid ", React.createElement(InstantDisplay, { value: from, label: "Valid from" }), " to ", React.createElement(InstantDisplay, { value: to, label: "Valid until" }));
+    return React.createElement(
+      React.Fragment,
+      null,
+      "Valid ",
+      React.createElement(InstantDisplay, { value: from, label: "Valid from" }),
+      " to ",
+      React.createElement(InstantDisplay, { value: to, label: "Valid until" })
+    );
   }
   if (from !== undefined) {
-    return React.createElement(React.Fragment, null, "Valid from ", React.createElement(InstantDisplay, { value: from, label: "Valid from" }));
+    return React.createElement(
+      React.Fragment,
+      null,
+      "Valid from ",
+      React.createElement(InstantDisplay, { value: from, label: "Valid from" })
+    );
   }
   if (to !== undefined) {
-    return React.createElement(React.Fragment, null, "Valid until ", React.createElement(InstantDisplay, { value: to, label: "Valid until" }));
+    return React.createElement(
+      React.Fragment,
+      null,
+      "Valid until ",
+      React.createElement(InstantDisplay, { value: to, label: "Valid until" })
+    );
   }
   return null;
 }
@@ -182,7 +200,15 @@ function ValidityFacts({
       ? React.createElement(
           "div",
           { className: MUTED_META_CLASS },
-          React.createElement(React.Fragment, null, "Checked at: ", React.createElement(InstantDisplay, { value: validity.checkedAt, label: "Validity checked" }))
+          React.createElement(
+            React.Fragment,
+            null,
+            "Checked at: ",
+            React.createElement(InstantDisplay, {
+              value: validity.checkedAt,
+              label: "Validity checked"
+            })
+          )
         )
       : null,
     validity.verificationSource
@@ -275,7 +301,7 @@ export function MemoryRecordsView({
   // and its neighbour as open, on the same screen, with nothing between them to
   // say why.
   const renderedAt = nowIso();
-  const columns: ColumnDef<MemoryRecord>[] = [
+  const columns: ColumnDef<DataTableFeatures, MemoryRecord>[] = [
     {
       id: "id",
       header: "Record ID",
@@ -755,7 +781,15 @@ function RecordDetailPanel({
           ? React.createElement(
               "div",
               { className: MONO_META_CLASS },
-              React.createElement(React.Fragment, null, "Last verified: ", React.createElement(InstantDisplay, { value: record.provenance.lastVerifiedAt, label: "Last verified" }))
+              React.createElement(
+                React.Fragment,
+                null,
+                "Last verified: ",
+                React.createElement(InstantDisplay, {
+                  value: record.provenance.lastVerifiedAt,
+                  label: "Last verified"
+                })
+              )
             )
           : null,
         record.provenance.evidence && record.provenance.evidence.length > 0
@@ -866,7 +900,10 @@ function RecordDetailPanel({
                       "flex shrink-0 items-center gap-3 text-fg-muted font-mono text-meta"
                   },
                   React.createElement("span", null, t.actorId),
-                  React.createElement(InstantDisplay, { value: t.occurredAt, label: "Transition time" })
+                  React.createElement(InstantDisplay, {
+                    value: t.occurredAt,
+                    label: "Transition time"
+                  })
                 )
               )
             )

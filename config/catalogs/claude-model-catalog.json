@@ -2,7 +2,6 @@
   "models": [
     {
       "slug": "sonnet",
-      "apply_patch_tool_type": "freeform",
       "display_name": "Claude Sonnet subscription",
       "description": "Claude Code OAuth subscription through the local bridge.",
       "default_reasoning_level": "medium",
@@ -34,7 +33,6 @@
     },
     {
       "slug": "claude-opus-5-5",
-      "apply_patch_tool_type": "freeform",
       "display_name": "Claude Opus 5.5",
       "description": "Claude Opus 5.5 through the Claude Code OAuth subscription on the local bridge.",
       "default_reasoning_level": "medium",

@@ -2,7 +2,6 @@
   "models": [
     {
       "slug": "gemini-4-argon-high",
-      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (High)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "high",
@@ -49,7 +48,6 @@
     },
     {
       "slug": "gemini-4-argon-medium",
-      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (Medium)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "medium",
@@ -96,7 +94,6 @@
     },
     {
       "slug": "gemini-4-argon-low",
-      "apply_patch_tool_type": "freeform",
       "display_name": "Antigravity Gemini Argon (Low)",
       "description": "Gemini Argon through the Antigravity CLI subscription, with reasoning depth encoded in the model id.",
       "default_reasoning_level": "low",

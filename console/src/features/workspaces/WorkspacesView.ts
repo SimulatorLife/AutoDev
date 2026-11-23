@@ -19,6 +19,7 @@ import {
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
@@ -168,7 +169,7 @@ export function WorkspacesView({
     (status) => status === "active"
   );
 
-  const columns: ColumnDef<ControlApiWorkspaceRecord>[] = [
+  const columns: ColumnDef<DataTableFeatures, ControlApiWorkspaceRecord>[] = [
     {
       id: "id",
       header: "Repository / Workspace",

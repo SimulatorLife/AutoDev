@@ -5,7 +5,7 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import {
   emptyMemoryStatusCounts,
   type EvidenceReference,

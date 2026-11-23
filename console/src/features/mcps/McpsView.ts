@@ -20,6 +20,7 @@ import {
 import { chipList, StatusChip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { MONO_ID_LINK_CLASS } from "../../components/ui/text-classes.ts";
@@ -68,7 +69,7 @@ export function McpsView({
   const observations = new Map(
     (runtime?.servers ?? []).map((server) => [server.name, server] as const)
   );
-  const columns: ColumnDef<McpServerResource>[] = [
+  const columns: ColumnDef<DataTableFeatures, McpServerResource>[] = [
     {
       id: "name",
       header: "Server Name",

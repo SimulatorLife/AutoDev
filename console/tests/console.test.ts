@@ -4924,11 +4924,13 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     gitChanges: UNOBSERVED_GIT_CHANGES,
     skillEventsByEvent: [{ event: "used", count: 1 }],
     requestsByRole: [{ role: "orchestrator", count: 3 }],
+    requestsByModel: null,
     requestsByWorkspace: {
       rows: [{ workspace: "SimulatorLife/AutoDev", count: 3 }],
       partial: false
     },
     attemptsByProvider: [{ provider: "codex", count: 5 }],
+    attemptsByModel: null,
     callsByTool: []
   };
   const markup = renderToStaticMarkup(
@@ -5026,11 +5028,13 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: [],
         requestsByRole: [{ role: "", count: 126 }],
+        requestsByModel: null,
         requestsByWorkspace: {
           rows: [{ workspace: "repo-a", count: 126 }],
           partial: false
         },
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
+        attemptsByModel: null,
         callsByTool: [{ tool: "", count: 1234 }]
       }
     })
@@ -5418,8 +5422,10 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: null,
         requestsByRole: [],
+        requestsByModel: [],
         requestsByWorkspace: { rows: [], partial: false },
         attemptsByProvider: [],
+        attemptsByModel: [],
         callsByTool: []
       }
     })

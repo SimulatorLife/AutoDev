@@ -53,6 +53,7 @@ import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
@@ -228,7 +229,7 @@ function sessionSkillUsage(
 
 function skillUsageColumns(
   state: SessionDiagnosticsViewState
-): readonly ColumnDef<SessionSkillUsage, unknown>[] {
+): readonly ColumnDef<DataTableFeatures, SessionSkillUsage, unknown>[] {
   return [
     {
       id: "skill",
@@ -463,7 +464,7 @@ function renderAlerts(report: SessionDiagnosticsReport): React.JSX.Element[] {
 function threadColumns(
   state: SessionDiagnosticsViewState,
   routerSummaries: readonly SessionRouterSummary[]
-): readonly ColumnDef<SessionThreadTrace, unknown>[] {
+): readonly ColumnDef<DataTableFeatures, SessionThreadTrace, unknown>[] {
   return [
     {
       id: "thread",
@@ -795,6 +796,7 @@ function renderOverview(
 /* ------------------------------------------------------------------ */
 
 function turnColumns(): readonly ColumnDef<
+  DataTableFeatures,
   SessionThreadTrace["turns"][number],
   unknown
 >[] {
@@ -843,6 +845,7 @@ function turnColumns(): readonly ColumnDef<
 }
 
 function gapColumns(): readonly ColumnDef<
+  DataTableFeatures,
   SessionThreadTrace["gaps"][number],
   unknown
 >[] {
@@ -878,7 +881,11 @@ function gapColumns(): readonly ColumnDef<
   ];
 }
 
-function itemColumns(): readonly ColumnDef<SessionThreadItem, unknown>[] {
+function itemColumns(): readonly ColumnDef<
+  DataTableFeatures,
+  SessionThreadItem,
+  unknown
+>[] {
   return [
     {
       id: "at",
@@ -1143,7 +1150,11 @@ function failureRows(report: SessionDiagnosticsReport): FailureRow[] {
   return rows;
 }
 
-function failureColumns(): readonly ColumnDef<FailureRow, unknown>[] {
+function failureColumns(): readonly ColumnDef<
+  DataTableFeatures,
+  FailureRow,
+  unknown
+>[] {
   return [
     {
       id: "at",
@@ -1497,7 +1508,11 @@ function renderRequests(
 /* OTel Spans.                                                         */
 /* ------------------------------------------------------------------ */
 
-function spanColumns(): readonly ColumnDef<UsageSessionSpanSummary, unknown>[] {
+function spanColumns(): readonly ColumnDef<
+  DataTableFeatures,
+  UsageSessionSpanSummary,
+  unknown
+>[] {
   return [
     {
       id: "time",

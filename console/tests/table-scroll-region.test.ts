@@ -5,7 +5,10 @@ import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DataTable } from "../src/components/tables/DataTable.ts";
+import {
+  DataTable,
+  type DataTableFeatures
+} from "../src/components/tables/DataTable.ts";
 
 /**
  * A table that is wider than the viewport scrolls inside its own region, and a
@@ -23,7 +26,7 @@ interface Row {
   readonly id: string;
 }
 
-const COLUMNS: readonly ColumnDef<Row>[] = [
+const COLUMNS: readonly ColumnDef<DataTableFeatures, Row>[] = [
   {
     id: "role",
     header: "Role",

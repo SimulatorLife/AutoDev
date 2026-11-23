@@ -29,6 +29,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
@@ -243,7 +244,7 @@ function ModelsPanel({
     (model) => model.provider === provider.id
   );
   const discoveryView = providerModelDiscoveryView(modelDiscovery, provider.id);
-  const columns: ColumnDef<ProviderModelRow>[] = [
+  const columns: ColumnDef<DataTableFeatures, ProviderModelRow>[] = [
     {
       id: "model",
       header: "Model",

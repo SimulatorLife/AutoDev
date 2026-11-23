@@ -13,6 +13,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
@@ -132,7 +133,7 @@ export function PermissionsView({
   executionContractObserved,
   saveOutcome
 }: PermissionsViewProps): React.JSX.Element {
-  const columns: ColumnDef<RoleCapabilityMatrix>[] = [
+  const columns: ColumnDef<DataTableFeatures, RoleCapabilityMatrix>[] = [
     {
       id: "role",
       header: "Agent Role",

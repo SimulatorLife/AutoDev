@@ -58,9 +58,9 @@ import {
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-  type SpanProcessor
-} from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+  type SpanProcessor,
+  type TracerProvider
+} from "@opentelemetry/sdk-trace";
 // Stable attribute keys come from the semantic-conventions index.
 import {
   ATTR_SERVICE_NAME,
@@ -77,6 +77,7 @@ import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
 import { safeMetricLabel } from "./metric-label.ts";
@@ -250,7 +251,7 @@ const METRIC_AGENT_ROLES = new Set([
 
 interface RouterTelemetryState {
   tracer: Tracer;
-  provider: NodeTracerProvider | null;
+  provider: TracerProvider | null;
   meterProvider: MeterProvider | null;
   meter: Meter | null;
   metricReaderForTest: MetricReader | null;
@@ -644,15 +645,15 @@ function buildSpanProcessors(): SpanProcessor[] {
   if (endpoint) {
     try {
       processors.push(
-        new BatchSpanProcessor(
-          new OTLPTraceExporter({
+        new BatchSpanProcessor({
+          exporter: new OTLPTraceExporter({
             url: endpoint,
             headers: parseOtlpHeaders(
               process.env.OTEL_EXPORTER_OTLP_HEADERS,
               process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS
             )
           })
-        )
+        })
       );
       state.otlpExporterInstalled = true;
     } catch {
@@ -663,7 +664,7 @@ function buildSpanProcessors(): SpanProcessor[] {
     }
   }
   if (state.testExporter) {
-    processors.push(new SimpleSpanProcessor(state.testExporter));
+    processors.push(new SimpleSpanProcessor({ exporter: state.testExporter }));
   }
   return processors;
 }
@@ -681,14 +682,13 @@ export function ensureOtelInitialized(): Tracer {
   try {
     const spanProcessors = buildSpanProcessors();
     if (spanProcessors.length === 0) return state.tracer;
-    const provider = new NodeTracerProvider({
+    const provider = registerTracerProvider({
       resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: SERVICE_NAME,
         [ATTR_SERVICE_VERSION]: TRACER_VERSION
       }),
       spanProcessors
     });
-    provider.register();
     state.provider = provider;
     state.tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
   } catch {

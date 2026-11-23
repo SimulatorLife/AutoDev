@@ -1,13 +1,16 @@
 import {
   type Cell,
+  type CellData,
   type Column,
   type ColumnDef,
   type ColumnMeta,
-  createTable,
+  constructTable,
+  type CoreFeatures,
   flexRender,
-  getCoreRowModel,
   type RowData,
-  type Table
+  type Table,
+  type TableFeatures,
+  tableFeatures
 } from "@tanstack/react-table";
 import React from "react";
 
@@ -43,8 +46,13 @@ declare module "@tanstack/react-table" {
    * laid out, so those concerns ride on the public `meta` slot rather than on a
    * parallel column type.
    */
-  // eslint-disable-next-line unused-imports/no-unused-vars -- TanStack fixes the type-parameter list of ColumnMeta
-  interface ColumnMeta<TData extends RowData, TValue> {
+  /* eslint-disable unused-imports/no-unused-vars -- TanStack fixes the type-parameter list of ColumnMeta */
+  interface ColumnMeta<
+    in out TFeatures extends TableFeatures,
+    in out TData extends RowData,
+    TValue extends CellData
+  > {
+    /* eslint-enable unused-imports/no-unused-vars */
     /**
      * Optional explanation of what this column is for, rendered as a `?`
      * affordance beside the header label and carried on the `title` and
@@ -82,9 +90,60 @@ declare module "@tanstack/react-table" {
   }
 }
 
-export interface DataTableProps<T> {
+/**
+ * Hook-free reactivity bindings for a single-render server table.
+ *
+ * `DataTable` builds a fresh table per render and never mutates or subscribes
+ * to state across renders, so atoms hold plain values with no-op subscriptions.
+ */
+const singleRenderReactivity: NonNullable<
+  CoreFeatures["coreReactivityFeature"]
+> = {
+  createOptionsStore: false,
+  wrapExternalAtoms: false,
+  addSubscription: () => undefined,
+  unmount: () => undefined,
+  schedule: (fn) => {
+    fn();
+  },
+  batch: (fn) => {
+    fn();
+  },
+  untrack: (fn) => fn(),
+  createWritableAtom: <V>(initialValue: V) => {
+    let value = initialValue;
+    return {
+      get: () => value,
+      set: (updater: V | ((previous: V) => V)) => {
+        value =
+          typeof updater === "function"
+            ? (updater as (previous: V) => V)(value)
+            : updater;
+      },
+      subscribe: () => ({ unsubscribe: () => undefined })
+    };
+  },
+  createReadonlyAtom: <V>(fn: () => V) => ({
+    get: fn,
+    subscribe: () => ({ unsubscribe: () => undefined })
+  })
+};
+
+/**
+ * The feature set every Console `DataTable` registers.
+ *
+ * Only core table/row/column/header/cell behavior is enabled; sorting,
+ * filtering and pagination belong to the server and the URL.
+ */
+export const dataTableFeatures = tableFeatures({
+  coreReactivityFeature: singleRenderReactivity
+});
+
+export type DataTableFeatures = typeof dataTableFeatures;
+
+export interface DataTableProps<T extends RowData> {
   readonly data: readonly T[];
-  readonly columns: readonly ColumnDef<T, unknown>[];
+  readonly columns: readonly ColumnDef<DataTableFeatures, T, unknown>[];
   readonly keyExtractor: (row: T) => string;
   /**
    * Required, and required for the same reason `EmptyState` never supplies a
@@ -110,7 +169,12 @@ export interface DataTableProps<T> {
 }
 
 /** The presentation metadata of a column, as the layout helpers read it. */
-type LayoutMeta = ColumnMeta<never, unknown> | undefined;
+type LayoutMeta =
+  | Pick<
+      ColumnMeta<DataTableFeatures, Record<string, unknown>, unknown>,
+      "headerHelp" | "rowHeader" | "weight" | "align" | "clampLines"
+    >
+  | undefined;
 
 /**
  * Width share granted to a `tokens` column when the view does not declare one.
@@ -138,7 +202,9 @@ const DEFAULT_COLUMN_WEIGHT = 100;
  * keeps its column proportions and its wrapper scrolls. Capping the sum made
  * controls and values spill across their own cells before scrolling began.
  */
-function tableMinWidthPx<T>(columns: readonly Column<T, unknown>[]): number {
+function tableMinWidthPx<T extends RowData>(
+  columns: readonly Column<DataTableFeatures, T, unknown>[]
+): number {
   return columns.reduce(
     (sum, column) => sum + columnWeight(column.columnDef.meta),
     0
@@ -292,7 +358,9 @@ function nodeText(node: React.ReactNode): string {
  * those weights, the wrapper scrolls instead of shrinking columns under their
  * authored content budget.
  */
-function columnWidths<T>(columns: readonly Column<T, unknown>[]): string[] {
+function columnWidths<T extends RowData>(
+  columns: readonly Column<DataTableFeatures, T, unknown>[]
+): string[] {
   const weights = columns.map((column) => columnWeight(column.columnDef.meta));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   // Rounded so the emitted markup stays readable and stable; the last column
@@ -312,33 +380,24 @@ function columnWidths<T>(columns: readonly Column<T, unknown>[]): string[] {
 /**
  * Build the TanStack table that owns this table's column and row model.
  *
- * `createTable` rather than `useReactTable`: the table is derived data for a
+ * `constructTable` rather than `useTable`: the table is derived data for a
  * single render, there is no state to hold between renders, and `DataTable`
  * must stay hook-free so it renders on the server like every other Console
  * table. Sorting, filtering and pagination are not enabled here -- they belong
- * to the server and the URL -- so only the core row model is registered.
- *
- * The options `createTable` requires of a caller that is not `useReactTable`
- * (state, onStateChange, renderFallbackValue) are supplied inert, and the state
- * is then seeded from the table's own initial state exactly as
- * `useReactTable` does.
+ * to the server and the URL -- so only the core feature set is registered.
  */
-function buildTable<T>(
+function buildTable<T extends RowData>(
   data: readonly T[],
-  columns: readonly ColumnDef<T, unknown>[],
+  columns: readonly ColumnDef<DataTableFeatures, T, unknown>[],
   keyExtractor: (row: T) => string
-): Table<T> {
-  const table = createTable<T>({
-    data: data as T[],
-    columns: [...columns],
-    getCoreRowModel: getCoreRowModel(),
+): Table<DataTableFeatures, T> {
+  return constructTable<DataTableFeatures, T>({
+    features: dataTableFeatures,
+    data,
+    columns,
     getRowId: keyExtractor,
-    state: {},
-    onStateChange: () => undefined,
     renderFallbackValue: null
   });
-  table.setOptions((previous) => ({ ...previous, state: table.initialState }));
-  return table;
 }
 
 /**
@@ -352,7 +411,9 @@ function buildTable<T>(
  * row, never components with state, so nothing is lost by resolving them
  * eagerly. Every other template (a string) goes through `flexRender`.
  */
-function cellContent<T>(cell: Cell<T, unknown>): React.ReactNode {
+function cellContent<T extends RowData>(
+  cell: Cell<DataTableFeatures, T, unknown>
+): React.ReactNode {
   const template = cell.column.columnDef.cell;
   return typeof template === "function"
     ? (template(cell.getContext()) as React.ReactNode)
@@ -360,7 +421,9 @@ function cellContent<T>(cell: Cell<T, unknown>): React.ReactNode {
 }
 
 /** A header is read as text, so its template has to be a string. */
-function headerLabel<T>(column: Column<T, unknown>): string {
+function headerLabel<T extends RowData>(
+  column: Column<DataTableFeatures, T, unknown>
+): string {
   const { header } = column.columnDef;
   if (typeof header !== "string") {
     throw new TypeError(
@@ -370,7 +433,7 @@ function headerLabel<T>(column: Column<T, unknown>): string {
   return header;
 }
 
-export function DataTable<T>({
+export function DataTable<T extends RowData>({
   data,
   columns,
   keyExtractor,
@@ -385,7 +448,7 @@ export function DataTable<T>({
   }
 
   const table = buildTable(data, columns, keyExtractor);
-  const leafColumns = table.getVisibleLeafColumns();
+  const leafColumns = table.getAllLeafColumns();
   const widths = new Map(
     columnWidths(leafColumns).map((width, index) => [
       leafColumns[index]!.id,
@@ -547,7 +610,7 @@ export function DataTable<T>({
               key: row.id,
               className: "transition-colors"
             },
-            row.getVisibleCells().map((cell) => {
+            row.getAllCells().map((cell) => {
               const meta = cell.column.columnDef.meta;
               const content = cellContent(cell);
               const rowHeader = meta?.rowHeader === true;

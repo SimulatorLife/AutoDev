@@ -29,6 +29,7 @@ import {
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
@@ -85,7 +86,7 @@ export function AgentsView({
   const inFlightCount =
     runtime === undefined ? NOT_OBSERVED_LABEL : runtime.inFlightRequestCount;
 
-  const columns: ColumnDef<AgentDefinition>[] = [
+  const columns: ColumnDef<DataTableFeatures, AgentDefinition>[] = [
     {
       id: "role",
       header: "Role / Agent",

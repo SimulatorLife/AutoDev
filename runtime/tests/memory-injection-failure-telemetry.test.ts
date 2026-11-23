@@ -9,10 +9,10 @@ import {
   trace
 } from "@opentelemetry/api";
 import {
-  BasicTracerProvider,
   InMemorySpanExporter,
-  SimpleSpanProcessor
-} from "@opentelemetry/sdk-trace-base";
+  SimpleSpanProcessor,
+  TracerProvider
+} from "@opentelemetry/sdk-trace";
 import type { MemoryRepository } from "@simulatorlife/autodev-core";
 import {
   MemoryAuthorizationError,
@@ -48,7 +48,7 @@ import {
  * only the presence of the category.
  *
  * Getting an active span at all took some doing. This package has no
- * `@opentelemetry/context-async-hooks`, so the API's default context manager is a
+ * registered context manager here, so the API's default context manager is a
  * no-op stack and `getActiveSpan()` is always undefined — which is why span
  * export has never been observable here. Rather than leave that arm untested,
  * the file registers a context manager that keeps one span active for its
@@ -57,8 +57,8 @@ import {
  */
 
 const exporter = new InMemorySpanExporter();
-const provider = new BasicTracerProvider({
-  spanProcessors: [new SimpleSpanProcessor(exporter)]
+const provider = new TracerProvider({
+  spanProcessors: [new SimpleSpanProcessor({ exporter })]
 });
 trace.setGlobalTracerProvider(provider);
 

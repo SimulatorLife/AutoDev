@@ -100,6 +100,15 @@ Relevant implementation:
 
 This is preferable to an `agy`-native child because the child becomes a real Codex session, is visible in the app, routes through AutoDev normally, and inherits the same lifecycle/accounting semantics as other Codex subagents
 
+### A turn never completes without its Codex tools
+
+Every provider gets the turn's whole Codex tool surface the same way, through the `codex` MCP shim. When the shim cannot start (a dependency upgrade left `codex-tools-shim-telemetry.ts` importing a package that no longer existed, on 2026-11-22), the provider CLI drops the server and carries on with only its own built-ins. The model then answers "I am blocked" or writes tool calls as plain text, and the bridge used to report that as a successful turn. A whole queue of tasks was used up that way.
+
+Both bridges now treat this as a failure of the turn, with `CodexToolsUnreachableError` (`runtime/src/providers/codex-tool-turns.ts`, code and incomplete reason `codex_tools_unreachable`):
+
+- **Claude**: the CLI's `system`/`init` stream line lists each MCP server's status. If the `codex` server is missing or not `connected`/`pending`, the turn fails before the model runs.
+- **Claude and Antigravity**: a turn that was offered Codex tools and ends without the shim ever reaching it (no `tools/list`, no `tools/call`) ends as failed or incomplete, never as `completed`.
+
 ### Remaining native Antigravity agency
 
 The ordinary Antigravity turn still runs through `agy` as an agent runtime. Native Antigravity tools execute inside that process rather than through Codex

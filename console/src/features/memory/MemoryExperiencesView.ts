@@ -30,6 +30,7 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
@@ -123,7 +124,7 @@ export function MemoryExperiencesView({
   sessionOutcome,
   listScope
 }: MemoryExperiencesViewProps): React.JSX.Element {
-  const columns: ColumnDef<ExperienceEnvelope>[] = [
+  const columns: ColumnDef<DataTableFeatures, ExperienceEnvelope>[] = [
     {
       id: "id",
       header: "Experience ID",

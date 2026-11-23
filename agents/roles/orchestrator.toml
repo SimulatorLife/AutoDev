@@ -5,6 +5,10 @@
 # are composed into $CODEX_HOME/config.toml by runtime/src/config/compose-user-config.ts.
 sandbox_mode = "danger-full-access"
 
+[mcp_servers.filesystem]
+enabled = true
+default_tools_approval_mode = "approve"
+
 [mcp_servers.lsp]
 enabled = true
 

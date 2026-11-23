@@ -31,6 +31,7 @@ import {
 import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
@@ -520,7 +521,7 @@ function spanLink(
 function traceColumns(
   nav: EvaluationsNav,
   selectedSpanId: string
-): readonly ColumnDef<UsageTraceSpan>[] {
+): readonly ColumnDef<DataTableFeatures, UsageTraceSpan>[] {
   return [
     {
       id: "span",
@@ -1128,7 +1129,7 @@ function passRate(counts: OutcomeTally): string {
 
 function comparisonColumns(
   label: string
-): readonly ColumnDef<readonly [string, OutcomeTally]>[] {
+): readonly ColumnDef<DataTableFeatures, readonly [string, OutcomeTally]>[] {
   return [
     {
       id: "target",
@@ -1672,7 +1673,7 @@ export function EvaluationsView({
       ? null
       : (evaluations.find((evaluation) => evaluation.id === selection) ?? null);
 
-  const columns: ColumnDef<EvaluationResult>[] = [
+  const columns: ColumnDef<DataTableFeatures, EvaluationResult>[] = [
     {
       id: "target",
       header: "Target",

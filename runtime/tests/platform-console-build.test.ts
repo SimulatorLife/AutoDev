@@ -486,6 +486,80 @@ test("Console build waits for an active lock and reuses the published stamp", ()
     assert.equal(existsSync(lockDir), false);
   }));
 
+test("Console build normalizes Next 16 dev/types staging entries in tsconfig.json", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const tsconfigPath = path.join(consoleRoot, "tsconfig.json");
+    writeFileSync(
+      tsconfigPath,
+      JSON.stringify(
+        {
+          include: [
+            ".next-dev/types/**/*.ts",
+            ".next/types/**/*.ts",
+            "src/**/*.ts",
+            ".next/dev/types/**/*.ts",
+            ".next-staging-99999999/dev/types/**/*.ts"
+          ]
+        },
+        null,
+        2
+      ) + "\n"
+    );
+
+    let preBuildInclude: string[] = [];
+    buildConsole(
+      { repositoryRoot, nodeBin: "/fixture/node" },
+      dependencies({
+        run: (_executable, _args, cwd, env) => {
+          const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+          preBuildInclude = (
+            JSON.parse(readFileSync(tsconfigPath, "utf8")) as {
+              include: string[];
+            }
+          ).include;
+          const stagingRoot = path.join(cwd, staging);
+          mkdirSync(stagingRoot, { recursive: true });
+          writeFileSync(path.join(stagingRoot, "BUILD_ID"), "new-build\n");
+          writeFileSync(
+            tsconfigPath,
+            JSON.stringify(
+              {
+                include: [
+                  ".next-dev/types/**/*.ts",
+                  `${staging}/types/**/*.ts`,
+                  "src/**/*.ts",
+                  `${staging}/dev/types/**/*.ts`
+                ]
+              },
+              null,
+              2
+            ) + "\n"
+          );
+        }
+      })
+    );
+
+    assert.ok(
+      preBuildInclude.some((entry) =>
+        /^\.next-staging-\d+\/dev\/types\/\*\*\/\*\.ts$/u.test(entry)
+      )
+    );
+    assert.equal(
+      preBuildInclude.includes(".next-staging-99999999/dev/types/**/*.ts"),
+      false
+    );
+    const finalTsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as {
+      include: string[];
+    };
+    assert.deepEqual(finalTsconfig.include, [
+      ".next-dev/types/**/*.ts",
+      ".next/types/**/*.ts",
+      "src/**/*.ts",
+      ".next/dev/types/**/*.ts"
+    ]);
+  }));
+
 test("console package build routes through the staged runtime builder unless a custom distDir is set", () => {
   const repoRoot = path.resolve(import.meta.dirname, "..", "..");
   const consolePackage = JSON.parse(

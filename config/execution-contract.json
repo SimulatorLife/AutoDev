@@ -5,6 +5,7 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
+        "filesystem",
         "playwright"
       ],
       "skills": [],
@@ -54,6 +55,7 @@
       "kind": "leaf",
       "sandboxMode": null,
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext"
@@ -106,6 +108,7 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
+        "filesystem",
         "openaiDeveloperDocs",
         "context7"
       ],
@@ -122,6 +125,7 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
@@ -152,6 +156,7 @@
       "kind": "orchestrator",
       "sandboxMode": "unrestricted",
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
@@ -191,6 +196,7 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
+        "filesystem",
         "playtest"
       ],
       "skills": [
@@ -235,6 +241,7 @@
       "kind": "leaf",
       "sandboxMode": "read-only",
       "mcp": [
+        "filesystem",
         "playtest"
       ],
       "skills": [
@@ -290,6 +297,7 @@
       "kind": "leaf",
       "sandboxMode": "unrestricted",
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
@@ -354,6 +362,7 @@
       "kind": "leaf",
       "sandboxMode": "workspace-write",
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext"
@@ -385,6 +394,7 @@
       "kind": "leaf",
       "sandboxMode": "unrestricted",
       "mcp": [
+        "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext"

@@ -26,6 +26,7 @@ import {
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
@@ -180,7 +181,7 @@ export function PromptsView({
         ? "RuleSync `.rulesync/commands/` was not observed."
         : rolePromptNotice;
 
-  const columns: ColumnDef<PromptAsset>[] = [
+  const columns: ColumnDef<DataTableFeatures, PromptAsset>[] = [
     {
       id: "name",
       header: "Command / Prompt",

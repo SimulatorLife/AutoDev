@@ -47,7 +47,13 @@ function rpc(method, params) {
   server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   return new Promise((resolveCall) => pending.set(id, resolveCall));
 }
-const config = flag("--mcp-config");
+// "failed": the CLI reports the Codex tools server failed to start, as the
+// real CLI's init line does when the shim crashes. "silent": the server never
+// connects and the CLI says nothing about it.
+const codexServer = process.env.CLAUDE_FAKE_CODEX_SERVER;
+if (codexServer === "failed")
+  out({ type: "system", subtype: "init", mcp_servers: [{ name: "codex", status: "failed" }] });
+const config = codexServer ? undefined : flag("--mcp-config");
 if (config) {
   const [, definition] = Object.entries(JSON.parse(config).mcpServers)[0];
   server = spawn(definition.command, definition.args, { env: { ...process.env, ...definition.env }, stdio: ["pipe", "pipe", "inherit"] });
@@ -159,7 +165,8 @@ async function withBridge(
     port: number;
     record: () => Promise<JsonRecord>;
     stopBridge: () => Promise<void>;
-  }) => Promise<void>
+  }) => Promise<void>,
+  extraEnv: Record<string, string> = {}
 ): Promise<void> {
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-loop-"));
   const cli = join(temp, "fake-claude.mjs");
@@ -180,7 +187,8 @@ async function withBridge(
       LITELLM_API_KEY: "",
       AUTODEV_NODE_BIN: process.execPath,
       CLAUDE_FAKE_SCRIPT: JSON.stringify(script),
-      CLAUDE_FAKE_RECORD: recordPath
+      CLAUDE_FAKE_RECORD: recordPath,
+      ...extraEnv
     },
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -420,6 +428,33 @@ test("tool-call-looking assistant text is not dispatched as a Codex tool", async
     assert.equal(response.output_text, serializedCall);
   });
 });
+
+for (const codexServer of ["failed", "silent"]) {
+  test(`a turn whose Codex tools server is ${codexServer} fails instead of completing without them`, async () => {
+    await withBridge(
+      [{ say: "I am blocked: no shell or file tools are available." }],
+      async ({ port }) => {
+        const body = await (
+          await codexRequest(port, [
+            CODEX_TOOLS,
+            { type: "message", role: "user", content: "fix the bug" }
+          ])
+        ).text();
+        assert.match(body, /codex_tools_unreachable/);
+        const terminal = parseSse(body).find(
+          ({ event }) =>
+            event === "response.completed" || event === "response.failed"
+        );
+        assert.notEqual(
+          (terminal?.data?.response as JsonRecord | undefined)?.status,
+          "completed",
+          "a turn that ran without its Codex tools is not reported as done"
+        );
+      },
+      { CLAUDE_FAKE_CODEX_SERVER: codexServer }
+    );
+  });
+}
 
 test("a turn without Codex tools does not direct the model to use absent tools", async () => {
   await withBridge(

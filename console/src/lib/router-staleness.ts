@@ -43,8 +43,11 @@
  * unreachable -- an entry is `reusable` for the whole window and `expired`
  * after it -- and every navigation commits.
  *
- * The number is the Console's own live-count cadence: a page the operator
- * lands on is at most five seconds old, which is the same promise the
+ * The dynamic reuse window is the Console's own live-count cadence: a page the
+ * operator lands on is at most five seconds old, which is the same promise the
  * five-second live-count refresh makes on the pages that carry live counts.
+ * Next.js 16 requires `experimental.staleTimes.static` to be at least 30 seconds
+ * (and clamps lower values internally with `Math.max(staleTimeSeconds, 30)`).
  */
 export const ROUTER_STALE_SECONDS = 5;
+export const ROUTER_STATIC_STALE_SECONDS = 30;

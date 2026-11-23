@@ -36,6 +36,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
@@ -461,7 +462,7 @@ export function ToolsView({
     executionContractObserved
   );
 
-  const columns: ColumnDef<ToolCatalogItem>[] = [
+  const columns: ColumnDef<DataTableFeatures, ToolCatalogItem>[] = [
     {
       id: "name",
       header: "Tool",

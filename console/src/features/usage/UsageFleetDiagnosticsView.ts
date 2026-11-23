@@ -35,6 +35,7 @@ import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
@@ -124,7 +125,7 @@ function panel(title: string, children: React.ReactNode): React.JSX.Element {
 
 function sessionColumns(
   range: string
-): readonly ColumnDef<FleetSessionRow, unknown>[] {
+): readonly ColumnDef<DataTableFeatures, FleetSessionRow, unknown>[] {
   return [
     {
       id: "session",

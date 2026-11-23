@@ -9,10 +9,13 @@ export const MAX_HOOK_REASON_LENGTH = 200;
 export const MAX_COMMAND_HEAD_LENGTH = 120;
 
 export type HookDenialPolicy =
-  "read-only" | "orchestrator-git-history" | "block-ccc-cli";
+  | "read-only"
+  | "orchestrator-git-history"
+  | "block-ccc-cli"
+  | "file-surface";
 
 export interface PreToolUseDenialLogEntry {
-  readonly hook: "role-sandbox" | "block-ccc-cli";
+  readonly hook: "role-sandbox" | "block-ccc-cli" | "file-surface";
   readonly policy: HookDenialPolicy;
   readonly role: string | null;
   readonly model: string | null;

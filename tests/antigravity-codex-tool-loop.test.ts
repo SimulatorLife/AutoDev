@@ -913,3 +913,87 @@ test("an image the user attached is written where agy can open it, and named in 
     });
   }
 });
+
+/**
+ * agy with its Codex tools server down: it never reaches the shim and answers
+ * from its own built-ins, the way every Antigravity turn did while the shim
+ * crashed on a missing dependency.
+ */
+const TOOLLESS_AGY = String.raw`
+process.stdout.write(JSON.stringify({ event: "step_update", step_update: { step_type: "text", text_delta: "I am blocked: the codex MCP server is unavailable." } }) + "\n");
+process.stdout.write(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "I am blocked: the codex MCP server is unavailable." } }) + "\n");
+process.exit(0);
+`;
+
+test("a turn whose Codex tools never reached agy fails instead of completing without them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-agy-codex-unreachable-"));
+  const home = join(root, "home");
+  const codexHome = join(root, "codex");
+  const workspace = join(root, "workspace");
+  const agyHome = join(home, ".gemini");
+  const fakeAgy = join(root, "fake-agy.mjs");
+  const port = await reservePort();
+
+  mkdirSync(join(agyHome, "config"), { recursive: true });
+  mkdirSync(join(agyHome, "antigravity-cli"), { recursive: true });
+  mkdirSync(join(agyHome, "antigravity-browser-profile"), { recursive: true });
+  mkdirSync(join(codexHome, "provider-runtime"), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(agyHome, "config", "mcp_config.json"), "{}\n");
+  writeFileSync(
+    join(agyHome, "antigravity-cli", "settings.json"),
+    '{"permissions":{"allow":[],"deny":[]}}\n'
+  );
+  writeFileSync(
+    join(codexHome, "provider-runtime", "mcp-servers.json"),
+    JSON.stringify({ playwright: { command: process.execPath, args: [] } })
+  );
+  writeFileSync(fakeAgy, `${NODE_SHEBANG}\n${TOOLLESS_AGY}`, { mode: 0o755 });
+
+  const bridge = spawn(
+    process.execPath,
+    ["runtime/src/providers/antigravity.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        AGY_PROXY_PORT: String(port),
+        AGY_CLI_PATH: fakeAgy,
+        AGY_SKIP_PERMISSIONS: "true",
+        LITELLM_API_KEY: ""
+      },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
+
+  try {
+    await waitForBridge(bridge);
+    const { status, body } = await post(
+      port,
+      {
+        cwd: workspace,
+        input: [...TOOLS, { type: "message", role: "user", content: "fix it" }],
+        model: "gemini-3.8-flash-medium",
+        stream: true
+      },
+      AbortSignal.timeout(30_000)
+    );
+    assert.equal(status, 200, body);
+    assert.match(body, /codex_tools_unreachable/);
+    const terminal = sseEvents(body).find(
+      (event) =>
+        event.type === "response.completed" || event.type === "response.failed"
+    );
+    assert.ok(terminal, body);
+    assert.notEqual(
+      terminal.response?.status,
+      "completed",
+      "a turn that ran without its Codex tools is not reported as done"
+    );
+  } finally {
+    await stopChild(bridge);
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

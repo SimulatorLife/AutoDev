@@ -38,6 +38,7 @@ import {
   renderCodexTranscript
 } from "./claude-codex-tools.ts";
 import {
+  CodexToolsUnreachableError,
   type CodexToolTurnRegistry,
   toolErrorResult,
   turnId
@@ -583,6 +584,12 @@ export class ClaudeTurn {
   private pendingUsage: typeof DEFAULT_USAGE = DEFAULT_USAGE;
   /** Whether the CLI reported any per-message usage this turn. */
   private sawMessageUsage = false;
+  /**
+   * Whether the shim reached this turn, listing its tools or calling one. A
+   * CLI lists an MCP server's tools as it connects, so a turn offered tools
+   * that ends without the shim ever reaching it ran without them.
+   */
+  private toolsReached = false;
   private readonly options: ClaudeTurnOptions;
 
   constructor(options: ClaudeTurnOptions) {
@@ -601,6 +608,7 @@ export class ClaudeTurn {
 
   /** The MCP tool list the shim offers the CLI. */
   toolDefinitions(): JsonRecord[] {
+    this.toolsReached = true;
     return this.options.tools.map(mcpToolDefinition);
   }
 
@@ -685,6 +693,7 @@ export class ClaudeTurn {
 
   /** A tool call the CLI made through the shim; resolves with Codex's output. */
   requestTool(name: string, args: unknown): Promise<JsonRecord> {
+    this.toolsReached = true;
     const tool = this.options.tools.find(
       (candidate) => candidate.name === name
     );
@@ -777,6 +786,17 @@ export class ClaudeTurn {
   }
 
   private complete(event: Extract<ClaudeCliEvent, { kind: "complete" }>): void {
+    if (this.options.tools.length > 0 && !this.toolsReached) {
+      this.fail(
+        this.options.describeFailure(
+          new CodexToolsUnreachableError(
+            "Claude",
+            "never reached the turn"
+          )
+        )
+      );
+      return;
+    }
     // The CLI's final result is authoritative; stream only what it adds.
     if (
       event.text &&

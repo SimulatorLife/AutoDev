@@ -17,6 +17,10 @@ developer_instructions = """
 {{AUTODEV_ROLE_PROMPT}}
 """
 
+[mcp_servers.filesystem]
+enabled = true
+default_tools_approval_mode = "approve"
+
 [mcp_servers.lsp]
 enabled = true
 enabled_tools = [

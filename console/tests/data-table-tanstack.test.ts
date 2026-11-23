@@ -6,7 +6,10 @@ import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DataTable } from "../src/components/tables/DataTable.ts";
+import {
+  DataTable,
+  type DataTableFeatures
+} from "../src/components/tables/DataTable.ts";
 
 interface Row {
   readonly id: string;
@@ -18,7 +21,7 @@ const ROWS: readonly Row[] = [
   { id: "b", name: "Beta" }
 ];
 
-function render(columns: readonly ColumnDef<Row>[]): string {
+function render(columns: readonly ColumnDef<DataTableFeatures, Row>[]): string {
   return renderToStaticMarkup(
     React.createElement(DataTable<Row>, {
       data: ROWS,
@@ -29,7 +32,7 @@ function render(columns: readonly ColumnDef<Row>[]): string {
   );
 }
 
-test("DataTable builds its rows and columns with TanStack's createTable and stays hook-free", () => {
+test("DataTable builds its rows and columns with TanStack's constructTable and stays hook-free", () => {
   // Comments may name the hooks to explain their absence; only code counts.
   const source = readFileSync(
     new URL("../src/components/tables/DataTable.ts", import.meta.url),
@@ -39,9 +42,10 @@ test("DataTable builds its rows and columns with TanStack's createTable and stay
     .filter((line) => !/^\s*(\*|\/\*|\/\/)/u.test(line))
     .join("\n");
   assert.match(source, /from "@tanstack\/react-table"/u);
-  assert.match(source, /\bcreateTable\b/u);
-  assert.match(source, /\bgetCoreRowModel\b/u);
+  assert.match(source, /\bconstructTable\b/u);
+  assert.match(source, /\btableFeatures\b/u);
   assert.match(source, /\bflexRender\b/u);
+  assert.doesNotMatch(source, /\buseTable\b/u);
   assert.doesNotMatch(source, /\buseReactTable\b/u);
   assert.doesNotMatch(source, /["']use client["']/u);
   assert.doesNotMatch(source, /\buse(State|Memo|Effect|Ref|Callback)\b/u);

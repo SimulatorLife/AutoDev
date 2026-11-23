@@ -31,6 +31,29 @@ export function turnId(bytes: number): string {
   return randomBytes(bytes).toString("hex");
 }
 
+/**
+ * A turn run by a provider that never reached part of its tool surface.
+ *
+ * Every provider runs with Codex's whole tool surface, offered the same way:
+ * Codex's tools through the shim, and file work through the `filesystem` MCP
+ * server. When either server cannot start -- a broken import, a missing
+ * dependency -- the provider CLI drops it and carries on without it, so the
+ * model answers "I am blocked" or writes tool calls as text, and the bridge
+ * would report that as a successful turn. Each bridge raises this instead, so
+ * the turn fails where the router can see it rather than completing without
+ * the tools it was routed with.
+ */
+export class CodexToolsUnreachableError extends Error {
+  readonly code = "codex_tools_unreachable";
+
+  constructor(provider: string, detail: string, server = "codex") {
+    super(
+      `${provider} ran without its tools: the ${server} MCP server ${detail}. The turn was not run with the tool surface it was routed with.`
+    );
+    this.name = "CodexToolsUnreachableError";
+  }
+}
+
 /** The MCP `tools/call` result for a call that could not be made. */
 export function toolErrorResult(text: string): JsonRecord {
   return { content: [{ type: "text", text }], isError: true };

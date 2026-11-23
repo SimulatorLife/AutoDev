@@ -6,7 +6,7 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import { ATTR_AUTODEV_CLIENT_SURFACE } from "@simulatorlife/autodev-core";
 
 import { createAgentActivityTracker } from "../src/agents/agent-activity.ts";

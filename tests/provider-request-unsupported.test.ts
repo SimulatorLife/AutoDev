@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { classifyProviderFailure } from "@simulatorlife/autodev-runtime/router/events";
-import { decideCandidateFailure } from "@simulatorlife/autodev-runtime/router/proxy";
+import {
+  classifyReportedFailure,
+  decideCandidateFailure,
+  streamFailureClass
+} from "@simulatorlife/autodev-runtime/router/proxy";
 import {
   PROVIDER_REQUEST_UNSUPPORTED_TYPE,
-  providerRequestUnsupported
+  providerRequestUnsupported,
+  providerToolChannelUnavailable
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
+import { INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
   requestCarriesImageContent,
   requestImages
@@ -187,4 +193,54 @@ test("a provider failure still cools down and still moves the chain on", () => {
     "a request the provider rejects on its merits is the client's answer"
   );
   assert.equal(rejected.coolDown, false);
+});
+
+test("codex_tools_unreachable from Claude and Antigravity maps to tool_channel_unavailable", () => {
+  const claudeError = {
+    type: "upstream_error",
+    code: INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
+    message:
+      'Claude ran without its tools: the codex MCP server reported status "failed".'
+  };
+  const antigravityError = {
+    type: INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
+    code: INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
+    message:
+      "Antigravity ran without its tools: the codex MCP server never reached the turn."
+  };
+
+  for (const error of [claudeError, antigravityError]) {
+    const body = JSON.stringify({ error });
+    assert.equal(providerToolChannelUnavailable(body), true);
+    assert.equal(classifyReportedFailure(error), "tool_channel_unavailable");
+    for (const status of [400, 502]) {
+      assert.equal(
+        classifyProviderFailure(status, body),
+        "tool_channel_unavailable"
+      );
+      assert.deepEqual(decideCandidateFailure(status, body), {
+        outcome: "fallback",
+        coolDown: true
+      });
+    }
+  }
+});
+
+test("streamFailureClass classifies codex_tools_unreachable incomplete responses as tool_channel_unavailable", () => {
+  assert.equal(
+    streamFailureClass({
+      limit: null,
+      incompleteReason: INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
+      error: null
+    }),
+    "tool_channel_unavailable"
+  );
+  assert.equal(
+    streamFailureClass({
+      limit: null,
+      incompleteReason: "provider_interrupted",
+      error: null
+    }),
+    "unavailable"
+  );
 });

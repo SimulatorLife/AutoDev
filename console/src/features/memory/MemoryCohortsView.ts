@@ -28,6 +28,7 @@ import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
+  type DataTableFeatures,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
@@ -251,7 +252,10 @@ export function MemoryCohortsView({
   // judgement category to be dropped or folded into another.
   const useTotals = useOutcomeTotals(useCells);
 
-  const cellColumns: ColumnDef<MemorySessionOutcomeCohortCell>[] = [
+  const cellColumns: ColumnDef<
+    DataTableFeatures,
+    MemorySessionOutcomeCohortCell
+  >[] = [
     {
       id: "mode",
       header: "Assigned Mode",
@@ -339,7 +343,10 @@ export function MemoryCohortsView({
     }
   ];
 
-  const useCellColumns: ColumnDef<MemoryInjectionUseCohortCell>[] = [
+  const useCellColumns: ColumnDef<
+    DataTableFeatures,
+    MemoryInjectionUseCohortCell
+  >[] = [
     {
       id: "mode",
       header: "Assigned Mode",

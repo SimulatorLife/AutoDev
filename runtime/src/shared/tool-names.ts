@@ -83,6 +83,14 @@ export const MCP_SERVER_PLAYWRIGHT = "playwright" as const;
 export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;
 export const MCP_SERVER_PLAYTEST = "playtest" as const;
+/**
+ * AutoDev's one file-interaction surface:
+ * `@modelcontextprotocol/server-filesystem`, confined to the turn's workspace.
+ * Every provider-native file tool is disabled in its favour.
+ */
+export const MCP_SERVER_FILESYSTEM = "filesystem" as const;
+/** Set to "1" in a read-only role's MCP environment to start it `--read-only`. */
+export const MCP_FILESYSTEM_READ_ONLY_ENV = "AUTODEV_MCP_READ_ONLY" as const;
 
 /**
  * Codex App tools live behind the codex-app-tools plugin and are surfaced to

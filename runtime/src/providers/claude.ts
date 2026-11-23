@@ -48,6 +48,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   classifyCliLimit,
+  INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   INCOMPLETE_REASON_TIMEOUT,
@@ -90,7 +91,10 @@ import {
   type TurnFailure,
   type TurnReporter
 } from "./claude-turn.ts";
-import { CodexToolTurnRegistry } from "./codex-tool-turns.ts";
+import {
+  CodexToolsUnreachableError,
+  CodexToolTurnRegistry
+} from "./codex-tool-turns.ts";
 
 // Bind the port only when run as a program, so this file can be imported for
 // its pure helpers without taking the port out from under the running bridge.
@@ -252,7 +256,6 @@ function requestedEffort(request: JsonRecord): unknown {
 export function claudeModelMetadata(): JsonRecord {
   return {
     slug: MODEL,
-    apply_patch_tool_type: "freeform",
     base_instructions: "You are a bounded external-provider Codex agent.",
     display_name: "Claude Code subscription",
     description: "Claude Code OAuth subscription through the local bridge.",
@@ -961,6 +964,35 @@ function* translateAssistantEvent(
   if (!state.sawMessageStart) yield { kind: "message_stop" };
 }
 
+/** MCP startup states that still end with the server's tools available. */
+const CODEX_TOOLS_LIVE_STATUSES = new Set(["connected", "pending"]);
+
+/**
+ * Fails the turn before the model runs when the CLI reports, in its `init`
+ * line, that the Codex tools server did not start. Left alone, the CLI runs on
+ * with only its built-ins and the model writes tool calls as plain text until
+ * the turn exhausts the account's limit.
+ */
+function assertCodexToolsConnected(
+  event: JsonRecord,
+  options: ClaudeStreamOptions
+): void {
+  if (!options.turnId) return;
+  const servers = Array.isArray(event.mcp_servers) ? event.mcp_servers : [];
+  const server = servers.find(
+    (entry): entry is JsonRecord =>
+      typeof entry === "object" &&
+      entry !== null &&
+      (entry as JsonRecord).name === CODEX_TOOLS_SERVER
+  );
+  const status = typeof server?.status === "string" ? server.status : null;
+  if (status !== null && CODEX_TOOLS_LIVE_STATUSES.has(status)) return;
+  throw new CodexToolsUnreachableError(
+    "Claude",
+    status === null ? "was not started" : `reported status "${status}"`
+  );
+}
+
 /**
  * Translates one parsed stream-json line, mutating `state` and yielding the
  * turn events it carries. Throws when the line reports a provider failure.
@@ -972,6 +1004,10 @@ function* translateClaudeStreamLine(
   state: ClaudeStreamState
 ): Generator<ClaudeCliEvent, void, void> {
   const eventType = event.type;
+  if (eventType === "system" && event.subtype === "init") {
+    assertCodexToolsConnected(event, options);
+    return;
+  }
   if (eventType === "rate_limit_event") {
     const rateError = rateLimitEventError(event);
     if (rateError !== null) throw rateError;
@@ -1119,9 +1155,12 @@ export function describeFailure(error: unknown): TurnFailure {
         : null;
   const reason = limit
     ? INCOMPLETE_REASON_PROVIDER_LIMIT
-    : error instanceof ClaudeOverloadedError || TIMED_OUT_PATTERN.test(message)
-      ? INCOMPLETE_REASON_TIMEOUT
-      : INCOMPLETE_REASON_INTERRUPTED;
+    : error instanceof CodexToolsUnreachableError
+      ? INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE
+      : error instanceof ClaudeOverloadedError ||
+          TIMED_OUT_PATTERN.test(message)
+        ? INCOMPLETE_REASON_TIMEOUT
+        : INCOMPLETE_REASON_INTERRUPTED;
   return { error, reason, limit, ...failureErrorBody(error, limit) };
 }
 
@@ -1132,6 +1171,8 @@ function failureErrorBody(
 ): { errorType: string; errorCode: string | null } {
   if (error instanceof ClaudeModelUnavailableError)
     return { errorType: "invalid_request_error", errorCode: "invalid_model" };
+  if (error instanceof CodexToolsUnreachableError)
+    return { errorType: "upstream_error", errorCode: error.code };
   if (limit?.limitClass === "capacity")
     return { errorType: "overloaded_error", errorCode: null };
   if (limit) return { errorType: "rate_limit_error", errorCode: null };

@@ -5,6 +5,7 @@ import {
   SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
 
 import { writeErrorLine } from "./output.ts";
+import { INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE } from "./provider-limits.ts";
 import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
 
 /**
@@ -52,6 +53,11 @@ export const PROVIDER_REQUEST_UNSUPPORTED_TYPE =
 export const PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE =
   "provider_tool_channel_unavailable" as const;
 
+const TOOL_CHANNEL_UNAVAILABLE_CODES = new Set<string>([
+  PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE,
+  INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE
+]);
+
 /**
  * Fail closed on a turn the provider could not carry out with its tools.
  */
@@ -72,18 +78,25 @@ export function sendToolChannelUnavailableFailure(
 
 /**
  * Whether a provider body reports that its tool channel could not carry out
- * the turn.
+ * the turn (`provider_tool_channel_unavailable` or `codex_tools_unreachable`).
  */
 export function providerToolChannelUnavailable(body: unknown): boolean {
-  if (typeof body !== "string" || !body.includes(PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE))
+  if (
+    typeof body !== "string" ||
+    (!body.includes(PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE) &&
+      !body.includes(INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE))
+  )
     return false;
   try {
     const parsed: unknown = JSON.parse(body);
     if (!isRecord(parsed)) return false;
     const error = isRecord(parsed.error) ? parsed.error : null;
+    if (!error) return false;
     return (
-      error?.type === PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE ||
-      error?.code === PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE
+      (typeof error.type === "string" &&
+        TOOL_CHANNEL_UNAVAILABLE_CODES.has(error.type)) ||
+      (typeof error.code === "string" &&
+        TOOL_CHANNEL_UNAVAILABLE_CODES.has(error.code))
     );
   } catch {
     return false;

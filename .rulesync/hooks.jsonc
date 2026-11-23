@@ -17,6 +17,12 @@
     "preToolUse": [
       {
         "type": "command",
+        "matcher": "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
+        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
+        "statusMessage": "Routing file work to the filesystem server"
+      },
+      {
+        "type": "command",
         "matcher": "(?i)exec[_ -]?command|bash",
         "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
         "statusMessage": "Enforcing command policy"

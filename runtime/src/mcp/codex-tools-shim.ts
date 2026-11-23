@@ -32,11 +32,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { validatedAutoDevOtelResourceAttributes } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
-import {
-  recordToolCallSpan,
-  shutdownTelemetry,
-  type ToolCallOutcome
-} from "./codex-tools-shim-telemetry.ts";
+import type { ToolCallOutcome } from "./codex-tools-shim-telemetry.ts";
 
 const BRIDGE_URL = process.env.AUTODEV_BRIDGE_URL ?? "";
 const BRIDGE_TOKEN = process.env.AUTODEV_BRIDGE_TOKEN ?? "";
@@ -53,6 +49,58 @@ const PROTOCOL_VERSION = "2025-06-18";
 type JsonRpcId = string | number | null;
 type JsonObject = Record<string, unknown>;
 type Send = (message: JsonObject) => void;
+
+export interface ShimTelemetry {
+  recordToolCallSpan(
+    name: string,
+    callback: () => Promise<ToolCallOutcome>,
+    metadata?: unknown
+  ): Promise<ToolCallOutcome>;
+  shutdownTelemetry(): Promise<void>;
+}
+
+export type ShimTelemetryLoader = () => Promise<ShimTelemetry>;
+
+let telemetryModulePromise: Promise<ShimTelemetry | null> | null = null;
+let hasLoggedTelemetryLoadFailure = false;
+
+function logTelemetryLoadFailure(): void {
+  if (hasLoggedTelemetryLoadFailure) return;
+  hasLoggedTelemetryLoadFailure = true;
+  try {
+    process.stderr.write(
+      "[autodev-codex-tools-telemetry] telemetry_module_load_failed\n"
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+async function importTelemetryModule(): Promise<ShimTelemetry | null> {
+  try {
+    return await import("./codex-tools-shim-telemetry.ts");
+  } catch {
+    logTelemetryLoadFailure();
+    return null;
+  }
+}
+
+function loadDefaultTelemetry(): Promise<ShimTelemetry | null> {
+  telemetryModulePromise ??= importTelemetryModule();
+  return telemetryModulePromise;
+}
+
+async function resolveTelemetry(
+  loader?: ShimTelemetryLoader
+): Promise<ShimTelemetry | null> {
+  if (!loader) return loadDefaultTelemetry();
+  try {
+    return await loader();
+  } catch {
+    logTelemetryLoadFailure();
+    return null;
+  }
+}
 
 /**
  * The launch definition a bridge writes into its CLI's MCP config.
@@ -196,50 +244,54 @@ async function callTool(
   id: JsonRpcId | undefined,
   params: JsonObject | undefined,
   emit: Send,
-  bridge: typeof callBridge
+  bridge: typeof callBridge,
+  telemetryLoader?: ShimTelemetryLoader
 ): Promise<void> {
   const name = typeof params?.name === "string" ? params.name : "";
   const args = isRecord(params?.arguments) ? params.arguments : {};
-  await recordToolCallSpan(
-    name,
-    async (): Promise<ToolCallOutcome> => {
-      try {
-        const reply = await bridge("/v1/bridge-tools/call", {
-          turn: TURN,
-          name,
-          arguments: args
-        });
-        if (reply.status !== 200 || !reply.body) {
-          const error =
-            typeof reply.body?.error === "string"
-              ? reply.body.error
-              : `Codex could not run ${name} (HTTP ${reply.status}).`;
-          toolError(id, error, emit);
-          return { status: "error", errorType: "tool_error" };
-        }
-        emit({ jsonrpc: "2.0", id, result: reply.body });
-        // The pinned Development MCP convention records
-        // `error.type=tool_error` when CallToolResult.isError is true. The
-        // tool-level outcome is a failure even though the bridge transport
-        // succeeded; telemetry reflects that without changing the response.
-        if (reply.body.isError === true) {
-          return { status: "error", errorType: "tool_error" };
-        }
-        return { status: "ok" };
-      } catch (error: unknown) {
-        const message = `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`;
-        toolError(id, message, emit);
+  const execute = async (): Promise<ToolCallOutcome> => {
+    try {
+      const reply = await bridge("/v1/bridge-tools/call", {
+        turn: TURN,
+        name,
+        arguments: args
+      });
+      if (reply.status !== 200 || !reply.body) {
+        const error =
+          typeof reply.body?.error === "string"
+            ? reply.body.error
+            : `Codex could not run ${name} (HTTP ${reply.status}).`;
+        toolError(id, error, emit);
         return { status: "error", errorType: "tool_error" };
       }
-    },
-    params?._meta
-  );
+      emit({ jsonrpc: "2.0", id, result: reply.body });
+      // The pinned Development MCP convention records
+      // `error.type=tool_error` when CallToolResult.isError is true. The
+      // tool-level outcome is a failure even though the bridge transport
+      // succeeded; telemetry reflects that without changing the response.
+      if (reply.body.isError === true) {
+        return { status: "error", errorType: "tool_error" };
+      }
+      return { status: "ok" };
+    } catch (error: unknown) {
+      const message = `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`;
+      toolError(id, message, emit);
+      return { status: "error", errorType: "tool_error" };
+    }
+  };
+  const telemetry = await resolveTelemetry(telemetryLoader);
+  if (telemetry) {
+    await telemetry.recordToolCallSpan(name, execute, params?._meta);
+    return;
+  }
+  await execute();
 }
 
 export async function handleMessage(
   message: JsonRpcMessage,
   emit: Send = send,
-  bridge = callBridge
+  bridge = callBridge,
+  telemetryLoader?: ShimTelemetryLoader
 ): Promise<void> {
   const { id, method, params } = message;
   if (method === "initialize") {
@@ -251,7 +303,7 @@ export async function handleMessage(
     return;
   }
   if (method === "tools/call") {
-    await callTool(id, params, emit, bridge);
+    await callTool(id, params, emit, bridge, telemetryLoader);
     return;
   }
   // Notifications carry no id and expect no reply.
@@ -267,10 +319,16 @@ export function runStdio(): void {
   const inFlight = new Set<Promise<void>>();
   let closing = false;
   let shutdownPromise: Promise<void> | null = null;
+  const shutdownLoadedTelemetry = async (): Promise<void> => {
+    await Promise.allSettled(inFlight);
+    if (!telemetryModulePromise) return;
+    const telemetry = await telemetryModulePromise;
+    await telemetry?.shutdownTelemetry();
+  };
   const flushOnClose = (): void => {
     if (shutdownPromise) return;
     closing = true;
-    shutdownPromise = Promise.allSettled(inFlight).then(shutdownTelemetry);
+    shutdownPromise = shutdownLoadedTelemetry();
   };
   lines.once("close", flushOnClose);
   process.once("SIGTERM", () => lines.close());

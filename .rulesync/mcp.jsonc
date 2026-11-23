@@ -1,6 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/dyoshikawa/rulesync/v16.30.2/schemas/mcp.json",
   "mcpServers": {
+    "filesystem": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" filesystem"]
+    },
     "lsp": {
       "command": "bash",
       "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
@@ -23,6 +27,11 @@
   },
   "codexcli": {
     "mcpServers": {
+      "filesystem": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" filesystem"],
+        "default_tools_approval_mode": "approve"
+      },
       "lsp": {
         "command": "bash",
         "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"],

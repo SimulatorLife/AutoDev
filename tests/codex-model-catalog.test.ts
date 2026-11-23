@@ -87,7 +87,7 @@ test("every MiniMax model assigned by routing is listed in both catalogs", () =>
   }
 });
 
-test("every catalog model compacts and truncates tool output inside the cost band", async () => {
+test("every catalog model compacts and truncates tool output inside the cost band, without apply_patch", async () => {
   const {
     autoCompactTokenLimit,
     AUTO_COMPACT_TOKEN_LIMIT_CAP,
@@ -114,9 +114,9 @@ test("every catalog model compacts and truncates tool output inside the cost ban
     ) as Catalog;
     for (const model of source.models) {
       assert.equal(
-        model.apply_patch_tool_type,
-        "freeform",
-        `${file}:${model.slug} must expose freeform apply_patch`
+        "apply_patch_tool_type" in model,
+        false,
+        `${file}:${model.slug} must not offer Codex's apply_patch: file edits go through the filesystem MCP server`
       );
       assert.equal(
         model.auto_compact_token_limit,
