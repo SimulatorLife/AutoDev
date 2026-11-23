@@ -82,6 +82,8 @@ export const MCP_SERVER_CODEGRAPHCONTEXT = "codegraphcontext" as const;
 export const MCP_SERVER_PLAYWRIGHT = "playwright" as const;
 export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;
+export const MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE =
+  "googleDeveloperKnowledge" as const;
 export const MCP_SERVER_PLAYTEST = "playtest" as const;
 /**
  * AutoDev's one file-interaction surface:

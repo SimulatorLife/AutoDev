@@ -19,6 +19,7 @@ import {
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_CODEX_APP,
   MCP_SERVER_CONTEXT7,
+  MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE,
   MCP_SERVER_LSP,
   MCP_SERVER_OPENAI_DEVELOPER_DOCS,
   MCP_SERVER_PLAYTEST,
@@ -55,6 +56,10 @@ test("MCP server names are pinned", () => {
   assert.equal(MCP_SERVER_PLAYTEST, "playtest");
   assert.equal(MCP_SERVER_OPENAI_DEVELOPER_DOCS, "openaiDeveloperDocs");
   assert.equal(MCP_SERVER_CONTEXT7, "context7");
+  assert.equal(
+    MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE,
+    "googleDeveloperKnowledge"
+  );
   assert.equal(MCP_SERVER_CODEX_APP, "codex_app");
 });
 
@@ -84,7 +89,8 @@ test("every canonical name passes the membership check", () => {
     "mcp__cocoindex-code__search",
     "mcp__playwright__browser_navigate",
     "mcp__openaiDeveloperDocs__search_docs",
-    "mcp__context7__resolve_library"
+    "mcp__context7__resolve_library",
+    "mcp__googleDeveloperKnowledge__search_documents"
   ]) {
     assert.ok(
       isCanonicalToolName(name),
@@ -104,7 +110,8 @@ test("the regex matches every multi-segment canonical name", () => {
     "mcp__cocoindex-code__search",
     "mcp__playwright__browser_navigate",
     "mcp__openaiDeveloperDocs__search_docs",
-    "mcp__context7__resolve_library"
+    "mcp__context7__resolve_library",
+    "mcp__googleDeveloperKnowledge__search_documents"
   ]) {
     assert.match(name, CANONICAL_TOOL_NAME_PATTERN);
   }
