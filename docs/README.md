@@ -8,7 +8,7 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Focused operational/design docs
 
-- [`xacpx-subagent-delegation.md`](xacpx-subagent-delegation.md) — Codex-agnostic ACP (`@agentclientprotocol/sdk` / `@ganglion/xacpx` / `acpx`) session orchestration, strict per-session provider pinning, native auto-compaction, and direct `opencli` `github-worker` execution.
+- [`xacpx-subagent-delegation.md`](xacpx-subagent-delegation.md) — Codex-agnostic ACP (`@agentclientprotocol/sdk` / `@ganglion/xacpx` / `acpx`) session orchestration, strict per-session provider pinning, native auto-compaction, exclusive `xacpx` MCP subagent delegation via the shared gateway, and direct `opencli` `github-worker` execution.
 - [`autodev-console-migration.md`](autodev-console-migration.md) — current Console/OpenLIT migration state, current gaps, cutover dependencies, and current acceptance evidence. It must not redefine target requirements.
 - [`local-setup.md`](local-setup.md) — current installation/materialization/runtime setup plus Console/OpenLIT commands, ports, service credentials, and local operational entry points. It may describe transitional native projections but does not override canonical ownership.
 - [`provider-routing.md`](provider-routing.md) — current provider/router execution, retry, fallback, limits, and ACP/`opencli` policy contract. Current native role projections are transitional where the canonical target moves them to RuleSync.

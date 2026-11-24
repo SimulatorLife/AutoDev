@@ -2126,3 +2126,18 @@ test("canonical MCP target requires one gateway for every provider", () => {
   assert.match(section, /Session and workspace isolation/u);
   assert.match(section, /provider matrix and isolation gates are observed/u);
 });
+
+
+test("canonical delegation target uses only XACPX MCP across providers", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const section = doc.slice(
+    doc.indexOf("### Cross-provider agent delegation contract"),
+    doc.indexOf("### Resilience mechanics and provider cooldown policy")
+  );
+  assert.match(section, /canonical `xacpx` MCP server/u);
+  assert.match(section, /exclusively through Supergateway/u);
+  assert.match(section, /no parallel delegation mechanism or fallback/u);
+  assert.match(section, /no permanent host-native delegation fallback/u);
+  assert.doesNotMatch(doc, /Shell and delegation \(`multi_agent_v1__\*`\) retain/u);
+  assert.doesNotMatch(doc, /Keep host-native delegation until/u);
+});

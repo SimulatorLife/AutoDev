@@ -1,6 +1,6 @@
 # Local AI and provider setup
 
-> **MCP migration target:** The direct provider MCP launch/configuration paths described below are current operational behavior, not the end state. The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) requires all AutoDev-managed provider MCP traffic to use Supergateway, with no direct backend fallback. Canonical Rulesync declarations and role/workspace contracts remain authoritative; the optional ChatGPT tunnel is not a prerequisite for local access.
+> **MCP migration target:** The direct provider MCP launch/configuration paths described below are current operational behavior, not the end state. The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) requires all AutoDev-managed provider MCP traffic to use Supergateway, with no direct backend fallback. Canonical Rulesync declarations and role/workspace contracts remain authoritative; the optional ChatGPT tunnel is not a prerequisite for local access. Subagent delegation likewise converges on the [single XACPX MCP interface](autodev-console-target-state.md#cross-provider-agent-delegation-contract) through the gateway. References below to native Codex spawn tools, code-mode spawn or the removed Codex-tools bridge describe pre-ACP behavior, not target requirements or fallback mechanisms.
 
 > This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 

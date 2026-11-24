@@ -1,5 +1,7 @@
 # Codex agent and provider routing
 
+> **Architecture supersession:** For current ACP architecture and the canonical delegation target, see [XACPX subagent delegation](xacpx-subagent-delegation.md) and [cross-provider agent delegation](autodev-console-target-state.md#cross-provider-agent-delegation-contract). This guide contains pre-ACP operational history describing Codex-native `multi_agent_v1__*`, the Codex-tools shim, Responses bridges and provider-specific direct MCP launches. Those are superseded designs, not supported target alternatives or implementation instructions. All orchestrators must migrate to the single `xacpx` MCP via Supergateway; ACP/acpx executes the agents and the Router retains allocation and authorization. Preserve native-host child visibility through lifecycle projection, not native spawn. The canonical target governs wherever this guide conflicts.
+
 This is the canonical repository guide for choosing and invoking agents across
 the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts remain the source of truth for exact model settings; this document owns the
 routing policy, execution boundaries, and the setup needed to use the
