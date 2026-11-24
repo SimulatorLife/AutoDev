@@ -33,26 +33,5 @@
         "statusMessage": "Enforcing the role sandbox"
       }
     ]
-  },
-  "codexcli": {
-    "hooks": {
-      "beforeSubmitPrompt": [
-        {
-          "type": "command",
-          "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts",
-          "statusMessage": "Applying root delegation policy"
-        }
-      ]
-    }
-  },
-  "copilot": {
-    "hooks": {
-      "beforeSubmitPrompt": [
-        {
-          "type": "command",
-          "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
-        }
-      ]
-    }
   }
 }

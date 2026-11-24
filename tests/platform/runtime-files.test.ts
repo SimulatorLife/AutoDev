@@ -76,8 +76,8 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     "/runtime/src/control-api/github.ts"
   );
   assert.equal(
-    runtimeTarget("runtime/src/hooks/root-delegation.ts", "/runtime"),
-    "/runtime/src/hooks/root-delegation.ts"
+    runtimeTarget("runtime/src/hooks/role-sandbox.ts", "/runtime"),
+    "/runtime/src/hooks/role-sandbox.ts"
   );
   assert.equal(
     runtimeTarget("runtime/src/providers/opencli.ts", "/runtime"),

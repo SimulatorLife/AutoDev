@@ -50,14 +50,6 @@ const sourceCommands = [
   "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
   "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
 ];
-/**
- * The root-delegation bootstrap names Codex's spawn tools and code-mode
- * `exec` cells, so only the hosts that route through AutoDev's Codex roots
- * run it. Shared, it put about 8 KB of Codex-only instructions into every
- * Claude Code prompt.
- */
-const rootDelegation =
-  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts";
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -144,26 +136,15 @@ function document(target: (typeof targets)[number]): JsonObject {
   return readJson(join(outputs[target], hookPaths[target]));
 }
 
-test("Rulesync hook source is the canonical three-section command subset", () => {
+test("Rulesync hook source is the canonical command subset", () => {
   const source = readJson(hookSourcePath);
-  assert.deepEqual(
-    Object.keys(source).sort(),
-    ["codexcli", "copilot", "hooks"].sort()
-  );
+  // One declaration for every target: the shared block is the whole surface,
+  // and no target carries an override of its own.
+  assert.deepEqual(Object.keys(source).sort(), ["hooks"]);
   assert.deepEqual(Object.keys(asObject(source.hooks)).sort(), [
     "preToolUse",
     "sessionStart"
   ]);
-  // The bootstrap is no host's in common: Codex and Copilot run it, Claude
-  // Code never does.
-  for (const target of ["codexcli", "copilot"])
-    assert.deepEqual(
-      commands(asObject(source[target])).filter(
-        (command) => command === rootDelegation
-      ),
-      [rootDelegation],
-      target
-    );
   assert.doesNotMatch(
     readFileSync(hookSourcePath, "utf8"),
     /prevent_idle_sleep/
@@ -222,10 +203,9 @@ test("target projections preserve their documented command losses", () => {
     ]),
     "antigravity-cli": new Set()
   };
-  assert.equal(projected.codexcli.has(rootDelegation), true);
-  assert.equal(projected.copilot.has(rootDelegation), true);
-  assert.equal(projected.claudecode.has(rootDelegation), false);
-  assert.equal(projected["antigravity-cli"].has(rootDelegation), false);
+  assert.equal(projected.codexcli.size, sourceCommands.length);
+  assert.equal(projected.claudecode.size, sourceCommands.length);
+  assert.equal(projected["antigravity-cli"].size, sourceCommands.length);
   for (const target of targets)
     assert.deepEqual(
       new Set(
@@ -244,13 +224,9 @@ test("target projections preserve their documented command losses", () => {
     )
   };
   const expectedNativeEvents: Record<(typeof targets)[number], Set<string>> = {
-    codexcli: new Set([
-      "PreToolUse",
-      "SessionStart",
-      "UserPromptSubmit"
-    ]),
+    codexcli: new Set(["PreToolUse", "SessionStart"]),
     claudecode: new Set(["PreToolUse", "SessionStart"]),
-    copilot: new Set(["userPromptSubmitted", "preToolUse"]),
+    copilot: new Set(["preToolUse"]),
     "antigravity-cli": new Set(["SessionStart", "PreToolUse"])
   };
   for (const target of targets)
@@ -317,51 +293,28 @@ test("Codex and Claude retain expected native hook projections without deprecate
   const codex = hooksAt(document("codexcli").hooks);
   assert.deepEqual(
     Object.keys(codex).sort(),
-    ["PreToolUse", "SessionStart", "UserPromptSubmit"].sort()
+    ["PreToolUse", "SessionStart"].sort()
   );
-  assert.deepEqual(
-    groupedCommands(codex).filter(
-      (command) => !sourceCommands.includes(command)
-    ),
-    [rootDelegation]
-  );
+  assert.deepEqual(groupedCommands(codex), sourceCommands);
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
     Object.keys(claude).sort(),
     ["PreToolUse", "SessionStart"].sort()
   );
   assert.deepEqual(groupedCommands(claude), sourceCommands);
-  const targetPromptHooks = Array.isArray(codex.UserPromptSubmit?.[0]?.hooks)
-    ? (codex.UserPromptSubmit[0].hooks as unknown[])
-    : [];
-  assert.equal(
-    asObject(targetPromptHooks[0]).statusMessage,
-    hooksAt(asObject(readJson(hookSourcePath).codexcli).hooks)
-      .beforeSubmitPrompt?.[0]?.statusMessage
-  );
   assert.equal(codex.PreToolUse?.[0]?.matcher, source.preToolUse?.[0]?.matcher);
 });
 
 test("Copilot and Antigravity retain their documented parity limits", () => {
   const copilot = document("copilot");
   const copilotHooks = hooksAt(copilot.hooks);
-  assert.deepEqual(Object.keys(copilotHooks), [
-    "preToolUse",
-    "userPromptSubmitted"
-  ]);
+  assert.deepEqual(Object.keys(copilotHooks), ["preToolUse"]);
   assert.deepEqual(commands(copilot), [
     "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts",
     "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts",
     "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
-    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts",
-    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
   ]);
-  assert.deepEqual(
-    copilotHooks.userPromptSubmitted?.map((hook) => hook.command),
-    [
-      "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
-    ]
-  );
   assert.deepEqual(
     copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
     [

@@ -22,7 +22,6 @@ const trackedFiles = execFileSync(
 const approvedLegacyFiles = new Set([
   ".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py",
   "scripts/bootstrap-repo-exclusions.sh",
-  "scripts/enforce-root-delegation.sh",
   "scripts/ensure-autodev-console.sh",
   "scripts/ensure-autodev-model-router.sh",
   "scripts/install.sh",

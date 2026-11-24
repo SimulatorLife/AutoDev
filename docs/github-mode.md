@@ -140,14 +140,14 @@ Codex `default.rules` prefix patterns cannot glob `autodev/*`, so the work is sp
 
 ### 7. Bootstrap tells the root which mode applies
 
-- `runtime/src/shared/root-bootstrap.ts`: `buildRootOrchestratorBootstrap({…, delivery})` appends a delivery section:
+- The delivery-mode section belongs to the orchestration skill's `github-pr-lifecycle.md` reference, which Rulesync projects to every target:
   - **local:** "commit to base per §8";
   - **github-pr:** "use `github-pr-lifecycle.md`; never commit to base";
   - **github-pr unavailable:** "BLOCKED: <reason>; do not implement; tell the user";
   - **unknown:** nothing appended.
-- `runtime/src/hooks/root-delegation.ts`: read `cwd` from the hook input and resolve the delivery mode.
+- No hook injects the delivery mode into a prompt. The root-delegation hook that used to resolve it from `cwd` is gone, and the root bootstrap module it read was removed with it.
 - Preserve the delivery-mode policy across native ACP continuation/compaction through the current trusted role/workspace bootstrap. Do not restore the retired Responses proxy bootstrap-recovery path.
-- Tests: the root-delegation hook, native ACP continuation and role/workspace policy acceptance.
+- Tests: native ACP continuation and role/workspace policy acceptance.
 
 ### 8. Policy docs, skill and prompts
 

@@ -10,7 +10,6 @@ import type {
   RouterEnsureResult
 } from "@simulatorlife/autodev-runtime/platform/router-ensure";
 
-import { runRootDelegation } from "../src/hooks/root-delegation.ts";
 import { createSessionStart } from "../src/hooks/session-start.ts";
 
 function withCodexHome<T>(callback: (home: string) => T): T {
@@ -108,8 +107,4 @@ test("session-start surfaces the typed exit code from the ensure runner", async 
   };
   const run = createSessionStart(runner);
   assert.equal(await run(Buffer.from("{}")), 1);
-});
-
-test("root-delegation skips configured leaf models", async () => {
-  assert.equal(runRootDelegation('{"model":"autodev/worker"}'), 0);
 });

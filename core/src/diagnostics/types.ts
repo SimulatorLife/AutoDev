@@ -527,7 +527,6 @@ export interface HookDenialSummary {
   readonly sinceDays: number;
   readonly cutoff: string;
   readonly totalLines: number;
-  readonly userPromptSubmits: number;
   readonly preToolUseDenials: number;
   readonly byPolicy: Readonly<Record<string, number>>;
   readonly byRole: Readonly<Record<string, number>>;
@@ -1301,7 +1300,6 @@ export function isSessionHookDenialsResponse(
     !isNumber(summary.sinceDays) ||
     typeof summary.cutoff !== "string" ||
     !isNumber(summary.totalLines) ||
-    !isNumber(summary.userPromptSubmits) ||
     !isNumber(summary.preToolUseDenials)
   )
     return false;

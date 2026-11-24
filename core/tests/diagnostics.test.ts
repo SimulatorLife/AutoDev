@@ -319,7 +319,6 @@ function hookSummary(): HookDenialSummary {
     sinceDays: 7,
     cutoff: "2026-11-03T00:00:00.000Z",
     totalLines: 12,
-    userPromptSubmits: 3,
     preToolUseDenials: 2,
     byPolicy: { "no-secrets": 2 },
     byRole: { worker: 2 },

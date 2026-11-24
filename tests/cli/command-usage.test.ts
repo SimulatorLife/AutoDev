@@ -84,11 +84,7 @@ test("a command invoked without its subcommand names the values it accepts", () 
     ["render", "render target", "agents, contract, mcp, or catalog"],
     ["router", "router command", "run, ensure, or status"],
     ["provider", "provider", "claude, mcode, copilot, or antigravity"],
-    [
-      "hook",
-      "hook",
-      "session-start, root-delegation, or skill-read"
-    ],
+    ["hook", "hook", "session-start, or skill-read"],
     ["repo", "repo subcommand", "bootstrap"],
     ["playtest", "playtest subcommand", "init, check, or conformance"]
   ] as const) {
@@ -148,7 +144,7 @@ function acceptedList(command: string): string {
       return "claude, mcode, copilot, or antigravity";
     }
     case "hook": {
-      return "session-start, root-delegation, or skill-read";
+      return "session-start, or skill-read";
     }
     case "repo": {
       return "bootstrap";
@@ -263,10 +259,7 @@ test("help discloses the provider and hook vocabularies", async () => {
   // discoverable only by running a command and reading the error.
   const help = await capture(["--", "--help"]);
   assert.match(help, / {2}provider claude\|mcode\|copilot\|antigravity/u);
-  assert.match(
-    help,
-    / {2}hook session-start\|root-delegation\|skill-read/u
-  );
+  assert.match(help, / {2}hook session-start\|skill-read/u);
   assert.doesNotMatch(help, / {2}provider <name>/u);
   assert.doesNotMatch(help, / {2}hook <name>/u);
 });

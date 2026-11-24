@@ -23,7 +23,6 @@ const COMMAND_LIMIT = 15;
 
 interface HookDenialAccumulator {
   totalLines: number;
-  userPromptSubmits: number;
   preToolUseDenials: number;
   byPolicy: Record<string, number>;
   byRole: Record<string, number>;
@@ -53,10 +52,6 @@ function recordHookLogLine(
   }
   if (!isRecord(parsed) || typeof parsed.time !== "string") return;
   if (parsed.time < cutoff) return;
-  if (parsed.event === "UserPromptSubmit") {
-    acc.userPromptSubmits += 1;
-    return;
-  }
   if (parsed.event !== "PreToolUse" || parsed.decision !== "deny") return;
   acc.preToolUseDenials += 1;
   const policy =
@@ -90,7 +85,6 @@ export function summarizeHookDenials(
   const cutoff = new Date(nowMs - sinceDays * MS_PER_DAY).toISOString();
   const acc: HookDenialAccumulator = {
     totalLines: 0,
-    userPromptSubmits: 0,
     preToolUseDenials: 0,
     byPolicy: {},
     byRole: {},
@@ -109,7 +103,6 @@ export function summarizeHookDenials(
     sinceDays,
     cutoff,
     totalLines: acc.totalLines,
-    userPromptSubmits: acc.userPromptSubmits,
     preToolUseDenials: acc.preToolUseDenials,
     byPolicy: acc.byPolicy,
     byRole: acc.byRole,

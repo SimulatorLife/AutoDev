@@ -59,7 +59,6 @@ test("the PreToolUse denials in the window are aggregated by policy, role and re
     );
     const summary = summarizeHookDenials(home, 7, NOW);
     assert.equal(summary.preToolUseDenials, 2);
-    assert.equal(summary.userPromptSubmits, 1);
     assert.equal(summary.byPolicy["no-secrets"], 2);
     assert.equal(summary.byRole.worker, 2);
     assert.deepEqual(summary.byReason, [

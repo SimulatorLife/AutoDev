@@ -44,6 +44,10 @@ import { materializeMcodeProjection } from "./mcode-projection.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
+  type CodexHookTrustEntry,
+  codexHookTrustEntries
+} from "./hook-trust.ts";
+import {
   type LaunchAgentPaths,
   renderLaunchAgent,
   resolveLaunchAgentValues
@@ -218,7 +222,6 @@ export const RUNTIME_MODULES = [
   "agents/prompts/base.md",
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
-  "agents/prompts/orchestrator.md",
   "runtime/src/hooks/hook-log.ts",
   "runtime/src/hooks/hook-payload.ts",
   "runtime/src/hooks/hook-roots.ts",
@@ -254,7 +257,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-check.ts",
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/platform/codex-permissions-source.ts",
-  "runtime/src/hooks/root-delegation.ts",
+  "runtime/src/platform/hook-trust.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
   "runtime/src/hooks/role-sandbox.ts",
   "runtime/src/hooks/file-surface.ts",
@@ -271,7 +274,6 @@ export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "claude"
 );
 export const HOOKS = [
-  "enforce-root-delegation.sh",
   "ensure-autodev-console.sh",
   "ensure-autodev-opencli-proxy.sh",
   "ensure-autodev-model-router.sh",
@@ -359,6 +361,7 @@ export const OBSOLETE_HOOKS = [
   "ensure-codex-minimax-proxy.sh",
   "ensure-codex-model-router.sh",
   "ensure-codex-opencli-proxy.sh",
+  "enforce-root-delegation.sh",
   "run-codex-antigravity-proxy.sh",
   "run-codex-claude-bridge.sh",
   "run-codex-console.sh",
@@ -371,39 +374,27 @@ export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
  * The trust hashes Codex expects for the canonical hooks.
  *
  * Codex hashes each hook it is asked to run and refuses to run one whose hash
- * is not trusted, so the installer has to write the hash the installed hook
- * content hashes to. The key is the hook's position in the projected
- * `hooks.json` -- `<event>:<group>:<hook>` -- and the value is the hash Codex
- * computes for the materialized script.
+ * is not trusted, so the installer has to write the hash Codex computes for
+ * the hook definition it is given. The key is the hook's position in the
+ * projected `hooks.json` -- `<event>:<group>:<hook>` -- and the value is that
+ * hash.
  *
- * Codex computes that hash itself and records it in `[hooks.state]` in
- * `$CODEX_HOME/config.toml` when it loads the hook, so the values are read
- * back from there after a materialize run rather than computed here: the hash
- * covers the hook script's content, which changes whenever a hook changes.
- * A hook that is missing from this map is a hook the installer never trusts,
- * and Codex will not run it.
+ * The hash belongs to the definition, not to a table, so it is computed from
+ * the installed hooks file rather than kept here: a table of hashes drifts
+ * from the declaration the moment the declaration changes, and Codex skips a
+ * drifted or unlisted hook without saying so.
  */
-export const CANONICAL_HOOK_HASHES = {
-  "pre_tool_use:0:0":
-    "sha256:7ac577f46abcb492b9e68887d1b4161ebe94c630e584ee7faba5b8c67b43e754",
-  "pre_tool_use:1:0":
-    "sha256:6b4570797d67d7d6588f75a9259f1130b525d9afd8ff59ef563558cfd13bd309",
-  "pre_tool_use:2:0":
-    "sha256:ae60c65e5df3105decbdae36dfd9aab04923a718d2d7b52e4e113801eac7f015",
-  "session_end:0:0":
-    "sha256:f0ab1b40d4481d128f3f3158d5c219ac3701d7108c1febf9c06ca787cb386e50",
-  "session_start:0:0":
-    "sha256:232fed476e86852e0e28311ef2deeeb10ad9fb0ecee3db2db7cd27f4f227779c",
-  "subagent_start:0:0":
-    "sha256:bfd8149a981310cfe1ce1e9e8a24876a50e9ee827ee3a7711ec080c681664bcc",
-  "user_prompt_submit:0:0":
-    "sha256:57b83265447a5a23eff86cf99e5b2ce6e68af1fd845277a800f91c915588c108"
-} as const;
-
 const CONFIG_TOML_KEY_PREFIX = "config.toml:";
 const HOOKS_JSON = "hooks.json";
 const OBSOLETE_RUNTIME_DIRECTORY = "obsolete-runtime-directory";
 const CONFIG_TOML_FILE = "config.toml";
+
+/** The trust entries for the hooks Codex is given at user level. */
+function codexUserHookTrustEntries(codexHome: string): CodexHookTrustEntry[] {
+  const hooksPath = path.join(codexHome, HOOKS_JSON);
+  if (!exists(hooksPath)) return [];
+  return codexHookTrustEntries(JSON.parse(readFileSync(hooksPath, "utf8")));
+}
 
 export function syncHookTrust(
   configPath: string,
@@ -431,12 +422,20 @@ export function syncHookTrust(
 
   const userHooksJson = path.join(codexHome, HOOKS_JSON);
   const projectHooksJson = path.join(repositoryRoot, ".codex", HOOKS_JSON);
+  const entries = codexUserHookTrustEntries(codexHome);
 
   for (const key of Object.keys(stateTable)) {
     if (key.startsWith(`${projectHooksJson}:`)) delete stateTable[key];
+    // A position the installed hooks file no longer has is a hook that is
+    // gone; its trust entry is stale state about a hook Codex will not run.
+    if (
+      key.startsWith(`${userHooksJson}:`) &&
+      !entries.some((entry) => key === `${userHooksJson}:${entry.key}`)
+    )
+      delete stateTable[key];
   }
-  for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES))
-    stateTable[`${userHooksJson}:${suffix}`] = { trusted_hash: hash };
+  for (const entry of entries)
+    stateTable[`${userHooksJson}:${entry.key}`] = { trusted_hash: entry.hash };
 
   hooksTable.state = stateTable;
   config.hooks = hooksTable;
@@ -475,11 +474,13 @@ export function checkHookTrust(
 
     const userHooksJson = path.join(codexHome, HOOKS_JSON);
     const projectHooksJson = path.join(repositoryRoot, ".codex", HOOKS_JSON);
+    const entries = codexUserHookTrustEntries(codexHome);
+    if (entries.length === 0) return false;
 
-    for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
-      const userEntry = stateTable[`${userHooksJson}:${suffix}`] as
+    for (const entry of entries) {
+      const userEntry = stateTable[`${userHooksJson}:${entry.key}`] as
         { trusted_hash?: string } | undefined;
-      if (userEntry?.trusted_hash !== hash) return false;
+      if (userEntry?.trusted_hash !== entry.hash) return false;
     }
     return !Object.keys(stateTable).some((key) =>
       key.startsWith(`${projectHooksJson}:`)

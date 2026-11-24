@@ -351,11 +351,6 @@ function renderHookDenials(
           )
         }),
         React.createElement(StatCard, {
-          title: "Prompt submits",
-          value: count(summary.userPromptSubmits),
-          subtitle: `${count(summary.totalLines)} log line(s)`
-        }),
-        React.createElement(StatCard, {
           title: "Policies",
           value: count(Object.keys(summary.byPolicy).length),
           subtitle: `${count(Object.keys(summary.byRole).length)} role(s)`

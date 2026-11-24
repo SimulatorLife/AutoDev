@@ -2,11 +2,7 @@ import { isChoice, unsupportedChoice } from "./command-choice.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
 /** The hook vocabulary, owned here and consumed by validation and errors. */
-export const HOOK_NAMES = [
-  "session-start",
-  "root-delegation",
-  "skill-read"
-] as const;
+export const HOOK_NAMES = ["session-start", "skill-read"] as const;
 
 export type HookName = (typeof HOOK_NAMES)[number];
 

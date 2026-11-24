@@ -510,7 +510,6 @@ test("all hooks are Runtime-owned and installed at canonical RuleSync paths", ()
     "hook-log.ts",
     "hook-roots.ts",
     "lifecycle.ts",
-    "root-delegation.ts",
     "session-start.ts",
     "skill-read-telemetry.ts"
   ];
@@ -518,7 +517,6 @@ test("all hooks are Runtime-owned and installed at canonical RuleSync paths", ()
     "block-ccc-cli.ts",
     "hook-log.ts",
     "hook-roots.ts",
-    "root-delegation.ts",
     "session-start.ts",
     "skill-read-telemetry.ts"
   ]);

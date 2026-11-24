@@ -533,7 +533,7 @@ export function renderFleetScanReport(
 export function renderHookDenialsReport(summary: HookDenialSummary): string {
   const lines = [
     `== hook denials (${summary.logFile}) since=${summary.cutoff} (${summary.sinceDays}d)`,
-    `${INDENT}lines=${summary.totalLines} userPromptSubmits=${summary.userPromptSubmits} preToolUseDenials=${summary.preToolUseDenials}`
+    `${INDENT}lines=${summary.totalLines} preToolUseDenials=${summary.preToolUseDenials}`
   ];
   if (summary.preToolUseDenials === 0) {
     lines.push(
