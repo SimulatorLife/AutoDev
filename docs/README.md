@@ -32,3 +32,5 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 7. Generated provider configuration, OpenLIT read models, and telemetry records are never competing configuration sources of truth.
 
 Removed/superseded documents must not be recreated as active guidance: the old platform-migration ledger, TypeScript migration target, UI control-plane target, observability target/runbook, metrics-dashboard runbook, and prompt-catalog migration ledger have all been folded into current authorities or completed.
+
+- [ChatGPT Secure MCP Tunnel](chatgpt-secure-mcp-tunnel.md) — installer-managed Supergateway integration.

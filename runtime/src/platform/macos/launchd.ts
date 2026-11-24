@@ -85,6 +85,9 @@ export class LaunchdClient {
   enable(label: string): void {
     this.run(["enable", `${this.domain}/${label}`]);
   }
+  disable(label: string): void {
+    this.run(["disable", `${this.domain}/${label}`]);
+  }
   /**
    * Unload a job (a no-op when it is not loaded) and block until launchd has
    * torn it down. `launchctl bootout` is asynchronous, and bootstrapping the

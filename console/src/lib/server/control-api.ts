@@ -1,3 +1,4 @@
+import { CHATGPT_TUNNEL_CONTROL_PATH, type ChatgptTunnelStatus } from "@simulatorlife/autodev-core";
 /**
  * Server-only typed fetcher for the AutoDev Control API.
  *
@@ -5037,4 +5038,18 @@ export async function fetchHookDenials(
     message:
       "AutoDev Control API returned an incompatible hook-denial response; the Console requires the v1 hook-denials contract."
   };
+}
+
+export async function fetchChatgptTunnel(config: ControlApiConfig): Promise<ControlApiResult<ChatgptTunnelStatus>> {
+  const result = await fetchControlApi<unknown>(CHATGPT_TUNNEL_CONTROL_PATH, config);
+  if (result.kind !== "ok") return result;
+  const data = result.data;
+  const grants = (value: unknown): boolean => isRecord(value) && Object.values(value).every(isStringList);
+  if (!isRecord(data) || data.schema !== "autodev-chatgpt-tunnel-v1" ||
+    typeof data.revision !== "string" || !/^[a-f0-9]{64}$/u.test(data.revision) ||
+    typeof data.configured !== "boolean" || typeof data.enabled !== "boolean" ||
+    typeof data.ready !== "boolean" || !isNullableString(data.workspace) ||
+    !isNullableString(data.tunnelId) || !grants(data.reviewed) || !grants(data.grants))
+    return invalidResponse("ChatgptTunnel", "autodev-chatgpt-tunnel-v1");
+  return { kind: "ok", data: data as unknown as ChatgptTunnelStatus };
 }

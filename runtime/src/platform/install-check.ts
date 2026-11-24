@@ -33,6 +33,7 @@ import {
   missingAntigravityPermissions
 } from "./antigravity-settings.ts";
 import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
+import { resolveRuntimeSourcePath } from "../shared/runtime-source-root.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
@@ -1241,6 +1242,12 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       failures
     );
     checkLaunchAgents(paths, failures);
+    try {
+      execFileSync(process.execPath, [resolveRuntimeSourcePath(paths.repositoryRoot, "platform/chatgpt-tunnel-install.ts"), "check", paths.repositoryRoot, paths.home, paths.codexHome], { stdio: "ignore", timeout: 15_000 });
+      check("configured ChatGPT tunnel readiness", true, failures);
+    } catch {
+      check("configured ChatGPT tunnel readiness", false, failures);
+    }
     return failures.value;
   } finally {
     rmSync(permissionsProjection.root, { recursive: true, force: true });

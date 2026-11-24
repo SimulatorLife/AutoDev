@@ -81,3 +81,10 @@ test("findStaleCodexPids reports root codex processes with a stale or missing to
     ["1000"]
   );
 });
+
+
+test("tunnel install flags cannot be combined with materialize-only or each other", () => {
+  assert.throws(() => runInstallCommand(["--materialize-only", "--enable-chatgpt-tunnel"]), /requires a normal install/);
+  assert.throws(() => runInstallCommand(["--materialize-only", "--disable-chatgpt-tunnel"]), /requires a normal install/);
+  assert.throws(() => runInstallCommand(["--enable-chatgpt-tunnel", "--disable-chatgpt-tunnel"]), /Choose only one/);
+});

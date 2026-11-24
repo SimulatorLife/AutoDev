@@ -95,6 +95,23 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+/** Use the native Homebrew architecture even when AutoDev runs under Rosetta. */
+export function homebrewInvocation(
+  brew: string,
+  args: readonly string[],
+  deps: Pick<DependencyDeps, "platform" | "capture"> = defaultDeps()
+): { command: string; args: string[] } {
+  const translated =
+    deps.platform === "darwin" &&
+    deps.capture("sysctl", ["-n", "sysctl.proc_translated"]) === "1" &&
+    deps.capture("sysctl", ["-n", "hw.optional.arm64"]) === "1";
+  if (translated) {
+    writeErrorLine("running Homebrew natively (this process is translated under Rosetta)");
+    return { command: "arch", args: ["-arm64", "brew", ...args] };
+  }
+  return { command: brew, args: [...args] };
+}
+
 function ensurePipx(options: DependencyOptions, deps: DependencyDeps): string {
   const existing = deps.commandPath("pipx");
   if (existing) {
@@ -107,18 +124,7 @@ function ensurePipx(options: DependencyOptions, deps: DependencyDeps): string {
   const brew = deps.commandPath("brew");
   let userPipx: string | null = null;
   if (brew) {
-    const translated =
-      deps.platform === "darwin" &&
-      deps.capture("sysctl", ["-n", "sysctl.proc_translated"]) === "1" &&
-      deps.capture("sysctl", ["-n", "hw.optional.arm64"]) === "1";
-    const command = translated ? "arch" : brew;
-    const args = translated
-      ? ["-arm64", "brew", "install", "pipx"]
-      : ["install", "pipx"];
-    if (translated)
-      writeErrorLine(
-        "running Homebrew natively (this process is translated under Rosetta)"
-      );
+    const { command, args } = homebrewInvocation(brew, ["install", "pipx"], deps);
     writeErrorLine("installing pipx with Homebrew");
     deps.run(command, args);
   } else {

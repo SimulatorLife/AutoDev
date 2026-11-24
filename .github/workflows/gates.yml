@@ -39,6 +39,12 @@ jobs:
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test pinned Supergateway MCP integration
+        env:
+          AUTODEV_TEST_SUPERGATEWAY: "1"
+        working-directory: runtime
+        run: node --test tests/chatgpt-supergateway.integration.test.ts
+
       # The playtesting statistics worker is a Python program the Runtime
       # starts through `uv`. The repository pins its lockfile and the Runtime
       # refuses to analyze with a drifted one, so a runner without `uv` is a
