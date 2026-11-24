@@ -49,7 +49,8 @@ export function renderChatgptSupergatewayConfig(
   grants: unknown,
   workspace: string,
   reviewedGrants: unknown,
-  filter = { command: process.execPath, script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url)) }
+  filter = { command: process.execPath, script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url)) },
+  confinedBackend?: (server: string) => { command: string; args: string[] }
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
@@ -101,13 +102,14 @@ export function renderChatgptSupergatewayConfig(
       qualified.add(fullName);
     }
 
+    const backend = confinedBackend?.(name) ?? { command: descriptor.command, args };
     entries.push([
       name,
       {
         // Supergateway interpolates ${VAR} in config strings. Preserve the
         // canonical shell argument verbatim using its literal-dollar escape.
         command: escapeInterpolation(filter.command),
-        args: [filter.script, descriptor.command, JSON.stringify(args), JSON.stringify([...new Set(tools)]), "external", name].map(escapeInterpolation),
+        args: [filter.script, backend.command, JSON.stringify(backend.args), JSON.stringify([...new Set(tools)]), "external", name].map(escapeInterpolation),
         cwd: escapeInterpolation(workspace),
         toolPrefix,
         tools: [...new Set<string>(tools)]

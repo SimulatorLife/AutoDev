@@ -69,7 +69,9 @@ function runToolFilter(args: string[]): void {
   const clientMethods = new Set(["initialize", "ping", "tools/list", "tools/call", "notifications/initialized", "notifications/cancelled"]);
   const backend = spawn(command, backendArgs, {
     cwd: process.cwd(),
-    env: process.env,
+    env: external && command === "/usr/bin/sandbox-exec"
+      ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
+      : process.env,
     stdio: ["pipe", "pipe", "inherit"]
   });
   const clientLines = createInterface({ input: process.stdin });
@@ -175,9 +177,7 @@ function runToolFilter(args: string[]): void {
       backend.kill("SIGTERM");
   });
   backend.on("error", (error) => {
-    process.stderr.write(
-      `role MCP backend failed to start: ${error.message}\n`
-    );
+    process.stderr.write(external ? "external MCP backend failed to start\n" : `role MCP backend failed to start: ${error.message}\n`);
     process.exitCode = 1;
   });
   backend.on("close", (code) => {

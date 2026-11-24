@@ -15,6 +15,7 @@ import { parseCliVersion } from "../providers/cli-versions.ts";
 import { writeLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
+import { externalFilesystemBackend } from "../mcp/chatgpt-filesystem-sandbox.ts";
 import {
   chatgptGrantsSchema,
   chatgptSupergatewayEnvironment,
@@ -92,7 +93,7 @@ function privateFileStat(file: string) {
   }
 }
 
-function privateWrite(file: string, content: string): void {
+export function privateWrite(file: string, content: string): void {
   const stat = privateFileStat(file);
   if (stat && (!stat.isFile() || stat.nlink !== 1 || (process.getuid && stat.uid !== process.getuid())))
     throw new Error("Refusing non-private ChatGPT tunnel file: " + file);
@@ -100,7 +101,7 @@ function privateWrite(file: string, content: string): void {
   chmodSync(file, 0o600);
 }
 
-function privateRead(file: string): string {
+export function privateRead(file: string): string {
   const stat = privateFileStat(file);
   if (!stat) return "";
   if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid()))
@@ -108,7 +109,12 @@ function privateRead(file: string): string {
   return readFileSync(file, "utf8").trim();
 }
 
-function shellWord(value: string): string {
+export function validateRuntimeKey(key: string, administrator?: string): void {
+  if (!key || /[\s\x00-\x1f\x7f]/u.test(key) || key === administrator || key.startsWith("sk-admin"))
+    throw new Error("Supply a restricted runtime API key with Tunnels Read + Use, not an administrator key");
+}
+
+export function shellWord(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
@@ -137,27 +143,39 @@ function tunnelBinary(env: NodeJS.ProcessEnv): string {
 }
 
 class TunnelMetadataError extends Error {
-  constructor(message: string, readonly transient: boolean) { super(message); }
-}
-
-function tunnelMetadata(
-  binary: string,
-  args: string[],
-  env: NodeJS.ProcessEnv
-): { id?: string; tunnel_id?: string; organization_ids?: string[]; workspace_ids?: string[] } {
-  try {
-    return JSON.parse(execFileSync(binary, ["admin", "--json", "tunnels", ...args], {
-      env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 45_000
-    }));
-  } catch (error) {
-    // Inspect only the category; never expose the original output or argv.
-    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
-    const transient = /(?:HTTP|status(?: code)?)\s*[:=]?\s*404\b/iu.test(stderr);
-    throw new TunnelMetadataError(`OpenAI tunnel ${args[0]} failed; verify account authorization, tunnel ID and runtime key in Platform`, transient);
+  readonly transient: boolean;
+  constructor(message: string, transient: boolean) {
+    super(message);
+    this.transient = transient;
   }
 }
 
-function createTunnel(binary: string, env: NodeJS.ProcessEnv, org: string, workspace: string): string {
+const tunnelMetadataSchema = z.object({
+  id: z.string().optional(),
+  tunnel_id: z.string().optional(),
+  organization_ids: z.array(z.string()).optional(),
+  workspace_ids: z.array(z.string()).optional()
+});
+
+export function tunnelMetadata(
+  binary: string,
+  args: string[],
+  env: NodeJS.ProcessEnv
+): z.infer<typeof tunnelMetadataSchema> {
+  try {
+    return tunnelMetadataSchema.parse(JSON.parse(execFileSync(binary, ["admin", "--json", "tunnels", ...args], {
+      env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000
+    })));
+  } catch (error) {
+    // Inspect only the category; never expose the original output or argv.
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    const status = /(?:HTTP|status(?: code)?)\s*[:=]?\s*(401|403|404|429|5\d\d)\b/iu.exec(stderr)?.[1];
+    const reason = status === "401" || status === "403" ? "credential unauthorized" : status === "404" ? "tunnel not found" : status === "429" ? "rate limited" : "invalid response or transport failure";
+    throw new TunnelMetadataError(`OpenAI tunnel ${args[0]} failed (${reason}); verify account authorization and tunnel scope in Platform`, status === "404");
+  }
+}
+
+export function createTunnel(binary: string, env: NodeJS.ProcessEnv, org: string, workspace: string): string {
   if (!env.OPENAI_ADMIN_KEY)
     throw new Error("Supply an existing CONTROL_PLANE_TUNNEL_ID or an OPENAI_ADMIN_KEY to create a tunnel");
   const result = tunnelMetadata(binary, [
@@ -189,16 +207,15 @@ function stateAt(file: string): TunnelState | undefined {
   return text ? stateSchema.parse(JSON.parse(text)) : undefined;
 }
 
-async function ready(launchd: LaunchdClient, port: number): Promise<boolean> {
+export async function ready(launchd: Pick<LaunchdClient, "print">, port: number, deps = {
+  listeners: (value: number) => execFileSync("/usr/sbin/lsof", ["-nP", "-tiTCP:" + value, "-sTCP:LISTEN"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim().split(/\s+/u),
+  probe: (value: number) => httpHealthProbe(`http://127.0.0.1:${value}/readyz`)()
+}): Promise<boolean> {
   try {
     const pid = /^\s*pid = (\d+)$/mu.exec(launchd.print(label))?.[1];
     if (!pid) return false;
-    const listeners = execFileSync("/usr/sbin/lsof", [
-      "-nP", "-tiTCP:" + port, "-sTCP:LISTEN"
-    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })
-      .trim().split(/\s+/u);
-    return listeners.length === 1 && listeners[0] === pid &&
-      await httpHealthProbe(`http://127.0.0.1:${port}/readyz`)();
+    const listeners = deps.listeners(port);
+    return listeners.length === 1 && listeners[0] === pid && await deps.probe(port);
   } catch {
     return false;
   }
@@ -248,7 +265,8 @@ export async function ensureChatgptTunnel(
   if (mode === "reconcile" && !existsSync(stateFile)) return;
   if (process.platform !== "darwin") throw new Error("AutoDev ChatGPT tunnel installation currently requires macOS");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  if (!lstatSync(directory).isDirectory()) throw new Error("ChatGPT tunnel directory must not be a symlink");
+  const directoryStat = lstatSync(directory);
+  if (!directoryStat.isDirectory() || (process.getuid && directoryStat.uid !== process.getuid())) throw new Error("ChatGPT tunnel directory must be an owned directory, not a symlink");
   chmodSync(directory, 0o700);
   const lock = path.join(directory, "install.lock");
   try {
@@ -272,8 +290,8 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const prior = installedState(state);
   const launchd = new LaunchdClient();
   if (mode === "disable" || (mode === "reconcile" && state?.enabled === false)) {
-    privateWrite(stateFile, JSON.stringify({ version: 1, enabled: false, prior }, null, 2) + "\n");
     launchd.bootout(label);
+    privateWrite(stateFile, JSON.stringify({ version: 1, enabled: false, prior }, null, 2) + "\n");
     rmSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"), { force: true });
     if (mutation?.action === "forget" && prior) {
       rmSync(path.join(generationPath(directory, prior.generation), "runtime.key"), { force: true });
@@ -295,7 +313,8 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const node = resolveServiceNode(paths.home);
   const generated = renderChatgptSupergatewayConfig(
     readBridgeMcpCatalogue(paths.codexHome), grants, workspace, reviewed,
-    { command: node, script: path.join(paths.codexHome, "src/mcp/tool-filter.ts") }
+    { command: node, script: path.join(paths.codexHome, "src/mcp/tool-filter.ts") },
+    (server) => externalFilesystemBackend(server, paths.repositoryRoot, workspace, node)
   );
   const org = env.AUTODEV_CHATGPT_ORGANIZATION_ID ?? prior?.organizationId;
   const workspaceId = env.AUTODEV_CHATGPT_WORKSPACE_ID ?? prior?.workspaceId;
@@ -303,8 +322,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     throw new Error("Set AUTODEV_CHATGPT_ORGANIZATION_ID and AUTODEV_CHATGPT_WORKSPACE_ID to verify tunnel scope");
   const rawKey = (mutation?.action === "rotate" ? mutation.runtimeKey : undefined) ?? env.CONTROL_PLANE_API_KEY ??
     (prior?.generation ? privateRead(path.join(generationPath(directory, prior.generation), "runtime.key")) : privateRead(path.join(directory, "runtime.key")));
-  if (!rawKey || /\s/u.test(rawKey) || rawKey === env.OPENAI_ADMIN_KEY || rawKey.startsWith("sk-admin"))
-    throw new Error("Supply a restricted runtime API key with Tunnels Read + Use, not an administrator key");
+  validateRuntimeKey(rawKey, env.OPENAI_ADMIN_KEY);
 
   const dependencyEnv = dependencyEnvironment(env);
   const binary = tunnelBinary(dependencyEnv);
@@ -324,7 +342,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   if (!/^tunnel_[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
   // Save newly created remote identity before further steps; never overwrite
   // a working tunnel ID with an unverified user-supplied replacement.
-  if (!existsSync(idFile) && !env.CONTROL_PLANE_TUNNEL_ID) privateWrite(idFile, id + "\n");
+  if (!existingId) privateWrite(idFile, id + "\n");
   // Newly created metadata can take up to 30 seconds to propagate. Retry
   // only explicit transient not-found responses, not permission failures.
   const observation: { metadata?: ReturnType<typeof tunnelMetadata> } = {};
@@ -424,7 +442,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     if (stopped) {
       launchd.bootout(label);
       if (previousPlist) {
-        privateWrite(plistFile, previousPlist + "\n");
+        privateWrite(plistFile, previousPlist);
         if (wasRunning) launchd.bootstrap(plistFile);
       } else {
         rmSync(plistFile, { force: true });
