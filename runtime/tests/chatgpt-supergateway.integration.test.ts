@@ -990,14 +990,18 @@ test(
         ),
         /env:AUTODEV_CHATGPT_TUNNEL_API_KEY/
       );
-      // Daemon runner injects Keychain secret (and honors explicit env override) without plaintext files.
+      // Daemon runner starts a staged candidate before gateway.json commits, and
+      // injects Keychain secret (honoring explicit env override) without plaintext files.
+      assert.ok(!existsSync(path.join(directory, "staged.json")));
       const seenDaemonEnv: NodeJS.ProcessEnv[] = [];
+      const seenDaemonArgs: string[][] = [];
       const fakeSpawn = ((
         _cmd: string,
-        _args: string[],
+        args: string[],
         opts: { env: NodeJS.ProcessEnv }
       ) => {
         seenDaemonEnv.push(opts.env);
+        seenDaemonArgs.push(args);
         return {
           exitCode: null,
           killed: false,
@@ -1007,6 +1011,25 @@ test(
           }
         };
       }) as unknown as typeof spawn;
+      const stagedGen = path.join(directory, "generation-staged");
+      mkdirSync(stagedGen, { recursive: true, mode: 0o700 });
+      writeFileSync(
+        path.join(stagedGen, "autodev.yaml"),
+        "api_key: env:AUTODEV_CHATGPT_TUNNEL_API_KEY\n",
+        { mode: 0o600 }
+      );
+      const {
+        version: _version,
+        enabled: _enabled,
+        ...stagedBase
+      } = migratedState;
+      privateWrite(
+        path.join(directory, "staged.json"),
+        JSON.stringify({
+          ...stagedBase,
+          generation: "generation-staged"
+        })
+      );
       assert.equal(
         await runChatgptTunnelDaemon(
           paths,
@@ -1016,7 +1039,21 @@ test(
         0
       );
       assert.equal(
-        seenDaemonEnv[0]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+        seenDaemonArgs[0]?.[2],
+        path.join(stagedGen, "autodev.yaml")
+      );
+      rmSync(path.join(directory, "staged.json"), { force: true });
+      rmSync(stagedGen, { recursive: true, force: true });
+      assert.equal(
+        await runChatgptTunnelDaemon(
+          paths,
+          { HOME: home },
+          { readKey: () => keychainValue, spawnProcess: fakeSpawn }
+        ),
+        0
+      );
+      assert.equal(
+        seenDaemonEnv[1]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
         "fixture-runtime"
       );
       assert.equal(
@@ -1031,7 +1068,7 @@ test(
         0
       );
       assert.equal(
-        seenDaemonEnv[1]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+        seenDaemonEnv[2]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
         "explicit-daemon-override"
       );
       wrongScope = true;

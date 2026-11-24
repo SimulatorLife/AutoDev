@@ -934,6 +934,7 @@ async function reconcile(
   chmodSync(generation, 0o700);
   const config = path.join(generation, "supergateway.json");
   const profile = path.join(generation, "autodev.yaml");
+  const stagedFile = path.join(directory, "staged.json");
   const plistFile = path.join(
     paths.home,
     "Library",
@@ -1056,6 +1057,7 @@ async function reconcile(
         "Tunnel readiness port is already in use or could not be checked"
       );
     stage = "launchd start";
+    privateWrite(stagedFile, JSON.stringify(nextState, null, 2) + "\n");
     privateWrite(plistFile, readFileSync(candidatePlist, "utf8"));
     launchd.enable(label);
     launchd.bootstrap(plistFile);
@@ -1073,6 +1075,7 @@ async function reconcile(
         "\n"
     );
     committed = true;
+    rmSync(stagedFile, { force: true });
     // Only remove legacy plaintext credential files after the Keychain-backed
     // service is verified ready and gateway.json is committed.
     securelyRemoveLegacyRuntimeKeys(directory, prior);
@@ -1081,6 +1084,7 @@ async function reconcile(
       "ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT"
     );
   } catch {
+    rmSync(stagedFile, { force: true });
     if (keyUpdated) {
       try {
         if (previousKey) deps.writeKey(previousKey, env);
@@ -1113,6 +1117,7 @@ async function reconcile(
       `ChatGPT tunnel setup failed (${stage}); previous service configuration retained. Check tunnel diagnostics and ${path.join(directory, "stderr.log")}`
     );
   } finally {
+    rmSync(stagedFile, { force: true });
     if (!committed && !rollbackFailed)
       rmSync(generation, { recursive: true, force: true });
   }
@@ -1166,7 +1171,13 @@ export async function runChatgptTunnelDaemon(
   } = {}
 ): Promise<number> {
   const directory = path.join(paths.codexHome, "chatgpt-tunnel");
-  const state = stateAt(path.join(directory, "gateway.json"));
+  const stagedRaw = privateRead(path.join(directory, "staged.json"));
+  const state = stagedRaw
+    ? {
+        enabled: true as const,
+        ...installedStateSchema.parse(JSON.parse(stagedRaw))
+      }
+    : stateAt(path.join(directory, "gateway.json"));
   if (!state?.enabled) {
     process.stderr.write(
       "AutoDev ChatGPT tunnel is disabled or not configured\n"
