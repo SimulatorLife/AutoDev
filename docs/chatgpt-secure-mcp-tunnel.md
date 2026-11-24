@@ -4,7 +4,7 @@ AutoDev can publish a single, private MCP tool catalogue to ChatGPT through Open
 
 ## Installation (macOS)
 
-Enable explicitly on the first normal install. Subsequent normal installs reconcile and restart the existing tunnel automatically; materialize-only installs never start or restart it. The installer installs the official Homebrew tunnel-client when absent and pinned Supergateway 4.2.2 using pnpm in a private local installation and creates a dedicated login LaunchAgent, local config, and a private runtime key file. The default workspace is the AutoDev checkout. Set AUTODEV_CHATGPT_MCP_WORKSPACE to an absolute project directory to select another workspace.
+Enable explicitly on the first normal install. Subsequent normal installs reconcile and restart the existing tunnel automatically; materialize-only installs never start or restart it. The installer installs the official Homebrew tunnel-client (minimum v0.0.21) when absent or outdated and pinned Supergateway 4.2.2 using pnpm in a private local installation and creates a dedicated login LaunchAgent, local config, and a private runtime key file. The default workspace is the AutoDev checkout. Set AUTODEV_CHATGPT_MCP_WORKSPACE to an absolute project directory to select another workspace.
 
 OpenAI requires organization-level tunnel authorization independently of ChatGPT subscription or plugin access. Obtain a restricted runtime key (Tunnels Read + Use) from [Platform organization API keys](https://platform.openai.com/settings/organization/api-keys). An existing tunnel must be associated with the intended ChatGPT workspace. If you already have an administrator key with Tunnels Read + Manage and explicit organization and workspace IDs, the installer can create the tunnel automatically:
 
@@ -46,3 +46,7 @@ launchctl print "gui/$(id -u)/com.codex.autodev-chatgpt-tunnel"
 Generated `supergateway.json`, persisted gateway settings, pinned dependency and lockfile, and logs reside under ${CODEX_HOME:-$HOME/.codex}/chatgpt-tunnel. The directory is private and the runtime key is stored in a mode-0600 file, referenced by path in the LaunchAgent. Disable persistently with `./scripts/install.sh --disable-chatgpt-tunnel`; later normal installs honor that state. Re-enable explicitly with `--enable-chatgpt-tunnel`. Set `AUTODEV_CHATGPT_TUNNEL_PORT` to override 3311. Run `./scripts/install.sh --check` to check configured tunnel readiness. An interrupted install may leave an install.lock directory; remove it only after confirming no installer is running. Revoke the tunnel/key in Platform when no longer needed.
 
 References: [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), [official tunnel-client](https://github.com/openai/tunnel-client).
+
+## Local protocol acceptance test
+
+After the repository dependencies are installed, run `AUTODEV_TEST_SUPERGATEWAY=1 pnpm --filter @simulatorlife/autodev-runtime exec node --test tests/chatgpt-supergateway.integration.test.ts`. This installs the pinned gateway in a temporary directory and tests its real stdio protocol and the actual workspace-confined AutoDev filesystem MCP, including out-of-workspace and symlink reads and direct calls to hidden write tools. It requires no OpenAI credentials; a separate authorized ChatGPT round trip is still required.

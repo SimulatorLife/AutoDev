@@ -58,14 +58,26 @@ function shellWord(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
+export function tunnelClientSupported(version: string): boolean {
+  const match = /(?:^|\s)v?(\d+)\.(\d+)\.(\d+)(?:\s|$)/u.exec(version.trim());
+  if (!match) return false;
+  const [, major, minor, patch] = match;
+  return Number(major) > 0 || Number(minor) > 0 || Number(patch) >= 21;
+}
+
 function tunnelBinary(): string {
-  const installed = resolveCommandOnPath("tunnel-client");
-  if (installed) return installed;
+  let binary = resolveCommandOnPath("tunnel-client");
+  const supported = (candidate: string): boolean =>
+    tunnelClientSupported(execFileSync(candidate, ["--version"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000
+    }));
+  if (binary && supported(binary)) return binary;
   const brew = resolveCommandOnPath("brew");
-  if (!brew) throw new Error("Homebrew is required to install the OpenAI tunnel client");
-  execFileSync(brew, ["install", "openai/tools/tunnel-client"], { stdio: "inherit" });
-  const binary = resolveCommandOnPath("tunnel-client");
-  if (!binary) throw new Error("OpenAI tunnel-client was not found after installation");
+  if (!brew) throw new Error("Homebrew is required to install OpenAI tunnel-client >= 0.0.21");
+  execFileSync(brew, [binary ? "upgrade" : "install", "openai/tools/tunnel-client"], { stdio: "inherit" });
+  binary = resolveCommandOnPath("tunnel-client");
+  if (!binary || !supported(binary))
+    throw new Error("OpenAI tunnel-client >= 0.0.21 is required");
   return binary;
 }
 
@@ -211,16 +223,18 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
   const gatewayEnv = chatgptSupergatewayEnvironment(paths, workspace, node, servicePath);
   const runtimeEnv = { ...cleanEnv, CONTROL_PLANE_API_KEY: rawKey };
   const idFile = path.join(directory, "tunnel-id");
-  const id = env.CONTROL_PLANE_TUNNEL_ID?.trim() || privateRead(idFile) ||
-    createTunnel(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
+  const existingId = env.CONTROL_PLANE_TUNNEL_ID?.trim() || privateRead(idFile);
+  const id = existingId || createTunnel(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
   if (!/^tunnel_[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
   // Save newly created remote identity before further steps; never overwrite
   // a working tunnel ID with an unverified user-supplied replacement.
   if (!existsSync(idFile) && !env.CONTROL_PLANE_TUNNEL_ID) privateWrite(idFile, id + "\n");
+  // OpenAI documents a 25–30 second propagation delay after creation.
+  if (!existingId) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
   const metadata = tunnelMetadata(binary, ["get", id], runtimeEnv);
   if ((metadata.id ?? metadata.tunnel_id) !== id ||
-      !metadata.organization_ids?.includes(org) ||
-      !metadata.workspace_ids?.includes(workspaceId))
+      metadata.organization_ids?.length !== 1 || !metadata.organization_ids.includes(org) ||
+      metadata.workspace_ids?.length !== 1 || !metadata.workspace_ids.includes(workspaceId))
     throw new Error("Tunnel does not belong to the configured organization and ChatGPT workspace");
 
   const generation = mkdtempSync(path.join(directory, "generation-"));
@@ -256,7 +270,9 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
       "--health-listen-addr", `127.0.0.1:${port}`
     ], { env: cleanEnv, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
     chmodSync(profile, 0o600);
-    execFileSync(binary, ["doctor", "--profile-file", profile, "--explain"], {
+    // The prior service may own the desired port. Doctor can validate the
+    // candidate using an ephemeral health port without interrupting it.
+    execFileSync(binary, ["doctor", "--profile-file", profile, "--health.listen-addr", "127.0.0.1:0", "--explain"], {
       env: cleanEnv, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000
     });
 
@@ -277,6 +293,9 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
 
     launchd.bootout(label);
     stopped = true;
+    const listeners = spawnSync("/usr/sbin/lsof", ["-nP", "-tiTCP:" + port, "-sTCP:LISTEN"], { encoding: "utf8" });
+    if (listeners.status === 0 || listeners.status !== 1 || listeners.stderr?.trim())
+      throw new Error("Tunnel readiness port is already in use or could not be checked");
     privateWrite(plistFile, plist);
     launchd.enable(label);
     launchd.bootstrap(plistFile);
