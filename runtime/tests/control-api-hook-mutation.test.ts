@@ -63,8 +63,7 @@ const DECLARATION = `{
  * second thing to keep in step.
  */
 const PROJECTION_CONFIG = `{
-  "targets": ["codexcli"],
-  "features": ["hooks"],
+  "targets": { "codexcli": ["hooks"] },
   "outputRoots": ["."]
 }`;
 

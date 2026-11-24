@@ -1,70 +1,47 @@
 {
   "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
-  "targets": [
-    "copilot",
-    "claudecode",
-    "codexcli",
-    "antigravity-cli",
-    "agentsmd"
-  ],
-  "features": [
-    "skills",
-    "commands",
-    "hooks",
-    "rules"
-  ],
-  "outputRoots": [
-    "."
-  ],
+  "targets": {
+    "copilot": ["skills", "commands", "hooks", "rules"],
+    "claudecode": ["skills", "commands", "hooks", "rules"],
+    "codexcli": ["skills", "rules"],
+    "antigravity-cli": ["commands", "hooks", "rules"],
+    "agentsmd": ["rules"]
+  },
+  "outputRoots": ["."],
   "delete": true,
   "global": false,
   "sources": [
     {
       "source": "vercel-labs/agent-skills",
-      "skills": [
-        "react-best-practices"
-      ]
+      "skills": ["react-best-practices"]
     },
     {
       "source": "multica-ai/andrej-karpathy-skills",
-      "skills": [
-        "karpathy-guidelines"
-      ]
+      "skills": ["karpathy-guidelines"]
     },
     {
       "source": "acpx",
       "transport": "npm",
       "ref": "0.22.0",
-      "skills": [
-        "acpx"
-      ]
+      "skills": ["acpx"]
     },
     {
       "source": "quota-axi",
       "transport": "npm",
       "ref": "0.1.69",
-      "skills": [
-        "quota-axi"
-      ]
+      "skills": ["quota-axi"]
     },
     {
       "source": "@jackwener/opencli",
       "transport": "npm",
       "ref": "2.0.3",
-      "skills": [
-        "opencli-autofix",
-        "opencli-browser",
-        "opencli-usage"
-      ]
+      "skills": ["opencli-autofix", "opencli-browser", "opencli-usage"]
     },
     {
       "source": "@tanstack/react-table",
       "transport": "npm",
       "ref": "9.3.1",
-      "skills": [
-        "getting-started",
-        "table-state"
-      ]
+      "skills": ["getting-started", "table-state"]
     }
   ]
 }

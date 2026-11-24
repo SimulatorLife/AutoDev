@@ -378,7 +378,10 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
   assert.match(source, /pnpm install --frozen-lockfile/);
   assert.match(source, /pnpm test/);
   assert.doesNotMatch(source, /test:python/);
-  assert.doesNotMatch(source, /\bnpm\b/);
+  // Match npm only where it is invoked as a command. The word also appears
+  // inside file names such as `rulesync-npm.lock.json`, which is a lockfile
+  // path, not a package-manager call.
+  assert.doesNotMatch(source, /\bnpm\s+/u);
   assert.match(source, /node-version-file: \.node-version/);
 });
 

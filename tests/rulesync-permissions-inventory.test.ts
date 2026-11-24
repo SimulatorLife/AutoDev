@@ -167,8 +167,12 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
 test("Codex Rulesync permissions are consolidated while subagent generation remains deferred", () => {
   assert.equal(read("rulesync.jsonc").includes('"permissions"'), false);
   const rulesyncConfig = readJson("rulesync.jsonc");
-  const features = rulesyncConfig.features as unknown[];
-  assert.equal(features.includes("permissions"), false);
+  const configuredTargets = rulesyncConfig.targets as Record<
+    string,
+    readonly string[]
+  >;
+  const features = new Set(Object.values(configuredTargets).flat());
+  assert.equal(features.has("permissions"), false);
   assert.equal(
     existsSync(join(repositoryRoot, ".rulesync", "permissions.jsonc")),
     true
@@ -178,7 +182,7 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
     asObject(permissionsDocument.codexcli).base_permission_profile,
     ":danger-full-access"
   );
-  assert.equal(features.includes("subagents"), false);
+  assert.equal(features.has("subagents"), false);
   assert.equal(
     existsSync(join(repositoryRoot, ".rulesync", "subagents")),
     false

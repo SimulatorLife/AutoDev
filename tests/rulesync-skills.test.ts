@@ -22,6 +22,8 @@ import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-le
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;
 
+const COLLATOR = new Intl.Collator();
+
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = join(repositoryRoot, ".rulesync", "skills");
 const curatedRoot = join(sourceRoot, ".curated");
@@ -42,12 +44,26 @@ const copilotSetupWorkflowPath = join(
   "workflows",
   "copilot-setup-steps.yml"
 );
-const targets = [
-  "copilot",
-  "claudecode",
-  "codexcli",
-  "antigravity-cli"
-] as const;
+/**
+ * Each configured target and the features it owns.
+ *
+ * The features are per target rather than global because a shared output tree
+ * needs a single owner. `.agents/skills/` is read by Codex CLI and Antigravity
+ * CLI alike, so only one of them may write it.
+ */
+const targetFeatures = {
+  copilot: ["skills", "commands", "hooks", "rules"],
+  claudecode: ["skills", "commands", "hooks", "rules"],
+  codexcli: ["skills", "rules"],
+  "antigravity-cli": ["commands", "hooks", "rules"],
+  agentsmd: ["rules"]
+} as const;
+// The skill tree each target that owns the `skills` feature writes.
+const skillTreeOwners = {
+  copilot: ".github/skills",
+  claudecode: ".claude/skills",
+  codexcli: ".agents/skills"
+} as const;
 const canonicalSkills = [
   "autodev-request-capture",
   "autodev-session-diagnostics",
@@ -84,7 +100,10 @@ const curatedSkills = [
  * the packages ship the skills that document the CLIs this repository runs,
  * so their pinned version must match the installed package version.
  */
-const gitCuratedSkills = ["karpathy-guidelines", "react-best-practices"] as const;
+const gitCuratedSkills = [
+  "karpathy-guidelines",
+  "react-best-practices"
+] as const;
 const npmCuratedSkills = [
   "acpx",
   "getting-started",
@@ -160,6 +179,22 @@ function _asObject(value: unknown): JsonObject {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as JsonObject;
 }
+/**
+ * The targets that own the `skills` feature, read from the configuration.
+ *
+ * A run that names its targets replaces the configuration's per-target map
+ * with a flat selection, so the owners are named explicitly. Naming the
+ * Antigravity CLI target here would give it the skills it does not own, and
+ * its projection of the shared `.agents/skills/` tree would differ from the
+ * Codex one.
+ */
+function skillOwners(): string[] {
+  const config = readJson(rulesyncConfigPath);
+  const targets = config.targets as Record<string, readonly string[]>;
+  return Object.entries(targets)
+    .filter(([, features]) => features.includes("skills"))
+    .map(([target]) => target);
+}
 function runRulesync(outputRoot: string, ...mode: string[]): RunResult {
   return spawnSync(
     "pnpm",
@@ -175,6 +210,8 @@ function runRulesync(outputRoot: string, ...mode: string[]): RunResult {
       // surface); tests/rulesync-commands.test.ts owns that projection.
       "--features",
       "skills",
+      "--targets",
+      skillOwners().join(","),
       ...mode,
       "--silent"
     ],
@@ -329,11 +366,23 @@ test("the canonical skills source holds no symbolic link", () => {
  */
 test("pnpm does not distribute agent skills into the repository", () => {
   const workspace = readFileSync(pnpmWorkspacePath, "utf8");
-  const dirs = /^skills:\s*\n(?:\s+[^\n]*\n)*?\s+dirs:\s*(?<dirs>\[[^\]]*\])\s*$/mu.exec(
-    workspace
-  )?.groups?.dirs;
-  assert.equal(dirs, "[]");
-  assert.doesNotMatch(workspace, /^\s*permissions:/mu);
+  const lines = workspace.split("\n").map((line) => line.trim());
+  const directoriesIndex = lines.indexOf("skills:");
+  assert.notEqual(
+    directoriesIndex,
+    -1,
+    "pnpm-workspace.yaml declares no skills block"
+  );
+  const emptyDirectoriesIndex = lines.indexOf("dirs: []", directoriesIndex);
+  assert.notEqual(
+    emptyDirectoriesIndex,
+    -1,
+    "pnpm still links agent skills somewhere"
+  );
+  assert.ok(
+    lines.every((line) => !line.startsWith("permissions:")),
+    "pnpm still grants a dependency a skill permission"
+  );
 });
 
 test("only the canonical skill source is tracked", () => {
@@ -381,6 +430,35 @@ test("only the canonical skill source is tracked", () => {
     ),
     []
   );
+});
+
+/**
+ * One writer per skill tree.
+ *
+ * `.agents/skills/` is read by Codex CLI and Antigravity CLI alike, so two
+ * targets writing it must produce byte-identical files. They cannot: a skill
+ * whose frontmatter one client reads and the other ignores -- `user-invocable`
+ * in the quota-axi skill, for instance -- becomes `disable-slash-command` in
+ * the Antigravity projection and nothing in the Codex projection, and the
+ * check then reports the tree as drifted on every run. Naming the owner of
+ * each skill tree keeps the projections unambiguous.
+ */
+test("every skill tree has exactly one configured owner", () => {
+  const config = readJson(rulesyncConfigPath);
+  const configured = config.targets as Record<string, readonly string[]>;
+  const owners = Object.entries(configured)
+    .filter(([, features]) => features.includes("skills"))
+    .map(([target]) => target);
+  assert.deepEqual(
+    owners.sort((left, right) => COLLATOR.compare(left, right)),
+    Object.keys(skillTreeOwners).sort((left, right) =>
+      COLLATOR.compare(left, right)
+    )
+  );
+  const trees = owners.map(
+    (target) => skillTreeOwners[target as keyof typeof skillTreeOwners]
+  );
+  assert.deepEqual(new Set(trees).size, trees.length);
 });
 
 test("each tool folder receives exactly its repository skills with bundled files", () => {
@@ -520,8 +598,8 @@ test("Copilot cloud setup generates repository skills after installing dependenc
 
 test("RuleSync project config and CI cover the repository projections", () => {
   const config = readJson(rulesyncConfigPath);
-  assert.deepEqual(config.targets, [...targets, "agentsmd"]);
-  assert.deepEqual(config.features, ["skills", "commands", "hooks", "rules"]);
+  assert.deepEqual(config.targets, targetFeatures);
+  assert.equal(config.features, undefined);
   assert.deepEqual(config.outputRoots, ["."]);
   assert.equal(config.delete, true);
   assert.equal(config.global, false);

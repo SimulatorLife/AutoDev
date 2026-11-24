@@ -7,11 +7,6 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { execa } from "execa";
 import {
-  chatgptTunnelStatus,
-  dependencyEnvironment,
-  tunnelMutationSchema
-} from "../platform/index.ts";
-import {
   type ApprovalPolicy,
   buildReconciliationView,
   CHATGPT_TUNNEL_CONTROL_PATH,
@@ -141,11 +136,14 @@ import {
   type WorkspaceVisualPlaytestTargetRepository
 } from "@simulatorlife/autodev-data";
 import {
+  chatgptTunnelStatus,
+  dependencyEnvironment,
   installedSkillMatches,
   materializeCurrentCommandProjections,
   materializeCurrentHookProjections,
   materializeCurrentMcpConfiguration,
-  materializeRuleSyncSkillProjections
+  materializeRuleSyncSkillProjections,
+  tunnelMutationSchema
 } from "@simulatorlife/autodev-runtime/platform";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";

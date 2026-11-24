@@ -45,8 +45,9 @@ function filesUnder(root: string): string[] {
 
 test("RuleSync owns root instructions and targets only the shared AGENTS.md output", () => {
   const config = JSON.parse(readFileSync(configPath, "utf8")) as JsonObject;
-  assert.ok((config.targets as string[]).includes("agentsmd"));
-  assert.ok((config.features as string[]).includes("rules"));
+  const configuredTargets = config.targets as Record<string, readonly string[]>;
+  assert.ok("agentsmd" in configuredTargets);
+  assert.ok(configuredTargets.agentsmd?.includes("rules"));
 
   const source = readFileSync(ruleSourcePath, "utf8");
   assert.match(source, /^---\nroot: true\ntargets:\n {2}- agentsmd\n---\n/u);
@@ -65,6 +66,14 @@ test("RuleSync owns root instructions and targets only the shared AGENTS.md outp
       "rulesync.jsonc",
       "--features",
       "rules",
+      // A run that names its features replaces the configuration's per-target
+      // map with a flat selection, so the targets that own the rules feature
+      // are named explicitly.
+      "--targets",
+      Object.entries(configuredTargets)
+        .filter(([, features]) => features.includes("rules"))
+        .map(([target]) => target)
+        .join(","),
       "--output-roots",
       outputRoot,
       "--delete",
@@ -114,7 +123,10 @@ test("full project generation materializes the shared root instructions", () => 
       "--delete",
       "--silent"
     ],
-    { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+    // A full generation walks every skill, command, rule, and hook the
+    // repository projects, and the RuleSync suites run side by side, so this
+    // subprocess needs more room than a single projection does.
+    { cwd: repositoryRoot, encoding: "utf8", timeout: 180_000 }
   );
   assert.equal(
     result.status,

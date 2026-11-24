@@ -90,19 +90,32 @@ function splitFrontmatter(text: string): { front: string; body: string } {
 }
 
 function readConfig(): {
-  targets: string[];
-  features: string[];
+  targets: Record<string, string[]>;
+  features?: string[];
   outputRoots: string[];
   delete: boolean;
   global: boolean;
 } {
   return JSON.parse(readFileSync(rulesyncConfigPath, "utf8")) as {
-    targets: string[];
-    features: string[];
+    targets: Record<string, string[]>;
+    features?: string[];
     outputRoots: string[];
     delete: boolean;
     global: boolean;
   };
+}
+
+/**
+ * The targets that own a feature, read from the configuration.
+ *
+ * A run that names its targets replaces the configuration's per-target map
+ * with a flat selection, so the owners are named explicitly.
+ */
+function featureOwners(feature: string): string[] {
+  const { targets } = readConfig();
+  return Object.entries(targets)
+    .filter(([, features]) => features.includes(feature))
+    .map(([target]) => target);
 }
 
 function generateGlobal(outputHome: string): void {
@@ -261,6 +274,8 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
         outputRoot,
         "--features",
         "commands",
+        "--targets",
+        featureOwners("commands").join(","),
         "--silent"
       ],
       { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
@@ -388,14 +403,14 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
   // Rulesync skips codexcli (its commands are global-only), so the installer
   // projects Codex prompts into $CODEX_HOME/prompts separately.
   const config = readConfig();
-  assert.deepEqual(config.targets, [
-    "copilot",
-    "claudecode",
-    "codexcli",
-    "antigravity-cli",
-    "agentsmd"
-  ]);
-  assert.deepEqual(config.features, ["skills", "commands", "hooks", "rules"]);
+  assert.deepEqual(config.targets, {
+    copilot: ["skills", "commands", "hooks", "rules"],
+    claudecode: ["skills", "commands", "hooks", "rules"],
+    codexcli: ["skills", "rules"],
+    "antigravity-cli": ["commands", "hooks", "rules"],
+    agentsmd: ["rules"]
+  });
+  assert.equal(config.features, undefined);
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
   assert.deepEqual(config.outputRoots, ["."]);

@@ -77,6 +77,7 @@ import {
 import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
+const FEATURE_COLLATOR = new Intl.Collator();
 
 export const RUNTIME_MODULES = [
   "runtime/src/router/quota-poll.ts",
@@ -1518,16 +1519,15 @@ export function materializeMcpConfiguration(options: {
  * Only the hooks feature is generated. The other features' projections are
  * left exactly as they are, because a declaration of hooks says nothing about
  * the skills or the commands a repository also projects.
- */
-/**
+ *
  * Codex reads both `$CODEX_HOME/hooks.json` and the working project's
  * `.codex/hooks.json`. Projecting Codex hooks into this checkout as well as
  * the user level ran every Codex hook twice in AutoDev sessions (the root
  * bootstrap was injected 2-4 times per turn), so Codex hooks are written only
- * at user level by {@link writeCodexUserHooks}; the repository projection
- * covers every other configured target.
+ * at user level by {@link writeCodexUserHooks}; `rulesync.jsonc` therefore
+ * gives the `codexcli` target no `hooks` feature, and the repository
+ * projection covers every other configured target.
  */
-const USER_LEVEL_HOOK_TARGETS: ReadonlySet<string> = new Set(["codexcli"]);
 
 /**
  * Run the repository's `rulesync.jsonc` generation (or its `--check`), with
@@ -1566,6 +1566,84 @@ function computeRepositoryRulesyncFingerprint(repositoryRoot: string): string {
   );
 }
 
+/**
+ * The repository's Rulesync targets, each with the features it owns.
+ *
+ * The per-target map is the only shape that can give a shared output tree a
+ * single owner. `.agents/skills/` is read by Codex CLI and Antigravity CLI
+ * alike, so a second writer would have to produce byte-identical files, and
+ * a skill whose frontmatter one client reads and the other ignores (such as
+ * `user-invocable`) makes that impossible. Naming the owner per target keeps
+ * one writer per tree.
+ */
+interface RulesyncProjectConfig {
+  readonly targets: Readonly<Record<string, readonly string[]>>;
+}
+
+/**
+ * Read the repository's Rulesync configuration.
+ *
+ * A configuration that does not name the features per target is rejected
+ * rather than reinterpreted: RuleSync accepts a flat target list, and
+ * reading that as a per-target map would silently generate nothing.
+ */
+function readRulesyncProjectConfig(configPath: string): RulesyncProjectConfig {
+  const parsed = JSON.parse(readFileSync(configPath, "utf8")) as {
+    targets?: unknown;
+  };
+  const targets = parsed.targets;
+  if (
+    targets === null ||
+    typeof targets !== "object" ||
+    Array.isArray(targets)
+  ) {
+    throw new Error(
+      `invalid-rulesync-config ${configPath}; "targets" must map every target to the features it owns.`
+    );
+  }
+  const owned: Record<string, readonly string[]> = {};
+  for (const [target, features] of Object.entries(targets)) {
+    if (
+      !Array.isArray(features) ||
+      features.some((feature) => typeof feature !== "string")
+    ) {
+      throw new Error(
+        `invalid-rulesync-config ${configPath}; the features of target "${target}" must be a list of feature names.`
+      );
+    }
+    owned[target] = features;
+  }
+  return { targets: owned };
+}
+
+/**
+ * Every feature any configured target owns, so a caller that asks for "the"
+ * features gets them all.
+ */
+function configuredFeatures(
+  targets: Readonly<Record<string, readonly string[]>>
+): string[] {
+  return [...new Set(Object.values(targets).flat())].sort((left, right) =>
+    FEATURE_COLLATOR.compare(left, right)
+  );
+}
+
+/**
+ * The targets that own a feature.
+ *
+ * A run that names its targets and features replaces the configuration's
+ * per-target map with a flat selection, so the owners are named here instead
+ * of letting a second target write a tree the first one owns.
+ */
+function targetsOwning(
+  targets: Readonly<Record<string, readonly string[]>>,
+  feature: string
+): string[] {
+  return Object.entries(targets)
+    .filter(([, features]) => features.includes(feature))
+    .map(([target]) => target);
+}
+
 export function generateRepositoryRulesync(
   repositoryRoot: string,
   options: {
@@ -1574,14 +1652,12 @@ export function generateRepositoryRulesync(
   } = {}
 ): void {
   const configPath = path.join(repositoryRoot, "rulesync.jsonc");
-  const config = JSON.parse(readFileSync(configPath, "utf8")) as {
-    targets: string[];
-    features: string[];
-  };
-  const features = options.features ?? config.features;
+  const config = readRulesyncProjectConfig(configPath);
+  const configFeatures = configuredFeatures(config.targets);
+  const features = options.features ?? configFeatures;
   const requestedSet = new Set(features);
   const featuresKey = [...requestedSet].sort().join(",");
-  const configFeaturesSet = new Set(config.features);
+  const configFeaturesSet = new Set(configFeatures);
   const allConfigFeaturesKey = [...configFeaturesSet].sort().join(",");
   const isAllConfigFeatures =
     featuresKey === allConfigFeaturesKey && requestedSet.size > 0;
@@ -1611,17 +1687,19 @@ export function generateRepositoryRulesync(
     check: options.check === true,
     silent: true
   };
-  const projectFeatures = features.filter((feature) => feature !== "hooks");
-  if (projectFeatures.length > 0)
-    runRulesyncGenerate(repositoryRoot, { ...base, features: projectFeatures });
-  if (features.includes("hooks"))
-    runRulesyncGenerate(repositoryRoot, {
-      ...base,
-      features: ["hooks"],
-      targets: config.targets.filter(
-        (target) => !USER_LEVEL_HOOK_TARGETS.has(target)
-      )
-    });
+  if (options.features === undefined) {
+    // The whole configuration, with its per-target map intact: naming a
+    // feature or a target here would replace that map with a flat selection.
+    runRulesyncGenerate(repositoryRoot, base);
+  } else {
+    for (const feature of features) {
+      runRulesyncGenerate(repositoryRoot, {
+        ...base,
+        features: [feature],
+        targets: targetsOwning(config.targets, feature)
+      });
+    }
+  }
   const postFingerprint = computeRepositoryRulesyncFingerprint(repositoryRoot);
   const latestCache = readRepoInstallCache(repositoryRoot);
   const nextGenerateCache: Record<string, string> = {

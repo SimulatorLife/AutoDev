@@ -2017,7 +2017,9 @@ test("resilience and ACP gates have reviewable structural tables", () => {
     /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u
   );
   for (const kind of ["transient", "hard", "probe", "config"]) {
-    assert.match(policy, new RegExp(String.raw`^\|\s*\`${kind}\`\s*\|`, "mu"));
+    // A backtick is a literal character in a pattern; escaping it is only
+    // valid outside unicode mode, where `\`` is an invalid escape.
+    assert.match(policy, new RegExp(`^\\|\\s*\`${kind}\`\\s*\\|`, "mu"));
   }
   const acpRows = doc
     .slice(
