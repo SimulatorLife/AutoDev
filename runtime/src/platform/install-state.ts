@@ -215,31 +215,22 @@ export function migrateEnvSecretsToKeychain(
   return migrated;
 }
 
+export const REQUIRED_INSTALL_KEYCHAIN_SECRETS: readonly KeychainSecretName[] =
+  ["MINIMAX_API_KEY", "CONTEXT7_API_KEY"];
+
 /**
- * Store explicit/env-file secrets in macOS Keychain during installation when
- * present in `env`. Never logs secret values.
+ * Verify that required API keys exist in macOS Keychain without writing or
+ * migrating Keychain entries or modifying `.env`. Returns any missing keys.
  */
-export function provisionEnvSecretsToKeychain(
-  env: NodeJS.ProcessEnv,
-  names: readonly KeychainSecretName[] = [
-    "MINIMAX_API_KEY",
-    "CONTEXT7_API_KEY"
-  ],
+export function checkRequiredKeychainSecrets(
+  names: readonly KeychainSecretName[] = REQUIRED_INSTALL_KEYCHAIN_SECRETS,
+  env: NodeJS.ProcessEnv = process.env,
   deps: KeychainDeps = {}
 ): KeychainSecretName[] {
   if (!keychainAvailable(env, deps)) return [];
-  const stored: KeychainSecretName[] = [];
-  for (const name of names) {
-    const value = env[name]?.trim();
-    if (!value) continue;
-    writeKeychainSecret(name, value, env, deps);
-    if (readKeychainSecret(name, env, { deps }) !== value) {
-      throw new Error(`Keychain verification failed for ${name}`);
-    }
-    stored.push(name);
-    writeErrorLine(`stored ${name} in macOS Keychain`);
-  }
-  return stored;
+  return names.filter(
+    (name) => readKeychainSecret(name, env, { deps }) === null
+  );
 }
 
 function cli(argv: string[]): number {

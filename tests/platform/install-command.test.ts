@@ -244,6 +244,69 @@ test("scripts/install.sh loads repository-root .env via --env-file-if-exists and
   });
 });
 
+test("normal install checks required Keychain API keys without migrating or overwriting Keychain", () => {
+  const root = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "autodev-install-keychain-check-"))
+  );
+  const previousDisable = process.env.AUTODEV_DISABLE_KEYCHAIN;
+  const previousMinimax = process.env.MINIMAX_API_KEY;
+  const previousContext7 = process.env.CONTEXT7_API_KEY;
+  const codexHome = path.join(root, ".codex");
+  const envFile = path.join(codexHome, ".env");
+  try {
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      envFile,
+      [
+        "MINIMAX_API_KEY=minimax-from-dotenv",
+        "CONTEXT7_API_KEY=context7-from-dotenv"
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+    process.env.AUTODEV_DISABLE_KEYCHAIN = "0";
+    process.env.MINIMAX_API_KEY = "minimax-from-env";
+    process.env.CONTEXT7_API_KEY = "context7-from-env";
+    const calls: string[][] = [];
+    const keychainDeps = {
+      platform: "darwin" as const,
+      runSecurity: (args: readonly string[]) => {
+        calls.push([...args]);
+        if (args[0] !== "find-generic-password") {
+          throw new Error(`Unexpected Keychain mutation: ${args.join(" ")}`);
+        }
+        const service = args[args.indexOf("-s") + 1];
+        if (service === "MINIMAX_API_KEY") return "kc-minimax\n";
+        throw new Error("not found");
+      }
+    };
+    assert.throws(
+      () =>
+        runInstallCommand([], {
+          repositoryRoot: path.resolve(path.dirname(installerScriptPath), ".."),
+          home: root,
+          codexHome,
+          keychainDeps
+        }),
+      /Missing required API key\(s\) in macOS Keychain: CONTEXT7_API_KEY/
+    );
+    assert.ok(
+      calls.every((args) => args[0] === "find-generic-password"),
+      "install must only check Keychain presence, never write or update items"
+    );
+    assert.match(readFileSync(envFile, "utf8"), /MINIMAX_API_KEY=/);
+    assert.match(readFileSync(envFile, "utf8"), /CONTEXT7_API_KEY=/);
+  } finally {
+    if (previousDisable === undefined)
+      delete process.env.AUTODEV_DISABLE_KEYCHAIN;
+    else process.env.AUTODEV_DISABLE_KEYCHAIN = previousDisable;
+    if (previousMinimax === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = previousMinimax;
+    if (previousContext7 === undefined) delete process.env.CONTEXT7_API_KEY;
+    else process.env.CONTEXT7_API_KEY = previousContext7;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("scripts/install.sh continues cleanly when repository-root .env is absent", () => {
   withInstallerFixture(({ repoRoot, envOutputFile, execInstall }) => {
     const result = execInstall(["--materialize-only"]);

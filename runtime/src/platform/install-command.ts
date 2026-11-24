@@ -6,6 +6,7 @@ import path from "node:path";
 import { ConfigError } from "@simulatorlife/autodev-runtime/config";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import type { KeychainDeps } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
@@ -20,10 +21,10 @@ import {
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
 import {
+  checkRequiredKeychainSecrets,
   ensureBridgeRouterAuth,
   ensureRouterAuth,
-  migrateEnvSecretsToKeychain,
-  provisionEnvSecretsToKeychain
+  REQUIRED_INSTALL_KEYCHAIN_SECRETS
 } from "./install-state.ts";
 import { installOpencliBrowser } from "./opencli-browser-install.ts";
 import {
@@ -35,6 +36,7 @@ export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
   readonly home?: string;
   readonly codexHome?: string;
+  readonly keychainDeps?: KeychainDeps;
 }
 
 interface InstallFlags {
@@ -142,12 +144,16 @@ export function runInstallCommand(
     ensureBridgeRouterAuth(path.join(codexHome, ".env"));
     if (flags.routerAuth) ensureRouterAuth(codexEnvFile, env);
     if (!flags.materializeOnly) {
-      migrateEnvSecretsToKeychain(codexEnvFile);
-      provisionEnvSecretsToKeychain({
-        ...process.env,
-        MINIMAX_API_KEY: isolatedSecrets.MINIMAX_API_KEY,
-        CONTEXT7_API_KEY: isolatedSecrets.CONTEXT7_API_KEY
-      });
+      const missingSecrets = checkRequiredKeychainSecrets(
+        REQUIRED_INSTALL_KEYCHAIN_SECRETS,
+        process.env,
+        overrides.keychainDeps
+      );
+      if (missingSecrets.length > 0) {
+        throw new ConfigError(
+          `Missing required API key(s) in macOS Keychain: ${missingSecrets.join(", ")}. Store them in your login Keychain before running install.`
+        );
+      }
       const dependencyOptions = resolveDependencyOptions(process.env);
       if (installCocoIndex(dependencyOptions) !== 0) return 1;
       if (installCodeGraphContext(dependencyOptions) !== 0) return 1;

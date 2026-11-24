@@ -749,12 +749,14 @@ async function reconcile(
     } else if (prior) {
       const legacyKey = readLegacyRuntimeKey(directory, prior);
       if (legacyKey) {
-        validateRuntimeKey(
-          legacyKey,
-          env.OPENAI_ADMIN_KEY?.trim() || undefined
-        );
-        deps.writeKey(legacyKey, env);
-        if (deps.readKey(env) === legacyKey) {
+        if (!deps.readKey(env)) {
+          validateRuntimeKey(
+            legacyKey,
+            env.OPENAI_ADMIN_KEY?.trim() || undefined
+          );
+          deps.writeKey(legacyKey, env);
+        }
+        if (deps.readKey(env)) {
           securelyRemoveLegacyRuntimeKeys(directory, prior);
         }
       }
@@ -1009,7 +1011,7 @@ async function reconcile(
     );
 
     stage = "keychain store";
-    if (previousKey !== rawKey) {
+    if (!previousKey || mutation?.action === "rotate") {
       deps.writeKey(rawKey, env);
       if (deps.readKey(env) !== rawKey) {
         throw new Error(

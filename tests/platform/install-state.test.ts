@@ -4,11 +4,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  checkRequiredKeychainSecrets,
   ensureBridgeRouterAuth,
   ensureRouterAuth,
   findPlaintextKeychainSecrets,
-  migrateEnvSecretsToKeychain,
-  provisionEnvSecretsToKeychain
+  migrateEnvSecretsToKeychain
 } from "@simulatorlife/autodev-runtime/platform/install-state";
 
 import { withTempDir } from "../support/test-helpers.ts";
@@ -125,15 +125,9 @@ test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env whi
       ].join("\n") + "\n"
     );
     assert.equal(lstatSync(envPath).mode & 0o777, 0o600);
-    const provisioned = provisionEnvSecretsToKeychain(
-      {
-        ...env,
-        MINIMAX_API_KEY: "minimax-from-installer",
-        CONTEXT7_API_KEY: ""
-      },
-      undefined,
-      deps
-    );
-    assert.deepEqual(provisioned, ["MINIMAX_API_KEY"]);
-    assert.equal(store.get("MINIMAX_API_KEY"), "minimax-from-installer");
+    assert.deepEqual(checkRequiredKeychainSecrets(undefined, env, deps), []);
+    store.delete("CONTEXT7_API_KEY");
+    assert.deepEqual(checkRequiredKeychainSecrets(undefined, env, deps), [
+      "CONTEXT7_API_KEY"
+    ]);
   }));

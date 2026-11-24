@@ -44,7 +44,11 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
-import { findPlaintextKeychainSecrets } from "./install-state.ts";
+import {
+  checkRequiredKeychainSecrets,
+  findPlaintextKeychainSecrets,
+  REQUIRED_INSTALL_KEYCHAIN_SECRETS
+} from "./install-state.ts";
 import {
   CATALOGS,
   checkHookTrust,
@@ -236,9 +240,16 @@ function checkAuth(
   const envFile =
     process.env.CODEX_ENV_FILE?.trim() || path.join(options.codexHome, ".env");
   if (keychainAvailable(process.env)) {
+    for (const secretName of checkRequiredKeychainSecrets(
+      REQUIRED_INSTALL_KEYCHAIN_SECRETS,
+      process.env
+    )) {
+      writeLine(`missing-keychain-secret ${secretName} in macOS Keychain`);
+      failures.value = 1;
+    }
     for (const secretName of findPlaintextKeychainSecrets(envFile)) {
       writeLine(
-        `stale-plaintext-secret ${secretName} in ${envFile} (run scripts/install.sh to migrate to macOS Keychain)`
+        `stale-plaintext-secret ${secretName} in ${envFile} (store in macOS Keychain and remove plaintext entry from ${envFile})`
       );
       failures.value = 1;
     }
