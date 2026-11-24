@@ -2110,3 +2110,19 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
   for (const name of manifests.keys()) check(name);
   assert.deepEqual(dependencies.get("@simulatorlife/autodev-core"), []);
 });
+
+
+test("canonical MCP target requires one gateway for every provider", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const section = doc.slice(
+    doc.indexOf("### Mandatory shared MCP gateway"),
+    doc.indexOf("### File interaction surface")
+  );
+  assert.match(section, /all AutoDev-managed MCP access goes through one provider-agnostic Supergateway service/u);
+  assert.match(section, /No direct-provider MCP connections or fallback/u);
+  assert.match(section, /Only the gateway starts\/manages local MCP backends/u);
+  assert.match(section, /Disabling or losing the tunnel must not disable local MCP access/u);
+  assert.match(section, /Server-side authorization and confinement/u);
+  assert.match(section, /Session and workspace isolation/u);
+  assert.match(section, /provider matrix and isolation gates are observed/u);
+});

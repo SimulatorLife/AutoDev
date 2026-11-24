@@ -1,5 +1,7 @@
 # ChatGPT Secure MCP Tunnel
 
+> **Target-state boundary:** This operational guide describes the current tunnel integration, not the final architecture. The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) is the canonical target: all AutoDev-managed provider MCP traffic must traverse Supergateway; the OpenAI tunnel becomes optional external ingress, independently managed. Direct provider stdio/backend HTTP connections are removed during migration. Current operational instructions remain applicable until cutover.
+
 AutoDev can publish a single, private MCP tool catalogue to ChatGPT through OpenAI Secure MCP Tunnel. The tunnel client supervises [Supergateway](https://github.com/supercorp-ai/supergateway) in combined stdio mode. Supergateway owns server startup, tool discovery, namespacing, filtering and routing; AutoDev only renders its configuration. No inbound listener, public IP, port forwarding, or external gateway service is required.
 
 ## Installation (macOS)

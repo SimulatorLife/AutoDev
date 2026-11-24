@@ -32,4 +32,4 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 Removed/superseded documents must not be recreated as active guidance: the old platform-migration ledger, TypeScript migration target, UI control-plane target, observability target/runbook, metrics-dashboard runbook, and prompt-catalog migration ledger have all been folded into current authorities or completed.
 
-- [ChatGPT Secure MCP Tunnel](chatgpt-secure-mcp-tunnel.md) — installer-managed Supergateway integration.
+- [ChatGPT Secure MCP Tunnel](chatgpt-secure-mcp-tunnel.md) — current installer-managed tunnel integration; the canonical target's [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) governs its migration to optional external ingress.

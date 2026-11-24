@@ -1,5 +1,7 @@
 # Local AI and provider setup
 
+> **MCP migration target:** The direct provider MCP launch/configuration paths described below are current operational behavior, not the end state. The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) requires all AutoDev-managed provider MCP traffic to use Supergateway, with no direct backend fallback. Canonical Rulesync declarations and role/workspace contracts remain authoritative; the optional ChatGPT tunnel is not a prerequisite for local access.
+
 > This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
 **JavaScript prerequisite:** install standalone pnpm (v12.21.0 for this
