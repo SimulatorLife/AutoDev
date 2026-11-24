@@ -3,19 +3,27 @@
   "mcpServers": {
     "filesystem": {
       "command": "bash",
-      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" filesystem"]
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" filesystem"]
+    },
+    "github": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" github"]
     },
     "lsp": {
       "command": "bash",
-      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" lsp"]
     },
     "cocoindex-code": {
       "command": "bash",
-      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
     },
     "codegraphcontext": {
       "command": "bash",
-      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" codegraphcontext"]
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" codegraphcontext"]
+    },
+    "xacpx": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" xacpx"]
     },
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
@@ -35,22 +43,34 @@
     "mcpServers": {
       "filesystem": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" filesystem"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" filesystem"],
+        "default_tools_approval_mode": "approve"
+      },
+      "github": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" github"],
+        "disabled": true,
         "default_tools_approval_mode": "approve"
       },
       "lsp": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" lsp"],
         "default_tools_approval_mode": "approve"
       },
       "cocoindex-code": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" cocoindex-code"],
         "default_tools_approval_mode": "approve"
       },
       "codegraphcontext": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" codegraphcontext"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" codegraphcontext"],
+        "default_tools_approval_mode": "approve"
+      },
+      "xacpx": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" xacpx"],
+        "disabled": true,
         "default_tools_approval_mode": "approve"
       },
       "openaiDeveloperDocs": {
@@ -71,13 +91,13 @@
       },
       "playwright": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" playwright"],
         "disabled": true,
         "default_tools_approval_mode": "approve"
       },
       "playtest": {
         "command": "bash",
-        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playtest"],
+        "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" playtest"],
         "disabled": true,
         "default_tools_approval_mode": "approve"
       },

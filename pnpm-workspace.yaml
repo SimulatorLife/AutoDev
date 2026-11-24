@@ -6,6 +6,10 @@ packages:
 
 allowBuilds:
   "@jackwener/opencli": true
+  esbuild: true
+  fs-ext: true
+  node-pty: true
+  protobufjs: true
   tldjs: true
   unrs-resolver: true
 patchedDependencies:

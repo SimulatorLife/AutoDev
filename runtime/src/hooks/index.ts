@@ -1,6 +1,7 @@
 export * from "./block-ccc-cli.ts";
 export * from "./file-surface.ts";
 export * from "./hook-log.ts";
+export * from "./hook-payload.ts";
 export * from "./hook-roots.ts";
 export * from "./lifecycle.ts";
 export * from "./memory-session-end.ts";

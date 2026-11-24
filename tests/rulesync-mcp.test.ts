@@ -32,7 +32,7 @@ const rulesyncCli = join(
   "node_modules/rulesync/dist/cli/index.js"
 );
 const launchCommand =
-  'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" ';
+  'exec "${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh" ';
 const userLevelFiles: Record<string, string> = {
   claudecode: ".claude.json",
   copilotcli: ".copilot/mcp-config.json",
@@ -161,9 +161,11 @@ test("source declares each launch definition consistently", () => {
     "codegraphcontext",
     "context7",
     "filesystem",
+    "github",
     "googleDeveloperKnowledge",
     "lsp",
-    "openaiDeveloperDocs"
+    "openaiDeveloperDocs",
+    "xacpx"
   ]);
   assert.equal(shared.context7?.url, "https://mcp.context7.com/mcp");
   assert.equal(shared.context7?.bearer_token_env_var, "CONTEXT7_API_KEY");
@@ -187,8 +189,6 @@ test("source declares each launch definition consistently", () => {
       ),
       []
     );
-    // Spawning is Codex's own `exec` surface on every provider; no target
-    // declares a separate spawn server.
     assert.equal(Object.hasOwn(targetServers, "autodev_spawn"), false);
     for (const [name, server] of Object.entries(targetServers)) {
       if (name === "codex_app") {

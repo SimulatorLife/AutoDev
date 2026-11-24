@@ -33,6 +33,7 @@
     "@eslint/compat": "^2.1.1",
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/server-filesystem": "^2.4.0",
+    "@modelcontextprotocol/server-github": "2025.4.8",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/context-async-hooks": "^3.1.1",
     "@opentelemetry/core": "^3.1.1",

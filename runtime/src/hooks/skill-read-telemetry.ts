@@ -23,19 +23,26 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 import { atomicWrite } from "@simulatorlife/autodev-data/files";
+import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 
 import {
   extractSkillReadPath,
   matchSkillReadTarget,
   normaliseSkillReadPath
 } from "../shared/skill-reads.ts";
+import {
+  extractHookContext,
+  extractHookToolCall,
+  parseHookPayload
+} from "./hook-payload.ts";
 
-const STATE_DIR = path.join(homedir(), ".codex", "run", "skill-read-telemetry");
+function skillReadStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(autodevRunDirectory(env), "skill-read-telemetry");
+}
 const SEEN_KEYS_LIMIT = 4096;
 const SEEN_VALUE_LIMIT = 4096;
 type JsonPrimitive = string | number | boolean | null;
@@ -70,81 +77,10 @@ function asSeenState(value: JsonValue): SeenState {
   return { turns, keys };
 }
 
-const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"];
-const ARGUMENT_KEYS = [
-  "arguments",
-  "args",
-  "input",
-  "params",
-  "tool_input",
-  "toolInput"
-];
-const SESSION_ID_KEYS = ["session_id", "sessionId"];
-const TURN_ID_KEYS = ["turn_id", "turnId"];
-const CODEX_SESSION_KEY = "x-codex-session-id";
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
-}
-
-function pickString(
-  payload: JsonValue | undefined,
-  keys: string[]
-): string | null {
-  const object = asObject(payload);
-  for (const key of keys) {
-    const value = object[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-function pickObject(
-  payload: JsonValue | undefined,
-  keys: string[]
-): JsonObject | null {
-  const object = asObject(payload);
-  for (const key of keys) {
-    const value = object[key];
-    if (value && typeof value === "object" && !Array.isArray(value))
-      return value;
-    if (typeof value === "string" && value.trim().startsWith("{")) {
-      try {
-        const parsed = JSON.parse(value);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-          return parsed as JsonObject;
-      } catch {
-        // A non-JSON argument string is handled by the command matcher below.
-      }
-    }
-  }
-  return null;
-}
-
-function pickValue(
-  payload: JsonValue | undefined,
-  keys: string[]
-): JsonValue | null {
-  const object = asObject(payload);
-  for (const key of keys) {
-    if (object[key] !== undefined && object[key] !== null) return object[key];
-  }
-  return null;
-}
-
-// The payload Codex sends uses different spellings across versions; this
-// walks every plausible key and only accepts the payload if at least one tool
-// name was present. A pre-tool hook that saw no tool name is a firehose we
-// have no signal on, so we drop it instead of guessing.
-function extractToolCall(
-  payload: JsonValue
-): { toolName: string; args: JsonValue } | null {
-  const toolName = pickString(payload, TOOL_NAME_KEYS);
-  if (!toolName) return null;
-  const rawArguments = pickValue(payload, ARGUMENT_KEYS);
-  const args = pickObject(payload, ARGUMENT_KEYS) ?? rawArguments ?? {};
-  return { toolName, args };
 }
 
 function hashKey(...parts: string[]): string {
@@ -154,7 +90,7 @@ function hashKey(...parts: string[]): string {
 async function readSeenState(
   sessionId: string
 ): Promise<{ path: string; value: SeenState }> {
-  const filePath = path.join(STATE_DIR, `${sessionId}.json`);
+  const filePath = path.join(skillReadStateDir(), `${sessionId}.json`);
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw);
@@ -286,23 +222,6 @@ async function postSkillUsed({
   });
 }
 
-// Resolve the workspace CWD from payload so we can also write it to the
-// session state for downstream consumers. Never forwarded in the post body.
-function payloadCwd(payload: JsonValue): string | null {
-  const object = asObject(payload);
-  const candidates = [
-    object.cwd,
-    object.working_directory,
-    object.workingDirectory,
-    object.workspace_cwd,
-    object.repository_cwd
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 async function run(): Promise<void> {
   let raw = "";
   try {
@@ -310,34 +229,24 @@ async function run(): Promise<void> {
   } catch {
     process.exit(0);
   }
-  let payload: JsonValue;
-  try {
-    payload = JSON.parse(raw) as JsonValue;
-  } catch {
+  const payload = parseHookPayload(raw);
+  if (!payload) {
     // Hook receives malformed JSON: no-op rather than surfacing an error to
-    // Codex. Telemetry must never fail a turn.
+    // the host CLI. Telemetry must never fail a turn.
     process.exit(0);
   }
-  const tool = extractToolCall(payload);
+  const tool = extractHookToolCall(payload);
   if (!tool) return;
-  const candidatePath = extractSkillReadPath(tool.toolName, tool.args);
+  const candidatePath = extractSkillReadPath(tool.toolName, tool.toolInput);
   if (!candidatePath) return;
   const normalised = normaliseSkillReadPath(candidatePath);
   if (!normalised) return;
   const match = matchSkillReadTarget(normalised);
   if (!match) return;
-  const payloadObject = asObject(payload);
-  const sessionId =
-    pickString(payload, SESSION_ID_KEYS) ??
-    pickString(payloadObject.metadata, SESSION_ID_KEYS) ??
-    (typeof payloadObject[CODEX_SESSION_KEY] === "string"
-      ? payloadObject[CODEX_SESSION_KEY]
-      : null);
+  const context = extractHookContext(payload);
+  const sessionId = context.sessionId;
   if (!sessionId) return;
-  const turnId =
-    pickString(payload, TURN_ID_KEYS) ??
-    pickString(payloadObject.metadata, TURN_ID_KEYS) ??
-    "no-turn";
+  const turnId = context.turnId ?? "no-turn";
   if (
     await alreadyReported({
       sessionId,
@@ -360,7 +269,6 @@ async function run(): Promise<void> {
     root: match.root,
     turnId
   });
-  payloadCwd(payload); // retained for symmetry; not forwarded in the post
 }
 
 try {

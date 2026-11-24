@@ -19,7 +19,9 @@ import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_FILESYSTEM,
-  MCP_SERVER_PLAYTEST
+  MCP_SERVER_GITHUB,
+  MCP_SERVER_PLAYTEST,
+  MCP_SERVER_XACPX
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 export type McpName =
@@ -28,7 +30,9 @@ export type McpName =
   | "cocoindex-code"
   | typeof MCP_SERVER_CODEGRAPHCONTEXT
   | typeof MCP_SERVER_FILESYSTEM
-  | typeof MCP_SERVER_PLAYTEST;
+  | typeof MCP_SERVER_GITHUB
+  | typeof MCP_SERVER_PLAYTEST
+  | typeof MCP_SERVER_XACPX;
 /**
  * The physical form of `dir`, as ccc sees it: ccc resolves every path it
  * walks, so a symlinked spelling (`/tmp` for `/private/tmp`, an aliased home)
@@ -117,6 +121,33 @@ export function resolveMcpCommand(
         "AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
       );
     return { binary, args: ["mcp", "start"], pathPrepend: [] };
+  }
+  if (tool === MCP_SERVER_GITHUB) {
+    return {
+      binary: path.join(repoRoot, "node_modules/.bin/mcp-server-github"),
+      args: [],
+      pathPrepend: [path.dirname(process.execPath)]
+    };
+  }
+  if (tool === MCP_SERVER_XACPX) {
+    const args = ["mcp-stdio"];
+    const coordinatorSession = env.AUTODEV_XACPX_COORDINATOR_SESSION?.trim();
+    if (coordinatorSession)
+      args.push("--coordinator-session", coordinatorSession);
+    const xacpxWorkspace = env.AUTODEV_XACPX_WORKSPACE?.trim();
+    if (xacpxWorkspace) args.push("--workspace", xacpxWorkspace);
+    const checkoutBin = path.join(repoRoot, "runtime/node_modules/.bin/xacpx");
+    const installedBin = path.join(repoRoot, "src/node_modules/.bin/xacpx");
+    const binary = existsSync(checkoutBin) ? checkoutBin : installedBin;
+    return {
+      binary,
+      args,
+      pathPrepend: [
+        path.dirname(binary),
+        path.join(repoRoot, "node_modules/.bin"),
+        path.dirname(process.execPath)
+      ]
+    };
   }
   if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {
     return {

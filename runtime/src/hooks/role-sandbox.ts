@@ -31,7 +31,6 @@
 
 import { readFileSync } from "node:fs";
 
-import { isRecord } from "@simulatorlife/autodev-core";
 import {
   evaluateOrchestratorToolCall,
   isRootOrchestratorModel
@@ -43,17 +42,12 @@ import { isReadOnlyRole } from "@simulatorlife/autodev-runtime/shared/execution-
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { type HookDenialPolicy, logPreToolUseDenial } from "./hook-log.ts";
-
-interface HookPayload {
-  readonly agent_type?: unknown;
-  readonly model?: unknown;
-  readonly session_id?: unknown;
-  readonly sessionId?: unknown;
-  readonly turn_id?: unknown;
-  readonly turnId?: unknown;
-  readonly tool_name?: unknown;
-  readonly tool_input?: unknown;
-}
+import {
+  extractHookContext,
+  extractHookToolCall,
+  formatPreToolUseDenyResponse,
+  parseHookPayload
+} from "./hook-payload.ts";
 
 interface RoleSandboxEvaluation {
   readonly denied: boolean;
@@ -65,23 +59,6 @@ interface RoleSandboxEvaluation {
   readonly turn: string | null;
   readonly tool: string | null;
   readonly toolInput: unknown;
-}
-
-function stringOrNull(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-/**
- * The role the tool call was made in.
- *
- * Null for the root session's own turns: the root session runs in the
- * session's sandbox, which is the policy the product declares, and no role
- * sandbox narrows it.
- */
-function roleOf(payload: HookPayload): string | null {
-  return stringOrNull(payload.agent_type);
 }
 
 function emptyEvaluation(): RoleSandboxEvaluation {
@@ -99,27 +76,18 @@ function emptyEvaluation(): RoleSandboxEvaluation {
 }
 
 function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
-  let payload: HookPayload;
-  try {
-    const parsed: unknown = JSON.parse(rawInput);
-    if (!isRecord(parsed)) return emptyEvaluation();
-    payload = parsed as HookPayload;
-  } catch {
-    // A payload that cannot be read is not a decision this hook can make. The
-    // session's own sandbox still governs the call, so the call is left alone
-    // rather than refused for a reason nobody can read.
-    return emptyEvaluation();
-  }
-
-  const toolName =
-    typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const model = stringOrNull(payload.model);
-  const session =
-    stringOrNull(payload.session_id) ?? stringOrNull(payload.sessionId);
-  const turn = stringOrNull(payload.turn_id) ?? stringOrNull(payload.turnId);
-  const tool = stringOrNull(payload.tool_name);
-  const call = { toolName, toolInput: payload.tool_input };
-  const role = roleOf(payload);
+  const payload = parseHookPayload(rawInput);
+  if (!payload) return emptyEvaluation();
+  const extracted = extractHookToolCall(payload);
+  const context = extractHookContext(payload);
+  const toolName = extracted?.toolName ?? "";
+  const toolInput = extracted?.toolInput;
+  const role = context.role;
+  const model = context.model;
+  const session = context.sessionId;
+  const turn = context.turnId;
+  const tool = toolName || null;
+  const call = { toolName, toolInput };
   if (role === null) {
     if (!isRootOrchestratorModel(model ?? "")) return emptyEvaluation();
     const decision = evaluateOrchestratorToolCall(call);
@@ -134,7 +102,7 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
           session,
           turn,
           tool,
-          toolInput: payload.tool_input
+          toolInput
         };
   }
 
@@ -151,7 +119,7 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
     session,
     turn,
     tool,
-    toolInput: payload.tool_input
+    toolInput
   };
 }
 
@@ -181,15 +149,7 @@ export function runRoleSandboxHook(raw = readFileSync(0, "utf8")): number {
     });
   }
   writeErrorLine(reason);
-  process.stdout.write(
-    `${JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: reason
-      }
-    })}\n`
-  );
+  process.stdout.write(`${formatPreToolUseDenyResponse(reason)}\n`);
   return 2;
 }
 

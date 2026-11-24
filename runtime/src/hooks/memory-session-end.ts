@@ -184,12 +184,13 @@ function readControlApiToken(env: NodeJS.ProcessEnv): string | null {
 
 function controlApiTokenFiles(env: NodeJS.ProcessEnv): string[] {
   const home = env.HOME?.trim() || homedir();
+  const autodevHome = env.AUTODEV_HOME?.trim() || path.join(home, ".autodev");
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
   const claudeHome = env.CLAUDE_HOME?.trim() || path.join(home, ".claude");
   const homes =
     sessionEndProvider(env) === CLAUDE_CODE_PROVIDER
-      ? [claudeHome, codexHome]
-      : [codexHome, claudeHome];
+      ? [autodevHome, claudeHome, codexHome]
+      : [autodevHome, codexHome, claudeHome];
   return homes.flatMap((directory) =>
     CONTROL_TOKEN_ENV_FILES.map((filename) => path.join(directory, filename))
   );

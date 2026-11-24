@@ -550,6 +550,7 @@ test("validates routing config and requires default model for providers", () => 
       "docs-researcher": { tier: "default" },
       "browser-tester": { tier: "default" },
       explorer: { tier: "default" },
+      "github-worker": { tier: "default" },
       worker: { tier: "default" },
       validator: { tier: "default" },
       smart: { tier: "smart" },

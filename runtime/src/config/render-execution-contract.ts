@@ -22,7 +22,9 @@ const MCP_ORDER: Record<string, number> = {
   openaiDeveloperDocs: 5,
   context7: 6,
   googleDeveloperKnowledge: 7,
-  codex_app: 8
+  codex_app: 8,
+  github: 9,
+  xacpx: 10
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so
@@ -48,9 +50,7 @@ const SKILL_ORDER: Record<string, number> = {
 const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();
 const RESEARCH_ROLES = new Set(["docs-researcher", "smart", "orchestrator"]);
-// Every delegating provider spawns through Codex's own `multi_agent_v1__*`
-// functions on the `exec` tool; there is no provider-specific spawn surface.
-const DELEGATION_MODES = new Set(["codex", "none"]);
+const DELEGATION_MODES = new Set(["codex", "xacpx", "acp", "none"]);
 
 export function validateProviderContracts(value: unknown): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

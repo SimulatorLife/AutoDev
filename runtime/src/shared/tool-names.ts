@@ -85,6 +85,9 @@ export const MCP_SERVER_CONTEXT7 = "context7" as const;
 export const MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE =
   "googleDeveloperKnowledge" as const;
 export const MCP_SERVER_PLAYTEST = "playtest" as const;
+export const MCP_SERVER_GITHUB = "github" as const;
+export const MCP_SERVER_MEMORY = "memory" as const;
+export const MCP_SERVER_XACPX = "xacpx" as const;
 /**
  * AutoDev's one file-interaction surface:
  * `@modelcontextprotocol/server-filesystem`, confined to the turn's workspace.

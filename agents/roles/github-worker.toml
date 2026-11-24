@@ -1,0 +1,86 @@
+name = "github-worker"
+description = "Autonomous GitHub worker routed exclusively to opencli web agents with built-in GitHub integration."
+nickname_candidates = ["GitHubWorker", "PrWorker", "IssueWorker"]
+
+model_provider = "local_model_router"
+model = "autodev/github-worker"
+
+developer_instructions = """
+{{AUTODEV_BASE_PROMPT}}
+
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
+
+[mcp_servers.github]
+enabled = true
+default_tools_approval_mode = "approve"
+
+[features]
+shell_tool = false
+multi_agent = false
+multi_agent_v2 = false
+hooks = false
+memories = false
+
+[tools]
+web_search = false
+
+[shell_environment_policy]
+inherit = "none"
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = false
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = false
+
+[[skills.config]]
+name = "ccc"
+enabled = false
+
+[[skills.config]]
+name = "code-simplification"
+enabled = false
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = false
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "game-playtesting"
+enabled = false
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = false
+
+[[skills.config]]
+name = "playtest-analysis"
+enabled = false
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = false
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = false
+
+[[skills.config]]
+name = "source-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "writing-agent-skills"
+enabled = false

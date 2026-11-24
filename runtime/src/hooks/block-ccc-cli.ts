@@ -6,6 +6,12 @@ import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point"
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { logPreToolUseDenial } from "./hook-log.ts";
+import {
+  extractHookContext,
+  extractHookToolCall,
+  formatPreToolUseDenyResponse,
+  parseHookPayload
+} from "./hook-payload.ts";
 
 export const REDIRECTION_MESSAGE = `Direct CLI execution of 'ccc' is blocked by policy.
 Do NOT run 'ccc' commands in bash or terminal.
@@ -228,18 +234,9 @@ type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
 
-function pickString(payload: JsonObject, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = payload[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 function extractCommandString(payload: JsonObject): string {
-  const toolName = (
-    pickString(payload, ["tool_name", "toolName", "name"]) ?? ""
-  )
+  const call = extractHookToolCall(payload);
+  const toolName = (call?.toolName ?? "")
     .toLowerCase()
     .replaceAll(/[\s-]+/g, "_");
   const commandTools = new Set([
@@ -252,13 +249,7 @@ function extractCommandString(payload: JsonObject): string {
   ]);
   if (!commandTools.has(toolName)) return "";
 
-  const rawArgs =
-    payload.arguments ??
-    payload.args ??
-    payload.input ??
-    payload.params ??
-    payload.tool_input ??
-    payload.toolInput;
+  const rawArgs = call?.toolInput;
   if (typeof rawArgs === "string") return rawArgs;
   if (rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)) {
     const obj = rawArgs as JsonObject;
@@ -274,22 +265,11 @@ function extractCommandString(payload: JsonObject): string {
   return "";
 }
 
-function parsePayload(rawInput: string): JsonObject | null {
-  try {
-    const parsed: unknown = JSON.parse(rawInput);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return null;
-    return parsed as JsonObject;
-  } catch {
-    return null;
-  }
-}
-
 export function evaluatePreToolUse(rawInput: string): {
   blocked: boolean;
   reason?: string;
 } {
-  const parsed = parsePayload(rawInput);
+  const parsed = parseHookPayload(rawInput) as JsonObject | null;
   if (!parsed) return { blocked: false };
 
   const cmd = extractCommandString(parsed);
@@ -303,30 +283,25 @@ export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
   const result = evaluatePreToolUse(raw);
   if (result.blocked) {
     const reason = result.reason ?? REDIRECTION_MESSAGE;
-    const parsed = parsePayload(raw);
+    const parsed = parseHookPayload(raw) as JsonObject | null;
     if (parsed) {
       const cmd = extractCommandString(parsed);
+      const call = extractHookToolCall(parsed);
+      const context = extractHookContext(parsed);
       logPreToolUseDenial({
         hook: "block-ccc-cli",
         policy: "block-ccc-cli",
-        role: pickString(parsed, ["agent_type", "agentType"]),
-        model: pickString(parsed, ["model"]),
-        session: pickString(parsed, ["session_id", "sessionId"]),
-        turn: pickString(parsed, ["turn_id", "turnId"]),
-        tool: pickString(parsed, ["tool_name", "toolName", "name"]),
+        role: context.role,
+        model: context.model,
+        session: context.sessionId,
+        turn: context.turnId,
+        tool: call?.toolName ?? null,
         reason,
         toolInput: cmd ? { cmd } : undefined
       });
     }
     writeErrorLine(reason);
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: reason
-      }
-    };
-    process.stdout.write(`${JSON.stringify(output)}\n`);
+    process.stdout.write(`${formatPreToolUseDenyResponse(reason)}\n`);
     return 2;
   }
   return 0;

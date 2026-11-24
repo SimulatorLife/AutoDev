@@ -27,6 +27,7 @@ import {
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
 import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
+import { autodevHome as resolveAutodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -39,6 +40,7 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
+import { materializeMcodeProjection } from "./mcode-projection.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
@@ -150,6 +152,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/installed-skills.ts",
   "runtime/src/shared/mcp-headers.ts",
   "runtime/src/shared/agent-context-headers.ts",
+  "runtime/src/shared/autodev-home.ts",
   "runtime/src/shared/env.ts",
   "runtime/src/shared/execution-contract.ts",
   "runtime/src/shared/provider-http.ts",
@@ -250,6 +253,7 @@ export const RUNTIME_MODULES = [
   "agents/prompts/code-search.md",
   "agents/prompts/orchestrator.md",
   "runtime/src/hooks/hook-log.ts",
+  "runtime/src/hooks/hook-payload.ts",
   "runtime/src/hooks/hook-roots.ts",
   "runtime/src/hooks/skill-read-telemetry.ts",
   "runtime/src/hooks/session-start.ts",
@@ -292,7 +296,10 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/root-delegation.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
   "runtime/src/hooks/role-sandbox.ts",
-  "runtime/src/hooks/file-surface.ts"
+  "runtime/src/hooks/file-surface.ts",
+  "runtime/src/acp/provider-profiles.ts",
+  "runtime/src/xacpx/manager.ts",
+  "runtime/src/platform/mcode-projection.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
   path.join("run", "claude-rate-limit.json")
@@ -341,6 +348,7 @@ export const ROLES = [
   "default",
   "docs-researcher",
   "explorer",
+  "github-worker",
   "playtest-analyst",
   "playtester",
   "smart",
@@ -520,6 +528,7 @@ interface MaterializeOptions {
   repositoryRoot: string;
   home: string;
   codexHome: string;
+  autodevHome?: string;
   materializeOnly: boolean;
   codexMcpSource: string;
 }
@@ -2382,6 +2391,29 @@ export function materializeInstallation(options: MaterializeOptions): void {
     codexHome: options.codexHome
   });
   prepareRunLogs(options.codexHome);
+  const autodevHome =
+    options.autodevHome ?? resolveAutodevHome(process.env, options.home);
+  if (path.resolve(autodevHome) !== path.resolve(options.codexHome)) {
+    const autodevHooks = path.join(autodevHome, "hooks");
+    linkNodeModules({ ...options, codexHome: autodevHome });
+    materializeRuntimeTree(
+      options.repositoryRoot,
+      autodevHome,
+      source,
+      (filePath) => runtimeTarget(filePath, autodevHome, autodevHooks)
+    );
+    materializeScripts(autodevHooks, source);
+    materializeRuntimeFile(
+      source("config/execution-contract.json"),
+      path.join(autodevHome, "config", "execution-contract.json"),
+      0o644
+    );
+    materializeMcodeProjection({
+      repositoryRoot: options.repositoryRoot,
+      mcodeHome: path.join(autodevHome, "providers", "mcode")
+    });
+    prepareRunLogs(autodevHome);
+  }
 }
 function exists(filePath: string): boolean {
   try {

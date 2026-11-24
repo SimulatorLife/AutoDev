@@ -22,7 +22,9 @@ test("TOML serialization is parseable and ends with one newline", () => {
   const output = serializeToml(input);
   assert.equal(output.endsWith("\n"), true);
   assert.equal(output.endsWith("\n\n"), false);
-  assert.deepEqual(parse(output), input);
+  // smol-toml returns null-prototype objects; structuredClone restores normal prototypes.
+  const parsed = structuredClone(parse(output));
+  assert.deepEqual(parsed, input);
 });
 
 test("composition preserves local state while AutoDev-owned keys win", () => {

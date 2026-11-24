@@ -44,12 +44,12 @@ const hookPaths: Record<(typeof targets)[number], string> = {
   "antigravity-cli": ".agents/hooks.json"
 };
 const sourceCommands = [
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts",
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts",
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts",
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts",
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
 ];
 /**
  * The root-delegation bootstrap names Codex's spawn tools and code-mode
@@ -58,7 +58,7 @@ const sourceCommands = [
  * Claude Code prompt.
  */
 const rootDelegation =
-  "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts";
+  "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts";
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -145,11 +145,11 @@ function document(target: (typeof targets)[number]): JsonObject {
   return readJson(join(outputs[target], hookPaths[target]));
 }
 
-test("Rulesync hook source is the canonical four-section command subset", () => {
+test("Rulesync hook source is the canonical three-section command subset", () => {
   const source = readJson(hookSourcePath);
   assert.deepEqual(
     Object.keys(source).sort(),
-    ["claudecode", "codexcli", "copilot", "hooks"].sort()
+    ["codexcli", "copilot", "hooks"].sort()
   );
   assert.deepEqual(Object.keys(asObject(source.hooks)).sort(), [
     "preToolUse",
@@ -166,10 +166,6 @@ test("Rulesync hook source is the canonical four-section command subset", () => 
       [rootDelegation],
       target
     );
-  assert.equal(
-    "beforeSubmitPrompt" in asObject(asObject(source.claudecode).hooks),
-    false
-  );
   assert.doesNotMatch(
     readFileSync(hookSourcePath, "utf8"),
     /prevent_idle_sleep/
@@ -224,10 +220,10 @@ test("target projections preserve their documented command losses", () => {
     codexcli: new Set(),
     claudecode: new Set(),
     copilot: new Set([
-      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
+      "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts"
     ]),
     "antigravity-cli": new Set([
-      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"
+      "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts"
     ])
   };
   assert.equal(projected.codexcli.has(rootDelegation), true);
@@ -254,17 +250,11 @@ test("target projections preserve their documented command losses", () => {
   const expectedNativeEvents: Record<(typeof targets)[number], Set<string>> = {
     codexcli: new Set([
       "PreToolUse",
-      "SessionEnd",
       "SessionStart",
       "SubagentStart",
       "UserPromptSubmit"
     ]),
-    claudecode: new Set([
-      "PreToolUse",
-      "SessionEnd",
-      "SessionStart",
-      "SubagentStart"
-    ]),
+    claudecode: new Set(["PreToolUse", "SessionStart", "SubagentStart"]),
     copilot: new Set(["subagentStart", "userPromptSubmitted", "preToolUse"]),
     "antigravity-cli": new Set(["SessionStart", "PreToolUse"])
   };
@@ -327,46 +317,25 @@ test("install projects Codex hooks once, at user level only", () => {
   }
 });
 
-test("Codex and Claude get native memory capture without adding a Copilot hook", () => {
+test("Codex and Claude retain expected native hook projections without deprecated memory capture", () => {
   const source = hooksAt(readJson(hookSourcePath).hooks);
   const codex = hooksAt(document("codexcli").hooks);
   assert.deepEqual(
     Object.keys(codex).sort(),
-    [
-      "PreToolUse",
-      "SessionEnd",
-      "SessionStart",
-      "SubagentStart",
-      "UserPromptSubmit"
-    ].sort()
+    ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].sort()
   );
   assert.deepEqual(
     groupedCommands(codex).filter(
       (command) => !sourceCommands.includes(command)
     ),
-    [
-      rootDelegation,
-      "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts"
-    ]
+    [rootDelegation]
   );
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
     Object.keys(claude).sort(),
-    ["PreToolUse", "SessionEnd", "SessionStart", "SubagentStart"].sort()
+    ["PreToolUse", "SessionStart", "SubagentStart"].sort()
   );
-  const claudeMemoryCapture =
-    "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code ~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts";
-  assert.deepEqual(groupedCommands(claude), [
-    ...sourceCommands,
-    claudeMemoryCapture
-  ]);
-  const sessionEndHook = claude.SessionEnd?.[0]?.hooks;
-  assert.ok(Array.isArray(sessionEndHook));
-  assert.deepEqual(asObject(sessionEndHook[0]), {
-    type: "command",
-    command: claudeMemoryCapture,
-    timeout: 60
-  });
+  assert.deepEqual(groupedCommands(claude), sourceCommands);
   const targetPromptHooks = Array.isArray(codex.UserPromptSubmit?.[0]?.hooks)
     ? (codex.UserPromptSubmit[0].hooks as unknown[])
     : [];
@@ -387,39 +356,43 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "userPromptSubmitted"
   ]);
   assert.deepEqual(commands(copilot), [
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
   ]);
   assert.deepEqual(
     copilotHooks.subagentStart?.map((hook) => hook.command),
-    ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"]
+    [
+      "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts"
+    ]
   );
   assert.deepEqual(
     copilotHooks.userPromptSubmitted?.map((hook) => hook.command),
-    ["~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"]
+    [
+      "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
+    ]
   );
   assert.deepEqual(
     copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
     [
       [
-        "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
-        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts"
+        "(?i)^(apply[_ -]?patch|view[_ -]?image|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
+        "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts"
       ],
       [
-        "(?i)exec[_ -]?command|bash",
-        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts"
+        "(?i)exec[_ -]?command|run[_ -]?command|bash",
+        "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts"
       ],
       [
-        "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+        "(?i)read[_ -]?file|view[_ -]?file|read[_ -]?text[_ -]?file|read[_ -]?multiple[_ -]?files|read|exec[_ -]?command|run[_ -]?command|bash|call[_ -]?mcp[_ -]?tool",
+        "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts"
       ],
       [
-        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
-        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
+        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command|call[_ -]?mcp[_ -]?tool|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
+        "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
       ]
     ]
   );
@@ -429,16 +402,16 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     "PreToolUse"
   ]);
   assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), [
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
-    "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
+    "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
   ]);
   assert.deepEqual(asObject(antigravity.rulesync).SessionStart, [
     {
       type: "command",
       command:
-        "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
+        "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts"
     }
   ]);
   assert.deepEqual(
@@ -451,27 +424,27 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
     }),
     [
       [
-        "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
+        "(?i)^(apply[_ -]?patch|view[_ -]?image|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
         [
-          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts"
+          "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts"
         ]
       ],
       [
-        "(?i)exec[_ -]?command|bash",
+        "(?i)exec[_ -]?command|run[_ -]?command|bash",
         [
-          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts"
+          "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts"
         ]
       ],
       [
-        "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
+        "(?i)read[_ -]?file|view[_ -]?file|read[_ -]?text[_ -]?file|read[_ -]?multiple[_ -]?files|read|exec[_ -]?command|run[_ -]?command|bash|call[_ -]?mcp[_ -]?tool",
         [
-          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts"
+          "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts"
         ]
       ],
       [
-        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
+        "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command|call[_ -]?mcp[_ -]?tool|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
         [
-          "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts"
+          "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts"
         ]
       ]
     ]

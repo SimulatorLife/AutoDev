@@ -13,10 +13,24 @@ fi
 script_path="$1"
 shift
 
+autodev_home="${AUTODEV_HOME:-$HOME/.autodev}"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 case "$script_path" in
+  \~/.autodev/*)
+    rel_path="${script_path#\~/.autodev/}"
+    if [ -e "$autodev_home/$rel_path" ] || [ ! -e "$codex_home/$rel_path" ]; then
+      script_path="$autodev_home/$rel_path"
+    else
+      script_path="$codex_home/$rel_path"
+    fi
+    ;;
   \~/.codex/*)
-    script_path="$codex_home/${script_path#\~/.codex/}"
+    rel_path="${script_path#\~/.codex/}"
+    if [ -e "$codex_home/$rel_path" ] || [ ! -e "$autodev_home/$rel_path" ]; then
+      script_path="$codex_home/$rel_path"
+    else
+      script_path="$autodev_home/$rel_path"
+    fi
     ;;
   \~/*)
     script_path="$HOME/${script_path#\~/}"

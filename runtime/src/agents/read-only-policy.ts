@@ -37,6 +37,18 @@ export interface ReadOnlyDecision {
 const ALLOWED: ReadOnlyDecision = { allowed: true, reason: null };
 
 /**
+ * Mutating filesystem MCP tools that remain blocked in read-only roles even
+ * when a provider launches a shared global `filesystem` MCP server without
+ * per-role `AUTODEV_MCP_READ_ONLY=1` isolation.
+ */
+const READ_ONLY_FILESYSTEM_MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "mcp__filesystem__write_file",
+  "mcp__filesystem__edit_file",
+  "mcp__filesystem__create_directory",
+  "mcp__filesystem__move_file"
+]);
+
+/**
  * The tools that write.
  *
  * A patch tool is the one the model reaches for to change a file, and the
@@ -1670,10 +1682,15 @@ export function evaluateReadOnlyToolCall(input: {
   readonly toolInput: unknown;
 }): ReadOnlyDecision {
   const toolName = normalizeToolName(input.toolName);
-  // An MCP server's tools are the role's own contract: the execution contract
-  // says which servers a role may reach, and the server says what its tools
-  // do. The policy governs Codex's own tools, where the tool is the model's
-  // own hand on the workspace.
+  if (READ_ONLY_FILESYSTEM_MCP_WRITE_TOOLS.has(toolName)) {
+    return {
+      allowed: false,
+      reason:
+        "This role runs in a read-only sandbox and may not change files through the filesystem MCP server. Report what you found instead of editing."
+    };
+  }
+  // Other MCP server tools are governed by the role's execution contract and
+  // the server's own capabilities.
   if (toolName.startsWith("mcp__")) return ALLOWED;
   if (WRITE_TOOL_NAMES.has(toolName)) {
     return {

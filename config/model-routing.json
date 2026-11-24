@@ -32,6 +32,9 @@
       ],
       ["codex"]
     ],
+    "github-worker": [
+      ["opencli-chatgpt", "opencli-gemini"]
+    ],
     "orchestrator": [
       ["codex"],
       ["claude", "antigravity-claude-gpt"],
@@ -205,6 +208,9 @@
     },
     "explorer": {
       "tier": "default"
+    },
+    "github-worker": {
+      "tier": "github-worker"
     },
     "worker": {
       "tier": "default"

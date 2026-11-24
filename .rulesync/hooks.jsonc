@@ -4,39 +4,39 @@
       {
         "type": "command",
         "matcher": ".*",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/session-start.ts"
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts"
       }
     ],
     "subagentStart": [
       {
         "type": "command",
         "matcher": ".*",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/subagent-start.ts"
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts"
       }
     ],
     "preToolUse": [
       {
         "type": "command",
-        "matcher": "(?i)^(apply[_ -]?patch|view[_ -]?image)$",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/file-surface.ts",
+        "matcher": "(?i)^(apply[_ -]?patch|view[_ -]?image|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/file-surface.ts",
         "statusMessage": "Routing file work to the filesystem server"
       },
       {
         "type": "command",
-        "matcher": "(?i)exec[_ -]?command|bash",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/block-ccc-cli.ts",
+        "matcher": "(?i)exec[_ -]?command|run[_ -]?command|bash",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/block-ccc-cli.ts",
         "statusMessage": "Enforcing command policy"
       },
       {
         "type": "command",
-        "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/skill-read-telemetry.ts",
+        "matcher": "(?i)read[_ -]?file|view[_ -]?file|read[_ -]?text[_ -]?file|read[_ -]?multiple[_ -]?files|read|exec[_ -]?command|run[_ -]?command|bash|call[_ -]?mcp[_ -]?tool",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/skill-read-telemetry.ts",
         "statusMessage": "Recording skill-read telemetry"
       },
       {
         "type": "command",
-        "matcher": "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command)$",
-        "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/role-sandbox.ts",
+        "matcher": "(?i)^(apply[_ -]?patch|exec[_ -]?command|execute[_ -]?command|unified[_ -]?exec|write[_ -]?stdin|shell|bash|sh|zsh|run[_ -]?command|call[_ -]?mcp[_ -]?tool|write[_ -]?to[_ -]?file|replace[_ -]?file[_ -]?content|multi[_ -]?replace[_ -]?file[_ -]?content)$",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/role-sandbox.ts",
         "statusMessage": "Enforcing the role sandbox"
       }
     ]
@@ -46,14 +46,8 @@
       "beforeSubmitPrompt": [
         {
           "type": "command",
-          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts",
+          "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts",
           "statusMessage": "Applying root delegation policy"
-        }
-      ],
-      "sessionEnd": [
-        {
-          "type": "command",
-          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts"
         }
       ]
     }
@@ -63,18 +57,7 @@
       "beforeSubmitPrompt": [
         {
           "type": "command",
-          "command": "~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/root-delegation.ts"
-        }
-      ]
-    }
-  },
-  "claudecode": {
-    "hooks": {
-      "SessionEnd": [
-        {
-          "type": "command",
-          "command": "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code ~/.codex/hooks/run-autodev-hook.sh ~/.codex/src/hooks/memory-session-end.ts",
-          "timeout": 60
+          "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/root-delegation.ts"
         }
       ]
     }

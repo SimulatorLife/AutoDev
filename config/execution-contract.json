@@ -153,6 +153,14 @@
         ]
       }
     },
+    "github-worker": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "github"
+      ],
+      "skills": []
+    },
     "orchestrator": {
       "kind": "orchestrator",
       "readOnly": false,
@@ -480,6 +488,12 @@
       "spawnTools": [],
       "permissionMode": "upstream",
       "delegation": "codex"
+    },
+    "mcode": {
+      "spawnTools": [],
+      "permissionMode": "configured",
+      "delegation": "xacpx",
+      "roleMcpInjection": true
     },
     "opencli-chatgpt": {
       "spawnTools": [],

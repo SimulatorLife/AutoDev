@@ -9,7 +9,8 @@ import {
   type ProviderAgentLimits,
   type ProviderRole,
   type ProviderRoleAssignment,
-  type RoutingPolicyState} from "@simulatorlife/autodev-core";
+  type RoutingPolicyState
+} from "@simulatorlife/autodev-core";
 import {
   providerInjectsRoleMcp,
   roleScopedMcp
@@ -31,6 +32,7 @@ export const ROLE_NAMES = [
   "docs-researcher",
   "browser-tester",
   "explorer",
+  "github-worker",
   "worker",
   "validator",
   "smart",

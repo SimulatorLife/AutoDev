@@ -1,6 +1,14 @@
-# Replace custom subagent spawning with xacpx MCP
+# Codex-agnostic ACP orchestration (`@ganglion/xacpx` + `acpx` + RuleSync)
 
-> **Proposal — not implemented.** [AutoDev target state](autodev-console-target-state.md#cross-provider-agent-delegation-contract) remains authoritative; follow its [ACP equivalence gate](autodev-console-target-state.md#agent-execution-transport-contract-acp-mcp-and-responses) before cutover.
+> **Phase 1 foundation implemented; Phase 2 cutover gated.** `@ganglion/xacpx` (`0.24.10`), `acpx` (`0.22.0`), `@agentclientprotocol/sdk` (`2.9.1`), and `@modelcontextprotocol/server-github` are pinned in the workspace, alongside provider isolation profiles, `$AUTODEV_HOME`, `mcode` projection, provider-neutral hook normalization, `XacpxSessionManager`, and the `github-worker` role. [AutoDev target state](autodev-console-target-state.md#cross-provider-agent-delegation-contract) remains authoritative until Phase 2 cutover passes live acceptance.
+
+## Phase 1 Foundation (Implemented)
+
+- **Packages:** `@ganglion/xacpx`, `acpx`, and `@agentclientprotocol/sdk` installed in `runtime/package.json`; `@modelcontextprotocol/server-github` installed in root `devDependencies`; `github` and `xacpx` wired into `runtime/src/mcp/launcher.ts` and `.rulesync/mcp.jsonc`.
+- **Provider-Agnostic Runtime Home:** `runtime/src/shared/autodev-home.ts` defines `$AUTODEV_HOME` (`~/.autodev`) with Phase 1 state-home fallback so AutoDev runtime assets stay decoupled from provider homes (`~/.claude`, `~/.gemini`, `~/.copilot`, `~/.codex`, `~/.mcode`).
+- **ACP Isolation & Session Pinning:** `runtime/src/acp/provider-profiles.ts` and `runtime/src/xacpx/manager.ts` configure native-tool/prompt/skill/MCP suppression for `claude`, `antigravity`, `copilot`, `mcode`, and `codex` ACP processes, enforce strict per-session provider pinning (relying on each autonomous CLI's native compaction rather than cross-provider mid-session hopping), and keep `github-worker` routed exclusively to `opencli-chatgpt` / `opencli-gemini`.
+- **Provider-Neutral Hooks & `mcode` Projection:** `runtime/src/hooks/hook-payload.ts` normalizes Antigravity `toolCall` + `call_mcp_tool` wrappers and Copilot/Claude/Codex payloads across `file-surface`, `block-ccc-cli`, `role-sandbox`, and `skill-read-telemetry`; `runtime/src/platform/mcode-projection.ts` renders/checks `AGENTS.md`, `mcp.json`, `hooks.json`, and `permissions.json` for `mcode`.
+- **Custom Memory Deprecation:** Deprecated custom memory capture is removed from `.rulesync/hooks.jsonc` (`memory-session-end.ts` unhooked); hosted Mem0 setup remains postponed for future work.
 
 ## Findings
 

@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./acp/provider-profiles": "./src/acp/provider-profiles.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/orchestrator-policy": "./src/agents/orchestrator-policy.ts",
     "./agents/read-only-policy": "./src/agents/read-only-policy.ts",
@@ -24,6 +25,7 @@
     "./cli/control-api-preflight": "./src/cli/control-api-preflight.ts",
     "./hooks": "./src/hooks/index.ts",
     "./hooks/hook-log": "./src/hooks/hook-log.ts",
+    "./hooks/hook-payload": "./src/hooks/hook-payload.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/codex-tools-shim": "./src/mcp/codex-tools-shim.ts",
     "./mcp/filesystem-server": "./src/mcp/filesystem-server.ts",
@@ -49,6 +51,7 @@
     "./platform/install-command": "./src/platform/install-command.ts",
     "./platform/install-materializer": "./src/platform/install-materializer.ts",
     "./platform/install-state": "./src/platform/install-state.ts",
+    "./platform/mcode-projection": "./src/platform/mcode-projection.ts",
     "./platform/launchagent": "./src/platform/macos/launchagent.ts",
     "./platform/launchd": "./src/platform/macos/launchd.ts",
     "./platform/minimax-ensure": "./src/platform/minimax-ensure.ts",
@@ -95,6 +98,7 @@
     "./router/tool-call-ownership": "./src/router/tool-call-ownership/index.ts",
     "./router/usage": "./src/router/usage.ts",
     "./shared/agent-context-headers": "./src/shared/agent-context-headers.ts",
+    "./shared/autodev-home": "./src/shared/autodev-home.ts",
     "./shared/bundled-plugins": "./src/shared/bundled-plugins.ts",
     "./shared/codex-transcript": "./src/shared/codex-transcript.ts",
     "./shared/compaction": "./src/shared/compaction.ts",
@@ -124,7 +128,8 @@
     "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts",
     "./telemetry/provider-phases": "./src/telemetry/provider-phases.ts",
     "./telemetry/tracer-provider": "./src/telemetry/tracer-provider.ts",
-    "./shared/skill-reads": "./src/shared/skill-reads.ts"
+    "./shared/skill-reads": "./src/shared/skill-reads.ts",
+    "./xacpx/manager": "./src/xacpx/manager.ts"
   },
   "scripts": {
     "autodev": "node src/cli/autodev.ts",
@@ -136,6 +141,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.9.1",
+    "@ganglion/xacpx": "0.24.10",
     "@jackwener/opencli": "2.0.3",
     "@letta-ai/trajectory": "^0.4.4",
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -150,6 +157,7 @@
     "@opentelemetry/semantic-conventions": "^1.45.0",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
+    "acpx": "0.22.0",
     "cockatiel": "4.0.0",
     "execa": "10.2.1",
     "playwright-core": "1.65.1",

@@ -1,10 +1,15 @@
-import { homedir } from "node:os";
 import path from "node:path";
 
+import {
+  autodevHome,
+  autodevStateHome
+} from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+export { autodevHome, autodevStateHome };
+
 export function codexHome(): string {
-  return process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
+  return autodevStateHome();
 }
 
 export function repositoryRoot(): string {
