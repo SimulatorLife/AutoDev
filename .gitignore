@@ -39,6 +39,15 @@ tmp/
 /.claude/settings.json
 /.github/hooks/
 /.agents/hooks.json
+# Rulesync's generated-output exclusions live in `.git/info/exclude` rather
+# than here, because Antigravity does not load skills from a gitignored
+# `.agents/skills/`. That block also lists the rule projections, but
+# `AGENTS.md` and `CLAUDE.md` are tracked repository content here, so they are
+# re-included: Git reads `.gitignore` before the exclude file, and a rule that
+# ignores a tracked file still hides it from every tool that walks the tree
+# with Git's ignore rules applied.
+!/AGENTS.md
+!/CLAUDE.md
 .eslintcache
 *.tmp.cjs
 *.bak

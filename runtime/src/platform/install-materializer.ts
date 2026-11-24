@@ -58,8 +58,8 @@ import {
   readRepoInstallCache,
   readRulesyncPackageVersion,
   resolveCommandOnPath,
-  type RulesyncGenerateOptions,
   runRulesyncGenerate,
+  runRulesyncGitignore,
   runRulesyncInstallFrozen,
   runtimeTarget,
   skillLinkMatches,
@@ -77,7 +77,14 @@ import {
 import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
-const FEATURE_COLLATOR = new Intl.Collator();
+
+/**
+ * The install cache key of the repository generation.
+ *
+ * The repository runs the whole Rulesync configuration, so one fingerprint
+ * covers the run; there is no per-feature selection to key it by.
+ */
+const REPOSITORY_GENERATE_CACHE_KEY = "repository";
 
 export const RUNTIME_MODULES = [
   "runtime/src/router/quota-poll.ts",
@@ -517,16 +524,16 @@ function providerCliInstalled(command: string): boolean {
 }
 
 /**
- * Regenerate and verify the canonical RuleSync skill projections without
- * running unrelated feature generators. A successful generation alone is not
- * enough to report convergence: the pinned CLI's `--check` must also confirm
- * that every configured target matches the canonical `.rulesync/skills`
- * source.
+ * Regenerate and verify the canonical RuleSync skill projections. A successful
+ * generation alone is not enough to report convergence: the pinned CLI's
+ * `--check` must also confirm that every configured target matches the
+ * canonical `.rulesync/skills` source.
  */
 export function materializeRuleSyncSkillProjections(
   repositoryRoot: string
 ): void {
-  generateRepositoryRulesync(repositoryRoot, { features: ["skills"] });
+  generateRepositoryRulesync(repositoryRoot);
+  generateRepositoryRulesync(repositoryRoot, { check: true });
 }
 
 const PER_REPO_MODE_PATTERN = /mode:\s*per_repo/u;
@@ -545,48 +552,6 @@ function extractIgnoreDirs(line: string): string[] {
     val = val.slice(1, -1);
   }
   return val ? val.split(",") : [];
-}
-
-/**
- * Whether a path is a directory.
- *
- * A repository's `.git` may be a file (a worktree's link) or absent, and both
- * mean the same thing here: there is no `info/exclude` to write, so the
- * exclusion is materialized through `git rev-parse` instead.
- */
-function isDirectory(target: string): boolean {
-  try {
-    return lstatSync(target).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function ensureExclude(options: MaterializeOptions): void {
-  const dotGitPath = path.join(options.repositoryRoot, ".git");
-  const exclude = isDirectory(dotGitPath)
-    ? path.join(dotGitPath, "info", "exclude")
-    : execFileSync(
-        "git",
-        ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-        { cwd: options.repositoryRoot, encoding: "utf8" }
-      ).trim();
-  mkdirSync(path.dirname(exclude), { recursive: true });
-  const entries = [
-    "/.agents/skills/",
-    "/.claude/settings.json",
-    "/.github/hooks/",
-    "/.agents/hooks.json"
-  ];
-  const existing = exists(exclude) ? readFileSync(exclude, "utf8") : "";
-  const missing = entries.filter(
-    (entry) => !existing.split(LINE_SPLIT_PATTERN).includes(entry)
-  );
-  if (missing.length > 0)
-    writeFileSync(
-      exclude,
-      `${existing}${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${missing.join("\n")}\n`
-    );
 }
 
 const REPOMIX_CONFIG_CANDIDATES = [
@@ -1567,103 +1532,27 @@ function computeRepositoryRulesyncFingerprint(repositoryRoot: string): string {
 }
 
 /**
- * The repository's Rulesync targets, each with the features it owns.
+ * The repository's Rulesync generation.
  *
- * The per-target map is the only shape that can give a shared output tree a
- * single owner. `.agents/skills/` is read by Codex CLI and Antigravity CLI
- * alike, so a second writer would have to produce byte-identical files, and
- * a skill whose frontmatter one client reads and the other ignores (such as
- * `user-invocable`) makes that impossible. Naming the owner per target keeps
- * one writer per tree.
- */
-interface RulesyncProjectConfig {
-  readonly targets: Readonly<Record<string, readonly string[]>>;
-}
-
-/**
- * Read the repository's Rulesync configuration.
+ * The per-target map in `rulesync.jsonc` is the only shape that can give a
+ * shared output tree a single owner. `.agents/skills/` is read by Codex CLI
+ * and Antigravity CLI alike, so a second writer would have to produce
+ * byte-identical files, and a skill whose frontmatter one client reads and the
+ * other ignores (such as `user-invocable`) makes that impossible. Naming the
+ * owner per target keeps one writer per tree.
  *
- * A configuration that does not name the features per target is rejected
- * rather than reinterpreted: RuleSync accepts a flat target list, and
- * reading that as a per-target map would silently generate nothing.
+ * RuleSync reads that map itself. A run that names its targets or its
+ * features replaces the map with a flat selection, and a flat selection cannot
+ * express "this target owns that feature", so the repository runs the whole
+ * configuration and lets RuleSync resolve the owners.
  */
-function readRulesyncProjectConfig(configPath: string): RulesyncProjectConfig {
-  const parsed = JSON.parse(readFileSync(configPath, "utf8")) as {
-    targets?: unknown;
-  };
-  const targets = parsed.targets;
-  if (
-    targets === null ||
-    typeof targets !== "object" ||
-    Array.isArray(targets)
-  ) {
-    throw new Error(
-      `invalid-rulesync-config ${configPath}; "targets" must map every target to the features it owns.`
-    );
-  }
-  const owned: Record<string, readonly string[]> = {};
-  for (const [target, features] of Object.entries(targets)) {
-    if (
-      !Array.isArray(features) ||
-      features.some((feature) => typeof feature !== "string")
-    ) {
-      throw new Error(
-        `invalid-rulesync-config ${configPath}; the features of target "${target}" must be a list of feature names.`
-      );
-    }
-    owned[target] = features;
-  }
-  return { targets: owned };
-}
-
-/**
- * Every feature any configured target owns, so a caller that asks for "the"
- * features gets them all.
- */
-function configuredFeatures(
-  targets: Readonly<Record<string, readonly string[]>>
-): string[] {
-  return [...new Set(Object.values(targets).flat())].sort((left, right) =>
-    FEATURE_COLLATOR.compare(left, right)
-  );
-}
-
-/**
- * The targets that own a feature.
- *
- * A run that names its targets and features replaces the configuration's
- * per-target map with a flat selection, so the owners are named here instead
- * of letting a second target write a tree the first one owns.
- */
-function targetsOwning(
-  targets: Readonly<Record<string, readonly string[]>>,
-  feature: string
-): string[] {
-  return Object.entries(targets)
-    .filter(([, features]) => features.includes(feature))
-    .map(([target]) => target);
-}
-
 export function generateRepositoryRulesync(
   repositoryRoot: string,
   options: {
-    readonly features?: readonly string[];
     readonly check?: boolean;
   } = {}
 ): void {
   const configPath = path.join(repositoryRoot, "rulesync.jsonc");
-  const config = readRulesyncProjectConfig(configPath);
-  const configFeatures = configuredFeatures(config.targets);
-  const features = options.features ?? configFeatures;
-  const requestedSet = new Set(features);
-  const featuresKey = [...requestedSet].sort().join(",");
-  const configFeaturesSet = new Set(configFeatures);
-  const allConfigFeaturesKey = [...configFeaturesSet].sort().join(",");
-  const isAllConfigFeatures =
-    featuresKey === allConfigFeaturesKey && requestedSet.size > 0;
-  const coveredByConfigAll = [...requestedSet].every((feature) =>
-    configFeaturesSet.has(feature)
-  );
   const forceRulesync = process.env.AUTODEV_FORCE_RULESYNC === "1";
   if (!forceRulesync) {
     const cache = readRepoInstallCache(repositoryRoot);
@@ -1671,47 +1560,27 @@ export function generateRepositoryRulesync(
     if (generateCache) {
       const preFingerprint =
         computeRepositoryRulesyncFingerprint(repositoryRoot);
-      if (
-        generateCache[featuresKey] === preFingerprint ||
-        (coveredByConfigAll && generateCache["*"] === preFingerprint)
-      ) {
+      if (generateCache[REPOSITORY_GENERATE_CACHE_KEY] === preFingerprint) {
         return;
       }
     }
   }
-  if (options.check !== true && features.includes("skills")) {
+  if (options.check !== true) {
+    // The frozen sources are the input of the skills the configuration
+    // declares, so they have to be materialized before the generation that
+    // projects them.
     runRulesyncInstallFrozen(repositoryRoot);
   }
-  const base: RulesyncGenerateOptions = {
+  runRulesyncGenerate(repositoryRoot, {
     configPath,
     check: options.check === true,
     silent: true
-  };
-  if (options.features === undefined) {
-    // The whole configuration, with its per-target map intact: naming a
-    // feature or a target here would replace that map with a flat selection.
-    runRulesyncGenerate(repositoryRoot, base);
-  } else {
-    for (const feature of features) {
-      runRulesyncGenerate(repositoryRoot, {
-        ...base,
-        features: [feature],
-        targets: targetsOwning(config.targets, feature)
-      });
-    }
-  }
+  });
   const postFingerprint = computeRepositoryRulesyncFingerprint(repositoryRoot);
   const latestCache = readRepoInstallCache(repositoryRoot);
-  const nextGenerateCache: Record<string, string> = {
-    ...latestCache.rulesyncGenerate,
-    [featuresKey]: postFingerprint
-  };
-  if (isAllConfigFeatures) {
-    nextGenerateCache["*"] = postFingerprint;
-  }
   writeRepoInstallCache(repositoryRoot, {
     ...latestCache,
-    rulesyncGenerate: nextGenerateCache
+    rulesyncGenerate: { [REPOSITORY_GENERATE_CACHE_KEY]: postFingerprint }
   });
 }
 
@@ -1758,9 +1627,8 @@ export function materializeCurrentHookProjections(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
 }): void {
-  generateRepositoryRulesync(options.repositoryRoot, { features: ["hooks"] });
+  generateRepositoryRulesync(options.repositoryRoot);
   generateRepositoryRulesync(options.repositoryRoot, {
-    features: ["hooks"],
     check: true
   });
   writeCodexUserHooks(options.repositoryRoot, options.codexHome);
@@ -1935,11 +1803,8 @@ export function materializeCurrentCommandProjections(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
 }): string[] {
+  generateRepositoryRulesync(options.repositoryRoot);
   generateRepositoryRulesync(options.repositoryRoot, {
-    features: ["commands"]
-  });
-  generateRepositoryRulesync(options.repositoryRoot, {
-    features: ["commands"],
     check: true
   });
   return materializeCommands(
@@ -2410,7 +2275,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
     writeLine(
       `updated Codex prompts: ${updatedPrompts.join(", ")} -- restart the Codex app to load them (it reads prompts only when its window opens)`
     );
-  ensureExclude(options);
+  runRulesyncGitignore(options.repositoryRoot);
   ensureGlobalGitExcludes(options);
   ensureGlobalRepomixConfig(options);
   ensureGlobalCodeGraphContext(options);

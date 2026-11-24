@@ -13,51 +13,92 @@ import {
 type Catalogue = Record<string, Record<string, unknown>>;
 
 const identifier = z.string().regex(/^[a-zA-Z0-9_-]+$/u);
-export const chatgptGrantsSchema = z.record(identifier, z.array(identifier).min(1));
-const stdioServerSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()),
-  cwd: z.string(),
-  toolPrefix: identifier,
-  tools: z.array(identifier).min(1)
-}).strict();
-export const supergatewayConfigSchema = z.object({
-  logLevel: z.literal("none"),
-  logFormat: z.literal("json"),
-  mcpServers: z.object({
-    autodev: z.object({
-      outputTransport: z.literal("stdio"),
-      mcpServers: z.record(identifier, stdioServerSchema)
-    }).strict()
-  }).strict()
-}).strict();
-type StdioServer = z.infer<typeof stdioServerSchema>;
-export type ChatgptSupergatewayConfig = z.infer<typeof supergatewayConfigSchema>;
+export const chatgptGrantsSchema = z.record(
+  identifier,
+  z.array(identifier).min(1)
+);
+const stdioServerSchema = z
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    cwd: z.string(),
+    toolPrefix: identifier,
+    tools: z.array(identifier).min(1)
+  })
+  .strict();
+export const DEFAULT_CHATGPT_MCP_PORT = 3312;
 
-export function qualifiedToolNames(config: ChatgptSupergatewayConfig): string[] {
+export const supergatewayConfigSchema = z
+  .object({
+    host: z.literal("127.0.0.1"),
+    port: z.number().int().min(1024).max(65535),
+    logLevel: z.literal("none"),
+    logFormat: z.literal("json"),
+    healthEndpoint: z.tuple([z.literal("/readyz")]),
+    mcpServers: z
+      .object({
+        autodev: z
+          .object({
+            path: z.literal("/"),
+            outputTransport: z.literal("streamableHttp"),
+            streamableHttpPath: z.literal("/mcp"),
+            stateful: z.literal(true),
+            sessionTimeout: z.number().int().min(1).optional(),
+            apiKeyFile: z.string().min(1),
+            mcpServers: z.record(identifier, stdioServerSchema)
+          })
+          .strict()
+      })
+      .strict()
+  })
+  .strict();
+type StdioServer = z.infer<typeof stdioServerSchema>;
+export type ChatgptSupergatewayConfig = z.infer<
+  typeof supergatewayConfigSchema
+>;
+export interface ChatgptSupergatewayHttpOptions {
+  port: number;
+  apiKeyFile: string;
+  sessionTimeout?: number;
+}
+
+export function qualifiedToolNames(
+  config: ChatgptSupergatewayConfig
+): string[] {
   return Object.values(config.mcpServers.autodev.mcpServers)
     .flatMap(({ toolPrefix, tools }) => tools.map((tool) => toolPrefix + tool))
     .sort();
 }
 
 /**
- * AutoDev owns grants and workspace scope, not MCP protocol mechanics.
- * Supergateway owns discovery, namespacing, dispatch and process lifecycle.
+ * AutoDev owns grants, workspace scope, loopback binding and local auth.
+ * Supergateway owns Streamable HTTP sessions, discovery, namespacing, dispatch and process lifecycle.
  */
 export function renderChatgptSupergatewayConfig(
   catalogue: Catalogue,
   grants: unknown,
   workspace: string,
   reviewedGrants: unknown,
-  filter = { command: process.execPath, script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url)) },
+  http: ChatgptSupergatewayHttpOptions,
+  filter = {
+    command: process.execPath,
+    script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url))
+  },
   confinedBackend?: (server: string) => { command: string; args: string[] }
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
+  if (!Number.isInteger(http.port) || http.port < 1024 || http.port > 65535)
+    throw new Error(
+      "ChatGPT Supergateway port must be an integer from 1024 to 65535"
+    );
+  if (!path.isAbsolute(http.apiKeyFile))
+    throw new Error("ChatGPT Supergateway API key file must be absolute");
   const reviewed = chatgptGrantsSchema.safeParse(reviewedGrants);
   if (!reviewed.success) throw new Error("Invalid reviewed ChatGPT MCP policy");
   const desired = chatgptGrantsSchema.safeParse(grants);
-  if (!desired.success) throw new Error("Explicit tool grants required; wildcards are not allowed");
+  if (!desired.success)
+    throw new Error("Explicit tool grants required; wildcards are not allowed");
   const approved = reviewed.data;
   const entries: Array<[string, StdioServer]> = [];
   const prefixes = new Set<string>();
@@ -66,8 +107,13 @@ export function renderChatgptSupergatewayConfig(
     if (!/^[a-zA-Z0-9_-]+$/u.test(name) || !Object.hasOwn(catalogue, name))
       throw new Error(`Unknown MCP declaration: ${name}`);
     const reviewed = Object.hasOwn(approved, name) ? approved[name] : undefined;
-    if (!Array.isArray(reviewed) || tools.some((tool) => !reviewed.includes(tool)))
-      throw new Error(`MCP grant exceeds the reviewed external policy: ${name}`);
+    if (
+      !Array.isArray(reviewed) ||
+      tools.some((tool) => !reviewed.includes(tool))
+    )
+      throw new Error(
+        `MCP grant exceeds the reviewed external policy: ${name}`
+      );
     const descriptor = catalogue[name]!;
     // The external gateway initially supports local, credential-free stdio
     // descriptors only. Do not silently translate remote/authenticated MCPs.
@@ -79,7 +125,9 @@ export function renderChatgptSupergatewayConfig(
       descriptor.http_headers !== undefined ||
       descriptor.env !== undefined
     )
-      throw new Error(`Unsupported external MCP transport or credentials: ${name}`);
+      throw new Error(
+        `Unsupported external MCP transport or credentials: ${name}`
+      );
     const args = descriptor.args ?? [];
     if (
       !Array.isArray(args) ||
@@ -102,14 +150,24 @@ export function renderChatgptSupergatewayConfig(
       qualified.add(fullName);
     }
 
-    const backend = confinedBackend?.(name) ?? { command: descriptor.command, args };
+    const backend = confinedBackend?.(name) ?? {
+      command: descriptor.command,
+      args
+    };
     entries.push([
       name,
       {
         // Supergateway interpolates ${VAR} in config strings. Preserve the
         // canonical shell argument verbatim using its literal-dollar escape.
         command: escapeInterpolation(filter.command),
-        args: [filter.script, backend.command, JSON.stringify(backend.args), JSON.stringify([...new Set(tools)]), "external", name].map(escapeInterpolation),
+        args: [
+          filter.script,
+          backend.command,
+          JSON.stringify(backend.args),
+          JSON.stringify([...new Set(tools)]),
+          "external",
+          name
+        ].map(escapeInterpolation),
         cwd: escapeInterpolation(workspace),
         toolPrefix,
         tools: [...new Set<string>(tools)]
@@ -118,17 +176,32 @@ export function renderChatgptSupergatewayConfig(
   }
   if (!entries.length) throw new Error("No MCP tools granted to ChatGPT");
 
-  // A combined stdio entry deliberately creates no HTTP/SSE listener.
-  return JSON.stringify(supergatewayConfigSchema.parse({
-    logLevel: "none",
-    logFormat: "json",
-    mcpServers: {
-      autodev: {
-        outputTransport: "stdio",
-        mcpServers: Object.fromEntries(entries)
-      }
-    }
-  }), null, 2) + "\n";
+  return (
+    JSON.stringify(
+      supergatewayConfigSchema.parse({
+        host: "127.0.0.1",
+        port: http.port,
+        logLevel: "none",
+        logFormat: "json",
+        healthEndpoint: ["/readyz"],
+        mcpServers: {
+          autodev: {
+            path: "/",
+            outputTransport: "streamableHttp",
+            streamableHttpPath: "/mcp",
+            stateful: true,
+            ...(http.sessionTimeout !== undefined
+              ? { sessionTimeout: http.sessionTimeout }
+              : {}),
+            apiKeyFile: escapeInterpolation(http.apiKeyFile),
+            mcpServers: Object.fromEntries(entries)
+          }
+        }
+      }),
+      null,
+      2
+    ) + "\n"
+  );
 }
 
 function escapeInterpolation(value: string): string {

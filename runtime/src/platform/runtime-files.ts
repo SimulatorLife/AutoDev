@@ -347,6 +347,37 @@ function computeRulesyncInstallFingerprint(repositoryRoot: string): string {
   );
 }
 
+/**
+ * Write the repository's generated-output exclusions with stock Rulesync.
+ *
+ * `rulesync gitignore` reads the repository's `rulesync.jsonc` and derives the
+ * paths the configured targets own. The repository routes those entries to
+ * `.git/info/exclude` with `"gitignoreDestination": "gitexclude"`, which keeps
+ * them out of the tracked `.gitignore` and out of the reach of the tools that
+ * refuse to read a gitignored `.agents/skills/` -- Antigravity among them.
+ *
+ * The command reads the configuration from the working directory and resolves
+ * the exclude file through Git, so it has to run from the repository root.
+ */
+export function runRulesyncGitignore(repositoryRoot: string): void {
+  const normalizedRoot = path.resolve(repositoryRoot);
+  const rulesyncBin = path.join(
+    normalizedRoot,
+    "node_modules",
+    ".bin",
+    "rulesync"
+  );
+  if (!existsSync(rulesyncBin)) {
+    throw new Error(
+      `missing-rulesync ${rulesyncBin}; run pnpm install --frozen-lockfile`
+    );
+  }
+  execFileSync(rulesyncBin, ["gitignore", "--silent"], {
+    cwd: normalizedRoot,
+    stdio: "pipe"
+  });
+}
+
 export function runRulesyncInstallFrozen(repositoryRoot: string): void {
   const normalizedRoot = path.resolve(repositoryRoot);
   // A repository with no lockfile has no declarative sources to install.

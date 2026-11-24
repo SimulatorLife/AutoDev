@@ -413,7 +413,13 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
   assert.equal(config.features, undefined);
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
-  assert.deepEqual(config.outputRoots, ["."]);
+  assert.deepEqual(config.outputRoots, {
+    copilot: ["."],
+    claudecode: ["."],
+    codexcli: ["."],
+    "antigravity-cli": ["."],
+    agentsmd: ["."]
+  });
   const installer = readFileSync(installerPath, "utf8");
   assert.match(installer, /src\/cli\/install\.ts/);
 });

@@ -2,7 +2,7 @@
 //
 // Exercises the script against real temporary git repositories (never this
 // repository's own .git/info/exclude) to prove: idempotent reconciliation,
-// detection of the Rulesync/.agents/skills signal, the machine-local
+// the machine-local
 // fallback path when no global excludes file is effective, avoidance of
 // duplicate entries already covered by a tracked .gitignore or an effective
 // global excludes file, and a clear failure outside a git repository. The
@@ -85,7 +85,7 @@ function withoutEffectiveGlobalExcludes(repo: string): NodeJS.ProcessEnv {
   return { ...process.env, HOME: fakeHome, XDG_CONFIG_HOME: fakeHome };
 }
 
-test("adds the Rulesync /.agents/skills/ entry when the repo generates it, and is idempotent", () => {
+test("leaves the Rulesync exclusion to `rulesync gitignore`, and is idempotent", () => {
   const repo = makeRepo("autodev-bootstrap-rulesync-");
   try {
     mkdirSync(join(repo, ".rulesync", "skills"), { recursive: true });
@@ -94,7 +94,11 @@ test("adds the Rulesync /.agents/skills/ entry when the repo generates it, and i
 
     const first = runScript(repo, { args: [repo], env });
     assert.equal(first.status, 0, first.stderr);
-    assert.match(readExclude(repo), /^\/\.agents\/skills\/$/m);
+    // `rulesync gitignore` owns the exclusion of the generated `.agents/skills/`
+    // tree: it writes it to `.git/info/exclude`, because Antigravity refuses to
+    // load skills from a gitignored `.agents/skills/`. This script must not
+    // write a second, differently spelled copy of the same rule.
+    assert.doesNotMatch(readExclude(repo), /\.agents\/skills/);
 
     const before = readExclude(repo);
     const second = runScript(repo, { args: [repo], env });
@@ -104,18 +108,6 @@ test("adds the Rulesync /.agents/skills/ entry when the repo generates it, and i
 
     const check = runScript(repo, { args: ["--check", repo], env });
     assert.equal(check.status, 0, "clean repo must report no pending changes");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("does not add the Rulesync entry for a repo that does not generate .agents/skills", () => {
-  const repo = makeRepo("autodev-bootstrap-no-rulesync-");
-  try {
-    const env = withEffectiveGlobalExcludes(repo);
-    const result = runScript(repo, { args: [repo], env });
-    assert.equal(result.status, 0, result.stderr);
-    assert.doesNotMatch(readExclude(repo), /\.agents\/skills/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -150,15 +142,14 @@ test("skips the machine-local fallback once an effective global excludes file ex
 test("does not duplicate an entry the tracked .gitignore already declares", () => {
   const repo = makeRepo("autodev-bootstrap-gitignore-covered-");
   try {
-    mkdirSync(join(repo, ".rulesync", "skills"), { recursive: true });
-    mkdirSync(join(repo, ".agents"), { recursive: true });
-    writeFileSync(join(repo, ".gitignore"), "/.agents/skills/\n");
+    writeFileSync(join(repo, ".cgcignore"), "*.log\n");
+    writeFileSync(join(repo, ".gitignore"), ".cgcignore\n");
     const env = withEffectiveGlobalExcludes(repo);
 
     const result = runScript(repo, { args: [repo], env });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /already up to date/);
-    assert.doesNotMatch(readExclude(repo), /agents\/skills/);
+    assert.doesNotMatch(readExclude(repo), /cgcignore/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

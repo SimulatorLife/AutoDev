@@ -1261,7 +1261,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
           paths.home,
           paths.codexHome
         ],
-        { stdio: "ignore", timeout: 15_000 }
+        { stdio: "ignore", timeout: 30_000 }
       );
       check("configured ChatGPT tunnel readiness", true, failures);
     } catch {

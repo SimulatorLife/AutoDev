@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { readRuntimeSecret } from "../shared/runtime-secrets.ts";
-import { configureExternalMcpTelemetry, recordToolCallSpan, shutdownTelemetry, type ToolCallOutcome } from "./mcp-telemetry.ts";
+import type { ToolCallOutcome } from "./mcp-telemetry.ts";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
@@ -36,12 +36,28 @@ function errorResponse(id: JsonRpcId, message: string): JsonRecord {
 function runToolFilter(args: string[]): void {
   const [command, argsJson, toolsJson, profile, server] = args;
   const external = profile === "external";
-  if (profile !== undefined && (!external || !server || !/^[a-zA-Z0-9_-]+$/u.test(server)))
+  if (
+    profile !== undefined &&
+    (!external || !server || !/^[a-zA-Z0-9_-]+$/u.test(server))
+  )
     throw new Error("Invalid MCP filter profile");
-  if (external) {
-    const token = readRuntimeSecret("OPENLIT_OTLP_API_KEY");
-    configureExternalMcpTelemetry(server!, "http://127.0.0.1:4318/v1/traces", token ? { Authorization: "Bearer " + token } : {});
-  }
+  let telemetryModulePromise: Promise<
+    typeof import("./mcp-telemetry.ts")
+  > | null = null;
+  const loadTelemetry = () => {
+    if (!telemetryModulePromise) {
+      telemetryModulePromise = import("./mcp-telemetry.ts").then((mod) => {
+        const token = readRuntimeSecret("OPENLIT_OTLP_API_KEY");
+        mod.configureExternalMcpTelemetry(
+          server!,
+          "http://127.0.0.1:4318/v1/traces",
+          token ? { Authorization: "Bearer " + token } : {}
+        );
+        return mod;
+      });
+    }
+    return telemetryModulePromise;
+  };
   if (!command?.trim()) throw new Error("a backend MCP command is required");
   const backendArgs: unknown = JSON.parse(argsJson ?? "null");
   const allowedTools: unknown = JSON.parse(toolsJson ?? "null");
@@ -68,12 +84,20 @@ function runToolFilter(args: string[]): void {
     observations.delete(id);
     resolve?.(outcome);
   };
-  const clientMethods = new Set(["initialize", "ping", "tools/list", "tools/call", "notifications/initialized", "notifications/cancelled"]);
+  const clientMethods = new Set([
+    "initialize",
+    "ping",
+    "tools/list",
+    "tools/call",
+    "notifications/initialized",
+    "notifications/cancelled"
+  ]);
   const backend = spawn(command, backendArgs, {
     cwd: process.cwd(),
-    env: external && command === "/usr/bin/sandbox-exec"
-      ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
-      : process.env,
+    env:
+      external && command === "/usr/bin/sandbox-exec"
+        ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
+        : process.env,
     stdio: ["pipe", "pipe", "inherit"]
   });
   const clearDeadline = (id: JsonRpcId): void => {
@@ -85,7 +109,9 @@ function runToolFilter(args: string[]): void {
     const timer = setTimeout(() => {
       clearDeadline(id);
       finish(id, { status: "error", errorType: "timeout" });
-      process.stdout.write(jsonLine(errorResponse(id, "External MCP request timed out")));
+      process.stdout.write(
+        jsonLine(errorResponse(id, "External MCP request timed out"))
+      );
       backend.kill("SIGKILL");
     }, milliseconds);
     timer.unref();
@@ -104,19 +130,39 @@ function runToolFilter(args: string[]): void {
       typeof message.id === "string" || typeof message.id === "number"
         ? message.id
         : null;
-    if (external && (typeof message.method !== "string" || !clientMethods.has(message.method))) {
-      if (id !== null && typeof message.method === "string") process.stdout.write(jsonLine(errorResponse(id, "MCP capability is not externally approved")));
+    if (
+      external &&
+      (typeof message.method !== "string" || !clientMethods.has(message.method))
+    ) {
+      if (id !== null && typeof message.method === "string")
+        process.stdout.write(
+          jsonLine(
+            errorResponse(id, "MCP capability is not externally approved")
+          )
+        );
       return;
     }
     if (external && id !== null && deadlines.has(id)) {
-      process.stdout.write(jsonLine(errorResponse(id, "Duplicate outstanding MCP request")));
+      process.stdout.write(
+        jsonLine(errorResponse(id, "Duplicate outstanding MCP request"))
+      );
       return;
     }
     if (external && message.method === "initialize" && id !== null) {
       pendingInitialize.add(id);
-      if (isRecord(message.params)) message.params = { ...message.params, capabilities: {} };
+      if (isRecord(message.params))
+        message.params = { ...message.params, capabilities: {} };
     }
-    if (external && message.method === "notifications/cancelled" && isRecord(message.params)) {
+    if (external && message.method === "notifications/initialized") {
+      setImmediate(() => {
+        void loadTelemetry().catch(() => {});
+      });
+    }
+    if (
+      external &&
+      message.method === "notifications/cancelled" &&
+      isRecord(message.params)
+    ) {
       const cancelled = message.params.requestId;
       if (typeof cancelled === "number" || typeof cancelled === "string") {
         if (deadlines.has(cancelled)) {
@@ -149,16 +195,32 @@ function runToolFilter(args: string[]): void {
       }
       if (external) {
         if (observations.has(id)) {
-          process.stdout.write(jsonLine(errorResponse(id, "Duplicate outstanding MCP request")));
+          process.stdout.write(
+            jsonLine(errorResponse(id, "Duplicate outstanding MCP request"))
+          );
           return;
         }
-        const outcome = new Promise<ToolCallOutcome>((resolve) => observations.set(id, resolve));
-        const span = recordToolCallSpan(toolName, () => outcome, params?._meta);
+        const outcome = new Promise<ToolCallOutcome>((resolve) =>
+          observations.set(id, resolve)
+        );
+        const span = loadTelemetry().then(
+          (telemetry) =>
+            telemetry.recordToolCallSpan(
+              toolName,
+              () => outcome,
+              params?._meta
+            ),
+          () => outcome
+        );
         spans.add(span);
-        void span.then(() => spans.delete(span), () => spans.delete(span));
+        void span.then(
+          () => spans.delete(span),
+          () => spans.delete(span)
+        );
       }
     }
-    if (external && id !== null) armDeadline(id, message.method === "tools/call" ? 60_000 : 15_000);
+    if (external && id !== null)
+      armDeadline(id, message.method === "tools/call" ? 60_000 : 15_000);
     backend.stdin?.write(external ? jsonLine(message) : `${line}\n`);
   });
 
@@ -167,10 +229,25 @@ function runToolFilter(args: string[]): void {
     const result = message && isRecord(message.result) ? message.result : null;
     if (external) {
       if (!message) return;
-      const id = typeof message.id === "string" || typeof message.id === "number" ? message.id : null;
+      const id =
+        typeof message.id === "string" || typeof message.id === "number"
+          ? message.id
+          : null;
       if (typeof message.method === "string") {
-        if (id !== null) backend.stdin?.write(jsonLine(errorResponse(id, "MCP client capability is not externally approved")));
-        else if (message.method === "notifications/tools/list_changed" || message.method === "notifications/progress") process.stdout.write(jsonLine(message));
+        if (id !== null)
+          backend.stdin?.write(
+            jsonLine(
+              errorResponse(
+                id,
+                "MCP client capability is not externally approved"
+              )
+            )
+          );
+        else if (
+          message.method === "notifications/tools/list_changed" ||
+          message.method === "notifications/progress"
+        )
+          process.stdout.write(jsonLine(message));
         return;
       }
       if (id !== null) {
@@ -181,10 +258,23 @@ function runToolFilter(args: string[]): void {
           pendingInitialize.delete(id);
           return;
         }
-        finish(id, message.error || result?.isError === true ? { status: "error", errorType: "tool_error" } : { status: "ok" });
+        finish(
+          id,
+          message.error || result?.isError === true
+            ? { status: "error", errorType: "tool_error" }
+            : { status: "ok" }
+        );
         if (pendingInitialize.delete(id) && result) {
-          const capabilities = isRecord(result.capabilities) ? result.capabilities : {};
-          message.result = { protocolVersion: result.protocolVersion, serverInfo: result.serverInfo, capabilities: { tools: isRecord(capabilities.tools) ? capabilities.tools : {} } };
+          const capabilities = isRecord(result.capabilities)
+            ? result.capabilities
+            : {};
+          message.result = {
+            protocolVersion: result.protocolVersion,
+            serverInfo: result.serverInfo,
+            capabilities: {
+              tools: isRecord(capabilities.tools) ? capabilities.tools : {}
+            }
+          };
           process.stdout.write(jsonLine(message));
           return;
         }
@@ -199,12 +289,26 @@ function runToolFilter(args: string[]): void {
     ) {
       message.result = {
         ...result,
-        tools: result.tools.filter(
-          (tool) =>
-            isRecord(tool) &&
-            typeof tool.name === "string" &&
-            allowed.has(tool.name)
-        ).map((tool) => external ? { ...tool, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } } : tool)
+        tools: result.tools
+          .filter(
+            (tool) =>
+              isRecord(tool) &&
+              typeof tool.name === "string" &&
+              allowed.has(tool.name)
+          )
+          .map((tool) =>
+            external
+              ? {
+                  ...tool,
+                  annotations: {
+                    readOnlyHint: true,
+                    destructiveHint: false,
+                    idempotentHint: true,
+                    openWorldHint: false
+                  }
+                }
+              : tool
+          )
       };
       process.stdout.write(jsonLine(message));
       return;
@@ -217,21 +321,34 @@ function runToolFilter(args: string[]): void {
       backend.kill("SIGTERM");
       if (external) {
         const timer = setTimeout(() => {
-          if (backend.exitCode === null && backend.signalCode === null) backend.kill("SIGKILL");
+          if (backend.exitCode === null && backend.signalCode === null)
+            backend.kill("SIGKILL");
         }, 5000);
         timer.unref();
       }
     }
   });
   backend.on("error", (error) => {
-    process.stderr.write(external ? "external MCP backend failed to start\n" : `role MCP backend failed to start: ${error.message}\n`);
+    process.stderr.write(
+      external
+        ? "external MCP backend failed to start\n"
+        : `role MCP backend failed to start: ${error.message}\n`
+    );
     process.exitCode = 1;
   });
   backend.on("close", (code) => {
     if (external) {
       for (const id of deadlines.keys()) clearDeadline(id);
-      for (const id of observations.keys()) finish(id, { status: "error", errorType: "backend_closed" });
-      void Promise.allSettled([...spans]).then(() => shutdownTelemetry());
+      for (const id of observations.keys())
+        finish(id, { status: "error", errorType: "backend_closed" });
+      if (telemetryModulePromise) {
+        void Promise.allSettled([...spans]).then(() =>
+          telemetryModulePromise!.then(
+            (telemetry) => telemetry.shutdownTelemetry(),
+            () => {}
+          )
+        );
+      }
     }
     process.exitCode = code ?? 1;
     clientLines.close();

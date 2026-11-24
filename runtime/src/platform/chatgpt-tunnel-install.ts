@@ -1,5 +1,11 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import {
+  type ChildProcess,
+  execFileSync,
+  spawn,
+  spawnSync
+} from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import type { ChatgptTunnelStatus } from "@simulatorlife/autodev-core";
 import {
   chmodSync,
@@ -11,7 +17,9 @@ import {
   readFileSync,
   rmSync
 } from "node:fs";
+import { createServer } from "node:net";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { z } from "zod";
@@ -39,7 +47,9 @@ import { externalFilesystemBackend } from "../mcp/chatgpt-filesystem-sandbox.ts"
 import {
   chatgptGrantsSchema,
   chatgptSupergatewayEnvironment,
+  DEFAULT_CHATGPT_MCP_PORT,
   renderChatgptSupergatewayConfig,
+  supergatewayConfigSchema,
   validateChatgptWorkspace
 } from "../config/render-chatgpt-supergateway.ts";
 
@@ -50,7 +60,9 @@ import { resolveCommandOnPath } from "./runtime-files.ts";
 
 const label = "com.codex.autodev-chatgpt-tunnel";
 const defaultPort = 3311;
+const defaultMcpPort = DEFAULT_CHATGPT_MCP_PORT;
 export const CHATGPT_TUNNEL_API_KEY_ENV = "AUTODEV_CHATGPT_TUNNEL_API_KEY";
+export const CHATGPT_MCP_PORT_ENV = "AUTODEV_CHATGPT_MCP_PORT";
 const CHATGPT_TUNNEL_API_KEY_REF = `env:${CHATGPT_TUNNEL_API_KEY_ENV}`;
 export type ChatgptTunnelMode = "reconcile" | "enable" | "disable";
 const installedStateSchema = z
@@ -60,6 +72,7 @@ const installedStateSchema = z
     grants: chatgptGrantsSchema,
     generation: z.string().regex(/^generation-[a-zA-Z0-9_-]+$/u),
     port: z.number().int().min(1024).max(65535),
+    mcpPort: z.number().int().min(1024).max(65535).optional(),
     organizationId: z.string().min(1),
     workspaceId: z.string().min(1),
     tunnelId: z.string().regex(/^tunnel_[a-zA-Z0-9_-]+$/u),
@@ -259,25 +272,64 @@ export function validateRuntimeKey(key: string, administrator?: string): void {
     );
 }
 
-export function shellWord(value: string): string {
-  return "'" + value.replaceAll("'", "'\\''") + "'";
+function localAuthPaths(directory: string): {
+  keyFile: string;
+  headerFile: string;
+} {
+  return {
+    keyFile: path.join(directory, "supergateway.key"),
+    headerFile: path.join(directory, "supergateway-auth.header")
+  };
 }
 
-export function gatewayStdioCommand(
-  executable: string,
-  config: string,
-  env: Record<string, string>
-): string {
-  return [
-    "/usr/bin/env",
-    "-i",
-    ...Object.entries(env).map(([name, value]) => name + "=" + value),
-    executable,
-    "--config",
-    config
-  ]
-    .map(shellWord)
-    .join(" ");
+function writeLocalAuthFiles(
+  directory: string,
+  token: string
+): {
+  keyFile: string;
+  headerFile: string;
+} {
+  const files = localAuthPaths(directory);
+  privateWrite(files.keyFile, token + "\n");
+  privateWrite(files.headerFile, `Bearer ${token}\n`);
+  return files;
+}
+
+export function tunnelClientMcpEnv(
+  authHeaderFile: string
+): Record<string, string> {
+  return {
+    MCP_OAUTH_DISCOVERY: "disabled",
+    MCP_EXTRA_HEADERS: `Authorization: file:${authHeaderFile}`,
+    MCP_DISCOVERY_EXTRA_HEADERS: `Authorization: file:${authHeaderFile}`
+  };
+}
+
+async function allocateLoopbackPort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Failed to allocate loopback port");
+  }
+  const { port } = address;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+async function stopChildProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  const exited = await Promise.race([
+    once(child, "exit").then(() => true),
+    delay(5000).then(() => false)
+  ]);
+  if (!exited && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await once(child, "exit").catch(() => {});
+  }
 }
 
 /** Resolve the workspace-managed dependency; package.json owns its version.
@@ -475,6 +527,27 @@ function healthPort(value: string | number | undefined): number {
   return port;
 }
 
+function resolveMcpPort(
+  value: string | number | undefined,
+  tunnelPort: number
+): number {
+  const raw = value === undefined ? "" : String(value).trim();
+  const port = raw
+    ? Number(raw)
+    : tunnelPort === defaultMcpPort
+      ? defaultMcpPort + 1
+      : defaultMcpPort;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    throw new Error(
+      "AUTODEV_CHATGPT_MCP_PORT must be an integer from 1024 to 65535"
+    );
+  if (port === tunnelPort)
+    throw new Error(
+      "AUTODEV_CHATGPT_MCP_PORT must differ from AUTODEV_CHATGPT_TUNNEL_PORT"
+    );
+  return port;
+}
+
 function reviewedPolicy(paths: Paths) {
   return chatgptGrantsSchema.parse(
     JSON.parse(
@@ -521,16 +594,21 @@ export async function ready(
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 3000
       }).trim() || null
-  }
+  },
+  mcpPort?: number
 ): Promise<boolean> {
   try {
     const pid = /^\s*pid = (\d+)$/mu.exec(launchd.print(label))?.[1];
     if (!pid) return false;
-    const listeners = deps.listeners(port);
-    if (listeners.length !== 1 || !listeners[0]) return false;
-    const owned =
-      listeners[0] === pid || deps.parentPid?.(listeners[0]) === pid;
-    return owned && (await deps.probe(port));
+    const ports = mcpPort === undefined ? [port] : [port, mcpPort];
+    for (const targetPort of ports) {
+      const listeners = deps.listeners(targetPort);
+      if (listeners.length !== 1 || !listeners[0]) return false;
+      const owned =
+        listeners[0] === pid || deps.parentPid?.(listeners[0]) === pid;
+      if (!owned || !(await deps.probe(targetPort))) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -556,6 +634,8 @@ export async function checkChatgptTunnel(
         ) &&
         legacyRuntimeKeyPaths(directory, state.prior).length === 0
       );
+    if (state.mcpPort === undefined || state.mcpPort === state.port)
+      return false;
     const generation = generationPath(directory, state.generation);
     const plist = path.join(
       paths.home,
@@ -567,6 +647,24 @@ export async function checkChatgptTunnel(
       path.join(generation, "autodev.yaml"),
       "utf8"
     );
+    const { keyFile, headerFile } = localAuthPaths(generation);
+    const localKey = privateRead(keyFile);
+    const localHeader = privateRead(headerFile);
+    const supergatewayRaw = privateRead(
+      path.join(generation, "supergateway.json")
+    );
+    if (!supergatewayRaw || !localKey || localHeader !== `Bearer ${localKey}`)
+      return false;
+    const supergatewayConfig = supergatewayConfigSchema.parse(
+      JSON.parse(supergatewayRaw)
+    );
+    if (
+      supergatewayConfig.host !== "127.0.0.1" ||
+      supergatewayConfig.port !== state.mcpPort ||
+      supergatewayConfig.mcpServers.autodev.apiKeyFile.replaceAll("$$", "$") !==
+        keyFile
+    )
+      return false;
     const key =
       process.env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
       deps.readKey(process.env);
@@ -574,14 +672,15 @@ export async function checkChatgptTunnel(
       key &&
       legacyRuntimeKeyPaths(directory, state).length === 0 &&
       profileText.includes(CHATGPT_TUNNEL_API_KEY_REF) &&
-      !profileText.includes("file:") &&
-      privateRead(path.join(generation, "supergateway.json")) &&
+      profileText.includes(`http://127.0.0.1:${state.mcpPort}/mcp`) &&
+      !profileText.includes("commands:") &&
+      !/api_key:\s*["']?file:/u.test(profileText) &&
       launchAgentMatches(
         templatePath(paths),
         plist,
         tunnelLaunchValues(paths, state, deps.launchValues(paths))
       ) &&
-      (await deps.ready(launchd, healthPort(state.port)))
+      (await deps.ready(launchd, healthPort(state.port), state.mcpPort))
     );
   } catch {
     return false;
@@ -627,9 +726,16 @@ export interface ChatgptTunnelDependencies {
   launchValues(paths: Paths): LaunchAgentValues;
   metadata: typeof tunnelMetadata;
   create: typeof createTunnel;
-  ready(job: TunnelLaunchd, port: number): Promise<boolean>;
+  ready(job: TunnelLaunchd, port: number, mcpPort?: number): Promise<boolean>;
   portFree(port: number): boolean;
   wait: typeof waitForProbe;
+  withCandidateGateway?<T>(
+    executable: string,
+    config: string,
+    env: NodeJS.ProcessEnv,
+    workspace: string,
+    fn: (mcpUrl: string) => Promise<T> | T
+  ): Promise<T>;
   run(
     command: string,
     args: string[],
@@ -651,7 +757,7 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
     launchValues: resolveLaunchAgentValues,
     metadata: tunnelMetadata,
     create: createTunnel,
-    ready,
+    ready: (job, port, mcpPort) => ready(job, port, undefined, mcpPort),
     portFree: (port) => {
       const result = spawnSync(
         "/usr/sbin/lsof",
@@ -661,6 +767,44 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
       return result.status === 1 && !result.stderr?.trim();
     },
     wait: waitForProbe,
+    withCandidateGateway: async (executable, config, env, workspace, fn) => {
+      const doctorPort = await allocateLoopbackPort();
+      const child = spawn(
+        executable,
+        [
+          "--config",
+          config,
+          "--port",
+          String(doctorPort),
+          "--exitWithProcess",
+          String(process.pid)
+        ],
+        {
+          cwd: workspace,
+          env,
+          stdio: ["pipe", "ignore", "pipe"]
+        }
+      );
+      try {
+        const probe = httpHealthProbe(`http://127.0.0.1:${doctorPort}/readyz`);
+        const readyOk = await waitForProbe(
+          {
+            sleep,
+            probe: async () => {
+              if (child.exitCode !== null || child.signalCode !== null)
+                throw new Error("Candidate Supergateway exited before ready");
+              return probe();
+            }
+          },
+          30_000
+        );
+        if (!readyOk)
+          throw new Error("Candidate Supergateway did not become ready");
+        return await fn(`http://127.0.0.1:${doctorPort}/mcp`);
+      } finally {
+        await stopChildProcess(child);
+      }
+    },
     run: (command, args, options) => {
       execFileSync(command, args, {
         ...options,
@@ -798,17 +942,13 @@ async function reconcile(
         : prior.grants
   );
   const node = deps.node(paths.home);
-  const generated = renderChatgptSupergatewayConfig(
-    readBridgeMcpCatalogue(paths.codexHome),
-    grants,
-    workspace,
-    reviewed,
-    {
-      command: node,
-      script: path.join(paths.codexHome, "src/mcp/tool-filter.ts")
-    },
-    (server) => deps.backend(server, paths.repositoryRoot, workspace, node)
-  );
+  const catalogue = readBridgeMcpCatalogue(paths.codexHome);
+  const filter = {
+    command: node,
+    script: path.join(paths.codexHome, "src/mcp/tool-filter.ts")
+  };
+  const backendFor = (server: string) =>
+    deps.backend(server, paths.repositoryRoot, workspace, node);
   const org =
     env.AUTODEV_CHATGPT_ORGANIZATION_ID?.trim() || prior?.organizationId;
   const workspaceId =
@@ -830,6 +970,10 @@ async function reconcile(
   const supergateway = deps.supergateway(paths.repositoryRoot);
   const port = healthPort(
     env.AUTODEV_CHATGPT_TUNNEL_PORT?.trim() || prior?.port
+  );
+  const mcpPort = resolveMcpPort(
+    env[CHATGPT_MCP_PORT_ENV]?.trim() || prior?.mcpPort,
+    port
   );
   const servicePath = [
     path.dirname(node),
@@ -911,6 +1055,7 @@ async function reconcile(
     prior.workspace === workspace &&
     prior.policyFile === policyFile &&
     prior.port === port &&
+    prior.mcpPort === mcpPort &&
     prior.tunnelId === id &&
     prior.organizationId === org &&
     prior.workspaceId === workspaceId &&
@@ -920,10 +1065,26 @@ async function reconcile(
     prior.servicePath === servicePath
   ) {
     const active = generationPath(directory, prior.generation);
+    const activeAuth = localAuthPaths(active);
+    const activeKey = privateRead(activeAuth.keyFile);
+    const activeHeader = privateRead(activeAuth.headerFile);
+    const expectedActive = activeKey
+      ? renderChatgptSupergatewayConfig(
+          catalogue,
+          grants,
+          workspace,
+          reviewed,
+          { port: mcpPort, apiKeyFile: activeAuth.keyFile },
+          filter,
+          backendFor
+        )
+      : "";
     if (
       deps.readKey(env) === rawKey &&
+      activeKey &&
+      activeHeader === `Bearer ${activeKey}` &&
       privateRead(path.join(active, "supergateway.json")) ===
-        generated.trim() &&
+        expectedActive.trim() &&
       (await checkChatgptTunnel(paths, deps))
     ) {
       writeLine("AutoDev ChatGPT tunnel already ready: " + id);
@@ -952,6 +1113,17 @@ async function reconcile(
   let rollbackFailed = false;
   let stage = "staging";
   try {
+    const localToken = randomBytes(32).toString("hex");
+    const authFiles = writeLocalAuthFiles(generation, localToken);
+    const generated = renderChatgptSupergatewayConfig(
+      catalogue,
+      grants,
+      workspace,
+      reviewed,
+      { port: mcpPort, apiKeyFile: authFiles.keyFile },
+      filter,
+      backendFor
+    );
     privateWrite(config, generated);
     stage = "supergateway config check";
     deps.run(supergateway, ["--config", config, "--checkConfig"], {
@@ -969,18 +1141,13 @@ async function reconcile(
       ],
       { cwd: workspace, env: gatewayEnv, timeout: 60_000 }
     );
-    const gatewayCommand = gatewayStdioCommand(
-      supergateway,
-      config,
-      gatewayEnv
-    );
     stage = "tunnel-client init";
     deps.run(
       binary,
       [
         "init",
         "--sample",
-        "sample_mcp_stdio_local",
+        "sample_mcp_remote_no_auth",
         "--profile",
         "autodev",
         "--profile-dir",
@@ -989,32 +1156,51 @@ async function reconcile(
         id,
         "--control-plane-api-key-ref",
         CHATGPT_TUNNEL_API_KEY_REF,
-        "--mcp-command",
-        gatewayCommand,
+        "--mcp-server-url",
+        `http://127.0.0.1:${mcpPort}/mcp`,
         "--health-listen-addr",
         `127.0.0.1:${port}`
       ],
       { env: cleanEnv, timeout: 30_000 }
     );
     chmodSync(profile, 0o600);
-    // The prior service may own the desired port. Doctor can validate the
-    // candidate using an ephemeral health port without interrupting it.
+    // The prior service may own the desired ports. Doctor validates the
+    // candidate against an ephemeral candidate Supergateway and health port.
     stage = "tunnel-client doctor";
-    deps.run(
-      binary,
-      [
-        "doctor",
-        "--profile-file",
-        profile,
-        "--health.listen-addr",
-        "127.0.0.1:0",
-        "--explain"
-      ],
-      {
-        env: runtimeEnv,
-        timeout: 60_000
-      }
-    );
+    const runDoctor = (doctorMcpUrl: string): void => {
+      deps.run(
+        binary,
+        [
+          "doctor",
+          "--profile-file",
+          profile,
+          "--health.listen-addr",
+          "127.0.0.1:0",
+          "--mcp.server-url",
+          `url=${doctorMcpUrl},channel=main`,
+          "--mcp.oauth-discovery=disabled",
+          "--explain"
+        ],
+        {
+          env: {
+            ...runtimeEnv,
+            ...tunnelClientMcpEnv(authFiles.headerFile)
+          },
+          timeout: 60_000
+        }
+      );
+    };
+    if (deps.withCandidateGateway) {
+      await deps.withCandidateGateway(
+        supergateway,
+        config,
+        gatewayEnv,
+        workspace,
+        runDoctor
+      );
+    } else {
+      runDoctor(`http://127.0.0.1:${mcpPort}/mcp`);
+    }
 
     stage = "keychain store";
     if (!previousKey || mutation?.action === "rotate") {
@@ -1033,6 +1219,7 @@ async function reconcile(
       grants,
       generation: path.basename(generation),
       port,
+      mcpPort,
       organizationId: org,
       workspaceId,
       tunnelId: id,
@@ -1052,9 +1239,9 @@ async function reconcile(
     launchd.bootout(label);
     stopped = true;
     stage = "readiness port check";
-    if (!deps.portFree(port))
+    if (!deps.portFree(port) || !deps.portFree(mcpPort))
       throw new Error(
-        "Tunnel readiness port is already in use or could not be checked"
+        "Tunnel readiness or MCP port is already in use or could not be checked"
       );
     stage = "launchd start";
     privateWrite(stagedFile, JSON.stringify(nextState, null, 2) + "\n");
@@ -1064,7 +1251,7 @@ async function reconcile(
     stage = "tunnel readiness";
     if (
       !(await deps.wait(
-        { probe: () => deps.ready(launchd, port), sleep },
+        { probe: () => deps.ready(launchd, port, mcpPort), sleep },
         60_000
       ))
     )
@@ -1161,13 +1348,17 @@ function tunnelLaunchValues(
   };
 }
 
-/** Launch the supervised tunnel-client with the runtime credential injected from Keychain. */
+/** Launch Supergateway (loopback Streamable HTTP) and tunnel-client with Keychain credentials. */
 export async function runChatgptTunnelDaemon(
   paths: Paths,
   env: NodeJS.ProcessEnv = process.env,
   deps: {
     readKey?: (environment: NodeJS.ProcessEnv) => string | null;
     spawnProcess?: typeof spawn;
+    waitForGateway?: (
+      mcpPort: number,
+      gateway: ChildProcess
+    ) => Promise<boolean>;
   } = {}
 ): Promise<number> {
   const directory = path.join(paths.codexHome, "chatgpt-tunnel");
@@ -1184,10 +1375,25 @@ export async function runChatgptTunnelDaemon(
     );
     return 1;
   }
+  if (state.mcpPort === undefined) {
+    process.stderr.write(
+      "AutoDev ChatGPT tunnel requires Streamable HTTP migration; rerun scripts/install.sh --enable-chatgpt-tunnel\n"
+    );
+    return 1;
+  }
   const generation = generationPath(directory, state.generation);
   const profile = path.join(generation, "autodev.yaml");
-  if (!existsSync(profile)) {
-    process.stderr.write("AutoDev ChatGPT tunnel profile is missing\n");
+  const supergatewayConfig = path.join(generation, "supergateway.json");
+  const authFiles = localAuthPaths(generation);
+  if (
+    !existsSync(profile) ||
+    !existsSync(supergatewayConfig) ||
+    !privateRead(authFiles.keyFile) ||
+    !privateRead(authFiles.headerFile)
+  ) {
+    process.stderr.write(
+      "AutoDev ChatGPT tunnel configuration or local auth files are missing\n"
+    );
     return 1;
   }
   const readKey =
@@ -1202,38 +1408,131 @@ export async function runChatgptTunnelDaemon(
     return 1;
   }
   const spawnProcess = deps.spawnProcess ?? spawn;
-  const child = spawnProcess(state.binary, ["run", "--profile-file", profile], {
-    cwd: state.workspace,
-    env: {
-      HOME: paths.home,
-      PATH: state.servicePath,
-      MCP_FORWARD_TRACE_CONTEXT: "true",
-      [CHATGPT_TUNNEL_API_KEY_ENV]: runtimeKey
-    },
-    stdio: "inherit"
+  const gatewayEnv = chatgptSupergatewayEnvironment(
+    paths,
+    state.workspace,
+    state.node,
+    state.servicePath
+  );
+  const gateway = spawnProcess(
+    state.supergateway,
+    ["--config", supergatewayConfig, "--exitWithProcess", String(process.pid)],
+    {
+      cwd: state.workspace,
+      env: gatewayEnv,
+      stdio: ["pipe", "inherit", "inherit"]
+    }
+  );
+  let gatewayExited = false;
+  let gatewayStartError = false;
+  gateway.once("error", () => {
+    gatewayStartError = true;
   });
-  return await new Promise<number>((resolve) => {
-    const forward = (signal: NodeJS.Signals): void => {
-      if (child.exitCode === null && !child.killed) {
-        child.kill(signal);
-      }
+  gateway.once("exit", () => {
+    gatewayExited = true;
+  });
+
+  const waitForGateway =
+    deps.waitForGateway ??
+    (async (mcpPort: number) => {
+      const probe = httpHealthProbe(`http://127.0.0.1:${mcpPort}/readyz`);
+      return waitForProbe(
+        {
+          sleep,
+          probe: async () => {
+            if (gatewayStartError || gatewayExited) return false;
+            return probe();
+          }
+        },
+        30_000
+      );
+    });
+
+  let stopping = false;
+  const terminateBoth = async (
+    signal: NodeJS.Signals,
+    tunnel?: ChildProcess
+  ): Promise<void> => {
+    stopping = true;
+    const stopTarget = async (
+      proc: ChildProcess | undefined
+    ): Promise<void> => {
+      if (!proc || proc.exitCode !== null || proc.killed) return;
+      proc.kill(signal);
     };
-    const onSigterm = (): void => forward("SIGTERM");
-    const onSigint = (): void => forward("SIGINT");
-    process.once("SIGTERM", onSigterm);
-    process.once("SIGINT", onSigint);
-    child.once("error", () => {
-      process.removeListener("SIGTERM", onSigterm);
-      process.removeListener("SIGINT", onSigint);
-      process.stderr.write("Failed to start tunnel-client daemon\n");
-      resolve(1);
+    await stopTarget(tunnel);
+    await stopTarget(gateway);
+  };
+
+  let tunnel: ChildProcess | undefined;
+  const onSigterm = (): void => {
+    void terminateBoth("SIGTERM", tunnel);
+  };
+  const onSigint = (): void => {
+    void terminateBoth("SIGINT", tunnel);
+  };
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  const cleanupListeners = (): void => {
+    process.removeListener("SIGTERM", onSigterm);
+    process.removeListener("SIGINT", onSigint);
+  };
+
+  try {
+    const gatewayReady = await waitForGateway(state.mcpPort, gateway);
+    if (!gatewayReady || gatewayStartError || gatewayExited || stopping) {
+      process.stderr.write(
+        "Failed to start Supergateway Streamable HTTP server\n"
+      );
+      await stopChildProcess(gateway);
+      return 1;
+    }
+
+    tunnel = spawnProcess(state.binary, ["run", "--profile-file", profile], {
+      cwd: state.workspace,
+      env: {
+        HOME: paths.home,
+        PATH: state.servicePath,
+        MCP_FORWARD_TRACE_CONTEXT: "true",
+        ...tunnelClientMcpEnv(authFiles.headerFile),
+        [CHATGPT_TUNNEL_API_KEY_ENV]: runtimeKey
+      },
+      stdio: "inherit"
     });
-    child.once("exit", (code, signal) => {
-      process.removeListener("SIGTERM", onSigterm);
-      process.removeListener("SIGINT", onSigint);
-      resolve(code ?? (signal ? 1 : 0));
+
+    return await new Promise<number>((resolve) => {
+      let settled = false;
+      const settle = (
+        code: number,
+        stopSibling: ChildProcess | undefined
+      ): void => {
+        if (settled) return;
+        settled = true;
+        cleanupListeners();
+        void (
+          stopSibling ? stopChildProcess(stopSibling) : Promise.resolve()
+        ).finally(() => resolve(code));
+      };
+      gateway.once("error", () => {
+        process.stderr.write("Supergateway process failed\n");
+        settle(1, tunnel);
+      });
+      gateway.once("exit", (code) => {
+        if (!stopping)
+          process.stderr.write("Supergateway exited unexpectedly\n");
+        settle(stopping ? 0 : code && code !== 0 ? code : 1, tunnel);
+      });
+      tunnel!.once("error", () => {
+        process.stderr.write("Failed to start tunnel-client daemon\n");
+        settle(1, gateway);
+      });
+      tunnel!.once("exit", (code, signal) => {
+        settle(code ?? (signal ? 1 : 0), gateway);
+      });
     });
-  });
+  } finally {
+    cleanupListeners();
+  }
 }
 
 if (isEntryPoint(import.meta.url)) {

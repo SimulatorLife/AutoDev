@@ -578,7 +578,7 @@ test("installer delegates repository skill generation and checking to typed mate
   assert.match(installer, /src\/cli\/install\.ts/);
   assert.match(materializer, /rulesync\.jsonc/);
   assert.match(materializer, /rulesync/);
-  assert.match(materializer, /ensureExclude/);
+  assert.match(materializer, /runRulesyncGitignore/);
   assert.doesNotMatch(materializer, /renderProviderSkillViews/);
   assert.match(materializer, /OBSOLETE_CLAUDE_SKILL_VIEWS/);
   // Skills are read only from their installed link; the runtime tree carries
@@ -600,7 +600,13 @@ test("RuleSync project config and CI cover the repository projections", () => {
   const config = readJson(rulesyncConfigPath);
   assert.deepEqual(config.targets, targetFeatures);
   assert.equal(config.features, undefined);
-  assert.deepEqual(config.outputRoots, ["."]);
+  assert.deepEqual(config.outputRoots, {
+    copilot: ["."],
+    claudecode: ["."],
+    codexcli: ["."],
+    "antigravity-cli": ["."],
+    agentsmd: ["."]
+  });
   assert.equal(config.delete, true);
   assert.equal(config.global, false);
   const configuredSources = (config.sources as Array<Record<string, unknown>>)

@@ -9,9 +9,11 @@
 # 2. Avoids modifying tracked repository files by default. Never edits the
 #    tracked .gitignore.
 # 3. Uses .git/info/exclude for genuinely repository-specific exclusions
-#    (such as /.agents/skills/ when Rulesync generates it, since Antigravity
-#    refuses to read skills from a gitignored .agents/skills/), or machine-local
-#    tool-config fallbacks when no effective global excludes file is present.
+#    (such as machine-local tool-config fallbacks when no effective global
+#    excludes file is present). The exclusions Rulesync generates for its own
+#    outputs are not written here: `rulesync gitignore` owns them, and it
+#    writes them to .git/info/exclude because Antigravity refuses to read
+#    skills from a gitignored .agents/skills/.
 # 4. Inspects active CodeGraphContext (CGC) and Repomix configuration:
 #    - If CGC active mode is per-repo (e.g. local .codegraphcontext directory,
 #      CGC_MODE=per_repo, or workspace mapping), manages repo-local .cgcignore,
@@ -325,13 +327,6 @@ fi
 declare -a candidate_entries=()
 
 # Repository-specific toolchain needs:
-if [[ -d "$repo_root/.rulesync/skills" && -d "$repo_root/.agents" ]]; then
-  # Antigravity does not load skills from a gitignored .agents/skills/, so
-  # this Rulesync-generated output must live in info/exclude rather than the
-  # tracked .gitignore.
-  candidate_entries+=("/.agents/skills/")
-fi
-
 if [[ -d "$repo_root/.codegraphcontext" ]]; then
   candidate_entries+=("/.codegraphcontext/")
 fi

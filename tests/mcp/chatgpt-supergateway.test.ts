@@ -11,22 +11,31 @@ const catalogue = {
   "future-server": { command: "example", args: ["--mcp", "a b"] },
   filesystem: { command: "bash", args: ["-lc", "exec launcher filesystem"] }
 };
+const http = { port: 3312, apiKeyFile: "/var/run/autodev/supergateway.key" };
 
-test("Supergateway config is generated from the canonical catalogue, not a fixed server inventory", () => {
+test("Supergateway config is generated from the canonical catalogue with loopback stateful Streamable HTTP", () => {
   const result = JSON.parse(
     renderChatgptSupergatewayConfig(
       catalogue,
       { "future-server": ["search"], filesystem: ["read_text_file"] },
       "/project",
-      { "future-server": ["search"], filesystem: ["read_text_file"] }
+      { "future-server": ["search"], filesystem: ["read_text_file"] },
+      http
     )
   );
   assert.deepEqual(result, {
+    host: "127.0.0.1",
+    port: 3312,
     logLevel: "none",
     logFormat: "json",
+    healthEndpoint: ["/readyz"],
     mcpServers: {
       autodev: {
-        outputTransport: "stdio",
+        path: "/",
+        outputTransport: "streamableHttp",
+        streamableHttpPath: "/mcp",
+        stateful: true,
+        apiKeyFile: "/var/run/autodev/supergateway.key",
         mcpServers: {
           "future-server": {
             command: process.execPath,
@@ -72,7 +81,8 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
       catalogue,
       { "future-server": ["search"] },
       "/project",
-      { "future-server": ["search"] }
+      { "future-server": ["search"] },
+      http
     )
   );
   assert.deepEqual(Object.keys(result.mcpServers.autodev.mcpServers), [
@@ -84,7 +94,8 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
         catalogue,
         { shell: ["exec"] },
         "/project",
-        { shell: ["exec"] }
+        { shell: ["exec"] },
+        http
       ),
     /Unknown/
   );
@@ -94,7 +105,8 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
         catalogue,
         { filesystem: ["*"] },
         "/project",
-        { filesystem: ["read_text_file"] }
+        { filesystem: ["read_text_file"] },
+        http
       ),
     /wildcards/
   );
@@ -104,24 +116,26 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
         catalogue,
         { filesystem: [] },
         "/project",
-        { filesystem: ["read_text_file"] }
+        { filesystem: ["read_text_file"] },
+        http
       ),
     /Explicit/
   );
   assert.throws(
-    () => renderChatgptSupergatewayConfig(catalogue, {}, "/project", {}),
+    () => renderChatgptSupergatewayConfig(catalogue, {}, "/project", {}, http),
     /No MCP/
   );
 });
 
-test("reject incompatible transports, credentials, workspace and colliding namespaces", () => {
+test("reject incompatible transports, credentials, workspace, HTTP options and colliding namespaces", () => {
   assert.throws(
     () =>
       renderChatgptSupergatewayConfig(
         { docs: { url: "https://example.test/mcp" } },
         { docs: ["search"] },
         "/project",
-        { docs: ["search"] }
+        { docs: ["search"] },
+        http
       ),
     /Unsupported/
   );
@@ -131,7 +145,8 @@ test("reject incompatible transports, credentials, workspace and colliding names
         { docs: { command: "example", env: { SECRET: "x" } } },
         { docs: ["search"] },
         "/project",
-        { docs: ["search"] }
+        { docs: ["search"] },
+        http
       ),
     /Unsupported/
   );
@@ -141,7 +156,8 @@ test("reject incompatible transports, credentials, workspace and colliding names
         { docs: { command: "example", cwd: "/other" } },
         { docs: ["search"] },
         "/project",
-        { docs: ["search"] }
+        { docs: ["search"] },
+        http
       ),
     /cwd/
   );
@@ -151,9 +167,32 @@ test("reject incompatible transports, credentials, workspace and colliding names
         { "a-b": { command: "example" }, a_b: { command: "example" } },
         { "a-b": ["search"], a_b: ["search"] },
         "/project",
-        { "a-b": ["search"], a_b: ["search"] }
+        { "a-b": ["search"], a_b: ["search"] },
+        http
       ),
     /Colliding/
+  );
+  assert.throws(
+    () =>
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        { filesystem: ["read_text_file"] },
+        "/project",
+        { filesystem: ["read_text_file"] },
+        { port: 80, apiKeyFile: "/var/run/supergateway.key" }
+      ),
+    /port/
+  );
+  assert.throws(
+    () =>
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        { filesystem: ["read_text_file"] },
+        "/project",
+        { filesystem: ["read_text_file"] },
+        { port: 3312, apiKeyFile: "relative/supergateway.key" }
+      ),
+    /API key file/
   );
 });
 
@@ -188,7 +227,8 @@ test("local grants may narrow but not expand reviewed external permissions", () 
         catalogue,
         { "future-server": ["search"] },
         "/project",
-        reviewed
+        reviewed,
+        http
       ),
     /reviewed external policy/
   );
@@ -198,7 +238,8 @@ test("local grants may narrow but not expand reviewed external permissions", () 
         catalogue,
         { filesystem: ["write_file"] },
         "/project",
-        reviewed
+        reviewed,
+        http
       ),
     /reviewed external policy/
   );
@@ -207,12 +248,13 @@ test("local grants may narrow but not expand reviewed external permissions", () 
       catalogue,
       { filesystem: ["read_text_file"] },
       "/project",
-      reviewed
+      reviewed,
+      http
     )
   );
 });
 
-test("canonical shell expressions survive Supergateway interpolation", () => {
+test("canonical shell expressions and key paths survive Supergateway interpolation", () => {
   const result = JSON.parse(
     renderChatgptSupergatewayConfig(
       {
@@ -226,7 +268,8 @@ test("canonical shell expressions survive Supergateway interpolation", () => {
       },
       { filesystem: ["read_text_file"] },
       "/a$b",
-      { filesystem: ["read_text_file"] }
+      { filesystem: ["read_text_file"] },
+      { port: 3312, apiKeyFile: "/a$b/supergateway.key" }
     )
   );
   const entry = result.mcpServers.autodev.mcpServers.filesystem;
@@ -235,23 +278,37 @@ test("canonical shell expressions survive Supergateway interpolation", () => {
     'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
   );
   assert.equal(entry.cwd, "/a$$b");
+  assert.equal(result.mcpServers.autodev.apiKeyFile, "/a$$b/supergateway.key");
 });
 
 test("missing or malformed reviewed policy fails closed", () => {
   const grants = { filesystem: ["read_text_file"] };
   assert.throws(
     () =>
-      renderChatgptSupergatewayConfig(catalogue, grants, "/project", undefined),
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        grants,
+        "/project",
+        undefined,
+        http
+      ),
     /reviewed/
   );
   assert.throws(
     () =>
-      renderChatgptSupergatewayConfig(catalogue, grants, "/project", {
-        filesystem: ["*"]
-      }),
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        grants,
+        "/project",
+        {
+          filesystem: ["*"]
+        },
+        http
+      ),
     /reviewed/
   );
 });
+
 test("different prefixes cannot produce identical qualified names", () => {
   const grants = { a: ["b__c"], a__b: ["c"] };
   assert.throws(
@@ -260,7 +317,8 @@ test("different prefixes cannot produce identical qualified names", () => {
         { a: { command: "example" }, a__b: { command: "example" } },
         grants,
         "/project",
-        grants
+        grants,
+        http
       ),
     /Colliding MCP qualified tool name/
   );

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -19,7 +20,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
@@ -35,17 +35,17 @@ import {
 import {
   assertTunnelScope,
   chatgptTunnelStatus,
+  checkChatgptTunnel,
   createTunnel,
   dependencyEnvironment,
   ensureChatgptTunnel,
   type ChatgptTunnelDependencies,
-  gatewayStdioCommand,
   privateRead,
   privateWrite,
   ready,
   resolveSupergateway,
   runChatgptTunnelDaemon,
-  shellWord,
+  tunnelClientMcpEnv,
   tunnelClientSupported,
   tunnelMetadata,
   validateRuntimeKey
@@ -53,6 +53,67 @@ import {
 import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
+
+async function allocateLoopbackPort(): Promise<number> {
+  const server = createNetServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const { port } = address;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+async function stopProcess(proc: ChildProcess | undefined): Promise<void> {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  proc.kill("SIGTERM");
+  const exited = await Promise.race([
+    once(proc, "exit").then(() => true),
+    delay(5000).then(() => false)
+  ]);
+  if (!exited && proc.exitCode === null && proc.signalCode === null) {
+    proc.kill("SIGKILL");
+    await once(proc, "exit").catch(() => {});
+  }
+}
+
+async function startSupergatewayServer(
+  executable: string,
+  config: string,
+  cwd: string,
+  env: Record<string, string>,
+  port: number
+): Promise<ChildProcess> {
+  let logs = "";
+  const child = spawn(
+    executable,
+    ["--config", config, "--exitWithProcess", String(process.pid)],
+    { cwd, env, stdio: ["pipe", "pipe", "pipe"] }
+  );
+  child.stdout?.on("data", (chunk) => {
+    logs += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    logs += String(chunk);
+  });
+  for (let attempt = 0; attempt < 150; attempt++) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Supergateway exited early: ${logs}`);
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/readyz`, {
+        signal: AbortSignal.timeout(1000)
+      });
+      if (response.ok) return child;
+    } catch {
+      /* waiting for Supergateway */
+    }
+    await delay(200);
+  }
+  await stopProcess(child);
+  throw new Error(`Supergateway did not become ready on port ${port}: ${logs}`);
+}
 
 test("supported tunnel-client version floor", () => {
   assert.equal(tunnelClientSupported("tunnel-client version v0.0.21"), true);
@@ -73,7 +134,7 @@ test("supported tunnel-client version floor", () => {
 });
 
 test(
-  "pinned Supergateway and actual AutoDev filesystem server enforce external grants",
+  "pinned Supergateway and actual AutoDev filesystem server enforce external grants over authenticated Streamable HTTP",
   {
     skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
     timeout: 180_000
@@ -87,6 +148,10 @@ test(
       name: "autodev-supergateway-test",
       version: "1.0.0"
     });
+    const secondClient = new Client({
+      name: "autodev-supergateway-test-2",
+      version: "1.0.0"
+    });
     const env = chatgptSupergatewayEnvironment(
       {
         home: root,
@@ -97,6 +162,7 @@ test(
       process.execPath,
       process.env.PATH ?? "/usr/bin:/bin"
     );
+    let gateway: ChildProcess | undefined;
     try {
       mkdirSync(workspace);
       const inside = path.join(workspace, "inside.txt");
@@ -110,6 +176,10 @@ test(
       symlinkSync(outside, path.join(workspace, "escape.txt"));
       const executable = resolveSupergateway(repo);
       const config = path.join(root, "supergateway.json");
+      const keyFile = path.join(root, "supergateway.key");
+      const localToken = "fixture-supergateway-token";
+      privateWrite(keyFile, localToken + "\n");
+      const mcpPort = await allocateLoopbackPort();
       const catalogue = {
         filesystem: {
           command: process.execPath,
@@ -126,20 +196,45 @@ test(
           policy,
           workspace,
           policy,
+          { port: mcpPort, apiKeyFile: keyFile },
           undefined,
           (server) =>
             externalFilesystemBackend(server, repo, workspace, process.execPath)
         )
       );
-      await client.connect(
-        new StdioClientTransport({
-          command: executable,
-          args: ["--config", config],
-          cwd: workspace,
-          env,
-          stderr: "inherit"
-        })
+      gateway = await startSupergatewayServer(
+        executable,
+        config,
+        workspace,
+        env,
+        mcpPort
       );
+      const endpoint = new URL(`http://127.0.0.1:${mcpPort}/mcp`);
+      const unauth = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {}
+        })
+      });
+      assert.equal(unauth.status, 401);
+
+      const authHeaders = { Authorization: `Bearer ${localToken}` };
+      const transportA = new StreamableHTTPClientTransport(endpoint, {
+        requestInit: { headers: authHeaders }
+      });
+      const transportB = new StreamableHTTPClientTransport(endpoint, {
+        requestInit: { headers: authHeaders }
+      });
+      await client.connect(transportA);
+      await secondClient.connect(transportB);
+      assert.ok(transportA.sessionId);
+      assert.ok(transportB.sessionId);
+      assert.notEqual(transportA.sessionId, transportB.sessionId);
+
       const tools = await client.listTools();
       assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
         "filesystem__list_allowed_directories",
@@ -152,11 +247,18 @@ test(
             tool.annotations.destructiveHint === false
         )
       );
-      const read = await client.callTool({
-        name: "filesystem__read_text_file",
-        arguments: { path: inside }
-      });
+      const [read, readSecond] = await Promise.all([
+        client.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: inside }
+        }),
+        secondClient.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: inside }
+        })
+      ]);
       assert.match(JSON.stringify(read), /expected-value/);
+      assert.match(JSON.stringify(readSecond), /expected-value/);
       const readExample = await client.callTool({
         name: "filesystem__read_text_file",
         arguments: { path: exampleEnv }
@@ -185,11 +287,12 @@ test(
         if (result.isError) throw new Error("tool denied");
       });
       assert.equal(readFileSync(inside, "utf8"), "expected-value");
-      await client.close();
+      await Promise.all([client.close(), secondClient.close()]);
       // The same exact inventory check used by the installer must succeed.
       await probeSupergateway(executable, config, env);
     } finally {
-      await client.close();
+      await Promise.allSettled([client.close(), secondClient.close()]);
+      await stopProcess(gateway);
       rmSync(root, { recursive: true, force: true });
     }
   }
@@ -405,6 +508,32 @@ test("tunnel listener must belong to the actual launchd job or its spawned tunne
     }),
     false
   );
+  assert.equal(
+    await ready(
+      launchd,
+      3311,
+      {
+        listeners: (target) => (target === 3311 ? ["456"] : ["789"]),
+        probe,
+        parentPid: (pid) => (pid === "456" || pid === "789" ? "123" : null)
+      },
+      3312
+    ),
+    true
+  );
+  assert.equal(
+    await ready(
+      launchd,
+      3311,
+      {
+        listeners: (target) => (target === 3311 ? ["456"] : ["789"]),
+        probe,
+        parentPid: (pid) => (pid === "456" ? "123" : "1")
+      },
+      3312
+    ),
+    false
+  );
 });
 
 test("official CLI argv, scope and sanitized authorization failure", () => {
@@ -457,13 +586,6 @@ test("official CLI argv, scope and sanitized authorization failure", () => {
         /unauthorized/.test(error.message) &&
         !error.message.includes("private-fixture-secret")
     );
-    const value = "directory with 'quote' and $dollar";
-    const quoted = spawnSync(
-      "/bin/sh",
-      ["-c", "printf %s " + shellWord(value)],
-      { encoding: "utf8" }
-    );
-    assert.equal(quoted.stdout, value);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -480,9 +602,14 @@ const reply = (id, result) => send({id, result});
 const tool = name => ({name, inputSchema:{type:"object"}, annotations:{readOnlyHint:false,destructiveHint:true}});
 const timers = new Map();
 let changed = false;
+let initialized = false;
 lines.on("line", line => {
   const m = JSON.parse(line);
-  if (m.method === "initialize") reply(m.id, {protocolVersion:m.params.protocolVersion, capabilities:{tools:{listChanged:true},resources:{},prompts:{}},serverInfo:{name:"fixture",version:"1"}});
+  if (m.method === "initialize") {
+    if (initialized) return send({id:m.id, error:{code:-32600, message:"McpServerError: The session is already initialized"}});
+    initialized = true;
+    reply(m.id, {protocolVersion:m.params.protocolVersion, capabilities:{tools:{listChanged:true},resources:{},prompts:{}},serverInfo:{name:"fixture",version:"1"}});
+  }
   else if (m.method === "ping") reply(m.id,{});
   else if (m.method === "tools/list") {
     if (m.params?.cursor === "page2") reply(m.id,{tools:[tool("image"),tool("unapproved")]});
@@ -521,9 +648,14 @@ test(
     const marker = path.join(root, "backend-marker");
     writeFileSync(fixture, fixtureSource);
     const clients: Client[] = [];
+    let gateway: ChildProcess | undefined;
     try {
       const executable = resolveSupergateway(repo);
       const config = path.join(root, "gateway.json");
+      const keyFile = path.join(root, "supergateway.key");
+      const localToken = "fixture-combined-token";
+      privateWrite(keyFile, localToken + "\n");
+      const mcpPort = await allocateLoopbackPort();
       const grants = {
         stable: ["read", "slow", "image", "changed"],
         conditional: ["read"]
@@ -540,8 +672,23 @@ test(
       };
       writeFileSync(
         config,
-        renderChatgptSupergatewayConfig(catalogue, grants, root, grants)
+        renderChatgptSupergatewayConfig(catalogue, grants, root, grants, {
+          port: mcpPort,
+          apiKeyFile: keyFile
+        })
       );
+      gateway = await startSupergatewayServer(
+        executable,
+        config,
+        root,
+        {
+          HOME: root,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          CODEX_HOME: root
+        },
+        mcpPort
+      );
+      const endpoint = new URL(`http://127.0.0.1:${mcpPort}/mcp`);
       const connect = async () => {
         const client = new Client({
           name: "external-mcp-fixture",
@@ -549,16 +696,8 @@ test(
         });
         clients.push(client);
         await client.connect(
-          new StdioClientTransport({
-            command: executable,
-            args: ["--config", config],
-            cwd: root,
-            env: {
-              HOME: root,
-              PATH: process.env.PATH ?? "/usr/bin:/bin",
-              CODEX_HOME: root
-            },
-            stderr: "pipe"
+          new StreamableHTTPClientTransport(endpoint, {
+            requestInit: { headers: { Authorization: `Bearer ${localToken}` } }
           }),
           { timeout: 20_000 }
         );
@@ -660,6 +799,7 @@ test(
       );
     } finally {
       await Promise.allSettled(clients.map((client) => client.close()));
+      await stopProcess(gateway);
       rmSync(root, { recursive: true, force: true });
     }
   }
@@ -766,41 +906,17 @@ test("verified metadata must match the exact intended tunnel and scope", () => {
       /does not belong/
     );
 });
-test("gateway command uses argv-safe paths and replaces the parent environment", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "gateway 'space'-"));
-  try {
-    const executable = path.join(directory, "fake gateway");
-    writeFileSync(
-      executable,
-      '#!/bin/sh\nprintf "%s\\n" "$1" "$2" "$HOME" "${AUTODEV_CHATGPT_TUNNEL_API_KEY-unset}"\n',
-      { mode: 0o700 }
-    );
-    const config = path.join(directory, "config '$.json");
-    const command = gatewayStdioCommand(executable, config, {
-      HOME: directory,
-      PATH: "/usr/bin:/bin"
-    });
-    const result = spawnSync("/bin/sh", ["-c", command], {
-      env: {
-        ...process.env,
-        AUTODEV_CHATGPT_TUNNEL_API_KEY: "private-fixture"
-      },
-      encoding: "utf8"
-    });
-    assert.equal(result.status, 0);
-    assert.deepEqual(result.stdout.trimEnd().split("\n"), [
-      "--config",
-      config,
-      directory,
-      "unset"
-    ]);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+test("tunnelClientMcpEnv references private auth header file without exposing secrets", () => {
+  const headerFile = "/tmp/autodev-test/generation-1/supergateway-auth.header";
+  assert.deepEqual(tunnelClientMcpEnv(headerFile), {
+    MCP_OAUTH_DISCOVERY: "disabled",
+    MCP_EXTRA_HEADERS: `Authorization: file:${headerFile}`,
+    MCP_DISCOVERY_EXTRA_HEADERS: `Authorization: file:${headerFile}`
+  });
 });
 
 test(
-  "mocked installer lifecycle stores credential in Keychain, migrates legacy runtime.key, and supports disable and rotation",
+  "mocked installer lifecycle stores credential in Keychain, migrates legacy stdio/runtime.key, and supports disable and rotation",
   { timeout: 30_000 },
   async () => {
     const root = realpathSync(
@@ -860,9 +976,16 @@ test(
         events.push("create");
         return "tunnel_fixture";
       },
-      ready: async () => running && !failReady,
+      ready: async (_job, _port, mcpPort) => {
+        assert.equal(mcpPort, 3312);
+        return running && !failReady;
+      },
       portFree: () => true,
       wait: async ({ probe }) => probe(),
+      withCandidateGateway: async (_exec, _config, env, _cwd, fn) => {
+        assert.equal(env.AUTODEV_CHATGPT_TUNNEL_API_KEY, undefined);
+        return fn("http://127.0.0.1:49999/mcp");
+      },
       run: (_command, args, options) => {
         assert.ok(!options.env.OPENAI_ADMIN_KEY);
         events.push(args[0] ?? "command");
@@ -871,7 +994,11 @@ test(
           const generation = args[args.indexOf("--profile-dir") + 1]!;
           assert.equal(
             args[args.indexOf("--sample") + 1],
-            "sample_mcp_stdio_local"
+            "sample_mcp_remote_no_auth"
+          );
+          assert.equal(
+            args[args.indexOf("--mcp-server-url") + 1],
+            "http://127.0.0.1:3312/mcp"
           );
           assert.equal(
             args[args.indexOf("--control-plane-api-key-ref") + 1],
@@ -879,10 +1006,33 @@ test(
           );
           writeFileSync(
             path.join(generation, "autodev.yaml"),
-            "api_key: env:AUTODEV_CHATGPT_TUNNEL_API_KEY\n"
+            [
+              "control_plane:",
+              '  api_key: "env:AUTODEV_CHATGPT_TUNNEL_API_KEY"',
+              "health:",
+              '  listen_addr: "127.0.0.1:3311"',
+              '  # url_file: "/tmp/tunnel-client-health.url"',
+              "mcp:",
+              "  server_urls:",
+              "    - channel: main",
+              '      url: "http://127.0.0.1:3312/mcp"'
+            ].join("\n") + "\n"
           );
         } else if (args[0] === "doctor") {
           assert.ok(options.env.AUTODEV_CHATGPT_TUNNEL_API_KEY);
+          assert.equal(options.env.MCP_OAUTH_DISCOVERY, "disabled");
+          assert.match(
+            options.env.MCP_EXTRA_HEADERS ?? "",
+            /^Authorization: file:/
+          );
+          assert.match(
+            options.env.MCP_DISCOVERY_EXTRA_HEADERS ?? "",
+            /^Authorization: file:/
+          );
+          assert.equal(
+            args[args.indexOf("--mcp.server-url") + 1],
+            "url=http://127.0.0.1:49999/mcp,channel=main"
+          );
         }
       },
       readKey: () => keychainValue,
@@ -926,11 +1076,27 @@ test(
       await ensureChatgptTunnel(paths, "enable", env, undefined, deps);
       const first = privateRead(stateFile);
       const firstState = JSON.parse(first);
+      assert.equal(firstState.mcpPort, 3312);
       assert.equal(keychainValue, "fixture-runtime");
       assert.ok(
         !existsSync(path.join(directory, firstState.generation, "runtime.key"))
       );
       assert.ok(!existsSync(path.join(directory, "runtime.key")));
+      assert.ok(
+        privateRead(
+          path.join(directory, firstState.generation, "supergateway.key")
+        )
+      );
+      assert.match(
+        privateRead(
+          path.join(
+            directory,
+            firstState.generation,
+            "supergateway-auth.header"
+          )
+        ),
+        /^Bearer /
+      );
       assert.match(
         readFileSync(plistFile, "utf8"),
         /chatgpt-tunnel-install\.ts/
@@ -960,8 +1126,9 @@ test(
       );
       assert.equal(events.length, count);
       assert.equal(privateRead(stateFile), first);
-      // Simulate a legacy installation with plaintext runtime.key and file: profile:
-      // reconcile must migrate it to Keychain + env:AUTODEV_CHATGPT_TUNNEL_API_KEY and remove runtime.key.
+      // Simulate a legacy stdio installation (no mcpPort, stdio supergateway.json,
+      // plaintext runtime.key, and commands:/file: profile): reconcile must migrate
+      // cleanly to Streamable HTTP + Keychain + env:AUTODEV_CHATGPT_TUNNEL_API_KEY.
       const legacyKeyFile = path.join(
         directory,
         firstState.generation,
@@ -970,8 +1137,15 @@ test(
       privateWrite(legacyKeyFile, "fixture-runtime\n");
       writeFileSync(
         path.join(directory, firstState.generation, "autodev.yaml"),
-        `api_key: file:${legacyKeyFile}\n`
+        `api_key: file:${legacyKeyFile}\nmcp:\n  commands:\n    - channel: main\n      command: supergateway\n`
       );
+      const { mcpPort: _legacyMcpPort, ...legacyStateWithoutMcpPort } =
+        firstState;
+      privateWrite(
+        stateFile,
+        JSON.stringify(legacyStateWithoutMcpPort, null, 2) + "\n"
+      );
+      assert.equal(await checkChatgptTunnel(paths, deps), false);
       keychainValue = null;
       await ensureChatgptTunnel(
         paths,
@@ -983,6 +1157,8 @@ test(
       assert.equal(keychainValue, "fixture-runtime");
       assert.ok(!existsSync(legacyKeyFile));
       const migratedState = JSON.parse(privateRead(stateFile));
+      assert.equal(migratedState.mcpPort, 3312);
+      assert.equal(await checkChatgptTunnel(paths, deps), true);
       assert.match(
         readFileSync(
           path.join(directory, migratedState.generation, "autodev.yaml"),
@@ -990,26 +1166,48 @@ test(
         ),
         /env:AUTODEV_CHATGPT_TUNNEL_API_KEY/
       );
-      // Daemon runner starts a staged candidate before gateway.json commits, and
-      // injects Keychain secret (honoring explicit env override) without plaintext files.
+      // Daemon runner starts Supergateway (clean env) then tunnel-client (Keychain + auth header),
+      // honoring staged candidates and explicit env overrides without plaintext tunnel files.
       assert.ok(!existsSync(path.join(directory, "staged.json")));
-      const seenDaemonEnv: NodeJS.ProcessEnv[] = [];
-      const seenDaemonArgs: string[][] = [];
+      const seenSpawns: Array<{
+        cmd: string;
+        args: string[];
+        env: NodeJS.ProcessEnv;
+      }> = [];
       const fakeSpawn = ((
-        _cmd: string,
+        cmd: string,
         args: string[],
         opts: { env: NodeJS.ProcessEnv }
       ) => {
-        seenDaemonEnv.push(opts.env);
-        seenDaemonArgs.push(args);
-        return {
-          exitCode: null,
+        seenSpawns.push({ cmd, args, env: opts.env });
+        const listeners = new Map<
+          string,
+          Array<(code: number | null) => void>
+        >();
+        const proc = {
+          exitCode: null as number | null,
           killed: false,
-          kill: () => true,
+          kill: () => {
+            proc.killed = true;
+            queueMicrotask(() => {
+              proc.exitCode = 0;
+              for (const cb of listeners.get("exit") ?? []) cb(0);
+            });
+            return true;
+          },
           once: (event: string, cb: (code: number | null) => void) => {
-            if (event === "exit") queueMicrotask(() => cb(0));
+            const list = listeners.get(event) ?? [];
+            list.push(cb);
+            listeners.set(event, list);
+            if (event === "exit" && cmd === "/fixture/tunnel-client") {
+              queueMicrotask(() => {
+                proc.exitCode = 0;
+                cb(0);
+              });
+            }
           }
         };
+        return proc;
       }) as unknown as typeof spawn;
       const stagedGen = path.join(directory, "generation-staged");
       mkdirSync(stagedGen, { recursive: true, mode: 0o700 });
@@ -1017,6 +1215,14 @@ test(
         path.join(stagedGen, "autodev.yaml"),
         "api_key: env:AUTODEV_CHATGPT_TUNNEL_API_KEY\n",
         { mode: 0o600 }
+      );
+      writeFileSync(path.join(stagedGen, "supergateway.json"), "{}\n", {
+        mode: 0o600
+      });
+      privateWrite(path.join(stagedGen, "supergateway.key"), "staged-token\n");
+      privateWrite(
+        path.join(stagedGen, "supergateway-auth.header"),
+        "Bearer staged-token\n"
       );
       const {
         version: _version,
@@ -1034,13 +1240,32 @@ test(
         await runChatgptTunnelDaemon(
           paths,
           { HOME: home },
-          { readKey: () => keychainValue, spawnProcess: fakeSpawn }
+          {
+            readKey: () => keychainValue,
+            spawnProcess: fakeSpawn,
+            waitForGateway: async () => true
+          }
         ),
         0
       );
+      assert.equal(seenSpawns[0]?.cmd, "/fixture/supergateway");
       assert.equal(
-        seenDaemonArgs[0]?.[2],
+        seenSpawns[0]?.args[1],
+        path.join(stagedGen, "supergateway.json")
+      );
+      assert.equal(
+        seenSpawns[0]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+        undefined
+      );
+      assert.equal(seenSpawns[1]?.cmd, "/fixture/tunnel-client");
+      assert.equal(
+        seenSpawns[1]?.args[2],
         path.join(stagedGen, "autodev.yaml")
+      );
+      assert.equal(seenSpawns[1]?.env.MCP_OAUTH_DISCOVERY, "disabled");
+      assert.equal(
+        seenSpawns[1]?.env.MCP_EXTRA_HEADERS,
+        `Authorization: file:${path.join(stagedGen, "supergateway-auth.header")}`
       );
       rmSync(path.join(directory, "staged.json"), { force: true });
       rmSync(stagedGen, { recursive: true, force: true });
@@ -1048,12 +1273,16 @@ test(
         await runChatgptTunnelDaemon(
           paths,
           { HOME: home },
-          { readKey: () => keychainValue, spawnProcess: fakeSpawn }
+          {
+            readKey: () => keychainValue,
+            spawnProcess: fakeSpawn,
+            waitForGateway: async () => true
+          }
         ),
         0
       );
       assert.equal(
-        seenDaemonEnv[1]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+        seenSpawns[3]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY,
         "fixture-runtime"
       );
       assert.equal(
@@ -1063,12 +1292,16 @@ test(
             HOME: home,
             AUTODEV_CHATGPT_TUNNEL_API_KEY: "explicit-daemon-override"
           },
-          { readKey: () => keychainValue, spawnProcess: fakeSpawn }
+          {
+            readKey: () => keychainValue,
+            spawnProcess: fakeSpawn,
+            waitForGateway: async () => true
+          }
         ),
         0
       );
       assert.equal(
-        seenDaemonEnv[2]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+        seenSpawns[5]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY,
         "explicit-daemon-override"
       );
       wrongScope = true;
@@ -1166,7 +1399,7 @@ test(
 );
 
 test(
-  "real tunnel-client dev proxy routes Streamable HTTP MCP calls through Supergateway and sandboxed filesystem",
+  "real tunnel-client dev proxy routes Streamable HTTP MCP sessions through Supergateway with session isolation, reconnection, and service restarts",
   {
     skip:
       process.env.AUTODEV_TEST_SUPERGATEWAY !== "1" ||
@@ -1181,10 +1414,6 @@ test(
     const codexHome = path.join(root, ".codex");
     const urlFile = path.join(root, "proxy.json");
     const healthUrlFile = path.join(root, "health.url");
-    const client = new Client({
-      name: "autodev-tunnel-http-e2e",
-      version: "1.0.0"
-    });
     mkdirSync(workspace);
     mkdirSync(codexHome);
     const inside = path.join(workspace, "allowed.txt");
@@ -1195,6 +1424,12 @@ test(
 
     const supergateway = resolveSupergateway(repo);
     const config = path.join(root, "supergateway.json");
+    const keyFile = path.join(root, "supergateway.key");
+    const headerFile = path.join(root, "supergateway-auth.header");
+    const localToken = "e2e-supergateway-token";
+    privateWrite(keyFile, localToken + "\n");
+    privateWrite(headerFile, `Bearer ${localToken}\n`);
+    const mcpPort = await allocateLoopbackPort();
     const catalogue = {
       filesystem: {
         command: process.execPath,
@@ -1211,6 +1446,7 @@ test(
         policy,
         workspace,
         policy,
+        { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
           externalFilesystemBackend(server, repo, workspace, process.execPath)
@@ -1222,13 +1458,20 @@ test(
       process.execPath,
       process.env.PATH ?? "/usr/bin:/bin"
     );
+    let gateway: ChildProcess | undefined = await startSupergatewayServer(
+      supergateway,
+      config,
+      workspace,
+      gatewayEnv,
+      mcpPort
+    );
     const proxy = spawn(
       resolveCommandOnPath("tunnel-client")!,
       [
         "dev",
         "proxy",
-        "--mcp-command",
-        gatewayStdioCommand(supergateway, config, gatewayEnv),
+        "--mcp-server-url",
+        `http://127.0.0.1:${mcpPort}/mcp`,
         "--url-file",
         urlFile,
         "--health-url-file",
@@ -1236,7 +1479,13 @@ test(
         "--readiness-timeout",
         "30s"
       ],
-      { stdio: ["ignore", "pipe", "pipe"] }
+      {
+        env: {
+          ...process.env,
+          ...tunnelClientMcpEnv(headerFile)
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      }
     );
     let proxyLogs = "";
     proxy.stdout.on("data", (chunk) => {
@@ -1245,8 +1494,18 @@ test(
     proxy.stderr.on("data", (chunk) => {
       proxyLogs += String(chunk);
     });
+    const openClients: Client[] = [];
+    const connectClient = async (name: string) => {
+      const client = new Client({ name, version: "1.0.0" });
+      openClients.push(client);
+      const transport = new StreamableHTTPClientTransport(
+        new URL(proxyInfo!.mcp_url!)
+      );
+      await client.connect(transport, { timeout: 45_000 });
+      return { client, transport };
+    };
+    let proxyInfo: { mcp_url?: string } | null = null;
     try {
-      let proxyInfo: { mcp_url?: string } | null = null;
       for (let attempt = 0; attempt < 150; attempt++) {
         await delay(200);
         try {
@@ -1266,27 +1525,27 @@ test(
       const healthUrl = readFileSync(healthUrlFile, "utf8").trim();
       const readyz = await fetch(healthUrl + "/readyz");
       assert.equal(readyz.ok, true);
-      assert.equal((await readyz.text()).trim(), "ready");
+      assert.match((await readyz.text()).trim(), /^ready/);
 
-      await client.connect(
-        new StreamableHTTPClientTransport(new URL(proxyInfo.mcp_url)),
-        { timeout: 45_000 }
-      );
-      const capabilities = client.getServerCapabilities();
+      // 1. Discovery followed by invocation, plus sandbox confinement.
+      const { client: primary, transport: primaryTransport } =
+        await connectClient("autodev-tunnel-primary");
+      assert.ok(primaryTransport.sessionId);
+      const capabilities = primary.getServerCapabilities();
       assert.equal(capabilities?.resources, undefined);
       assert.equal(capabilities?.prompts, undefined);
-      const listed = await client.listTools({}, { timeout: 45_000 });
+      const listed = await primary.listTools({}, { timeout: 45_000 });
       assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
         "filesystem__list_allowed_directories",
         "filesystem__read_text_file"
       ]);
-      const read = await client.callTool({
+      const read = await primary.callTool({
         name: "filesystem__read_text_file",
         arguments: { path: inside }
       });
       assert.match(JSON.stringify(read), /tunnel-roundtrip-ok/);
       for (const target of [outside, path.join(workspace, "escape.txt")]) {
-        const denied = await client.callTool({
+        const denied = await primary.callTool({
           name: "filesystem__read_text_file",
           arguments: { path: target }
         });
@@ -1294,7 +1553,7 @@ test(
         assert.doesNotMatch(JSON.stringify(denied), /forbidden-secret/);
       }
       await assert.rejects(async () => {
-        const result = await client.callTool({
+        const result = await primary.callTool({
           name: "filesystem__write_file",
           arguments: { path: inside, content: "mutated" }
         });
@@ -1302,23 +1561,87 @@ test(
       });
       assert.equal(readFileSync(inside, "utf8"), "tunnel-roundtrip-ok");
 
-      const mcpHealth = (await fetch(healthUrl + "/health/mcp").then(
-        (response) => response.json()
-      )) as {
-        status?: string;
-        state?: string;
-        details?: { tools_list?: { tool_names?: string[] } };
-      };
-      assert.equal(mcpHealth.status, "ok");
-      assert.equal(mcpHealth.state, "discovered");
-      assert.deepEqual(
-        mcpHealth.details?.tools_list?.tool_names?.slice().sort(),
-        ["filesystem__list_allowed_directories", "filesystem__read_text_file"]
+      // 2. Concurrent independent sessions & repeated initialization against the same running tunnel.
+      const [second, third] = await Promise.all([
+        connectClient("autodev-tunnel-concurrent-1"),
+        connectClient("autodev-tunnel-concurrent-2")
+      ]);
+      assert.ok(second.transport.sessionId);
+      assert.ok(third.transport.sessionId);
+      assert.notEqual(primaryTransport.sessionId, second.transport.sessionId);
+      assert.notEqual(second.transport.sessionId, third.transport.sessionId);
+      const [r1, r2, r3] = await Promise.all([
+        primary.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: inside }
+        }),
+        second.client.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: inside }
+        }),
+        third.client.callTool({
+          name: "filesystem__list_allowed_directories",
+          arguments: {}
+        })
+      ]);
+      assert.match(JSON.stringify(r1), /tunnel-roundtrip-ok/);
+      assert.match(JSON.stringify(r2), /tunnel-roundtrip-ok/);
+      assert.match(
+        JSON.stringify(r3),
+        new RegExp(workspace.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
       );
+
+      // 3. Reconnection after closing a previous session.
+      await second.client.close();
+      const reconnected = await connectClient("autodev-tunnel-reconnect");
+      assert.notEqual(
+        reconnected.transport.sessionId,
+        second.transport.sessionId
+      );
+      const reconnectedTools = await reconnected.client.listTools(
+        {},
+        { timeout: 45_000 }
+      );
+      assert.equal(reconnectedTools.tools.length, 2);
+      const reconnectedRead = await reconnected.client.callTool({
+        name: "filesystem__read_text_file",
+        arguments: { path: inside }
+      });
+      assert.match(JSON.stringify(reconnectedRead), /tunnel-roundtrip-ok/);
+
+      // 4. Service restart behind the same running tunnel: stale sessions get 404,
+      // and new sessions initialize and invoke tools cleanly.
+      await stopProcess(gateway);
+      gateway = await startSupergatewayServer(
+        supergateway,
+        config,
+        workspace,
+        gatewayEnv,
+        mcpPort
+      );
+      await assert.rejects(
+        () =>
+          primary.callTool({
+            name: "filesystem__read_text_file",
+            arguments: { path: inside }
+          }),
+        /404|Not Found|session/i
+      );
+      const postRestart = await connectClient("autodev-tunnel-post-restart");
+      const postRestartTools = await postRestart.client.listTools(
+        {},
+        { timeout: 45_000 }
+      );
+      assert.equal(postRestartTools.tools.length, 2);
+      const postRestartRead = await postRestart.client.callTool({
+        name: "filesystem__read_text_file",
+        arguments: { path: inside }
+      });
+      assert.match(JSON.stringify(postRestartRead), /tunnel-roundtrip-ok/);
     } finally {
-      await client.close().catch(() => {});
-      proxy.kill("SIGTERM");
-      await once(proxy, "exit");
+      await Promise.allSettled(openClients.map((client) => client.close()));
+      await stopProcess(proxy);
+      await stopProcess(gateway);
       rmSync(root, { recursive: true, force: true });
     }
   }

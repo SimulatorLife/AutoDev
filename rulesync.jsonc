@@ -26,9 +26,24 @@
       "rules"
     ]
   },
-  "outputRoots": [
-    "."
-  ],
+  "outputRoots": {
+    "copilot": [
+      "."
+    ],
+    "claudecode": [
+      "."
+    ],
+    "codexcli": [
+      "."
+    ],
+    "antigravity-cli": [
+      "."
+    ],
+    "agentsmd": [
+      "."
+    ]
+  },
+  "gitignoreDestination": "gitexclude",
   "delete": true,
   "global": false,
   "sources": [
