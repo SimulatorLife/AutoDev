@@ -153,7 +153,7 @@ function resolveRouterEnsureOptionsFromEnv(
       lockDir: `${ensureLock}.d`,
       fallbackLog,
       fallbackPidFile,
-      launcher: path.join(codexHome, "hooks", "run-codex-model-router.sh"),
+      launcher: path.join(codexHome, "hooks", "run-autodev-model-router.sh"),
       plistLink,
       launchdLogOut: path.join(
         launchdRunDir,
@@ -436,6 +436,7 @@ function fallbackPidOwned(deps: RouterEnsureDeps, pid: number): boolean {
   const cmd = deps.pidCommandLine(pid);
   if (cmd === null) return false;
   return (
+    cmd.includes("run-autodev-model-router.sh") ||
     cmd.includes("run-codex-model-router.sh") ||
     cmd.includes("codex-model-router.mjs")
   );

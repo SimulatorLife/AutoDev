@@ -334,14 +334,29 @@ function computeRulesyncInstallFingerprint(repositoryRoot: string): string {
   const curatedRelative = path.join(".rulesync", "skills", ".curated");
   return computeRepoPathsFingerprint(
     repositoryRoot,
-    ["rulesync.lock", "rulesync.jsonc", curatedRelative],
+    [
+      "rulesync.lock",
+      // The npm-transport sources are pinned in their own lockfile, so a
+      // changed pin must invalidate the frozen install just like a changed
+      // git-transport pin does.
+      "rulesync-npm.lock.json",
+      "rulesync.jsonc",
+      curatedRelative
+    ],
     [`rulesync:${readRulesyncPackageVersion(repositoryRoot)}`]
   );
 }
 
 export function runRulesyncInstallFrozen(repositoryRoot: string): void {
   const normalizedRoot = path.resolve(repositoryRoot);
-  if (!existsSync(path.join(normalizedRoot, "rulesync.lock"))) {
+  // A repository with no lockfile has no declarative sources to install.
+  // The npm-transport sources pin into their own lockfile, so either one
+  // makes the frozen install meaningful.
+  const hasGitLock = existsSync(path.join(normalizedRoot, "rulesync.lock"));
+  const hasNpmLock = existsSync(
+    path.join(normalizedRoot, "rulesync-npm.lock.json")
+  );
+  if (!hasGitLock && !hasNpmLock) {
     return;
   }
   const cache =

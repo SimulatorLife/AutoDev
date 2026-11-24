@@ -16,6 +16,7 @@ import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
+  type ChatgptTunnelStatus,
   CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
   type ControlApiAgentDetailResponse,
   type ControlApiMcpAppliedResponse,
@@ -47,6 +48,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ResourceUnavailable } from "../app/_console.ts";
+import * as chatgptTunnelRoute from "../app/api/chatgpt-tunnel/route.ts";
 import * as hookEventRoute from "../app/api/hooks/[event]/route.ts";
 import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
@@ -123,6 +125,7 @@ import { ProviderStatusBadge } from "../src/features/providers/provider-status.t
 import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
+import { ChatgptTunnelPanel } from "../src/features/mcps/ChatgptTunnelPanel.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
 import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 import {
@@ -211,6 +214,7 @@ import {
   CONTROL_API_PATHS,
   fetchAgentDetail,
   fetchAgents,
+  fetchChatgptTunnel,
   fetchControlApi,
   fetchControlApiBinary,
   fetchEvaluations,
@@ -535,9 +539,7 @@ test("missing evidence is reported in one word, from one constant", () => {
   // not a stand-in for missing evidence. A view is not allowed to invent the
   // word; the table that declares the vocabulary has to contain it, or the
   // honest fix is to change what the Runtime reports rather than to reword it.
-  const VOCABULARY_DECLARATIONS = [
-    join("status", "StatusBadge.ts")
-  ];
+  const VOCABULARY_DECLARATIONS = [join("status", "StatusBadge.ts")];
   const consoleRoot = join(import.meta.dirname, "..");
   const offenders: string[] = [];
   for (const dir of ["src", "app"]) {
@@ -746,7 +748,6 @@ test("an unrecognised URL filter is named, never resolved into a default", async
   );
   assert.doesNotMatch(toolRows("mcp"), /was not applied/);
   assert.doesNotMatch(toolRows(""), /was not applied/);
-
 });
 
 test("the shell lets a keyboard user reach the page body without walking the nav", () => {
@@ -15472,7 +15473,7 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
 });
 
 test("next dev and the production build never share a dist directory", () => {
-  // The LaunchAgent's `next start` and run-codex-console.sh's BUILD_ID gate
+  // The LaunchAgent's `next start` and run-autodev-console.sh's BUILD_ID gate
   // read the production build from console/.next.
   assert.equal(CONSOLE_BUILD_DIST_DIR, ".next");
   assert.notEqual(CONSOLE_DEV_DIST_DIR, CONSOLE_BUILD_DIST_DIR);
@@ -19989,6 +19990,7 @@ test("the hook declaration route refuses a request that is not same-origin befor
   assert.equal(asked, 0);
 });
 
+
 test("the MCP declaration route reports the Runtime's refusal as the outcome it was", async () => {
   // The Runtime's verdict is the answer the operator needs: a conflict means
   // the declaration moved, and a refusal means the actor is not an operator.
@@ -20090,4 +20092,154 @@ test("the MCP declaration route refuses a request that is not same-origin before
     }
   );
   assert.equal(asked, 0);
+});
+
+test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking secrets", async () => {
+  const validStatus: ChatgptTunnelStatus = {
+    schema: "autodev-chatgpt-tunnel-v1",
+    revision: "a".repeat(64),
+    configured: true,
+    enabled: true,
+    ready: true,
+    workspace: "/Users/test/project",
+    tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
+    reviewed: { filesystem: ["read_text_file", "list_directory"] },
+    grants: { filesystem: ["read_text_file"] }
+  };
+
+  await withControlRouteEnvironment(
+    "chatgpt-tunnel-fetch-token",
+    async (input) => {
+      assert.match(String(input), /\/control\/chatgpt-tunnel$/u);
+      return Response.json(validStatus);
+    },
+    async () => {
+      const config = readControlApiConfig();
+      assert.ok(config);
+      const fetched = await fetchChatgptTunnel(config);
+      assert.equal(fetched.kind, "ok");
+      if (fetched.kind === "ok") {
+        assert.deepEqual(fetched.data, validStatus);
+      }
+    }
+  );
+
+  await withControlRouteEnvironment(
+    "chatgpt-tunnel-invalid-token",
+    async () =>
+      Response.json({
+        schema: "autodev-chatgpt-tunnel-v1",
+        revision: "not-a-sha256"
+      }),
+    async () => {
+      const config = readControlApiConfig();
+      assert.ok(config);
+      const invalid = await fetchChatgptTunnel(config);
+      assert.equal(invalid.kind, "invalid-response");
+    }
+  );
+
+  const unconfiguredMarkup = renderToStaticMarkup(
+    React.createElement(ChatgptTunnelPanel, {
+      status: {
+        ...validStatus,
+        configured: false,
+        enabled: false,
+        ready: false,
+        workspace: null,
+        tunnelId: null
+      }
+    })
+  );
+  assert.match(unconfiguredMarkup, /--enable-chatgpt-tunnel/u);
+  assert.doesNotMatch(unconfiguredMarkup, /Disconnect and disable/u);
+
+  const readyMarkup = renderToStaticMarkup(
+    React.createElement(ChatgptTunnelPanel, { status: validStatus })
+  );
+  assert.match(readyMarkup, /Ready/u);
+  assert.match(readyMarkup, /tunnel_0123456789abcdef0123456789abcdef/u);
+  assert.match(readyMarkup, /Disconnect and disable/u);
+  assert.match(readyMarkup, /checked="" value="filesystem:read_text_file"/u);
+  assert.match(readyMarkup, /value="filesystem:list_directory"/u);
+  assert.doesNotMatch(readyMarkup, /checked="" value="filesystem:list_directory"/u);
+});
+
+test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutations", async () => {
+  const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+  await withControlRouteEnvironment(
+    "chatgpt-tunnel-route-token",
+    async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        body: JSON.parse(String(init?.body))
+      });
+      return Response.json({
+        schema: "autodev-chatgpt-tunnel-v1",
+        revision: "b".repeat(64)
+      });
+    },
+    async () => {
+      const revision = "a".repeat(64);
+      const crossOrigin = await chatgptTunnelRoute.POST(
+        sameOriginFormRequest(
+          "/api/chatgpt-tunnel",
+          new URLSearchParams({ action: "disable", expectedRevision: revision }).toString(),
+          { fetchSite: "cross-site" }
+        )
+      );
+      assert.equal(crossOrigin.status, 303);
+      assert.equal(crossOrigin.headers.get("location"), "/mcps?tunnel=failed");
+      assert.equal(requests.length, 0);
+
+      const badRevision = await chatgptTunnelRoute.POST(
+        sameOriginFormRequest(
+          "/api/chatgpt-tunnel",
+          new URLSearchParams({ action: "disable", expectedRevision: "short" }).toString()
+        )
+      );
+      assert.equal(badRevision.headers.get("location"), "/mcps?tunnel=failed");
+      assert.equal(requests.length, 0);
+
+      const configureBody = new URLSearchParams({
+        action: "configure",
+        expectedRevision: revision,
+        workspace: "/Users/test/project"
+      });
+      configureBody.append("grant", "filesystem:read_text_file");
+      configureBody.append("grant", "filesystem:list_directory");
+      const configured = await chatgptTunnelRoute.POST(
+        sameOriginFormRequest("/api/chatgpt-tunnel", configureBody.toString())
+      );
+      assert.equal(configured.status, 303);
+      assert.equal(configured.headers.get("location"), "/mcps?tunnel=ok");
+      assert.equal(requests.length, 1);
+      assert.match(requests[0]!.url, /\/control\/chatgpt-tunnel$/u);
+      assert.equal(requests[0]!.method, "POST");
+      assert.deepEqual(requests[0]!.body, {
+        action: "configure",
+        expectedRevision: revision,
+        workspace: "/Users/test/project",
+        grants: { filesystem: ["read_text_file", "list_directory"] }
+      });
+
+      const rotated = await chatgptTunnelRoute.POST(
+        sameOriginFormRequest(
+          "/api/chatgpt-tunnel",
+          new URLSearchParams({
+            action: "rotate",
+            expectedRevision: revision,
+            runtimeKey: "sk-runtime-fixture"
+          }).toString()
+        )
+      );
+      assert.equal(rotated.headers.get("location"), "/mcps?tunnel=ok");
+      assert.deepEqual(requests[1]!.body, {
+        action: "rotate",
+        expectedRevision: revision,
+        runtimeKey: "sk-runtime-fixture"
+      });
+    }
+  );
 });

@@ -192,24 +192,39 @@ test("an orchestrator request with only a non-delegating provider names the caus
     const { port } = server.address() as AddressInfo;
     const baseUrl = `http://127.0.0.1:${port}`;
     try {
-      const response = await fetch(`${baseUrl}/v1/responses`, {
+      const retiredResponse = await fetch(`${baseUrl}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ model: "autodev/orchestrator", stream: false })
       });
-      assert.equal(response.status, 400);
-      const body = await response.json();
-      assert.equal(body.error?.code, "router_provider_exhausted");
-      assert.equal(body.error?.retryable, false);
+      assert.equal(retiredResponse.status, 404);
+
+      const acpResponse = await fetch(`${baseUrl}/v1/acp/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "orchestrator",
+          cwd: process.cwd(),
+          promptOrTask: "delegate"
+        })
+      });
+      assert.equal(acpResponse.status, 400);
+      const body = await acpResponse.json();
+      assert.match(
+        body.error,
+        /No eligible provider candidate found for role 'orchestrator'/u
+      );
+
       // The cause is the provider's capability, not an enable switch: the
       // provider was enabled, and no switch would have served the request.
-      assert.equal(body.error?.failureClass, "provider_cannot_delegate");
-      assert.match(
-        body.error?.message,
-        /minimax cannot serve the orchestrator/u
+      const explanation = routing.providerRoleCapabilityExplanation(
+        NON_DELEGATING,
+        "orchestrator"
       );
+      assert.ok(explanation !== null);
+      assert.match(explanation, /minimax cannot serve the orchestrator/u);
       assert.doesNotMatch(
-        body.error?.message,
+        explanation,
         /No enabled providers/u,
         "the old message blamed the enable switches for a capability gap"
       );

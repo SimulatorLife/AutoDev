@@ -54,17 +54,17 @@ interface ManagedServicePaths {
 
 const SERVICE_PATHS = {
   [CONSOLE_SERVICE_LABEL]: {
-    launcher: "run-codex-console.sh",
+    launcher: "run-autodev-console.sh",
     root: "repository",
     executable: ["console", "node_modules", "next", "dist", "bin", "next"]
   },
   [LABEL_MODEL_ROUTER]: {
-    launcher: "run-codex-model-router.sh",
+    launcher: "run-autodev-model-router.sh",
     root: "codex",
     executable: ["src", "router", "server.ts"]
   },
   [LABEL_OPENCLI_PROXY]: {
-    launcher: "run-codex-opencli-proxy.sh",
+    launcher: "run-autodev-opencli-proxy.sh",
     root: "codex",
     executable: ["src", "providers", "opencli.ts"]
   }
@@ -555,7 +555,7 @@ async function runDirectEnsures(
       path.join(
         options.repositoryRoot,
         "scripts",
-        "ensure-codex-model-router.sh"
+        "ensure-autodev-model-router.sh"
       )
     ) !== 0
   )
@@ -565,12 +565,12 @@ async function runDirectEnsures(
       path.join(
         options.repositoryRoot,
         "scripts",
-        "ensure-codex-opencli-proxy.sh"
+        "ensure-autodev-opencli-proxy.sh"
       )
     ) !== 0
   )
     writeErrorLine(
-      "bridge start failed: ensure-codex-opencli-proxy.sh (router will route around it)"
+      "bridge start failed: ensure-autodev-opencli-proxy.sh (router will route around it)"
     );
   return 0;
 }

@@ -306,22 +306,9 @@
   },
   "modelProviders": [
     {
-      "name": "claude_code_subscription",
-      "attributes": {
-        "name": "Claude Code OAuth subscription bridge",
-        "base_url": "http://127.0.0.1:4000/v1",
-        "env_key": "LITELLM_API_KEY",
-        "wire_api": "responses",
-        "requires_openai_auth": false,
-        "request_max_retries": 1,
-        "stream_max_retries": 2,
-        "stream_idle_timeout_ms": 300000
-      }
-    },
-    {
       "name": "local_model_router",
       "attributes": {
-        "name": "Local model-aware Codex Responses router",
+        "name": "Local model-aware AutoDev Router",
         "base_url": "http://127.0.0.1:4100/v1",
         "env_key": "CODEX_ROUTER_AUTH_TOKEN",
         "wire_api": "responses",
@@ -330,40 +317,9 @@
         "stream_max_retries": 2,
         "stream_idle_timeout_ms": 300000
       }
-    },
-    {
-      "name": "minimax",
-      "attributes": {
-        "name": "MiniMax",
-        "base_url": "http://127.0.0.1:18765/v1",
-        "env_key": "MINIMAX_API_KEY",
-        "wire_api": "responses",
-        "requires_openai_auth": false,
-        "request_max_retries": 4,
-        "stream_max_retries": 10,
-        "stream_idle_timeout_ms": 300000
-      }
-    },
-    {
-      "name": "antigravity_cli",
-      "attributes": {
-        "name": "Antigravity CLI subscription through the local Responses adapter",
-        "base_url": "http://127.0.0.1:4002/v1",
-        "env_key": "LITELLM_API_KEY",
-        "wire_api": "responses",
-        "requires_openai_auth": false,
-        "request_max_retries": 1,
-        "stream_max_retries": 2,
-        "stream_idle_timeout_ms": 300000
-      }
     }
   ],
-  "modelProviderOrder": [
-    "claude_code_subscription",
-    "local_model_router",
-    "minimax",
-    "antigravity_cli"
-  ],
+  "modelProviderOrder": ["local_model_router"],
   "skillsConfigNames": [
     "ccc",
     "cloud-environment:cloud-desktop",

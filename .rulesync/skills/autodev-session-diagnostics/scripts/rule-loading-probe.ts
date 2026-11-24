@@ -45,10 +45,10 @@ import {
   parseTurnsFile,
   type SseEvent,
   startRecorder
-} from "../../autodev-codex-request-capture/scripts/responses-recorder.ts";
+} from "../../autodev-request-capture/scripts/responses-recorder.ts";
 
 const EXAMPLE_TURNS = new URL(
-  "../../autodev-codex-request-capture/examples/exec-command.turns.json",
+  "../../autodev-request-capture/examples/exec-command.turns.json",
   import.meta.url
 );
 const MODEL_CATALOG = fileURLToPath(

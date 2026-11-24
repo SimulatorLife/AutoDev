@@ -272,12 +272,12 @@ export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
 );
 export const HOOKS = [
   "enforce-root-delegation.sh",
-  "ensure-codex-console.sh",
-  "ensure-codex-opencli-proxy.sh",
-  "ensure-codex-model-router.sh",
-  "run-codex-opencli-proxy.sh",
-  "run-codex-model-router.sh",
-  "run-codex-console.sh",
+  "ensure-autodev-console.sh",
+  "ensure-autodev-opencli-proxy.sh",
+  "ensure-autodev-model-router.sh",
+  "run-autodev-opencli-proxy.sh",
+  "run-autodev-model-router.sh",
+  "run-autodev-console.sh",
   "run-autodev-hook.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
@@ -354,11 +354,17 @@ export const OBSOLETE_HOOKS = [
   "codex-claude-cli-responses-proxy.py",
   "ensure-codex-antigravity-proxy.sh",
   "ensure-codex-claude-bridge.sh",
+  "ensure-codex-console.sh",
   "ensure-codex-copilot-proxy.sh",
   "ensure-codex-minimax-proxy.sh",
+  "ensure-codex-model-router.sh",
+  "ensure-codex-opencli-proxy.sh",
   "run-codex-antigravity-proxy.sh",
   "run-codex-claude-bridge.sh",
-  "run-codex-copilot-cli-responses-proxy.sh"
+  "run-codex-console.sh",
+  "run-codex-copilot-cli-responses-proxy.sh",
+  "run-codex-model-router.sh",
+  "run-codex-opencli-proxy.sh"
 ] as const;
 export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
 /**
@@ -1530,6 +1536,7 @@ const USER_LEVEL_HOOK_TARGETS: ReadonlySet<string> = new Set(["codexcli"]);
 const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
   "rulesync.jsonc",
   "rulesync.lock",
+  "rulesync-npm.lock.json",
   "AGENTS.md",
   "CLAUDE.md",
   "GEMINI.md",

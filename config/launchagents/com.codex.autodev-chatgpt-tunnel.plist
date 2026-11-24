@@ -17,6 +17,8 @@
     <string>__TUNNEL_HOME__</string>
     <key>PATH</key>
     <string>__TUNNEL_SERVICE_PATH__</string>
+    <key>MCP_FORWARD_TRACE_CONTEXT</key>
+    <string>true</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>__TUNNEL_WORKSPACE__</string>

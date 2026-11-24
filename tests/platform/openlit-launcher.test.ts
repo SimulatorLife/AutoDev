@@ -43,7 +43,7 @@ test("OpenLIT ingress launcher supplies protected OTLP and control-only listener
     chmodSync(fakeNode, 0o700);
     const result = spawnSync(
       "bash",
-      [join(repositoryRoot, "scripts/run-codex-model-router.sh")],
+      [join(repositoryRoot, "scripts/run-autodev-model-router.sh")],
       {
         encoding: "utf8",
         env: {

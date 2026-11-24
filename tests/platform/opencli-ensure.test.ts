@@ -31,7 +31,7 @@ test("resolver derives the opencli launchd paths and finds the pinned opencli de
   assert.equal(options.port, 4004);
   assert.equal(
     options.launcher,
-    "/home/test/.codex/hooks/run-codex-opencli-proxy.sh"
+    "/home/test/.codex/hooks/run-autodev-opencli-proxy.sh"
   );
   assert.equal(
     options.plist,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-// console-ensure runs as a script entrypoint (scripts/ensure-codex-console.sh
+// console-ensure runs as a script entrypoint (scripts/ensure-autodev-console.sh
 // dispatches to it), so it is deliberately absent from the platform barrel.
 import {
   type ConsoleEnsureDeps,
@@ -59,7 +59,10 @@ test("resolver derives the Console LaunchAgent and runtime paths", () => {
     result.plist,
     "/home/test/Library/LaunchAgents/com.codex.autodev-console.plist"
   );
-  assert.equal(result.launcher, "/home/test/.codex/hooks/run-codex-console.sh");
+  assert.equal(
+    result.launcher,
+    "/home/test/.codex/hooks/run-autodev-console.sh"
+  );
   assert.equal(
     result.logPath,
     "/home/test/.codex/run/autodev-console.fallback.log"

@@ -13,6 +13,7 @@ on:
       - "pnpm-lock.yaml"
       - "rulesync.jsonc"
       - "rulesync.lock"
+      - "rulesync-npm.lock.json"
       - "tsconfig.json"
   pull_request:
     paths:
@@ -25,6 +26,7 @@ on:
       - "pnpm-lock.yaml"
       - "rulesync.jsonc"
       - "rulesync.lock"
+      - "rulesync-npm.lock.json"
       - "tsconfig.json"
 
 jobs:
@@ -68,8 +70,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # `.github/skills/` is not tracked: `.rulesync/skills/` and the external
-      # sources locked in `rulesync.lock` are the skill inputs, so the cloud
-      # agent's skills are installed and generated here before it starts.
+      # sources locked in `rulesync.lock` and `rulesync-npm.lock.json` are the
+      # skill inputs, so the cloud agent's skills are installed and generated
+      # here before it starts.
       # rulesync.jsonc supplies the feature, output root, and delete behaviour.
       - name: Generate repository skills for Copilot
         env:

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "node runtime/src/cli/dev.ts",
-    "test:root": "node --import ./runtime/tests/support/isolate-codex-state.ts --test tests/*.test.ts tests/**/*.test.ts",
+    "test:root": "node --import ./runtime/tests/support/isolate-autodev-state.ts --test tests/*.test.ts tests/**/*.test.ts",
     "test": "pnpm run test:root; root_status=$?; pnpm --recursive --workspace-concurrency=1 --if-present test; workspace_status=$?; test \"$root_status\" -eq 0 -a \"$workspace_status\" -eq 0",
     "typecheck:root": "tsc --noEmit",
     "typecheck": "pnpm run typecheck:root; root_status=$?; pnpm --recursive --if-present typecheck; workspace_status=$?; test \"$root_status\" -eq 0 -a \"$workspace_status\" -eq 0",
@@ -18,7 +18,7 @@
     "autodev": "node runtime/src/cli/autodev.ts",
     "opencli:version": "node runtime/src/cli/opencli-version.ts",
     "opencli:version:check": "node runtime/src/cli/opencli-version.ts --check",
-    "install:codex": "bash scripts/install.sh",
+    "install:autodev": "bash scripts/install.sh",
     "validate:inventory": "AUTODEV_ENFORCE_INVENTORY=1 node --test tests/inventory/repository-inventory.test.ts",
     "lint": "eslint . --cache --max-warnings=0 --report-unused-disable-directives",
     "lint:fix": "eslint . --cache --fix --max-warnings=0",

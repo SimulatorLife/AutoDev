@@ -673,7 +673,7 @@ test("a holder from another runtime's console directory is refused rather than s
 test("a missing Console LaunchAgent or launcher prevents build publication", async () => {
   for (const missingPath of [
     "/home/Library/LaunchAgents/com.codex.autodev-console.plist",
-    "/home/.codex/hooks/run-codex-console.sh"
+    "/home/.codex/hooks/run-autodev-console.sh"
   ]) {
     const base = deps({ fileExists: (filePath) => filePath !== missingPath });
     const [status, stderr] = await captureStderr(() =>
@@ -834,7 +834,7 @@ test("a label launchd refuses to load is reported and falls back to the ensure h
   assert.equal(stderr.includes("launchctl unavailable"), false);
   assert.ok(
     fake.runs.some((run) =>
-      run.args.at(-1)?.endsWith("ensure-codex-model-router.sh")
+      run.args.at(-1)?.endsWith("ensure-autodev-model-router.sh")
     )
   );
 });
@@ -1024,7 +1024,7 @@ test("refuses to bootstrap the Console when BUILD_ID remains missing after rebui
 test("failure log tailing is scoped to output written after reload instead of reprinting stale history", async () => {
   const errPath = `/home/.codex/run/${LABEL_AUTODEV_CONSOLE}.err.log`;
   let consoleErrContent =
-    "run-codex-console: console/.next/BUILD_ID is missing\n" +
+    "run-autodev-console: console/.next/BUILD_ID is missing\n" +
     "stale earlier error line\n";
   const observedOffsets: Array<number | undefined> = [];
   const base = deps();

@@ -331,7 +331,7 @@ test("dev Control API probe names a missing contract endpoint without exposing c
         error.message,
         new RegExp(`version ${String(CONTROL_API_CONTRACT.version)}`, "u")
       );
-      assert.match(error.message, /pnpm run install:codex/u);
+      assert.match(error.message, /pnpm run install:autodev/u);
       assert.doesNotMatch(error.message, /probe-token/u);
       return true;
     }

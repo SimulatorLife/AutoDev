@@ -474,7 +474,6 @@ jobs:
               gemini: 'gemini-invoke.yml',
               qwen: 'qwen-invoke.yml',
               'mini-max': 'minimax-invoke.yml',
-              'mini-max-codex': 'minimax-codex-invoke.yml',
             };
             const workflowId = workflowByAgent[process.env.AGENT];
             if (!workflowId) return;

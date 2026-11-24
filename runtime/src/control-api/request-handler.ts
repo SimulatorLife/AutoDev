@@ -6,7 +6,11 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import { execa } from "execa";
-import { chatgptTunnelStatus, dependencyEnvironment, tunnelMutationSchema } from "../platform/index.ts";
+import {
+  chatgptTunnelStatus,
+  dependencyEnvironment,
+  tunnelMutationSchema
+} from "../platform/index.ts";
 import {
   type ApprovalPolicy,
   buildReconciliationView,
@@ -8810,35 +8814,67 @@ async function workspaceRoute(
   return true;
 }
 
-
 /** Only authenticated operators can change the local external MCP service. */
 async function chatgptTunnelRoute(
-  request: IncomingMessage, response: ServerResponse, actor: ControlApiActor,
-  method: string, options: ControlApiRequestOptions
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  options: ControlApiRequestOptions
 ): Promise<boolean> {
   const home = process.env.HOME?.trim() || homedir();
-  const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
-  const paths = { home, codexHome, repositoryRoot: options.repositoryRoot ?? DEFAULT_REPO_ROOT };
+  const codexHome =
+    options.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
+  const paths = {
+    home,
+    codexHome,
+    repositoryRoot: options.repositoryRoot ?? DEFAULT_REPO_ROOT
+  };
   const audit = (outcome: "ok" | "denied" | "error", reason?: string): void =>
-    auditMutation({ actor: actor.actor, actorVerified: true, role: actor.role,
-      action: "update_chatgpt_tunnel", resource: CHATGPT_TUNNEL_CONTROL_PATH,
-      outcome, changes: null, ...(reason ? { reason } : {}) });
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_chatgpt_tunnel",
+      resource: CHATGPT_TUNNEL_CONTROL_PATH,
+      outcome,
+      changes: null,
+      ...(reason ? { reason } : {})
+    });
   if (method === "GET") {
     try {
-      sendJson(response, 200, await chatgptTunnelStatus(paths), { "cache-control": "no-store", vary: CONTROL_VARY_HEADER });
+      sendJson(response, 200, await chatgptTunnelStatus(paths), {
+        "cache-control": "no-store",
+        vary: CONTROL_VARY_HEADER
+      });
     } catch {
-      sendControlError(response, 503, "autodev_chatgpt_tunnel_unavailable", "Tunnel state is unavailable or invalid.");
+      sendControlError(
+        response,
+        503,
+        "autodev_chatgpt_tunnel_unavailable",
+        "Tunnel state is unavailable or invalid."
+      );
     }
     return true;
   }
   if (method !== "POST") {
     response.setHeader("allow", "GET, POST");
-    sendControlError(response, 405, "autodev_control_api_method_not_allowed", "Tunnel controls require POST.");
+    sendControlError(
+      response,
+      405,
+      "autodev_control_api_method_not_allowed",
+      "Tunnel controls require POST."
+    );
     return true;
   }
   if (actor.role !== "operator") {
     audit("denied", "operator_required");
-    sendControlError(response, 403, "autodev_control_api_forbidden", "Tunnel controls require an operator.");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Tunnel controls require an operator."
+    );
     return true;
   }
   const parsed = await readControlApiJsonObject(request, 32_768);
@@ -8850,25 +8886,48 @@ async function chatgptTunnelRoute(
   const mutation = tunnelMutationSchema.safeParse(parsed.body);
   if (!mutation.success) {
     audit("error", "invalid_body");
-    sendControlError(response, 400, "autodev_control_api_invalid_body", "Invalid tunnel mutation.");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "Invalid tunnel mutation."
+    );
     return true;
   }
   try {
     // Never use a browser-supplied command, path to executable, or admin key.
     // Run in a child so provisioning cannot block the router event loop.
-    await execa(process.execPath, [
-      path.join(paths.codexHome, "src/platform/chatgpt-tunnel-install.ts"),
-      "control", paths.repositoryRoot, paths.home, paths.codexHome
-    ], {
-      input: JSON.stringify(mutation.data),
-      env: dependencyEnvironment(process.env), extendEnv: false,
-      timeout: 240_000, stdout: "ignore", stderr: "ignore"
-    });
+    await execa(
+      process.execPath,
+      [
+        path.join(paths.codexHome, "src/platform/chatgpt-tunnel-install.ts"),
+        "control",
+        paths.repositoryRoot,
+        paths.home,
+        paths.codexHome
+      ],
+      {
+        input: JSON.stringify(mutation.data),
+        env: dependencyEnvironment(process.env),
+        extendEnv: false,
+        timeout: 240_000,
+        stdout: "ignore",
+        stderr: "ignore"
+      }
+    );
     audit("ok");
-    sendJson(response, 200, await chatgptTunnelStatus(paths), { "cache-control": "no-store", vary: CONTROL_VARY_HEADER });
+    sendJson(response, 200, await chatgptTunnelStatus(paths), {
+      "cache-control": "no-store",
+      vary: CONTROL_VARY_HEADER
+    });
   } catch {
     audit("error", "tunnel_apply_failed");
-    sendControlError(response, 409, "autodev_chatgpt_tunnel_apply_failed", "Tunnel mutation was refused or failed. Reload status before retrying.");
+    sendControlError(
+      response,
+      409,
+      "autodev_chatgpt_tunnel_apply_failed",
+      "Tunnel mutation was refused or failed. Reload status before retrying."
+    );
   }
   return true;
 }
@@ -8883,7 +8942,8 @@ export async function handleControlApiRequest(
   const method = request.method ?? "GET";
   const actor = actorForControlRequest(request, response, method, pathname);
   if (!actor) return true;
-  if (pathname === CHATGPT_TUNNEL_CONTROL_PATH) return chatgptTunnelRoute(request, response, actor, method, options);
+  if (pathname === CHATGPT_TUNNEL_CONTROL_PATH)
+    return chatgptTunnelRoute(request, response, actor, method, options);
   if (
     (await workspaceVisualPlaytestTargetsRoute(
       request,

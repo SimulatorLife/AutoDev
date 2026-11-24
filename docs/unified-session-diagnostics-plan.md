@@ -69,6 +69,7 @@ flowchart LR
 > [!IMPORTANT]
 > **2. Single-Source API Host (`:4101/control/diagnostics/*`) & Offline Skill Fallback**
 > The shared diagnostics HTTP API will live on the authenticated **AutoDev Control API** (`http://127.0.0.1:4101/control/diagnostics/*`, bumping `CONTROL_API_CONTRACT.version` from `34` to `35`), keeping diagnostics available whenever Runtime is running (even if Console is stopped) and giving direct in-process access to live router status/MCP exposure/cooldowns without a self-HTTP call.
+>
 > - In default online use, [`session-trace.ts`](../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts) calls `GET $CONTROL_API_BASE_URL/control/diagnostics/*` using the local Control API token (read in-process from env or `$CODEX_HOME/openlit-secrets.env`, never printed or logged), matching [`runtime/src/hooks/memory-session-end.ts`](../runtime/src/hooks/memory-session-end.ts).
 > - When invoked with `--offline`, `--codex-home <dir>`, or `--router-log <file>` — or when the Control API service is down — `session-trace.ts` delegates to `node <repo>/runtime/src/cli/autodev.ts diagnostics ...`, which runs the **same `@simulatorlife/autodev-data/diagnostics` engine** directly on disk without duplicating parsing logic in the standalone skill script (preserving ESLint's `allowOnly("skill-script", [])` rule in [`eslint.config.js`](../eslint.config.js)).
 
@@ -262,7 +263,9 @@ Update patch-application assertions for patch `79` and `autodev-openlit-session-
 ### 5. Unified Console `/usage` UI (`console/`)
 
 #### `[DELETE]` [`console/src/features/usage/SessionUsageLookup.ts`](../console/src/features/usage/SessionUsageLookup.ts)
+
 #### `[DELETE]` [`console/app/api/usage/session/route.ts`](../console/app/api/usage/session/route.ts)
+
 #### `[DELETE]` [`console/tests/usage-session-route.test.ts`](../console/tests/usage-session-route.test.ts)
 
 Remove the superseded client-only POST lookup island, its browser proxy route, and its `approvedClientModules` entry in [`console/tests/console.test.ts`](../console/tests/console.test.ts). Everything moves to server-rendered, URL-addressable `UsagePage` + `FilterBar` + `SessionDiagnosticsView`.
@@ -386,7 +389,7 @@ Update the Usage dashboard and Control API sections in place to document:
    pnpm --filter @simulatorlife/autodev-core test
    pnpm --filter @simulatorlife/autodev-data test
    pnpm --filter @simulatorlife/autodev-runtime test
-   node --import ./runtime/tests/support/isolate-codex-state.ts --test \
+   node --import ./runtime/tests/support/isolate-autodev-state.ts --test \
      tests/session-diagnostics-skill.test.ts \
      tests/openlit-patches-apply.test.ts \
      tests/platform/runtime-manifest.test.ts \

@@ -300,7 +300,7 @@ export async function ensureBackends(
     );
   } else {
     dependencies.writeLine(
-      "[dev] ℹ AutoDev Model Router is not listening on port 4100 (run launchctl or scripts/run-codex-model-router.sh)."
+      "[dev] ℹ AutoDev Model Router is not listening on port 4100 (run launchctl or scripts/run-autodev-model-router.sh)."
     );
   }
 

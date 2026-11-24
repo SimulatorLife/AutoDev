@@ -2,7 +2,8 @@ import {
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   isRecord,
-  LOCAL_CONTROL_API_ACTOR} from "@simulatorlife/autodev-core";
+  LOCAL_CONTROL_API_ACTOR
+} from "@simulatorlife/autodev-core";
 
 const CONTROL_API_PROBE_TIMEOUT_MS = 10_000;
 const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
@@ -238,7 +239,7 @@ function isControlApiProviderModelsResponse(
 
 function startupError(reason: string): Error {
   return new Error(
-    `The configured AutoDev Control API is not compatible with this Console checkout (${reason}). The Console was not started. Refresh the Runtime with \`pnpm run install:codex\` when no active task depends on the Model Router. For a live session, use \`bash scripts/install.sh --materialize-only\` and restart the Router later.`
+    `The configured AutoDev Control API is not compatible with this Console checkout (${reason}). The Console was not started. Refresh the Runtime with \`pnpm run install:autodev\` when no active task depends on the Model Router. For a live session, use \`bash scripts/install.sh --materialize-only\` and restart the Router later.`
   );
 }
 

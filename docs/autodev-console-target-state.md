@@ -48,15 +48,14 @@ Configure
 Observe
 ├── Usage
 ├── Evaluations
-├── Playtesting
-└── Memory
+└── Playtesting
 
 Operate
 ├── Workspaces
 └── GitHub
 ```
 
-The grouping is presentation only; all **15 resources** have first-class routes. **Playtesting** is the Observe resource at `/playtesting`; its detailed requirements are in [Playtesting Target State](playtesting-target-state.md).
+The grouping is presentation only; all top-level resources have first-class routes. **Playtesting** is the Observe resource at `/playtesting`; its detailed requirements are in [Playtesting Target State](playtesting-target-state.md).
 
 There is no separate generic Home/Dashboard page. The root route should redirect to a useful canonical resource rather than introduce a second dashboard. **Overview** is the Configure landing page and concise cross-system snapshot: it retains links to the canonical resources while surfacing bounded live activity, provider readiness/quota verdicts, recent failures, and a small recent-telemetry summary. It complements rather than replaces the detailed resource pages.
 
@@ -476,11 +475,10 @@ The orchestrator selects a **named task role and capability contract**, not a pr
 Task → named role + capabilities → validated routing tier
  → explicit selection / session affinity → eligibility / health / request-outcome cooldowns
  → configured per-tier priority and deterministic candidate ordering
- → supported executor (Responses, native CLI or ACP)
+ → supported executor (native ACP via `acpx` or `opencli` for `github-worker`)
  → outcome + attempts + child sessions + evidence
     ├── Runtime / Control API → Console (live control)
-    ├── OpenTelemetry → OpenLIT OTLP → ClickHouse → Usage (history)
-    └── Memory / trajectory → PostgreSQL + pgvector (experience)
+    └── OpenTelemetry → OpenLIT OTLP → ClickHouse → Usage (history)
 ```
 
 **Selection order**
@@ -496,11 +494,10 @@ Task → named role + capabilities → validated routing tier
 
 **CLI categories**
 
-| Backend type                          | Examples                                    | Contract                                                                                                                                                                                              |
-| ------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Complete autonomous coding-agent CLIs | `codex`, `claude`, `agy`, compatible agents | Own their agent/tool loop; integrate by native CLI or parity-proven ACP. Reuse supported subscription authentication; quota collection and quota semantics come from quota-axi, not routing adapters. |
-| Tool-call-capable inference CLI       | `mmx`                                       | Can declare/return tool calls but does **not** provide the full autonomous file/shell tool loop; the owning agent harness executes tools. Avoid a duplicate harness.                                  |
-| Browser-backed model CLI              | `opencli`                                   | Bridge model turns through authenticated browser sessions, with site queues, idempotency and an accepted-turn ledger.                                                                                 |
+| Backend type                          | Examples                                     | Contract                                                                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complete autonomous coding-agent CLIs | `codex`, `claude`, `agy`, `copilot`, `mcode` | Own their agent/tool loop and context/auto-compaction; integrate via ACP with native tools, skills, prompts, and ungranted MCPs disabled so RuleSync owns configuration. Quota collection comes from quota-axi. |
+| Browser-backed model CLI              | `opencli`                                    | Serves `github-worker` and browser-backed endpoints (`opencli-browser`, health/models server) with site queues, idempotency, and an accepted-turn ledger.                                                       |
 
 **Browser-backed provider isolation.** A provider that automates a signed-in web application owns a dedicated visible Chromium process and private profile; it never drives the operator’s everyday browser or a shared browser extension/daemon. CDP is bound to loopback and each concurrent command receives its own browser target. The profile contains site cookies, stays under AutoDev’s private runtime directory outside the repository, and is never copied, synced, logged, or committed. Browser installation is pinned by the Runtime dependency and reconciled by the typed installer; site sign-in remains an explicit operator action.
 
@@ -573,34 +570,34 @@ Validate equivalent **effective role grants, leaf prompts, tool execution, sessi
 - **Dependency-first parity rule:** Where Cockatiel's public APIs satisfy the same bounded attempts, deadline, cancellation, scope and concurrency behavior, delete the superseded AutoDev-owned generic resilience mechanism. If a provider-specific behavior cannot be expressed, retain only a documented, tested policy adapter—not a second general-purpose retry framework.
 - Test the mapping with injected clocks, response-supplied reset times, independent provider/model routes, concurrent requests, cancellation, restart, recovery, last-resort selection and indeterminate mutating turns. Resilience library breaker state is never the authority for quota semantics or per-tier priority.
 
-### Agent execution transport contract: ACP, MCP and Responses
+### Agent execution transport contract: ACP, MCP, and OpenCLI
 
-**ACP** controls a complete coding agent; **MCP** exposes tools to an agent; **Responses** exchanges model messages/tool calls with AutoDev's owning agent loop. They are complementary, not interchangeable.
+**ACP** controls each interactive coding agent natively (`claude`, `antigravity`, `copilot`, `mcode`, `codex`); **MCP** exposes tools and subagent management consistently to every agent via RuleSync; **`opencli`** serves `github-worker` and browser-backed endpoints. They are complementary, not interchangeable.
 
-**ACP tradeoff:** A maintained ACP client such as `acpx/runtime` can replace per-agent CLI process supervision, session plumbing, streaming/event parsing, cancellation and permission-request transport. It also introduces an ACP adapter/protocol boundary, version compatibility and possible loss of provider-native Codex tool/child semantics. Prefer it only for complete ACP-capable agents whose measured parity and maintenance savings justify that boundary; retain direct CLI/Responses for model/tool-loop providers or unsupported native behaviors. ACP does not replace MCP, Rulesync, the model router or runtime permission enforcement.
+**ACP boundary:** A maintained ACP client (`@agentclientprotocol/sdk` / `xacpx`) replaces per-provider `/v1/responses` translation bridges, custom continuation state, and custom compaction logic. Each ACP provider launches with native tools, built-in skills, native prompts, and ungranted MCPs disabled so AutoDev's RuleSync projections and role-scoped MCPs are the sole execution surface, while each provider manages its own session history and native auto-compaction. AutoDev retains routing, session-to-provider pinning, request-outcome cooldowns, observability, and authorization.
 
-| Transport                                                                   | Best fit                                                                                                                                         | Required boundary                                                                                                                             |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direct CLI / Responses                                                      | `mmx`: inference with tool/function calling but no autonomous shell/file agent loop; `opencli`: browser-backed inference; Codex-owned tool loops | The owning harness executes approved tools and normalizes streaming/results without duplicating an agent loop.                                |
-| [`acpx/runtime`](https://github.com/openclaw/acpx) / ACP                    | Standalone ACP-compatible coding agents executing bounded **leaf** tasks                                                                         | Reuse session/process/cancellation/permission transport; AutoDev retains routing, request-outcome cooldowns, observability and authorization. |
-| [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) | Required adapter for an unsupported ACP agent                                                                                                    | Use the public SDK instead of writing a second ACP transport.                                                                                 |
-| `@modelcontextprotocol/sdk` / MCP                                           | Shared tools and controlled child delegation                                                                                                     | Apply role-scoped MCP tool filtering; MCP support alone does not imply ACP.                                                                   |
+| Transport                                                                   | Best fit                                                                             | Required boundary                                                                                                                              |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`acpx/runtime`](https://github.com/openclaw/acpx) / ACP                    | All interactive coding agents (`claude`, `antigravity`, `copilot`, `mcode`, `codex`) | Reuse session/process/cancellation/permission transport; AutoDev retains routing, request-outcome cooldowns, observability, and authorization. |
+| [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) | Typed ACP client transport and session lifecycle                                     | Use the public SDK (`@agentclientprotocol/sdk`) instead of custom provider HTTP translation bridges.                                           |
+| `@jackwener/opencli`                                                        | `github-worker` role and `opencli-browser` / health & models server                  | Bounded worker dispatch isolated from interactive ACP roles; no general `/v1/responses` translation bridge.                                    |
+| `@modelcontextprotocol/sdk` / MCP                                           | Shared tools and controlled child delegation                                         | Apply role-scoped MCP tool filtering; exposed consistently across providers via RuleSync.                                                      |
 
-**Transport selection:** ACP is preferred for independent complete agents when its documented public API reduces maintained custom code **and** every applicable equivalence gate below passes. Direct CLI/Responses is first-class when a provider is model-only, tool-call-capable without execution, or requires Codex-specific tool behavior. The root Codex orchestrator has a **separate, stronger gate**: it must additionally preserve root tool ownership, Responses continuation, native subagent lifecycle, existing role delegation, session resume, and all Console-visible state end to end. Passing a leaf ACP gate does not authorize moving the root orchestrator or replacing Codex's owning tool loop.
+**Transport selection:** Interactive roles route natively over ACP (`POST /v1/acp/sessions` and `/v1/acp/sessions/:sessionId/*`); `github-worker` routes exclusively to `opencli` (with strict enforcement that interactive roles never fall back to `opencli` and `github-worker` never falls back to ACP). Custom `/v1/responses` translation bridges are retired.
 
 **ACP equivalence gate**
 
-| Dimension                | Required evidence                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Role/configuration       | Lossless Rulesync skills, MCP/hook/agent projections, role capability policy, models/effort and target overrides.                                                                                                                                                                                                                                                     |
-| Permissions              | Real sandbox/network/tool enforcement, reviewer/approval flow, no shadow policy; reject unsupported restrictions.                                                                                                                                                                                                                                                     |
-| Tool/child continuity    | A versioned mapping of Codex tool schemas, calls/results, streaming, spawn/completion, parent/child IDs, `/status` and Console child visibility, and Responses continuation to ACP events; no invisible child delegation.                                                                                                                                             |
-| Sessions and recovery    | Stable identity, resume/reconnect, cancellation, timeouts, process crash/restart, ownership, safe treatment of partial mutations.                                                                                                                                                                                                                                     |
-| Provider correctness     | Model eligibility, quota-axi report fidelity, request-outcome cooldowns, priorities, capacity and sticky sessions.                                                                                                                                                                                                                                                    |
-| Observability and memory | Correct logical-request/physical-attempt attribution, child events, latency, token/cost unknowns, provenance and privacy.                                                                                                                                                                                                                                             |
-| Engineering decision     | **100% of required permission/child/session/conformance cases pass; no new unauthorized side effects.** Compare the same predefined tasks against direct CLI using success/quality, p50 and p95 end-to-end latency, code/API surface removed, upgrade effort and resource use. Non-inferiority tolerances and acceptable tradeoffs are declared _before_ measurement. |
+| Dimension                | Required evidence                                                                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Role/configuration       | Lossless Rulesync skills, MCP/hook/agent projections, role capability policy, models/effort and target overrides.                                                                                         |
+| Permissions              | Real sandbox/network/tool enforcement, reviewer/approval flow, no shadow policy; reject unsupported restrictions.                                                                                         |
+| Tool/child continuity    | Provider-agnostic MCP tool exposure, ACP session updates, spawn/completion, parent/child IDs, and Console child visibility across providers.                                                              |
+| Sessions and recovery    | Stable identity, strict session-to-provider pinning, resume/reconnect, cancellation, timeouts, process crash/restart, and provider-native auto-compaction without mid-session provider hopping.           |
+| Provider correctness     | Model eligibility, quota-axi report fidelity, request-outcome cooldowns, priorities, and concurrency limits.                                                                                              |
+| Observability and memory | Correct logical-request/physical-attempt attribution, child events, latency, token/cost unknowns, provenance, and privacy (with durable Mem0 integration postponed).                                      |
+| Engineering decision     | **100% of required permission/child/session/conformance cases pass; no new unauthorized side effects.** Retire redundant provider bridges and custom compaction/continuation shims once ACP parity holds. |
 
-An ACP change's mapping and test evidence must be reviewed/approved by the **AutoDev Runtime contract owner** in the PR, including contract/integration and fault-injection tests for native Codex tool/child visibility, multi-turn continuation, permissions and Console state. An “equivalent” event name without the same observable behavior is insufficient. If a gate fails, keep the direct executor; ACP does not itself guarantee Codex tool/session compatibility.
+An ACP change's mapping and test evidence must pass contract, unit, and lifecycle tests for tool/skill isolation, multi-turn continuation, permissions, and Console state.
 
 ### Dependency ownership and maintainability
 
@@ -760,7 +757,7 @@ Retain or adapt:
 - GenAI usage/cost foundations;
 - time-range, chart, widget, trace, table, filter, status, form, dialog, and detail primitives that fit the AutoDev design system;
 - telemetry query/source abstractions;
-- OpenLIT's **Mem0** memory connector/domain capabilities and useful Memory UI components, adapted into Console (not a separate OpenLIT Memory product);
+- Mem0 connector/domain capabilities are postponed for a future iteration; the custom PostgreSQL/pgvector memory engine and any temporary OpenLIT Memory bridge have been removed;
 - Evaluation definitions/results/history capabilities that remain independent of removed product concepts;
 - Prompt Hub browsing/edit/version/diff/preview interaction patterns, realized in the AutoDev Console's Prompts surface while RuleSync remains canonical. The OpenLIT's own Prompt Hub product is not retained: those patterns are kept by the Console that owns prompts, and a second copy of the surface would be a second authority over them.
 - useful Agent presentation patterns, but not OpenLIT discovery/instrumentation semantics;
@@ -768,7 +765,7 @@ Retain or adapt:
 
 OpenLIT auto-pricing may persist a computed cost to a trace, but it must batch span updates into bounded, partition-pruned ClickHouse mutations. Never issue one `ALTER TABLE ... UPDATE` for each span: MergeTree mutations rewrite immutable parts, so per-span updates amplify writes and can saturate the local telemetry database. The maintained patch series owns this adaptation; OpenLIT remains the sole telemetry store and cost values keep their existing source/estimate semantics.
 
-The Memory operator surface lives exclusively inside console/ and uses the shared design system; a separate OpenLIT Memory UI is not part of the AutoDev product.
+The custom PostgreSQL/pgvector memory subsystem has been removed and Mem0 integration is postponed; neither OpenLIT nor `console/` currently exposes a `/memory` product route.
 
 ### Remove from the AutoDev product/distribution
 
@@ -928,7 +925,7 @@ Priority: P1 / P2 / P3 / Disabled
 Limits:   Per session, Across sessions, Unlimited
 ```
 
-**The CLI's version belongs to the provider, and it is small text.** Every provider AutoDev routes to is served by a CLI, and the release it is on is the first thing an operator needs when a provider behaves differently than it used to. Runtime reads the version from the binary it would actually spawn — `claude --version`, `codex --version`, `agy --version`, `mmx --version`, `copilot --version`, and opencli's own entry point — so the number beside a provider is the number in use. The read is bounded, happens off the request path, and is refreshed in the background; the Console never spawns a CLI itself. The table shows it under the provider's name, and the provider's own page shows it in its header beside the live agent count. A CLI that is not on the machine reads **Not installed**; one that is there and would not answer reads **Not read**; a Runtime that has not read any version says **Not observed**. None of them reads as a version of zero, and the provider, requested-model and Skill filters do not narrow the version, because it is a property of the machine rather than of a request.
+**The CLI's version belongs to the provider, and it is small text.** Every provider AutoDev routes to is served by a CLI, and the release it is on is the first thing an operator needs when a provider behaves differently than it used to. Runtime reads the version from the binary it would actually spawn — `claude --version`, `codex --version`, `agy --version`, `mcode --version`, `copilot --version`, and opencli's own entry point — so the number beside a provider is the number in use. The read is bounded, happens off the request path, and is refreshed in the background; the Console never spawns a CLI itself. The table shows it under the provider's name, and the provider's own page shows it in its header beside the live agent count. A CLI that is not on the machine reads **Not installed**; one that is there and would not answer reads **Not read**; a Runtime that has not read any version says **Not observed**. None of them reads as a version of zero, and the provider, requested-model and Skill filters do not narrow the version, because it is a property of the machine rather than of a request.
 
 Provider detail may combine its enable/disable controls, configured routes, its models with their own toggles, per-tier models, the tier priority/fallback groups the provider appears in, the CLI's version, live readiness/cooldown/failure evidence, small scoped Usage summaries that link to Usage, and the provider's external Usage and Documentation links. Those two links are focused contextual links: each provider's URLs live once in its `providers.<id>.links` routing-config entry, reach the Console through the providers Control API record, open in a new tab, and are omitted when unconfigured; the Console keeps no URL list of its own. Mutations go through typed Control API provider/routing operations. Credentials are shown only as configured/missing status, never as values, and Providers must not become a second credential or model-catalog authority.
 
@@ -994,13 +991,7 @@ The skill's own routes follow the same rule as every other detail. A catalogue t
 
 ### Memory
 
-Memory must use the same AutoDev shell, tables, forms, filters, status patterns, and detail surfaces as the rest of the Console.
-
-**Mem0 Platform** is the selected managed memory engine (capture-derived extraction, consolidation, durable storage, updates and retrieval), with its official hosted MCP usable only through trusted, scoped agent integration. AutoDev should **not** build or indefinitely maintain a competing PostgreSQL/pgvector memory engine, generic MemoryService CRUD/search pipeline, or custom general-purpose memory MCP. AutoDev retains execution evidence, scoped authorization, current Git/RuleSync applicability checks, bounded injection and evaluation.
-
-Keep **OpenLIT** as the memory UI/telemetry framework. Port/adapt the supported **Mem0 connector** and useful OpenLIT list/detail/graph/chart/trace primitives into `console/`; there is **no standalone OpenLIT Memory operator UI** in the target. API/connector/hosted-MCP compatibility and security isolation must be validated before replacement. The current AutoDev-owned memory system is transitional until cutover gates pass.
-
-Detailed Mem0 adoption, integration, security, telemetry, migration and evaluation requirements are in [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
+The custom AutoDev PostgreSQL/pgvector memory subsystem (`MemoryService`, `/control/memory/*`, and `console/app/memory`) has been removed, and **Mem0 Platform** integration is postponed for future work. AutoDev does **not** maintain a competing PostgreSQL/pgvector memory engine, custom compaction/continuation shims, or `/memory` Console pages in the active release; future Mem0 adoption must go through AutoDev's scoped authorization and telemetry boundaries.
 
 ### Evaluations
 
@@ -1242,17 +1233,12 @@ Use a minimal autodev.skill.* contract where no standard skill semantic conventi
 
 ### Memory
 
-Memory telemetry must remain governed by the focused Memory design. At the shared Console level:
+Custom memory telemetry pipelines are removed while Mem0 integration is postponed. At the shared Console level, any future memory integration must ensure:
 
-- memory research stages are observable within the logical request trace;
-- packet injection is distinct from model use and task success;
-- task/PR outcomes are never inferred from provider-routing success;
+- memory stages remain observable within the logical request trace without duplicating GenAI cost spans;
 - metric dimensions remain bounded and content-free;
-- GenAI attempt spans remain the source of model cost;
-- Mem0 is the durable memory authority; provider operations and hosted MCP must pass AutoDev's trusted scope/authorization boundary, and old MemoryService storage/search is transitional;
+- provider/tool operations pass AutoDev's trusted scope/authorization boundary;
 - sensitive query/claim/evidence/session/memory identifiers do not become telemetry dimensions.
-
-Detailed stage/metric definitions remain in memory-target-state.md so this shared target does not duplicate the Memory implementation contract.
 
 ### Usage dashboard
 
@@ -1480,7 +1466,6 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 ### Console UI/product
 
 - console/ is the sole final user-facing application.
-- Canonical resource navigation exposes **15 resources**, with **Playtesting** under Observe.
 - The Providers tab uses five columns — **Provider, Status, Active Agents, Roles, Agent Limits**. Status reads `Ready` only when the provider is healthy and fully configured and no fresh, known quota scope is authoritatively exhausted; the yellow `Quota exhausted` verdict names its scope in the badge title and remains presentation-only, without changing Runtime health or routing. Otherwise Status names the blocking state. Active Agents reports the live Runtime count. Roles shows **Default, Smart, Orchestrator, Subagent** with distinct white-outline icons, `P1/P2/P3/Disabled` priority dropdowns and model selectors that dim when disabled. The Disabled priority is highlighted; P1–P3 use a neutral style. Agent Limits provides **Per session** and **Across sessions** steppers, an **Unlimited** button and a **Disable / Enable** button that preserves configured models, priorities and limits.
 - Agents and Models show active instance counts per configured role and model, respectively; the Providers and Models views refresh current counts every five seconds while open. Not-observed live state remains distinct from a measured zero.
 - Skills presents catalog metadata and role assignments in one table; every checkbox change auto-saves the complete role set, with revision-conflict/failure feedback and no separate Save button.
@@ -1492,7 +1477,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Otter/chat is absent.
 - Documentation/Community/blog/marketing navigation is absent.
 - Accounts/profile/logout, organization/project/environment selectors, generic onboarding, generic dashboard builder, Rule Engine, OpenGround, GPU, discovery/instrumentation UX, and removed product surfaces are absent.
-- Memory, Evaluations, **Playtesting**, Agents, Prompts, Usage, and other retained functionality appears inside the shared AutoDev shell rather than opening a second operator application.
+- Evaluations, **Playtesting**, Agents, Prompts, Usage, and other retained functionality appears inside the shared AutoDev shell rather than opening a second operator application.
 - **Playtesting** has a dedicated active sidebar item, a Run-first start/watch/result flow, Sessions/Findings/Compare archive views, indexed workspace-filtered evidence and an outcome-first full-page session inspector with raw evidence disclosure. Evidence links, absent media, human-data privacy, checkout-scoped latest-commit execution, in-place navigation and large-history pagination are validated with bounded data retrieval.
 - Shared tables/tabs/forms/status/dialog/filter/chart primitives produce consistent spacing, density, keyboard/focus behavior, and status vocabulary.
 - Safe single-choice settings apply on selection without a second Apply control; multi-axis filters, multi-select sets, and reviewed transactions retain an explicit submit boundary with its purpose made clear. Changing or submitting any Console form or control does not cause a full document reload, executing via in-place client navigation and updates while preserving URL state, native form semantics, keyboard focus, accessible pending feedback, and server-confirmed state.
@@ -1592,6 +1577,6 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 ## Final target
 
-AutoDev is a **TypeScript-first, provider-independent, subscription-capable agent platform** with role-based orchestration, safe direct CLI/Responses and parity-gated ACP execution, strict and observable permissions, durable routing and resource policy, and package-managed, maintained open-source dependencies rather than duplicated custom infrastructure.
+AutoDev is a **TypeScript-first, provider-independent, subscription-capable agent platform** with role-based orchestration, native ACP execution and bounded `opencli` worker dispatch, strict and observable permissions, durable routing and resource policy, and package-managed, maintained open-source dependencies rather than duplicated custom infrastructure.
 
 Its single-user, dark-only **AutoDev Console** is the sole compact product surface, with **14 canonical resources**. Rulesync owns portable desired agent configuration; Runtime/Control API owns live control; OpenTelemetry/OpenLIT/ClickHouse owns observed history; managed Mem0 Platform owns long-term memory, exposed with trusted scoped MCP/API integration and OpenLIT UI components in AutoDev Console. No parallel authorities, operator dashboards, execution control planes, telemetry stores or shadow agent runtimes.

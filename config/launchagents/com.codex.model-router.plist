@@ -17,7 +17,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__CODEX_HOME__/hooks/run-codex-model-router.sh</string>
+    <string>__CODEX_HOME__/hooks/run-autodev-model-router.sh</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -35,7 +35,7 @@
   <key>ExitTimeOut</key>
   <integer>45</integer>
 
-  <!-- The launcher (run-codex-model-router.sh) runs AUTODEV_NODE_BIN, the
+  <!-- The launcher (run-autodev-model-router.sh) runs AUTODEV_NODE_BIN, the
        native Node the installer resolved, and falls back to PATH if that
        binary is gone. CODEX_HOME is set so the router reads the user-level
        config; HOME so launcher credential files are found. -->

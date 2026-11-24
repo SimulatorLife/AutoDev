@@ -24,7 +24,7 @@ Start with the installer and read the script before running it:
 
 ```bash
 bash scripts/install.sh
-# or: pnpm run install:codex
+# or: pnpm run install:autodev
 ```
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
@@ -620,7 +620,7 @@ local config turns it on, and a bundled plugin Codex installs after the last
 install is named - disabled - by the next one. Enabling one of those means
 enabling it in `config/config.autodev.toml` and re-running the installer.
 
-`autodev-codex-request-capture`, `autodev-session-diagnostics`,
+`autodev-request-capture`, `autodev-session-diagnostics`,
 `opentelemetry`, and `writing-agent-skills` are **AutoDev-repository-only**
 skills. They are intentionally not wired into any cross-workspace agent
 role because their guidance is meaningless outside of developing the AutoDev
@@ -1055,7 +1055,7 @@ AutoDev scripts remain the hook implementations, while Rulesync owns declaration
 node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev-authored skill, and external curated skills declared in `rulesync.jsonc` (`sources`) and locked in `rulesync.lock` (`karpathy-guidelines` and `react-best-practices`) are materialized under gitignored `.rulesync/skills/.curated/` via `pnpm exec rulesync install --frozen --silent`. The generated repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output combining both local repository skills and curated skills. The installer installs frozen sources from `rulesync.lock` and generates the projections by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two as well as `/.rulesync/skills/.curated/` (while tracking `rulesync.lock`). The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent installs frozen sources and generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` — as well as the external curated skills in `.rulesync/skills/.curated/` — keep the default targets (`["*"]`) and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks every skill that declares `targets` (the user-level set `runtime/src/platform/user-level-skills.ts` reads from the frontmatter) from `.rulesync/skills/` into `$HOME/.agents/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`. A skill may also show what another skill could look like: such an example names files on purpose that the skill does not ship, so `tests/rulesync-skills.test.ts` ignores the paths inside a `<!-- skill-example -->` … `<!-- /skill-example -->` region, and a skill that names a file it does not ship has to mark it as one.
+Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev-authored skill, and external curated skills declared in `rulesync.jsonc` (`sources`) and locked in `rulesync.lock` (`karpathy-guidelines` and `react-best-practices`) are materialized under gitignored `.rulesync/skills/.curated/` via `pnpm exec rulesync install --frozen --silent`. The generated repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output combining both local repository skills and curated skills. The installer installs frozen sources from `rulesync.lock` and generates the projections by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two as well as `/.rulesync/skills/.curated/` (while tracking `rulesync.lock`). The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent installs frozen sources and generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` — as well as the external curated skills in `.rulesync/skills/.curated/` — keep the default targets (`["*"]`) and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks every skill that declares `targets` (the user-level set `runtime/src/platform/user-level-skills.ts` reads from the frontmatter) from `.rulesync/skills/` into `$HOME/.agents/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, Copilot omits `SessionStart`, and Antigravity omits `SubagentStart`/`UserPromptSubmitted`. A skill may also show what another skill could look like: such an example names files on purpose that the skill does not ship, so `tests/rulesync-skills.test.ts` ignores the paths inside a `<!-- skill-example -->` … `<!-- /skill-example -->` region, and a skill that names a file it does not ship has to mark it as one.
 
 The Console Skills detail view edits only an existing canonical `.rulesync/skills/<name>/SKILL.md`; Runtime revision-checks the source, then runs the pinned RuleSync skills-only generator and `--check` across the configured targets before confirming. For manual source edits, regenerate and verify the same projections with:
 
@@ -1094,7 +1094,7 @@ CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 
 The installer provisions `CODEX_ROUTER_OPENCLI_API_KEY` the same way for the
 opencli bridge (`com.codex.opencli-proxy`, `127.0.0.1:4004`), which the Router
-and `run-codex-opencli-proxy.sh` both load. opencli itself is not a global
+and `run-autodev-opencli-proxy.sh` both load. opencli itself is not a global
 install: it is the Runtime's pinned `@jackwener/opencli` dependency, installed
 by `pnpm install --frozen-lockfile` and reached from the installed tree through
 its `node_modules` link, so launchd's `PATH` never decides which opencli runs
@@ -1183,7 +1183,7 @@ three places, and each one is live at a different moment:
   symlink (`$CODEX_HOME/.src-<hash>/providers/`, swapped atomically so a
   restarting process never observes a half-written tree and retained for 7 days
   after replacement for in-flight sessions), the path
-  `run-codex-opencli-proxy.sh` executes. With the dedicated browser on, the
+  `run-autodev-opencli-proxy.sh` executes. With the dedicated browser on, the
   bridge owns Chrome for Testing's lifecycle and CDP target pool; its private
   profile remains in `CODEX_HOME` across restarts. The normal installer
   refreshes the bridge and ensures the build pinned by Runtime's Playwright
@@ -1259,7 +1259,7 @@ bash scripts/openlit/down.sh
 
 Use `pnpm run dev` as the supported development entrypoint. Directly launching the Next.js workspace bypasses backend reconciliation and contract validation and is intentionally not exposed as a root script. The production Console launcher performs the same read-only Control API compatibility check and validates the OpenLIT Usage v5 response before it starts `next start`.
 
-The normal `pnpm run install:codex` release materializes the Console LaunchAgent, verifies that this Runtime owns the Console port, builds Next into a unique staging directory, leaves the active production artifact untouched on build failure, then reloads/verifies the managed Console after Runtime. `bash scripts/install.sh --materialize-only` deliberately skips both the production build and service restart for an active session. The installer owns the Console port: it stops a Console process this Runtime owns — a previous install's console, or a development server occupying the configured port — and takes the port for the managed Console, so a repeated install converges instead of failing. It never kills a listener it does not own and never publishes over a foreign listener's port; that listener has to be stopped, or the port changed with `AUTODEV_CONSOLE_PORT`.
+The normal `pnpm run install:autodev` release materializes the Console LaunchAgent, verifies that this Runtime owns the Console port, builds Next into a unique staging directory, leaves the active production artifact untouched on build failure, then reloads/verifies the managed Console after Runtime. `bash scripts/install.sh --materialize-only` deliberately skips both the production build and service restart for an active session. The installer owns the Console port: it stops a Console process this Runtime owns — a previous install's console, or a development server occupying the configured port — and takes the port for the managed Console, so a repeated install converges instead of failing. It never kills a listener it does not own and never publishes over a foreign listener's port; that listener has to be stopped, or the port changed with `AUTODEV_CONSOLE_PORT`.
 
 `next dev` writes to `console/.next-dev`; `next build` (and the Runtime installer’s console-build step) writes the production build that `next start` and the Console LaunchAgent serve to `console/.next`. The split lives in `console/src/lib/build-output.ts` (applied by `console/next.config.ts`), so a build cannot delete the chunks a running dev server loads (the `Cannot find module './<n>.js'` crash from `_document.js`). `console/next-env.d.ts` points at whichever directory generated it last, so it is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs `next typegen` first, which regenerates it and the `console/.next/types` route types. The dev server’s `console/.next-dev/types` stay out of the type-check.
 
@@ -1330,7 +1330,7 @@ Console workflow. That file carries only the two Console-required server
 credentials plus their non-secret local base URL defaults; the OpenLIT
 database password and the OTLP receiver token are deliberately not
 included. The launchd-managed Console path does not depend on
-`console/.env.local` — `scripts/run-codex-console.sh` reads the canonical
+`console/.env.local` — `scripts/run-autodev-console.sh` reads the canonical
 secret file via an exact-key parser and exports only the two tokens
 needed by the Next.js server.
 
@@ -1394,7 +1394,7 @@ The Console GitHub page always shows the workflow definitions parsed from
 read-only Control API route `/control/github`, which issues only `GET`
 requests for the repository's Actions workflows and runs. That route runs
 inside the model router process: the `com.codex.model-router` LaunchAgent
-starts `scripts/run-codex-model-router.sh`, which loads `$CODEX_HOME/.env`
+starts `scripts/run-autodev-model-router.sh`, which loads `$CODEX_HOME/.env`
 before starting `runtime/src/router/server.ts`. To configure runtime facts, set
 the following in that private file:
 

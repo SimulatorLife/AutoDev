@@ -34,12 +34,7 @@ const EXPECTED_SECTIONS = Object.freeze([
   "shell_environment_policy",
   "plugins"
 ]);
-const EXPECTED_MODEL_PROVIDERS = Object.freeze([
-  "claude_code_subscription",
-  "local_model_router",
-  "minimax",
-  "antigravity_cli"
-]);
+const EXPECTED_MODEL_PROVIDERS = Object.freeze(["local_model_router"]);
 const EXPECTED_SKILLS = Object.freeze([
   "lsp-mcp-server",
   "ccc",
@@ -95,10 +90,9 @@ type PortableFixture = {
 };
 
 function loadPortable(absoluteTomlPath: string): Record<string, unknown> {
-  return parse(readFileSync(absoluteTomlPath, "utf8")) as unknown as Record<
-    string,
-    unknown
-  >;
+  return structuredClone(
+    parse(readFileSync(absoluteTomlPath, "utf8"))
+  ) as unknown as Record<string, unknown>;
 }
 
 async function readFixture(): Promise<PortableFixture> {

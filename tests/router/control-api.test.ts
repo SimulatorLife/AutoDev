@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import {
+  CHATGPT_TUNNEL_CONTROL_PATH,
   type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
   type ControlApiProvidersResponse,
@@ -447,7 +448,10 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     setExecutionContractForTests({
       roles: {
         default: { mcp: ["playwright"], skills: ["orchestration"] },
-        reviewer: { mcp: ["playwright", "github"], skills: ["lsp-mcp-server"] }
+        reviewer: {
+          mcp: ["playwright", "custom-undeclared-mcp"],
+          skills: ["lsp-mcp-server"]
+        }
       },
       providers: {}
     } as unknown as ExecutionContract);
@@ -487,11 +491,11 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     assert.equal(mcps.response.statusCode, 200);
     assert.equal(mcps.body.source, ".rulesync/mcp.jsonc");
     assert.equal(mcps.body.valid, true);
-    const undeclaredGithub = mcps.body.servers.find(
-      (server: { name: string }) => server.name === "github"
+    const undeclaredCustom = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "custom-undeclared-mcp"
     );
-    assert.deepEqual(undeclaredGithub, {
-      name: "github",
+    assert.deepEqual(undeclaredCustom, {
+      name: "custom-undeclared-mcp",
       enabled: null,
       transport: "unknown",
       targetOverrides: [],
@@ -835,6 +839,7 @@ test("operator PATCH validates fields, persists provider state, and audits the a
   }
 });
 
+
 test("POST /control/providers/:provider/check runs the router's check for an operator", async () => {
   const saved = saveEnv();
   const checked: string[] = [];
@@ -1089,6 +1094,7 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
   }
 });
 
+
 test("failed persistence rolls back the in-memory provider policy", async () => {
   const saved = saveEnv();
   const previous = ROUTING_POLICY.assignmentFor("claude", "subagent");
@@ -1124,6 +1130,7 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
     restoreEnv(saved);
   }
 });
+
 
 test("provider enablement disables globally while preserving its roles and limits", async () => {
   const saved = saveEnv();
@@ -1256,6 +1263,7 @@ test("provider enablement disables globally while preserving its roles and limit
     restoreEnv(saved);
   }
 });
+
 
 test("the opencli providers share one browser setting that defaults to the operator's Chrome", async () => {
   const saved = saveEnv();
@@ -1410,6 +1418,7 @@ test("provider agent limits accept Unlimited and reject values that are not limi
   }
 });
 
+
 test("a failed provider limits persist leaves no limits behind", async () => {
   const saved = saveEnv();
   const originalPersistence = setDefaultPersistenceManager({
@@ -1439,6 +1448,7 @@ test("a failed provider limits persist leaves no limits behind", async () => {
     restoreEnv(saved);
   }
 });
+
 
 test("a failed persist cannot leave behind an assignment that had none before", async () => {
   const saved = saveEnv();
@@ -1477,6 +1487,7 @@ test("a failed persist cannot leave behind an assignment that had none before", 
     restoreEnv(saved);
   }
 });
+
 
 test("provider reset requires an operator actor and a body of exactly { confirm: true }", async () => {
   const saved = saveEnv();
@@ -1529,6 +1540,7 @@ test("provider reset requires an operator actor and a body of exactly { confirm:
     restoreEnv(saved);
   }
 });
+
 
 test("provider reset clears only role assignments, provider disables, model disables, and provider limits, and preserves everything else", async () => {
   const saved = saveEnv();
@@ -1705,6 +1717,7 @@ test("provider reset clears only role assignments, provider disables, model disa
   }
 });
 
+
 test("a failed provider reset persist restores the exact prior provider state", async () => {
   const saved = saveEnv();
   const priorState = ROUTING_POLICY.runtimeState();
@@ -1746,6 +1759,7 @@ test("a failed provider reset persist restores the exact prior provider state", 
     restoreEnv(saved);
   }
 });
+
 
 test("provider reset serializes with a concurrent provider role mutation on the shared router-state queue", async () => {
   const saved = saveEnv();
@@ -1820,6 +1834,7 @@ test("provider reset serializes with a concurrent provider role mutation on the 
     restoreEnv(saved);
   }
 });
+
 
 test("providers v2 reports routes, credential presence, tier models, priorities, and router health only when observed", async () => {
   const saved = saveEnv();
@@ -2190,6 +2205,7 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
   }
 });
 
+
 test("operator cannot change model enablement without current routeable availability", async () => {
   const saved = saveEnv();
   const configured = ROUTING_POLICY.configuredModels()[0]!;
@@ -2248,6 +2264,7 @@ test("operator cannot change model enablement without current routeable availabi
     restoreEnv(saved);
   }
 });
+
 
 test("provider role edits preserve an unavailable current model but accept new models only from current routeable discovery", async () => {
   const saved = saveEnv();
@@ -2373,6 +2390,7 @@ test("provider role edits preserve an unavailable current model but accept new m
     restoreEnv(saved);
   }
 });
+
 
 test("read-only collections reject mutations and the removed admin route stays absent", async () => {
   const saved = saveEnv();
@@ -2907,6 +2925,7 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
   }
 });
 
+
 test("Agent detail and mutation paths canonicalize role aliases before applying policy", async () => {
   const saved = saveEnv();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
@@ -2939,6 +2958,7 @@ test("Agent detail and mutation paths canonicalize role aliases before applying 
     restoreEnv(saved);
   }
 });
+
 
 test("concurrent Agent enablement writes compare revisions after the prior persist completes", async () => {
   const saved = saveEnv();
@@ -3004,6 +3024,7 @@ test("concurrent Agent enablement writes compare revisions after the prior persi
     restoreEnv(saved);
   }
 });
+
 
 test("Control API surfaces all 13 typed resource families", async () => {
   const saved = saveEnv();
@@ -4087,255 +4108,6 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
   }
 });
 
-test("Memory Control API requires an explicit workspace scope and configured storage", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    const missingScope = await call("GET", "/control/memory/records", {
-      actor: "viewer-a"
-    });
-    assert.equal(missingScope.response.statusCode, 400);
-    assert.equal(missingScope.body.error.code, "autodev_memory_invalid_filter");
-
-    const unavailable = await call(
-      "GET",
-      "/control/memory/records?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-      { actor: "viewer-a" }
-    );
-    assert.equal(unavailable.response.statusCode, 503);
-    assert.equal(unavailable.body.error.code, "autodev_memory_unavailable");
-  } finally {
-    restoreEnv(saved);
-  }
-});
-
-test("native transcript capture requires an operator and an observed session scope", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    const denied = await call("POST", "/control/memory/capture", {
-      actor: "viewer-a",
-      body: {
-        sessionId: "session-a",
-        transcriptPath: "/tmp/codex/sessions/session.jsonl",
-        cwd: "/workspace/repo"
-      }
-    });
-    assert.equal(denied.response.statusCode, 403);
-    assert.equal(denied.body.error.code, "autodev_memory_capture_forbidden");
-
-    const unknownSession = await call("POST", "/control/memory/capture", {
-      actor: "operator-a",
-      body: {
-        sessionId: "session-a",
-        transcriptPath: "/tmp/codex/sessions/session.jsonl",
-        cwd: "/workspace/repo"
-      }
-    });
-    assert.equal(unknownSession.response.statusCode, 403);
-    assert.equal(
-      unknownSession.body.error.code,
-      "autodev_memory_capture_scope_forbidden"
-    );
-  } finally {
-    restoreEnv(saved);
-  }
-});
-
-test("Memory Control API rejects invalid filters before opening the memory host", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    const invalidKind = await call(
-      "GET",
-      "/control/memory/records?workspaceId=workspace-a&kind=prompt",
-      { actor: "viewer-a" }
-    );
-    assert.equal(invalidKind.response.statusCode, 400);
-
-    const invalidScope = await call(
-      "GET",
-      "/control/memory/experiences?workspaceId=workspace-a&taskId=task-a",
-      { actor: "viewer-a" }
-    );
-    assert.equal(invalidScope.response.statusCode, 400);
-    const invalidMemoryMode = await call(
-      "GET",
-      "/control/memory/experiences?workspaceId=workspace-a&memoryMode=other",
-      { actor: "viewer-a" }
-    );
-    assert.equal(invalidMemoryMode.response.statusCode, 400);
-    const invalidOutcome = await call(
-      "GET",
-      "/control/memory/experiences?workspaceId=workspace-a&outcome=maybe",
-      { actor: "viewer-a" }
-    );
-    assert.equal(invalidOutcome.response.statusCode, 400);
-  } finally {
-    restoreEnv(saved);
-  }
-});
-
-test("Memory Control API bounds the records and experiences time window", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    const rejects = async (query: string): Promise<number> => {
-      const result = await call(
-        "GET",
-        `/control/memory/records?workspaceId=workspace-a&${query}`,
-        { actor: "viewer-a" }
-      );
-      return result.response.statusCode;
-    };
-
-    // Half a window is the same filter written two ways, so the ambiguous form
-    // is refused rather than guessed at.
-    assert.equal(await rejects("occurredFrom=2026-09-01T00:00:00Z"), 400);
-    assert.equal(await rejects("occurredUntil=2026-10-01T00:00:00Z"), 400);
-    assert.equal(await rejects("occurredFrom=yesterday"), 400);
-    assert.equal(
-      await rejects(
-        "occurredUntil=2026-09-01T00:00:00Z&occurredFrom=2026-10-01T00:00:00Z"
-      ),
-      400
-    );
-    // The same 365-day ceiling the cohort reads carry, so an operator gets one
-    // answer for how far back they can look on every Memory surface.
-    assert.equal(
-      await rejects(
-        "occurredFrom=2020-01-01T00:00:00Z&occurredUntil=2026-10-01T00:00:00Z"
-      ),
-      400
-    );
-    // A well-formed window parses and proceeds to the memory host, which is
-    // absent here -- so it must fail as unavailable, never as a bad request.
-    const accepted = await call(
-      "GET",
-      "/control/memory/records?workspaceId=workspace-a&occurredFrom=2026-09-01T00:00:00Z&occurredUntil=2026-10-01T00:00:00Z",
-      { actor: "viewer-a" }
-    );
-    assert.notEqual(accepted.response.statusCode, 400);
-  } finally {
-    restoreEnv(saved);
-  }
-});
-
-test("Memory Control API audits denied lifecycle writes and gates global reads", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    process.env.AUTODEV_MEMORY_READ_GLOBAL = "1";
-    const write = await captureAudit(() =>
-      call("POST", "/control/memory/records?workspaceId=workspace-a", {
-        actor: "viewer-a",
-        body: {}
-      })
-    );
-    assert.equal(write.result.response.statusCode, 403);
-    assert.equal(write.lines.length, 1);
-    const audit = JSON.parse(write.lines[0] ?? "null") as {
-      outcome: string;
-      reason: string;
-      resource: string;
-    };
-    assert.equal(audit.outcome, "denied");
-    assert.equal(audit.reason, "viewer_cannot_mutate");
-    assert.equal(audit.resource, "/control/memory/records");
-
-    const getPurge = await call(
-      "GET",
-      "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-      { actor: "operator-a" }
-    );
-    assert.equal(getPurge.response.statusCode, 405);
-    assert.equal(getPurge.response.headers.allow, "POST");
-
-    const viewerPurge = await captureAudit(() =>
-      call(
-        "POST",
-        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-        {
-          actor: "viewer-a",
-          body: { reason: "privacy_request" }
-        }
-      )
-    );
-    assert.equal(viewerPurge.result.response.statusCode, 403);
-    assert.equal(viewerPurge.lines.length, 1);
-    const purgeAudit = JSON.parse(viewerPurge.lines[0] ?? "null") as {
-      action: string;
-      outcome: string;
-      resource: string;
-      reason: string;
-    };
-    assert.equal(purgeAudit.action, "purge");
-    assert.equal(purgeAudit.outcome, "denied");
-    assert.equal(purgeAudit.resource, "/control/memory/experiences");
-    assert.equal(purgeAudit.reason, "viewer_cannot_mutate");
-
-    const unavailablePurge = await captureAudit(() =>
-      call(
-        "POST",
-        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-        {
-          actor: "operator-a",
-          body: { reason: "privacy_request" }
-        }
-      )
-    );
-    assert.equal(unavailablePurge.result.response.statusCode, 503);
-    assert.equal(unavailablePurge.lines.length, 1);
-    const unavailableAudit = JSON.parse(
-      unavailablePurge.lines[0] ?? "null"
-    ) as { action: string; outcome: string; resource: string; reason: string };
-    assert.equal(unavailableAudit.action, "purge");
-    assert.equal(unavailableAudit.outcome, "error");
-    assert.equal(unavailableAudit.resource, "/control/memory/experiences");
-    assert.equal(unavailableAudit.reason, "memory_unavailable");
-
-    const malformed = await call(
-      "POST",
-      "/control/memory/records?workspaceId=workspace-a",
-      { actor: "operator-a", body: "not-json" }
-    );
-    assert.equal(malformed.response.statusCode, 400);
-    assert.equal(malformed.body.error.code, "autodev_control_api_bad_body");
-
-    const viewerGlobal = await call(
-      "GET",
-      "/control/memory/records?workspaceId=workspace-a&includeGlobal=true",
-      { actor: "viewer-a" }
-    );
-    assert.equal(viewerGlobal.response.statusCode, 403);
-    assert.equal(
-      viewerGlobal.body.error.code,
-      "autodev_memory_scope_forbidden"
-    );
-    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
-    const viewerTaskHistory = await call(
-      "GET",
-      "/control/memory/experiences?workspaceId=workspace-a&includeTaskHistory=true",
-      { actor: "viewer-a" }
-    );
-    assert.equal(viewerTaskHistory.response.statusCode, 403);
-    const operatorGrantRequired = await call(
-      "GET",
-      "/control/memory/experiences?workspaceId=workspace-a&includeTaskHistory=true",
-      { actor: "operator-a" }
-    );
-    assert.equal(operatorGrantRequired.response.statusCode, 503);
-    delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
-  } finally {
-    restoreEnv(saved);
-  }
-});
-
 test("Control API /control/github surfaces authoritative read-only GitHub Actions runtime state and scoped stats when configured", async () => {
   const saved = saveEnv();
   try {
@@ -5042,6 +4814,7 @@ test("queued provider role patches revalidate an unchanged model after reset cle
   }
 });
 
+
 test("queued provider role patches recheck provider enablement after a disable commits", async () => {
   const saved = saveEnv();
   const priorState = ROUTING_POLICY.runtimeState();
@@ -5117,6 +4890,7 @@ test("queued provider role patches recheck provider enablement after a disable c
     restoreEnv(saved);
   }
 });
+
 
 test("a provider role accepts a model no catalog declares, and keeps the effort it carries", async () => {
   // A provider offers models that no catalog declares: the Claude account's own
@@ -5234,6 +5008,72 @@ test("a provider role accepts a model no catalog declares, and keeps the effort 
       );
     else ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
     setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/chatgpt-tunnel exposes status and enforces operator and body guards", async () => {
+  const saved = saveEnv();
+  const root = mkdtempSync(join(tmpdir(), "autodev-control-tunnel-"));
+  try {
+    configure();
+    const repo = fileURLToPath(new URL("../../", import.meta.url));
+    const home = join(root, "home");
+    const codexHome = join(home, ".codex");
+    mkdirSync(codexHome, { recursive: true });
+    const options: ControlApiRequestOptions = { repositoryRoot: repo, codexHome };
+
+    const getResult = await call(
+      "GET",
+      CHATGPT_TUNNEL_CONTROL_PATH,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(getResult.handled, true);
+    assert.equal(getResult.response.statusCode, 200);
+    assert.equal(getResult.body?.schema, "autodev-chatgpt-tunnel-v1");
+    assert.equal(getResult.body?.configured, false);
+    assert.equal(getResult.body?.enabled, false);
+    assert.equal(getResult.body?.ready, false);
+    assert.match(getResult.body?.revision ?? "", /^[a-f0-9]{64}$/u);
+
+    const forbidden = await call(
+      "POST",
+      CHATGPT_TUNNEL_CONTROL_PATH,
+      {
+        actor: "viewer-a",
+        body: { action: "disable", expectedRevision: "a".repeat(64) }
+      },
+      options
+    );
+    assert.equal(forbidden.response.statusCode, 403);
+    assert.equal(forbidden.body?.error?.code, "autodev_control_api_forbidden");
+
+    const invalid = await call(
+      "POST",
+      CHATGPT_TUNNEL_CONTROL_PATH,
+      {
+        actor: "operator-a",
+        body: { action: "unknown", expectedRevision: "bad" }
+      },
+      options
+    );
+    assert.equal(invalid.response.statusCode, 400);
+    assert.equal(
+      invalid.body?.error?.code,
+      "autodev_control_api_invalid_body"
+    );
+
+    const methodNotAllowed = await call(
+      "DELETE",
+      CHATGPT_TUNNEL_CONTROL_PATH,
+      { actor: "operator-a" },
+      options
+    );
+    assert.equal(methodNotAllowed.response.statusCode, 405);
+    assert.equal(methodNotAllowed.response.headers.allow, "GET, POST");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
     restoreEnv(saved);
   }
 });

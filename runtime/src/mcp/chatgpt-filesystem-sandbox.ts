@@ -55,6 +55,7 @@ export function filesystemSandboxProfile(workspace: string, modules: string, nod
   return [
     "(version 1)",
     "(deny default)",
+    '(import "dyld-support.sb")',
     "(allow process-exec " + literal(node) + ")",
     "(allow sysctl-read)",
     "(allow mach-lookup)",

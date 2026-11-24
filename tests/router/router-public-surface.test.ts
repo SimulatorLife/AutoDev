@@ -78,8 +78,4 @@ test("tests import pass-throughed constants from the module that owns them", () 
     source("tests/router/subagents.test.ts"),
     /PROCESS_FALLBACK_SESSION_KEY[^}]*\} from "@simulatorlife\/autodev-runtime\/router\/concurrency";/su
   );
-  assert.match(
-    source("tests/router/model-router.test.ts"),
-    /ORCHESTRATOR_ALIAS[^}]*\} from "@simulatorlife\/autodev-runtime\/router\/routing";/su
-  );
 });

@@ -139,17 +139,29 @@ export function tunnelClientSupported(version: string): boolean {
 }
 
 function tunnelBinary(env: NodeJS.ProcessEnv): string {
-  let binary = resolveCommandOnPath("tunnel-client");
-  const supported = (candidate: string): boolean =>
-    tunnelClientSupported(execFileSync(candidate, ["--version"], {
-      env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000
-    }));
+  const searchPath = [env.PATH, process.env.PATH, "/opt/homebrew/bin", "/usr/local/bin"]
+    .filter((entry): entry is string => Boolean(entry))
+    .join(path.delimiter);
+  let binary = resolveCommandOnPath("tunnel-client", searchPath);
+  const supported = (candidate: string): boolean => {
+    try {
+      return tunnelClientSupported(execFileSync(candidate, ["--version"], {
+        env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000
+      }));
+    } catch {
+      return false;
+    }
+  };
   if (binary && supported(binary)) return binary;
-  const brew = resolveCommandOnPath("brew");
+  const brew = resolveCommandOnPath("brew", searchPath);
   if (!brew) throw new Error("Homebrew is required to install OpenAI tunnel-client >= 0.0.21");
+  if (!binary) {
+    const tap = homebrewInvocation(brew, ["tap", "openai/tools"]);
+    execFileSync(tap.command, tap.args, { env, stdio: "inherit" });
+  }
   const invocation = homebrewInvocation(brew, [binary ? "upgrade" : "install", "openai/tools/tunnel-client"]);
   execFileSync(invocation.command, invocation.args, { env, stdio: "inherit" });
-  binary = resolveCommandOnPath("tunnel-client");
+  binary = resolveCommandOnPath("tunnel-client", searchPath);
   if (!binary || !supported(binary))
     throw new Error("OpenAI tunnel-client >= 0.0.21 is required");
   return binary;
@@ -252,6 +264,7 @@ export async function checkChatgptTunnel(paths: Paths, deps = defaultTunnelDepen
     const generation = generationPath(directory, state.generation);
     const plist = path.join(paths.home, "Library", "LaunchAgents", label + ".plist");
     return Boolean(privateRead(path.join(generation, "runtime.key")) &&
+      privateRead(path.join(generation, "supergateway.json")) &&
       existsSync(path.join(generation, "autodev.yaml")) &&
       launchAgentMatches(templatePath(paths), plist, tunnelLaunchValues(paths, state, generation, deps.launchValues(paths))) &&
       await deps.ready(launchd, healthPort(state.port)));
@@ -448,12 +461,16 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   let stopped = false;
   let committed = false;
   let rollbackFailed = false;
+  let stage = "staging";
   try {
     privateWrite(config, generated);
     privateWrite(keyFile, rawKey + "\n");
+    stage = "supergateway config check";
     deps.run(supergateway, ["--config", config, "--checkConfig"], { cwd: workspace, env: gatewayEnv, timeout: 30_000 });
+    stage = "supergateway MCP probe";
     deps.run(node, [path.join(paths.codexHome, "src/mcp/chatgpt-supergateway-probe.ts"), supergateway, config], { cwd: workspace, env: gatewayEnv, timeout: 60_000 });
     const gatewayCommand = gatewayStdioCommand(supergateway, config, gatewayEnv);
+    stage = "tunnel-client init";
     deps.run(binary, [
       "init", "--sample", "sample_mcp_stdio_local", "--profile", "autodev",
       "--profile-dir", generation, "--tunnel-id", id,
@@ -464,6 +481,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     chmodSync(profile, 0o600);
     // The prior service may own the desired port. Doctor can validate the
     // candidate using an ephemeral health port without interrupting it.
+    stage = "tunnel-client doctor";
     deps.run(binary, ["doctor", "--profile-file", profile, "--health.listen-addr", "127.0.0.1:0", "--explain"], {
       env: cleanEnv, timeout: 60_000
     });
@@ -475,13 +493,17 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     const candidatePlist = path.join(generation, label + ".plist");
     renderLaunchAgent(templatePath(paths), candidatePlist, tunnelLaunchValues(paths, nextState, generation, deps.launchValues(paths)));
 
+    stage = "launchd stop";
     launchd.bootout(label);
     stopped = true;
+    stage = "readiness port check";
     if (!deps.portFree(port))
       throw new Error("Tunnel readiness port is already in use or could not be checked");
+    stage = "launchd start";
     privateWrite(plistFile, readFileSync(candidatePlist, "utf8"));
     launchd.enable(label);
     launchd.bootstrap(plistFile);
+    stage = "tunnel readiness";
     if (!await deps.wait({ probe: () => deps.ready(launchd, port), sleep }, 60_000))
       throw new Error("Tunnel did not become ready");
     privateWrite(stateFile, JSON.stringify({ version: 1, enabled: true, ...nextState }, null, 2) + "\n");
@@ -504,10 +526,10 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
         }
       } catch {
         rollbackFailed = true;
-        throw new Error("ChatGPT tunnel setup and rollback failed; candidate generation retained for recovery");
+        throw new Error(`ChatGPT tunnel setup (${stage}) and rollback failed; candidate generation retained for recovery`);
       }
     }
-    throw new Error("ChatGPT tunnel setup failed; previous service configuration retained. Check tunnel diagnostics and " + path.join(directory, "stderr.log"));
+    throw new Error(`ChatGPT tunnel setup failed (${stage}); previous service configuration retained. Check tunnel diagnostics and ${path.join(directory, "stderr.log")}`);
   } finally {
     if (!committed && !rollbackFailed) rmSync(generation, { recursive: true, force: true });
   }

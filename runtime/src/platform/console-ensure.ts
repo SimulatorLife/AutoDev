@@ -68,7 +68,7 @@ export function resolveConsoleEnsureOptions(
       "LaunchAgents",
       `${LABEL_AUTODEV_CONSOLE}.plist`
     ),
-    launcher: path.join(codexHome, "hooks", "run-codex-console.sh"),
+    launcher: path.join(codexHome, "hooks", "run-autodev-console.sh"),
     nodeBin: resolveServiceNode(home),
     readyTimeoutMs:
       Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000") ||

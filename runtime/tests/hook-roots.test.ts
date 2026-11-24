@@ -39,9 +39,7 @@ test("repositoryRoot resolves the Runtime source tree without a configured overr
         "mcp/tool-filter.ts"
       ),
       path.resolve(
-        fileURLToPath(
-          new URL("../src/mcp/tool-filter.ts", import.meta.url)
-        )
+        fileURLToPath(new URL("../src/mcp/tool-filter.ts", import.meta.url))
       )
     );
   } finally {
@@ -64,9 +62,7 @@ test("repositoryRoot falls back to CODEX_HOME for an installed hook copy", async
     "dir"
   );
   copyFileSync(
-    fileURLToPath(
-      new URL("../src/hooks/hook-roots.ts", import.meta.url)
-    ),
+    fileURLToPath(new URL("../src/hooks/hook-roots.ts", import.meta.url)),
     installedModule
   );
   delete process.env.AUTODEV_REPO_ROOT;

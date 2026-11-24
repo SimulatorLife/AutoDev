@@ -216,7 +216,7 @@ test("assigning inside a workspace writes the workspace section and leaves the g
   const result = await assignSkillRoles({
     file: file.path,
     expectedRevision: file.revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker"],
     workspace: WORKSPACE
   });
@@ -224,7 +224,7 @@ test("assigning inside a workspace writes the workspace section and leaves the g
   assert.equal(result.workspace, WORKSPACE);
   assert.deepEqual([...result.roles], ["worker"]);
   assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "worker"), [
-    "autodev-codex-request-capture"
+    "autodev-request-capture"
   ]);
   // The global section is untouched: the skill is that workspace's alone.
   assert.deepEqual(rolesOf(file.path, "worker"), []);
@@ -250,7 +250,7 @@ test("a workspace assignment removes the skill from the workspace's other roles"
   await assignSkillRoles({
     file: file.path,
     expectedRevision: file.revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker", "reviewer"],
     workspace: WORKSPACE
   });
@@ -259,13 +259,13 @@ test("a workspace assignment removes the skill from the workspace's other roles"
   await assignSkillRoles({
     file: file.path,
     expectedRevision: revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker"],
     workspace: WORKSPACE
   });
 
   assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "worker"), [
-    "autodev-codex-request-capture"
+    "autodev-request-capture"
   ]);
   assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "reviewer"), []);
 });
@@ -276,7 +276,7 @@ test("a workspace id that is not an owner/repository key is refused", async () =
     assignSkillRoles({
       file: file.path,
       expectedRevision: file.revision,
-      skill: "autodev-codex-request-capture",
+      skill: "autodev-request-capture",
       roles: ["worker"],
       workspace: "SimulatorLife"
     }),
@@ -295,7 +295,7 @@ test("a role the contract does not define cannot be assigned inside a workspace"
     assignSkillRoles({
       file: file.path,
       expectedRevision: file.revision,
-      skill: "autodev-codex-request-capture",
+      skill: "autodev-request-capture",
       roles: ["nonexistent"],
       workspace: WORKSPACE
     }),
@@ -309,7 +309,7 @@ test("the read side is the exact inverse of the write", async () => {
   await assignSkillRoles({
     file: file.path,
     expectedRevision: file.revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker"],
     workspace: WORKSPACE
   });
@@ -318,7 +318,7 @@ test("the read side is the exact inverse of the write", async () => {
     [
       ...assignedSkillRoles({
         file: file.path,
-        skill: "autodev-codex-request-capture"
+        skill: "autodev-request-capture"
       })
     ],
     [],
@@ -328,7 +328,7 @@ test("the read side is the exact inverse of the write", async () => {
     [
       ...assignedSkillRoles({
         file: file.path,
-        skill: "autodev-codex-request-capture",
+        skill: "autodev-request-capture",
         workspace: WORKSPACE
       })
     ],
@@ -356,7 +356,7 @@ test("the contract's role map is read per workspace", async () => {
   await assignSkillRoles({
     file: file.path,
     expectedRevision: file.revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker"],
     workspace: WORKSPACE
   });
@@ -368,7 +368,7 @@ test("the contract's role map is read per workspace", async () => {
   );
   assert.deepEqual(
     contractSkillRoles(parsed as Record<string, unknown>, WORKSPACE).worker,
-    ["autodev-codex-request-capture"]
+    ["autodev-request-capture"]
   );
 });
 
@@ -377,7 +377,7 @@ test("the revision changes when the workspace section changes", async () => {
   const result = await assignSkillRoles({
     file: file.path,
     expectedRevision: file.revision,
-    skill: "autodev-codex-request-capture",
+    skill: "autodev-request-capture",
     roles: ["worker"],
     workspace: WORKSPACE
   });
@@ -392,7 +392,7 @@ test("the revision changes when the workspace section changes", async () => {
     assignSkillRoles({
       file: file.path,
       expectedRevision: file.revision,
-      skill: "autodev-codex-request-capture",
+      skill: "autodev-request-capture",
       roles: ["reviewer"],
       workspace: WORKSPACE
     }),

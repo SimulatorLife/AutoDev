@@ -5,16 +5,16 @@ description: AutoDev-only. Diagnose and fix AutoDev issues from live evidence --
 
 # AutoDev session diagnostics (AutoDev development only)
 
-Diagnose from what the system recorded, not from what the code or docs *say* it
+Diagnose from what the system recorded, not from what the code or docs _say_ it
 should do. Find root causes at their source, then fix them and prove it.
 
-This skill is not for inspecting what Codex *would* send a provider offline -- that is the `autodev-codex-request-capture` skill, which this one hands off to when you need
+This skill is not for inspecting what an agent or transport _would_ send a provider offline -- that is the `autodev-request-capture` skill, which this one hands off to when you need
 to reproduce a request shape.
 
 ### Things to look for
 
-- Agents had the proper/expected skills, tools, MCPs, prompts, permissions, and other resources available/enabled, and *used* them as/when expected
-- Agents did not have access to resources they should *not* have (e.g. a subagent reading an 'orchestration' skill when it does not and *should not* have agent-spawning tools/permissions)
+- Agents had the proper/expected skills, tools, MCPs, prompts, permissions, and other resources available/enabled, and _used_ them as/when expected
+- Agents did not have access to resources they should _not_ have (e.g. a subagent reading an 'orchestration' skill when it does not and _should not_ have agent-spawning tools/permissions)
 - Tools and MCP servers were exposed with the expected names and in the expected way to agents, and that they have consistent names across all model providers and are exposed in the same/consistent way
 - Orchestrator agents could properly spawn subagents and receive their reports
 - Telemetry and logging was emitted, captured, and persisted, and is consistent/standardized across all agents, subagents, and providers
@@ -82,21 +82,21 @@ every event and looked like "the router logged nothing".
 
 ## 2. Evidence map
 
-| Question | Source |
-| --- | --- |
-| What does the session look like overall? | `GET /control/diagnostics/sessions/<id>` on the Control API (`:4101`, read-only, contract v35), `pnpm autodev -- diagnostics <id>`, or the Console's `/usage?sessionId=<id>` -- all three run the same engine |
-| What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
-| Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside |
-| What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times; check `opencli-proxy.launchd.log` for `earlier message(s) left out` and `minimax-proxy.launchd.log` for startup errors) |
-| Health, cooldowns, agent counts, MCP usage now | `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status \| jq`) -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>` (`byMcp`/`mcpUses`, `mcpExposed`, `bridgeTools`), `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. Retry `/status` once if `session-trace.ts` hits a router restart window (`router /status unreachable`). |
-| Persisted router state vs live `/status` | `$CODEX_HOME/codex-router-state.json` (`disabledProviders`, `providerCooldowns`, `roleAssignments.*.model: null` falling back to `config/model-routing.json`) |
-| Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
-| Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
-| Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
-| Did Codex load the command rules? | `node "$SKILL_DIR/scripts/rule-loading-probe.ts" --codex "$(command -v codex)"` — a real Codex run against an isolated `CODEX_HOME`; `ls -l "$CODEX_HOME/rules/default.rules"` must show a regular file, and `bash scripts/install.sh --check` reports a symlink or stale copy as drift |
-| Can this session write to `.git`? | `node "$SKILL_DIR/scripts/git-write-access-probe.ts" --codex "$(command -v codex)"` — the same real-Codex harness against a throwaway Git repository, staging one file through each command form and reporting which forms keep the write access |
-| What `PreToolUse` hooks blocked? | `$CODEX_HOME/hooks/hooks.log` (`event="PreToolUse"`, `decision="deny"`, `policy`, `role`, `reason`, `commandHead`); summarize via `node "$SKILL_DIR/scripts/session-trace.ts" --hooks --since 7`, or scan historical rollouts via `--scan-recent [N]` |
-| Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json` stores per-turn SHA-256 dedupe hashes (`session-trace.ts --efficiency` reports the count), while rollout tool inputs reading `SKILL.md` give exact skill names |
+| Question                                       | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What does the session look like overall?       | `GET /control/diagnostics/sessions/<id>` on the Control API (`:4101`, read-only, contract v35), `pnpm autodev -- diagnostics <id>`, or the Console's `/usage?sessionId=<id>` -- all three run the same engine                                                                                                                                                                                                                                                                                                                                           |
+| What did the thread contain?                   | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error`                                                                                                                                                                                                                                                                                            |
+| Which provider served each request?            | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside                                                                                                                                                                                                                                                                                                                                        |
+| What did a bridge do?                          | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times; check `opencli-proxy.launchd.log` for `earlier message(s) left out` and `minimax-proxy.launchd.log` for startup errors)                                                                                                                                                                                                                                                                                                                                   |
+| Health, cooldowns, agent counts, MCP usage now | `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status \| jq`) -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>` (`byMcp`/`mcpUses`, `mcpExposed`, `bridgeTools`), `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. Retry `/status` once if `session-trace.ts` hits a router restart window (`router /status unreachable`).                                                                                                                                |
+| Persisted router state vs live `/status`       | `$CODEX_HOME/codex-router-state.json` (`disabledProviders`, `providerCooldowns`, `roleAssignments.*.model: null` falling back to `config/model-routing.json`)                                                                                                                                                                                                                                                                                                                                                                                           |
+| Does an MCP server work?                       | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
+| Codex's own view of a turn                     | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"`                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Did work happen despite an empty thread?       | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Did Codex load the command rules?              | `node "$SKILL_DIR/scripts/rule-loading-probe.ts" --codex "$(command -v codex)"` — a real Codex run against an isolated `CODEX_HOME`; `ls -l "$CODEX_HOME/rules/default.rules"` must show a regular file, and `bash scripts/install.sh --check` reports a symlink or stale copy as drift                                                                                                                                                                                                                                                                 |
+| Can this session write to `.git`?              | `node "$SKILL_DIR/scripts/git-write-access-probe.ts" --codex "$(command -v codex)"` — the same real-Codex harness against a throwaway Git repository, staging one file through each command form and reporting which forms keep the write access                                                                                                                                                                                                                                                                                                        |
+| What `PreToolUse` hooks blocked?               | `$CODEX_HOME/hooks/hooks.log` (`event="PreToolUse"`, `decision="deny"`, `policy`, `role`, `reason`, `commandHead`); summarize via `node "$SKILL_DIR/scripts/session-trace.ts" --hooks --since 7`, or scan historical rollouts via `--scan-recent [N]`                                                                                                                                                                                                                                                                                                   |
+| Did a skill get read?                          | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json` stores per-turn SHA-256 dedupe hashes (`session-trace.ts --efficiency` reports the count), while rollout tool inputs reading `SKILL.md` give exact skill names                                                                                                                                                                                                                                                                                                                                     |
 
 ## 3. Diagnose
 
@@ -106,7 +106,7 @@ every event and looked like "the router logged nothing".
 3. **Check the provider side**: bridge log, live CLIs outliving their request,
    workspace changes the thread never recorded.
 4. **Check what is deployed** before blaming (or crediting) code: router and
-   bridges run *installed copies* under `$CODEX_HOME/src` and only pick up a
+   bridges run _installed copies_ under `$CODEX_HOME/src` and only pick up a
    change after reinstall and restart (see `DRIFT` and service start times);
    the MCP launcher resolves into the checkout and applies on the next server
    start.
@@ -116,17 +116,16 @@ every event and looked like "the router logged nothing".
 
 ## 4. Reproduce, fix, verify
 
-- **Hermetic first:** drive the real bridge or router with a fake CLI or fake
-  upstream (`tests/claude-codex-tool-loop.test.ts`, `tests/router/proxy.test.ts`). When running router/proxy unit tests directly with `node --test`, include `--import ./runtime/tests/support/isolate-codex-state.ts` (matching `package.json`'s `test:root`) so tests do not read live `$CODEX_HOME/codex-router-state.json` cooldowns.
+- **Hermetic first:** drive the real ACP executor or router with a fake CLI or fake
+  upstream (`runtime/tests/xacpx-acp-architecture.test.ts`, `tests/router/http.test.ts`). When running router/proxy unit tests directly with `node --test`, include `--import ./runtime/tests/support/isolate-autodev-state.ts` (matching `package.json`'s `test:root`) so tests do not read live `$CODEX_HOME/codex-router-state.json` cooldowns.
 - **Model catalog changes:** keep `config/model-routing.json`, `config/catalogs/*-model-catalog.json`, `config/catalogs/codex-model-catalog.json`, and `data/src/openlit/sync-model-catalogue.ts` in sync (`data/tests/openlit/price-catalogue.test.ts`, `tests/providers/opencli.test.ts`).
 - **Prove the test catches the bug:** disable the fix (revert it or neuter one
   line), confirm the new test fails with the observed symptom, restore.
-- **Request shapes:** `autodev-codex-request-capture`; replay a spawn to see a
+- **Request shapes:** `autodev-request-capture`; replay a spawn to see a
   subagent's own requests.
-- **Live, without touching the running system:** a second bridge from the
-  checkout on a spare port (e.g. `CLAUDE_BRIDGE_PORT=4019 node
-  runtime/src/providers/claude.ts`, OAuth token read inline from the Keychain, never
-  printed), an isolated `CODEX_HOME` pointing at it, and `codex exec --json`
+- **Live, without touching the running system:** run a second `opencli` server or
+  router instance from the checkout on a spare port (e.g. `node runtime/src/providers/opencli.ts`
+  or `/v1/acp/sessions`), an isolated `CODEX_HOME` pointing at it, and `codex exec --json`
   from a throwaway `git init` repo with `</dev/null`; then run this skill's
   script with `--codex-home`. Kill what you started.
 - **Intermittent failures:** repeat the full suite several times, keeping each
@@ -175,7 +174,7 @@ every event and looked like "the router logged nothing".
   `playwright-mcp` launches headed Chrome against one persistent profile
   (`~/Library/Caches/ms-playwright-mcp/mcp-chrome-<hash>`), so a second
   instance gets `Browser is already in use for <dir>, use --isolated`. The
-  pinned `node_modules/.bin/playwright-mcp` (0.0.80) fails this *silently* --
+  pinned `node_modules/.bin/playwright-mcp` (0.0.80) fails this _silently_ --
   tools list, then no reply, no stderr -- while 0.0.83 names the cause. Read
   that silence as "old version plus an already-held profile", never as a healthy
   server, and never as proof the server is broken.
@@ -188,7 +187,7 @@ every event and looked like "the router logged nothing".
 - **`codegraphcontext`'s `get_repository_stats` reports `0` functions and classes
   for a fully indexed repo** (verified 2026-10-05: the graph held 9,505
   `Function` and 262 `Class` nodes; the tool returned `functions: 0,
-  classes: 0` with `success: true`). It counts through
+classes: 0` with `success: true`). It counts through
   `MATCH (r:Repository)-[:CONTAINS*]->(:Function|:Class)`, but the indexer emits
   `CONTAINS` from `File` to `Function` exactly once across the whole graph and
   never from `File` to `Class`; functions hang off files via `CALLS` and
@@ -229,7 +228,7 @@ every event and looked like "the router logged nothing".
   in `docs/local-setup.md` ("Codex command rules").
 - **"`.git` is read-only for this session" is usually a wrong diagnosis.** The
   write access is granted per command, not per session, and it is real: a
-  standalone `git add <path>` writes the index. What loses it is the *shape* of
+  standalone `git add <path>` writes the index. What loses it is the _shape_ of
   the command. Codex judges a chain as a whole, so a chain is only allowed when
   every part of it matches a rule; a shell construct (`cd ... &&`, `2>&1`, `|`,
   a `for` loop) breaks the chain even around an allowed command. Verified
@@ -240,14 +239,14 @@ every event and looked like "the router logged nothing".
   shell loop still do not.
 - **`touch .git/<file>` is not a probe of the write access.** It matches no
   rule, so it is sandboxed by design and always fails with `Operation not
-  permitted` — including in a session that stages successfully. A session that
+permitted` — including in a session that stages successfully. A session that
   probed that way and concluded it could not commit had never tried a real
   `git add`. The one signal that tells a sandboxed command from an unsandboxed
   one is the noise the login shell makes when it is sandboxed (on this
   machine, `/Users/<user>/.rvm/scripts/rvm: line 15: /bin/ps: Operation not
-  permitted`): its absence means the command ran outside the sandbox.
+permitted`): its absence means the command ran outside the sandbox.
 - **An explicit `shell` on `exec_command` can cost the write access.**
-  Codex resolves the shell by *name* through `PATH`, ignoring the directory in
+  Codex resolves the shell by _name_ through `PATH`, ignoring the directory in
   the path you give it, and on an Apple Silicon machine `bash` is often a
   Homebrew x86_64 build that runs translated; macOS keeps the sandbox on a
   translated shell, so an allowed command still cannot write `.git`. Verified
@@ -258,12 +257,12 @@ every event and looked like "the router logged nothing".
   interchangeable.** Measured 2026-11-21 with `codex-cli 0.171.0-alpha.13`
   (`git-write-access-probe.ts --writable-root` / `--permission-profile` /
   `--no-sandbox-mode`): the sandbox alone writes nothing; an execpolicy
-  `allow` rule lets *that one command* out of the sandbox; a sandbox
+  `allow` rule lets _that one command_ out of the sandbox; a sandbox
   `writable_roots` entry makes the whole directory writable for every command
   (and a **file** path as a writable root has no effect, so
   `writable_roots = ["<repo>/.git/index"]` grants nothing while
   `["<repo>/.git"]` grants everything, `git config` included); a Codex
-  **permission profile** is path-scoped *with specificity*, so
+  **permission profile** is path-scoped _with specificity_, so
   `".git/**" = "write"` plus `".git/config" = "read"` lets every command stage
   while `.git/config` stays read-only. A selected profile also **overrides**
   `sandbox_mode`, which is why AutoDev does not let Rulesync generate it: one

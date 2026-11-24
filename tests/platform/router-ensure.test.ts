@@ -45,7 +45,7 @@ function defaultPaths(home: string): RouterEnsureOptions["paths"] {
     lockDir: `${ensureLock}.d`,
     fallbackLog: join(runDir, "codex-model-router.fallback.log"),
     fallbackPidFile: join(runDir, "codex-model-router.fallback.pid"),
-    launcher: join(home, "hooks", "run-codex-model-router.sh"),
+    launcher: join(home, "hooks", "run-autodev-model-router.sh"),
     plistLink: join(
       home,
       "Library",
@@ -399,7 +399,7 @@ test("fallbackPidOwned matches the launchd launcher or the node entrypoint", () 
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     pidCommandLine: () =>
-      "bash /Users/test/.codex/hooks/run-codex-model-router.sh"
+      "bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
   });
   const depsB = makeDeps({
     home: "/tmp/x",
@@ -571,7 +571,7 @@ test("ensureViaFallback returns 0 immediately when a tracked, owned pid is still
       fs,
       probeResult: true,
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh"
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const result = await __testing.ensureViaFallback(
       deps,
@@ -632,7 +632,7 @@ test("ensureViaFallback recycles a tracked but unhealthy pid, starts a launcher,
       fs,
       probeResult: () => probeStates[probeIdx++] ?? false,
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh",
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh",
       nextLauncherPids: [8888]
     });
     const result = await __testing.ensureViaFallback(
@@ -661,7 +661,7 @@ test("ensureViaFallback kills the spawned launcher and clears its pid when the p
       probeResult: false,
       nextLauncherPids: [8888],
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh"
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const result = await __testing.ensureViaFallback(
       deps,
@@ -688,7 +688,7 @@ test("ensureViaFallback rotates the fallback log when it exceeds the size budget
       probeResult: false,
       nextLauncherPids: [8888],
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh"
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const options = defaultOptions(home, { fallbackLogMaxBytes: 32 });
     const result = await __testing.ensureViaFallback(deps, options);
@@ -862,7 +862,7 @@ test("runRouterEnsure returns healthy-fallback when launchd is unavailable and t
       probeResult: () => probeStates[probeIdx++] ?? false,
       nextLauncherPids: [8888],
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh"
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const result = await runRouterEnsure(deps, defaultOptions(home));
     assert.equal(result.status, "healthy-fallback");
@@ -891,7 +891,7 @@ test("runRouterEnsure returns fallback-failed with a log tail when the launcher 
       probeResult: false,
       nextLauncherPids: [8888],
       pidCommandLine: () =>
-        "/bin/bash /Users/test/.codex/hooks/run-codex-model-router.sh",
+        "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh",
       launcherAppends: logLines
     });
     const result = await runRouterEnsure(deps, defaultOptions(home));

@@ -13,10 +13,10 @@ import {
   sseBody,
   type SseEvent,
   startRecorder
-} from "../.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts";
+} from "../.rulesync/skills/autodev-request-capture/scripts/responses-recorder.ts";
 
 const SKILL_DIR = fileURLToPath(
-  new URL("../.rulesync/skills/autodev-codex-request-capture/", import.meta.url)
+  new URL("../.rulesync/skills/autodev-request-capture/", import.meta.url)
 );
 const RECORDER = join(SKILL_DIR, "scripts", "responses-recorder.ts");
 
@@ -180,4 +180,15 @@ test("a turns file that is not { turns: [...] } is refused instead of silently f
     () => parseTurnsFile({ turns: ["not an event array"] }),
     /SSE event arrays/
   );
+});
+
+test("top-level skill is provider-agnostic and delegates Codex wire details to references/", async () => {
+  const skill = await readFile(join(SKILL_DIR, "SKILL.md"), "utf8");
+  const codexRef = await readFile(
+    join(SKILL_DIR, "references", "codex-responses.md"),
+    "utf8"
+  );
+  assert.match(skill, /^name: autodev-request-capture$/m);
+  assert.match(skill, /references\/codex-responses\.md/);
+  assert.match(codexRef, /x-codex-turn-metadata/);
 });

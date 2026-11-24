@@ -31,4 +31,4 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck:root
       - name: OpenCLI provider regression tests
-        run: node --import ./runtime/tests/support/isolate-codex-state.ts --test tests/providers/opencli-upstream.test.ts tests/providers/opencli.test.ts
+        run: node --import ./runtime/tests/support/isolate-autodev-state.ts --test tests/providers/opencli-upstream.test.ts tests/providers/opencli.test.ts

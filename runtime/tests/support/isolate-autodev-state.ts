@@ -1,14 +1,14 @@
 /**
- * Keeps every test run away from the maintainer's live `~/.codex`.
+ * Keeps every test run away from the maintainer's live AutoDev/provider state under `$CODEX_HOME`.
  *
- * The router and default workspace repositories persist state beneath
+ * The router, opencli, and default workspace repositories persist state beneath
  * `$CODEX_HOME`, which defaults to `~/.codex` on an operator's machine. Tests
  * that use those default owners must not chmod or write the operator's live
  * workspace approvals, playtest targets, or router policy.
  *
  * Loaded with `--import` by every test script, before any test module, so
- * each test process gets a temporary Codex home and state files unless the test
- * explicitly supplies its own.
+ * each test process gets an isolated AutoDev state home and router state file
+ * unless the test explicitly supplies its own.
  */
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";

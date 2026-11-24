@@ -44,7 +44,7 @@ const SKILL_ORDER: Record<string, number> = {
   "resolve-merge-conflicts": 8,
   "doubt-driven-development": 9,
   "writing-agent-skills": 10,
-  "autodev-codex-request-capture": 11,
+  "autodev-request-capture": 11,
   "autodev-session-diagnostics": 12
 };
 const ROLE_FILE_EXTENSION = /\.toml$/u;

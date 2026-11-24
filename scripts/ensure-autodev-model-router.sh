@@ -16,5 +16,5 @@ resolve_node() {
   done
   return 1
 }
-node_bin="$(resolve_node)" || { echo "ensure-codex-model-router: node not found" >&2; exit 127; }
+node_bin="$(resolve_node)" || { echo "ensure-autodev-model-router: node not found" >&2; exit 127; }
 exec "$node_bin" "$module"

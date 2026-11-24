@@ -112,7 +112,7 @@
   "scripts": {
     "autodev": "node src/cli/autodev.ts",
     "openlit:verify-usage": "node src/platform/usage-contract.ts",
-    "test": "node --import ./tests/support/isolate-codex-state.ts --test",
+    "test": "node --import ./tests/support/isolate-autodev-state.ts --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

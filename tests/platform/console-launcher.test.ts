@@ -22,10 +22,10 @@ const plistPath = join(
   repositoryRoot,
   "config/launchagents/com.codex.autodev-console.plist"
 );
-const runScriptPath = join(repositoryRoot, "scripts/run-codex-console.sh");
+const runScriptPath = join(repositoryRoot, "scripts/run-autodev-console.sh");
 const ensureScriptPath = join(
   repositoryRoot,
-  "scripts/ensure-codex-console.sh"
+  "scripts/ensure-autodev-console.sh"
 );
 
 test("console LaunchAgent plist matches label, loopback service requirements and placeholder contract", () => {
@@ -41,10 +41,10 @@ test("console LaunchAgent plist matches label, loopback service requirements and
   assert.match(content, /<key>RunAtLoad<\/key>\s*<true\/>/u);
   assert.match(content, /<key>KeepAlive<\/key>\s*<true\/>/u);
 
-  // ProgramArguments invokes hooks/run-codex-console.sh
+  // ProgramArguments invokes hooks/run-autodev-console.sh
   assert.match(
     content,
-    /<string>__CODEX_HOME__\/hooks\/run-codex-console\.sh<\/string>/u
+    /<string>__CODEX_HOME__\/hooks\/run-autodev-console\.sh<\/string>/u
   );
 
   // Required placeholders in EnvironmentVariables

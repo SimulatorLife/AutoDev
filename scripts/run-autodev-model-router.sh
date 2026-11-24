@@ -59,7 +59,7 @@ fi
 if [[ -n "${CODEX_ROUTER_AUTH_TOKEN:-}" && "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
   && command -v launchctl >/dev/null 2>&1; then
   launchctl setenv CODEX_ROUTER_AUTH_TOKEN "$CODEX_ROUTER_AUTH_TOKEN" 2>/dev/null || \
-    echo "run-codex-model-router: could not publish CODEX_ROUTER_AUTH_TOKEN to launchd" >&2
+    echo "run-autodev-model-router: could not publish CODEX_ROUTER_AUTH_TOKEN to launchd" >&2
 fi
 
 
@@ -72,7 +72,7 @@ export AUTODEV_CONTROL_API_LISTEN_PORT="${AUTODEV_CONTROL_API_LISTEN_PORT:-4101}
 # is written into config.toml/plist.
 otlp_api_key="${OPENLIT_OTLP_API_KEY:-}"
 if [[ ${#otlp_api_key} -lt 32 ]]; then
-  echo "run-codex-model-router: the OpenLIT OTLP key is required" >&2
+  echo "run-autodev-model-router: the OpenLIT OTLP key is required" >&2
   exit 1
 fi
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318"
@@ -81,11 +81,11 @@ export AUTODEV_OPENLIT_OTLP_AUTH="1"
 if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
   && command -v launchctl >/dev/null 2>&1; then
   launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT "$OTEL_EXPORTER_OTLP_ENDPOINT" 2>/dev/null || \
-    echo "run-codex-model-router: could not publish OpenLIT OTLP endpoint to launchd" >&2
+    echo "run-autodev-model-router: could not publish OpenLIT OTLP endpoint to launchd" >&2
   launchctl setenv OTEL_EXPORTER_OTLP_HEADERS "$OTEL_EXPORTER_OTLP_HEADERS" 2>/dev/null || \
-    echo "run-codex-model-router: could not publish OpenLIT OTLP auth to launchd" >&2
+    echo "run-autodev-model-router: could not publish OpenLIT OTLP auth to launchd" >&2
   launchctl setenv AUTODEV_OPENLIT_OTLP_AUTH "1" 2>/dev/null || \
-    echo "run-codex-model-router: could not publish OpenLIT ingress marker to launchd" >&2
+    echo "run-autodev-model-router: could not publish OpenLIT ingress marker to launchd" >&2
 fi
 
 # launchd uses a minimal PATH; resolve the pnpm-managed Node directly.
@@ -106,7 +106,7 @@ resolve_node() {
 
 NODE_BIN="$(resolve_node || true)"
 if [[ -z "${NODE_BIN:-}" ]]; then
-  echo "run-codex-model-router: could not locate a node binary" >&2
+  echo "run-autodev-model-router: could not locate a node binary" >&2
   exit 127
 fi
 

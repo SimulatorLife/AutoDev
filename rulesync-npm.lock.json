@@ -1,0 +1,77 @@
+{
+  "lockfileVersion": 1,
+  "sources": {
+    "acpx": {
+      "requestedVersion": "0.22.0",
+      "resolvedVersion": "0.22.0",
+      "integrity": "sha512-dD+xgRwLFOfwL7/VEdn3zrVNFleFoIA0EUETK35w/e+MeYB5FN5+vKERoV60d4SUirTqX610yb/wN+2OFcjpMQ==",
+      "resolvedAt": "2026-11-24T13:41:54.435Z",
+      "skills": {
+        "acpx": {
+          "integrity": "sha256-219d27866bf4bbc0ab4a645131ad6e4ee8a1f5e546f40685d54719cd8af512b4"
+        }
+      },
+      "skillSelection": [
+        "acpx"
+      ],
+      "skillsPath": "skills"
+    },
+    "quota-axi": {
+      "requestedVersion": "0.1.69",
+      "resolvedVersion": "0.1.69",
+      "integrity": "sha512-SfRYsaKhumK1A9Rkfm7JNlZM1tviIbDo5HJVZ1KdmklJz4EOnncveRLzCBC2dFVSj4s2N3jlBPS+Qq8nkcolwQ==",
+      "resolvedAt": "2026-11-24T13:41:57.582Z",
+      "skills": {
+        "quota-axi": {
+          "integrity": "sha256-e5d4999e8b73bf64e518d96762fbc602ed99bd1c12f89466a9846a2c9e1baacf"
+        }
+      },
+      "skillSelection": [
+        "quota-axi"
+      ],
+      "skillsPath": "skills"
+    },
+    "@jackwener/opencli": {
+      "requestedVersion": "2.0.3",
+      "resolvedVersion": "2.0.3",
+      "integrity": "sha512-CkmardXwEYYh80sIMXNL0I8LtdLJNGMhSA+E9v2eFn16AhariIjtJjOsMZZuM7j/i5Kt60rIPKa/cHPFMmVxeA==",
+      "resolvedAt": "2026-11-24T13:42:01.433Z",
+      "skills": {
+        "opencli-autofix": {
+          "integrity": "sha256-7b2c594f381894116d87bf3230e3725affd0fd851671ec957b30ce7547615434"
+        },
+        "opencli-browser": {
+          "integrity": "sha256-f6dc0e90d0c66e5d398410024b3e530f52577b06d0c662565ba318067fe3dfa4"
+        },
+        "opencli-usage": {
+          "integrity": "sha256-c1662ae3f877bc0eb37ce5ca77e4dbc9bcbe121744195dec0174ab56d31e4a36"
+        }
+      },
+      "skillSelection": [
+        "opencli-autofix",
+        "opencli-browser",
+        "opencli-usage"
+      ],
+      "skillsPath": "skills"
+    },
+    "@tanstack/react-table": {
+      "requestedVersion": "9.3.1",
+      "resolvedVersion": "9.3.1",
+      "integrity": "sha512-E6Ya5TnY6EaGyZYIUqig/29Lr/gJSAubQkLJFqiWkUl5nRCr0Xr9hvJot+NiRTtG+TzGxHTiqUW3bnLtQxlHug==",
+      "resolvedAt": "2026-11-24T13:42:04.711Z",
+      "skills": {
+        "getting-started": {
+          "integrity": "sha256-90a178a7d65b58c7c427bd798390b7fe3ae425e6262865929741024777c55551"
+        },
+        "table-state": {
+          "integrity": "sha256-250106b39cd0a39f747674722e1ff1aef553fa339360a9773efd272aeb760c12"
+        }
+      },
+      "skillSelection": [
+        "getting-started",
+        "table-state"
+      ],
+      "skillsPath": "skills"
+    }
+  }
+}

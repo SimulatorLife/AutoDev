@@ -12,5 +12,5 @@ resolve_node() {
   done
   return 1
 }
-node_bin="$(resolve_node)" || { echo "ensure-codex-opencli-proxy: node not found" >&2; exit 127; }
+node_bin="$(resolve_node)" || { echo "ensure-autodev-opencli-proxy: node not found" >&2; exit 127; }
 exec "$node_bin" "$codex_home/src/platform/opencli-ensure.ts"

@@ -137,8 +137,8 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.deepEqual(
     groups.Observe.slice().sort(),
-    ["Evaluations", "Memory", "Playtesting", "Usage"],
-    "Observe must list exactly its four canonical nav resources"
+    ["Evaluations", "Playtesting", "Usage"],
+    "Observe must list exactly its three canonical nav resources"
   );
   assert.deepEqual(
     groups.Operate.slice().sort(),
@@ -216,7 +216,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   // it rather than becoming further top-level nav items.
   assert.match(
     target,
-    /\*\*Providers\*\* is a top-level Configure resource in the Console navigation/u
+    /\*\*Providers\*\* is (?:a top-level Configure resource|listed directly after Agents) in the (?:Console|Configure) navigation/u
   );
   assert.match(
     target,
@@ -460,7 +460,6 @@ test("documentation keeps one broad target-state authority", () => {
     "README.md",
     "docs/local-setup.md",
     "docs/provider-routing.md",
-    "docs/antigravity-codex-tool-loop.md",
     "docs/prompt-ownership.md"
   ]) {
     const content = readFileSync(new URL(path, repositoryRoot), "utf8");
@@ -1122,16 +1121,13 @@ test("representative staged-production browser evidence stays bounded", () => {
   );
 });
 
-test("OpenLIT Memory UI is retired after Console parity while connector APIs remain", () => {
+test("OpenLIT Memory UI is retired while Mem0 integration is postponed", () => {
   const target = readFileSync(targetStatePath, "utf8");
   const migration = readFileSync(migrationPath, "utf8");
-  assert.match(
-    target,
-    /retained OpenLIT Memory page may exist only as a \*\*temporary migration bridge\*\*/u
-  );
+  assert.match(target, /Mem0.*postponed.*custom PostgreSQL\/pgvector memory/su);
   assert.match(
     migration,
-    /Standalone OpenLIT Memory page\/portal\s*\|\s*\*\*Retired in patch 58; Console surface verified locally\*\*/u
+    /Standalone OpenLIT Memory page\/portal\s*\|\s*\*\*Retired in patch/u
   );
   assert.match(
     migration,
@@ -1988,7 +1984,7 @@ test("unified target has one source of authority and nonduplicated subsystem con
     "## 4. Repository and module architecture",
     "### Role-oriented execution and provider routing",
     "### Resilience mechanics and provider cooldown policy",
-    "### Agent execution transport contract: ACP, MCP and Responses",
+    "### Agent execution transport contract: ACP, MCP, and OpenCLI",
     "### Dependency ownership and maintainability",
     "### Latency, local delegation and OpenCLI",
     "### Execution observability and experience",
@@ -2014,25 +2010,19 @@ test("resilience and ACP gates have reviewable structural tables", () => {
   const doc = readFileSync(targetStatePath, "utf8");
   const policy = doc.slice(
     doc.indexOf("### Resilience mechanics and provider cooldown policy"),
-    doc.indexOf(
-      "### Agent execution transport contract: ACP, MCP and Responses"
-    )
+    doc.indexOf("### Agent execution transport contract: ACP, MCP, and OpenCLI")
   );
   assert.match(
     policy,
     /\|\s*Kind\s*\|\s*Eligibility and scope\s*\|\s*Last resort\s*\|\s*Persistence/u
   );
   for (const kind of ["transient", "hard", "probe", "config"]) {
-    assert.ok(
-      policy.includes(
-        "| " + String.fromCharCode(96) + kind + String.fromCharCode(96) + " |"
-      )
-    );
+    assert.match(policy, new RegExp(String.raw`^\|\s*\`${kind}\`\s*\|`, "mu"));
   }
   const acpRows = doc
     .slice(
       doc.indexOf(
-        "### Agent execution transport contract: ACP, MCP and Responses"
+        "### Agent execution transport contract: ACP, MCP, and OpenCLI"
       ),
       doc.indexOf("### Dependency ownership and maintainability")
     )
@@ -2045,7 +2035,7 @@ test("resilience and ACP gates have reviewable structural tables", () => {
     "Engineering decision"
   ]) {
     assert.ok(
-      acpRows.some((row) => row.startsWith("| " + criterion + " |")),
+      acpRows.some((row) => row.startsWith("| " + criterion + " ")),
       "Missing ACP gate: " + criterion
     );
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ensure-codex-console.sh — Process-dispatch shim for the Console LaunchAgent.
+# ensure-autodev-console.sh — Process-dispatch shim for the Console LaunchAgent.
 #
 # All readiness, restart, ownership, and fallback policy lives in the typed
 # Runtime platform owner (runtime/src/platform/console-ensure.ts); this shell
@@ -34,6 +34,6 @@ resolve_node() {
   return 1
 }
 
-node_bin="$(resolve_node)" || { echo "ensure-codex-console: node not found" >&2; exit 127; }
-[[ -f "$module" ]] || { echo "ensure-codex-console: console-ensure module not found: $module" >&2; exit 1; }
+node_bin="$(resolve_node)" || { echo "ensure-autodev-console: node not found" >&2; exit 127; }
+[[ -f "$module" ]] || { echo "ensure-autodev-console: console-ensure module not found: $module" >&2; exit 1; }
 exec "$node_bin" "$module"

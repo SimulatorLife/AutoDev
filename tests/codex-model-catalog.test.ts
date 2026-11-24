@@ -137,24 +137,11 @@ test("every catalog model compacts and truncates tool output inside the cost ban
   }
 });
 
-test("provider profiles leave compaction to the model catalog", async () => {
-  for (const profile of [
-    "minimax",
-    "claude",
-    "antigravity-gemini",
-    "antigravity-argon",
-    "antigravity-claude-gpt"
-  ]) {
-    const source = await readFile(
-      new URL(`../config/profiles/${profile}.config.toml`, import.meta.url),
-      "utf8"
-    );
-    assert.doesNotMatch(source, /^model_auto_compact_token_limit\b/m, profile);
-    assert.doesNotMatch(source, /^model_context_window\b/m, profile);
-  }
+test("portable autodev config leaves compaction to the model catalog", async () => {
   const portable = await readFile(
     new URL("../config/config.autodev.toml", import.meta.url),
     "utf8"
   );
   assert.doesNotMatch(portable, /^model_auto_compact_token_limit\b/m);
+  assert.doesNotMatch(portable, /^model_context_window\b/m);
 });

@@ -299,8 +299,7 @@ test("central provider invocations accept target repository and PR number", asyn
     "claude-invoke.yml",
     "gemini-invoke.yml",
     "qwen-invoke.yml",
-    "minimax-invoke.yml",
-    "minimax-codex-invoke.yml"
+    "minimax-invoke.yml"
   ]) {
     const source = await readWorkflow(name);
     assert.match(source, /workflow_dispatch:/, name);
@@ -496,7 +495,7 @@ test("local provider tooling resolves the playwright MCP from a pinned devDepend
   const manifest = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   );
-  assert.equal(manifest.devDependencies["@playwright/mcp"], "^0.0.80");
+  assert.equal(manifest.devDependencies["@playwright/mcp"], "^0.0.86");
 
   for (const role of ["browser-tester", "smart"]) {
     const roleSource = await readFile(
@@ -568,34 +567,17 @@ test("Antigravity workspace customizations expose the code skills", async () => 
   });
 });
 
-test("provider bridges explicitly expose code MCP capabilities", async () => {
-  const copilot = await readFile(
-    path.join(root, "runtime", "src", "providers", "copilot.ts"),
+test("ACP provider profiles disable native surfaces so RuleSync and role MCPs own execution", async () => {
+  const profiles = await readFile(
+    path.join(root, "runtime", "src", "acp", "provider-profiles.ts"),
     "utf8"
   );
-  // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.ts).
-  assert.match(copilot, /--additional-mcp-config/);
-  assert.match(copilot, /--disable-mcp-server/);
-  assert.match(copilot, /--allow-tool=web_search/);
-  assert.match(copilot, /--allow-tool=web_fetch/);
-  const claude = await readFile(
-    path.join(root, "runtime", "src", "providers", "claude.ts"),
-    "utf8"
-  );
-  // Claude reaches a role's MCP servers through Codex's own tools (Codex
-  // loads them from the role TOML), reads and edits files through its own
-  // `filesystem` server, and keeps only its native web research.
-  assert.match(claude, /codexToolsMcpServer/);
-  assert.match(claude, /filesystemMcpServer/);
-  assert.doesNotMatch(claude, /bridgeMcpServers/);
-  assert.match(claude, /WebSearch/);
-  assert.match(claude, /WebFetch/);
-  const antigravity = await readFile(
-    path.join(root, "runtime", "src", "providers", "antigravity.ts"),
-    "utf8"
-  );
-  assert.match(antigravity, /search_web/);
-  assert.match(antigravity, /read_url_content/);
+  assert.match(profiles, /nativeToolsDisabled:\s*true/);
+  assert.match(profiles, /nativePromptsDisabled:\s*true/);
+  assert.match(profiles, /nativeSkillsDisabled:\s*true/);
+  assert.match(profiles, /nativeMcpsDisabled:\s*true/);
+  assert.match(profiles, /compactionManagedByProvider:\s*true/);
+  assert.match(profiles, /"mcode"/);
   const installer = await readFile(
     path.join(root, "scripts", "install.sh"),
     "utf8"
@@ -645,8 +627,7 @@ test("provider CLI versions are pinned in one AutoDev manifest", async () => {
     "claude-invoke.yml",
     "gemini-invoke.yml",
     "minimax-invoke.yml",
-    "qwen-invoke.yml",
-    "minimax-codex-invoke.yml"
+    "qwen-invoke.yml"
   ]) {
     const source = await readWorkflow(name);
     assert.doesNotMatch(source, /agent_command:/, name);
@@ -694,7 +675,6 @@ test("manual repository selectors accept target_repository as string without dup
     "minimax-invoke.yml",
     "claude-invoke.yml",
     "gemini-invoke.yml",
-    "minimax-codex-invoke.yml",
     "qwen-invoke.yml"
   ]) {
     const source = await readWorkflow(name);
@@ -959,62 +939,14 @@ test("agent invocation interface omits unused compatibility inputs", async () =>
   assert.doesNotMatch(source, /\n {6}working_branch:/);
 });
 
-test("MiniMax Codex CI runs through the tracked boundary adapter, never straight to MiniMax", async () => {
-  const invoke = await readWorkflow("minimax-codex-invoke.yml");
-  assert.match(invoke, /agent: mini-max-codex/);
-  assert.doesNotMatch(invoke, /openai_base_url/);
-  assert.doesNotMatch(invoke, /api\.minimax\.io/);
-  const agentInvoke = await readWorkflow("agent-invoke.yml");
-  assert.match(
-    agentInvoke,
-    /AUTODEV_ROOT: \$\{\{ github\.workspace \}\}\/\.autodev/
-  );
+test("CI runner excludes retired MiniMax Codex boundary adapter and profile", async () => {
   const runner = await readFile(
     path.join(root, "scripts", "run-ci-provider.sh"),
     "utf8"
   );
-  // Assert against commands, not prose: the comments explain why MiniMax is never called directly.
-  const marker = "  mini-max-codex)";
-  const markerIndex = runner.indexOf(marker);
-  const afterMarker =
-    markerIndex === -1 ? "" : runner.slice(markerIndex + marker.length);
-  const semiIndex = afterMarker.indexOf(";;");
-  const branchSource =
-    semiIndex === -1 ? afterMarker : afterMarker.slice(0, semiIndex);
-  const branch = branchSource
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n");
-  assert.match(branch, /export CODEX_HOME="\$runner_temp\/codex-home"/);
-  assert.match(
-    branch,
-    /config\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/
-  );
-  assert.match(
-    branch,
-    /config\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/
-  );
-  assert.match(
-    branch,
-    /node "\$AUTODEV_ROOT\/runtime\/src\/providers\/minimax\.ts"/
-  );
-  assert.match(
-    branch,
-    /MINIMAX_PROXY_HOST=127\.0\.0\.1 MINIMAX_PROXY_PORT=18765/
-  );
-  assert.match(branch, /\/health/);
-  assert.match(branch, /export MINIMAX_API_KEY=/);
-  assert.match(branch, /exec --profile=minimax --json -/);
-  assert.doesNotMatch(branch, /api\.minimax\.io/);
-  const profile = await readFile(
-    path.join(root, "config", "profiles", "minimax.config.toml"),
-    "utf8"
-  );
-  assert.match(profile, /base_url = "http:\/\/127\.0\.0\.1:18765\/v1"/);
-  assert.match(
-    profile,
-    /model_catalog_json = "\.\/minimax-model-catalog\.json"/
-  );
+  assert.doesNotMatch(runner, /mini-max-codex\)/);
+  assert.doesNotMatch(runner, /runtime\/src\/providers\/minimax\.ts/);
+  assert.doesNotMatch(runner, /config\/profiles\/minimax\.config\.toml/);
 });
 
 test("CI never stores a GitHub credential in a git remote URL", async () => {
@@ -1163,9 +1095,9 @@ test("agent-invoke.yml run: blocks are syntactically valid bash", async () => {
 
 test("AutoDev shell launchers resolve pnpm-managed Node without nvm or npm", async () => {
   for (const script of [
-    "run-codex-console.sh",
-    "run-codex-model-router.sh",
-    "run-codex-opencli-proxy.sh",
+    "run-autodev-console.sh",
+    "run-autodev-model-router.sh",
+    "run-autodev-opencli-proxy.sh",
     "run-autodev-hook.sh"
   ]) {
     const source = await readFile(path.join(root, "scripts", script), "utf8");

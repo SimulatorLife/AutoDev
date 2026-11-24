@@ -43,7 +43,7 @@ Start every efficiency audit with AutoDev's bundled diagnostics before writing a
    - `--hooks [--since DAYS]` summarizes structured `PreToolUse` denials logged in `$CODEX_HOME/hooks/hooks.log`.
 3. **Live router status:** `pnpm autodev -- router status` (or `curl -s 127.0.0.1:4100/status | jq`). If `session-trace.ts` prints `router /status unreachable` right after a router restart, retry once after a few seconds.
 4. **Console view:** `/usage?range=24H&sessionId=<id>` renders the same diagnostics in the browser (`Overview`, `Threads & Turns`, `Failures & Hooks`, `Router Requests`, `OTel Spans`), with unscoped `Recent sessions` and `Hook denials` tabs for fleet sizing.
-5. **Handoff for request-shape reproduction:** Use `autodev-session-diagnostics` for deeper provider/MCP/rule probes, and `autodev-codex-request-capture` when inspecting exact Codex-to-provider wire requests offline.
+5. **Handoff for request-shape reproduction:** Use `autodev-session-diagnostics` for deeper provider/MCP/rule probes, and `autodev-request-capture` when inspecting exact provider wire requests offline.
 
 ## 3. Procedure
 

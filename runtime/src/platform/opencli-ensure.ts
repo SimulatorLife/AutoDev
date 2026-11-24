@@ -56,7 +56,7 @@ export function resolveOpencliEnsureOptions(
       "LaunchAgents",
       `${OPENCLI_PROXY_LABEL}.plist`
     ),
-    launcher: path.join(codexHome, "hooks", "run-codex-opencli-proxy.sh"),
+    launcher: path.join(codexHome, "hooks", "run-autodev-opencli-proxy.sh"),
     available: findOpencliCommand(env) !== null,
     readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_OPENCLI_READY_TIMEOUT_MS,

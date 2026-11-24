@@ -1507,7 +1507,7 @@ does not read as a role whose effort is unknown.
 - **Only the router writes the file.** There is no implicit persistence
   manager: the router module sets one, and anything that persists without it
   fails. Every test script loads
-  `runtime/tests/support/isolate-codex-state.ts`, which points
+  `runtime/tests/support/isolate-autodev-state.ts`, which points
   `CODEX_ROUTER_STATE_FILE` at a temporary file. Before both, the Control API
   tests replaced the live router's file with an empty state on every run
   from a maintainer's shell (91 such 94-byte writes were found stranded beside
@@ -1689,7 +1689,7 @@ content before restarting them. Three contracts separate
   throttled background tier: every Codex request passes through it, and a
   `Background` job is starved of CPU and disk I/O whenever the machine is busy.
 
-The `scripts/ensure-codex-model-router.sh` hook prefers the installed launchd
+The `scripts/ensure-autodev-model-router.sh` hook prefers the installed launchd
 job and falls back to a direct `nohup` process only when launchd is genuinely
 unavailable (for example, from inside the Codex sandbox where `gui/$UID` is
 not reachable). It acquires an atomic private lock directory at
@@ -2849,7 +2849,7 @@ single list; the route patterns and the site registry in
 - **Gemini streams settled prose; ChatGPT forwards stored partials when available.**
   While `gemini ask` waits, patched `waitForGeminiResponse` reports snapshots
   from the chat's structured turns. While `chatgpt ask-file` waits, the
-  patched ChatGPT adapter polls the *stored* conversation reply **while
+  patched ChatGPT adapter polls the _stored_ conversation reply **while
   ChatGPT is still generating**, instead of waiting for the lossy DOM to
   settle. If the site's conversation API publishes growing stored text
   during generation, the bridge forwards it incrementally. This is
@@ -2876,7 +2876,7 @@ single list; the route patterns and the site registry in
   has been shown the router cannot fall
   back to another provider or restart the turn in a new chat. Non-streamed
   requests are unchanged; installing the patched adapter requires `pnpm
-  install --frozen-lockfile` with the matching SHA256 checksum in
+install --frozen-lockfile` with the matching SHA256 checksum in
   `pnpm-lock.yaml`.
 - **ChatGPT's missing terminal marker is not an indefinite wait.** The stored
   reply normally has `end_turn=true`. If it does not, the adapter accepts
@@ -3266,7 +3266,7 @@ single list; the route patterns and the site registry in
 - **Gemini runs as a named Google account.** A browser signed in to several
   Google accounts opens gemini.google.com/app as its first one. Setting
   `OPENCLI_GEMINI_ACCOUNT=<email>` in `$CODEX_HOME/.env` (read by
-  `run-codex-opencli-proxy.sh`) makes opencli's Gemini adapter open the app
+  `run-autodev-opencli-proxy.sh`) makes opencli's Gemini adapter open the app
   with `?authuser=<email>` and treat a tab showing another account as not
   ready; the account is named by email, so it stays right however the
   browser's sign-ins are ordered.

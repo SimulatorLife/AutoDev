@@ -35,7 +35,7 @@ resolve_node() {
   fi
   return 1
 }
-node_bin="$(resolve_node)" || { echo "run-codex-opencli-proxy: node not found" >&2; exit 127; }
+node_bin="$(resolve_node)" || { echo "run-autodev-opencli-proxy: node not found" >&2; exit 127; }
 # The bridge is a typed AutoDev runtime module installed under CODEX_HOME. It
 # runs opencli from the Runtime's own @jackwener/opencli dependency, which the
 # installed tree reaches through its node_modules link.

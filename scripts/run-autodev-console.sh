@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-codex-console.sh — Launchd entrypoint that exec's the resolved Node
+# run-autodev-console.sh — Launchd entrypoint that exec's the resolved Node
 # against console/node_modules/next/dist/bin/next start on the loopback
 # interface, exporting only the two Console-required service credentials
 # (AUTODEV_CONTROL_API_TOKEN, AUTODEV_OPENLIT_USAGE_TOKEN) and the optional
@@ -37,7 +37,7 @@ console_port="${AUTODEV_CONSOLE_PORT:-3300}"
 if [[ ! "$console_port" =~ ^[0-9]{1,5}$ ]] ||
   ((console_port < 1 || console_port > 65535)); then
   printf '%s\n' \
-    "run-codex-console: AUTODEV_CONSOLE_PORT must be an integer from 1 to 65535" \
+    "run-autodev-console: AUTODEV_CONSOLE_PORT must be an integer from 1 to 65535" \
     "  got: '$console_port'" \
     "  This value is rendered into the LaunchAgent at install time; re-run" \
     "  scripts/install.sh to re-render com.codex.autodev-console.plist, or export" \
@@ -130,7 +130,7 @@ resolve_node() {
 
 NODE_BIN="$(resolve_node || true)"
 if [[ -z "${NODE_BIN:-}" ]]; then
-  echo "run-codex-console: could not locate a node binary" >&2
+  echo "run-autodev-console: could not locate a node binary" >&2
   exit 127
 fi
 
@@ -148,7 +148,7 @@ console_dir="$repo_root/console"
 build_id_file="$console_dir/.next/BUILD_ID"
 if [[ ! -f "$build_id_file" ]]; then
   cat >&2 <<ERR
-run-codex-console: console/.next/BUILD_ID is missing at $build_id_file
+run-autodev-console: console/.next/BUILD_ID is missing at $build_id_file
   Next.js requires a built console before 'next start' can serve it.
   The Runtime installer is the single owner of the console build
   (it pre-builds console/.next so the LaunchAgent can exec 'next start').
@@ -161,7 +161,7 @@ fi
 
 next_bin="$console_dir/node_modules/next/dist/bin/next"
 if [[ ! -f "$next_bin" ]]; then
-  echo "run-codex-console: next bin is missing: $next_bin" >&2
+  echo "run-autodev-console: next bin is missing: $next_bin" >&2
   echo "  Reinstall console/node_modules (the Runtime installer links it)." >&2
   exit 127
 fi
@@ -216,7 +216,7 @@ verify_backend_contracts() {
 	done
 
 	if [[ "$control_status" -eq 75 || "$usage_status" -eq 75 ]]; then
-		echo "run-codex-console: a backend did not answer; the Console will retry when it is up." >&2
+		echo "run-autodev-console: a backend did not answer; the Console will retry when it is up." >&2
 		exit 75
 	fi
 	if [[ "$control_status" -ne 0 ]]; then

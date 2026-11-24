@@ -59,10 +59,10 @@ test("a skill installed in the repository is repo-scoped, and belongs to that re
     );
     skillDirectory(
       path.join(box.repositoryRoot, ".agents", "skills"),
-      "autodev-codex-request-capture"
+      "autodev-request-capture"
     );
 
-    const scopes = resolveSkillScopes(["autodev-codex-request-capture"], {
+    const scopes = resolveSkillScopes(["autodev-request-capture"], {
       roots: {
         home: box.home,
         codexHome: box.codexHome,
@@ -71,7 +71,7 @@ test("a skill installed in the repository is repo-scoped, and belongs to that re
       workspaces: box.workspaces
     });
 
-    const facts = scopes.get("autodev-codex-request-capture");
+    const facts = scopes.get("autodev-request-capture");
     assert.equal(facts?.scope, "repo");
     assert.equal(
       facts?.location,
@@ -79,7 +79,7 @@ test("a skill installed in the repository is repo-scoped, and belongs to that re
         box.repositoryRoot,
         ".agents",
         "skills",
-        "autodev-codex-request-capture"
+        "autodev-request-capture"
       )
     );
     // The workspace comes from the repository itself, not from a setting: a

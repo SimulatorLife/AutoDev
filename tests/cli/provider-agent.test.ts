@@ -24,7 +24,10 @@ import {
   readRoleExecutionSettings,
   runProviderAgent
 } from "@simulatorlife/autodev-runtime/cli/provider-agent";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseRawToml } from "smol-toml";
+
+const parseToml = (source: string): Record<string, unknown> =>
+  structuredClone(parseRawToml(source)) as Record<string, unknown>;
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 

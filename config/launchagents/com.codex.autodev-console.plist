@@ -18,7 +18,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__CODEX_HOME__/hooks/run-codex-console.sh</string>
+    <string>__CODEX_HOME__/hooks/run-autodev-console.sh</string>
   </array>
 
   <key>RunAtLoad</key>

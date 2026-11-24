@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,12 +11,14 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { chatgptSupergatewayEnvironment, renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import { externalFilesystemBackend, filesystemSandboxProfile } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
 import { assertTunnelScope, chatgptTunnelStatus, createTunnel, dependencyEnvironment, ensureChatgptTunnel, type ChatgptTunnelDependencies, gatewayStdioCommand, privateRead, privateWrite, ready, resolveSupergateway, shellWord, tunnelClientSupported, tunnelMetadata, validateRuntimeKey } from "../src/platform/chatgpt-tunnel-install.ts";
+import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -461,6 +463,139 @@ test("mocked installer lifecycle retains working state on failure and supports p
     assert.ok(!existsSync(path.join(directory, persisted.prior.generation, "runtime.key")));
     await assert.rejects(ensureChatgptTunnel(paths, "enable", {}, undefined, deps), /restricted runtime/);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("real tunnel-client dev proxy routes Streamable HTTP MCP calls through Supergateway and sandboxed filesystem", {
+  skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1" || !resolveCommandOnPath("tunnel-client"),
+  timeout: 180_000
+}, async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "autodev-tunnel-e2e-")));
+  const workspace = path.join(root, "workspace");
+  const codexHome = path.join(root, ".codex");
+  const urlFile = path.join(root, "proxy.json");
+  const healthUrlFile = path.join(root, "health.url");
+  const client = new Client({ name: "autodev-tunnel-http-e2e", version: "1.0.0" });
+  mkdirSync(workspace);
+  mkdirSync(codexHome);
+  const inside = path.join(workspace, "allowed.txt");
+  const outside = path.join(root, "secret.txt");
+  writeFileSync(inside, "tunnel-roundtrip-ok");
+  writeFileSync(outside, "forbidden-secret");
+  symlinkSync(outside, path.join(workspace, "escape.txt"));
+
+  const supergateway = resolveSupergateway(repo);
+  const config = path.join(root, "supergateway.json");
+  const catalogue = {
+    filesystem: {
+      command: process.execPath,
+      args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "filesystem"]
+    }
+  };
+  const policy = { filesystem: ["read_text_file", "list_allowed_directories"] };
+  writeFileSync(
+    config,
+    renderChatgptSupergatewayConfig(
+      catalogue,
+      policy,
+      workspace,
+      policy,
+      undefined,
+      (server) => externalFilesystemBackend(server, repo, workspace, process.execPath)
+    )
+  );
+  const gatewayEnv = chatgptSupergatewayEnvironment(
+    { home: root, codexHome, repositoryRoot: repo },
+    workspace,
+    process.execPath,
+    process.env.PATH ?? "/usr/bin:/bin"
+  );
+  const proxy = spawn(
+    resolveCommandOnPath("tunnel-client")!,
+    [
+      "dev",
+      "proxy",
+      "--mcp-command",
+      gatewayStdioCommand(supergateway, config, gatewayEnv),
+      "--url-file",
+      urlFile,
+      "--health-url-file",
+      healthUrlFile,
+      "--readiness-timeout",
+      "30s"
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+  let proxyLogs = "";
+  proxy.stdout.on("data", (chunk) => { proxyLogs += String(chunk); });
+  proxy.stderr.on("data", (chunk) => { proxyLogs += String(chunk); });
+  try {
+    let proxyInfo: { mcp_url?: string } | null = null;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      await delay(200);
+      try {
+        const raw = readFileSync(urlFile, "utf8").trim();
+        if (raw) {
+          proxyInfo = JSON.parse(raw) as { mcp_url?: string };
+          break;
+        }
+      } catch {
+        /* waiting for proxy readiness */
+      }
+    }
+    assert.ok(proxyInfo?.mcp_url, `tunnel-client dev proxy did not report mcp_url: ${proxyLogs}`);
+    const healthUrl = readFileSync(healthUrlFile, "utf8").trim();
+    const readyz = await fetch(healthUrl + "/readyz");
+    assert.equal(readyz.ok, true);
+    assert.equal((await readyz.text()).trim(), "ready");
+
+    await client.connect(new StreamableHTTPClientTransport(new URL(proxyInfo.mcp_url)), { timeout: 45_000 });
+    const capabilities = client.getServerCapabilities();
+    assert.equal(capabilities?.resources, undefined);
+    assert.equal(capabilities?.prompts, undefined);
+    const listed = await client.listTools({}, { timeout: 45_000 });
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name).sort(),
+      ["filesystem__list_allowed_directories", "filesystem__read_text_file"]
+    );
+    const read = await client.callTool({
+      name: "filesystem__read_text_file",
+      arguments: { path: inside }
+    });
+    assert.match(JSON.stringify(read), /tunnel-roundtrip-ok/);
+    for (const target of [outside, path.join(workspace, "escape.txt")]) {
+      const denied = await client.callTool({
+        name: "filesystem__read_text_file",
+        arguments: { path: target }
+      });
+      assert.equal(denied.isError, true);
+      assert.doesNotMatch(JSON.stringify(denied), /forbidden-secret/);
+    }
+    await assert.rejects(async () => {
+      const result = await client.callTool({
+        name: "filesystem__write_file",
+        arguments: { path: inside, content: "mutated" }
+      });
+      if (result.isError) throw new Error("write denied");
+    });
+    assert.equal(readFileSync(inside, "utf8"), "tunnel-roundtrip-ok");
+
+    const mcpHealth = await fetch(healthUrl + "/health/mcp").then((response) => response.json()) as {
+      status?: string;
+      state?: string;
+      details?: { tools_list?: { tool_names?: string[] } };
+    };
+    assert.equal(mcpHealth.status, "ok");
+    assert.equal(mcpHealth.state, "discovered");
+    assert.deepEqual(
+      mcpHealth.details?.tools_list?.tool_names?.slice().sort(),
+      ["filesystem__list_allowed_directories", "filesystem__read_text_file"]
+    );
+  } finally {
+    await client.close().catch(() => {});
+    proxy.kill("SIGTERM");
+    await once(proxy, "exit");
     rmSync(root, { recursive: true, force: true });
   }
 });

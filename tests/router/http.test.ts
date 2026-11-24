@@ -22,6 +22,9 @@ import {
   rememberWorkspaceMetadata,
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
+import type { RoutingPolicy } from "@simulatorlife/autodev-runtime/router/routing";
+import { didHandleAcpRoute } from "@simulatorlife/autodev-runtime/xacpx/http";
+import { XacpxSessionManager } from "@simulatorlife/autodev-runtime/xacpx/manager";
 
 class FakeRequest extends EventTarget {
   method: string;
@@ -199,15 +202,22 @@ test("HTTP endpoint routing keeps health, status, models, control, and response 
       assert.equal(typeof provider.health?.failureStreak, "number");
     }
 
-    const responseResponse = responseRecorder();
+    const retiredResponses = responseRecorder();
     await handleRequest(
       new FakeRequest("POST", "/v1/responses", {}) as any,
-      responseResponse
+      retiredResponses
     );
-    assert.equal(responseResponse.statusCode, 400);
+    assert.equal(retiredResponses.statusCode, 404);
+
+    const acpResponse = responseRecorder();
+    await handleRequest(
+      new FakeRequest("POST", "/v1/acp/sessions", {}) as any,
+      acpResponse
+    );
+    assert.equal(acpResponse.statusCode, 400);
     assert.match(
-      JSON.parse(responseResponse.body).error.message,
-      /requires a non-empty string model/
+      JSON.parse(acpResponse.body).error,
+      /Fields `role`, `cwd`, and `promptOrTask` are required/
     );
   } finally {
     setRouterAuthTokenForTests(previousAuthToken ?? "");
@@ -224,16 +234,30 @@ test("HTTP endpoint routing keeps health, status, models, control, and response 
 });
 
 test(
-  "a concrete request whose provider is under a hard cooldown makes no upstream fetch",
+  "an ACP session whose pinned provider is under a hard cooldown makes no upstream launch",
   { concurrency: false },
   async () => {
     COOLDOWNS.clearAll();
-    const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = (async () => {
-      calls += 1;
-      return new Response("{}", { status: 500 });
-    }) as typeof fetch;
+    const manager = new XacpxSessionManager({
+      policy: {
+        roleCandidates: () => [
+          { provider: "claude", model: "sonnet", reasoningEffort: null }
+        ],
+        orchestratorCandidates: () => []
+      } as unknown as RoutingPolicy,
+      acpTransportFactory: async () => {
+        calls += 1;
+        throw new Error("should not launch ACP while provider is cooling down");
+      }
+    });
+    manager.planDispatch({
+      sessionId: "cooled-session-1",
+      role: "worker",
+      cwd: process.cwd(),
+      systemPrompt: "",
+      promptOrTask: "initial"
+    });
     const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
     try {
       COOLDOWNS.cooldownProvider("claude", {
@@ -242,36 +266,23 @@ test(
         structured: true
       });
       const response = responseRecorder();
-      await handleRequest(
-        new FakeRequest("POST", "/v1/responses", {
-          model: "sonnet",
-          stream: false
+      const handled = await didHandleAcpRoute(
+        new FakeRequest("POST", "/v1/acp/sessions", {
+          sessionId: "cooled-session-1",
+          role: "worker",
+          cwd: process.cwd(),
+          promptOrTask: "follow-up"
         }) as any,
-        response
+        response,
+        "/v1/acp/sessions",
+        manager
       );
+      assert.equal(handled, true);
       assert.equal(calls, 0);
-      // The refusal is terminal, in the chain's exhaustion shape: no
-      // `retry-after`, because a window measured in days is an instruction the
-      // caller cannot hurry.
       assert.equal(response.statusCode, 400);
-      assert.equal(
-        response.headers["x-autodev-limit-class"],
-        "quota_exhausted"
-      );
-      assert.equal(response.headers["x-autodev-limit-resets-at"], resetsAt);
-      assert.equal(response.headers["retry-after"], undefined);
       const body = JSON.parse(response.body);
-      assert.equal(body.error.code, "router_provider_exhausted");
-      assert.equal(body.error.retryable, false);
-      const events = getRecentRouterEvents().filter(
-        (event) => event.requestId === response.headers["x-autodev-request-id"]
-      );
-      assert.ok(
-        events.some((event) => event.phase === "skipped"),
-        "the cooled route is refused without an attempt"
-      );
+      assert.match(body.error, /Pinned provider 'claude' is cooling down/i);
     } finally {
-      globalThis.fetch = originalFetch;
       COOLDOWNS.clearAll();
     }
   }

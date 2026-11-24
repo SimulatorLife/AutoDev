@@ -28,6 +28,8 @@ const curatedRoot = join(sourceRoot, ".curated");
 const installerPath = join(repositoryRoot, "scripts", "install.sh");
 const rulesyncConfigPath = join(repositoryRoot, "rulesync.jsonc");
 const rulesyncLockPath = join(repositoryRoot, "rulesync.lock");
+const rulesyncNpmLockPath = join(repositoryRoot, "rulesync-npm.lock.json");
+const pnpmWorkspacePath = join(repositoryRoot, "pnpm-workspace.yaml");
 const driftWorkflowPath = join(
   repositoryRoot,
   ".github",
@@ -47,7 +49,7 @@ const targets = [
   "antigravity-cli"
 ] as const;
 const canonicalSkills = [
-  "autodev-codex-request-capture",
+  "autodev-request-capture",
   "autodev-session-diagnostics",
   "ccc",
   "code-simplification",
@@ -64,31 +66,85 @@ const canonicalSkills = [
   "source-driven-development",
   "writing-agent-skills"
 ] as const;
-const curatedSkills = ["karpathy-guidelines", "react-best-practices"] as const;
+const curatedSkills = [
+  "acpx",
+  "getting-started",
+  "karpathy-guidelines",
+  "opencli-autofix",
+  "opencli-browser",
+  "opencli-usage",
+  "quota-axi",
+  "react-best-practices",
+  "table-state"
+] as const;
+/**
+ * The curated skills that arrive from a GitHub repository, pinned in
+ * `rulesync.lock`, and the ones that arrive from a published npm package,
+ * pinned in `rulesync-npm.lock.json`. The npm-transport sources exist because
+ * the packages ship the skills that document the CLIs this repository runs,
+ * so their pinned version must match the installed package version.
+ */
+const gitCuratedSkills = ["karpathy-guidelines", "react-best-practices"] as const;
+const npmCuratedSkills = [
+  "acpx",
+  "getting-started",
+  "opencli-autofix",
+  "opencli-browser",
+  "opencli-usage",
+  "quota-axi",
+  "table-state"
+] as const;
+const npmSourcePackages = [
+  { source: "acpx", version: "0.22.0" },
+  { source: "quota-axi", version: "0.1.69" },
+  { source: "@jackwener/opencli", version: "2.0.3" },
+  { source: "@tanstack/react-table", version: "9.3.1" }
+] as const;
 const repositorySkills: Record<string, readonly string[]> = {
   ".github/skills": [
-    "autodev-codex-request-capture",
+    "acpx",
+    "autodev-request-capture",
     "autodev-session-diagnostics",
     "ccc",
+    "getting-started",
     "karpathy-guidelines",
     "lsp-mcp-server",
+    "opencli-autofix",
+    "opencli-browser",
+    "opencli-usage",
     "opentelemetry",
     "orchestration",
-    "react-best-practices"
+    "quota-axi",
+    "react-best-practices",
+    "table-state"
   ],
   ".claude/skills": [
-    "autodev-codex-request-capture",
+    "acpx",
+    "autodev-request-capture",
     "autodev-session-diagnostics",
+    "getting-started",
     "karpathy-guidelines",
+    "opencli-autofix",
+    "opencli-browser",
+    "opencli-usage",
     "opentelemetry",
-    "react-best-practices"
+    "quota-axi",
+    "react-best-practices",
+    "table-state"
   ],
   ".agents/skills": [
-    "autodev-codex-request-capture",
+    "acpx",
+    "autodev-request-capture",
     "autodev-session-diagnostics",
+    "getting-started",
     "karpathy-guidelines",
+    "opencli-autofix",
+    "opencli-browser",
+    "opencli-usage",
     "opentelemetry",
-    "react-best-practices"
+    "quota-axi",
+    "react-best-practices",
+    "table-state"
   ]
 };
 
@@ -226,11 +282,58 @@ test("canonical source holds every skill", () => {
   const lockedSkills = Object.values(lockedSources)
     .flatMap((entry) => Object.keys(_asObject(_asObject(entry).skills)))
     .sort();
-  assert.deepEqual(lockedSkills, [...curatedSkills].sort());
+  assert.deepEqual(lockedSkills, [...gitCuratedSkills].sort());
+  const npmLockfile = _asObject(readJson(rulesyncNpmLockPath));
+  const npmLockedSources = _asObject(npmLockfile.sources);
+  const npmLockedSkills = Object.values(npmLockedSources)
+    .flatMap((entry) => Object.keys(_asObject(_asObject(entry).skills)))
+    .sort();
+  assert.deepEqual(npmLockedSkills, [...npmCuratedSkills].sort());
+  assert.deepEqual(
+    [...lockedSkills, ...npmLockedSkills].sort(),
+    [...curatedSkills].sort()
+  );
   assert.equal(
     existsSync(join(sourceRoot, "orchestration", "agents", "openai.yaml")),
     true
   );
+});
+
+/**
+ * The canonical skills source holds real directories only.
+ *
+ * A package that ships agent skills used to be linked into `.rulesync/skills/`
+ * as a symbolic link, and the Runtime's catalog reads that directory as the
+ * canonical source: a link there is not a skill, it is an invalid entry that
+ * fails the whole catalog. RuleSync owns every skill this repository
+ * distributes, so the packages are installed for their CLIs and libraries
+ * only, and their skills are fetched and pinned by RuleSync instead.
+ */
+test("the canonical skills source holds no symbolic link", () => {
+  const linked = readdirSync(sourceRoot, { withFileTypes: true })
+    .filter((entry) => entry.isSymbolicLink())
+    .map((entry) => entry.name);
+  assert.deepEqual(linked, []);
+  const curatedLinked = readdirSync(curatedRoot, { withFileTypes: true })
+    .filter((entry) => entry.isSymbolicLink())
+    .map((entry) => entry.name);
+  assert.deepEqual(curatedLinked, []);
+});
+
+/**
+ * pnpm must not link a dependency's agent skills into the repository.
+ *
+ * `skills.dirs` is pnpm's own skill distribution, and a non-empty list points
+ * it at the canonical source, where its links shadow the RuleSync-managed
+ * copies. An empty list turns that distribution off.
+ */
+test("pnpm does not distribute agent skills into the repository", () => {
+  const workspace = readFileSync(pnpmWorkspacePath, "utf8");
+  const dirs = /^skills:\s*\n(?:\s+[^\n]*\n)*?\s+dirs:\s*(?<dirs>\[[^\]]*\])\s*$/mu.exec(
+    workspace
+  )?.groups?.dirs;
+  assert.equal(dirs, "[]");
+  assert.doesNotMatch(workspace, /^\s*permissions:/mu);
 });
 
 test("only the canonical skill source is tracked", () => {
@@ -258,6 +361,12 @@ test("only the canonical skill source is tracked", () => {
     { cwd: repositoryRoot, encoding: "utf8" }
   );
   assert.equal(lockTracked.status, 0);
+  const npmLockTracked = spawnSync(
+    "git",
+    ["ls-files", "--error-unmatch", "rulesync-npm.lock.json"],
+    { cwd: repositoryRoot, encoding: "utf8" }
+  );
+  assert.equal(npmLockTracked.status, 0);
   const ignored = readFileSync(join(repositoryRoot, ".gitignore"), "utf8")
     .split("\n")
     .map((line) => line.trim());
@@ -265,6 +374,7 @@ test("only the canonical skill source is tracked", () => {
   assert.ok(ignored.includes("/.claude/skills/"));
   assert.ok(ignored.includes("/.rulesync/skills/.curated/"));
   assert.ok(ignored.includes("!/rulesync.lock"));
+  assert.ok(ignored.includes("!/rulesync-npm.lock.json"));
   assert.deepEqual(
     ignored.filter(
       (line) => line.includes(".agents/skills") && !line.startsWith("#")
@@ -370,9 +480,7 @@ test("Rulesync check detects edited, stale, and missing generated skills", () =>
     [
       "missing",
       (root: string) =>
-        rmSync(
-          join(root, ".claude/skills/autodev-codex-request-capture/SKILL.md")
-        )
+        rmSync(join(root, ".claude/skills/autodev-request-capture/SKILL.md"))
     ]
   ] as const) {
     const root = join(temporaryRoot, label);
@@ -423,6 +531,7 @@ test("RuleSync project config and CI cover the repository projections", () => {
   assert.deepEqual(configuredSources, [...curatedSkills].sort());
   const workflow = readFileSync(driftWorkflowPath, "utf8");
   assert.match(workflow, /- "rulesync\.lock"/);
+  assert.match(workflow, /- "rulesync-npm\.lock\.json"/);
   assert.match(workflow, /pnpm exec rulesync install --frozen --silent/);
   assert.match(
     workflow,
@@ -436,6 +545,58 @@ test("RuleSync project config and CI cover the repository projections", () => {
     .filter((entry) => entry.name.startsWith("rulesync-"))
     .map((entry) => entry.name);
   assert.deepEqual(stray, []);
+});
+
+/**
+ * A skill that documents a CLI must document the CLI this repository runs.
+ *
+ * The npm-transport sources fetch the skills a published package ships, so
+ * the pin in `rulesync.jsonc` is a package version. When the workspace bumps
+ * that package, the fetched skill is the one that describes the new CLI, so
+ * the two versions must be the same number; a skill pinned to an older
+ * version describes commands the installed CLI does not have.
+ */
+test("every npm-transport source pins the version the workspace installs", () => {
+  const config = readJson(rulesyncConfigPath);
+  const sources = config.sources as Array<Record<string, unknown>>;
+  const npmSources = new Map(
+    sources
+      .filter((entry) => entry.transport === "npm")
+      .map((entry) => [entry.source as string, entry])
+  );
+  assert.deepEqual(
+    [...npmSources.keys()].sort(),
+    npmSourcePackages.map((entry) => entry.source).sort()
+  );
+  const workspaceProjects = ["runtime", "console", "core", "data"];
+  for (const { source, version } of npmSourcePackages) {
+    const declared = workspaceProjects.flatMap((project) => {
+      const manifest = readJson(
+        join(repositoryRoot, project, "package.json")
+      ) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      return [
+        manifest.dependencies?.[source],
+        manifest.devDependencies?.[source]
+      ].filter((value): value is string => typeof value === "string");
+    });
+    assert.ok(declared.length > 0, `${source} is not a workspace dependency`);
+    assert.deepEqual(
+      [...new Set(declared)],
+      [version],
+      `${source} is installed at a version other than ${version}`
+    );
+    assert.equal(npmSources.get(source)?.ref, version, source);
+  }
+  const npmLock = _asObject(readJson(rulesyncNpmLockPath));
+  const npmLocked = _asObject(npmLock.sources);
+  for (const { source, version } of npmSourcePackages) {
+    const entry = _asObject(npmLocked[source]);
+    assert.equal(entry.requestedVersion, version, source);
+    assert.equal(entry.resolvedVersion, version, source);
+  }
 });
 
 test("every skill a role enables is installed at user level", () => {

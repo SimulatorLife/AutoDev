@@ -15,3 +15,13 @@ allowBuilds:
 patchedDependencies:
   "@jackwener/opencli@2.0.3": patches/@jackwener__opencli@2.0.3.patch
   quota-axi@0.1.69: patches/quota-axi@0.1.69.patch
+# The dependencies that ship agent skills (acpx, quota-axi, @jackwener/opencli,
+# @tanstack/react-table) are installed for their CLIs and libraries, not for
+# their skills. RuleSync owns every skill this repository distributes: it
+# fetches the same skills from the published packages, pins them in
+# `rulesync-npm.lock.json`, and materializes them under
+# `.rulesync/skills/.curated/`. An empty `skills.dirs` turns pnpm's own agent
+# skill linking off, so no package can link a skill into the canonical source
+# and shadow the RuleSync-managed copy.
+skills:
+  dirs: []

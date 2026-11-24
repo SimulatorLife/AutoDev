@@ -112,34 +112,3 @@ test("the fail-closed response names the bridge that rejected the request", () =
     );
   }
 });
-
-test("provider bridges delegate their HTTP responses to the shared owner", () => {
-  // Each bridge used to carry its own `sendJson` and its own copy of the
-  // fail-closed 400, which is how the contract in docs/provider-routing.md
-  // drifted out of sync between them.
-  for (const provider of ["claude", "copilot", "antigravity"]) {
-    const source = readFileSync(
-      path.join(repositoryRoot, "runtime/src/providers", `${provider}.ts`),
-      "utf8"
-    );
-
-    assert.doesNotMatch(
-      source,
-      /function sendJson\(/u,
-      `${provider}.ts defines its own sendJson`
-    );
-    // `invalid_request_error` is still correct for the bridges' other 400/404
-    // bodies, so scope the guard to the workspace failure itself, which used to
-    // be logged and answered inline in each bridge.
-    assert.doesNotMatch(
-      source,
-      /workspace resolution failed/u,
-      `${provider}.ts hand-rolls the fail-closed workspace response`
-    );
-    assert.match(
-      source,
-      /sendWorkspaceResolutionFailure/u,
-      `${provider}.ts must fail closed through the shared helper`
-    );
-  }
-});
