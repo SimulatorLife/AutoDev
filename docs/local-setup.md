@@ -326,16 +326,7 @@ is missing" or "AutoDev MCP binary is missing or not executable: `<temporary
 home>/.local/bin/ccc`". `ccc` also reads its global settings from that home, so
 the same home decides whether the server can serve at all.
 
-The role contract is what tells a server whose home it runs with: the roles
-that use `cocoindex-code` and `codegraphcontext` declare `HOME` in their
-`[mcp_servers.<name>]` `env_vars`, and the bridge passes the user's own home
-to exactly those servers. That is the same home the native Codex path already
-gives them, so a bridged turn and a native turn run the same tool the same way.
-The launcher checks every candidate it resolves before answering with it, so a
-home that holds no install falls through to `PATH` rather than shadowing a
-working copy with a path that names a file that is not there.
-`tests/config/mcp-launcher.test.ts` and `tests/antigravity-mcp-isolation.test.ts`
-cover both halves.
+Backend execution must resolve the installed binary and permitted configuration from trusted Runtime context, independently of a provider's isolated HOME. The launcher checks each candidate before selecting it; a nonexistent home-local binary must not shadow a working installation. The gateway target centralizes this backend environment selection and restricts access to approved workspace/index roots and required runtime dependencies. Do not solve missing tools by granting arbitrary home-directory access.
 
 Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
 than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
@@ -353,9 +344,7 @@ bundles it), `lsp_call_hierarchy`, `lsp_file_imports`, or `lsp_related_files`
 server-lifecycle tools. `explorer`, `validator`, `smart`, and `orchestrator`
 keep the full LSP surface as the fallback for questions the preferred owner
 cannot answer. `tests/config/config-rendering.test.ts` freezes that split.
-Copilot registers `lsp` per session, as it does `codegraphcontext`, so the
-bridge can apply each role's allowlist: `.rulesync/mcp.jsonc` removes both from
-Copilot's user-level file. The `browser-tester` and `smart`
+The canonical Rulesync configuration contains provider-specific current projection overrides. The ACP profile and gateway target must deliver the exact effective role tools, regardless of the provider's user-level registry. The `browser-tester` and `smart`
 roles use the pinned TypeScript language server from AutoDev's devDependencies;
 the installer also installs `python-lsp-server==1.15.0` with pipx so Python
 files have a working `pylsp` backend. The launcher adds both AutoDev's
@@ -376,19 +365,7 @@ fetching/opening and is the appropriate search/open/read path for authoritative
 websites. Do not add a separate Codex `web_fetch` tool. Their rendered remote
 MCP entries set `transport = "streamable_http"`, which the installed Codex
 0.153.x role loader requires even when `url` is present.
-The Playwright MCP remains strictly for UI and browser testing roles and is disabled
-for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
-`smart` and `orchestrator` follow the web-research policy. A Claude-served turn acts only
-through Codex's own tools, so it reaches exactly the MCP servers and Playwright tools its
-Codex role TOML enables; the Claude bridge passes `--strict-mcp-config` with only the
-per-turn Codex tools server, so user-level `~/.claude.json` servers and a workspace's own
-`.mcp.json` never reach a bridged turn. Only `browser-tester` and `smart` receive Playwright.
-Playwright is never exposed to the root orchestrator. Antigravity's registry is
-global, so its bridge creates an invocation-scoped temporary home that exposes
-only the current role's contracted MCP servers and tools. This lets `browser-tester`
-and `smart` use their Playwright allowlists without changing the global registry
-or exposing Playwright to other roles. For documentation and web research,
-Antigravity uses its native `search_web` and `read_url_content` tools.
+Playwright is reserved for explicitly granted UI/browser testing roles; documentation-only and ungranted root roles do not receive it. Resolve tool names and grants from the current role contract, rather than relying on a provider's native tool surface. All ACP profiles and the future gateway enforce the same role/workspace policy, with separate authorization for external ChatGPT access.
 
 The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
 `0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts
@@ -412,42 +389,15 @@ none of `codex mcp add`, `copilot mcp add`, or `agy mcp add`: Rulesync writes
 user-level MCP files from the canonical declaration. Install pipx before running
 the installer if it is not already present.
 
-Native role contracts enable CodeGraphContext, CocoIndex, and LSP for the
-root orchestrator and code-capable profiles, and omit them from
-`docs-researcher` and `browser-tester`. Codex-native and bridged providers
-enforce these role contracts. Antigravity is the exception: its MCP registry is
-global and has no per-role server filtering, so its four explicitly permitted
-CodeGraphContext tools are also visible to `docs-researcher` sessions despite
-that role's contract. The docs-researcher prompt forbids using local-code tools;
-this is prompt policy, not a capability boundary. Antigravity rejects
-`browser-tester` requests because Playwright cannot be isolated there.
+Code-capable roles receive the contracted CodeGraphContext, CocoIndex and LSP tools; other roles must not receive ungranted code-navigation tools. The current ACP provider profile implementation (`runtime/src/acp/provider-profiles.ts`) isolates native settings and effective role capabilities. Missing required tool exposure is an integration defect, not a reason to weaken a role or exclude a provider on tool support. At gateway cutover every provider connects only to its role-scoped gateway endpoints.
 
-The installer exposes these AutoDev-owned shared skill directories in
-`$HOME/.agents/skills/` through symlinks. A Claude-served turn reads them through
-Codex's tools from the skills catalogue in Codex's own context, like any Codex-served
-turn, so there is no Claude-specific skill view; the installer removes the obsolete
-`$CODEX_HOME/provider-runtime/claude/` views. The root `orchestration` skill is
-also enabled in the parent user config and injected deterministically into root
-turns by the delegation hook and provider bridges; leaf role TOMLs keep it
-disabled so child agents do not inherit parent orchestration policy.
-
-Antigravity has a global MCP registry and workspace customization discovery.
-The installer registers the pinned `codegraphcontext`, `cocoindex-code`, and
-`lsp` MCP servers with `agy`; `.agents/skills.json` continues to expose the
-`ccc` and `lsp-mcp-server` skills from the canonical `.rulesync/skills/` source.
-The shared code-search prompt directs code roles to CGC first. The bridge filters
-the installed MCP catalogue for each invocation and creates a temporary home
-containing only that role's contracted servers and tool grants. It preserves
-explicit user denies and does not rewrite the global registry or settings.
-CodeGraphContext tool grants remain explicit rather than wildcarded.
+The installer exposes the shared canonical skills through `$HOME/.agents/skills/`; root orchestrators receive the orchestration skill, and leaf roles receive only their own contracted skills. XACPX manages delegation; no parent-native spawn path or provider-specific tool mirroring is required.
 
 Headless subagents run noninteractively and cannot answer interactive permission
 prompts. The installer projects static Antigravity CLI permissions from
 `.rulesync/permissions.jsonc` (via `rulesync`) into
 `~/.gemini/antigravity-cli/settings.json` and layers dynamic, machine-local
-workspace `read_file` grants on top; for router-managed turns the bridge
-replaces only MCP allow grants in a temporary settings copy with grants from the
-selected role contract. Read-only roles keep the Antigravity sandbox and never
+workspace `read_file` grants on top; for AutoDev-managed turns the ACP profile must apply the selected role's effective grants without widening user or operator denies. Read-only roles keep the Antigravity sandbox and never
 receive `--dangerously-skip-permissions` or `command(*)`. If a native command is
 not allowed, the leaf prompt directs the model to stop retrying it and return a
 visible summary that records the limitation.
@@ -477,8 +427,7 @@ execution. These installer grants support direct CLI use. AutoDev-managed
 read-only turns build an isolated settings copy from the validated request
 workspace, preserve explicit denies, and do not inherit user command, write, or
 `unsandboxed(...)` grants. User-configured `read_url(...)` rules remain separate
-from local file access. The bridge passes agy's `--sandbox` flag to read-only
-roles; write-capable roles retain their existing permission policy. Broad shell
+from local file access. Read-only roles must retain enforceable sandbox restrictions; write-capable roles retain their authorized policy. Broad shell
 execution is never granted to read-only validation roles.
 
 Run the installer with `--check` to validate that all configured workspace roots
@@ -952,9 +901,7 @@ The versioned execution contract is `config/execution-contract.json`.
 It is generated by `runtime/src/config/render-execution-contract.ts` from the current
 role TOMLs plus the root orchestrator configuration. Runtime consumes it for role kind, the sandbox a role
 declares, expected MCP/skill capabilities, and adapter spawn-tool metadata. Canonical role prose lives in
-`agents/prompts/roles/*.md`; bridges and the native-role renderer share
-those fragments instead of duplicating them. A bridge must report missing
-capabilities rather than silently substituting a different workflow. Native role
+`agents/prompts/roles/*.md`; the execution integration and role renderer share those fragments instead of duplicating them. A provider integration must report missing capabilities rather than silently substituting a different workflow. Native role
 TOMLs remain the **current transitional capability input** until the RuleSync subagent/agent-role migration reaches parity; they are not the long-term canonical source. The installer fails when the generated contract drifts from the current input. The root orchestrator uses the
 capability-only `agents/roles/orchestrator.toml` declaration but is not
 installed as a child role. A child must be resolved through the canonical role and workspace contract, with exact effective MCP/skill grants. The XACPX-only delegation target does not depend on native Codex child inheritance. Skill paths and grants are derived by Runtime, not trusted from agent-supplied spawn prose.
@@ -1014,11 +961,7 @@ so `runtime/src/hooks/file-surface.ts`, a `PreToolUse` hook registered in
 does not render. Refusals are logged to `$CODEX_HOME/hooks/hooks.log` with
 `"hook":"file-surface"`.
 
-The bridges launch the server per turn with `AUTODEV_MCP_WORKSPACE` (the turn's
-workspace) and, on a read-only turn, `AUTODEV_MCP_READ_ONLY=1`; the launcher
-adds `--confine-roots` and the skill roots outside the workspace as
-`--read-only-dir`. A read-only role's Codex config sets the same variable in its
-`[mcp_servers.filesystem]` table.
+The existing launcher accepts `AUTODEV_MCP_WORKSPACE` and `AUTODEV_MCP_READ_ONLY=1` from trusted execution context, adds `--confine-roots` and the approved skill roots as `--read-only-dir`. In the mandatory gateway target, these are gateway/backend launch parameters, not client-controlled grants.
 
 ### Rulesync shared configuration
 
@@ -1053,13 +996,7 @@ node_modules/.bin/rulesync generate --features skills --targets copilot,claudeco
 node_modules/.bin/rulesync generate --features skills --targets copilot,claudecode,codexcli --check
 ```
 
-The installer also provisions `CODEX_ROUTER_COPILOT_API_KEY` in the private
-`$CODEX_HOME/.env`. It is a local Router-to-Copilot bridge bearer credential,
-not a GitHub or Copilot provider API key. The Router and Copilot proxy launcher
-load the same value; the Copilot CLI subprocess does not inherit it. A
-materialize-only install stages a newly generated key without restarting the
-Router or Copilot proxy, so both services must be reloaded before Copilot can
-serve routed tasks with that key.
+Copilot execution now uses its native ACP CLI rather than a separate Responses proxy. Do not provision or reload the removed Copilot bridge as a prerequisite; confirm the current executable, provider authentication and ACP session readiness.
 
 The Codex CLI is found by one lookup in `runtime/src/shared/executables.ts`,
 and every surface that runs it uses that lookup: an explicit `CODEX_BIN` wins,
@@ -1067,7 +1004,7 @@ and otherwise the newest CLI installed wins over a stale one on the default
 `PATH`. The candidates are `~/.local/bin/codex`, the first `codex` on `PATH`,
 and the pnpm-global `PNPM_HOME/bin/codex`. A machine usually holds more than
 one copy -- a stale one in the system bin directory is common -- and the stale
-one rejects the flags the role bridge and the command rules depend on, so the
+one rejects the flags the role integration and command rules depend on, so the
 newest one is the one that runs. A `CODEX_BIN` that names something unusable
 is reported as the misconfiguration it is, and a machine with no Codex CLI at
 all reports that none is installed rather than guessing at one.
@@ -1075,10 +1012,9 @@ all reports that none is installed rather than guessing at one.
 The Copilot CLI itself is found the way the Codex CLI is found, by one lookup
 in `runtime/src/shared/executables.ts`: `COPILOT_BIN` when it is set, then the
 first `copilot` on `PATH`, then `PNPM_HOME/bin/copilot`, then
-`~/.local/bin/copilot`. The bridge, installer dependency check, and Router
-ensure hook all share that lookup. The explicit pnpm-global fallback works
+`~/.local/bin/copilot`. The installer and execution integration should reuse that lookup. The explicit pnpm-global fallback works
 under launchd even when its minimal `PATH` omits pnpm's bin directory. The Copilot CLI's launcher is a
-`#!/usr/bin/env node` script, so the bridge puts its own Node first on the
+`#!/usr/bin/env node` script, so the execution integration must supply the pinned Node on the
 CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 
 The installer provisions `CODEX_ROUTER_OPENCLI_API_KEY` the same way for the

@@ -2167,3 +2167,18 @@ test("canonical target does not restore pre-ACP provider hopping or removed memo
   assert.doesNotMatch(setup, /There is no spawn MCP server/u);
   assert.match(setup, /The `xacpx` MCP is declared here/u);
 });
+
+test("active documentation does not prescribe retired execution paths", () => {
+  const todo = readFileSync(new URL("docs/TODO.md", repositoryRoot), "utf8");
+  const active = todo
+    .split("\n")
+    .filter((entry) => /^- \[[ ~]\]/u.test(entry))
+    .join("\n");
+  assert.doesNotMatch(active, /Preserve direct CLI\/Responses/u);
+  assert.doesNotMatch(active, /Mirror the shim/u);
+  const playtesting = readFileSync(
+    new URL("docs/playtesting-target-state.md", repositoryRoot),
+    "utf8"
+  );
+  assert.doesNotMatch(playtesting, /Playtesting \| Memory/u);
+});
