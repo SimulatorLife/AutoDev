@@ -294,7 +294,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-materializer.ts",
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/chatgpt-tunnel-install.ts",
-  "runtime/src/platform/supergateway-install.ts",
   "runtime/src/platform/install-check.ts",
   "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/platform/codex-permissions-source.ts",

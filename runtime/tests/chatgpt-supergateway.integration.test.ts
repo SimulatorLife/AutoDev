@@ -15,9 +15,8 @@ import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/typ
 
 import { chatgptSupergatewayEnvironment, renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
-import { ensureSupergateway } from "../src/platform/supergateway-install.ts";
 import { externalFilesystemBackend, filesystemSandboxProfile } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
-import { assertTunnelScope, createTunnel, dependencyEnvironment, gatewayStdioCommand, privateRead, privateWrite, ready, shellWord, tunnelClientSupported, tunnelMetadata, validateRuntimeKey } from "../src/platform/chatgpt-tunnel-install.ts";
+import { assertTunnelScope, createTunnel, dependencyEnvironment, gatewayStdioCommand, privateRead, privateWrite, ready, resolveSupergateway, shellWord, tunnelClientSupported, tunnelMetadata, validateRuntimeKey } from "../src/platform/chatgpt-tunnel-install.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -46,7 +45,7 @@ test("pinned Supergateway and actual AutoDev filesystem server enforce external 
     writeFileSync(inside, "expected-value");
     writeFileSync(outside, "outside-value");
     symlinkSync(outside, path.join(workspace, "escape.txt"));
-    const executable = ensureSupergateway(root);
+    const executable = resolveSupergateway(repo);
     const config = path.join(root, "supergateway.json");
     const catalogue = {
       filesystem: {
@@ -249,7 +248,7 @@ test("real combined MCP protocol: pagination, images, cancellation, list changes
   writeFileSync(fixture, fixtureSource);
   const clients: Client[] = [];
   try {
-    const executable = ensureSupergateway(root);
+    const executable = resolveSupergateway(repo);
     const config = path.join(root, "gateway.json");
     const grants = { stable: ["read", "slow", "image", "changed"], conditional: ["read"] };
     const catalogue = {

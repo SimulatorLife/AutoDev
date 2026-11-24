@@ -22,7 +22,7 @@ import {
   renderChatgptSupergatewayConfig,
   validateChatgptWorkspace
 } from "../config/render-chatgpt-supergateway.ts";
-import { ensureSupergateway } from "./supergateway-install.ts";
+
 import { resolveServiceNode } from "./host-arch.ts";
 import { homebrewInvocation } from "./dependencies.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -120,6 +120,15 @@ export function shellWord(value: string): string {
 
 export function gatewayStdioCommand(executable: string, config: string, env: Record<string, string>): string {
   return ["/usr/bin/env", "-i", ...Object.entries(env).map(([name, value]) => name + "=" + value), executable, "--config", config].map(shellWord).join(" ");
+}
+
+/** Resolve the workspace-managed dependency; package.json owns its version.
+ * Never install or resolve a second dependency tree at tunnel startup. */
+export function resolveSupergateway(repositoryRoot: string): string {
+  const executable = path.join(repositoryRoot, "runtime", "node_modules", ".bin", "supergateway");
+  if (!resolveCommandOnPath(executable))
+    throw new Error("Supergateway is not installed; run pnpm install from the AutoDev repository root");
+  return executable;
 }
 
 export function tunnelClientSupported(version: string): boolean {
@@ -337,7 +346,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
 
   const dependencyEnv = dependencyEnvironment(env);
   const binary = tunnelBinary(dependencyEnv);
-  const supergateway = ensureSupergateway(directory, dependencyEnv);
+  const supergateway = resolveSupergateway(paths.repositoryRoot);
   const port = healthPort(env.AUTODEV_CHATGPT_TUNNEL_PORT ?? prior?.port);
   const servicePath = [
     path.dirname(node), path.dirname(binary), path.dirname(supergateway),

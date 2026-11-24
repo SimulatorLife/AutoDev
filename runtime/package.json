@@ -163,6 +163,7 @@
     "playwright-core": "1.65.1",
     "quota-axi": "0.1.69",
     "smol-toml": "^1.9.1",
+    "supergateway": "4.2.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
