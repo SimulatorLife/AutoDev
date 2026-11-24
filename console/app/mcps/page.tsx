@@ -22,7 +22,8 @@ export const metadata: Metadata = {
   title: "MCPs"
 };
 
-export default async function McpsPage(): Promise<React.JSX.Element> {
+export default async function McpsPage({ searchParams }: { searchParams?: Promise<{ tunnel?: string | string[] }> } = {}): Promise<React.JSX.Element> {
+  const tunnelOutcome = (await searchParams)?.tunnel;
   const { section, config } = readNodeContext("/mcps");
   if (!config) {
     return React.createElement(
@@ -60,6 +61,7 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
       section,
       counts: result.data.valid ? { MCPs: servers.length } : {}
     },
+    tunnelOutcome === "ok" || tunnelOutcome === "failed" ? React.createElement("p", { role: "status" }, tunnelOutcome === "ok" ? "ChatGPT tunnel settings updated." : "ChatGPT tunnel update failed; review status and installer diagnostics.") : null,
     React.createElement(ChatgptTunnelPanel, { status: tunnelResult.kind === "ok" ? tunnelResult.data : null }),
     React.createElement(McpsView, {
       servers,

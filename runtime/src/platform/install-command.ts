@@ -95,13 +95,27 @@ export function runInstallCommand(
   const home = overrides.home ?? process.env.HOME ?? homedir();
   const codexHome =
     overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
-  const projection = createCodexMcpSource(repositoryRoot);
   const env = {
     AUTODEV_REPO_ROOT: repositoryRoot,
     CODEX_HOME: codexHome,
     HOME: home
   };
+  // Tunnel credentials belong only to the tunnel installer, not ordinary
+  // package managers, materializers or service restarts.
+  const tunnelSecrets = Object.fromEntries(
+    ["OPENAI_ADMIN_KEY", "CONTROL_PLANE_API_KEY"].map((key) => [key, process.env[key]])
+  );
+  for (const key of Object.keys(tunnelSecrets)) delete process.env[key];
+  let projection: ReturnType<typeof createCodexMcpSource> | undefined;
   try {
+    if (flags.chatgptTunnel === "disable") {
+      runNodeModule(
+        resolveRuntimeSourcePath(repositoryRoot, "platform/chatgpt-tunnel-install.ts"),
+        ["disable", repositoryRoot, home, codexHome], env
+      );
+      return 0;
+    }
+    projection = createCodexMcpSource(repositoryRoot);
     ensureBridgeRouterAuth(path.join(codexHome, ".env"));
     if (flags.routerAuth)
       ensureRouterAuth(
@@ -129,7 +143,7 @@ export function runInstallCommand(
     } else {
       runNodeModule(
         resolveRuntimeSourcePath(repositoryRoot, "platform/chatgpt-tunnel-install.ts"),
-        [flags.chatgptTunnel, repositoryRoot, home, codexHome], env
+        [flags.chatgptTunnel, repositoryRoot, home, codexHome], { ...env, ...tunnelSecrets }
       );
       runNodeModule(
         resolveRuntimeSourcePath(repositoryRoot, "platform/service-restart.ts"),
@@ -139,6 +153,9 @@ export function runInstallCommand(
     }
     return 0;
   } finally {
-    rmSync(projection.root, { recursive: true, force: true });
+    if (projection) rmSync(projection.root, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(tunnelSecrets)) {
+      if (value !== undefined) process.env[key] = value;
+    }
   }
 }

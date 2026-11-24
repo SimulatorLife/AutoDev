@@ -23,6 +23,7 @@ import {
 } from "../config/render-chatgpt-supergateway.ts";
 import { ensureSupergateway } from "./supergateway-install.ts";
 import { resolveServiceNode } from "./host-arch.ts";
+import { homebrewInvocation } from "./dependencies.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { resolveCommandOnPath } from "./runtime-files.ts";
 
@@ -66,7 +67,9 @@ function installedState(state: TunnelState | undefined): InstalledState | undefi
 }
 function generationPath(directory: string, generation: string): string {
   const target = path.join(directory, generation);
-  if (!lstatSync(target).isDirectory()) throw new Error("Invalid tunnel generation directory");
+  const stat = lstatSync(target);
+  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid()))
+    throw new Error("Invalid private tunnel generation directory");
   return target;
 }
 export function dependencyEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -80,17 +83,27 @@ interface Paths {
   codexHome: string;
 }
 
+function privateFileStat(file: string) {
+  try {
+    return lstatSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function privateWrite(file: string, content: string): void {
-  if (existsSync(file) && !lstatSync(file).isFile())
-    throw new Error("Refusing non-regular ChatGPT tunnel file: " + file);
+  const stat = privateFileStat(file);
+  if (stat && (!stat.isFile() || stat.nlink !== 1 || (process.getuid && stat.uid !== process.getuid())))
+    throw new Error("Refusing non-private ChatGPT tunnel file: " + file);
   atomicWriteSync(file, content, { mode: 0o600, skipUnchanged: true });
   chmodSync(file, 0o600);
 }
 
 function privateRead(file: string): string {
-  if (!existsSync(file)) return "";
-  const stat = lstatSync(file);
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0)
+  const stat = privateFileStat(file);
+  if (!stat) return "";
+  if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid()))
     throw new Error("ChatGPT tunnel file must be a private regular file: " + file);
   return readFileSync(file, "utf8").trim();
 }
@@ -115,7 +128,8 @@ function tunnelBinary(env: NodeJS.ProcessEnv): string {
   if (binary && supported(binary)) return binary;
   const brew = resolveCommandOnPath("brew");
   if (!brew) throw new Error("Homebrew is required to install OpenAI tunnel-client >= 0.0.21");
-  execFileSync(brew, [binary ? "upgrade" : "install", "openai/tools/tunnel-client"], { env, stdio: "inherit" });
+  const invocation = homebrewInvocation(brew, [binary ? "upgrade" : "install", "openai/tools/tunnel-client"]);
+  execFileSync(invocation.command, invocation.args, { env, stdio: "inherit" });
   binary = resolveCommandOnPath("tunnel-client");
   if (!binary || !supported(binary))
     throw new Error("OpenAI tunnel-client >= 0.0.21 is required");
