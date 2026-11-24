@@ -45,11 +45,15 @@ The same rule applies when passing inline Python/Node scripts or shell commands
 to `tools.exec_command`: never wrap them in a JS template literal when they
 contain backticks or `${`.
 
-Files are read and edited only through the `filesystem` MCP server
+Files inside the active workspace are read and edited through the `filesystem` MCP server
 (`tools.mcp__filesystem__read_text_file`, `tools.mcp__filesystem__edit_file`,
 `tools.mcp__filesystem__write_file`, …), on every provider. Codex's own
 `apply_patch` and `view_image` are not offered, and a call to either is refused
-by the `file-surface` hook with the `filesystem` tool to use instead.
+by the `file-surface` hook with the `filesystem` tool to use instead. Because
+`filesystem` MCP is confined per-session to the active workspace (plus read-only
+skill roots), use `tools.exec_command` for authorized reads of external paths
+such as `/tmp/*` snapshots, and write scratch probes under gitignored `tmp/`
+rather than tracked `tests/`.
 
 ## Bounded discovery and navigation
 

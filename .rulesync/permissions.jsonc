@@ -58,7 +58,8 @@
       "npm publish *": "deny",
       "pnpm publish *": "deny",
       "curl * | *sh*": "deny",
-      "wget * | *sh*": "deny"
+      "wget * | *sh*": "deny",
+      "sleep *": "deny"
     },
     "mcp__filesystem": {
       "*": "allow"

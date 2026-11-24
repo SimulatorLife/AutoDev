@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { buildRootOrchestratorBootstrap } from "@simulatorlife/autodev-runtime/shared/root-bootstrap";
+
 const skill = readFileSync(
   fileURLToPath(
     new URL("../.rulesync/skills/orchestration/SKILL.md", import.meta.url)
@@ -121,4 +123,29 @@ test("development-lifecycle reference links Discover and Validate to canonical F
     /proportionate validation tiers\s+\(focused, subsystem, full\)/
   );
   assert.match(lifecycle, /references\/validation\.md/);
+});
+
+test("post-compaction bootstrap and orchestration references document workspace confinement and probe hygiene", () => {
+  const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+  const bootstrap = buildRootOrchestratorBootstrap({
+    repoRoot: repositoryRoot,
+    postCompaction: true
+  });
+  assert.ok(bootstrap);
+  assert.match(bootstrap.content, /mcp__filesystem.*confined/u);
+  assert.match(bootstrap.content, /exec_command/u);
+  assert.match(bootstrap.content, /gitignored `tmp\/`/u);
+  const codeMode = readDocument(
+    ".rulesync/skills/orchestration/references/codex-code-mode.md"
+  );
+  assert.match(codeMode, /confined per-session to the active workspace/u);
+  assert.match(codeMode, /gitignored `tmp\/`/u);
+  const runtimeContract = readDocument(
+    ".rulesync/skills/orchestration/references/runtime-contract.md"
+  );
+  assert.match(
+    runtimeContract,
+    /confined per-session to the active workspace/u
+  );
+  assert.match(runtimeContract, /exec_command/u);
 });

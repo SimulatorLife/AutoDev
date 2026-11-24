@@ -46,6 +46,7 @@ import {
   parseOpencliReply,
   prefixDigests,
   renderOpencliContinuation,
+  renderOpencliPrompt,
   replyFromRow,
   toolIndex,
   transcriptEntries,
@@ -2063,6 +2064,54 @@ test("a leaf turn may finish in prose once a tool has run, and an orchestrator m
       assert.equal(root.status, 200);
     }
   );
+});
+
+test("post-compaction prompts remind web-chat models that tools are live and orchestrator tool-access refusals fail", async () => {
+  const compactedSummary =
+    "Another language model started to solve this problem and produced a summary of its thinking process.\n\n# Handoff Summary\nStatus: Incomplete.";
+  await withBridge(
+    [
+      {
+        response:
+          "This session does not expose the Codex agent's machine, repository tools, or active child-agent handles. I therefore cannot execute the requested repository changes or truthfully report validation results.",
+        conversationId: "conv-compacted-refusal"
+      }
+    ],
+    async (baseUrl, runs) => {
+      const response = await post(
+        baseUrl,
+        {
+          model: "opencli-chatgpt-balanced",
+          tools: [CODE_MODE_EXEC_TOOL, WAIT_TOOL],
+          input: [
+            userMessage("Fix the next major bug."),
+            userMessage(compactedSummary)
+          ]
+        },
+        { "x-autodev-agent-role": "orchestrator" }
+      );
+      assert.equal(response.status, 400);
+      const body = (await response.json()) as { error: { type: string } };
+      assert.equal(body.error.type, "provider_tool_channel_unavailable");
+      const prompt = runs.prompts[0]!;
+      assert.match(prompt, /compacted handoff summary/u);
+      assert.match(prompt, /remain active on the user's machine right now/u);
+    }
+  );
+  const afterTool = renderOpencliPrompt(
+    "",
+    [
+      {
+        kind: "custom",
+        name: "exec",
+        description: CODE_MODE_EXEC_TOOL.description,
+        parameters: null,
+        namespace: null
+      }
+    ],
+    `${compactedSummary}\n\n<tool_output>ok</tool_output>`
+  );
+  assert.doesNotMatch(afterTool, /compacted handoff summary from an earlier/u);
 });
 
 test("a tool call goes to Codex and its output continues the same site conversation", async () => {

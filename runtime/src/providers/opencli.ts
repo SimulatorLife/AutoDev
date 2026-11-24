@@ -550,17 +550,33 @@ const UNUSABLE_REPLY = "UNUSABLE_REPLY";
  */
 const NO_TOOL_USE = "NO_TOOL_USE";
 
-/**
- * Why a reply cannot finish this leaf agent's turn, or null when it can: the
- * turn offers a shell, the reply calls no tool, and no tool has run in the
- * conversation.
- */
+/* Prose claims that the offered machine, repository, shell, or tool surface is missing despite an active shell tool channel. */
+const TOOL_ACCESS_REFUSAL_PATTERNS = [
+  /\bNO_REPO_ACCESS\b/u,
+  /\bdoes not expose\b[^.!?\n]{0,120}\b(?:machine|repository|tools|handles)\b/iu,
+  /\b(?:do|does) not have access to\b[^.!?\n]{0,120}\b(?:machine|repository|filesystem|shell|tools|handles)\b/iu,
+  /\bno (?:shell|repository|filesystem|repo) access\b/iu
+] as const;
+
+function hasToolAccessRefusal(text: string): boolean {
+  return TOOL_ACCESS_REFUSAL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/* Why a reply cannot finish this turn, or null when it can: either prose explicitly claims tool/repository access is unavailable despite an active shell tool, or a leaf agent with a shell ended without calling any tool. */
 function toolChannelUnused(
   turn: PreparedTurn,
   parsed: ParsedReply
 ): string | null {
-  if (!turn.requiresToolUse || parsed.calls.length > 0) return null;
-  if (turn.entries.some((entry) => entry.kind === "tool_output")) return null;
+  if (parsed.calls.length > 0) return null;
+  if (shellAccess(turn.tools) !== null && hasToolAccessRefusal(parsed.text)) {
+    return `the ${turn.site} reply claimed repository or tool access is unavailable despite an active tool channel`;
+  }
+  if (
+    !turn.requiresToolUse ||
+    turn.entries.some((entry) => entry.kind === "tool_output")
+  ) {
+    return null;
+  }
   return `the ${turn.site} reply ended a leaf agent's turn without calling a tool, and no tool has run in this conversation`;
 }
 

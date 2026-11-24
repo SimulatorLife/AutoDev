@@ -141,7 +141,12 @@ The root owns commits; delegated roles never stage or commit. Codex command rule
 ## Workspace and role resolution
 
 Keep delegated work in the parent-selected repository or worktree. Do not let
-task prose implicitly select another workspace.
+task prose implicitly select another workspace. Because `mcp__filesystem` is
+confined per-session to the active workspace (plus read-only skill roots), if a
+child is intentionally directed to inspect an external snapshot such as `/tmp/*`,
+explicitly instruct it to use `exec_command` rather than `mcp__filesystem`.
+Keep temporary probe files in gitignored `tmp/` (never tracked `tests/`) and
+clean them up before finishing.
 
 Give children only the task context they need. The spawn payload contains the
 selected role and task, not ad hoc skill paths or MCP lists.

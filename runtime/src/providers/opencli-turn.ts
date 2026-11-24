@@ -26,6 +26,7 @@ import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { COMPACTED_SUMMARY_PREFIX } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -678,6 +679,21 @@ function roleSection(role: string | null): string[] {
 const NEXT_REPLY =
   "Write the agent's next reply to the conversation above, following the response rules.";
 
+const POST_COMPACTION_NEXT_REPLY = [
+  'The conversation above ends with a compacted handoff summary from an earlier context window of this same agent. Your tools listed under "Tools" above (including `exec`, `tools.exec_command`, and any `tools.multi_agent_v1__*` functions listed there) remain active on the user\'s machine right now.',
+  "Resume execution by writing `<tool_call>` blocks rather than summarizing the handoff or claiming tools, repository access, or child-agent handles are unavailable.",
+  NEXT_REPLY
+].join("\n\n");
+
+function isFreshCompactedTranscript(transcript: string): boolean {
+  const lastMarker = Math.max(
+    transcript.lastIndexOf(COMPACTED_SUMMARY_PREFIX),
+    transcript.lastIndexOf("<compacted-summary>")
+  );
+  if (lastMarker === -1) return false;
+  return !transcript.slice(lastMarker).includes("<tool_output>");
+}
+
 /** A heading in a code-mode tool's description: a server group or one nested tool. */
 const CODE_MODE_HEADING = /^(#{2,3}) /u;
 const NESTED_TOOL_HEADING = /^### `([^`]+)`/u;
@@ -815,7 +831,9 @@ export function renderOpencliPrompt(
     ...roleSection(role),
     toolsSection(tools),
     `## Conversation\n\n${transcript}`,
-    NEXT_REPLY
+    tools.length > 0 && isFreshCompactedTranscript(transcript)
+      ? POST_COMPACTION_NEXT_REPLY
+      : NEXT_REPLY
   ].join("\n\n");
 }
 
