@@ -8,8 +8,10 @@
  * bridge already authenticates its turns with, and it lives either in the
  * environment or in the owner-only keychain item the bridge writes.
  */
-import { execFileSync } from "node:child_process";
-import { userInfo } from "node:os";
+import {
+  keychainAccount,
+  readKeychainSecret
+} from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 const KEYCHAIN_SERVICE = "com.codex.claude-bridge.oauth-token";
 
@@ -17,30 +19,7 @@ const KEYCHAIN_SERVICE = "com.codex.claude-bridge.oauth-token";
 export function claudeKeychainAccount(
   env: NodeJS.ProcessEnv = process.env
 ): string {
-  return env.USER?.trim() || userInfo().username;
-}
-
-function keychainToken(env: NodeJS.ProcessEnv): string {
-  try {
-    return execFileSync(
-      "/usr/bin/security",
-      [
-        "find-generic-password",
-        "-a",
-        claudeKeychainAccount(env),
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-w"
-      ],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5000
-      }
-    ).trim();
-  } catch {
-    return "";
-  }
+  return keychainAccount(env);
 }
 
 /** The Claude Code account's OAuth token, or an empty string when absent. */
@@ -49,7 +28,9 @@ export function readClaudeOAuthToken(
 ): string {
   const direct = env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (direct) return direct;
-  return keychainToken(env);
+  return (
+    readKeychainSecret(KEYCHAIN_SERVICE, env, { exactAccount: true }) ?? ""
+  );
 }
 
 /**

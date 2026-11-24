@@ -26,8 +26,12 @@ import {
 } from "@simulatorlife/autodev-runtime/platform";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
+import {
+  readRuntimeSecret,
+  resolveManagedSecret
+} from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
@@ -851,11 +855,23 @@ function providerCodexEnvironment(
           executionEnvironment
         )
       };
-  // Control credentials are never sent to the model process. Playtest MCP
-  // reads its dedicated runner token directly from the protected secret file.
+  // Control credentials and unrelated provider/tunnel keys are never sent to
+  // the model process. Playtest MCP reads its dedicated runner token directly
+  // from the protected secret file.
   delete providerEnvironment.AUTODEV_CONTROL_API_TOKEN;
   delete providerEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
   delete providerEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
+  delete providerEnvironment.MINIMAX_API_KEY;
+  delete providerEnvironment.AUTODEV_CHATGPT_TUNNEL_API_KEY;
+  if (roleContract(options.role).mcp.includes("context7")) {
+    const context7Key = resolveManagedSecret(
+      "CONTEXT7_API_KEY",
+      providerEnvironment
+    );
+    if (context7Key) providerEnvironment.CONTEXT7_API_KEY = context7Key;
+  } else {
+    delete providerEnvironment.CONTEXT7_API_KEY;
+  }
   if (options.role === BROWSER_TESTER_ROLE) {
     return {
       args: [],
@@ -1423,10 +1439,18 @@ function providerAgentRuntimeEnvironment(
     delete loaded.AUTODEV_CONTROL_API_TOKEN;
     delete loaded.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
     delete loaded.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
+    const router = { ...loaded };
+    const minimaxKey = resolveManagedSecret("MINIMAX_API_KEY", loaded);
+    if (minimaxKey) router.MINIMAX_API_KEY = minimaxKey;
+    else delete router.MINIMAX_API_KEY;
+    delete router.CONTEXT7_API_KEY;
+    delete router.AUTODEV_CHATGPT_TUNNEL_API_KEY;
+    delete loaded.MINIMAX_API_KEY;
+    delete loaded.AUTODEV_CHATGPT_TUNNEL_API_KEY;
     return {
       analystDispatch: false,
       execution: loaded,
-      router: loaded
+      router
     };
   }
   const sourceHome =

@@ -24,6 +24,7 @@ import {
   readRoleExecutionSettings,
   runProviderAgent
 } from "@simulatorlife/autodev-runtime/cli/provider-agent";
+import { writeKeychainSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { parse as parseRawToml } from "smol-toml";
 
 const parseToml = (source: string): Record<string, unknown> =>
@@ -201,6 +202,9 @@ function fixture(): {
       // carries one would answer these assertions with its own token instead
       // of the fixture's, so the fixture starts without it.
       CODEX_ROUTER_AUTH_TOKEN: undefined,
+      MINIMAX_API_KEY: undefined,
+      CONTEXT7_API_KEY: undefined,
+      AUTODEV_CHATGPT_TUNNEL_API_KEY: undefined,
       AUTODEV_REPO_ROOT: repositoryRoot,
       AUTODEV_MEMORY_DATABASE_URL:
         "postgresql://memory-user:secret@127.0.0.1/memory",
@@ -306,6 +310,9 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
         "AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN=analyst-secret\n" +
         "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=runner-file-secret\n" +
         "AUTODEV_PLAYTEST_CONTROL_API_ROLE=playtester\n" +
+        "MINIMAX_API_KEY=minimax-file-secret\n" +
+        "CONTEXT7_API_KEY=context7-file-secret\n" +
+        "AUTODEV_CHATGPT_TUNNEL_API_KEY=tunnel-file-secret\n" +
         "CODEX_ROUTER_AUTH_TOKEN=router-from-file\n"
     );
     const env = {
@@ -375,6 +382,16 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       routerEnvironments[0]?.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN,
       undefined
     );
+    assert.equal(
+      routerEnvironments[0]?.MINIMAX_API_KEY,
+      "minimax-file-secret",
+      "isolated provider-agent passes MINIMAX_API_KEY to the Router"
+    );
+    assert.equal(routerEnvironments[0]?.CONTEXT7_API_KEY, undefined);
+    assert.equal(
+      routerEnvironments[0]?.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+      undefined
+    );
     assert.equal(calls[0]?.binary, f.codex);
     assert.equal(calls[0]?.checkOnly, false);
     assert.equal(calls[0]?.env.AUTODEV_CONTROL_API_TOKEN, undefined);
@@ -386,6 +403,21 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       calls[0]?.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
       undefined,
       "ordinary roles must not inherit the Playtest runner secret"
+    );
+    assert.equal(
+      calls[0]?.env.MINIMAX_API_KEY,
+      undefined,
+      "ordinary roles must not inherit MINIMAX_API_KEY"
+    );
+    assert.equal(
+      calls[0]?.env.CONTEXT7_API_KEY,
+      undefined,
+      "non-context7 roles must not inherit CONTEXT7_API_KEY"
+    );
+    assert.equal(
+      calls[0]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY,
+      undefined,
+      "ordinary roles must not inherit AUTODEV_CHATGPT_TUNNEL_API_KEY"
     );
     assert.equal(
       calls[0]?.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE,
@@ -1827,4 +1859,146 @@ test("provider-agent help is a successful typed CLI path", () => {
     encoding: "utf8"
   });
   assert.match(output, /Usage: run-provider-agent\.sh/);
+});
+
+test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keychain and override precedence", async () => {
+  const f = fixture();
+  try {
+    const docsRoleFile = join(
+      f.env.CODEX_HOME!,
+      "agents",
+      "docs-researcher.toml"
+    );
+    writeFileSync(
+      docsRoleFile,
+      '# role-access: read-only\nname = "docs-researcher"\ndeveloper_instructions = "Research external docs."\n'
+    );
+    const promptFile = join(f.root, "prompt.txt");
+    writeFileSync(promptFile, "check library docs");
+    const credentialFile = join(f.root, "provider.env");
+    writeFileSync(
+      credentialFile,
+      [
+        "MINIMAX_API_KEY=minimax-from-file",
+        "CONTEXT7_API_KEY=ctx7-from-file",
+        "AUTODEV_CHATGPT_TUNNEL_API_KEY=tunnel-from-file",
+        "CODEX_ROUTER_AUTH_TOKEN=router-from-file"
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+    const routerEnvironments: NodeJS.ProcessEnv[] = [];
+    const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const deps: ProviderAgentDeps = {
+      ensureRouter: async (environment) => {
+        routerEnvironments.push(environment);
+      },
+      runCodex: (_binary, _args, runtimeEnvironment) => {
+        calls.push({ env: runtimeEnvironment });
+        return 0;
+      }
+    };
+    const baseEnv: NodeJS.ProcessEnv = {
+      ...f.env,
+      MINIMAX_API_KEY: undefined,
+      CONTEXT7_API_KEY: undefined,
+      AUTODEV_CHATGPT_TUNNEL_API_KEY: undefined,
+      CODEX_ENV_FILE: credentialFile
+    };
+    assert.equal(
+      await runProviderAgent(
+        [
+          "--role",
+          "docs-researcher",
+          "--cwd",
+          join(f.root, "workspace"),
+          "--prompt-file",
+          promptFile
+        ],
+        baseEnv,
+        deps
+      ),
+      0
+    );
+    assert.equal(routerEnvironments[0]?.MINIMAX_API_KEY, "minimax-from-file");
+    assert.equal(calls[0]?.env.CONTEXT7_API_KEY, "ctx7-from-file");
+    assert.equal(calls[0]?.env.MINIMAX_API_KEY, undefined);
+    assert.equal(calls[0]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY, undefined);
+
+    if (process.platform === "darwin") {
+      const keychain = join(f.root, "provider-agent.keychain-db");
+      execFileSync("/usr/bin/security", [
+        "create-keychain",
+        "-p",
+        "test-pass",
+        keychain
+      ]);
+      execFileSync("/usr/bin/security", [
+        "unlock-keychain",
+        "-p",
+        "test-pass",
+        keychain
+      ]);
+      writeFileSync(
+        credentialFile,
+        "CODEX_ROUTER_AUTH_TOKEN=router-from-file\n",
+        {
+          mode: 0o600
+        }
+      );
+      const kcEnv: NodeJS.ProcessEnv = {
+        ...baseEnv,
+        USER: "autodev-tester",
+        AUTODEV_DISABLE_KEYCHAIN: "0",
+        AUTODEV_KEYCHAIN_FILE: keychain
+      };
+      writeKeychainSecret("MINIMAX_API_KEY", "minimax-from-keychain", kcEnv);
+      writeKeychainSecret("CONTEXT7_API_KEY", "ctx7-from-keychain", kcEnv);
+      writeKeychainSecret(
+        "AUTODEV_CHATGPT_TUNNEL_API_KEY",
+        "tunnel-from-keychain",
+        kcEnv
+      );
+      assert.equal(
+        await runProviderAgent(
+          [
+            "--role",
+            "docs-researcher",
+            "--cwd",
+            join(f.root, "workspace"),
+            "--prompt-file",
+            promptFile
+          ],
+          kcEnv,
+          deps
+        ),
+        0
+      );
+      assert.equal(
+        routerEnvironments[1]?.MINIMAX_API_KEY,
+        "minimax-from-keychain"
+      );
+      assert.equal(calls[1]?.env.CONTEXT7_API_KEY, "ctx7-from-keychain");
+      assert.equal(calls[1]?.env.MINIMAX_API_KEY, undefined);
+      assert.equal(calls[1]?.env.AUTODEV_CHATGPT_TUNNEL_API_KEY, undefined);
+
+      assert.equal(
+        await runProviderAgent(
+          [
+            "--role",
+            "docs-researcher",
+            "--cwd",
+            join(f.root, "workspace"),
+            "--prompt-file",
+            promptFile
+          ],
+          { ...kcEnv, CONTEXT7_API_KEY: "ctx7-explicit-override" },
+          deps
+        ),
+        0
+      );
+      assert.equal(calls[2]?.env.CONTEXT7_API_KEY, "ctx7-explicit-override");
+    }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });

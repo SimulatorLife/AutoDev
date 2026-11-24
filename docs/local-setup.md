@@ -27,6 +27,14 @@ bash scripts/install.sh
 # or: pnpm run install:autodev
 ```
 
+`scripts/install.sh` passes `--env-file-if-exists="$repo_root/.env"` to Node.js so
+a git-ignored `.env` file at the repository root is loaded automatically when
+present (including during MCP gateway/tunnel provisioning). Explicit
+environment variables set in the calling shell take precedence over `.env`
+values, and `scripts/install.sh` continues normally when no `.env` file exists.
+Never commit `.env` (already ignored via `.gitignore`), log its credentials, or
+expose `.env` files through external MCP tools.
+
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
 ### Typed CLI commands
@@ -246,10 +254,12 @@ and `playwright` MCP servers through the installed `run-autodev-mcp.sh` launcher
 `context7` is the hosted
 `https://mcp.context7.com/mcp` server that resolves third-party library IDs and
 returns version-pinned docs and source snippets; the operator supplies the
-`CONTEXT7_API_KEY` env var — exported in the environment AutoDev runs in, or
-written to `$CODEX_HOME/.env`, which the runtime loads into the role process
-environment — and Codex's `bearer_token_env_var` plumbing forwards
-it as the bearer token, so the key never leaves the operator's shell. The
+`CONTEXT7_API_KEY` secret — in macOS Keychain (service `CONTEXT7_API_KEY`, via
+`node runtime/src/platform/install-state.ts keychain set CONTEXT7_API_KEY` or
+auto-migrated from `$CODEX_HOME/.env` by `scripts/install.sh`), or exported as
+an explicit environment override — and AutoDev injects it only into role
+processes that enable `context7`, where Codex's `bearer_token_env_var` plumbing
+forwards it as the bearer token. The
 `context7` entry is registered at user-level but the role TOMLs explicitly
 gate it: `docs-researcher` and `explorer` enable it (their bounded work
 frequently needs to answer "how do I call method X on library Y" or "what's the
@@ -899,9 +909,7 @@ disturb the sandbox the roles run in.
   creates or rewrites `~/.zprofile` to modify the login shell's PATH.
   If Node is missing, provision it with `pnpm runtime set node 24.12.0 -g`
   and rerun the installer.
-- Keep OAuth/PAT/API credentials outside the repository. Background services
-  load provider credentials from `~/.codex/.env`; for MiniMax this means a
-  private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
+- Keep OAuth/PAT/API credentials outside the repository. On macOS, store `MINIMAX_API_KEY`, `CONTEXT7_API_KEY`, and `AUTODEV_CHATGPT_TUNNEL_API_KEY` in macOS Keychain via `/usr/bin/security` (or `node runtime/src/platform/install-state.ts keychain set <NAME>` reading from stdin); explicit environment variables always override Keychain. Normal runs of `scripts/install.sh` automatically migrate any plaintext `MINIMAX_API_KEY`, `CONTEXT7_API_KEY`, and `AUTODEV_CHATGPT_TUNNEL_API_KEY` entries from `$CODEX_HOME/.env` into Keychain (and `scripts/install.sh --check` flags unmigrated plaintext entries). Each secret is injected only into processes that require it (`MINIMAX_API_KEY` into the Model Router and `mcode`, `CONTEXT7_API_KEY` into roles enabling `context7`, `AUTODEV_CHATGPT_TUNNEL_API_KEY` into `tunnel-client`). Background services keep other internal router/bridge credentials in mode-0600 `$CODEX_HOME/.env` and `$CODEX_HOME/openlit-secrets.env`.
 - Treat proxy and router logs as local-only operational data. Antigravity's
   launchd service is the canonical supervisor when loaded; the ensure hook
   refuses to start a duplicate unmanaged process on port 4002. The

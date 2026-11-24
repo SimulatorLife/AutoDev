@@ -42,3 +42,9 @@ if (process.env.OPENCLI_BROWSER_SETTING_FILE === undefined) {
 // a request the test builds without credentials is refused with 401. Tests
 // that exercise authentication set their own token.
 delete process.env.CODEX_ROUTER_AUTH_TOKEN;
+
+// Keep unit tests isolated from the operator's live macOS Keychain items;
+// tests that exercise Keychain integration explicitly opt back in.
+if (process.env.AUTODEV_DISABLE_KEYCHAIN === undefined) {
+  process.env.AUTODEV_DISABLE_KEYCHAIN = "1";
+}

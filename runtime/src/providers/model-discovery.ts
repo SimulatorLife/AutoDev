@@ -18,6 +18,7 @@ import {
 import { execa } from "execa";
 
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
+import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { readClaudeOAuthToken } from "./claude-credential.ts";
 import { loadCodexAuth } from "./codex-auth.ts";
 
@@ -420,7 +421,7 @@ export async function discoverMiniMaxModels(
   fetchImpl: typeof fetch = globalThis.fetch,
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
-  const apiKey = env.MINIMAX_API_KEY?.trim();
+  const apiKey = resolveManagedSecret("MINIMAX_API_KEY", env);
   if (!apiKey) {
     throw new Error("MINIMAX_API_KEY is not configured for model discovery.");
   }

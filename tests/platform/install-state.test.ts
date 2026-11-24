@@ -5,7 +5,10 @@ import test from "node:test";
 
 import {
   ensureBridgeRouterAuth,
-  ensureRouterAuth
+  ensureRouterAuth,
+  findPlaintextKeychainSecrets,
+  migrateEnvSecretsToKeychain,
+  provisionEnvSecretsToKeychain
 } from "@simulatorlife/autodev-runtime/platform/install-state";
 
 import { withTempDir } from "../support/test-helpers.ts";
@@ -56,4 +59,81 @@ test("router auth replaces an empty token entry rather than treating it as confi
       readFileSync(path, "utf8"),
       new RegExp(`CODEX_ROUTER_AUTH_TOKEN=${token}`)
     );
+  }));
+
+test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env while preserving other entries", () =>
+  withTempDir((directory) => {
+    const envPath = join(directory, ".env");
+    writeFileSync(
+      envPath,
+      [
+        "# Keep comments",
+        "CODEX_ROUTER_AUTH_TOKEN=router-secret",
+        "MINIMAX_API_KEY=minimax-plaintext",
+        'export CONTEXT7_API_KEY="context7-plaintext"',
+        "AUTODEV_CHATGPT_TUNNEL_API_KEY=tunnel-plaintext",
+        "OPENCLI_GEMINI_ACCOUNT=me@example.com"
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+    const store = new Map<string, string>();
+    const deps = {
+      platform: "darwin" as const,
+      runSecurity: (args: readonly string[], input?: string) => {
+        if (args[0] === "-i" && input) {
+          const match =
+            /-s "([^"]+)" -T "\/usr\/bin\/security" -w "((?:[^"\\]|\\.)*)"/u.exec(
+              input
+            );
+          if (match) store.set(match[1]!, match[2]!);
+          return "";
+        }
+        if (args[0] === "find-generic-password") {
+          const service = args[args.indexOf("-s") + 1]!;
+          const value = store.get(service);
+          if (!value) throw new Error("missing");
+          return `${value}\n`;
+        }
+        throw new Error("unexpected command");
+      }
+    };
+    const env = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
+    assert.deepEqual(findPlaintextKeychainSecrets(envPath), [
+      "MINIMAX_API_KEY",
+      "CONTEXT7_API_KEY",
+      "AUTODEV_CHATGPT_TUNNEL_API_KEY"
+    ]);
+    const migrated = migrateEnvSecretsToKeychain(envPath, env, { deps });
+    assert.deepEqual(migrated, [
+      "MINIMAX_API_KEY",
+      "CONTEXT7_API_KEY",
+      "AUTODEV_CHATGPT_TUNNEL_API_KEY"
+    ]);
+    assert.equal(store.get("MINIMAX_API_KEY"), "minimax-plaintext");
+    assert.equal(store.get("CONTEXT7_API_KEY"), "context7-plaintext");
+    assert.equal(
+      store.get("AUTODEV_CHATGPT_TUNNEL_API_KEY"),
+      "tunnel-plaintext"
+    );
+    assert.deepEqual(findPlaintextKeychainSecrets(envPath), []);
+    assert.equal(
+      readFileSync(envPath, "utf8"),
+      [
+        "# Keep comments",
+        "CODEX_ROUTER_AUTH_TOKEN=router-secret",
+        "OPENCLI_GEMINI_ACCOUNT=me@example.com"
+      ].join("\n") + "\n"
+    );
+    assert.equal(lstatSync(envPath).mode & 0o777, 0o600);
+    const provisioned = provisionEnvSecretsToKeychain(
+      {
+        ...env,
+        MINIMAX_API_KEY: "minimax-from-installer",
+        CONTEXT7_API_KEY: ""
+      },
+      undefined,
+      deps
+    );
+    assert.deepEqual(provisioned, ["MINIMAX_API_KEY"]);
+    assert.equal(store.get("MINIMAX_API_KEY"), "minimax-from-installer");
   }));

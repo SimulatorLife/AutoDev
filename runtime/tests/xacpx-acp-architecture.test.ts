@@ -498,16 +498,54 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     server.close();
   }
 
-  // Minimax routes cleanly through mcode ACP and binary discovery.
+  // Minimax routes cleanly through mcode ACP and binary discovery, and receives
+  // MINIMAX_API_KEY only for mcode while CONTEXT7_API_KEY is injected only for
+  // roles that enable context7.
   const mcodeLaunch = buildAcpProviderLaunchSpec({
     provider: "mcode",
     role: "worker",
     model: "MiniMax-M3",
     cwd: REPO_ROOT,
     systemPrompt: "Worker",
-    sessionId: "sess-mcode-1"
+    sessionId: "sess-mcode-1",
+    env: {
+      MINIMAX_API_KEY: "minimax-secret",
+      CONTEXT7_API_KEY: "context7-secret"
+    }
   });
   assert.equal(mcodeLaunch.command, "mcode");
   assert.deepEqual(mcodeLaunch.args, ["acp"]);
+  assert.equal(mcodeLaunch.env.MINIMAX_API_KEY, "minimax-secret");
+  assert.equal(mcodeLaunch.env.CONTEXT7_API_KEY, undefined);
+
+  const claudeWorker = buildAcpProviderLaunchSpec({
+    provider: "claude",
+    role: "worker",
+    model: "sonnet",
+    cwd: REPO_ROOT,
+    systemPrompt: "Worker",
+    sessionId: "sess-claude-worker",
+    env: {
+      MINIMAX_API_KEY: "minimax-secret",
+      CONTEXT7_API_KEY: "context7-secret"
+    }
+  });
+  assert.equal(claudeWorker.env.MINIMAX_API_KEY, undefined);
+  assert.equal(claudeWorker.env.CONTEXT7_API_KEY, undefined);
+
+  const docsResearcher = buildAcpProviderLaunchSpec({
+    provider: "claude",
+    role: "docs-researcher",
+    model: "sonnet",
+    cwd: REPO_ROOT,
+    systemPrompt: "Docs",
+    sessionId: "sess-docs-1",
+    env: {
+      MINIMAX_API_KEY: "minimax-secret",
+      CONTEXT7_API_KEY: "context7-secret"
+    }
+  });
+  assert.equal(docsResearcher.env.MINIMAX_API_KEY, undefined);
+  assert.equal(docsResearcher.env.CONTEXT7_API_KEY, "context7-secret");
   assert.equal(findMcodeBinary({ PATH: "", HOME: "/nonexistent-home" }), null);
 });

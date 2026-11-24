@@ -28,6 +28,8 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+import { keychainAvailable } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
+
 import {
   antigravitySkillsStatus,
   missingAntigravityPermissions
@@ -42,6 +44,7 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
+import { findPlaintextKeychainSecrets } from "./install-state.ts";
 import {
   CATALOGS,
   checkHookTrust,
@@ -232,6 +235,14 @@ function checkAuth(
 ): void {
   const envFile =
     process.env.CODEX_ENV_FILE?.trim() || path.join(options.codexHome, ".env");
+  if (keychainAvailable(process.env)) {
+    for (const secretName of findPlaintextKeychainSecrets(envFile)) {
+      writeLine(
+        `stale-plaintext-secret ${secretName} in ${envFile} (run scripts/install.sh to migrate to macOS Keychain)`
+      );
+      failures.value = 1;
+    }
+  }
   if (!existsSync(envFile)) {
     writeLine(
       "router auth token not staged (use --enable-router-auth during a planned restart)"
@@ -432,9 +443,10 @@ function resolveRunInstallPaths(
   overrides: InstallCheckOptions
 ): RunInstallPaths {
   const repositoryRoot = sourceRoot(overrides);
-  const home = overrides.home ?? process.env.HOME ?? homedir();
+  const home = overrides.home ?? (process.env.HOME?.trim() || homedir());
   const codexHome =
-    overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
+    overrides.codexHome ??
+    (process.env.CODEX_HOME?.trim() || path.join(home, ".codex"));
   return {
     repositoryRoot,
     home,
@@ -1226,7 +1238,20 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     );
     checkLaunchAgents(paths, failures);
     try {
-      execFileSync(process.execPath, [resolveRuntimeSourcePath(paths.repositoryRoot, "platform/chatgpt-tunnel-install.ts"), "check", paths.repositoryRoot, paths.home, paths.codexHome], { stdio: "ignore", timeout: 15_000 });
+      execFileSync(
+        process.execPath,
+        [
+          resolveRuntimeSourcePath(
+            paths.repositoryRoot,
+            "platform/chatgpt-tunnel-install.ts"
+          ),
+          "check",
+          paths.repositoryRoot,
+          paths.home,
+          paths.codexHome
+        ],
+        { stdio: "ignore", timeout: 15_000 }
+      );
       check("configured ChatGPT tunnel readiness", true, failures);
     } catch {
       check("configured ChatGPT tunnel readiness", false, failures);

@@ -11,6 +11,7 @@ import path from "node:path";
 
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 export const ACP_PROVIDER_IDS = [
   "claude",
@@ -103,9 +104,13 @@ export function isGithubWorkerProvider(
 }
 
 function sharedIsolationEnvironment(
-  options: AcpProfileOptions
+  options: AcpProfileOptions,
+  mcpServers: readonly string[]
 ): Record<string, string> {
   const homeDirectory = autodevHome(options.env);
+  const context7ApiKey = mcpServers.includes("context7")
+    ? resolveManagedSecret("CONTEXT7_API_KEY", options.env)
+    : null;
   return {
     AUTODEV_HOME: homeDirectory,
     AUTODEV_AGENT_ROLE: options.role,
@@ -115,7 +120,8 @@ function sharedIsolationEnvironment(
     AUTODEV_MCP_WORKSPACE: options.cwd,
     AUTODEV_AGENT_EVENTS_URL:
       options.env?.AUTODEV_AGENT_EVENTS_URL ??
-      "http://127.0.0.1:4100/v1/agent-events"
+      "http://127.0.0.1:4100/v1/agent-events",
+    ...(context7ApiKey ? { CONTEXT7_API_KEY: context7ApiKey } : {})
   };
 }
 
@@ -127,7 +133,7 @@ export function buildAcpProviderLaunchSpec(
 ): AcpProviderLaunchSpec {
   const contract = roleContract(options.role);
   const mcpServers = [...contract.mcp];
-  const baseEnvironment = sharedIsolationEnvironment(options);
+  const baseEnvironment = sharedIsolationEnvironment(options, mcpServers);
 
   switch (options.provider) {
     case "claude": {
@@ -241,6 +247,10 @@ export function buildAcpProviderLaunchSpec(
         "providers",
         "mcode"
       );
+      const minimaxApiKey = resolveManagedSecret(
+        "MINIMAX_API_KEY",
+        options.env
+      );
       return {
         provider: "mcode",
         role: options.role,
@@ -249,7 +259,8 @@ export function buildAcpProviderLaunchSpec(
         args: ["acp"],
         env: {
           ...baseEnvironment,
-          MCODE_HOME: mcodeHome
+          MCODE_HOME: mcodeHome,
+          ...(minimaxApiKey ? { MINIMAX_API_KEY: minimaxApiKey } : {})
         },
         cwd: options.cwd,
         systemPrompt: options.systemPrompt,

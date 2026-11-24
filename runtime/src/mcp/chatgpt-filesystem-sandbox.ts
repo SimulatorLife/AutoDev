@@ -26,21 +26,34 @@ export function externalFilesystemBackend(
   node: string
 ): ExternalBackend {
   if (server !== MCP_SERVER_FILESYSTEM)
-    throw new Error("No externally confined execution profile for MCP: " + server);
+    throw new Error(
+      "No externally confined execution profile for MCP: " + server
+    );
   if (process.platform !== "darwin" || !existsSync(sandboxExecutable))
     throw new Error("The external filesystem MCP requires macOS sandbox-exec");
   const modules = path.join(repositoryRoot, "node_modules");
   const packageRoot = realpathSync(path.join(modules, packageName));
-  const manifest = manifestSchema.parse(JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")));
-  const entry = typeof manifest.bin === "string" ? manifest.bin : manifest.bin["mcp-server-filesystem"];
+  const manifest = manifestSchema.parse(
+    JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"))
+  );
+  const entry =
+    typeof manifest.bin === "string"
+      ? manifest.bin
+      : manifest.bin["mcp-server-filesystem"];
   if (!entry) throw new Error("Filesystem MCP executable is missing");
   const script = realpathSync(path.join(packageRoot, entry));
   const binary = realpathSync(node);
   return {
     command: sandboxExecutable,
     args: [
-      "-p", filesystemSandboxProfile(workspace, realpathSync(modules), binary),
-      binary, script, "--read-only", "--confine-roots", "--", workspace
+      "-p",
+      filesystemSandboxProfile(workspace, realpathSync(modules), binary),
+      binary,
+      script,
+      "--read-only",
+      "--confine-roots",
+      "--",
+      workspace
     ]
   };
 }
@@ -48,10 +61,21 @@ export function externalFilesystemBackend(
 /** Default deny, including all network and writes. The only data readable
  * outside the workspace is installed code and system runtime support.
  * No shell startup, HOME/CODEX_HOME secret files or arbitrary executables. */
-export function filesystemSandboxProfile(workspace: string, modules: string, node: string): string {
+export function filesystemSandboxProfile(
+  workspace: string,
+  modules: string,
+  node: string
+): string {
   const literal = (value: string) => "(literal " + JSON.stringify(value) + ")";
   const subtree = (value: string) => "(subpath " + JSON.stringify(value) + ")";
-  const roots = [workspace, modules, "/System", "/usr/lib", "/usr/share", "/Library/Apple/System"];
+  const roots = [
+    workspace,
+    modules,
+    "/System",
+    "/usr/lib",
+    "/usr/share",
+    "/Library/Apple/System"
+  ];
   return [
     "(version 1)",
     "(deny default)",
@@ -60,7 +84,22 @@ export function filesystemSandboxProfile(workspace: string, modules: string, nod
     "(allow sysctl-read)",
     "(allow mach-lookup)",
     "(allow file-read-metadata)",
-    "(allow file-read* " + [...roots.map(subtree), literal(node), literal("/dev/null"), literal("/dev/random"), literal("/dev/urandom"), literal("/private/etc/localtime")].join(" ") + ")",
+    "(allow file-read* " +
+      [
+        ...roots.map(subtree),
+        literal(node),
+        literal("/dev/null"),
+        literal("/dev/random"),
+        literal("/dev/urandom"),
+        literal("/private/etc/localtime")
+      ].join(" ") +
+      ")",
+    // Never expose local .env / .env.* secret files (including via symlinks)
+    // through external MCP reads; permit only .env.example inside the workspace.
+    '(deny file-read-data (regex #"/\\.env(\\.[^/]*)?(/|$)"))',
+    "(allow file-read-data (require-all " +
+      subtree(workspace) +
+      ' (regex #"/\\.env\\.example$")))',
     "(allow file-write-data " + literal("/dev/null") + ")"
   ].join("\n");
 }

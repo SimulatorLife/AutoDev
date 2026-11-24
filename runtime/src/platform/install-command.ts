@@ -19,9 +19,17 @@ import {
   resolveDependencyOptions
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
-import { ensureBridgeRouterAuth, ensureRouterAuth } from "./install-state.ts";
+import {
+  ensureBridgeRouterAuth,
+  ensureRouterAuth,
+  migrateEnvSecretsToKeychain,
+  provisionEnvSecretsToKeychain
+} from "./install-state.ts";
 import { installOpencliBrowser } from "./opencli-browser-install.ts";
-import { type ChatgptTunnelMode } from "./chatgpt-tunnel-install.ts";
+import {
+  CHATGPT_TUNNEL_API_KEY_ENV,
+  type ChatgptTunnelMode
+} from "./chatgpt-tunnel-install.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -44,12 +52,15 @@ function parseFlags(args: readonly string[]): InstallFlags {
   for (const arg of args) {
     if (arg === "--materialize-only") flags.materializeOnly = true;
     else if (arg === "--enable-router-auth") flags.routerAuth = true;
-    else if (arg === "--enable-chatgpt-tunnel" || arg === "--disable-chatgpt-tunnel") {
+    else if (
+      arg === "--enable-chatgpt-tunnel" ||
+      arg === "--disable-chatgpt-tunnel"
+    ) {
       if (flags.chatgptTunnel !== "reconcile")
         throw new ConfigError("Choose only one ChatGPT tunnel option");
-      flags.chatgptTunnel = arg === "--enable-chatgpt-tunnel" ? "enable" : "disable";
-    }
-    else if (arg === "--check") {
+      flags.chatgptTunnel =
+        arg === "--enable-chatgpt-tunnel" ? "enable" : "disable";
+    } else if (arg === "--check") {
       throw new ConfigError(
         "autodev install --check is still owned by the installer check boundary; run scripts/install.sh --check"
       );
@@ -92,37 +103,51 @@ export function runInstallCommand(
       process.env.AUTODEV_REPO_ROOT ??
       resolveRuntimeSourceRoot(import.meta.dirname)
   );
-  const home = overrides.home ?? process.env.HOME ?? homedir();
+  const home = overrides.home ?? (process.env.HOME?.trim() || homedir());
   const codexHome =
-    overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
+    overrides.codexHome ??
+    (process.env.CODEX_HOME?.trim() || path.join(home, ".codex"));
   const env = {
     AUTODEV_REPO_ROOT: repositoryRoot,
     CODEX_HOME: codexHome,
     HOME: home
   };
-  // Tunnel credentials belong only to the tunnel installer, not ordinary
-  // package managers, materializers or service restarts.
-  const tunnelSecrets = Object.fromEntries(
-    ["OPENAI_ADMIN_KEY", "CONTROL_PLANE_API_KEY"].map((key) => [key, process.env[key]])
+  // Credentials belong only to the components that consume or provision them,
+  // never ordinary package managers, materializers, or unrelated restarts.
+  const isolatedSecrets = Object.fromEntries(
+    [
+      "OPENAI_ADMIN_KEY",
+      CHATGPT_TUNNEL_API_KEY_ENV,
+      "MINIMAX_API_KEY",
+      "CONTEXT7_API_KEY"
+    ].map((key) => [key, process.env[key]])
   );
-  for (const key of Object.keys(tunnelSecrets)) delete process.env[key];
+  for (const key of Object.keys(isolatedSecrets)) delete process.env[key];
   let projection: ReturnType<typeof createCodexMcpSource> | undefined;
   try {
     if (flags.chatgptTunnel === "disable") {
       runNodeModule(
-        resolveRuntimeSourcePath(repositoryRoot, "platform/chatgpt-tunnel-install.ts"),
-        ["disable", repositoryRoot, home, codexHome], env
+        resolveRuntimeSourcePath(
+          repositoryRoot,
+          "platform/chatgpt-tunnel-install.ts"
+        ),
+        ["disable", repositoryRoot, home, codexHome],
+        env
       );
       return 0;
     }
+    const codexEnvFile =
+      process.env.CODEX_ENV_FILE?.trim() || path.join(codexHome, ".env");
     projection = createCodexMcpSource(repositoryRoot);
     ensureBridgeRouterAuth(path.join(codexHome, ".env"));
-    if (flags.routerAuth)
-      ensureRouterAuth(
-        process.env.CODEX_ENV_FILE ?? path.join(codexHome, ".env"),
-        env
-      );
+    if (flags.routerAuth) ensureRouterAuth(codexEnvFile, env);
     if (!flags.materializeOnly) {
+      migrateEnvSecretsToKeychain(codexEnvFile);
+      provisionEnvSecretsToKeychain({
+        ...process.env,
+        MINIMAX_API_KEY: isolatedSecrets.MINIMAX_API_KEY,
+        CONTEXT7_API_KEY: isolatedSecrets.CONTEXT7_API_KEY
+      });
       const dependencyOptions = resolveDependencyOptions(process.env);
       if (installCocoIndex(dependencyOptions) !== 0) return 1;
       if (installCodeGraphContext(dependencyOptions) !== 0) return 1;
@@ -142,8 +167,17 @@ export function runInstallCommand(
       );
     } else {
       runNodeModule(
-        resolveRuntimeSourcePath(repositoryRoot, "platform/chatgpt-tunnel-install.ts"),
-        [flags.chatgptTunnel, repositoryRoot, home, codexHome], { ...env, ...tunnelSecrets }
+        resolveRuntimeSourcePath(
+          repositoryRoot,
+          "platform/chatgpt-tunnel-install.ts"
+        ),
+        [flags.chatgptTunnel, repositoryRoot, home, codexHome],
+        {
+          ...env,
+          OPENAI_ADMIN_KEY: isolatedSecrets.OPENAI_ADMIN_KEY,
+          [CHATGPT_TUNNEL_API_KEY_ENV]:
+            isolatedSecrets[CHATGPT_TUNNEL_API_KEY_ENV]
+        }
       );
       runNodeModule(
         resolveRuntimeSourcePath(repositoryRoot, "platform/service-restart.ts"),
@@ -154,7 +188,7 @@ export function runInstallCommand(
     return 0;
   } finally {
     if (projection) rmSync(projection.root, { recursive: true, force: true });
-    for (const [key, value] of Object.entries(tunnelSecrets)) {
+    for (const [key, value] of Object.entries(isolatedSecrets)) {
       if (value !== undefined) process.env[key] = value;
     }
   }

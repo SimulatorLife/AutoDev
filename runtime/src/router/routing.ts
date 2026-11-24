@@ -24,6 +24,10 @@ import {
   OPENCLI_GEMINI_MODEL_PATTERN
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  isKeychainSecretName,
+  resolveManagedSecret
+} from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 import { providerCapabilities } from "./subagents.ts";
 
@@ -1659,10 +1663,12 @@ export class RoutingPolicy {
     route: ProviderRoute | null,
     environment: NodeJS.ProcessEnv = process.env
   ): boolean {
-    return (
-      route !== null &&
-      (!route.envKey || Boolean(String(environment[route.envKey] ?? "").trim()))
-    );
+    if (route === null) return false;
+    if (!route.envKey) return true;
+    if (isKeychainSecretName(route.envKey)) {
+      return Boolean(resolveManagedSecret(route.envKey, environment));
+    }
+    return Boolean(String(environment[route.envKey] ?? "").trim());
   }
 
   configuredModel(

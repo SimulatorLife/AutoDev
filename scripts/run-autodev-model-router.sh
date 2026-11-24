@@ -5,12 +5,29 @@ codex_home="${CODEX_HOME:-$HOME/.codex}"
 
 # Load router settings and out-of-repository OpenLIT secrets. The generated
 # secret file contains only shell-safe hex values and is mode 0600.
+explicit_minimax_api_key="${MINIMAX_API_KEY:-}"
 if [[ -f "$codex_home/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
   source "$codex_home/.env"
   set +a
 fi
+if [[ -n "$explicit_minimax_api_key" ]]; then
+  export MINIMAX_API_KEY="$explicit_minimax_api_key"
+elif [[ -z "${MINIMAX_API_KEY:-}" && "${AUTODEV_DISABLE_KEYCHAIN:-0}" != "1" ]] \
+  && [[ "$(uname -s)" == "Darwin" && -x /usr/bin/security ]]; then
+  keychain_account="${USER:-$(id -un)}"
+  minimax_keychain_value="$(
+    /usr/bin/security find-generic-password -a "$keychain_account" -s MINIMAX_API_KEY -w ${AUTODEV_KEYCHAIN_FILE:+"$AUTODEV_KEYCHAIN_FILE"} 2>/dev/null ||
+      /usr/bin/security find-generic-password -s MINIMAX_API_KEY -w ${AUTODEV_KEYCHAIN_FILE:+"$AUTODEV_KEYCHAIN_FILE"} 2>/dev/null ||
+      true
+  )"
+  if [[ -n "$minimax_keychain_value" ]]; then
+    export MINIMAX_API_KEY="$minimax_keychain_value"
+  fi
+  unset minimax_keychain_value keychain_account
+fi
+unset explicit_minimax_api_key
 openlit_secret_file="${AUTODEV_OPENLIT_SECRET_FILE:-$codex_home/openlit-secrets.env}"
 unset AUTODEV_PLAYTEST_CONTROL_API_TOKEN
 if [[ -f "$openlit_secret_file" ]]; then

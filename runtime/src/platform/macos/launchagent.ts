@@ -26,7 +26,15 @@ export interface LaunchAgentValues {
   readonly codexBin: string;
   /** The loopback port the Console binds; see resolveConsolePort. */
   readonly consolePort: string;
-  readonly tunnel?: { binary: string; profile: string; workspace: string; servicePath: string; logDirectory: string };
+  readonly tunnel?: {
+    node: string;
+    runner: string;
+    repositoryRoot: string;
+    codexHome: string;
+    workspace: string;
+    servicePath: string;
+    logDirectory: string;
+  };
 }
 
 const PLACEHOLDER_PATTERN = /__[A-Z0-9_]+__/gu;
@@ -55,7 +63,13 @@ function renderedTemplate(
   template: string,
   values: LaunchAgentValues
 ): string {
-  const escapeXml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
+  const escapeXml = (value: string): string =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&apos;");
   const rendered = template
     .replaceAll("__CODEX_HOME__", () => values.codexHome)
     .replaceAll("__HOME__", () => values.home)
@@ -64,11 +78,37 @@ function renderedTemplate(
     .replaceAll("__CODEX_BIN__", () => values.codexBin)
     .replaceAll("__AUTODEV_CONSOLE_PORT__", () => values.consolePort)
     .replaceAll("__TUNNEL_HOME__", () => escapeXml(values.home))
-    .replaceAll("__TUNNEL_BINARY__", () => values.tunnel ? escapeXml(values.tunnel.binary) : "__TUNNEL_BINARY__")
-    .replaceAll("__TUNNEL_PROFILE__", () => values.tunnel ? escapeXml(values.tunnel.profile) : "__TUNNEL_PROFILE__")
-    .replaceAll("__TUNNEL_WORKSPACE__", () => values.tunnel ? escapeXml(values.tunnel.workspace) : "__TUNNEL_WORKSPACE__")
-    .replaceAll("__TUNNEL_SERVICE_PATH__", () => values.tunnel ? escapeXml(values.tunnel.servicePath) : "__TUNNEL_SERVICE_PATH__")
-    .replaceAll("__TUNNEL_LOG_DIRECTORY__", () => values.tunnel ? escapeXml(values.tunnel.logDirectory) : "__TUNNEL_LOG_DIRECTORY__");
+    .replaceAll("__TUNNEL_NODE__", () =>
+      values.tunnel ? escapeXml(values.tunnel.node) : "__TUNNEL_NODE__"
+    )
+    .replaceAll("__TUNNEL_RUNNER__", () =>
+      values.tunnel ? escapeXml(values.tunnel.runner) : "__TUNNEL_RUNNER__"
+    )
+    .replaceAll("__TUNNEL_REPOSITORY_ROOT__", () =>
+      values.tunnel
+        ? escapeXml(values.tunnel.repositoryRoot)
+        : "__TUNNEL_REPOSITORY_ROOT__"
+    )
+    .replaceAll("__TUNNEL_CODEX_HOME__", () =>
+      values.tunnel
+        ? escapeXml(values.tunnel.codexHome)
+        : "__TUNNEL_CODEX_HOME__"
+    )
+    .replaceAll("__TUNNEL_WORKSPACE__", () =>
+      values.tunnel
+        ? escapeXml(values.tunnel.workspace)
+        : "__TUNNEL_WORKSPACE__"
+    )
+    .replaceAll("__TUNNEL_SERVICE_PATH__", () =>
+      values.tunnel
+        ? escapeXml(values.tunnel.servicePath)
+        : "__TUNNEL_SERVICE_PATH__"
+    )
+    .replaceAll("__TUNNEL_LOG_DIRECTORY__", () =>
+      values.tunnel
+        ? escapeXml(values.tunnel.logDirectory)
+        : "__TUNNEL_LOG_DIRECTORY__"
+    );
   const unresolved = rendered.match(PLACEHOLDER_PATTERN);
   // An unrendered placeholder is not a cosmetic defect: it ships verbatim into
   // a launchd job, where the service dies on its first command line. Refuse to

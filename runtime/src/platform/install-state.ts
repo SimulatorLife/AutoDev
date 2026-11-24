@@ -9,8 +9,22 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
-import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  deleteKeychainSecret,
+  isKeychainSecretName,
+  KEYCHAIN_SECRET_NAMES,
+  keychainAvailable,
+  type KeychainDeps,
+  type KeychainSecretName,
+  readKeychainSecret,
+  writeKeychainSecret
+} from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
 /**
@@ -22,6 +36,8 @@ export const BRIDGE_ROUTER_AUTH_VARIABLES = {
   Copilot: "CODEX_ROUTER_COPILOT_API_KEY",
   opencli: "CODEX_ROUTER_OPENCLI_API_KEY"
 } as const;
+
+const LINE_SPLIT_PATTERN = /\r?\n/u;
 
 function existingToken(filePath: string, variable: string): string | null {
   if (!existsSync(filePath)) return null;
@@ -109,13 +125,176 @@ export function ensureBridgeRouterAuth(
   return tokens;
 }
 
+function parseEnvAssignment(
+  rawLine: string
+): { key: string; value: string } | null {
+  const trimmed = rawLine.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const assignment = trimmed.startsWith("export ")
+    ? trimmed.slice(7).trim()
+    : trimmed;
+  const separator = assignment.indexOf("=");
+  if (separator < 1) return null;
+  const key = assignment.slice(0, separator).trim();
+  let value = assignment.slice(separator + 1).trim();
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return { key, value };
+}
+
+/** Return the list of Keychain-managed secret names present in an env file. */
+export function findPlaintextKeychainSecrets(
+  filePath: string,
+  targets: readonly KeychainSecretName[] = KEYCHAIN_SECRET_NAMES
+): KeychainSecretName[] {
+  if (!existsSync(filePath)) return [];
+  const targetSet = new Set<string>(targets);
+  const found = new Set<KeychainSecretName>();
+  for (const line of readFileSync(filePath, "utf8").split(LINE_SPLIT_PATTERN)) {
+    const parsed = parseEnvAssignment(line);
+    if (parsed && targetSet.has(parsed.key) && parsed.value.trim()) {
+      found.add(parsed.key as KeychainSecretName);
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Migrate Keychain-managed secrets out of `$CODEX_HOME/.env` into macOS
+ * Keychain, verifying each Keychain write before atomically rewriting the env
+ * file without those plaintext secrets.
+ */
+export function migrateEnvSecretsToKeychain(
+  filePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+  options: {
+    readonly secrets?: readonly KeychainSecretName[];
+    readonly deps?: KeychainDeps;
+  } = {}
+): KeychainSecretName[] {
+  if (!existsSync(filePath)) return [];
+  const deps = options.deps ?? {};
+  if (!keychainAvailable(env, deps)) return [];
+  const targets = new Set<string>(options.secrets ?? KEYCHAIN_SECRET_NAMES);
+  const rawContent = readFileSync(filePath, "utf8");
+  const lines = rawContent.split(LINE_SPLIT_PATTERN);
+  const extracted = new Map<KeychainSecretName, string>();
+  for (const line of lines) {
+    const parsed = parseEnvAssignment(line);
+    if (parsed && targets.has(parsed.key)) {
+      const value = parsed.value.trim();
+      if (value) extracted.set(parsed.key as KeychainSecretName, value);
+    }
+  }
+  if (extracted.size === 0) return [];
+  const migrated: KeychainSecretName[] = [];
+  for (const [name, value] of extracted) {
+    writeKeychainSecret(name, value, env, deps);
+    if (readKeychainSecret(name, env, { deps }) !== value) {
+      throw new Error(`Keychain verification failed while migrating ${name}`);
+    }
+    migrated.push(name);
+    writeErrorLine(`migrated ${name} from ${filePath} to macOS Keychain`);
+  }
+  const migratedSet = new Set<string>(migrated);
+  const remaining = lines.filter((line) => {
+    const parsed = parseEnvAssignment(line);
+    return !(parsed && migratedSet.has(parsed.key));
+  });
+  const nextContent =
+    remaining.length === 0 || (remaining.length === 1 && remaining[0] === "")
+      ? ""
+      : `${remaining.join("\n").replace(/\n*$/u, "")}\n`;
+  atomicWriteSync(filePath, nextContent, { mode: 0o600, skipUnchanged: true });
+  chmodSync(filePath, 0o600);
+  return migrated;
+}
+
+/**
+ * Store explicit/env-file secrets in macOS Keychain during installation when
+ * present in `env`. Never logs secret values.
+ */
+export function provisionEnvSecretsToKeychain(
+  env: NodeJS.ProcessEnv,
+  names: readonly KeychainSecretName[] = [
+    "MINIMAX_API_KEY",
+    "CONTEXT7_API_KEY"
+  ],
+  deps: KeychainDeps = {}
+): KeychainSecretName[] {
+  if (!keychainAvailable(env, deps)) return [];
+  const stored: KeychainSecretName[] = [];
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (!value) continue;
+    writeKeychainSecret(name, value, env, deps);
+    if (readKeychainSecret(name, env, { deps }) !== value) {
+      throw new Error(`Keychain verification failed for ${name}`);
+    }
+    stored.push(name);
+    writeErrorLine(`stored ${name} in macOS Keychain`);
+  }
+  return stored;
+}
+
 function cli(argv: string[]): number {
-  const [command, filePath, value] = argv;
-  if (command === "auth" && filePath && value === undefined) {
-    ensureRouterAuth(filePath);
+  const [command, subcommand, target, extra] = argv;
+  if (command === "auth" && subcommand && target === undefined) {
+    ensureRouterAuth(subcommand);
     return 0;
   }
-  throw new Error("usage: install-state auth <env-file>");
+  if (command === "keychain") {
+    if (subcommand === "set" && target && extra === undefined) {
+      if (!isKeychainSecretName(target)) {
+        throw new Error(
+          `unsupported Keychain secret: ${target} (expected one of: ${KEYCHAIN_SECRET_NAMES.join(", ")})`
+        );
+      }
+      const value = readFileSync(0, "utf8").trim();
+      writeKeychainSecret(target, value);
+      writeLine(`stored ${target} in macOS Keychain`);
+      return 0;
+    }
+    if (subcommand === "delete" && target && extra === undefined) {
+      if (!isKeychainSecretName(target)) {
+        throw new Error(
+          `unsupported Keychain secret: ${target} (expected one of: ${KEYCHAIN_SECRET_NAMES.join(", ")})`
+        );
+      }
+      const deleted = deleteKeychainSecret(target);
+      writeLine(
+        deleted
+          ? `deleted ${target} from macOS Keychain`
+          : `${target} was not present in macOS Keychain`
+      );
+      return 0;
+    }
+    if (subcommand === "status" && extra === undefined) {
+      const names = target ? [target] : [...KEYCHAIN_SECRET_NAMES];
+      for (const name of names) {
+        if (!isKeychainSecretName(name)) {
+          throw new Error(
+            `unsupported Keychain secret: ${name} (expected one of: ${KEYCHAIN_SECRET_NAMES.join(", ")})`
+          );
+        }
+        const present = readKeychainSecret(name) !== null;
+        writeLine(`${name}: ${present ? "present" : "missing"}`);
+      }
+      return 0;
+    }
+    if (subcommand === "migrate" && target && extra === undefined) {
+      migrateEnvSecretsToKeychain(target);
+      return 0;
+    }
+  }
+  throw new Error(
+    "usage: install-state auth <env-file> | keychain <set|delete|status|migrate> [target]"
+  );
 }
 
 if (isEntryPoint(import.meta.url)) {
