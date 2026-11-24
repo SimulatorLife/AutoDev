@@ -7,13 +7,6 @@
         "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts"
       }
     ],
-    "subagentStart": [
-      {
-        "type": "command",
-        "matcher": ".*",
-        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/subagent-start.ts"
-      }
-    ],
     "preToolUse": [
       {
         "type": "command",

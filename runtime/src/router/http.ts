@@ -27,11 +27,6 @@ import {
   routerAuthorizationValid
 } from "@simulatorlife/autodev-runtime/router/auth";
 import {
-  CodexStateCollector,
-  type CodexStateSnapshot,
-  loadCodexStateCollectorConfig
-} from "@simulatorlife/autodev-runtime/router/codex-state-collector";
-import {
   ConcurrencyManager,
   getDefaultConcurrencyManager,
   PROCESS_FALLBACK_SESSION_KEY,
@@ -108,7 +103,6 @@ import {
 } from "./correlation.ts";
 import {
   activeProviderRequests,
-  activitySubjectFor,
   CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
   errorBody,
@@ -118,10 +112,6 @@ import {
   PROBE_TIMEOUT_MS,
   probeProvider,
   type ProviderProbeResult,
-  proxyConcreteResponse,
-  proxyOrchestratorResponse,
-  proxyRoleResponse,
-  responseFailureEvent,
   ROUTER_INSTANCE_ID,
   type RouterSession,
   sendJson,
@@ -141,7 +131,6 @@ import {
   orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
-  recordSubagentSpawn,
   rememberWorkspaceMetadata,
   resetSpawnFailureTelemetry,
   resetSubagentTelemetry,
@@ -154,7 +143,7 @@ import {
   observeRouterWorkspaceGitCommits,
   withExtractedTraceContext
 } from "./telemetry.ts";
-import { installUpstreamShapeHooks } from "./upstream-shape-hooks.ts";
+import { didHandleAcpRoute } from "../xacpx/http.ts";
 import {
   getDefaultUsageTracker,
   type RecordUsageEventParams,
@@ -407,10 +396,7 @@ setDefaultSubagentRegistry(subagentRegistry);
 const otelTracker = new CorrelationTracker({
   healthTtlMs: MCP_OBSERVATION_TTL_MS,
   usageTracker: getDefaultUsageTracker(),
-  getConversationThread: (id) => {
-    const thread = codexState.lastSnapshot?.conversationThreads?.[id];
-    return thread ? { ...thread } : null;
-  },
+  getConversationThread: () => null,
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
   onSchedulePersist: () => scheduleRouterStatePersist()
 });
@@ -439,38 +425,6 @@ COOLDOWNS.setRuntime({
   isKnownProvider: (provider) => Object.hasOwn(ROUTING.providers, provider),
   lastFailureClass: (provider) => providerState(provider).lastFailureClass
 });
-installUpstreamShapeHooks();
-
-export const codexState = {
-  collector: new CodexStateCollector(loadCodexStateCollectorConfig()),
-  lastSnapshot: null as Partial<CodexStateSnapshot> | null,
-  livePollStarted: false
-};
-
-export async function refreshCodexState(): Promise<void> {
-  try {
-    const snapshot = await codexState.collector.collectSnapshot();
-    assignCodexSnapshot(snapshot);
-  } catch (error) {
-    assignCodexSnapshot({
-      localTelemetry: {
-        status: "error",
-        path: null,
-        schema: null,
-        capabilities: { tables: {}, columnCount: 0 },
-        recencyWindowMs: null,
-        limit: null,
-        threadCount: 0,
-        projectCount: 0,
-        edgeCount: 0,
-        fileSizeBytes: null,
-        collectedAt: new Date().toISOString(),
-        durationMs: null,
-        reason: error instanceof Error ? error.message : String(error)
-      }
-    });
-  }
-}
 
 const ROUTING_POLICY_PERSISTENCE_SECTIONS = new Set([
   "roleAssignments",
@@ -551,51 +505,6 @@ function restoreRecentEvents(
     if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
   }
   getDefaultUsageTracker().inFlightUsage.clear();
-}
-
-function assignCodexSnapshot(
-  snapshot: Partial<CodexStateSnapshot> | null
-): void {
-  codexState.lastSnapshot = snapshot;
-}
-
-export function setCodexStateSnapshotForTests(
-  snapshot: Partial<CodexStateSnapshot> | null
-): void {
-  assignCodexSnapshot(
-    snapshot && typeof snapshot === "object" ? snapshot : null
-  );
-}
-
-export function codexStateStatus(): Record<string, unknown> {
-  const snapshot = codexState.lastSnapshot;
-  if (!snapshot) {
-    return {
-      localTelemetry: {
-        status: "pending",
-        pathConfigured: true,
-        schema: null,
-        capabilities: { tables: {}, columnCount: 0 },
-        threadCount: 0,
-        projectCount: 0,
-        edgeCount: 0,
-        collectedAt: null,
-        reason: "collector_initializing"
-      }
-    };
-  }
-  const { path: _path, ...safeLocalTelemetry } = snapshot.localTelemetry ?? {};
-  return {
-    localTelemetry: {
-      ...safeLocalTelemetry,
-      pathConfigured: Boolean(snapshot.localTelemetry?.path)
-    },
-    recentThreads: snapshot.recentThreads,
-    projects: snapshot.projects,
-    conversationThreads: snapshot.conversationThreads,
-    spawnEdges: snapshot.spawnEdges,
-    schema: snapshot.schema
-  };
 }
 
 export function providerState(provider: string) {
@@ -1266,8 +1175,7 @@ function buildRouterStatus(now = Date.now()) {
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: statusRecentEvents,
-    liveFeed: liveFeedEvents.getRecentEvents(true, false),
-    codexState: codexStateStatus()
+    liveFeed: liveFeedEvents.getRecentEvents(true, false)
   };
 }
 
@@ -1815,229 +1723,6 @@ export async function loadCatalog(
   }
 }
 
-async function handleResponseRequest(
-  pathname: string,
-  request: IncomingMessage,
-  response: ServerResponse
-): Promise<void> {
-  if (pathname !== "/v1/responses" || request.method !== "POST") {
-    sendJson(response, 404, errorBody("not found"));
-    return;
-  }
-  if (getDefaultRouterLifecycle().isDraining()) {
-    sendJson(
-      response,
-      503,
-      errorBody(
-        "Router is draining for shutdown; please retry against another instance.",
-        "router_draining",
-        { code: "router_draining", retryable: true }
-      ),
-      { "retry-after": "5" }
-    );
-    return;
-  }
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(await requestBody(request));
-  } catch {
-    sendJson(response, 400, errorBody("request body must be valid JSON"));
-    return;
-  }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    sendJson(response, 400, errorBody("request body must be a JSON object"));
-    return;
-  }
-  const model = typeof payload.model === "string" ? payload.model.trim() : "";
-  if (!model) {
-    sendJson(
-      response,
-      400,
-      errorBody("request body requires a non-empty string model")
-    );
-    return;
-  }
-  payload = { ...payload, model };
-  const role = ROUTING_POLICY.roleForModel(model);
-  const requestId = String(request.headers["x-request-id"] ?? randomUUID());
-  const wantsStream = payload.stream !== false;
-  const isOrchestratorRequest = model === ORCHESTRATOR_ALIAS;
-  const agentRole = isOrchestratorRequest ? "orchestrator" : role;
-  if (agentRole && ROUTING_POLICY.isAgentEnabled(agentRole) === false) {
-    recordRouterEvent({
-      phase: "denied",
-      requestId,
-      role: agentRole,
-      requestedModel: model,
-      provider: null,
-      model: null,
-      outcome: "failure",
-      status: 403,
-      failureClass: "request_error",
-      denialReason: "agent_disabled"
-    });
-    sendJson(
-      response,
-      403,
-      errorBody(
-        `Agent role ${agentRole} is disabled.`,
-        "router_agent_disabled",
-        {
-          code: "router_agent_disabled",
-          retryable: false,
-          model,
-          requestId
-        }
-      ),
-      { "x-autodev-request-id": requestId }
-    );
-    return;
-  }
-  const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
-  const session = requestSession(request, payload, turnMetadataHeader);
-  if (session.sessionId && session.clientSurface) {
-    getDefaultUsageTracker().noteSessionClientSurface(
-      session.sessionId,
-      session.clientSurface
-    );
-  }
-  const activitySubject = activitySubjectFor(requestId, session, {
-    subagentOfKnownSession:
-      !isOrchestratorRequest &&
-      Boolean(role && orchestratorProviderForSession(session.key))
-  });
-  noteRequestIdentity(
-    requestId,
-    session.thread,
-    activitySubject,
-    session.clientSurface
-  );
-  const effectiveTurnMetadataHeader = workspaceMetadataForSession(
-    payload,
-    turnMetadataHeader,
-    session
-  );
-  const workspace = workspaceContextFromRequest(
-    request,
-    payload,
-    effectiveTurnMetadataHeader
-  );
-  const clientAbort = new AbortController();
-  const abortForRequest = () => clientAbort.abort();
-  const abortForRequestClose = () => {
-    if (!request.complete) clientAbort.abort();
-  };
-  // A client disconnect destroys the response before "close" fires, so a
-  // `destroyed` check here skipped exactly the case this exists for and left
-  // the provider working for a client that was gone. Anything not ended by
-  // the router can no longer be delivered: cancel the upstream work.
-  const abortForResponseClose = () => {
-    if (!response.writableEnded) clientAbort.abort();
-  };
-
-  getDefaultRouterLifecycle().registerActiveRequest(clientAbort);
-  request.once("aborted", abortForRequest);
-  request.once("close", abortForRequestClose);
-  response.once("close", abortForResponseClose);
-  try {
-    if (model === ORCHESTRATOR_ALIAS) {
-      await proxyOrchestratorResponse(
-        response,
-        payload,
-        wantsStream,
-        requestId,
-        effectiveTurnMetadataHeader,
-        workspace,
-        clientAbort.signal,
-        session
-      );
-      return;
-    }
-    if (role) {
-      const denialReason =
-        getDefaultConcurrencyManager().tryAcquireSubagentSlot(session.key);
-      if (denialReason) {
-        recordConcurrencyDenial({
-          requestId,
-          role,
-          requestedModel: payload.model,
-          sessionScope: session.scope,
-          reason: denialReason
-        });
-        sendJson(
-          response,
-          429,
-          errorBody(
-            `Subagent denied by configured ${denialReason} limit.`,
-            "router_concurrency_limit",
-            {
-              code: "router_concurrency_limit",
-              retryable: true,
-              failureClass: "concurrency_limit",
-              model,
-              requestId
-            }
-          ),
-          { "retry-after": "1", "x-autodev-request-id": requestId }
-        );
-        return;
-      }
-      try {
-        recordSubagentSpawn({
-          mechanism: "router_alias",
-          provider: orchestratorProviderForSession(session.key),
-          role,
-          tool: "multi_agent_v1.spawn",
-          requestId,
-          workspace: workspace?.key ?? null,
-          thread: session.thread
-        });
-        await proxyRoleResponse(
-          response,
-          role,
-          payload,
-          wantsStream,
-          requestId,
-          effectiveTurnMetadataHeader,
-          workspace,
-          clientAbort.signal,
-          session
-        );
-      } finally {
-        getDefaultConcurrencyManager().releaseSubagentSlot(session.key);
-      }
-      return;
-    }
-    const route = ROUTING_POLICY.routeForModel(payload.model as string);
-    if (!route) {
-      sendJson(
-        response,
-        400,
-        errorBody(
-          `No local route is configured for model ${String(payload.model)}`
-        )
-      );
-      return;
-    }
-    await proxyConcreteResponse(
-      response,
-      route,
-      payload,
-      wantsStream,
-      requestId,
-      effectiveTurnMetadataHeader,
-      workspace,
-      clientAbort.signal,
-      session
-    );
-  } finally {
-    getDefaultRouterLifecycle().unregisterActiveRequest(clientAbort);
-    request.removeListener("aborted", abortForRequest);
-    request.removeListener("close", abortForRequestClose);
-    response.removeListener("close", abortForResponseClose);
-  }
-}
-
 export async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse
@@ -2079,7 +1764,9 @@ export async function handleRequest(
     return;
   }
 
-  await handleResponseRequest(pathname, request, response);
+  if (await didHandleAcpRoute(request, response, pathname)) return;
+
+  sendJson(response, 404, errorBody("not found"));
 }
 
 async function handlePreflightRoutes(
@@ -2149,13 +1836,6 @@ export async function handle(
     if (response.writableEnded || response.destroyed) return;
     try {
       if (response.headersSent) {
-        try {
-          response.write(
-            responseFailureEvent("The router could not complete the request.")
-          );
-        } catch {
-          /* stream already closed */
-        }
         response.end();
       } else {
         sendJson(

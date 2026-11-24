@@ -4,7 +4,6 @@ import { createServer, type Server } from "node:http";
 import test from "node:test";
 
 import { getDefaultPlaytestRunControl } from "@simulatorlife/autodev-runtime/playtesting";
-import { codexState } from "@simulatorlife/autodev-runtime/router/http";
 
 test("control-only listener exposes only authenticated Control API routes", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
@@ -142,8 +141,6 @@ test("router listener close shuts down the shared Playtest run owner exactly onc
       server.close();
       await closed;
     }
-    codexState.collector.stopLivePoll();
-    codexState.livePollStarted = false;
   }
 });
 
@@ -157,7 +154,6 @@ test("router server removes its process handlers with the listener", async () =>
   const listenerCounts = new Map(
     processEvents.map((event) => [event, process.listenerCount(event)])
   );
-  const previousLivePollStarted = codexState.livePollStarted;
   let server: Server | undefined;
 
   try {
@@ -165,12 +161,10 @@ test("router server removes its process handlers with the listener", async () =>
       await import("@simulatorlife/autodev-runtime/router/server");
     server = startRouterServer(0, "127.0.0.1");
     await once(server, "listening");
-    assert.equal(codexState.livePollStarted, true);
 
     const closed = once(server, "close");
     server.close();
     await closed;
-    assert.equal(codexState.livePollStarted, false);
     for (const event of processEvents)
       assert.equal(process.listenerCount(event), listenerCounts.get(event));
   } finally {
@@ -179,7 +173,5 @@ test("router server removes its process handlers with the listener", async () =>
       server.close();
       await closed;
     }
-    codexState.collector.stopLivePoll();
-    codexState.livePollStarted = previousLivePollStarted;
   }
 });

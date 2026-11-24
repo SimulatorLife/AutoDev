@@ -31,7 +31,7 @@ const RUNTIME_SRC = join(REPO_ROOT, "runtime/src");
 const OWNER_PATH = "runtime/src/telemetry/otlp-config.ts";
 const PRODUCERS = [
   "runtime/src/router/telemetry.ts",
-  "runtime/src/mcp/codex-tools-shim-telemetry.ts"
+  "runtime/src/mcp/mcp-telemetry.ts"
 ];
 
 async function runtimeSourceFiles(): Promise<string[]> {

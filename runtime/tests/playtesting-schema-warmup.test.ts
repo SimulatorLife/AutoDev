@@ -5,7 +5,6 @@ import test from "node:test";
 
 import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
 import { warmupDefaultPlaytestingRepository } from "../src/control-api/request-handler.ts";
-import { codexState } from "../src/router/http.ts";
 import { startRouterServer } from "../src/router/server.ts";
 import {
   makeRequest,
@@ -141,8 +140,6 @@ test(
       disabledRouter.close();
       await disabledRouterClosed;
       router = undefined;
-      codexState.collector.stopLivePoll();
-      codexState.livePollStarted = false;
 
       process.env.AUTODEV_CONTROL_API_TOKEN =
         "playtesting-warmup-control-token-0123456789";
@@ -346,8 +343,6 @@ test(
         router.close();
         await closed;
       }
-      codexState.collector.stopLivePoll();
-      codexState.livePollStarted = false;
       globalThis.fetch = nativeFetch;
       process.stderr.write = nativeStderrWrite;
       for (const [key, value] of Object.entries(env)) {

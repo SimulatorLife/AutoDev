@@ -174,8 +174,6 @@ const internalNavigationSources = [
   ["PromptsView", "../src/features/prompts/PromptsView.ts"],
   ["ToolDetailView", "../src/features/tools/ToolDetailView.ts"],
   ["WorkspacesView", "../src/features/workspaces/WorkspacesView.ts"],
-  ["MemoryRecordsView", "../src/features/memory/MemoryRecordsView.ts"],
-  ["MemoryExperiencesView", "../src/features/memory/MemoryExperiencesView.ts"],
   ["EvaluationsView", "../src/features/evaluations/EvaluationsView.ts"],
   ["UsageView", "../src/features/usage/UsageView.ts"]
 ].map(([name, path]) => ({

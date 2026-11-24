@@ -86,16 +86,10 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/git-commit-identity.ts",
   "runtime/src/telemetry/resource-context/index.ts",
   "runtime/src/telemetry/workspace-commit-observer.ts",
-  "runtime/src/router/responses.ts",
   "runtime/src/router/agent-event-ingest.ts",
-  "runtime/src/router/upstream-shape-hooks.ts",
-  "runtime/src/router/memory/index.ts",
-  "runtime/src/control-api/memory.ts",
   "runtime/src/control-api/claude-code-binding.ts",
   "runtime/src/control-api/body.ts",
   "runtime/src/control-api/diagnostics.ts",
-  "runtime/src/router/memory/reconstruction.ts",
-  "runtime/src/router/memory/embedding.ts",
   "runtime/src/router/routing.ts",
   "runtime/src/control-api/playtesting.ts",
   "runtime/src/control-api/workspace-playtesting.ts",
@@ -151,21 +145,15 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/runtime-source-root.ts",
   "runtime/src/shared/installed-skills.ts",
   "runtime/src/shared/mcp-headers.ts",
-  "runtime/src/shared/agent-context-headers.ts",
   "runtime/src/shared/autodev-home.ts",
   "runtime/src/shared/env.ts",
   "runtime/src/shared/execution-contract.ts",
   "runtime/src/shared/provider-http.ts",
   "runtime/src/shared/provider-limits.ts",
   "runtime/src/shared/provider-reset-headers.ts",
-  "runtime/src/shared/compaction.ts",
   "runtime/src/shared/entry-point.ts",
-  "runtime/src/shared/root-bootstrap.ts",
   "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
-  "runtime/src/shared/responses-continuation.ts",
-  "runtime/src/shared/codex-transcript.ts",
-  "runtime/src/shared/responses-item-ids.ts",
   "runtime/src/shared/tool-names.ts",
   "runtime/src/shared/skill-reads.ts",
   "runtime/src/shared/service-lifecycle.ts",
@@ -178,7 +166,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/usage.ts",
   "runtime/src/router/correlation.ts",
   "runtime/src/router/proxy.ts",
-  "runtime/src/router/provider-hops.ts",
   "runtime/src/router/http.ts",
   "runtime/src/router/server.ts",
   "runtime/src/router/auth.ts",
@@ -188,13 +175,9 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/lifecycle/index.ts",
   "runtime/src/router/live-feed.ts",
   "runtime/src/router/persistence/index.ts",
-  "runtime/src/router/codex-state-collector.ts",
   "runtime/src/router/status.ts",
-  "runtime/src/router/tool-call-ownership/index.ts",
   "runtime/src/agents/index.ts",
   "runtime/src/agents/agent-activity.ts",
-  "runtime/src/agents/bridge-role.ts",
-  "runtime/src/agents/bridge-sandbox.ts",
   "runtime/src/agents/orchestrator-policy.ts",
   "runtime/src/agents/read-only-policy.ts",
   "runtime/src/agents/role-mcp-environment.ts",
@@ -207,42 +190,23 @@ export const RUNTIME_MODULES = [
   "runtime/src/config/render-chatgpt-supergateway.ts",
   "runtime/src/config/render-execution-contract.ts",
   "runtime/src/config/render-model-catalog.ts",
-  "runtime/src/memory/index.ts",
-  "runtime/src/memory/context-injection.ts",
-  "runtime/src/memory/git-curation.ts",
-  "runtime/src/memory/mcp.ts",
-  "runtime/src/memory/openai-compatible-embedding.ts",
-  "runtime/src/memory/postgres.ts",
-  "runtime/src/memory/privacy.ts",
-  "runtime/src/memory/service.ts",
-  "runtime/src/memory/skill-promotion.ts",
-  "runtime/src/memory/stdio.ts",
-  "runtime/src/memory/trajectory.ts",
   "runtime/src/telemetry/index.ts",
   "runtime/src/telemetry/agent-events.ts",
   "runtime/src/telemetry/github-metrics.ts",
   "runtime/src/telemetry/provider-phases.ts",
   "runtime/src/telemetry/tracer-provider.ts",
   "runtime/src/telemetry/otlp-config.ts",
-  "runtime/src/providers/minimax.ts",
   "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/cli-versions.ts",
   "runtime/src/providers/claude-credential.ts",
-  "runtime/src/providers/copilot.ts",
   "runtime/src/providers/opencli.ts",
   "runtime/src/providers/opencli-browser.ts",
   "runtime/src/shared/opencli-browser-setting.ts",
   "runtime/src/providers/opencli-turn.ts",
-  "runtime/src/providers/antigravity.ts",
-  "runtime/src/providers/claude.ts",
-  "runtime/src/providers/claude-codex-tools.ts",
-  "runtime/src/providers/claude-turn.ts",
-  "runtime/src/providers/codex-tool-turns.ts",
   "runtime/src/mcp/tool-filter.ts",
-  "runtime/src/mcp/codex-tools-shim.ts",
   "runtime/src/mcp/filesystem-server.ts",
-  "runtime/src/mcp/codex-tools-shim-telemetry.ts",
+  "runtime/src/mcp/mcp-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
   "runtime/src/mcp/chatgpt-supergateway-probe.ts",
   "runtime/src/mcp/chatgpt-filesystem-sandbox.ts",
@@ -260,21 +224,14 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/hook-roots.ts",
   "runtime/src/hooks/skill-read-telemetry.ts",
   "runtime/src/hooks/session-start.ts",
-  "runtime/src/hooks/subagent-start.ts",
-  "runtime/src/hooks/memory-session-end.ts",
   "runtime/src/platform/macos/launchd.ts",
   "runtime/src/platform/index.ts",
   "runtime/src/platform/host-arch.ts",
   "runtime/src/platform/macos/launchagent.ts",
   "runtime/src/platform/router-ensure.ts",
-  "runtime/src/platform/copilot-ensure.ts",
   "runtime/src/platform/opencli-ensure.ts",
   "runtime/src/platform/opencli-browser-install.ts",
-  "runtime/src/platform/optional-bridge-ensure.ts",
   "runtime/src/platform/code-graph-ensure.ts",
-  "runtime/src/platform/antigravity-ensure.ts",
-  "runtime/src/platform/claude-ensure.ts",
-  "runtime/src/platform/minimax-ensure.ts",
   "runtime/src/platform/antigravity-settings.ts",
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-mirror-package.ts",
@@ -302,6 +259,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/role-sandbox.ts",
   "runtime/src/hooks/file-surface.ts",
   "runtime/src/acp/provider-profiles.ts",
+  "runtime/src/xacpx/http.ts",
   "runtime/src/xacpx/manager.ts",
   "runtime/src/platform/mcode-projection.ts"
 ] as const;
@@ -315,28 +273,15 @@ export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
 export const HOOKS = [
   "enforce-root-delegation.sh",
   "ensure-codex-console.sh",
-  "ensure-codex-antigravity-proxy.sh",
-  "ensure-codex-claude-bridge.sh",
-  "ensure-codex-copilot-proxy.sh",
   "ensure-codex-opencli-proxy.sh",
   "ensure-codex-model-router.sh",
-  "ensure-codex-minimax-proxy.sh",
-  "run-codex-antigravity-proxy.sh",
-  "run-codex-claude-bridge.sh",
-  "run-codex-copilot-cli-responses-proxy.sh",
   "run-codex-opencli-proxy.sh",
   "run-codex-model-router.sh",
   "run-codex-console.sh",
   "run-autodev-hook.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
-export const PROFILES = [
-  "claude",
-  "minimax",
-  "antigravity-gemini",
-  "antigravity-argon",
-  "antigravity-claude-gpt"
-] as const;
+export const PROFILES = [] as const;
 export const CATALOGS = [
   "claude",
   "minimax",
@@ -371,15 +316,15 @@ export const RULES = ["rulesync.rules"] as const;
 export const LAUNCH_LABELS = [
   "com.codex.autodev-console",
   "com.codex.model-router",
-  "com.codex.claude-bridge",
-  "com.codex.minimax-proxy",
-  "com.codex.antigravity-proxy",
-  "com.codex.copilot-proxy",
   "com.codex.opencli-proxy"
 ] as const;
 export const OBSOLETE_LAUNCH = [
   "com.codex.antigravity-litellm",
-  "com.codex.otel-collector"
+  "com.codex.otel-collector",
+  "com.codex.claude-bridge",
+  "com.codex.minimax-proxy",
+  "com.codex.antigravity-proxy",
+  "com.codex.copilot-proxy"
 ] as const;
 const OBSOLETE_COLLECTOR_HOOKS = [
   "otel/ensure-autodev-otel-collector.sh",
@@ -389,10 +334,13 @@ const OBSOLETE_COLLECTOR_HOOKS = [
 export const OBSOLETE_PATHS = [
   ".config/litellm/antigravity.yaml",
   ".codex/codex-antigravity-litellm-config.sha256",
-  // The single Antigravity provider's profile and catalog, replaced by one
-  // per Antigravity provider (gemini, argon, claude-gpt).
   ".codex/antigravity.config.toml",
-  ".codex/antigravity-model-catalog.json"
+  ".codex/antigravity-model-catalog.json",
+  ".codex/claude.config.toml",
+  ".codex/minimax.config.toml",
+  ".codex/antigravity-gemini.config.toml",
+  ".codex/antigravity-argon.config.toml",
+  ".codex/antigravity-claude-gpt.config.toml"
 ] as const;
 export const OBSOLETE_DASHBOARD = "codex-model-router-dashboard.html";
 export const OBSOLETE_HOOKS = [
@@ -403,7 +351,14 @@ export const OBSOLETE_HOOKS = [
   "codex-copilot-cli-responses-proxy.mjs",
   "codex-antigravity-cli-responses-proxy.mjs",
   "codex-model-router-status.mjs",
-  "codex-claude-cli-responses-proxy.py"
+  "codex-claude-cli-responses-proxy.py",
+  "ensure-codex-antigravity-proxy.sh",
+  "ensure-codex-claude-bridge.sh",
+  "ensure-codex-copilot-proxy.sh",
+  "ensure-codex-minimax-proxy.sh",
+  "run-codex-antigravity-proxy.sh",
+  "run-codex-claude-bridge.sh",
+  "run-codex-copilot-cli-responses-proxy.sh"
 ] as const;
 export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
 /**
@@ -1290,11 +1245,6 @@ function materializeScripts(hooks: string, source: FileTarget): void {
 }
 
 function linkRuntimeConfigs(codexHome: string, source: FileTarget): void {
-  for (const name of PROFILES)
-    linkRuntimeSource(
-      source(`config/profiles/${name}.config.toml`),
-      path.join(codexHome, `${name}.config.toml`)
-    );
   for (const name of CATALOGS)
     linkRuntimeSource(
       source(`config/catalogs/${name}-model-catalog.json`),

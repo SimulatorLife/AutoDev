@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import { execa } from "execa";
-import { chatgptTunnelStatus, dependencyEnvironment, tunnelMutationSchema } from "../platform/chatgpt-tunnel-install.ts";
+import { chatgptTunnelStatus, dependencyEnvironment, tunnelMutationSchema } from "../platform/index.ts";
 import {
   type ApprovalPolicy,
   buildReconciliationView,
@@ -173,7 +173,6 @@ import {
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
 import { githubWorkflowsView } from "./github.ts";
-import { handleMemoryControlApiRequest } from "./memory.ts";
 import {
   handlePlaytestingControlApiRequest,
   type PlaytestingControlRepository
@@ -255,7 +254,6 @@ export const CONTROL_API_PATHS = {
   workspaces: "/control/workspaces",
   routing: "/control/routing",
   runtime: "/control/runtime",
-  memory: "/control/memory",
   evaluations: "/control/evaluations",
   github: "/control/github",
   playtesting: "/control/playtesting",
@@ -8902,26 +8900,6 @@ export async function handleControlApiRequest(
       options
     ))
   ) {
-    return true;
-  }
-  if (pathname.startsWith(CONTROL_API_PATHS.memory + "/")) {
-    await handleMemoryControlApiRequest(
-      request,
-      response,
-      pathname,
-      actor,
-      (event) =>
-        auditMutation({
-          actor: actor.actor,
-          actorVerified: true,
-          role: actor.role,
-          action: event.action,
-          resource: event.resource,
-          outcome: event.outcome,
-          changes: event.changes,
-          ...(event.reason ? { reason: event.reason } : {})
-        })
-    );
     return true;
   }
   if (

@@ -83,11 +83,11 @@ test("a command invoked without its subcommand names the values it accepts", () 
   for (const [command, label, expected] of [
     ["render", "render target", "agents, contract, mcp, or catalog"],
     ["router", "router command", "run, ensure, or status"],
-    ["provider", "provider", "claude, minimax, copilot, or antigravity"],
+    ["provider", "provider", "claude, mcode, copilot, or antigravity"],
     [
       "hook",
       "hook",
-      "session-start, subagent-start, root-delegation, or skill-read"
+      "session-start, root-delegation, or skill-read"
     ],
     ["repo", "repo subcommand", "bootstrap"],
     ["playtest", "playtest subcommand", "init, check, or conformance"]
@@ -145,10 +145,10 @@ function acceptedList(command: string): string {
       return "run, ensure, or status";
     }
     case "provider": {
-      return "claude, minimax, copilot, or antigravity";
+      return "claude, mcode, copilot, or antigravity";
     }
     case "hook": {
-      return "session-start, subagent-start, root-delegation, or skill-read";
+      return "session-start, root-delegation, or skill-read";
     }
     case "repo": {
       return "bootstrap";
@@ -262,10 +262,10 @@ test("help discloses the provider and hook vocabularies", async () => {
   // Both families used to render a bare `<name>`, so their accepted values were
   // discoverable only by running a command and reading the error.
   const help = await capture(["--", "--help"]);
-  assert.match(help, / {2}provider claude\|minimax\|copilot\|antigravity/u);
+  assert.match(help, / {2}provider claude\|mcode\|copilot\|antigravity/u);
   assert.match(
     help,
-    / {2}hook session-start\|subagent-start\|root-delegation\|skill-read/u
+    / {2}hook session-start\|root-delegation\|skill-read/u
   );
   assert.doesNotMatch(help, / {2}provider <name>/u);
   assert.doesNotMatch(help, / {2}hook <name>/u);

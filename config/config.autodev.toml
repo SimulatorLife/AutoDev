@@ -51,40 +51,10 @@ image_generation = false
 # `.rulesync/permissions.jsonc`, and MCP servers are declared in
 # `.rulesync/mcp.jsonc`; the composer merges both into `$CODEX_HOME/config.toml`.
 
-[model_providers.claude_code_subscription]
-name = "Claude Code OAuth subscription bridge"
-base_url = "http://127.0.0.1:4000/v1"
-env_key = "LITELLM_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-request_max_retries = 1
-stream_max_retries = 2
-stream_idle_timeout_ms = 300000
-
 [model_providers.local_model_router]
-name = "Local model-aware Codex Responses router"
+name = "Local model-aware AutoDev Router"
 base_url = "http://127.0.0.1:4100/v1"
 env_key = "CODEX_ROUTER_AUTH_TOKEN"
-wire_api = "responses"
-requires_openai_auth = false
-request_max_retries = 1
-stream_max_retries = 2
-stream_idle_timeout_ms = 300000
-
-[model_providers.minimax]
-name = "MiniMax"
-base_url = "http://127.0.0.1:18765/v1"
-env_key = "MINIMAX_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-request_max_retries = 4
-stream_max_retries = 10
-stream_idle_timeout_ms = 300000
-
-[model_providers.antigravity_cli]
-name = "Antigravity CLI subscription through the local Responses adapter"
-base_url = "http://127.0.0.1:4002/v1"
-env_key = "LITELLM_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
 request_max_retries = 1

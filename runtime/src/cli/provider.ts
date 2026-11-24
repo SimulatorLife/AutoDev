@@ -4,7 +4,7 @@ import { UnmigratedRuntimeError } from "./runtime.ts";
 /** The provider vocabulary, owned here and consumed by validation and errors. */
 export const PROVIDER_NAMES = [
   "claude",
-  "minimax",
+  "mcode",
   "copilot",
   "antigravity"
 ] as const;

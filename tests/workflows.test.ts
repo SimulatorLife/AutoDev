@@ -1165,12 +1165,7 @@ test("AutoDev shell launchers resolve pnpm-managed Node without nvm or npm", asy
   for (const script of [
     "run-codex-console.sh",
     "run-codex-model-router.sh",
-    "run-codex-claude-bridge.sh",
     "run-codex-opencli-proxy.sh",
-    "run-codex-antigravity-proxy.sh",
-    "run-codex-copilot-cli-responses-proxy.sh",
-    "ensure-codex-antigravity-proxy.sh",
-    "ensure-codex-minimax-proxy.sh",
     "run-autodev-hook.sh"
   ]) {
     const source = await readFile(path.join(root, "scripts", script), "utf8");

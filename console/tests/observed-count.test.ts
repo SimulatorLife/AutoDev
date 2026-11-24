@@ -20,8 +20,6 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../src/components/status/StatusBadge.ts";
-import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
-import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import {
   type WorkspaceApprovalLookup,
@@ -246,29 +244,6 @@ function statCard(markup: string, title: string): string {
   return markup.slice(start, end);
 }
 
-function listScope(): MemoryListScope {
-  return {
-    tab: "cohorts",
-    workspaceId: "SimulatorLife/AutoDev",
-    offset: 0,
-    limit: 25
-  } as MemoryListScope;
-}
-
-function renderCohorts(sessionCohorts: unknown, useCohorts: unknown): string {
-  return renderToStaticMarkup(
-    React.createElement(MemoryCohortsView, {
-      sessionCohorts,
-      useCohorts,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
-      repositoryId: "simulatorlife/autodev",
-      occurredFrom: "2026-10-01T00:00:00.000Z",
-      occurredUntil: "2026-10-08T00:00:00.000Z",
-      listScope: listScope()
-    } as never)
-  );
-}
-
 test("a count over a scope that was not fully observed is not a number", () => {
   const scope = [
     { observed: true, ready: true },
@@ -401,53 +376,6 @@ test("a readable workspace approval still counts as a number", () => {
     /Approval state was not observed/u,
     "a fully observed scope must keep its count"
   );
-});
-
-test("a failed cohort read does not make the cell count a zero", () => {
-  const markup = renderCohorts(null, null);
-
-  assert.doesNotMatch(
-    markup,
-    /0 cohort cells/u,
-    "a failed read must not be rendered as an empty matrix"
-  );
-  assert.match(markup, /Cohort cells unavailable/u);
-});
-
-test("an observed but empty cohort matrix is still a measured zero", () => {
-  const emptySessionCohorts = {
-    schema: "autodev-memory-session-outcome-cohorts-v1",
-    workspaceId: "SimulatorLife/AutoDev",
-    repositoryId: "simulatorlife/autodev",
-    occurredFrom: "2026-10-01T00:00:00.000Z",
-    occurredUntil: "2026-10-08T00:00:00.000Z",
-    cells: [],
-    sessionCount: 0,
-    reportedSessionCount: 0,
-    unreportedSessionCount: 0,
-    conflictingOutcomeSessionCount: 0,
-    mixedModeSessionCount: 0
-  };
-  const emptyUseCohorts = {
-    schema: "autodev-memory-injection-use-cohorts-v1",
-    workspaceId: "SimulatorLife/AutoDev",
-    repositoryId: "simulatorlife/autodev",
-    occurredFrom: "2026-10-01T00:00:00.000Z",
-    occurredUntil: "2026-10-08T00:00:00.000Z",
-    cells: [],
-    exposureCount: 0,
-    assessedExposureCount: 0,
-    unassessedExposureCount: 0
-  };
-
-  const markup = renderCohorts(emptySessionCohorts, emptyUseCohorts);
-
-  assert.match(
-    markup,
-    /0 cohort cells/u,
-    "a measured empty matrix is a measurement and stays a number"
-  );
-  assert.doesNotMatch(markup, /Cohort cells unavailable/u);
 });
 
 test("the shared not-observed label is the word the Console already uses", () => {

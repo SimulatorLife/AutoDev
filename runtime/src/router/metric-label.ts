@@ -1,12 +1,6 @@
 // The router sanitises every OpenTelemetry dimension, metric label and
-// aggregation key through `safeMetricLabel`. It used to live in
-// `subagents.ts` next to unrelated orchestration code, which made the
-// subagent registry the de facto owner of a utility the whole router needs.
-// `usage.ts` importing it from there closed the router's only import cycle
-// (`usage` -> `subagents` -> `usage`), and `codex-state-collector.ts` had to keep a
-// private copy because that module is not allowed to import anything.
-// This module has no router-internal imports so every router module can
-// depend on it without creating a cycle.
+// aggregation key through `safeMetricLabel`. This module has no router-internal
+// imports so every router module can depend on it without creating a cycle.
 
 // Strip ASCII control characters from a metric label without using a
 // regular expression. `eslint-plugin-regexp/no-control-regex` rejects raw

@@ -427,26 +427,26 @@ export function findAgyBinary(
  * own bin directory, and `mmx` installed beside it is found there -- so it is
  * consulted only for this machine's home, and never for another one.
  */
-export function findMiniMaxBinary(
+export function findMcodeBinary(
   env: NodeJS.ProcessEnv = process.env,
   home = env.HOME?.trim() || homedir()
 ): string | null {
-  const configured = env.MINIMAX_BIN?.trim() || env.MMX_BIN?.trim();
+  const configured = env.MCODE_BIN?.trim() || env.MINIMAX_BIN?.trim();
   if (configured) {
     const resolved = configured.includes(path.sep)
       ? configured
       : findExecutable(configured, env.PATH ?? "");
     if (resolved && isExecutable(resolved)) return resolved;
   }
-  const fromPath = findExecutable("mmx", env.PATH ?? "");
+  const fromPath = findExecutable("mcode", env.PATH ?? "");
   if (fromPath) return fromPath;
-  const fromPnpm = findPnpmGlobalBinary("mmx", home, env);
+  const fromPnpm = findPnpmGlobalBinary("mcode", home, env);
   if (fromPnpm) return fromPnpm;
   if (home === homedir()) {
-    const nodeDirCandidate = path.join(path.dirname(process.execPath), "mmx");
+    const nodeDirCandidate = path.join(path.dirname(process.execPath), "mcode");
     if (isExecutable(nodeDirCandidate)) return nodeDirCandidate;
   }
-  const local = path.join(home, ".local", "bin", "mmx");
+  const local = path.join(home, ".local", "bin", "mcode");
   return isExecutable(local) ? local : null;
 }
 

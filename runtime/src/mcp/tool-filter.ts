@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { readRuntimeSecret } from "../shared/runtime-secrets.ts";
-import { configureExternalMcpTelemetry, recordToolCallSpan, shutdownTelemetry, type ToolCallOutcome } from "./codex-tools-shim-telemetry.ts";
+import { configureExternalMcpTelemetry, recordToolCallSpan, shutdownTelemetry, type ToolCallOutcome } from "./mcp-telemetry.ts";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;

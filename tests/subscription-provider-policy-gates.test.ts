@@ -14,9 +14,6 @@ import { normalizedSource } from "./source-text.ts";
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
 const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
-  "runtime/src/providers/claude.ts",
-  "scripts/run-codex-claude-bridge.sh",
-  "runtime/src/platform/claude-ensure.ts",
   // Reads the account credential to ask Anthropic for the account's own model
   // list, the provider-owned source the Console's role assignments come from.
   // It never hands the token to a bridge, a proxy or a model request.
@@ -115,16 +112,6 @@ test("only reviewed runtime files reference the Claude subscription token", () =
   assert.deepEqual(consumers, REVIEWED_CLAUDE_TOKEN_CONSUMERS);
 });
 
-test("the Claude bridge hands the token only to the Claude Code binary", () => {
-  const source = normalizedSource(
-    readFileSync(join(REPO_ROOT, "runtime/src/providers/claude.ts"), "utf8")
-  );
-  assert.match(source, /CLI\s*=.*claude/);
-  assert.doesNotMatch(source, /anthropic\.com/);
-  assert.match(route("claude"), /baseUrl: "http:\/\/127\.0\.0\.1:4000\/v1"/);
-  assert.doesNotMatch(router, /anthropic\.com/);
-});
-
 test("CI runs the pinned official Claude Code package", () => {
   const manifest = JSON.parse(
     readFileSync(join(REPO_ROOT, ".github/ci/provider-tools.json"), "utf8")
@@ -143,15 +130,7 @@ test("CI runs the pinned official Claude Code package", () => {
   assert.match(branch, /pnpm --silent dlx "\$AUTODEV_CLAUDE_PACKAGE"/);
 });
 
-test("Copilot and Antigravity bridges run their official CLIs", () => {
-  // The Copilot CLI is the official one, found the way the Codex CLI is
-  // found: an explicit setting, then PATH, then the newest version-managed
-  // install. A PATH lookup alone misses a CLI installed under nvm, and the
-  // bridge runs under a PATH that names no version manager.
-  assert.match(
-    texts["runtime/src/providers/copilot.ts"]!,
-    /spawn\(resolveCopilotBinary\(\), args/
-  );
+test("ACP executors locate their official CLIs safely", () => {
   assert.match(
     texts["runtime/src/shared/executables.ts"]!,
     /export function resolveCopilotBinary/
@@ -165,28 +144,8 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /export function findCodexAppMcpServer/
   );
   assert.match(
-    texts["runtime/src/providers/copilot.ts"]!,
-    /COPILOT_PROXY_STARTUP_TIMEOUT_MS/
-  );
-  assert.match(
     texts["runtime/src/shared/executables.ts"]!,
     /export function resolveAgyBinary/
   );
   assert.match(texts["runtime/src/shared/executables.ts"]!, /AGY_CLI_PATH/);
-  assert.match(
-    texts["runtime/src/providers/antigravity.ts"]!,
-    /const CLI = resolveAgyBinary\(\);/
-  );
-  assert.match(
-    texts["runtime/src/providers/antigravity.ts"]!,
-    /spawn\(CLI, agyArgs\(/
-  );
-  assert.match(route("copilot"), /baseUrl: "http:\/\/127\.0\.0\.1:4003\/v1"/);
-  // The Antigravity model-family routes are served by the one agy bridge.
-  for (const provider of ANTIGRAVITY_PROVIDERS)
-    assert.equal(
-      ROUTES.find((candidate) => candidate.provider === provider)?.baseUrl,
-      "http://127.0.0.1:4002/v1",
-      provider
-    );
 });

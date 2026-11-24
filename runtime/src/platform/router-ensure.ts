@@ -17,7 +17,6 @@ import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point"
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { ensureOpencliProxy } from "./opencli-ensure.ts";
@@ -301,7 +300,7 @@ export function createDefaultRouterEnsureDeps(
       }
     },
     setExitHandler: defaultSetExitHandler,
-    ensureOptionalBridges: [ensureCopilotProxy, ensureOpencliProxy]
+    ensureOptionalBridges: [ensureOpencliProxy]
   };
 }
 

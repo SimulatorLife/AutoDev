@@ -37,17 +37,9 @@ const LINE_SPLIT_PATTERN = /\r?\n/u;
 const LSOF_NAME_PREFIX = "n";
 
 export const LABEL_MODEL_ROUTER = "com.codex.model-router";
-export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
-export const LABEL_MINIMAX_PROXY = "com.codex.minimax-proxy";
-export const LABEL_ANTIGRAVITY_PROXY = "com.codex.antigravity-proxy";
-export const LABEL_COPILOT_PROXY = "com.codex.copilot-proxy";
 export const LABEL_OPENCLI_PROXY = "com.codex.opencli-proxy";
 export const MANAGED_SERVICE_LABELS = [
   LABEL_MODEL_ROUTER,
-  LABEL_CLAUDE_BRIDGE,
-  LABEL_MINIMAX_PROXY,
-  LABEL_ANTIGRAVITY_PROXY,
-  LABEL_COPILOT_PROXY,
   LABEL_OPENCLI_PROXY,
   CONSOLE_SERVICE_LABEL
 ] as const;
@@ -71,30 +63,10 @@ const SERVICE_PATHS = {
     root: "codex",
     executable: ["src", "router", "server.ts"]
   },
-  [LABEL_CLAUDE_BRIDGE]: {
-    launcher: "run-codex-claude-bridge.sh",
-    root: "codex",
-    executable: ["src", "providers", "claude.ts"]
-  },
-  [LABEL_ANTIGRAVITY_PROXY]: {
-    launcher: "run-codex-antigravity-proxy.sh",
-    root: "codex",
-    executable: ["src", "providers", "antigravity.ts"]
-  },
-  [LABEL_COPILOT_PROXY]: {
-    launcher: "run-codex-copilot-cli-responses-proxy.sh",
-    root: "codex",
-    executable: ["src", "providers", "copilot.ts"]
-  },
   [LABEL_OPENCLI_PROXY]: {
     launcher: "run-codex-opencli-proxy.sh",
     root: "codex",
     executable: ["src", "providers", "opencli.ts"]
-  },
-  [LABEL_MINIMAX_PROXY]: {
-    launcher: "ensure-codex-minimax-proxy.sh",
-    root: "codex",
-    executable: ["src", "providers", "minimax.ts"]
   }
 } satisfies Readonly<Record<ManagedServiceLabel, ManagedServicePaths>>;
 
@@ -177,10 +149,6 @@ interface ServiceSpec {
 
 const SERVICE_PORTS = {
   [LABEL_MODEL_ROUTER]: 4100,
-  [LABEL_CLAUDE_BRIDGE]: 4000,
-  [LABEL_MINIMAX_PROXY]: 18_765,
-  [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003,
   [LABEL_OPENCLI_PROXY]: 4004
 } as const satisfies Record<
   Exclude<ManagedServiceLabel, typeof CONSOLE_SERVICE_LABEL>,
@@ -209,30 +177,6 @@ function serviceSpecs(options: ServiceRestartOptions): readonly ServiceSpec[] {
       probe: "http://127.0.0.1:4100/health/readiness",
       ownedPort: SERVICE_PORTS[LABEL_MODEL_ROUTER],
       required: true
-    },
-    {
-      label: LABEL_CLAUDE_BRIDGE,
-      probe: "http://127.0.0.1:4000/health/liveliness",
-      ownedPort: SERVICE_PORTS[LABEL_CLAUDE_BRIDGE],
-      required: false
-    },
-    {
-      label: LABEL_MINIMAX_PROXY,
-      probe: "http://127.0.0.1:18765/health",
-      ownedPort: SERVICE_PORTS[LABEL_MINIMAX_PROXY],
-      required: false
-    },
-    {
-      label: LABEL_ANTIGRAVITY_PROXY,
-      probe: "http://127.0.0.1:4002/health/liveliness",
-      ownedPort: SERVICE_PORTS[LABEL_ANTIGRAVITY_PROXY],
-      required: false
-    },
-    {
-      label: LABEL_COPILOT_PROXY,
-      probe: "http://127.0.0.1:4003/health/liveliness",
-      ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
-      required: false
     },
     {
       label: LABEL_OPENCLI_PROXY,
@@ -616,30 +560,18 @@ async function runDirectEnsures(
     ) !== 0
   )
     return 1;
-  for (const [model, script] of [
-    ["sonnet", "ensure-codex-claude-bridge.sh"],
-    ["MiniMax-M3", "ensure-codex-minimax-proxy.sh"],
-    ["gemini-3.8-flash-medium", "ensure-codex-antigravity-proxy.sh"]
-  ] as const) {
-    if (
-      run(
-        path.join(options.repositoryRoot, "scripts", script),
-        `{"model":"${model}"}\n`
-      ) !== 0
-    )
-      writeErrorLine(
-        `bridge start failed: ${script} (router will route around it)`
-      );
-  }
-  for (const script of [
-    "ensure-codex-copilot-proxy.sh",
-    "ensure-codex-opencli-proxy.sh"
-  ] as const) {
-    if (run(path.join(options.repositoryRoot, "scripts", script)) !== 0)
-      writeErrorLine(
-        `bridge start failed: ${script} (router will route around it)`
-      );
-  }
+  if (
+    run(
+      path.join(
+        options.repositoryRoot,
+        "scripts",
+        "ensure-codex-opencli-proxy.sh"
+      )
+    ) !== 0
+  )
+    writeErrorLine(
+      "bridge start failed: ensure-codex-opencli-proxy.sh (router will route around it)"
+    );
   return 0;
 }
 

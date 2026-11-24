@@ -19,7 +19,7 @@ import {
   codexCliVersion,
   findCodexBinary,
   findCopilotBinary,
-  findMiniMaxBinary,
+  findMcodeBinary,
   findPnpmGlobalBinary,
   resolveCodexBinary,
   resolveCopilotBinary
@@ -360,11 +360,11 @@ test("a CODEX_BIN that names nothing usable is reported as a misconfiguration", 
 test("the MiniMax CLI is looked for in the environment it was handed", (t) => {
   const fixture = homeFixture();
   t.after(fixture.cleanup);
-  // A machine with no MiniMax CLI installed: an empty PATH and a home with
+  // A machine with no mcode CLI installed: an empty PATH and a home with
   // nothing in it. The lookup must answer about that machine, so it must not
   // fall back on the Node this process happens to run under.
   assert.equal(
-    findMiniMaxBinary({ PATH: "", HOME: fixture.home }, fixture.home),
+    findMcodeBinary({ PATH: "", HOME: fixture.home }, fixture.home),
     null
   );
 });
@@ -372,15 +372,15 @@ test("the MiniMax CLI is looked for in the environment it was handed", (t) => {
 test("a MiniMax CLI is found in the home it was asked about", (t) => {
   const fixture = homeFixture();
   t.after(fixture.cleanup);
-  const binary = installExecutable(join(fixture.home, ".local", "bin", "mmx"));
+  const binary = installExecutable(join(fixture.home, ".local", "bin", "mcode"));
   assert.equal(
-    findMiniMaxBinary({ PATH: "", HOME: fixture.home }, fixture.home),
+    findMcodeBinary({ PATH: "", HOME: fixture.home }, fixture.home),
     binary
   );
   const pnpmHome = join(fixture.home, "pnpm-home");
-  const versionManaged = installExecutable(join(pnpmHome, "bin", "mmx"));
+  const versionManaged = installExecutable(join(pnpmHome, "bin", "mcode"));
   assert.equal(
-    findMiniMaxBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
+    findMcodeBinary({ PATH: "", PNPM_HOME: pnpmHome }, fixture.home),
     versionManaged
   );
 });

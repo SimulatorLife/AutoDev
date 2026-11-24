@@ -4,7 +4,6 @@ import { UnmigratedRuntimeError } from "./runtime.ts";
 /** The hook vocabulary, owned here and consumed by validation and errors. */
 export const HOOK_NAMES = [
   "session-start",
-  "subagent-start",
   "root-delegation",
   "skill-read"
 ] as const;

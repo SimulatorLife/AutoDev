@@ -1,107 +1,33 @@
 /**
- * One Codex turn served by a web chat site through opencli.
- *
- * opencli (`@jackwener/opencli`) drives a chat site -- chatgpt.com,
- * gemini.google.com -- through the user's own signed-in browser and returns
- * the assistant's reply as JSON. A site has no tool-calling API, so the bridge
- * is the model's only way to act: the turn's prompt carries Codex's tool
- * reference and a plain-text call syntax, the reply is parsed for calls, and
- * each call goes back to Codex as a Responses `custom_tool_call` or
- * `function_call` item. Codex runs it in the turn's sandbox with its approvals
- * and hooks, exactly as for any other model, and its next request carries the
- * output.
- *
- * The call syntax is the one `renderCodexTranscript` already uses for earlier
- * calls (`<tool_call name="...">`), so the model reads its own previous calls
- * in the same shape it is asked to write new ones.
- *
- * This module is pure: the prompt, the site's command line, the reply parser,
- * and the conversation ledger. `runtime/src/providers/opencli.ts` owns the
- * process and the HTTP surface.
+ * Direct `opencli` site adapters and output parsing for `github-worker` web
+ * tasks and model discovery.
  */
 
-import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
-import { COMPACTED_SUMMARY_PREFIX } from "@simulatorlife/autodev-runtime/shared/compaction";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_SITES,
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
-import {
-  MULTI_AGENT_CLOSE_TOOL,
-  MULTI_AGENT_SPAWN_TOOL,
-  MULTI_AGENT_WAIT_TOOL
-} from "@simulatorlife/autodev-runtime/shared/tool-names";
-
-import {
-  type CodexTool,
-  codexToolCallItem,
-  type CodexTranscriptOptions,
-  codexToolReference,
-  nestedToolNames,
-  renderCodexTranscriptSegments
-} from "@simulatorlife/autodev-runtime/shared/codex-transcript";
 
 type JsonRecord = Record<string, unknown>;
 
-/**
- * The file name a turn's prompt is attached under: unique per turn.
- *
- * ChatGPT renames an upload whose name it has seen before
- * (`turn(20261106-183651).md`), and opencli recognises its own attachment
- * chip only by the name it uploaded (or a `name (N).ext` copy suffix), so a
- * reused name left `ask-file` waiting for a chip it never matched -- every
- * turn after the first few failed with "new ready attachment chips did not
- * appear". A fresh name per turn is never renamed.
- */
 export function attachedPromptFileName(): string {
   return `turn-${randomBytes(6).toString("hex")}.md`;
 }
 
-/**
- * The short message sent alongside an attached prompt file.
- *
- * It is plain text with no Markdown, so the site's reply detection -- which
- * pairs the visible user bubble with the prompt it was given -- always
- * matches. A transcript typed into the composer does not: the site renders its
- * Markdown (fences become labelled code blocks), the bubble no longer equals
- * the prompt, and opencli waits out its timeout on a reply that already
- * arrived.
- */
 export function attachedPromptMessage(fileName: string): string {
   return `Read the attached file ${fileName} and respond exactly as it instructs.`;
 }
 
-/**
- * The first line of a prompt that is typed into the composer: the marker the
- * site's reply is paired by.
- *
- * The site renders a typed message's Markdown, so the bubble it shows is not
- * the text that was sent, and opencli cannot pair the reply against the
- * prompt. The marker is plain words that rendering leaves alone and is unique
- * to the turn, so the bubble that starts with it is this turn's.
- */
 export function typedPromptMarker(fileName: string): string {
-  return `Codex agent turn ${path.basename(fileName, path.extname(fileName))}.`;
+  return `AutoDev turn ${path.basename(fileName, path.extname(fileName))}.`;
 }
 
-/**
- * ChatGPT's page refusing the attachment outright: it shows its file inputs
- * and none of them takes the file.
- *
- * That is not a page that is still rendering. ChatGPT allows an account a
- * fixed number of uploads in a rolling window (80 in three hours on the plan
- * this was observed on) and, once they are spent, the input that takes any
- * file is the one that stops taking it. A bridge that attached every turn's
- * prompt spent the allowance in about an hour of an orchestrated session, and
- * every turn for the rest of the window then died here.
- */
 const UPLOADS_REFUSED =
   /\b0 of \d+ file input\(s\) on the page accept this file/u;
 
@@ -111,75 +37,35 @@ export function uploadsRefused(error: unknown): boolean {
   );
 }
 
-/** The bridge's code for a prompt that needs an upload the site will not take. */
 export const UPLOADS_EXHAUSTED = "UPLOADS_EXHAUSTED";
 
 export interface OpencliInvocation {
-  /** The prompt as text, for a site that takes it on the command line. */
   readonly prompt: string;
-  /** Where the prompt was written, for a site that takes it as an attachment. */
   readonly promptFile: string;
-  /**
-   * Whether a site that takes the prompt as a file types it into the composer
-   * instead of uploading it. A typed prompt spends none of the site's upload
-   * allowance; an uploaded one is for a prompt too long to type.
-   */
   readonly typed: boolean;
-  /** The site conversation to continue, or null to start a new one. */
   readonly conversationId: string | null;
-  /** The site's own model name the turn asks (`advanced`, `3.1-pro`). */
   readonly siteModel: string;
-  /**
-   * Whether the site's model has to be switched before asking. A site's
-   * model is an account setting that outlives the chat, so it is switched
-   * only when the turn asks for a different one than the bridge last
-   * selected: Gemini's picker then is not opened, read and closed on every
-   * turn, and a picker that cannot render fails only the turns that need it.
-   */
   readonly selectModel: boolean;
-  /**
-   * The thinking level the turn asks the site for, or null to leave the one
-   * it has. Gemini is the site with a thinking level of its own; ChatGPT's
-   * intelligence level is its model, so it has none.
-   */
   readonly siteThinking: string | null;
   readonly timeoutSeconds: number;
 }
 
-/**
- * The thinking levels Gemini's web UI offers.
- *
- * The site renamed them: it offered `standard` and `extended` when opencli
- * was written, and offers `low`, `medium` and `high` now. A level the CLI
- * cannot name is a level it cannot select.
- */
 export const GEMINI_THINKING_LEVELS = Object.freeze(["low", "medium", "high"]);
 
-/**
- * Runs one opencli command and returns the rows of its JSON result. The
- * bridge supplies it: it owns the process, the cancellation, and waiting out a
- * site session the daemon is still releasing.
- */
 export type OpencliExec = (args: readonly string[]) => Promise<JsonRecord[]>;
+
+export interface OpencliReply {
+  readonly response: string;
+  readonly conversationId: string | null;
+  readonly thinking?: string | null;
+  readonly modelSelected: boolean;
+}
 
 export interface OpencliSiteSpec {
   readonly site: OpencliSite;
-  /** Whether the prompt travels as a file (typed or uploaded) rather than as argv. */
   readonly attachesPrompt: boolean;
-  /**
-   * The site models this account can be asked, as opencli names them: a
-   * fixed list for a site with no model-list command (ChatGPT), or the
-   * listing that reads them from the site. A fixed list never touches the
-   * site, so it takes no tab and says nothing about whether the site's
-   * account is signed in.
-   */
   readonly models:
     readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
-  /**
-   * One turn: the commands that deliver the prompt into the right site
-   * conversation with the right model and read back the reply, and the
-   * conversation it is in.
-   */
   turn(invocation: OpencliInvocation, exec: OpencliExec): Promise<OpencliReply>;
 }
 
@@ -187,35 +73,17 @@ const GEMINI_REPLY_PREFIX = "💬 ";
 const GEMINI_CONVERSATION_PATTERN = /\/app\/([\w-]+)/u;
 const JSON_FORMAT = ["-f", "json"] as const;
 
-/**
- * ChatGPT's selectable models and intelligence levels, as `opencli chatgpt
- * model` names them (opencli 2.0.3's `CHATGPT_MODEL_TARGETS`; the command also
- * takes aliases such as `thinking` for `advanced`, which are not separate
- * models). ChatGPT has no model-list command, so this is the list.
- */
 export const CHATGPT_MODELS = Object.freeze([
   "fast",
   "balanced",
   "advanced",
-  // opencli's `xhigh` alias for Very High: an id ending `-high` would read
-  // as an effort variant of `opencli-chatgpt-very` (agy's id convention).
   "xhigh",
   "pro",
   "gpt-5.6-pro"
 ]);
 
-/** opencli's chat was not the one the turn named. */
 export const CHAT_MISMATCH = "CHAT_MISMATCH";
 
-/**
- * The reply, once it is shown to belong to the chat the turn continued.
- *
- * Several agents and sessions take turns in one browser tab per site, and
- * anything else driving that tab can move it between commands. A reply the
- * site gave in another chat answered a conversation this agent never saw;
- * recording it would also file another agent's chat under this one. It fails
- * the turn instead -- after sending, so it is not retried into the same chat.
- */
 function answeredIn(
   site: string,
   expected: string | null,
@@ -225,16 +93,16 @@ function answeredIn(
     expected !== null &&
     reply.conversationId !== null &&
     reply.conversationId !== expected
-  )
+  ) {
     throw new OpencliCommandError(
       `${site} answered in chat ${reply.conversationId}, not ${expected}`,
       CHAT_MISMATCH,
       null
     );
+  }
   return reply;
 }
 
-/** opencli could not open or read Gemini's model picker, so selected no model. */
 const GEMINI_MODEL_SELECTION_FAILURE =
   /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open (?:Gemini )?model picker|model picker button was not found|Failed to click Gemini model picker|not found in picker menu/u;
 
@@ -245,10 +113,6 @@ function isGeminiModelSelectionFailure(error: unknown): boolean {
   );
 }
 
-/**
- * Gemini's thinking level could not be selected: the site's picker moved, or
- * it does not offer the level that was asked for.
- */
 const GEMINI_THINKING_SELECTION_FAILURE =
   /Could not select thinking level|--thinking must be one of|--thinking '[^']*' is not (?:currently )?available/u;
 
@@ -259,12 +123,6 @@ function isGeminiThinkingSelectionFailure(error: unknown): boolean {
   );
 }
 
-/**
- * opencli's code for a Gemini model the account is out of usage on: the site
- * keeps the model in its picker and replaces its description with when the
- * limit resets, and `gemini ask --model` refuses it with that text
- * ('Gemini model "4-argon" is out of usage: Limit resets Nov 9, 9:26 PM').
- */
 const GEMINI_MODEL_LIMIT = "MODEL_LIMIT";
 const GEMINI_LIMITED_MODEL = /^Gemini model "([^"]+)" is out of usage/u;
 const GEMINI_LIMIT_RESETS =
@@ -283,17 +141,6 @@ const MONTHS = Object.freeze([
   "nov",
   "dec"
 ]);
-
-/**
- * When a limited Gemini model says its limit resets, as an instant.
- *
- * The site states a local wall-clock time with no year ("Nov 9, 9:26 PM").
- * A reset is soon -- the site's windows are days, not months -- so the year
- * is the one that puts it within the weeks ahead: a January reset read in
- * December is next year's. A time that has already passed is a label the
- * page has not refreshed, and names no reset at all; reading it as next
- * year's would cool the provider down for a year.
- */
 const GEMINI_RESET_HORIZON_MS = 45 * 24 * 60 * 60 * 1000;
 
 function geminiLimitReset(
@@ -305,8 +152,9 @@ function geminiLimitReset(
   now: number
 ): string | null {
   const monthIndex = MONTHS.indexOf(month.toLowerCase());
-  if (monthIndex === -1 || hour12 < 1 || hour12 > 12 || minute > 59)
+  if (monthIndex === -1 || hour12 < 1 || hour12 > 12 || minute > 59) {
     return null;
+  }
   const hour = (hour12 % 12) + (meridiem.toLowerCase() === "pm" ? 12 : 0);
   const at = (year: number) =>
     new Date(year, monthIndex, Number(day), hour, minute).getTime();
@@ -318,15 +166,6 @@ function geminiLimitReset(
   return reset === undefined ? null : new Date(reset).toISOString();
 }
 
-/**
- * The usage limit behind a Gemini model opencli refused to ask.
- *
- * opencli names a model by its own name and version alone, and reports a
- * model the account is out of usage on under its own code with the site's
- * "Limit resets Nov 9, 9:26 PM". This reads it back as the usage limit it
- * is, with the reset the site stated as an instant, so the router cools the
- * route down until then instead of reading a refusal it cannot place.
- */
 export function geminiModelLimit(
   error: unknown,
   now = Date.now()
@@ -334,8 +173,9 @@ export function geminiModelLimit(
   if (
     !(error instanceof OpencliCommandError) ||
     error.code !== GEMINI_MODEL_LIMIT
-  )
+  ) {
     return null;
+  }
   const model = GEMINI_LIMITED_MODEL.exec(error.message)?.[1];
   const resets = GEMINI_LIMIT_RESETS.exec(error.message);
   const resetsAt = resets
@@ -355,7 +195,6 @@ export function geminiModelLimit(
   );
 }
 
-/** The conversation a Gemini `/app/<id>` URL names, or null for any other page. */
 export function geminiConversationId(url: unknown): string | null {
   return typeof url === "string"
     ? (GEMINI_CONVERSATION_PATTERN.exec(url)?.[1] ?? null)
@@ -364,48 +203,16 @@ export function geminiConversationId(url: unknown): string | null {
 
 function firstRow(rows: JsonRecord[]): JsonRecord {
   const row = rows[0];
-  if (!row)
+  if (!row) {
     throw new OpencliCommandError(
       "opencli returned no result row",
       "INVALID_OUTPUT",
       null
     );
+  }
   return row;
 }
 
-/**
- * Every served site's adapter contract, checked against opencli 2.0.3.
- *
- * Both sites continue a conversation, so a turn after the first sends only
- * what the site has not seen. Without that, every request re-sends the whole
- * transcript, which grows with every tool output until it no longer fits:
- * a Gemini worker turn was refused after ~25 tool calls once its prompt
- * passed the command-line limit.
- *
- * - ChatGPT takes the prompt as a file (`ask-file`) and names the
- *   conversation to continue with `--conversation`; the reply row carries its
- *   id. The file is typed into the composer after a marker line (`--inline`,
- *   AutoDev's patch) when the bridge says the prompt fits, and uploaded
- *   otherwise: the site rations uploads, so they are kept for the prompts
- *   too long to type. Its model is an account setting switched with
- *   `chatgpt model <level>`.
- * - Gemini's `ask` takes the prompt on the command line, the model with
- *   `--model`, and the chat with `--conversation <id>` or `--new` (AutoDev's
- *   opencli patch), which it opens and confirms on the sending page right
- *   before sending. The reply row carries the URL of the page that answered
- *   (`url`), which names the chat; a separate `status` could read another
- *   Gemini tab. `ask` also decorates every reply with a speech bubble, which
- *   is the adapter's, not the model's, and is removed. Its models are listed
- *   by `gemini models`.
- *
- * On both sites one command is the whole turn: it opens the chat, stops a
- * reply an interrupted turn left running there, and confirms on the page
- * that sends -- right before sending -- that it shows the turn's chat (a new
- * one for a fresh turn). Someone clicking in the tab, or anything else
- * driving the browser between turns, can then only fail a turn before its
- * prompt is sent, never redirect it. The bridge also runs a site's turns one
- * at a time, and checks that the reply came from the chat it continued.
- */
 export const OPENCLI_SITE_SPECS: Readonly<
   Record<OpencliSite, OpencliSiteSpec>
 > = {
@@ -424,13 +231,6 @@ export const OPENCLI_SITE_SPECS: Readonly<
             ...JSON_FORMAT
           ]);
         } catch (error) {
-          // The site's intelligence level is a preference, not the turn. The
-          // picker needs a visible page, so a switch fails whenever the tab
-          // is in the background -- which is how a machine runs when nobody
-          // is watching it -- and a turn must not die of that: the site
-          // keeps the level it has, the way Gemini's does when its model
-          // picker is out of reach. A failure here is not the provider
-          // being broken, and must not be reported as one.
           writeErrorLine(
             `opencli chatgpt could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
           );
@@ -479,14 +279,7 @@ export const OPENCLI_SITE_SPECS: Readonly<
           "ask",
           invocation.prompt,
           ...(model === null ? [] : ["--model", model]),
-          // The thinking level is a preference of the site's own account, not
-          // a different model: the level is asked for only when it differs
-          // from the one the site already has.
           ...(thinking == null ? [] : ["--thinking", thinking]),
-          // opencli opens the chat, stops a reply an interrupted turn left
-          // running, and confirms the chat on the sending page right before
-          // sending (AutoDev's patch): nothing that moves the tab between
-          // commands can redirect the prompt.
           ...(invocation.conversationId
             ? ["--conversation", invocation.conversationId]
             : ["--new", "true"]),
@@ -495,10 +288,6 @@ export const OPENCLI_SITE_SPECS: Readonly<
           ...JSON_FORMAT
         ]);
       let rows: JsonRecord[];
-      // The level the site ends up answering at. It is the level the turn
-      // asked for until the site refuses it: a site that answers at another
-      // level has not been put on the level that was asked for, and the
-      // bridge must not remember it as one.
       let thinking: string | null = invocation.siteThinking;
       let modelSelected = true;
       try {
@@ -507,9 +296,6 @@ export const OPENCLI_SITE_SPECS: Readonly<
           invocation.siteThinking
         );
       } catch (error) {
-        // The thinking level is a preference, like the model: a site that
-        // cannot take it answers at the level it has, the way it answers at
-        // the model it has when its model picker cannot render.
         if (isGeminiThinkingSelectionFailure(error)) {
           writeErrorLine(
             `opencli gemini could not switch to ${invocation.siteThinking}: ${errorMessage(error)}`
@@ -520,27 +306,16 @@ export const OPENCLI_SITE_SPECS: Readonly<
           );
           thinking = null;
         } else if (isGeminiModelSelectionFailure(error)) {
-          // Gemini's model picker does not render in a hidden or covered
-          // window, and opencli then cannot select any model -- before anything
-          // is sent. A root turn failed outright that way; it is asked with the
-          // model the site already has instead.
-          //
-          // The turn is answered, but it is answered at another model than the
-          // one that was asked for, so the turn says which model it could not
-          // put the site on: a route that lands on the wrong model is not a
-          // turn that went wrong, and it is invisible without this.
           writeErrorLine(
             `opencli gemini could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
           );
           rows = await ask(null, null);
           thinking = null;
           modelSelected = false;
-        } else throw geminiModelLimit(error) ?? error;
+        } else {
+          throw geminiModelLimit(error) ?? error;
+        }
       }
-      // The chat comes from the page `ask` answered on (its `url`), never from
-      // a later `status`: with more than one Gemini tab open, `status` can
-      // bind another tab, and a subagent's follow-ups were then sent into an
-      // older chat belonging to other sessions.
       const row = firstRow(rows);
       const { response } = replyFromRow(row);
       return answeredIn("Gemini", invocation.conversationId, {
@@ -555,673 +330,10 @@ export const OPENCLI_SITE_SPECS: Readonly<
   }
 };
 
-// A site added to OPENCLI_PROVIDER_SITES without a spec would route to a
-// bridge that cannot serve it; fail at load instead.
-for (const site of OPENCLI_SITES)
-  if (!Object.hasOwn(OPENCLI_SITE_SPECS, site))
+for (const site of OPENCLI_SITES) {
+  if (!Object.hasOwn(OPENCLI_SITE_SPECS, site)) {
     throw new Error(`opencli site ${site} has no adapter spec`);
-
-const RESPONSE_RULES = [
-  "## How to respond",
-  "You are the model behind a Codex coding agent working on the user's machine. You cannot see that machine and cannot run anything yourself: you act only by requesting tool calls, which the agent executes in its own sandbox. Their results arrive in the next message.",
-  "You know nothing about the machine's files, directories, commands, or state except what tool results in the conversation show. Never guess or assume them: when the task needs such a fact and no tool result states it yet, your reply must be the tool calls that find it out.",
-  "Your own chat tools -- this site's Python or code sandbox, file search, browsing -- run somewhere else, not on the agent's machine. They cannot see its repository, its files, or its tools, so never use them to check whether a path, a file, or a tool exists. A repository path or a function on `tools` (such as the `multi_agent_v1__*` delegation functions) is checked only through a tool call to the agent, for example `exec` running `text(typeof tools.multi_agent_v1__spawn_agent)`. Never report a capability or path as unavailable unless a tool result in this conversation shows it.",
-  "The tools listed under \"Tools\" below are the agent's tools, and they are your tools in this conversation: your shell, your file access, your access to the repository. They are not this site's built-in function calling and will never appear among your own built-in tools. You call them by writing <tool_call> blocks in the text of your reply, and the agent runs them on the user's machine. So when a message asks whether you have a shell, can read files, or have some tool, the answer is these tools: call them, and never reply that the repository, a shell, or a tool is unavailable without first calling it.",
-  "Reply in exactly one of two ways:",
-  '1. To act, write one or more tool calls, each in exactly this form, with only the tool\'s input between the tags:\n\n<tool_call name="TOOL_NAME">\nINPUT\n</tool_call>\n\nFor a tool that takes raw text (such as `exec`, whose input is JavaScript source), INPUT is that text, with no Markdown fences. For a tool that takes JSON arguments, INPUT is one JSON object matching its schema. You may write a short note before the calls. Stop after the last call: do not invent its result.',
-  "2. When the task is done, or you need nothing more from the tools, reply with your final answer as plain text and no tool_call tags.",
-  "Every reply is a full round trip through a web chat and costs minutes, so make each one do as much as it safely can. Put every independent read, search, and command the next step needs into one reply -- in `exec`, one script that runs them together (`await Promise.all([...])` over `tools.*`) and prints all their results. Read a whole file once instead of one range per reply, and never repeat a call whose result is already in the conversation. Stop only where a result decides what you do next.",
-  "Never write a <tool_output> block yourself; only the agent produces those."
-].join("\n\n");
-
-const CONTINUATION_HEADER =
-  "The conversation so far is in this chat's earlier messages. What follows is everything new since your last reply: the results of your tool calls and any new messages.";
-
-function toolsSection(tools: readonly CodexTool[]): string {
-  if (tools.length === 0)
-    return "## Tools\n\nNo tools are available on this turn: answer in plain text.";
-  const shell = shellAccess(tools);
-  return [
-    "## Tools",
-    ...(shell ? [`### Your shell\n\n${shell.guide}`] : []),
-    codexToolReference(tools)
-  ].join("\n\n");
-}
-
-/** Codex's shell tools when it offers them as plain functions (no code mode). */
-const SHELL_FUNCTION_TOOLS = new Set([
-  "exec_command",
-  "shell_command",
-  "shell"
-]);
-/** The command every shell example runs: harmless, and what a first look needs. */
-const EXAMPLE_COMMAND = "pwd && ls";
-
-/** How the model reaches the user's shell on this turn, if the tools carry one. */
-export interface ShellAccess {
-  /** One line naming the shell, for a continuation's reminder. */
-  readonly summary: string;
-  /** The shell named, with a complete example call, for a first prompt. */
-  readonly guide: string;
-}
-
-/**
- * The shell among a turn's tools, with an example call in the response
- * protocol -- or null when the turn offers no shell.
- *
- * In Codex's code mode the shell is not a tool of its own: it is
- * `exec_command`, a function on the `tools` global inside `exec`, and `exec`'s
- * description says its JavaScript has "no Node, no file system, no network
- * access" (true of the isolate, not of the functions it calls). A web chat
- * model reading that reference found no tool named like a shell, read `exec`
- * as a sandbox with no file access, and answered an explorer's "run `pwd`
- * with your shell tool" with `NO_REPO_ACCESS: functions.exec, container.exec,
- * python.exec, web.run` -- every explorer turn on ChatGPT on 2026-11-20 ended
- * that way, with no tool call (thread `01a1fbe9-d211-7bb1-a791-e80743556eef`).
- * The shell is named outright, with a call the model can copy.
- */
-export function shellAccess(tools: readonly CodexTool[]): ShellAccess | null {
-  const codeMode = tools.find(
-    (tool) =>
-      tool.kind === "custom" &&
-      nestedToolNames(tool.description).includes("exec_command")
-  );
-  if (codeMode) {
-    const summary = `Your shell on the user's machine is \`tools.exec_command\`, called inside \`${codeMode.name}\`.`;
-    return {
-      summary,
-      guide: `${summary} \`${codeMode.name}\`'s note that its JavaScript has no file system or network describes the script's own isolate: the functions on \`tools\` run on the user's machine, in its repository. To run a command, read a file, or list a directory, reply with a call like this one:\n\n<tool_call name="${codeMode.name}">\nconst result = await tools.exec_command({ cmd: ${JSON.stringify(EXAMPLE_COMMAND)} });\ntext(result.output);\n</tool_call>`
-    };
   }
-  const shell = tools.find(
-    (tool) => tool.kind === "function" && SHELL_FUNCTION_TOOLS.has(tool.name)
-  );
-  const argument = shell ? shellCommandArgument(shell) : null;
-  if (!shell || !argument) return null;
-  const summary = `Your shell on the user's machine is the \`${shell.name}\` tool.`;
-  return {
-    summary,
-    guide: `${summary} It runs on the user's machine, in its repository. To run a command, read a file, or list a directory, reply with a call like this one:\n\n<tool_call name="${shell.name}">\n${JSON.stringify(argument)}\n</tool_call>`
-  };
-}
-
-/** A shell function's arguments running the example command, from its schema. */
-function shellCommandArgument(tool: CodexTool): JsonRecord | null {
-  const properties = tool.parameters?.properties;
-  const required = tool.parameters?.required;
-  const name = Array.isArray(required) ? required[0] : undefined;
-  if (typeof name !== "string" || !properties || typeof properties !== "object")
-    return null;
-  const schema = (properties as JsonRecord)[name];
-  const array =
-    schema !== null &&
-    typeof schema === "object" &&
-    (schema as JsonRecord).type === "array";
-  return { [name]: array ? ["bash", "-lc", EXAMPLE_COMMAND] : EXAMPLE_COMMAND };
-}
-
-/**
- * The role prompt the bridge adds for a role whose instructions Codex does not
- * carry whole.
- *
- * A root orchestrator's policy reaches Codex as the root-delegation hook's
- * additional context, and Codex truncates it (an opencli-gemini root turn
- * received "Warning: truncated output (original token count: 6282)" and only
- * the first ~10 KB) -- the delegation half did not survive, and the model did
- * every step itself. The CLI bridges add the full role prompt from the router's
- * role header; this is the same for opencli, and it travels with every turn
- * because a site does not keep an earlier attachment in context.
- */
-function roleSection(role: string | null): string[] {
-  return role ? [`## Your role\n\n${role}`] : [];
-}
-
-const NEXT_REPLY =
-  "Write the agent's next reply to the conversation above, following the response rules.";
-
-const POST_COMPACTION_NEXT_REPLY = [
-  'The conversation above ends with a compacted handoff summary from an earlier context window of this same agent. Your tools listed under "Tools" above (including `exec`, `tools.exec_command`, and any `tools.multi_agent_v1__*` functions listed there) remain active on the user\'s machine right now.',
-  "Resume execution by writing `<tool_call>` blocks rather than summarizing the handoff or claiming tools, repository access, or child-agent handles are unavailable.",
-  NEXT_REPLY
-].join("\n\n");
-
-function isFreshCompactedTranscript(transcript: string): boolean {
-  const lastMarker = Math.max(
-    transcript.lastIndexOf(COMPACTED_SUMMARY_PREFIX),
-    transcript.lastIndexOf("<compacted-summary>")
-  );
-  if (lastMarker === -1) return false;
-  return !transcript.slice(lastMarker).includes("<tool_output>");
-}
-
-/** A heading in a code-mode tool's description: a server group or one nested tool. */
-const CODE_MODE_HEADING = /^(#{2,3}) /u;
-const NESTED_TOOL_HEADING = /^### `([^`]+)`/u;
-/** The longest summary a compacted nested tool keeps. */
-const COMPACT_SUMMARY_CHARS = 160;
-
-/** The first prose line of a nested tool's section, cut to a summary. */
-function sectionSummary(body: readonly string[]): string {
-  const line =
-    body.find((text) => {
-      const trimmed = text.trim();
-      return (
-        trimmed !== "" &&
-        !trimmed.startsWith("```") &&
-        !trimmed.startsWith("declare ")
-      );
-    }) ?? "";
-  const trimmed = line.trim();
-  return trimmed.length > COMPACT_SUMMARY_CHARS
-    ? `${trimmed.slice(0, COMPACT_SUMMARY_CHARS - 1)}…`
-    : trimmed;
-}
-
-/** How much of each MCP tool a compacted reference keeps. */
-export type ToolReferenceDetail = "summaries" | "names";
-
-/**
- * A code-mode tool's description with its MCP tools named, not documented.
- *
- * `exec`'s description documents every nested tool -- a description and a
- * TypeScript declaration each -- and a root orchestrator in the Codex app has
- * enough connector and MCP tools that its first prompt reached 300 KB. Gemini
- * takes its prompt through the composer, which did not finish taking 300 KB
- * in 270 s, so no Gemini root could start (session
- * `01a1b914-9431-7620-ad4a-e6362957b1e6`). Codex itself leaves deferred tools
- * out of a subagent's description and points to `ALL_TOOLS`; this does the
- * same for MCP tools: the built-in tools (commands, files, delegation) keep
- * their full sections, and every `mcp__*` tool keeps its name -- with its
- * summary line, or alone when even summaries do not fit -- and how to read
- * the rest.
- */
-export function compactCodeModeDescription(
-  description: string,
-  detail: ToolReferenceDetail = "summaries"
-): string {
-  const { preamble, sections } = codeModeSections(description);
-  const out = [...preamble];
-  let compacted = 0;
-  let names: string[] = [];
-  const flushNames = () => {
-    if (names.length > 0)
-      out.push(names.map((name) => `\`${name}\``).join(", "));
-    names = [];
-  };
-  for (const { heading, body } of sections) {
-    const name = NESTED_TOOL_HEADING.exec(heading)?.[1];
-    if (name?.startsWith("mcp__")) {
-      compacted += 1;
-      if (detail === "names") names.push(name);
-      else out.push(namedTool(name, sectionSummary(body)));
-      continue;
-    }
-    flushNames();
-    out.push(
-      "",
-      heading,
-      ...(name === undefined ? groupNotes(body, detail) : body)
-    );
-  }
-  flushNames();
-  if (compacted > 0)
-    out.push(
-      "",
-      `The ${compacted} \`mcp__*\` tools above are listed by name only, to keep this message short. Before calling one, read its full description inside \`exec\`: \`text(ALL_TOOLS.find((tool) => tool.name === "NAME").description)\`.`
-    );
-  return out.join("\n").replaceAll(/\n{3,}/gu, "\n\n");
-}
-
-/** A description's lines before its first heading, then each heading's section. */
-function codeModeSections(description: string): {
-  preamble: string[];
-  sections: Array<{ heading: string; body: string[] }>;
-} {
-  const preamble: string[] = [];
-  const sections: Array<{ heading: string; body: string[] }> = [];
-  for (const line of description.split("\n")) {
-    if (CODE_MODE_HEADING.test(line))
-      sections.push({ heading: line, body: [] });
-    else (sections.at(-1)?.body ?? preamble).push(line);
-  }
-  return { preamble, sections };
-}
-
-function namedTool(name: string, summary: string): string {
-  return `- \`${name}\`${summary ? `: ${summary}` : ""}`;
-}
-
-/** A server group's notes, cut to their first line, or dropped with names only. */
-function groupNotes(
-  body: readonly string[],
-  detail: ToolReferenceDetail
-): string[] {
-  const summary = sectionSummary(body);
-  return summary && detail === "summaries" ? [summary] : [];
-}
-
-/** The tools with every code-mode description compacted. */
-export function compactCodexTools(
-  tools: readonly CodexTool[],
-  detail: ToolReferenceDetail = "summaries"
-): CodexTool[] {
-  return tools.map((tool) =>
-    tool.kind === "custom"
-      ? {
-          ...tool,
-          description: compactCodeModeDescription(tool.description, detail)
-        }
-      : tool
-  );
-}
-
-/** The first prompt of a site conversation: everything the model needs. */
-export function renderOpencliPrompt(
-  instructions: string,
-  tools: readonly CodexTool[],
-  transcript: string,
-  role: string | null = null
-): string {
-  return [
-    "# Codex agent turn",
-    RESPONSE_RULES,
-    ...(instructions.trim()
-      ? [`## Instructions\n\n${instructions.trim()}`]
-      : []),
-    ...roleSection(role),
-    toolsSection(tools),
-    `## Conversation\n\n${transcript}`,
-    tools.length > 0 && isFreshCompactedTranscript(transcript)
-      ? POST_COMPACTION_NEXT_REPLY
-      : NEXT_REPLY
-  ].join("\n\n");
-}
-
-const CONTINUATION_RULES =
-  "Same rules as this chat's first message: to act, reply with <tool_call name=\"TOOL_NAME\">INPUT</tool_call> blocks (raw JavaScript for `exec`, one JSON object for a function tool) and stop after the last call; when the task is done, reply in plain text with no tags. The tools below are your tools, called only by writing those blocks in your reply, not this site's built-in functions. Nothing about the machine is known except what tool results show, and your own chat tools (Python, file search) cannot see it.";
-
-const ORCHESTRATOR_REMINDER = `You are still the root orchestrator, under the full role instructions in this chat's first message: delegate substantive work to child agents with \`tools.${MULTI_AGENT_SPAWN_TOOL}\` inside \`exec\`, follow them with \`tools.${MULTI_AGENT_WAIT_TOOL}\` in an \`exec\` cell whose first line is \`// @exec: {"yield_time_ms": 330000}\` (so the cell waits the full \`timeout_ms\` of 300000 instead of yielding after 30 seconds), and close finished ones with \`tools.${MULTI_AGENT_CLOSE_TOOL}\`.`;
-
-/**
- * Every tool by name, with the functions `exec` exposes: a reminder, not a
- * reference. The full reference is in the conversation's first message.
- */
-export function toolIndex(tools: readonly CodexTool[]): string {
-  if (tools.length === 0)
-    return "No tools are available on this turn: answer in plain text.";
-  const shell = shellAccess(tools);
-  const index = tools
-    .map((tool) => {
-      const description = tool.description.trim();
-      const newline = description.indexOf("\n");
-      const summary =
-        newline === -1 ? description : description.slice(0, newline);
-      const nested =
-        tool.kind === "custom" ? nestedToolNames(tool.description) : [];
-      return `- \`${tool.name}\`${summary ? `: ${summary}` : ""}${nested.length > 0 ? ` Functions on \`tools\`: ${nested.map((name) => `\`${name}\``).join(", ")}.` : ""}`;
-    })
-    .join("\n");
-  return shell ? `${shell.summary}\n\n${index}` : index;
-}
-
-/**
- * A follow-up prompt inside a continued site conversation.
- *
- * A chat keeps its own history, so the first message of a conversation
- * carries everything -- rules, instructions, role, the full tool reference,
- * the transcript -- and a follow-up carries only what is new: the results of
- * the model's calls and any new messages. Re-sending the reference and role
- * on every turn made each attachment tens of kilobytes for one tool output.
- * The follow-up still restates the call syntax, names every tool (and the
- * functions `exec` exposes), and for an orchestrator says it is still
- * orchestrating: given only a tool output, ChatGPT once read a spawn result
- * as a document and said it could not wait for the child, when the next step
- * was a `wait_agent` call it no longer had in view.
- */
-export function renderOpencliContinuation(
-  tools: readonly CodexTool[],
-  delta: string,
-  orchestrator = false
-): string {
-  return [
-    "# Codex agent turn (continued)",
-    CONTINUATION_RULES,
-    ...(orchestrator ? [ORCHESTRATOR_REMINDER] : []),
-    `## Tools\n\n${toolIndex(tools)}`,
-    `## New in the conversation\n\n${CONTINUATION_HEADER}\n\n${delta}`,
-    NEXT_REPLY
-  ].join("\n\n");
-}
-
-/** Who or what a rendered conversation item is: a message's role, or a tool call or its output. */
-export type TranscriptItemKind =
-  "user" | "assistant" | "developer" | "system" | "tool_call" | "tool_output";
-
-/** One conversation item as the prompt text it renders to. */
-export interface TranscriptEntry {
-  readonly kind: TranscriptItemKind;
-  readonly text: string;
-}
-
-/**
- * Immutable per-item segments used by `OpencliConversationLedger` so prefix
- * digests stay stable when continuing an existing web chat (`--conversation`).
- */
-export function transcriptEntries(input: unknown): TranscriptEntry[] {
-  if (!Array.isArray(input)) {
-    return renderCodexTranscriptSegments(input).map((segment) => ({
-      kind: segment.kind,
-      text: segment.text
-    }));
-  }
-  const entries: TranscriptEntry[] = [];
-  for (const item of input) {
-    for (const segment of renderCodexTranscriptSegments([item])) {
-      entries.push({ kind: segment.kind, text: segment.text });
-    }
-  }
-  return entries;
-}
-
-/**
- * Framed multi-turn transcript segments (with prior-turn tool elision and
- * mid-turn hop compression) used whenever `opencli` starts a fresh web chat.
- */
-export function framedTranscriptEntries(
-  input: unknown,
-  options: CodexTranscriptOptions = {}
-): TranscriptEntry[] {
-  return renderCodexTranscriptSegments(input, options).map((segment) => ({
-    kind: segment.kind,
-    text: segment.text
-  }));
-}
-
-const RECOVERY_PREFLIGHT_HEADING = "## Current-parent recovery preflight";
-
-/**
- * The conversation without the root-delegation hook's bootstrap, for a
- * prompt whose role section already carries it.
- *
- * Codex hands the bridge the hook's message as a developer item: the
- * orchestrator prompt and the code-search prompt, which the role section of
- * an orchestrator's first prompt renders too (with the orchestration skill in
- * full). The copy is about 10 KB of a first prompt that Gemini caps at
- * 100 KB and ChatGPT types only up to 32 KB. Only the hook's recovery note --
- * the parent session's id, which the role section cannot know -- is kept.
- */
-export function withoutHookBootstrap(
-  entries: readonly TranscriptEntry[],
-  heading: string
-): TranscriptEntry[] {
-  const opening = `<developer>\n${heading}`;
-  return entries.flatMap((entry) => {
-    if (entry.kind !== "developer" || !entry.text.startsWith(opening))
-      return [entry];
-    const recovery = entry.text.indexOf(RECOVERY_PREFLIGHT_HEADING);
-    if (recovery === -1) return [];
-    return [
-      {
-        kind: entry.kind,
-        text: `<developer>\n${entry.text.slice(recovery)}`
-      }
-    ];
-  });
-}
-
-/** Each conversation item as the text it renders to. */
-export function transcriptSegments(input: unknown): string[] {
-  return transcriptEntries(input).map((entry) => entry.text);
-}
-
-/**
- * The bytes a prompt spends on each kind of item, largest first, as
- * `tool_output 14210 B in 3, developer 1102 B in 1`. The turn log carries it
- * so a large prompt shows what filled it.
- */
-export function describeTranscriptBytes(
-  entries: readonly TranscriptEntry[]
-): string {
-  const totals = new Map<
-    TranscriptItemKind,
-    { items: number; bytes: number }
-  >();
-  for (const entry of entries) {
-    const total = totals.get(entry.kind) ?? { items: 0, bytes: 0 };
-    total.items += 1;
-    total.bytes += Buffer.byteLength(entry.text);
-    totals.set(entry.kind, total);
-  }
-  if (totals.size === 0) return "none";
-  return [...totals]
-    .sort((a, b) => b[1].bytes - a[1].bytes || (a[0] < b[0] ? -1 : 1))
-    .map(([kind, { items, bytes }]) => `${kind} ${bytes} B in ${items}`)
-    .join(", ");
-}
-
-/** What the prompt says about the part of the conversation it left out. */
-export function transcriptOmissionMarker(dropped: number): string {
-  return `[${dropped} earlier message${dropped === 1 ? "" : "s"} of this conversation left out to keep it within the site's limit]`;
-}
-
-/** Room the omission marker needs, so the transcript can be sized around it. */
-const OMISSION_MARKER_BYTES = 200;
-
-/**
- * The conversation, shortened to what a site's limit allows.
- *
- * A conversation grows with every tool result, and a chat that is new has to
- * carry all of it: the prompt a site gets is the whole conversation. The
- * limit is on the whole prompt, and the tool reference is not what fills it
- * -- the tool results are. So what is left out is the middle of the
- * conversation: the task and the most recent turns are what the next call
- * needs, and the turns between them are the ones a later turn is least
- * likely to read. The model is told that they are gone, rather than left to
- * find a conversation with a hole in it.
- */
-export function compactTranscript(
-  segments: readonly string[],
-  budgetBytes: number
-): { readonly text: string; readonly dropped: number } {
-  const joined = segments.join("\n\n");
-  if (segments.length === 0 || Buffer.byteLength(joined) <= budgetBytes)
-    return { text: joined, dropped: 0 };
-  const first = segments[0]!;
-  let size = Buffer.byteLength(first);
-  const kept: string[] = [];
-  for (let index = segments.length - 1; index >= 1; index -= 1) {
-    const segment = segments[index]!;
-    const cost = Buffer.byteLength(segment) + 2;
-    if (size + cost + OMISSION_MARKER_BYTES > budgetBytes) break;
-    size += cost;
-    kept.unshift(segment);
-  }
-  const dropped = segments.length - 1 - kept.length;
-  // Nothing was left out: the conversation fits once the head is counted
-  // against the limit, or the first message alone is larger than it is.
-  if (dropped <= 0) return { text: joined, dropped: 0 };
-  return {
-    text: [first, transcriptOmissionMarker(dropped), ...kept].join("\n\n"),
-    dropped
-  };
-}
-
-/** Rolling digests of every prefix of `segments`: entry `i` covers `segments[0..i]`. */
-export function prefixDigests(segments: readonly string[]): string[] {
-  const digests: string[] = [];
-  let previous = "";
-  for (const segment of segments) {
-    previous = createHash("sha256")
-      .update(previous)
-      .update("\0")
-      .update(segment)
-      .digest("hex");
-    digests.push(previous);
-  }
-  return digests;
-}
-
-export interface ConversationResume {
-  readonly conversationId: string;
-  /** The recorded prefix this resumes from, to spend once the turn succeeds. */
-  readonly digest: string;
-  /** How many leading segments that conversation has already seen. */
-  readonly seen: number;
-}
-
-/**
- * Which site conversation already holds a prefix of this transcript.
- *
- * Codex re-sends the whole conversation on every request. A site that can
- * continue a conversation only needs what it has not seen -- the tool outputs
- * and messages after its own last reply -- and re-sending a long transcript
- * through a browser composer is the slowest step of a turn. The ledger records,
- * after each reply, the digest of the transcript that reply ends; a later
- * request whose transcript starts with that prefix continues the conversation.
- *
- * An entry is spent when the turn that continued from it succeeds, not when
- * the turn starts. A retry of a failed turn therefore continues the same web
- * conversation -- at worst re-sending the new items the site already saw --
- * instead of starting a fresh chat with the whole transcript in one huge
- * attachment, which is what a router retry after a headers timeout did: the
- * model, handed that attachment, said its delegation tools did not exist.
- */
-export class OpencliConversationLedger {
-  private readonly entries = new Map<string, string>();
-  private readonly maxEntries: number;
-  private readonly file: string | null;
-
-  /**
-   * `file` keeps the ledger across bridge restarts. Held only in memory, it
-   * was lost on every deploy, crash or reboot, and the next message in an
-   * AutoDev session -- a user's "Continue" an hour later -- started a new chat
-   * with the whole transcript as its first message (225 KB in one case)
-   * instead of continuing the chat the session had been using.
-   */
-  constructor(options: { maxEntries?: number; file?: string | null } = {}) {
-    this.maxEntries = options.maxEntries ?? 256;
-    this.file = options.file ?? null;
-    this.load();
-  }
-
-  /**
-   * An entry belongs to one site and one Codex thread. The transcript digest
-   * alone identified a chat by its content, so two threads whose transcripts
-   * began alike -- subagents spawned with the same task -- could resolve to
-   * one chat; the thread makes every agent's chats its own.
-   */
-  private key(scope: OpencliChatScope, digest: string): string {
-    return `${scope.site}:${scope.thread ?? NO_THREAD}:${digest}`;
-  }
-
-  /** The longest recorded prefix of `digests` in this site and thread. */
-  find(
-    scope: OpencliChatScope,
-    digests: readonly string[]
-  ): ConversationResume | null {
-    for (let index = digests.length - 1; index >= 0; index -= 1) {
-      const digest = digests[index];
-      if (digest === undefined) continue;
-      const conversationId = this.entries.get(this.key(scope, digest));
-      if (conversationId === undefined) continue;
-      return { conversationId, seen: index + 1, digest };
-    }
-    return null;
-  }
-
-  /** Spend an entry once the turn that continued from it has succeeded. */
-  consume(scope: OpencliChatScope, digest: string): void {
-    if (this.entries.delete(this.key(scope, digest))) this.save();
-  }
-
-  record(
-    scope: OpencliChatScope,
-    digest: string,
-    conversationId: string
-  ): void {
-    const key = this.key(scope, digest);
-    this.entries.delete(key);
-    this.entries.set(key, conversationId);
-    while (this.entries.size > this.maxEntries) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-    }
-    this.save();
-  }
-
-  get size(): number {
-    return this.entries.size;
-  }
-
-  /** Read the saved ledger; an unreadable file is an empty ledger, not a failure. */
-  private load(): void {
-    if (this.file === null || !existsSync(this.file)) return;
-    try {
-      const saved: unknown = JSON.parse(readFileSync(this.file, "utf8"));
-      const entries =
-        isRecord(saved) && Array.isArray(saved.entries) ? saved.entries : [];
-      for (const entry of entries.slice(-this.maxEntries)) {
-        if (
-          Array.isArray(entry) &&
-          typeof entry[0] === "string" &&
-          LEDGER_KEY_PATTERN.test(entry[0]) &&
-          typeof entry[1] === "string" &&
-          entry[1].length > 0
-        )
-          this.entries.set(entry[0], entry[1]);
-      }
-    } catch {
-      this.entries.clear();
-    }
-  }
-
-  /** Write the ledger atomically, oldest entry first, so eviction order survives. */
-  private save(): void {
-    if (this.file === null) return;
-    try {
-      mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-      atomicWriteSync(
-        this.file,
-        JSON.stringify({ schema: LEDGER_SCHEMA, entries: [...this.entries] }),
-        { mode: 0o600 }
-      );
-    } catch {
-      // A ledger that cannot be written still serves this process; the next
-      // restart then starts fresh chats, which is the state before persisting.
-    }
-  }
-}
-
-const LEDGER_SCHEMA = "autodev-opencli-conversations-v1";
-const LEDGER_KEY_PATTERN = /^[a-z]+:[\w.-]{1,128}:[0-9a-f]{64}$/u;
-/** The thread part of a key for a request that named no Codex thread. */
-const NO_THREAD = "-";
-
-/** Whose chats an entry belongs to: one site, one Codex thread (agent). */
-export interface OpencliChatScope {
-  readonly site: OpencliSite;
-  /** The Codex thread; null when the request named none. */
-  readonly thread: string | null;
-}
-
-export interface OpencliReply {
-  readonly response: string;
-  readonly conversationId: string | null;
-  /**
-   * The thinking level the site answered at, when the site has levels of its
-   * own. `null` means the turn did not establish one: the site was never asked
-   * for a level, or it declined the level it was asked for and answered at
-   * the level it had.
-   */
-  readonly thinking?: string | null;
-  /**
-   * Whether the site is now on the model the turn asked for: it was already
-   * on it, or the turn switched it. `false` when the switch failed and the
-   * site answered at the model it had, so the bridge does not record a model
-   * the site is not on and the next turn asks for it again.
-   */
-  readonly modelSelected: boolean;
 }
 
 export class OpencliCommandError extends Error {
@@ -1244,10 +356,6 @@ function stringField(record: JsonRecord, ...keys: string[]): string | null {
   return null;
 }
 
-/**
- * The rows of opencli's JSON envelope: `{ ok: true, data: [rows] }`, or the
- * typed failure in `{ ok: false, error: { code, message, exitCode, hint } }`.
- */
 export function parseOpencliOutput(
   stdout: string,
   exitCode: number | null
@@ -1263,12 +371,13 @@ export function parseOpencliOutput(
       exitCode
     );
   }
-  if (!isRecord(envelope))
+  if (!isRecord(envelope)) {
     throw new OpencliCommandError(
       "opencli returned a non-object result",
       "INVALID_OUTPUT",
       exitCode
     );
+  }
   if (envelope.ok !== true) {
     const error = isRecord(envelope.error) ? envelope.error : {};
     const message = stringField(error, "message") ?? "opencli command failed";
@@ -1283,316 +392,19 @@ export function parseOpencliOutput(
   return data.filter(isRecord);
 }
 
-/**
- * The reply an `ask` row carries. `ask` names the conversation
- * `conversationId`, `ask-file` names it `conversation_id`; both are read.
- */
 export function replyFromRow(
   row: JsonRecord
 ): Pick<OpencliReply, "response" | "conversationId"> {
   const response = stringField(row, "response");
-  if (response === null)
+  if (response === null) {
     throw new OpencliCommandError(
       "opencli returned an empty reply",
       "EMPTY_RESPONSE",
       null
     );
+  }
   return {
     response,
     conversationId: stringField(row, "conversationId", "conversation_id")
-  };
-}
-
-export interface ParsedToolCall {
-  readonly name: string;
-  readonly input: string;
-}
-
-export type ParsedReplySegment =
-  | { readonly type: "message"; readonly text: string }
-  | { readonly type: "tool_call"; readonly call: ParsedToolCall };
-
-export interface ParsedReply {
-  /**
-   * Safe prose preceding the first pending tool call (or all prose if no call).
-   */
-  readonly text: string;
-  readonly calls: ParsedToolCall[];
-  /**
-   * Initial prose followed by pending calls in original order; speculative
-   * trailing prose is omitted.
-   */
-  readonly segments: ParsedReplySegment[];
-  /**
-   * Whether the prose still holds a `<tool_call` the parser could not read.
-   * Such a reply asked for a call it did not complete; sending it to Codex as
-   * prose ends the agent's turn on an answer the model never gave.
-   */
-  readonly unparsedCall: boolean;
-  /**
-   * Whether the reply wrote a `<tool_output>` block of its own. Only Codex
-   * produces tool output; a reply that writes one has started inventing the
-   * results of its calls, so everything from that block on is dropped.
-   */
-  readonly inventedOutput: boolean;
-}
-
-/**
- * One call: `<tool_call name="...">body</tool_call>`. The name may be single-
- * or double-quoted and may carry a namespace (`mcp__x__y`, `ns.tool`). A
- * final call the reply ends inside -- the site cut it off, or the model
- * stopped before the closing tag -- runs to the end of the reply.
- */
-const TOOL_CALL_PATTERN =
-  /<tool_call\s+name=(["'])([\w.:/-]{1,128})\1[^>]*>([\s\S]*?)(?:<\/tool_call>|$(?![\s\S]))/gu;
-const TOOL_CALL_OPENING = /<tool_call\b/u;
-const TOOL_OUTPUT_OPENING = /<tool_output\b/u;
-/** A reply the site rendered as escaped HTML carries its calls as `&lt;tool_call`. */
-const ESCAPED_TOOL_CALL = /&lt;\/?tool_call\b/u;
-const HTML_ENTITIES: Readonly<Record<string, string>> = {
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&amp;": "&"
-};
-const HTML_ENTITY_PATTERN = /&(?:lt|gt|quot|#39|amp);/gu;
-const FENCED_BODY_PATTERN = /^```[\w-]*\n([\s\S]*?)\n?```$/u;
-const EMPTY_ESCAPE_TAG_PATTERN = /<escape>\s*<\/escape>/gu;
-const ESCAPE_TAG_PATTERN = /<\/?escape>/gu;
-const LEADING_NEWLINE_PATTERN = /^\r?\n/u;
-const TRAILING_NEWLINE_PATTERN = /\r?\n$/u;
-const BLANK_RUN_PATTERN = /\n{3,}/gu;
-
-/**
- * The body of one call, as the tool should receive it.
- *
- * A chat model fences code by habit even when told not to; a fence around the
- * whole body is unwrapped, since Codex would otherwise run the backticks.
- */
-function callBody(raw: string): string {
-  const body = raw
-    .replace(LEADING_NEWLINE_PATTERN, "")
-    .replace(TRAILING_NEWLINE_PATTERN, "");
-  const fenced = FENCED_BODY_PATTERN.exec(body.trim());
-  return fenced?.[1] ?? body;
-}
-
-/** Strip transcript-only wrappers from prose between tool-call spans. */
-function cleanText(value: string): string {
-  return value
-    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
-    .replaceAll(ESCAPE_TAG_PATTERN, "")
-    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
-    .trim();
-}
-
-/**
- * The shapes a site reply takes when it reports that the agent's own tools --
- * or the repository they reach -- are not available to it.
- *
- * A web chat site runs a model that has tools of its own: a Python sandbox, a
- * file search, a browser. Asked to act as a Codex agent, it sometimes lists
- * *those* tools and concludes that the repository and the agent's tools are out
- * of reach, then says so in prose instead of making a tool call. The bridge's
- * own prompt warns against exactly this ("never report a capability or path as
- * unavailable unless a tool result in this conversation shows it"), and the
- * warning does not always land: on 2026-11-20 fourteen explorer turns in one
- * session came back this way, each one a confident statement that the work was
- * impossible.
- *
- * Such a reply is not an answer to the task; it is a report that the turn could
- * not be carried out. Delivered as an answer it ends the agent's turn with a
- * false result, and the caller reads the result as the work. The bridge
- * refuses these turns instead, and the router moves on to a route whose tool
- * channel works.
- *
- * The site's wording is not ours to fix, so this matches prose. It is kept
- * narrow on purpose: a matcher that fires on ordinary answers would refuse
- * turns that succeeded.
- */
-const TOOL_CHANNEL_REFUSAL_PATTERNS: readonly RegExp[] = [
-  /NO_REPO_ACCESS/i,
-  /\b(?:exec_command|apply_patch)\b[^\n]{0,140}\b(?:not exposed|not available|unavailable|missing|not provided|not connected)\b/i,
-  /\b(?:not exposed|not available|unavailable|missing|not provided|not connected)\b[^\n]{0,140}\b(?:exec_command|apply_patch|codegraphcontext|cocoindex)\b/i,
-  /\b(?:do(?:es)? not expose|cannot see|has no access to)\b[^\n]{0,140}\b(?:exec_command|apply_patch|codegraphcontext|cocoindex|shell|filesystem|repository|repo)\b/i,
-  /\b(?:repository|repo|workspace|filesystem|file system)\b[^\n]{0,140}\b(?:access is unavailable|is unavailable|not accessible|inaccessible)\b/i,
-  /\bno (?:shell|filesystem|repository|repo|workspace) access\b/i,
-  /\bblocked by unavailable\b[^\n]{0,120}\b(?:tools?|runtime)\b/i,
-  /\brequires? access to the\b[^\n]{0,120}\bworkspace\b/i
-];
-
-/**
- * Whether a reply declares the agent's tools, or the repository they reach,
- * unavailable to it.
- */
-export function declaresToolChannelUnavailable(text: string): boolean {
-  if (!text) return false;
-  // The declaration is at the start of the reply; a long answer that mentions
-  // it later is talking about something else.
-  const opening = text.slice(0, 2000);
-  return TOOL_CHANNEL_REFUSAL_PATTERNS.some((pattern) => pattern.test(opening));
-}
-
-/** Split a site reply into its prose and the tool calls it requests. */
-export function parseOpencliReply(response: string): ParsedReply {
-  const calls: ParsedToolCall[] = [];
-  // A site that shows the reply as HTML escapes it whole: the calls and
-  // their bodies alike. Only such a reply is unescaped.
-  const source =
-    !TOOL_CALL_OPENING.test(response) && ESCAPED_TOOL_CALL.test(response)
-      ? response.replaceAll(
-          HTML_ENTITY_PATTERN,
-          (entity) => HTML_ENTITIES[entity] ?? entity
-        )
-      : response;
-  // A model that writes a call's output itself goes on as if it had read it:
-  // a Gemini root turn ran one call, invented its result in the same reply,
-  // and later reported tests passing that never ran (session
-  // 01a1e592-6349-73a2-8d2f-3d8bea217417). The calls before the invented
-  // output are real requests; nothing from it on is.
-  const invented = TOOL_OUTPUT_OPENING.exec(source);
-  const usable = invented ? source.slice(0, invented.index) : source;
-  const segments: ParsedReplySegment[] = [];
-  let offset = 0;
-  let beforeFirstCall = true;
-  let firstMessage = "";
-  for (const match of usable.matchAll(TOOL_CALL_PATTERN)) {
-    const before = cleanText(usable.slice(offset, match.index));
-    if (beforeFirstCall) {
-      // Codex has not executed the call yet: any later prose would be an
-      // unverified continuation, even without an explicit <tool_output>.
-      firstMessage = before;
-      if (before) segments.push({ type: "message", text: before });
-      beforeFirstCall = false;
-    }
-    const call: ParsedToolCall = {
-      name: match[2] ?? "",
-      input: callBody(match[3] ?? "")
-    };
-    calls.push(call);
-    segments.push({ type: "tool_call", call });
-    offset = match.index + match[0].length;
-  }
-  // The assistant may emit several independent calls. Keep those calls in
-  // order, but never display prose it wrote after its first unexecuted call.
-  const text = beforeFirstCall ? cleanText(usable) : firstMessage;
-  if (beforeFirstCall && text) segments.push({ type: "message", text });
-  // Do not silently accept an incomplete call even in discarded trailing
-  // prose; the model must repair the malformed request on another route.
-  const unparsedCall = TOOL_CALL_OPENING.test(
-    usable.replaceAll(TOOL_CALL_PATTERN, "")
-  );
-  return {
-    text,
-    calls,
-    segments,
-    unparsedCall,
-    inventedOutput: invented !== null
-  };
-}
-
-/**
- * The prose of a reply that is still being written, as far as it is settled
- * enough to show Codex before the reply ends.
- *
- * A reply shown cannot be taken back, so a prefix is shown only once it is
- * certain to be part of the finished reply's text:
- *
- * - Only an agreed prefix: the page can rewrite what it shows. The final
- *   whitespace-delimited word is held back until a delimiter (or completion).
- * - Only what two readings in a row agree on: the page can rewrite what it
- *   shows. A reading that no longer starts with what was shown adds nothing,
- *   and what was shown is never revised.
- * - Nothing from the first `<tool_call`, `<tool_output` or HTML entity on:
- *   a call is run only from the finished reply, read whole, and a call being
- *   written is not prose; an entity is where a site that escapes its replies
- *   would have the finished text read differently.
- *
- * The text is normalized as parseOpencliReply does, so what was shown is a
- * prefix of the finished reply's text.
- */
-export class OpencliReplyPreview {
-  private previous = "";
-  private shownText = "";
-
-  /** Everything shown so far. */
-  get shown(): string {
-    return this.shownText;
-  }
-
-  /** The text to add to what is shown for this reading of the reply, if any. */
-  next(reading: string): string | null {
-    const settled = settledProse(reading);
-    const agreed = commonPrefix(this.previous, settled);
-    this.previous = settled;
-    const unfinishedWord = /\S+$/u.exec(agreed);
-    const stable = (
-      unfinishedWord ? agreed.slice(0, unfinishedWord.index) : agreed
-    ).trimEnd();
-    if (stable.length <= this.shownText.length) return null;
-    if (!stable.startsWith(this.shownText)) return null;
-    const added = stable.slice(this.shownText.length);
-    this.shownText = stable;
-    return added;
-  }
-}
-
-const PREVIEW_STOP_PATTERN =
-  /<tool_call\b|<tool_output\b|&(?:lt|gt|quot|#39|amp);/u;
-
-/** The reply's prose before any call, output or entity, normalized for display. */
-function settledProse(reading: string): string {
-  const stop = PREVIEW_STOP_PATTERN.exec(reading);
-  return (stop ? reading.slice(0, stop.index) : reading)
-    .replaceAll(EMPTY_ESCAPE_TAG_PATTERN, "")
-    .replaceAll(ESCAPE_TAG_PATTERN, "")
-    .replaceAll(BLANK_RUN_PATTERN, "\n\n")
-    .trimStart();
-}
-
-function commonPrefix(left: string, right: string): string {
-  let length = 0;
-  const limit = Math.min(left.length, right.length);
-  while (length < limit && left[length] === right[length]) length += 1;
-  return left.slice(0, length);
-}
-
-/**
- * The Responses item for one parsed call.
- *
- * A call to a tool Codex did not offer is still sent as a `function_call`:
- * Codex answers an unknown tool with an error output, which tells the model
- * its mistake on the next request instead of ending the turn on prose that
- * looks like a call.
- */
-export function opencliToolCallItem(
-  call: ParsedToolCall,
-  tools: readonly CodexTool[],
-  ids: { itemId: string; callId: string }
-): JsonRecord {
-  const tool = tools.find((candidate) => candidate.name === call.name);
-  if (tool?.kind === "custom")
-    return codexToolCallItem(tool, { input: call.input }, ids);
-  if (tool) {
-    let args: unknown;
-    try {
-      args = JSON.parse(call.input || "{}");
-    } catch {
-      args = null;
-    }
-    if (isRecord(args)) return codexToolCallItem(tool, args, ids);
-  }
-  // Unknown tool, or arguments that are not a JSON object: pass the text as
-  // given so Codex reports the error to the model rather than the bridge
-  // silently rewriting what it asked for.
-  return {
-    id: ids.itemId,
-    type: "function_call",
-    status: "completed",
-    call_id: ids.callId,
-    name: call.name,
-    ...(tool?.namespace ? { namespace: tool.namespace } : {}),
-    arguments: call.input
   };
 }

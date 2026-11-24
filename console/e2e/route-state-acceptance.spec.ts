@@ -37,7 +37,6 @@ const CONTROL_API_ROUTES: readonly string[] = [
   "/permissions",
   "/tools",
   "/evaluations",
-  "/memory",
   "/github"
 ];
 

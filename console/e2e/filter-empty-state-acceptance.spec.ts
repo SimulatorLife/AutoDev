@@ -29,8 +29,7 @@ const SEARCHABLE_LISTS: readonly {
   readonly query: string;
 }[] = [
   { path: "/prompts", query: "q" },
-  { path: "/tools", query: "q" },
-  { path: "/memory", query: "query" }
+  { path: "/tools", query: "q" }
 ];
 
 for (const list of SEARCHABLE_LISTS) {

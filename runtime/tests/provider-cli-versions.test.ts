@@ -52,7 +52,7 @@ test("a provider's CLI is named by the command an operator would type", () => {
   // The name of each provider's CLI is known whether or not the CLI is
   // installed, so a provider whose CLI is missing is still named.
   assert.equal(providerCliName("codex"), "codex");
-  assert.equal(providerCliName("minimax"), "mmx");
+  assert.equal(providerCliName("minimax"), "mcode");
   assert.equal(providerCliName("copilot"), "copilot");
   assert.equal(providerCliName("opencli-chatgpt"), "opencli");
   assert.equal(providerCliName("opencli-gemini"), "opencli");
@@ -90,14 +90,14 @@ test("the version can be read when a CLI prints it on stderr", async () => {
 test("a CLI that prints no version is not read as one", async () => {
   const capture = await captureCliVersion(
     nodeCommand(
-      "mmx",
+      "mcode",
       String.raw`process.stdout.write('command not found\n'); process.exitCode = 127`
     )
   );
   assert.equal(capture.ok, false);
   assert.equal(
     capture.ok ? "" : capture.reason,
-    "The mmx CLI exited with status 127 without reporting a version."
+    "The mcode CLI exited with status 127 without reporting a version."
   );
 });
 

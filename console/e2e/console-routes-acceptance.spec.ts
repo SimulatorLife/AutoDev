@@ -161,7 +161,6 @@ test("Overview is a static resource landing page linking to canonical destinatio
     "Usage",
     "Evaluations",
     "Playtesting",
-    "Memory",
     "Workspaces",
     "GitHub"
   ]) {

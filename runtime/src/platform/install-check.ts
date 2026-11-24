@@ -57,7 +57,6 @@ import {
   OBSOLETE_HOOKS,
   OBSOLETE_LAUNCH,
   OBSOLETE_PATHS,
-  PROFILES,
   PROMPT_ROLES,
   renderCodexUserHooks,
   ROLES,
@@ -216,7 +215,6 @@ function staleCheck(
     ),
     ...OBSOLETE_PATHS.map((filePath) => path.join(options.home, filePath)),
     path.join(hooks, "codex", "lib", "codex-spawn-tools.mjs"),
-    path.join(hooks, "codex", "lib", "codex-state-collector.mjs"),
     path.join(hooks, "codex", "lib", "spawn-shim-mcp.mjs"),
     path.join(hooks, OBSOLETE_DASHBOARD),
     ...OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
@@ -718,15 +716,6 @@ function checkProfilesAndCatalogs(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
-  for (const name of PROFILES)
-    check(
-      `profile ${name}`,
-      runtimeLinkMatches(
-        path.join(paths.repositoryRoot, `config/profiles/${name}.config.toml`),
-        path.join(paths.codexHome, `${name}.config.toml`)
-      ),
-      failures
-    );
   for (const name of CATALOGS)
     check(
       `catalog ${name}`,
@@ -771,17 +760,11 @@ function checkPortableConfig(
     path.join(paths.repositoryRoot, "config/config.autodev.toml"),
     "utf8"
   );
-  for (const provider of [
-    "local_model_router",
-    "claude_code_subscription",
-    "minimax",
-    "antigravity_cli"
-  ])
-    check(
-      `provider config ${provider}`,
-      portable.includes(`[model_providers.${provider}]`),
-      failures
-    );
+  check(
+    "provider config local_model_router",
+    portable.includes("[model_providers.local_model_router]"),
+    failures
+  );
   check(
     "provider auth boundary",
     portable.includes("requires_openai_auth = false"),

@@ -12,7 +12,6 @@ import type {
 
 import { runRootDelegation } from "../src/hooks/root-delegation.ts";
 import { createSessionStart } from "../src/hooks/session-start.ts";
-import { createSubagentStart } from "../src/hooks/subagent-start.ts";
 
 function withCodexHome<T>(callback: (home: string) => T): T {
   const previous = process.env.CODEX_HOME;
@@ -109,30 +108,6 @@ test("session-start surfaces the typed exit code from the ensure runner", async 
   };
   const run = createSessionStart(runner);
   assert.equal(await run(Buffer.from("{}")), 1);
-});
-
-test("subagent-start calls typed provider owners in order and fails closed", async () => {
-  const calls: string[] = [];
-  const run = createSubagentStart({
-    claude: async (input) => {
-      calls.push(`claude:${input}`);
-      return 0;
-    },
-    minimax: async (input) => {
-      calls.push(`minimax:${input}`);
-      return 0;
-    },
-    antigravity: async (input) => {
-      calls.push(`antigravity:${input}`);
-      return 0;
-    }
-  });
-  assert.equal(await run(Buffer.from('{"model":"MiniMax-M3"}')), 0);
-  assert.deepEqual(calls, [
-    'claude:{"model":"MiniMax-M3"}',
-    'minimax:{"model":"MiniMax-M3"}',
-    'antigravity:{"model":"MiniMax-M3"}'
-  ]);
 });
 
 test("root-delegation skips configured leaf models", async () => {

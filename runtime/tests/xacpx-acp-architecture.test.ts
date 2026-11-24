@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -6,10 +7,19 @@ import {
   readFileSync,
   rmSync
 } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import {
+  AGENT_METHODS,
+  AgentApp,
+  CLIENT_METHODS,
+  PROTOCOL_VERSION
+} from "@agentclientprotocol/sdk";
 
 import {
   ACP_PROVIDER_IDS,
@@ -31,10 +41,12 @@ import {
 } from "../src/platform/mcode-projection.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
+import { findMcodeBinary } from "../src/shared/executables.ts";
 import {
   extractSkillReadPath,
   matchSkillReadTarget
 } from "../src/shared/skill-reads.ts";
+import { didHandleAcpRoute } from "../src/xacpx/http.ts";
 import {
   type AcpConsoleSessionEvent,
   resolveXacpxBinaries,
@@ -312,4 +324,190 @@ test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli 
   });
   assert.equal(ghPlan.kind, "opencli-github-worker");
   assert.match(ghPlan.session.provider, /^opencli-(?:chatgpt|gemini)$/u);
+});
+
+test("XacpxSessionManager executes live ACP turns, enforces read-only permissions, and serves /v1/acp/sessions", async () => {
+  const permissionOutcomes: string[] = [];
+  let createdSessions = 0;
+  let cancelledSessions = 0;
+  let closedSessions = 0;
+
+  const createMockAcpAgent = () =>
+    new AgentApp({ name: "mock-acp-agent" })
+      .onRequest(AGENT_METHODS.initialize, async () => ({
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false }
+      }))
+      .onRequest(AGENT_METHODS.session_new, async () => {
+        createdSessions += 1;
+        return { sessionId: `acp-live-${createdSessions}` };
+      })
+      .onRequest(AGENT_METHODS.session_prompt, async ({ params, client }) => {
+        const promptText = params.prompt
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .join("");
+        const permission = await client.request(
+          CLIENT_METHODS.session_request_permission,
+          {
+            sessionId: params.sessionId,
+            toolCall: {
+              toolCallId: "tc-1",
+              name: promptText.includes("attempt-write")
+                ? "mcp__filesystem__write_file"
+                : "mcp__filesystem__read_text_file",
+              rawInput: { path: "/tmp/example.ts" }
+            },
+            options: [
+              {
+                optionId: "allow",
+                name: "Allow once",
+                kind: "allow_once"
+              },
+              {
+                optionId: "reject",
+                name: "Reject once",
+                kind: "reject_once"
+              }
+            ]
+          }
+        );
+        permissionOutcomes.push(
+          permission.outcome.outcome === "selected"
+            ? permission.outcome.optionId
+            : permission.outcome.outcome
+        );
+        await client.notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `echo:${promptText}`
+            }
+          }
+        });
+        return { stopReason: "end_turn" };
+      })
+      .onNotification(AGENT_METHODS.session_cancel, () => {
+        cancelledSessions += 1;
+      })
+      .onRequest(AGENT_METHODS.session_close, async () => {
+        closedSessions += 1;
+        return {};
+      });
+
+  const events: AcpConsoleSessionEvent[] = [];
+  let transportCalls = 0;
+  const opencliCalls: string[] = [];
+  const manager = new XacpxSessionManager({
+    consoleSink: {
+      emit: (event) => {
+        events.push(event);
+      }
+    },
+    acpTransportFactory: () => {
+      transportCalls += 1;
+      return { target: createMockAcpAgent() };
+    },
+    githubWorkerRunner: async (task) => {
+      opencliCalls.push(`${task.provider}:${task.prompt}`);
+      return { outputText: "github pr #42 opened", exitCode: 0 };
+    }
+  });
+
+  // Read-only explorer denies mutating tools and allows read-only tools across
+  // two turns sharing one pinned ACP session.
+  const firstTurn = await manager.executeTurn({
+    sessionId: "sess-ro-1",
+    role: "explorer",
+    cwd: REPO_ROOT,
+    systemPrompt: "Explorer prompt",
+    promptOrTask: "attempt-write"
+  });
+  assert.equal(firstTurn.kind, "acp");
+  assert.equal(firstTurn.outputText, "echo:attempt-write");
+  assert.equal(firstTurn.stopReason, "end_turn");
+  assert.equal(transportCalls, 1);
+
+  const followUpTurn = await manager.promptSession(
+    "sess-ro-1",
+    "read-file-next"
+  );
+  assert.equal(followUpTurn.acpSessionId, firstTurn.acpSessionId);
+  assert.equal(followUpTurn.outputText, "echo:read-file-next");
+  assert.equal(transportCalls, 1);
+  assert.deepEqual(permissionOutcomes, ["reject", "allow"]);
+
+  // Direct github-worker web execution bypasses ACP and /v1/responses.
+  const ghResult = await manager.executeTurn({
+    sessionId: "sess-gh-1",
+    role: GITHUB_WORKER_ROLE,
+    cwd: REPO_ROOT,
+    systemPrompt: "",
+    promptOrTask: "Inspect PR checks",
+    repository: "SimulatorLife/AutoDev"
+  });
+  assert.equal(ghResult.kind, "opencli-github-worker");
+  assert.equal(ghResult.outputText, "github pr #42 opened");
+  assert.equal(opencliCalls.length, 1);
+
+  // HTTP /v1/acp/sessions endpoint round-trip.
+  const server = createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    void (async () => {
+      const handled = await didHandleAcpRoute(
+        request,
+        response,
+        pathname,
+        manager
+      );
+      if (!handled) {
+        response.writeHead(404).end();
+      }
+    })();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const listResponse = await fetch(
+      `http://127.0.0.1:${port}/v1/acp/sessions`
+    );
+    assert.equal(listResponse.status, 200);
+    const listBody = (await listResponse.json()) as {
+      sessions: { sessionId: string }[];
+    };
+    assert.equal(listBody.sessions.length, 2);
+
+    const cancelResponse = await fetch(
+      `http://127.0.0.1:${port}/v1/acp/sessions/sess-ro-1/cancel`,
+      { method: "POST" }
+    );
+    assert.equal(cancelResponse.status, 200);
+    assert.equal(cancelledSessions, 1);
+
+    const deleteResponse = await fetch(
+      `http://127.0.0.1:${port}/v1/acp/sessions/sess-ro-1`,
+      { method: "DELETE" }
+    );
+    assert.equal(deleteResponse.status, 200);
+    assert.equal(closedSessions, 1);
+    assert.equal(manager.hasLiveAcpSession("sess-ro-1"), false);
+  } finally {
+    await manager.closeAllSessions();
+    server.close();
+  }
+
+  // Minimax routes cleanly through mcode ACP and binary discovery.
+  const mcodeLaunch = buildAcpProviderLaunchSpec({
+    provider: "mcode",
+    role: "worker",
+    model: "MiniMax-M3",
+    cwd: REPO_ROOT,
+    systemPrompt: "Worker",
+    sessionId: "sess-mcode-1"
+  });
+  assert.equal(mcodeLaunch.command, "mcode");
+  assert.deepEqual(mcodeLaunch.args, ["acp"]);
+  assert.equal(findMcodeBinary({ PATH: "", HOME: "/nonexistent-home" }), null);
 });

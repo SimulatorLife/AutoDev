@@ -4,10 +4,6 @@ import test from "node:test";
 import { LABEL_AUTODEV_CONSOLE } from "@simulatorlife/autodev-runtime/platform/console-ensure";
 import {
   type KillSignal,
-  LABEL_ANTIGRAVITY_PROXY,
-  LABEL_CLAUDE_BRIDGE,
-  LABEL_COPILOT_PROXY,
-  LABEL_MINIMAX_PROXY,
   LABEL_MODEL_ROUTER,
   LABEL_OPENCLI_PROXY,
   MANAGED_SERVICE_LABELS,
@@ -20,19 +16,11 @@ import {
 const PORTS: Record<ManagedServiceLabel, number> = {
   [LABEL_AUTODEV_CONSOLE]: 3300,
   [LABEL_MODEL_ROUTER]: 4100,
-  [LABEL_CLAUDE_BRIDGE]: 4000,
-  [LABEL_MINIMAX_PROXY]: 18_765,
-  [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003,
   [LABEL_OPENCLI_PROXY]: 4004
 };
 const JOB_PIDS: Record<ManagedServiceLabel, number> = {
   [LABEL_AUTODEV_CONSOLE]: 600,
   [LABEL_MODEL_ROUTER]: 100,
-  [LABEL_CLAUDE_BRIDGE]: 200,
-  [LABEL_MINIMAX_PROXY]: 300,
-  [LABEL_ANTIGRAVITY_PROXY]: 400,
-  [LABEL_COPILOT_PROXY]: 500,
   [LABEL_OPENCLI_PROXY]: 700
 };
 
@@ -214,17 +202,17 @@ test("a crash-looping bridge is reported at once with its log, without holding u
   const fake = deps(
     {},
     {
-      jobLines: { [LABEL_COPILOT_PROXY]: "\tlast exit code = 1" }
+      jobLines: { [LABEL_OPENCLI_PROXY]: "\tlast exit code = 1" }
     }
   );
   const probe = fake.probe;
-  const copilotProbes: string[] = [];
+  const opencliProbes: string[] = [];
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 80 }), {
       ...fake,
       probe: async (url, jsonBody) => {
-        if (url.includes(":4003/")) {
-          copilotProbes.push(url);
+        if (url.includes(":4004/")) {
+          opencliProbes.push(url);
           return false;
         }
         return probe(url, jsonBody);
@@ -233,21 +221,21 @@ test("a crash-looping bridge is reported at once with its log, without holding u
   );
   assert.equal(status, 0, "an optional bridge does not fail the install");
   assert.equal(
-    copilotProbes.length,
+    opencliProbes.length,
     1,
     "a crashed job is caught on the first check, not after the readiness budget"
   );
   assert.match(
     stderr,
-    /com\.codex\.copilot-proxy is not running: exited with code 1 \(router will route around it\)/u
+    /com\.codex\.opencli-proxy is not running: exited with code 1 \(router will route around it\)/u
   );
   assert.match(
     stderr,
-    /log: \/home\/\.codex\/run\/com\.codex\.copilot-proxy\.err\.log/u
+    /log: \/home\/\.codex\/run\/com\.codex\.opencli-proxy\.err\.log/u
   );
   assert.match(
     stderr,
-    /\| tail of \/home\/\.codex\/run\/com\.codex\.copilot-proxy\.err\.log/u
+    /\| tail of \/home\/\.codex\/run\/com\.codex\.opencli-proxy\.err\.log/u
   );
 });
 
@@ -426,11 +414,11 @@ test("an unready service reads its launchd job only every few attempts", async (
       launchd: {
         ...base.launchd,
         print: (label) => {
-          if (label === LABEL_COPILOT_PROXY) jobReads += 1;
+          if (label === LABEL_OPENCLI_PROXY) jobReads += 1;
           return base.launchd.print(label);
         }
       },
-      probe: async (url) => !url.includes(":4003/")
+      probe: async (url) => !url.includes(":4004/")
     })
   );
   assert.equal(status, 0);
@@ -757,10 +745,6 @@ test("an unmanaged listener from this CODEX_HOME is stopped and gone before its 
 test("each managed backend service recognizes its configured executable path", async () => {
   const executables: readonly [ManagedServiceLabel, string][] = [
     [LABEL_MODEL_ROUTER, "/home/.codex/src/router/server.ts"],
-    [LABEL_CLAUDE_BRIDGE, "/home/.codex/src/providers/claude.ts"],
-    [LABEL_MINIMAX_PROXY, "/home/.codex/src/providers/minimax.ts"],
-    [LABEL_ANTIGRAVITY_PROXY, "/home/.codex/src/providers/antigravity.ts"],
-    [LABEL_COPILOT_PROXY, "/home/.codex/src/providers/copilot.ts"],
     [LABEL_OPENCLI_PROXY, "/home/.codex/src/providers/opencli.ts"]
   ];
 
@@ -805,7 +789,7 @@ test("an unmanaged listener that ignores SIGTERM is killed before its label is b
 });
 
 test("a port held by a process this installer does not own is left alone and falls back to the ensure hooks", async () => {
-  const fake = deps({}, { strays: new Map([[4003, 42]]) });
+  const fake = deps({}, { strays: new Map([[4004, 42]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -816,12 +800,12 @@ test("a port held by a process this installer does not own is left alone and fal
   assert.deepEqual(fake.kills, []);
   assert.match(
     stderr,
-    /port 4003 held by a process this installer does not own \(pid 42\)/u
+    /port 4004 held by a process this installer does not own \(pid 42\)/u
   );
-  assert.match(stderr, /launchd could not load com\.codex\.copilot-proxy/u);
+  assert.match(stderr, /launchd could not load com\.codex\.opencli-proxy/u);
   assert.equal(
     fake.runs.length,
-    6,
+    2,
     "the direct ensure hooks start what launchd could not"
   );
 });
@@ -834,7 +818,7 @@ test("a label launchd refuses to load is reported and falls back to the ensure h
       launchd: {
         ...fake.launchd,
         bootstrap: (plist) => {
-          if (plist.endsWith(`${LABEL_CLAUDE_BRIDGE}.plist`))
+          if (plist.endsWith(`${LABEL_OPENCLI_PROXY}.plist`))
             throw new Error("Bootstrap failed: 5: Input/output error");
           fake.launchd.bootstrap(plist);
         }
@@ -844,9 +828,9 @@ test("a label launchd refuses to load is reported and falls back to the ensure h
   assert.equal(status, 0);
   assert.match(
     stderr,
-    /could not load com\.codex\.claude-bridge: Bootstrap failed: 5: Input\/output error/u
+    /could not load com\.codex\.opencli-proxy: Bootstrap failed: 5: Input\/output error/u
   );
-  assert.match(stderr, /launchd could not load com\.codex\.claude-bridge/u);
+  assert.match(stderr, /launchd could not load com\.codex\.opencli-proxy/u);
   assert.equal(stderr.includes("launchctl unavailable"), false);
   assert.ok(
     fake.runs.some((run) =>
@@ -887,15 +871,15 @@ test("a job that will not unload is reported instead of being bootstrapped over"
 });
 
 test("a loaded service owned by another runtime leaves every service untouched", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_CLAUDE_BRIDGE]) });
+  const fake = deps({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
       launchd: {
         ...fake.launchd,
         print: (label) =>
-          label === LABEL_CLAUDE_BRIDGE
-            ? "program = /foreign/runtime/claude-bridge"
+          label === LABEL_OPENCLI_PROXY
+            ? "program = /foreign/runtime/opencli-proxy"
             : fake.launchd.print(label)
       }
     })
@@ -909,30 +893,30 @@ test("a loaded service owned by another runtime leaves every service untouched",
   assert.deepEqual(fake.runs, []);
   assert.match(
     stderr,
-    /loaded com\.codex\.claude-bridge belongs to another runtime/u
+    /loaded com\.codex\.opencli-proxy belongs to another runtime/u
   );
 });
 
 test("a bridge loaded from an earlier install path under the same CODEX_HOME is adopted and restarted", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_COPILOT_PROXY]) });
+  const fake = deps({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
   assert.equal(
     await restartServices(options(), {
       ...fake,
       launchd: {
         ...fake.launchd,
         print: (label) =>
-          label === LABEL_COPILOT_PROXY
-            ? "program = /bin/bash\narguments = { /home/.codex/hooks/codex/run-codex-copilot-cli-responses-proxy.sh }\nCODEX_HOME => /home/.codex"
+          label === LABEL_OPENCLI_PROXY
+            ? "program = /bin/bash\narguments = { /home/.codex/hooks/codex/run-codex-opencli-proxy.sh }\nCODEX_HOME => /home/.codex"
             : fake.launchd.print(label)
       }
     }),
     0
   );
-  assert.ok(fake.calls.includes(`bootout:${LABEL_COPILOT_PROXY}`));
-  assert.ok(fake.calls.includes(`enable:${LABEL_COPILOT_PROXY}`));
+  assert.ok(fake.calls.includes(`bootout:${LABEL_OPENCLI_PROXY}`));
+  assert.ok(fake.calls.includes(`enable:${LABEL_OPENCLI_PROXY}`));
   assert.ok(
     fake.calls.includes(
-      `bootstrap:/home/Library/LaunchAgents/${LABEL_COPILOT_PROXY}.plist`
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_OPENCLI_PROXY}.plist`
     )
   );
   assert.ok(

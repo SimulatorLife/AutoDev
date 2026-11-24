@@ -110,10 +110,16 @@ const MCP_OPERATION_NAME_EXECUTE_TOOL = "execute_tool" as const;
 const TRACER_NAME = "autodev.codex-tools-mcp";
 const TRACER_VERSION = "1.0.0";
 const SERVICE_NAME = "autodev-codex-tools-mcp";
-let externalTelemetry: { server: string; endpoint: string; headers: Record<string, string> } | undefined;
+let externalTelemetry:
+  | { server: string; endpoint: string; headers: Record<string, string> }
+  | undefined;
 
 /** Reuse the same MCP span contract in the externally scoped tool filter. */
-export function configureExternalMcpTelemetry(server: string, endpoint: string, headers: Record<string, string>): void {
+export function configureExternalMcpTelemetry(
+  server: string,
+  endpoint: string,
+  headers: Record<string, string>
+): void {
   if (state.initialized) throw new Error("MCP telemetry already initialized");
   externalTelemetry = { server, endpoint, headers };
 }
@@ -161,7 +167,9 @@ function buildResource(): Resource {
   }
   // The shim's own producer identity always wins, so a misconfigured
   // OTEL_SERVICE_NAME=autodev-router cannot mislabel these spans.
-  merged[ATTR_SERVICE_NAME] = externalTelemetry ? "autodev-chatgpt-mcp" : SERVICE_NAME;
+  merged[ATTR_SERVICE_NAME] = externalTelemetry
+    ? "autodev-chatgpt-mcp"
+    : SERVICE_NAME;
   merged[ATTR_SERVICE_VERSION] = TRACER_VERSION;
   const workspace = safeAutoDevWorkspaceKey(merged[ATTR_AUTODEV_WORKSPACE]);
   if (workspace) merged[ATTR_AUTODEV_WORKSPACE] = workspace;
@@ -235,7 +243,10 @@ export function ensureOtelInitialized(): Tracer {
       spanProcessors
     });
     state.provider = provider;
-    state.tracer = trace.getTracer(externalTelemetry ? "autodev.chatgpt-mcp" : TRACER_NAME, TRACER_VERSION);
+    state.tracer = trace.getTracer(
+      externalTelemetry ? "autodev.chatgpt-mcp" : TRACER_NAME,
+      TRACER_VERSION
+    );
   } catch {
     state.provider = null;
     state.otlpExporterInstalled = false;
@@ -423,7 +434,8 @@ export async function recordToolCallSpan(
       [ATTR_GEN_AI_OPERATION_NAME]: MCP_OPERATION_NAME_EXECUTE_TOOL,
       [ATTR_NETWORK_TRANSPORT]: "pipe"
     };
-    if (externalTelemetry) attributes["autodev.mcp.server"] = externalTelemetry.server;
+    if (externalTelemetry)
+      attributes["autodev.mcp.server"] = externalTelemetry.server;
     const toolName = safeTrim(name);
     if (toolName) attributes[ATTR_GEN_AI_TOOL_NAME] = toolName;
     const spanName = toolName ? `tools/call ${toolName}` : "tools/call";

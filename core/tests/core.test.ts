@@ -41,8 +41,7 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 15 secti
   assert.deepEqual(CANONICAL_NAV_GROUPS[1]?.sections, [
     "Usage",
     "Evaluations",
-    "Playtesting",
-    "Memory"
+    "Playtesting"
   ]);
   assert.deepEqual(CANONICAL_NAV_GROUPS[2]?.sections, ["Workspaces", "GitHub"]);
 
@@ -60,12 +59,11 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 15 secti
     "Usage",
     "Evaluations",
     "Playtesting",
-    "Memory",
     "Workspaces",
     "GitHub"
   ] as const;
   assert.deepEqual(CANONICAL_NAVIGATION, expected);
-  assert.equal(CANONICAL_NAVIGATION.length, 15);
+  assert.equal(CANONICAL_NAVIGATION.length, 14);
 
   for (const [index, element] of expected.entries()) {
     const section = element!;

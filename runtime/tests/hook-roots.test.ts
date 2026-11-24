@@ -16,8 +16,10 @@ import { resolveRuntimeSourcePath } from "@simulatorlife/autodev-runtime/shared/
 
 import * as hookRoots from "../src/hooks/hook-roots.ts";
 
-test("hook root helpers expose the Codex home and repository root", () => {
+test("hook root helpers expose AutoDev and Codex home roots", () => {
   assert.deepEqual(Object.keys(hookRoots).sort(), [
+    "autodevHome",
+    "autodevStateHome",
     "codexHome",
     "repositoryRoot"
   ]);

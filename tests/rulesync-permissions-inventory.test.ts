@@ -90,35 +90,6 @@ test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not 
   }
 });
 
-test("Claude bridge acts only through Codex tools", () => {
-  // Codex, not the CLI, enforces each role's sandbox, MCP allowlist, and
-  // approvals, because every action a Claude turn takes is a Codex tool call.
-  // The CLI keeps no built-in tool except web research, and only when Codex
-  // offered its hosted web search, which no tool script can perform.
-  const source = read("runtime/src/providers/claude.ts");
-  for (const marker of [
-    'const CLAUDE_WEB_TOOLS = ["WebSearch", "WebFetch"]',
-    "const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : []",
-    '"--tools", builtIns.join(",")',
-    '"--strict-mcp-config"',
-    "`mcp__${CODEX_TOOLS_SERVER}`",
-    '"--permission-mode"',
-    'CLAUDE_CODE_PERMISSION_MODE ?? "bypassPermissions"'
-  ])
-    assert.ok(source.includes(marker), marker);
-  for (const obsolete of [
-    "--disallowed-tools",
-    "--add-dir",
-    "bridgeMcpServers",
-    "Bash(ccc"
-  ]) {
-    assert.ok(
-      !source.includes(obsolete),
-      `the Claude bridge no longer grants or filters CLI-native tools: ${obsolete}`
-    );
-  }
-});
-
 test("Antigravity static permissions live in .rulesync/permissions.jsonc and dynamic roots stay machine-local", () => {
   const source = read("runtime/src/platform/antigravity-settings.ts");
   const materializer = read("runtime/src/platform/install-materializer.ts");
@@ -141,12 +112,6 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
   });
   assert.deepEqual(sharedPermission.mcp__playwright, { "*": "deny" });
   assert.deepEqual(sharedPermission.mcp__playtest, { "*": "deny" });
-  assert.ok(
-    read("runtime/src/providers/antigravity.ts").includes(
-      "readAntigravityCliPermissionDefaults"
-    ),
-    "antigravity.ts must read agentMode from .rulesync/permissions.jsonc"
-  );
   for (const tool of [
     "list_indexed_repositories",
     "find_code",
@@ -264,7 +229,6 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
 test("the permission inventory reads sources without changing them", () => {
   const paths = [
     "config/config.autodev.toml",
-    "runtime/src/providers/claude.ts",
     "scripts/install.sh",
     "rulesync.jsonc",
     ".rulesync/mcp.jsonc",

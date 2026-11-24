@@ -4,11 +4,11 @@ import test from "node:test";
 import {
   ensureOpencliProxy,
   OPENCLI_PROXY_LABEL,
+  type OpencliEnsureDeps,
   resolveOpencliEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/opencli-ensure";
-import type { OptionalBridgeDeps } from "@simulatorlife/autodev-runtime/platform/optional-bridge-ensure";
 
-function deps(overrides: Partial<OptionalBridgeDeps> = {}): OptionalBridgeDeps {
+function deps(overrides: Partial<OpencliEnsureDeps> = {}): OpencliEnsureDeps {
   return {
     launchd: {
       isLoaded: () => false,

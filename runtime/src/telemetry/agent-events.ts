@@ -32,8 +32,18 @@
  * `count` anonymous children by the router.
  */
 
-import { contextHeaderValue } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
+function contextHeaderValue(headers: unknown, name: string): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const record = headers as Record<string, unknown>;
+  const key = Object.keys(record).find(
+    (candidate) => candidate.toLowerCase() === name
+  );
+  const raw = key === undefined ? undefined : record[key];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
 
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
 export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";

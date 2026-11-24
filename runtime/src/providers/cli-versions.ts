@@ -25,7 +25,7 @@ import {
   findClaudeBinary,
   findCodexBinary,
   findCopilotBinary,
-  findMiniMaxBinary,
+  findMcodeBinary,
   findOpencliCommand
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { execa } from "execa";
@@ -142,11 +142,11 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
     ])
   ),
   minimax: {
-    command: "mmx",
+    command: "mcode",
     label: "MiniMax",
     locate: (env) => {
-      const binary = findMiniMaxBinary(env);
-      return binary ? located("mmx", binary) : null;
+      const binary = findMcodeBinary(env);
+      return binary ? located("mcode", binary) : null;
     }
   },
   copilot: {

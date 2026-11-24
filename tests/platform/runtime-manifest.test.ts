@@ -407,29 +407,8 @@ test("Runtime shared contracts are Runtime-owned and loaded through workspace ex
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
-  assert.equal(
-    runtimePackage.exports["./shared/agent-context-headers"],
-    "./src/shared/agent-context-headers.ts"
-  );
-  assert.ok(
-    existsSync(
-      join(repositoryRoot, "runtime/src/shared/agent-context-headers.ts")
-    )
-  );
 
   const migratedContracts = [
-    {
-      exportPath: "./shared/responses-continuation",
-      exportTarget: "./src/shared/responses-continuation.ts",
-      runtimeFile: "runtime/src/shared/responses-continuation.ts",
-      legacyFile: "src/shared/responses-continuation.ts"
-    },
-    {
-      exportPath: "./shared/codex-transcript",
-      exportTarget: "./src/shared/codex-transcript.ts",
-      runtimeFile: "runtime/src/shared/codex-transcript.ts",
-      legacyFile: "src/shared/codex-transcript.ts"
-    },
     {
       exportPath: "./shared/provider-limits",
       exportTarget: "./src/shared/provider-limits.ts",
@@ -441,12 +420,6 @@ test("Runtime shared contracts are Runtime-owned and loaded through workspace ex
       exportTarget: "./src/shared/tool-names.ts",
       runtimeFile: "runtime/src/shared/tool-names.ts",
       legacyFile: "src/shared/tool-names.ts"
-    },
-    {
-      exportPath: "./shared/agent-context-headers",
-      exportTarget: "./src/shared/agent-context-headers.ts",
-      runtimeFile: "runtime/src/shared/agent-context-headers.ts",
-      legacyFile: "src/shared/agent-context-headers.ts"
     },
     {
       exportPath: "./shared/env",
@@ -471,12 +444,6 @@ test("Runtime shared contracts are Runtime-owned and loaded through workspace ex
       exportTarget: "./src/shared/resolve-workspace.ts",
       runtimeFile: "runtime/src/shared/resolve-workspace.ts",
       legacyFile: "src/shared/resolve-workspace.ts"
-    },
-    {
-      exportPath: "./shared/responses-item-ids",
-      exportTarget: "./src/shared/responses-item-ids.ts",
-      runtimeFile: "runtime/src/shared/responses-item-ids.ts",
-      legacyFile: "src/shared/responses-item-ids.ts"
     },
     {
       exportPath: "./shared/execution-contract",
@@ -543,21 +510,17 @@ test("all hooks are Runtime-owned and installed at canonical RuleSync paths", ()
     "hook-log.ts",
     "hook-roots.ts",
     "lifecycle.ts",
-    "memory-session-end.ts",
     "root-delegation.ts",
     "session-start.ts",
-    "skill-read-telemetry.ts",
-    "subagent-start.ts"
+    "skill-read-telemetry.ts"
   ];
   const materializedHookSources = new Set([
     "block-ccc-cli.ts",
     "hook-log.ts",
     "hook-roots.ts",
-    "memory-session-end.ts",
     "root-delegation.ts",
     "session-start.ts",
-    "skill-read-telemetry.ts",
-    "subagent-start.ts"
+    "skill-read-telemetry.ts"
   ]);
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const hookExports = readFileSync(
@@ -588,8 +551,7 @@ test("MCP implementations are Runtime-owned and installed at canonical paths", (
   assert.equal(runtimePackage.exports["./mcp"], "./src/mcp/index.ts");
 
   const mcpModules = [
-    "codex-tools-shim-telemetry.ts",
-    "codex-tools-shim.ts",
+    "mcp-telemetry.ts",
     "launcher.ts",
     "tool-filter.ts"
   ];
@@ -650,7 +612,6 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     "http",
     "correlation",
     "proxy",
-    "responses",
     "server",
     "subagents",
     "telemetry",
@@ -660,7 +621,6 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     "http",
     "correlation",
     "proxy",
-    "responses",
     "server",
     "subagents",
     "telemetry",
@@ -698,7 +658,6 @@ test("Control API implementation is Runtime-owned outside the model router", () 
   for (const name of [
     "request-handler.ts",
     "body.ts",
-    "memory.ts",
     "github.ts"
   ]) {
     const runtimePath = `runtime/src/control-api/${name}`;
@@ -830,17 +789,11 @@ test("router concurrency policy is Runtime-owned behind its workspace subpath", 
   );
 });
 
-test("router state collection and MCP process lifecycle are Runtime-owned", () => {
+test("MCP process lifecycle is Runtime-owned", () => {
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
   const migrations = [
-    {
-      exportPath: "./router/codex-state-collector",
-      exportTarget: "./src/router/codex-state-collector.ts",
-      runtimePath: "runtime/src/router/codex-state-collector.ts",
-      legacyPath: "src/router/state-collector.ts"
-    },
     {
       exportPath: "./mcp/process-registry",
       exportTarget: "./src/mcp/process-registry.ts",
@@ -941,12 +894,6 @@ test("platform host and installation primitives are Runtime-owned behind package
       exportTarget: "./src/platform/runtime-reconciliation.ts"
     },
     {
-      name: "copilot-ensure",
-      runtimePath: "runtime/src/platform/copilot-ensure.ts",
-      legacyPath: "src/platform/copilot-ensure.ts",
-      exportTarget: "./src/platform/copilot-ensure.ts"
-    },
-    {
       name: "code-graph-ensure",
       runtimePath: "runtime/src/platform/code-graph-ensure.ts",
       legacyPath: "src/platform/code-graph-ensure.ts",
@@ -957,24 +904,6 @@ test("platform host and installation primitives are Runtime-owned behind package
       runtimePath: "runtime/src/platform/router-ensure.ts",
       legacyPath: "src/platform/router-ensure.ts",
       exportTarget: "./src/platform/router-ensure.ts"
-    },
-    {
-      name: "antigravity-ensure",
-      runtimePath: "runtime/src/platform/antigravity-ensure.ts",
-      legacyPath: "src/platform/antigravity-ensure.ts",
-      exportTarget: "./src/platform/antigravity-ensure.ts"
-    },
-    {
-      name: "claude-ensure",
-      runtimePath: "runtime/src/platform/claude-ensure.ts",
-      legacyPath: "src/platform/claude-ensure.ts",
-      exportTarget: "./src/platform/claude-ensure.ts"
-    },
-    {
-      name: "minimax-ensure",
-      runtimePath: "runtime/src/platform/minimax-ensure.ts",
-      legacyPath: "src/platform/minimax-ensure.ts",
-      exportTarget: "./src/platform/minimax-ensure.ts"
     },
     {
       name: "install-state",
@@ -1044,8 +973,6 @@ test("Agents implementations are Runtime-owned behind the workspace package", ()
 
   const agentFiles = [
     "agent-activity.ts",
-    "bridge-role.ts",
-    "bridge-sandbox.ts",
     "role-mcp-environment.ts"
   ];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
@@ -1066,7 +993,7 @@ test("Agents implementations are Runtime-owned behind the workspace package", ()
   assert.doesNotMatch(agentsIndex, /src\/agents/);
 });
 
-test("migrated provider implementations are Runtime-owned behind workspace exports", () => {
+test("opencli provider implementation is Runtime-owned behind workspace exports", () => {
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
@@ -1075,46 +1002,22 @@ test("migrated provider implementations are Runtime-owned behind workspace expor
     "utf8"
   );
 
-  for (const provider of ["antigravity", "claude", "copilot", "minimax"]) {
-    const runtimeProviderPath = `runtime/src/providers/${provider}.ts`;
-    const legacyProviderPath = `src/providers/${provider}.ts`;
-    assert.equal(
-      runtimePackage.exports[`./providers/${provider}`],
-      `./src/providers/${provider}.ts`
-    );
-    assert.equal(existsSync(join(repositoryRoot, runtimeProviderPath)), true);
-    assert.equal(existsSync(join(repositoryRoot, legacyProviderPath)), false);
-    assert.ok(
-      (RUNTIME_MODULES as readonly string[]).includes(runtimeProviderPath)
-    );
-    assert.equal(
-      (RUNTIME_MODULES as readonly string[]).includes(legacyProviderPath),
-      false
-    );
-    assert.ok(
-      runtimeProviders.includes(
-        `export * as ${provider} from "./${provider}.ts";`
-      )
-    );
-  }
-
-  for (const filename of ["claude-turn.ts", "claude-codex-tools.ts"]) {
-    const runtimePath = `runtime/src/providers/${filename}`;
-    const legacyPath = `src/providers/${filename}`;
-    const subpath =
-      filename === "claude-turn.ts" ? "claude-turn" : "claude-codex-tools";
-    assert.equal(
-      runtimePackage.exports[`./providers/${subpath}`],
-      `./src/providers/${filename}`
-    );
-    assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
-    assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
-    assert.ok((RUNTIME_MODULES as readonly string[]).includes(runtimePath));
-    assert.equal(
-      (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
-      false
-    );
-  }
+  const runtimeProviderPath = "runtime/src/providers/opencli.ts";
+  const legacyProviderPath = "src/providers/opencli.ts";
+  assert.equal(
+    runtimePackage.exports["./providers/opencli"],
+    "./src/providers/opencli.ts"
+  );
+  assert.equal(existsSync(join(repositoryRoot, runtimeProviderPath)), true);
+  assert.equal(existsSync(join(repositoryRoot, legacyProviderPath)), false);
+  assert.ok(
+    (RUNTIME_MODULES as readonly string[]).includes(runtimeProviderPath)
+  );
+  assert.equal(
+    (RUNTIME_MODULES as readonly string[]).includes(legacyProviderPath),
+    false
+  );
+  assert.ok(runtimeProviders.includes('export * as opencli from "./opencli.ts";'));
   assert.equal(existsSync(join(repositoryRoot, "src/providers")), false);
 });
 
@@ -1151,49 +1054,20 @@ test("telemetry helpers are Runtime-owned behind the telemetry workspace export"
   );
 });
 
-test("router memory is one Runtime component behind a single entrypoint", () => {
-  const runtimePackage = JSON.parse(
-    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
-  ) as { exports: Record<string, string> };
-  assert.equal(
-    runtimePackage.exports["./router/memory"],
-    "./src/router/memory/index.ts"
-  );
-  const modules = RUNTIME_MODULES as readonly string[];
-  for (const name of ["index", "embedding", "reconstruction"])
-    assert.ok(modules.includes(`runtime/src/router/memory/${name}.ts`));
-  // Embedding selection and routed reconstruction are internal to the component,
-  // so the package publishes no subpath for them.
-  for (const name of ["embedding", "injection", "reconstruction"]) {
-    const flatPath = `src/router/memory-${name}.ts`;
-    assert.equal(runtimePackage.exports[`./router/memory-${name}`], undefined);
-    assert.equal(existsSync(join(repositoryRoot, "runtime", flatPath)), false);
+test("retired router memory, bridge, and tool-call-ownership paths are decommissioned", () => {
+  const runtimeModules = RUNTIME_MODULES as readonly string[];
+  for (const retiredPath of [
+    "runtime/src/router/memory/index.ts",
+    "runtime/src/router/tool-call-ownership/index.ts",
+    "runtime/src/memory/index.ts",
+    "runtime/src/providers/claude.ts",
+    "runtime/src/providers/antigravity.ts",
+    "runtime/src/providers/copilot.ts",
+    "runtime/src/providers/minimax.ts"
+  ]) {
+    assert.equal(existsSync(join(repositoryRoot, retiredPath)), false);
+    assert.equal(runtimeModules.includes(retiredPath), false);
   }
-});
-
-test("tool-call ownership is Runtime-owned and imported through its workspace subpath", () => {
-  const runtimePackage = JSON.parse(
-    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
-  ) as { exports: Record<string, string> };
-  assert.equal(
-    runtimePackage.exports["./router/tool-call-ownership"],
-    "./src/router/tool-call-ownership/index.ts"
-  );
-  assert.ok(
-    existsSync(
-      join(repositoryRoot, "runtime/src/router/tool-call-ownership/index.ts")
-    )
-  );
-  assert.equal(
-    existsSync(join(repositoryRoot, "src/router/tool-call-ownership.ts")),
-    false
-  );
-  assert.equal(
-    (RUNTIME_MODULES as readonly string[]).includes(
-      "src/router/tool-call-ownership.ts"
-    ),
-    false
-  );
 });
 
 test("router lifecycle is Runtime-owned and loaded through its workspace export", () => {
@@ -1327,28 +1201,6 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
   );
 
   assert.match(materializer, /bootoutObsoleteLaunchLabels\(launchd\)/);
-});
-
-test("Memory implementations are Runtime-owned behind the workspace package", () => {
-  const runtimePackage = JSON.parse(
-    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
-  ) as { exports: Record<string, string> };
-  assert.equal(runtimePackage.exports["./memory"], "./src/memory/index.ts");
-  const memoryModules = [
-    "openai-compatible-embedding.ts",
-    "privacy.ts",
-    "service.ts",
-    "trajectory.ts"
-  ];
-  const runtimeModules = RUNTIME_MODULES as readonly string[];
-  for (const filename of memoryModules) {
-    const runtimePath = `runtime/src/memory/${filename}`;
-    const legacyPath = `src/memory/${filename}`;
-    assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
-    assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
-    assert.equal(runtimeModules.includes(runtimePath), true);
-    assert.equal(runtimeModules.includes(legacyPath), false);
-  }
 });
 
 test("installed sources use dependencies from their owning workspace", () => {

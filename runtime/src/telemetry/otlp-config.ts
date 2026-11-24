@@ -2,8 +2,8 @@
  * The one owner of AutoDev's OTLP exporter configuration.
  *
  * Two producers install the official OTLP HTTP exporter: the Router
- * (`runtime/src/router/telemetry.ts`) and the Codex tools MCP shim
- * (`runtime/src/mcp/codex-tools-shim-telemetry.ts`). They are separate
+ * (`runtime/src/router/telemetry.ts`) and the MCP tool filter
+ * (`runtime/src/mcp/mcp-telemetry.ts`). They are separate
  * processes with separate span sets, but they read the same operator-facing
  * environment: a base endpoint or a signal-specific endpoint, plus the
  * credential-bearing headers that authenticate the export.

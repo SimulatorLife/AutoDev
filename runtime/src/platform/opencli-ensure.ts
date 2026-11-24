@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -6,28 +8,37 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { findOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import {
-  defaultOptionalBridgeDeps,
-  ensureOptionalBridge,
-  type OptionalBridgeDeps,
-  type OptionalBridgeOptions
-} from "./optional-bridge-ensure.ts";
+import { httpHealthProbe } from "./health-probe.ts";
+import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
+import { waitForProbe } from "./wait-for-probe.ts";
 
 export const OPENCLI_PROXY_LABEL = "com.codex.opencli-proxy";
 export const OPENCLI_PROXY_PORT = 4004;
 const DEFAULT_TIMEOUT_MS = 5000;
 
-/**
- * Where the opencli bridge lives and whether opencli is installed.
- *
- * opencli is a dependency of the Runtime package, so it is present wherever
- * the checkout's dependencies are; the lookup is the bridge's own, so the two
- * cannot disagree. Whether a browser is signed in to a site is a per-turn
- * fact the bridge reports, not something that decides whether it starts.
- */
+export interface OpencliEnsureOptions {
+  readonly host: string;
+  readonly port: number;
+  readonly label: string;
+  readonly domain: string;
+  readonly plist: string;
+  readonly launcher: string;
+  readonly available: boolean;
+  readonly readyTimeoutMs: number;
+  readonly logPath: string;
+}
+
+export interface OpencliEnsureDeps {
+  readonly launchd: Pick<LaunchdClient, "isLoaded" | "kickstart" | "bootstrap">;
+  readonly probe: () => Promise<boolean>;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly startFallback: (launcher: string, logPath: string) => void;
+}
+
 export function resolveOpencliEnsureOptions(
   env: NodeJS.ProcessEnv = process.env
-): OptionalBridgeOptions {
+): OpencliEnsureOptions {
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
@@ -55,12 +66,60 @@ export function resolveOpencliEnsureOptions(
   };
 }
 
-/** Best-effort: opencli is an optional fallback provider. */
-export function ensureOpencliProxy(
-  options: OptionalBridgeOptions = resolveOpencliEnsureOptions(),
-  deps: OptionalBridgeDeps = defaultOptionalBridgeDeps(options)
+export function defaultOpencliEnsureDeps(
+  options: Pick<OpencliEnsureOptions, "host" | "port">
+): OpencliEnsureDeps {
+  const endpoint = `http://${options.host}:${options.port}/health/liveliness`;
+  return {
+    launchd: new LaunchdClient(),
+    probe: httpHealthProbe(endpoint),
+    sleep,
+    startFallback: (launcher, logPath) => {
+      const runDir = path.dirname(logPath);
+      mkdirSync(runDir, { recursive: true, mode: 0o700 });
+      chmodSync(runDir, 0o700);
+      const fd = openSync(logPath, "a", 0o600);
+      chmodSync(logPath, 0o600);
+      const child = spawn("/bin/bash", [launcher], {
+        detached: true,
+        stdio: ["ignore", fd, fd]
+      });
+      child.unref();
+    }
+  };
+}
+
+/** Best-effort: opencli serves `github-worker` web automation tasks. */
+export async function ensureOpencliProxy(
+  options: OpencliEnsureOptions = resolveOpencliEnsureOptions(),
+  deps: OpencliEnsureDeps = defaultOpencliEnsureDeps(options)
 ): Promise<boolean> {
-  return ensureOptionalBridge(options, deps);
+  if (await deps.probe()) return true;
+  if (!options.available) return true;
+
+  if (deps.launchd.isLoaded(options.label)) {
+    try {
+      deps.launchd.kickstart(options.label);
+    } catch {
+      /* best effort */
+    }
+    return waitForProbe(deps, options.readyTimeoutMs);
+  }
+
+  if (existsSync(options.plist)) {
+    try {
+      deps.launchd.bootstrap(options.plist);
+      if (await waitForProbe(deps, options.readyTimeoutMs)) return true;
+    } catch {
+      /* fall through to the sandbox fallback */
+    }
+  }
+
+  if (existsSync(options.launcher)) {
+    deps.startFallback(options.launcher, options.logPath);
+    return waitForProbe(deps, options.readyTimeoutMs);
+  }
+  return false;
 }
 
 if (isEntryPoint(import.meta.url)) {
@@ -68,7 +127,7 @@ if (isEntryPoint(import.meta.url)) {
     .then((ready) => {
       if (!ready)
         writeErrorLine(
-          "opencli Responses proxy did not become ready; router will route around it."
+          "opencli runner did not become ready; router will route around it."
         );
       process.exitCode = ready ? 0 : 1;
       return ready ? 0 : 1;

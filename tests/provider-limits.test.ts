@@ -297,30 +297,6 @@ test("a classified Antigravity permission denial survives the incomplete boundar
   assert.match(generic.output_text, /stopped unexpectedly/);
 });
 
-test("typed bridges consume the Runtime-owned provider-limit contract", () => {
-  const bridge = read("runtime/src/providers/claude.ts");
-  assert.match(
-    bridge,
-    /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u
-  );
-  assert.match(bridge, /classifyCliLimit/);
-  assert.match(bridge, /ClaudeRateLimitError/);
-  assert.match(bridge, /INCOMPLETE_REASON_PROVIDER_LIMIT/);
-  assert.match(bridge, /limitResponseHeaders/);
-  // A Claude turn emits its items as they finish, so it ends an interrupted
-  // response from the shared details and notice rather than a fixed layout.
-  const turn = read("runtime/src/providers/claude-turn.ts");
-  assert.match(
-    turn,
-    /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u
-  );
-  assert.match(turn, /incompleteDetails\(failure\.reason, failure\.limit\)/);
-  assert.match(
-    turn,
-    /truncationNotice\(\{ provider, limit: failure\.limit, reason: failure\.reason \}\)/
-  );
-});
-
 test("an exhausted subscription quota is a hard limit, not a transient rate limit", () => {
   // The exact wording agy emits when the account's individual quota is spent,
   // as captured from the bridge log. The `429` in `RESOURCE_EXHAUSTED (code

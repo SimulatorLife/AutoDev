@@ -47,18 +47,16 @@ import { createProviderCliVersionService } from "../providers/cli-versions.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import { findAgyBinary, findClaudeBinary } from "../shared/executables.ts";
 import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
+import { SHARED_XACPX_SESSION_MANAGER } from "../xacpx/http.ts";
 import {
   agentActivity,
   checkProvider,
-  codexState,
   getRouterStatus,
   handle,
   HOST,
   PORT,
-  recordProviderSignIn,
-  refreshCodexState
+  recordProviderSignIn
 } from "./http.ts";
-import { closeOrchestratorMemoryHost } from "./memory/index.ts";
 import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
@@ -103,26 +101,6 @@ export function handleFatalProcessError(phase: string, reason: unknown): void {
   fatalExitPromise = persistRouterStateNow()
     .catch(() => undefined)
     .finally(() => process.exit(1));
-}
-
-async function closeMemoryHostSafely(): Promise<void> {
-  try {
-    await closeOrchestratorMemoryHost();
-  } catch (error) {
-    const info = transportErrorInfo(error);
-    writeErrorLine(
-      JSON.stringify({
-        schema: "autodev-router-event-v1",
-        timestamp: new Date().toISOString(),
-        routerInstanceId: ROUTER_INSTANCE_ID,
-        requestId: null,
-        phase: "memory_pool_close_failed",
-        errorName: info.name,
-        errorCode: info.code,
-        syscall: info.syscall
-      })
-    );
-  }
 }
 
 export function createControlApiServer(): Server {
@@ -339,7 +317,6 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       .then(async () => {
         cleanup();
         await closePlaytestingSafely();
-        await closeMemoryHostSafely();
         process.exit(0);
       });
   };
@@ -353,13 +330,11 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     }
     cleanup();
     await closePlaytestingSafely();
-    await closeMemoryHostSafely();
     handleFatalProcessError("uncaught_exception", error);
   };
   const onUnhandledRejection = async (reason: unknown) => {
     cleanup();
     await closePlaytestingSafely();
-    await closeMemoryHostSafely();
     handleFatalProcessError("unhandled_rejection", reason);
   };
   const cleanup = () => {
@@ -369,10 +344,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       clearTimeout(backgroundWarmupTimer);
       backgroundWarmupTimer = null;
     }
-    if (livePollStarted) {
-      codexState.collector.stopLivePoll();
-      codexState.livePollStarted = false;
-    }
+    void SHARED_XACPX_SESSION_MANAGER.closeAllSessions().catch(() => undefined);
     if (quotaPollInterval !== null) {
       clearInterval(quotaPollInterval);
       quotaPollInterval = null;
@@ -389,7 +361,6 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     setControlApiLiveSessionsSource(null);
     setControlApiDiagnosticsRouterStatusSource(null);
     void closePlaytestingSafely();
-    void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);
     process.off("unhandledRejection", onUnhandledRejection);
     process.off("SIGINT", onSigint);
@@ -444,17 +415,11 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             writeErrorLine("Playtesting schema startup warmup failed.");
           }
         }
-        if (!codexState.livePollStarted) {
-          livePollStarted = true;
-          codexState.livePollStarted = true;
-          codexState.collector.startLivePoll();
-        }
-        // Defer heavy synchronous SQLite polling and external provider probes until
-        // after both HTTP listeners have bound and can service readiness probes.
+        // Defer heavy external provider probes until after both HTTP listeners
+        // have bound and can service readiness probes.
         backgroundWarmupTimer = setTimeout(() => {
           backgroundWarmupTimer = null;
           if (cleanedUp) return;
-          void refreshCodexState();
           modelDiscovery?.start();
           if (IS_MAIN) {
             void refreshQuotaAxi().catch(() => undefined);
@@ -495,31 +460,22 @@ export {
   ingestAgentEvents,
   limitsStatus,
   loadCatalog,
-  refreshCodexState,
   requestClientSurface,
   requestSession,
   resetRouterTelemetry,
   resolveTurnMetadataHeader,
   routingStatus,
-  setCodexStateSnapshotForTests,
   workspaceContextFromRequest,
   workspaceMetadataForSession
 } from "./http.ts";
 export {
   activeProviderRequests,
-  carriesPendingToolResult,
   declaredLimit,
   decrementActiveRequests,
-  downstreamHeaders,
   fallbackable,
   getActiveRequests,
   incrementActiveRequests,
   isClientDisconnectError,
-  payloadForCandidate,
-  proxyConcreteResponse,
-  proxyOrchestratorResponse,
-  proxyRoleResponse,
-  recordNativeMcpExposure,
   ROUTER_INSTANCE_ID
 } from "./proxy.ts";
 export {

@@ -314,7 +314,7 @@ function readFileExists(file: string): boolean {
 }
 
 test("external tool traces use the actual OTLP HTTP exporter and omit payloads", { timeout: 20_000 }, async () => {
-  const { configureExternalMcpTelemetry, recordToolCallSpan, shutdownTelemetry, shutdownTelemetryForTest } = await import("../src/mcp/codex-tools-shim-telemetry.ts");
+  const { configureExternalMcpTelemetry, recordToolCallSpan, shutdownTelemetry, shutdownTelemetryForTest } = await import("../src/mcp/mcp-telemetry.ts");
   const observed: { body: string; authorization?: string }[] = [];
   const receiver = createHttpServer((request, response) => {
     let body = "";

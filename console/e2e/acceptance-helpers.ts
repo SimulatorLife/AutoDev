@@ -101,7 +101,6 @@ export const CANONICAL_ROUTES: readonly CanonicalRoute[] = [
   { path: "/tools", section: "tools", heading: "Tools" },
   { path: "/usage", section: "usage", heading: "Usage" },
   { path: "/evaluations", section: "evaluations", heading: "Evaluations" },
-  { path: "/memory", section: "memory", heading: "Memory" },
   { path: "/playtesting", section: "playtesting", heading: "Playtesting" },
   { path: "/workspaces", section: "workspaces", heading: "Workspaces" },
   { path: "/github", section: "github", heading: "GitHub" }
@@ -151,17 +150,6 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
  * section and says so the same way its detail pages do.
  */
 export const SUBSURFACE_ROUTES: readonly CanonicalRoute[] = [
-  {
-    path: "/memory?tab=experiences&experienceId=exp-0001",
-    section: "memory",
-    heading: "Memory"
-  },
-  { path: "/memory?tab=cohorts", section: "memory", heading: "Memory" },
-  {
-    path: "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001",
-    section: "memory",
-    heading: "Memory"
-  },
   {
     path: "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
     section: "playtesting",

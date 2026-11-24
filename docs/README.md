@@ -4,22 +4,21 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Canonical target
 
-- [`autodev-console-target-state.md`](autodev-console-target-state.md) — **sole AutoDev codebase target-state authority**: agent orchestration and CLI/ACP transport gates, dependency ownership/reuse, provider routing, Rulesync/permissions, OpenLIT/OpenTelemetry, memory, Control API, Console design/resource contracts and acceptance criteria.
+- [`autodev-console-target-state.md`](autodev-console-target-state.md) — **sole AutoDev codebase target-state authority**: agent orchestration and ACP/MCP/opencli transport gates, dependency ownership/reuse, provider routing, Rulesync/permissions, OpenLIT/OpenTelemetry, Control API, Console design/resource contracts and acceptance criteria.
 
 ## Focused operational/design docs
 
+- [`xacpx-subagent-delegation.md`](xacpx-subagent-delegation.md) — Codex-agnostic ACP (`@agentclientprotocol/sdk` / `@ganglion/xacpx` / `acpx`) session orchestration, strict per-session provider pinning, native auto-compaction, and direct `opencli` `github-worker` execution.
 - [`autodev-console-migration.md`](autodev-console-migration.md) — current Console/OpenLIT migration state, current gaps, cutover dependencies, and current acceptance evidence. It must not redefine target requirements.
 - [`local-setup.md`](local-setup.md) — current installation/materialization/runtime setup plus Console/OpenLIT commands, ports, service credentials, and local operational entry points. It may describe transitional native projections but does not override canonical ownership.
-- [`provider-routing.md`](provider-routing.md) — current provider/router execution, retry, fallback, limits, and bridge contract. Current native role projections are transitional where the canonical target moves them to RuleSync.
+- [`provider-routing.md`](provider-routing.md) — current provider/router execution, retry, fallback, limits, and ACP/`opencli` policy contract. Current native role projections are transitional where the canonical target moves them to RuleSync.
 - [`opencli-separate-browser.md`](opencli-separate-browser.md) — investigated, not implemented: test results and design for running the opencli providers in a dedicated browser over CDP instead of the user's Chrome, and why headless is not viable; subordinate to `provider-routing.md`.
-- [`antigravity-codex-tool-loop.md`](antigravity-codex-tool-loop.md) — focused Antigravity provider/tool-loop design and migration gates; subordinate to the canonical target for configuration ownership.
 - [`prompt-ownership.md`](prompt-ownership.md) — editable ownership of AutoDev RuleSync prompts versus target-repository prompts.
 - [`organization-routing.md`](organization-routing.md) — GitHub organization scheduler/repository routing. “Organization” here refers to SimulatorLife GitHub automation, not the removed OpenLIT organization concept.
 - [`private-target-validation.md`](private-target-validation.md) — centralized validation for private target repositories.
 - [`codebase-context-target.md`](codebase-context-target.md) — code-search/context tool responsibilities and target workflow.
-- [`memory-target-state.md`](memory-target-state.md) — **Mem0 Platform as the sole managed long-term memory engine** (official hosted MCP for trusted/scoped agents), OpenLIT Mem0 connector/UI/telemetry inside AutoDev Console, thin AutoDev security/current-state/JIT boundary, controlled evaluation, and reversible legacy-memory retirement. This is the new target, **not** the current implementation.
-- [`memory-injection-outcome-evaluation.md`](memory-injection-outcome-evaluation.md) — append-only request-level packet exposure and operator-reported outcome correlation, including scope and attribution limits.
-- [`../config/memory/README.md`](../config/memory/README.md) — **current transitional** PostgreSQL/pgvector runtime setup and operational tests; not the target Mem0 deployment guide. This remains applicable until the provider cutover is validated.
+
+> Custom PostgreSQL/pgvector AutoDev memory has been retired and removed; Mem0 integration remains postponed for future work.
 
 ## Documentation rules
 

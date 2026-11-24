@@ -19,7 +19,6 @@ const DATA_READING_ROUTES = [
   "hooks/page.tsx",
   "mcps/[name]/page.tsx",
   "mcps/page.tsx",
-  "memory/page.ts",
   "permissions/page.tsx",
   "prompts/[name]/page.ts",
   "prompts/page.tsx",

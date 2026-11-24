@@ -72,7 +72,6 @@ import {
   isClientSurface,
   safeAutoDevSessionId
 } from "@simulatorlife/autodev-core";
-import { parseTurnMetadataJson } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
   readOtlpHeaders,
   readOtlpMetricEndpoint,
@@ -87,10 +86,6 @@ import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
 import { safeMetricLabel } from "./metric-label.ts";
-import {
-  PROVIDER_HOP_FAILURE_CLASSES,
-  type ProviderHop
-} from "./provider-hops.ts";
 // Experimental (incubating) attribute keys are imported via the package's
 // `./incubating` subpath. NodeNext module resolution does not always resolve
 // the subpath declaration, so the keys are also declared inline below to
@@ -121,7 +116,6 @@ const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
  * and it is bounded and opaque before it is published.
  */
 export const ATTR_AUTODEV_SESSION_ID = "autodev.session.id" as const;
-export const METRIC_CONTEXT_COMPACTIONS = "autodev.context.compactions";
 export const METRIC_GIT_COMMITS = "autodev.git.commits";
 export const METRIC_GIT_FILES_CHANGED = "autodev.git.files_changed";
 export const METRIC_GIT_FILES_ADDED = "autodev.git.files_added";
@@ -165,56 +159,6 @@ function claimGitCommit(commit: string): boolean {
 export function resetTrackedGitCommitsForTest(): void {
   trackedGitCommits.clear();
 }
-export const ATTR_AUTODEV_REQUEST_KIND = "autodev.request_kind" as const;
-export const ATTR_AUTODEV_COMPACTION_TRIGGER =
-  "autodev.compaction.trigger" as const;
-export const ATTR_AUTODEV_COMPACTION_REASON =
-  "autodev.compaction.reason" as const;
-export const ATTR_AUTODEV_COMPACTION_IMPLEMENTATION =
-  "autodev.compaction.implementation" as const;
-export const ATTR_AUTODEV_COMPACTION_PHASE =
-  "autodev.compaction.phase" as const;
-export const ATTR_AUTODEV_COMPACTION_STRATEGY =
-  "autodev.compaction.strategy" as const;
-/**
- * The provider that served a compaction.
- *
- * The logical request span never carries `gen_ai.provider.name`: a logical
- * route may touch several providers, so a single provider name on the parent
- * would be a claim the source cannot make. A compaction is different -- one
- * request, one serving provider -- so the provider is published under a
- * compaction-scoped key and only on the compaction it actually describes.
- */
-export const ATTR_AUTODEV_COMPACTION_PROVIDER =
-  "autodev.compaction.provider" as const;
-
-/**
- * The provider serving an agent/role changed.
- *
- * A hop is a fact about one request: the request moved the agent from one
- * provider to another. It is published on the request's own span under
- * hop-scoped keys, because the logical request span never carries
- * `gen_ai.provider.name` -- a logical route may touch several providers, so a
- * single provider name on the parent would be a claim the source cannot make.
- * A hop knows exactly which two providers it is about, so it names both of
- * them under its own keys.
- */
-export const ATTR_AUTODEV_HOP_FROM = "autodev.hop.from" as const;
-export const ATTR_AUTODEV_HOP_TO = "autodev.hop.to" as const;
-/**
- * The two providers of a hop as one label, "from → to".
- *
- * A hop is counted per provider pair, which is what an operator asks about:
- * "we keep moving from Claude to Minimax" is a statement about a pair, not
- * about either provider alone. The pair is published as one label so a
- * breakdown reads it directly; the two providers stay published separately.
- */
-export const ATTR_AUTODEV_HOP_ROUTE = "autodev.hop.route" as const;
-export const ATTR_AUTODEV_HOP_REASON = "autodev.hop.reason" as const;
-export const ATTR_AUTODEV_HOP_FAILURE_CLASS =
-  "autodev.hop.failure_class" as const;
-/** The separator between the two providers of a hop's route label. */
-export const HOP_ROUTE_SEPARATOR = " → ";
 
 const METRIC_GEN_AI_CLIENT_TOKEN_USAGE = "gen_ai.client.token.usage";
 const METRIC_GEN_AI_CLIENT_OPERATION_DURATION =
@@ -286,7 +230,6 @@ interface LogicalMetricContext {
   attributes: Record<string, string>;
   startedAt: number;
   requestId: string | null;
-  compactionSignal?: ParsedCompactionSignal | null;
 }
 
 const attemptMetricContexts = new WeakMap<Span, AttemptMetricContext>();
@@ -300,7 +243,6 @@ interface RouterMetricInstruments {
   genAiTokenUsage: ReturnType<Meter["createHistogram"]>;
   cacheReadTokens: ReturnType<Meter["createHistogram"]>;
   skillEvents: ReturnType<Meter["createCounter"]>;
-  contextCompactions: ReturnType<Meter["createCounter"]>;
   gitCommits: ReturnType<Meter["createCounter"]>;
   gitFilesChanged: ReturnType<Meter["createCounter"]>;
   gitFilesAdded: ReturnType<Meter["createCounter"]>;
@@ -443,11 +385,6 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
       description:
         "Accepted AutoDev skill lifecycle observations; skill names are intentionally excluded from metric dimensions.",
       unit: "{event}"
-    }),
-    contextCompactions: meter.createCounter(METRIC_CONTEXT_COMPACTIONS, {
-      description:
-        "Source-confirmed context compactions completed by the AutoDev router.",
-      unit: "{compaction}"
     }),
     gitCommits: meter.createCounter(METRIC_GIT_COMMITS, {
       description: "Commits created by AutoDev-managed agent work.",
@@ -662,7 +599,6 @@ export function resetTelemetryExporter(): void {
   } catch {
     /* ignore test exporter cleanup failures */
   }
-  resetCompactionDedupForTest();
 }
 
 const UUID_PATTERN =
@@ -703,64 +639,6 @@ function hasProhibitedIdPrefixWithDigit(value: string): boolean {
  * To add a new value, extend the matching allowlist explicitly. Hidden
  * aliasing or a competing source of truth is intentionally avoided.
  */
-export const COMPACTION_DIMENSION_ALLOWLISTS = {
-  trigger: new Set([
-    "threshold",
-    "manual",
-    "overflow",
-    "pressure",
-    "remote",
-    "scheduled",
-    "explicit"
-  ]),
-  reason: new Set([
-    "context_window_exceeded",
-    "window_pressure",
-    "overflow",
-    "token_budget",
-    "explicit_request",
-    "auto_recovery",
-    "ttl_exceeded"
-  ]),
-  implementation: new Set([
-    "summarize",
-    "truncate",
-    "drop_middle",
-    "rewrite",
-    "hybrid",
-    "rolling_window"
-  ]),
-  phase: new Set(["pre_turn", "mid_turn", "post_turn"]),
-  strategy: new Set([
-    "drop_middle",
-    "summarize_head",
-    "summarize_tail",
-    "rolling_window",
-    "truncate_oldest",
-    "hybrid"
-  ])
-} as const;
-
-export const COMPACTION_DIMENSION_OTHER = "other";
-
-/**
- * Collapse a compaction metric dimension value to a source-supported
- * enumeration. The untrusted value first passes through
- * `sanitizeCategoricalLabel` for shape, length, and ID-safety; only then
- * is it mapped onto the supplied allowlist or onto
- * `COMPACTION_DIMENSION_OTHER`. A non-string, empty, oversized, ID-like,
- * or otherwise unsafe value returns `null`, which the metric recorder
- * treats as "no dimension reported".
- */
-export function compactCompactionDimension(
-  rawValue: unknown,
-  allowlist: ReadonlySet<string>
-): string | null {
-  const safe = sanitizeCategoricalLabel(rawValue);
-  if (!safe) return null;
-  return allowlist.has(safe) ? safe : COMPACTION_DIMENSION_OTHER;
-}
-
 export function sanitizeCategoricalLabel(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -778,173 +656,6 @@ export function sanitizeCategoricalLabel(value: unknown): string | null {
   }
   if (HEX_HASH_PATTERN.test(trimmed)) return null;
   return trimmed;
-}
-
-export interface CompactionMetadata {
-  trigger?: string | null | undefined;
-  reason?: string | null | undefined;
-  implementation?: string | null | undefined;
-  phase?: string | null | undefined;
-  strategy?: string | null | undefined;
-}
-
-export interface ParsedCompactionSignal {
-  isCompaction: boolean;
-  compaction?: CompactionMetadata | null | undefined;
-}
-
-const COMPACTION_METADATA_FIELDS = [
-  "trigger",
-  "reason",
-  "implementation",
-  "phase",
-  "strategy"
-] as const satisfies readonly (keyof CompactionMetadata)[];
-
-function isMetadataRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function turnMetadataRecord(
-  metadata: string | Record<string, unknown> | null | undefined
-): Record<string, unknown> | null {
-  if (typeof metadata === "string") return parseTurnMetadataJson(metadata);
-  return isMetadataRecord(metadata) ? metadata : null;
-}
-
-function sanitizedCompactionMetadata(
-  value: unknown
-): CompactionMetadata | null {
-  if (!isMetadataRecord(value)) return null;
-
-  const compaction: CompactionMetadata = {};
-  for (const field of COMPACTION_METADATA_FIELDS) {
-    const label = sanitizeCategoricalLabel(value[field]);
-    if (label) compaction[field] = label;
-  }
-  return Object.keys(compaction).length > 0 ? compaction : null;
-}
-
-export function parseCompactionSignal(
-  metadata: string | Record<string, unknown> | null | undefined
-): ParsedCompactionSignal {
-  const parsed = turnMetadataRecord(metadata);
-  if (!parsed || parsed.request_kind !== "compaction") {
-    return { isCompaction: false };
-  }
-  return {
-    isCompaction: true,
-    compaction: sanitizedCompactionMetadata(parsed.compaction)
-  };
-}
-
-const COMPACTION_DEDUP_CACHE_SIZE = 1000;
-const recordedCompactionRequestIds = new Set<string>();
-const recordedCompactionQueue: string[] = [];
-
-export function resetCompactionDedupForTest(): void {
-  recordedCompactionRequestIds.clear();
-  recordedCompactionQueue.length = 0;
-}
-
-export interface RecordContextCompactionOptions {
-  requestId?: string | null | undefined;
-  provider?: string | null | undefined;
-  model?: string | null | undefined;
-  role?: string | null | undefined;
-  providerRole?: string | null | undefined;
-  workspace?: { key?: string | null | undefined } | null | undefined;
-  compaction?: CompactionMetadata | null | undefined;
-  clientSurface?: ClientSurface | null | undefined;
-}
-
-function claimCompactionRequestId(
-  requestId: string | null | undefined
-): boolean {
-  if (!requestId) return true;
-  if (recordedCompactionRequestIds.has(requestId)) return false;
-
-  recordedCompactionRequestIds.add(requestId);
-  recordedCompactionQueue.push(requestId);
-  if (recordedCompactionQueue.length > COMPACTION_DEDUP_CACHE_SIZE) {
-    const oldest = recordedCompactionQueue.shift();
-    if (oldest) recordedCompactionRequestIds.delete(oldest);
-  }
-  return true;
-}
-
-const COMPACTION_METRIC_DIMENSIONS = [
-  [
-    "trigger",
-    ATTR_AUTODEV_COMPACTION_TRIGGER,
-    COMPACTION_DIMENSION_ALLOWLISTS.trigger
-  ],
-  [
-    "reason",
-    ATTR_AUTODEV_COMPACTION_REASON,
-    COMPACTION_DIMENSION_ALLOWLISTS.reason
-  ],
-  [
-    "implementation",
-    ATTR_AUTODEV_COMPACTION_IMPLEMENTATION,
-    COMPACTION_DIMENSION_ALLOWLISTS.implementation
-  ],
-  [
-    "phase",
-    ATTR_AUTODEV_COMPACTION_PHASE,
-    COMPACTION_DIMENSION_ALLOWLISTS.phase
-  ],
-  [
-    "strategy",
-    ATTR_AUTODEV_COMPACTION_STRATEGY,
-    COMPACTION_DIMENSION_ALLOWLISTS.strategy
-  ]
-] as const;
-
-function addCompactionMetricDimensions(
-  attributes: Record<string, string>,
-  compaction: CompactionMetadata
-): void {
-  for (const [field, attribute, allowlist] of COMPACTION_METRIC_DIMENSIONS) {
-    const value = compactCompactionDimension(compaction[field], allowlist);
-    if (value) attributes[attribute] = value;
-  }
-}
-
-function compactionMetricAttributes(
-  options: RecordContextCompactionOptions
-): Record<string, string> {
-  const attributes = metricAttributes({
-    provider: options.provider,
-    model: options.model,
-    workspace: options.workspace,
-    role: options.role,
-    providerRole: options.providerRole,
-    ...(options.clientSurface === undefined
-      ? {}
-      : { clientSurface: options.clientSurface })
-  });
-  if (options.compaction) {
-    addCompactionMetricDimensions(attributes, options.compaction);
-  }
-  return attributes;
-}
-
-export function recordContextCompaction(
-  options: RecordContextCompactionOptions
-): boolean {
-  if (!claimCompactionRequestId(options.requestId)) return false;
-  ensureOtelInitialized();
-  if (!instruments) return false;
-
-  const attributes = compactionMetricAttributes(options);
-  try {
-    instruments.contextCompactions.add(1, attributes);
-    return true;
-  } catch {
-    logTelemetryError("context_compaction_recording_failed");
-    return false;
-  }
 }
 
 export interface RecordGitCommitOptions {
@@ -1045,34 +756,6 @@ export const observeRouterWorkspaceGitCommits =
  * "nothing" to "something" is not a change of provider, and a hop to an
  * unnamed provider cannot be explained or filtered.
  */
-export function publishProviderHop(span: Span, hop: ProviderHop): boolean {
-  const from = safeProviderName(hop.fromProvider);
-  const to = safeProviderName(hop.toProvider);
-  if (!from || !to || from === to) return false;
-  const failureClass =
-    hop.failureClass &&
-    PROVIDER_HOP_FAILURE_CLASSES.has(hop.failureClass) &&
-    safeTrim(hop.failureClass)
-      ? safeTrim(hop.failureClass)
-      : null;
-  try {
-    span.setAttribute(ATTR_AUTODEV_HOP_FROM, from);
-    span.setAttribute(ATTR_AUTODEV_HOP_TO, to);
-    span.setAttribute(
-      ATTR_AUTODEV_HOP_ROUTE,
-      `${from}${HOP_ROUTE_SEPARATOR}${to}`
-    );
-    span.setAttribute(ATTR_AUTODEV_HOP_REASON, hop.reason);
-    if (failureClass) {
-      span.setAttribute(ATTR_AUTODEV_HOP_FAILURE_CLASS, failureClass);
-    }
-    return true;
-  } catch {
-    logTelemetryError("provider_hop_publication_failed");
-    return false;
-  }
-}
-
 export interface LogicalRequestSpanOptions {
   requestId: string | null;
   role: string | null;
@@ -1082,7 +765,6 @@ export interface LogicalRequestSpanOptions {
   requestedModel: string | null;
   memoryMode?: "jit" | "retrieval-only" | "disabled" | "invalid" | undefined;
   turnMetadataHeader?: string | null | undefined;
-  compactionSignal?: ParsedCompactionSignal | null | undefined;
   /**
    * The source-confirmed session the request belongs to.
    *
@@ -1128,31 +810,9 @@ function addAutoDevSpanContext(
   if (clientSurface) attributes[ATTR_AUTODEV_CLIENT_SURFACE] = clientSurface;
 }
 
-function addCompactionSpanAttributes(
-  attributes: LogicalSpanAttributes,
-  signal: ParsedCompactionSignal
-): void {
-  if (!signal.isCompaction) return;
-  attributes[ATTR_AUTODEV_REQUEST_KIND] = "compaction";
-  if (!signal.compaction) return;
-
-  const compactionAttributes = [
-    ["trigger", ATTR_AUTODEV_COMPACTION_TRIGGER],
-    ["reason", ATTR_AUTODEV_COMPACTION_REASON],
-    ["implementation", ATTR_AUTODEV_COMPACTION_IMPLEMENTATION],
-    ["phase", ATTR_AUTODEV_COMPACTION_PHASE],
-    ["strategy", ATTR_AUTODEV_COMPACTION_STRATEGY]
-  ] as const satisfies readonly (readonly [keyof CompactionMetadata, string])[];
-  for (const [field, attribute] of compactionAttributes) {
-    const value = signal.compaction[field];
-    if (value) attributes[attribute] = value;
-  }
-}
-
 function logicalRequestSpanData(options: LogicalRequestSpanOptions): {
   attributes: LogicalSpanAttributes;
   model: string | null;
-  compactionSignal: ParsedCompactionSignal;
 } {
   const attributes: LogicalSpanAttributes = {
     "autodev.router.subject": safeTrim(options.subject) ?? "request",
@@ -1165,19 +825,14 @@ function logicalRequestSpanData(options: LogicalRequestSpanOptions): {
     attributes["autodev.memory.mode"] = options.memoryMode;
   }
 
-  const compactionSignal =
-    options.compactionSignal ??
-    parseCompactionSignal(options.turnMetadataHeader);
-  addCompactionSpanAttributes(attributes, compactionSignal);
-  return { attributes, model, compactionSignal };
+  return { attributes, model };
 }
 
 export function startLogicalRequestSpan(
   options: LogicalRequestSpanOptions
 ): Span {
   ensureOtelInitialized();
-  const { attributes, model, compactionSignal } =
-    logicalRequestSpanData(options);
+  const { attributes, model } = logicalRequestSpanData(options);
 
   const span = state.tracer.startSpan("autodev.routed_request", {
     kind: SpanKind.INTERNAL,
@@ -1192,8 +847,7 @@ export function startLogicalRequestSpan(
       clientSurface: options.clientSurface ?? null
     }),
     startedAt: performance.now(),
-    requestId: options.requestId,
-    compactionSignal
+    requestId: options.requestId
   });
   return span;
 }
@@ -1202,33 +856,6 @@ export interface EndLogicalRequestSpanOptions {
   status: "ok" | "error";
   errorMessage?: string | null | undefined;
   provider?: string | null | undefined;
-}
-
-/**
- * Publish the serving provider on a compaction's own span.
- *
- * A compaction is served by exactly one provider, and the router knows which
- * one by the time the request completes. The value is sanitized with the same
- * helper the compaction counter uses, so the span and the counter can never
- * disagree about which provider served the event.
- *
- * Returns the published name, or null when this span is not a completed
- * compaction. The counter reuses that value instead of resolving a provider
- * of its own, so the two readings of "which provider served this compaction"
- * cannot drift apart.
- */
-function publishCompactionProvider(
-  span: Span,
-  signal: ParsedCompactionSignal | null | undefined,
-  status: "ok" | "error",
-  provider: string | null | undefined
-): string | null {
-  if (status !== "ok") return null;
-  if (!signal?.isCompaction) return null;
-  const name = safeProviderName(provider);
-  if (!name) return null;
-  span.setAttribute(ATTR_AUTODEV_COMPACTION_PROVIDER, name);
-  return name;
 }
 
 export function endLogicalRequestSpan(
@@ -1245,12 +872,6 @@ export function endLogicalRequestSpan(
       span.setStatus({ code: SpanStatusCode.OK });
     }
     const metricContext = logicalMetricContexts.get(span);
-    const compactionProvider = publishCompactionProvider(
-      span,
-      metricContext?.compactionSignal,
-      options.status,
-      options.provider
-    );
     if (metricContext && instruments) {
       const outcome = options.status === "error" ? "error" : "success";
       const attributes = {
@@ -1262,29 +883,6 @@ export function endLogicalRequestSpan(
         elapsedSeconds(metricContext.startedAt),
         attributes
       );
-      if (
-        options.status !== "error" &&
-        metricContext.compactionSignal?.isCompaction
-      ) {
-        recordContextCompaction({
-          requestId: metricContext.requestId,
-          provider: compactionProvider,
-          model: metricContext.attributes[ATTR_GEN_AI_REQUEST_MODEL] ?? null,
-          workspace: metricContext.attributes[ATTR_AUTODEV_WORKSPACE]
-            ? { key: metricContext.attributes[ATTR_AUTODEV_WORKSPACE] }
-            : null,
-          role: metricContext.attributes[ATTR_AUTODEV_AGENT_ROLE] ?? null,
-          providerRole:
-            (metricContext.attributes["autodev.router.provider_role"] as
-              "orchestrator" | "subagent" | null) ?? null,
-          clientSurface: isClientSurface(
-            metricContext.attributes[ATTR_AUTODEV_CLIENT_SURFACE]
-          )
-            ? metricContext.attributes[ATTR_AUTODEV_CLIENT_SURFACE]
-            : null,
-          compaction: metricContext.compactionSignal.compaction
-        });
-      }
       logicalMetricContexts.delete(span);
     }
     span.end();

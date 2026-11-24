@@ -4,7 +4,6 @@ export * as config from "./config/index.ts";
 export * from "./control-api/request-handler.ts";
 export * as hooks from "./hooks/index.ts";
 export * as mcp from "./mcp/index.ts";
-export * as memory from "./memory/index.ts";
 export * as platform from "./platform/index.ts";
 export * as playtesting from "./playtesting/index.ts";
 export * as providers from "./providers/index.ts";

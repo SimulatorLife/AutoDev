@@ -102,7 +102,9 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   playtester:
     "Provider-neutral AutoDev playtester role routed by the local model router.",
   "playtest-analyst":
-    "Provider-neutral AutoDev read-only playtest analyst routed by the local model router."
+    "Provider-neutral AutoDev read-only playtest analyst routed by the local model router.",
+  "github-worker":
+    "Provider-neutral AutoDev GitHub automation worker routed via OpenCLI."
 };
 
 function formatDisplayName(slug: string): string {
@@ -252,7 +254,8 @@ const ROLE_ALIAS_NAMES = [
   "validator",
   "smart",
   "playtester",
-  "playtest-analyst"
+  "playtest-analyst",
+  "github-worker"
 ] as const;
 
 function isCatalogRecord(value: unknown): value is CatalogRecord {

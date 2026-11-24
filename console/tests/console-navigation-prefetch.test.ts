@@ -62,10 +62,10 @@ test("a warm-up that was never replaced still happens", async () => {
   clearPrefetchCacheForTests();
   const { router, warmed } = recordingRouter();
 
-  scheduleWholePageWarmUp(router, "/memory", 0);
+  scheduleWholePageWarmUp(router, "/evaluations", 0);
   await wait(PREFETCH_INTENT_DELAY_MS + 40);
 
-  assert.deepEqual(warmed, ["/memory"]);
+  assert.deepEqual(warmed, ["/evaluations"]);
 });
 
 test("the same destination is not warmed twice inside the router's reuse window", async () => {

@@ -1,39 +1,26 @@
-# Codex-agnostic ACP orchestration (`@ganglion/xacpx` + `acpx` + RuleSync)
+# Codex-agnostic ACP orchestration (`@agentclientprotocol/sdk` + `xacpx` + RuleSync)
 
-> **Phase 1 foundation implemented; Phase 2 cutover gated.** `@ganglion/xacpx` (`0.24.10`), `acpx` (`0.22.0`), `@agentclientprotocol/sdk` (`2.9.1`), and `@modelcontextprotocol/server-github` are pinned in the workspace, alongside provider isolation profiles, `$AUTODEV_HOME`, `mcode` projection, provider-neutral hook normalization, `XacpxSessionManager`, and the `github-worker` role. [AutoDev target state](autodev-console-target-state.md#cross-provider-agent-delegation-contract) remains authoritative until Phase 2 cutover passes live acceptance.
+> **Phase 2 cutover implemented.** AutoDev orchestrates every interactive agent provider natively over ACP (`@agentclientprotocol/sdk`, `@ganglion/xacpx`, `acpx`) with RuleSync-projected MCPs, skills, prompts, permissions, and provider-neutral hooks. All legacy `/v1/responses` provider bridges, `codex-tools-shim`, custom compaction/continuation/item-id/transcript shims, Codex SQLite state polling (`codex-state-collector`), mid-session provider hopping (`provider-hops`), and the custom PostgreSQL/pgvector memory stack have been removed.
 
-## Phase 1 Foundation (Implemented)
+## Architecture Overview
 
-- **Packages:** `@ganglion/xacpx`, `acpx`, and `@agentclientprotocol/sdk` installed in `runtime/package.json`; `@modelcontextprotocol/server-github` installed in root `devDependencies`; `github` and `xacpx` wired into `runtime/src/mcp/launcher.ts` and `.rulesync/mcp.jsonc`.
-- **Provider-Agnostic Runtime Home:** `runtime/src/shared/autodev-home.ts` defines `$AUTODEV_HOME` (`~/.autodev`) with Phase 1 state-home fallback so AutoDev runtime assets stay decoupled from provider homes (`~/.claude`, `~/.gemini`, `~/.copilot`, `~/.codex`, `~/.mcode`).
-- **ACP Isolation & Session Pinning:** `runtime/src/acp/provider-profiles.ts` and `runtime/src/xacpx/manager.ts` configure native-tool/prompt/skill/MCP suppression for `claude`, `antigravity`, `copilot`, `mcode`, and `codex` ACP processes, enforce strict per-session provider pinning (relying on each autonomous CLI's native compaction rather than cross-provider mid-session hopping), and keep `github-worker` routed exclusively to `opencli-chatgpt` / `opencli-gemini`.
-- **Provider-Neutral Hooks & `mcode` Projection:** `runtime/src/hooks/hook-payload.ts` normalizes Antigravity `toolCall` + `call_mcp_tool` wrappers and Copilot/Claude/Codex payloads across `file-surface`, `block-ccc-cli`, `role-sandbox`, and `skill-read-telemetry`; `runtime/src/platform/mcode-projection.ts` renders/checks `AGENTS.md`, `mcp.json`, `hooks.json`, and `permissions.json` for `mcode`.
-- **Custom Memory Deprecation:** Deprecated custom memory capture is removed from `.rulesync/hooks.jsonc` (`memory-session-end.ts` unhooked); hosted Mem0 setup remains postponed for future work.
-
-## Findings
-
-- **Current:** Every orchestrator, on every provider, calls Codex's `multi_agent_v1__spawn_agent`/`send_input`/`wait_agent`/`close_agent` inside Codex's `exec` tool; the Claude and Antigravity bridges mirror that tool through the `codex` MCP shim (`runtime/src/mcp/codex-tools-shim.ts`), and Copilot is subagent-only. See [Codex code mode](../.rulesync/skills/orchestration/references/codex-code-mode.md). The bridge-side `autodev_spawn` shim was removed on 2026-11-20.
-- **[xacpx](https://github.com/gadzan/xacpx)** already provides an external `mcp-stdio` server backed by [acpx](https://github.com/openclaw/acpx): `delegate_request`/`delegate_batch`, `task_get`/`task_list`/`task_watch`/`task_cancel`, and `agent_list`/`agent_send`. Any MCP-compatible orchestrator can request workers on supported ACP agent backends; unlike plain acpx, xacpx owns task coordination.
-- **Session modes:** `parallel: false` reuses the selected target's session and serializes tasks; `parallel: true` creates an isolated, concurrent session that auto-closes after terminal completion and reviews. `agent_send` queues/sends to authorized reachable agents but returns delivery acceptance, not a synchronous response. `task_watch` waits on *tasks*, not arbitrary session turns. No generic MCP `close_agent` is exposed; external MCP coordinators cannot receive unsolicited agent messages.
-- **Alternative:** [claude-code-teams-mcp](https://github.com/cs50victor/claude-code-teams-mcp) offers team inboxes and explicit shutdown but only Claude Code/OpenCode workers via Python/tmux, not acpx. It is not the provider-agnostic choice.
-
-## Host app visibility: current blocker
-
-Every AutoDev orchestrator spawns through Codex's native `multi_agent_v1` tools, so each child is a real, clickable Codex thread with its own progress and tool history. An xacpx MCP call instead creates an **external ACP worker**: Codex can display the MCP call and xacpx task updates (`task_watch`/MCP Tasks), but the worker is **not automatically registered in the Codex app's native Subagents panel**. Task IDs, telemetry, and xacpx's own UI are not substitutes for an inspectable child in the originating host app.
-
-[Codex issue #34519](https://github.com/openai/codex/issues/34519) requests a supported API to register live external workers with lineage, progress and cancellation; it remains open. A related [thread-attachment request (#24398)](https://github.com/openai/codex/issues/24398) was closed after a maintainer noted architectural conflicts. No supported native-equivalent external-worker registration path is verified. Avoid undocumented state edits or a second reasoning-agent proxy merely to manufacture UI entries. Other host apps must meet the same user-visible requirement through their own supported integrations.
-
-## Recommendation
-
-**Target xacpx's MCP server as the shared cross-provider delegation dependency, but preserve Codex-native spawning until xacpx workers can appear and be controlled as equivalent, individually inspectable subagents in the Codex app.** Do not replace Codex-native spawning solely because task lifecycle and telemetry work. Where host UI parity is unavailable, retain the native host adapter while consolidating policy; avoid a second general-purpose orchestration stack.
-
-AutoDev must remain the **sole policy authority** for role-to-provider/model allocation, eligibility, priorities, cooldowns, concurrency admission, workspace/tool/MCP/skill grants, approvals, parent-child ownership, telemetry and Console state. Map its selected role/provider to an explicit xacpx `targetAgent`; do not allow a hidden xacpx fallback or a second permission policy. xacpx owns worker transport/task execution, not AutoDev routing. Preserve direct execution for `mmx`, `opencli`, or other unsupported/non-ACP backends.
-
-## Migration / acceptance gate
-
-1. **Integrate:** Pin and install xacpx; configure one Rulesync-projected `xacpx mcp-stdio` server and managed daemon lifecycle. Verify available agent profiles, model/effort selection, authentication and workspace-scoped MCP/permissions. Keep the current delegation path during evaluation.
-2. **Prove parity:** Exercise Codex-to-Claude and Claude-to-Codex (plus other enabled ACP agents), serial reuse, independent parallel workers, batched dispatch, follow-up messages/results, nonterminal watch timeouts, cancellation, idle-session release, crashed/restarted sessions, concurrency pressure, approvals and denied capabilities. **In the Codex app**, confirm each worker appears as an individually inspectable child with live progress, tool activity, parent lineage, results and supported controls—not just an MCP tool call or a Console record. Repeat equivalent in-app acceptance for future hosts. Require no duplicate mutations or unauthorized tool grants.
-3. **Resolve gaps before replacement:** Establish whether `agent_send`/task reuse satisfies AutoDev's parked-worker `send_input` contract, how explicit `close_agent`/capacity eviction works, and whether Codex exposes a supported external-child registration/progress/cancellation integration. Validate xacpx's internal queue/approvals against AutoDev's single-authority rules; its same-user daemon socket is not an authorization boundary. If host visibility or lifecycle semantics fail, retain the incumbent native path or use only a minimal tested host adapter—not another orchestration stack.
-4. **Conditional cutover:** Move a host's spawning from Codex-native `multi_agent_v1` to xacpx **only for hosts whose native/equivalent subagent UI, lifecycle, permissions and telemetry have passed the gate**. If Codex cannot display external workers natively, keep the minimal Codex-owned spawn path and its necessary integration; eliminate only duplicate policy and unused code. Update Rulesync references, provider-routing docs and telemetry mappings without silently losing in-app child sessions.
-
-**References:** [xacpx external MCP contract](https://github.com/gadzan/xacpx/blob/main/docs/external-mcp.md) · [xacpx MCP tool registry](https://github.com/gadzan/xacpx/blob/main/src/mcp/xacpx-mcp-tools.ts) · [AutoDev existing lifecycle](../.rulesync/skills/orchestration/references/runtime-contract.md) · [AutoDev target state](autodev-console-target-state.md#agent-execution-transport-contract-acp-mcp-and-responses)
+1. **Single Policy Authority (AutoDev Router):**
+   - `runtime/src/router/routing.ts` (`ROUTING_POLICY`), `runtime/src/router/cooldown/`, `runtime/src/router/concurrency/`, `runtime/src/router/usage.ts`, `runtime/src/router/correlation.ts`, and `runtime/src/router/telemetry.ts` remain AutoDev's sole authority for role -> tier -> provider/model allocation, cooldowns, concurrency limits, usage attribution, and OTLP telemetry.
+2. **Live ACP Execution & Session Pinning (`XacpxSessionManager` + `/v1/acp/sessions`):**
+   - `runtime/src/xacpx/manager.ts` pins each session strictly to one provider/model on creation (no mid-session cross-provider hops) and manages native ACP connections (`ClientApp` + `ndJsonStream`) against:
+     - `claude` -> `claude-agent-acp`
+     - `antigravity` -> `agy acp`
+     - `copilot` -> `copilot --acp`
+     - `minimax` / `mcode` -> `mcode acp`
+     - `codex` -> `codex-acp`
+   - Each provider CLI manages its own session history, context window, and native auto-compaction without AutoDev interception.
+   - `session/request_permission` enforces AutoDev's read-only contract (`evaluateReadOnlyToolCall` + `roleContract(role).readOnly`) fail-closed for read-only roles (`explorer`, `browser-tester`, `docs-researcher`, `playtest-analyst`).
+   - `runtime/src/xacpx/http.ts` exposes `/v1/acp/sessions` (`GET`, `POST`, `/:sessionId/prompt`, `/:sessionId/cancel`, `DELETE /:sessionId`) directly on the AutoDev Router (`runtime/src/router/http.ts`).
+3. **Isolation Profiles (`provider-profiles.ts`) & RuleSync Surface:**
+   - `runtime/src/acp/provider-profiles.ts` disables native tools, built-in skills, default system prompts, and ungranted MCP servers for each ACP executor so AutoDev's RuleSync-projected MCP servers (`filesystem`, `github`, `codegraphcontext`, `context7`, `playwright`, `xacpx`, `playtest`), prompts, skills, permissions, and provider-neutral hooks (`file-surface`, `block-ccc-cli`, `role-sandbox`, `skill-read-telemetry`, `root-delegation`, `session-start`) are the sole execution surface under `$AUTODEV_HOME`.
+   - `runtime/src/platform/mcode-projection.ts` projects and validates `AGENTS.md`, `mcp.json`, `hooks.json`, and `permissions.json` for `mcode`.
+4. **Autonomous `github-worker` Web Execution (`opencli`):**
+   - `github-worker` (`agents/roles/github-worker.toml`, all skills disabled) routes exclusively to `opencli-chatgpt` / `opencli-gemini` via direct `opencli` site execution without `/v1/responses` translation.
+   - `runtime/src/providers/opencli-browser.ts` and `runtime/src/control-api/opencli-browser.ts` continue to govern AutoDev's dedicated Chrome vs extension browser mode setting.
+5. **Memory Status:**
+   - Custom AutoDev PostgreSQL/pgvector memory storage, HTTP endpoints, Console UI, and capture hooks have been removed; hosted Mem0 setup remains postponed for future work.

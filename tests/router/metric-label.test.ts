@@ -41,7 +41,6 @@ test("the router has one owner for safeMetricLabel", () => {
     "runtime/src/router/usage.ts",
     "runtime/src/router/correlation.ts",
     "runtime/src/router/http.ts",
-    "runtime/src/router/codex-state-collector.ts",
     "runtime/src/router/index.ts"
   ];
   const read = (relativePath: string): string =>
