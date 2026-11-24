@@ -21,6 +21,7 @@ import {
 import { materializeInstallation } from "./install-materializer.ts";
 import { ensureBridgeRouterAuth, ensureRouterAuth } from "./install-state.ts";
 import { installOpencliBrowser } from "./opencli-browser-install.ts";
+import { ensureChatgptTunnel } from "./chatgpt-tunnel-install.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -31,16 +32,19 @@ export interface InstallCommandOptions {
 interface InstallFlags {
   materializeOnly: boolean;
   routerAuth: boolean;
+  chatgptTunnel: boolean;
 }
 
 function parseFlags(args: readonly string[]): InstallFlags {
   const flags: InstallFlags = {
     materializeOnly: false,
-    routerAuth: false
+    routerAuth: false,
+    chatgptTunnel: false
   };
   for (const arg of args) {
     if (arg === "--materialize-only") flags.materializeOnly = true;
     else if (arg === "--enable-router-auth") flags.routerAuth = true;
+    else if (arg === "--enable-chatgpt-tunnel") flags.chatgptTunnel = true;
     else if (arg === "--check") {
       throw new ConfigError(
         "autodev install --check is still owned by the installer check boundary; run scripts/install.sh --check"
@@ -53,6 +57,8 @@ function parseFlags(args: readonly string[]): InstallFlags {
       );
     }
   }
+  if (flags.materializeOnly && flags.chatgptTunnel)
+    throw new ConfigError("ChatGPT tunnel setup requires a normal install");
   return flags;
 }
 
@@ -122,6 +128,7 @@ export function runInstallCommand(
         [],
         env
       );
+      ensureChatgptTunnel({ repositoryRoot, home, codexHome }, flags.chatgptTunnel);
     }
     return 0;
   } finally {
