@@ -15,7 +15,10 @@ interface GatewayConfig {
 /** A real MCP round trip using the official SDK, not a proxy implementation. */
 export async function probeSupergateway(
   executable: string,
-  configFile: string
+  configFile: string,
+  env: Record<string, string> = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+  )
 ): Promise<void> {
   const config = JSON.parse(
     readFileSync(configFile, "utf8")
@@ -28,7 +31,7 @@ export async function probeSupergateway(
     await client.connect(new StdioClientTransport({
       command: executable,
       args: ["--config", configFile],
-      env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      env,
       stderr: "inherit"
     }), { timeout: 20_000 });
     const capabilities = client.getServerCapabilities();

@@ -27,6 +27,7 @@ interface TunnelState {
   port?: number;
   organizationId?: string;
   workspaceId?: string;
+  tunnelId?: string;
 }
 
 interface Paths {
@@ -144,7 +145,8 @@ export function checkChatgptTunnel(paths: Paths): boolean {
     const state = stateAt(path.join(directory, "gateway.json"));
     if (!state) return true;
     const launchd = new LaunchdClient();
-    if (state.enabled === false) return !launchd.isLoaded(label);
+    if (state.enabled === false) return !launchd.isLoaded(label) &&
+      !existsSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"));
     return Boolean(state.generation && privateRead(path.join(state.generation, "runtime.key")) &&
       existsSync(path.join(state.generation, "autodev.yaml")) &&
       ready(launchd, healthPort(state.port)));
@@ -180,12 +182,11 @@ export function ensureChatgptTunnel(
 
 function reconcile(paths: Paths, directory: string, stateFile: string, mode: ChatgptTunnelMode, env: NodeJS.ProcessEnv): void {
   const prior = stateAt(stateFile);
-  if (mode === "reconcile" && prior?.enabled === false) return;
   const launchd = new LaunchdClient();
-  if (mode === "disable") {
+  if (mode === "disable" || (mode === "reconcile" && prior?.enabled === false)) {
+    privateWrite(stateFile, JSON.stringify({ ...prior, enabled: false }, null, 2) + "\n");
     launchd.bootout(label);
     rmSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"), { force: true });
-    privateWrite(stateFile, JSON.stringify({ ...prior, enabled: false }, null, 2) + "\n");
     writeLine("AutoDev ChatGPT tunnel disabled; normal installs will not re-enable it.");
     return;
   }
@@ -223,7 +224,7 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
   const gatewayEnv = chatgptSupergatewayEnvironment(paths, workspace, node, servicePath);
   const runtimeEnv = { ...cleanEnv, CONTROL_PLANE_API_KEY: rawKey };
   const idFile = path.join(directory, "tunnel-id");
-  const existingId = env.CONTROL_PLANE_TUNNEL_ID?.trim() || privateRead(idFile);
+  const existingId = env.CONTROL_PLANE_TUNNEL_ID?.trim() || prior?.tunnelId || privateRead(idFile);
   const id = existingId || createTunnel(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
   if (!/^tunnel_[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
   // Save newly created remote identity before further steps; never overwrite
@@ -303,10 +304,9 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
       if (ready(launchd, port)) {
         privateWrite(stateFile, JSON.stringify({
           enabled: true, workspace, policyFile, generation, port,
-          organizationId: org, workspaceId
+          organizationId: org, workspaceId, tunnelId: id
         }, null, 2) + "\n");
         committed = true;
-        privateWrite(idFile, id + "\n");
         writeLine("AutoDev ChatGPT tunnel ready: " + id);
         writeLine("ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT");
         break;

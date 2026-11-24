@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
+import { chatgptSupergatewayEnvironment, renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import { ensureSupergateway } from "../src/platform/supergateway-install.ts";
 import { tunnelClientSupported } from "../src/platform/chatgpt-tunnel-install.ts";
@@ -29,14 +29,10 @@ test("pinned Supergateway and actual AutoDev filesystem server enforce external 
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "autodev-supergateway-")));
   const workspace = path.join(root, "workspace");
   const client = new Client({ name: "autodev-supergateway-test", version: "1.0.0" });
-  const env = {
-    ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    AUTODEV_REPO_ROOT: repo,
-    AUTODEV_MCP_WORKSPACE: workspace,
-    AUTODEV_MCP_READ_ONLY: "1",
-    AUTODEV_MCP_WORKSPACE_ONLY: "1"
-  };
-  const old = { ...process.env };
+  const env = chatgptSupergatewayEnvironment(
+    { home: root, codexHome: path.join(root, ".codex"), repositoryRoot: repo },
+    workspace, process.execPath, process.env.PATH ?? "/usr/bin:/bin"
+  );
   try {
     mkdirSync(workspace);
     const inside = path.join(workspace, "inside.txt");
@@ -84,14 +80,9 @@ test("pinned Supergateway and actual AutoDev filesystem server enforce external 
     });
     assert.equal(readFileSync(inside, "utf8"), "expected-value");
     // The same exact inventory check used by the installer must succeed.
-    Object.assign(process.env, env);
-    await probeSupergateway(executable, config);
+    await probeSupergateway(executable, config, env);
   } finally {
     await client.close();
-    for (const key of Object.keys(process.env)) {
-      if (!Object.hasOwn(old, key)) delete process.env[key];
-    }
-    Object.assign(process.env, old);
     rmSync(root, { recursive: true, force: true });
   }
 });
