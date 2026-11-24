@@ -28,6 +28,7 @@ export async function probeSupergateway(
     await client.connect(new StdioClientTransport({
       command: executable,
       args: ["--config", configFile],
+      env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
       stderr: "inherit"
     }), { timeout: 20_000 });
     const capabilities = client.getServerCapabilities();

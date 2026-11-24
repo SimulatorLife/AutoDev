@@ -172,6 +172,7 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
   const launchd = new LaunchdClient();
   if (mode === "disable") {
     launchd.bootout(label);
+    rmSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"), { force: true });
     privateWrite(stateFile, JSON.stringify({ ...prior, enabled: false }, null, 2) + "\n");
     writeLine("AutoDev ChatGPT tunnel disabled; normal installs will not re-enable it.");
     return;
@@ -213,9 +214,9 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
   const id = env.CONTROL_PLANE_TUNNEL_ID?.trim() || privateRead(idFile) ||
     createTunnel(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
   if (!/^tunnel_[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
-  // Persist the remote identity before further steps, so a failed local install
-  // can retry the existing resource instead of creating another tunnel.
-  privateWrite(idFile, id + "\n");
+  // Save newly created remote identity before further steps; never overwrite
+  // a working tunnel ID with an unverified user-supplied replacement.
+  if (!existsSync(idFile) && !env.CONTROL_PLANE_TUNNEL_ID) privateWrite(idFile, id + "\n");
   const metadata = tunnelMetadata(binary, ["get", id], runtimeEnv);
   if ((metadata.id ?? metadata.tunnel_id) !== id ||
       !metadata.organization_ids?.includes(org) ||
@@ -239,7 +240,7 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
       cwd: workspace, env: gatewayEnv, stdio: ["ignore", "inherit", "inherit"], timeout: 30_000
     });
     execFileSync(node, [
-      path.join(paths.repositoryRoot, "runtime/src/mcp/chatgpt-supergateway-probe.ts"),
+      path.join(paths.codexHome, "src/mcp/chatgpt-supergateway-probe.ts"),
       supergateway, config
     ], { cwd: workspace, env: gatewayEnv, stdio: ["ignore", "inherit", "inherit"], timeout: 60_000 });
     const gatewayCommand = [
@@ -286,6 +287,7 @@ function reconcile(paths: Paths, directory: string, stateFile: string, mode: Cha
           organizationId: org, workspaceId
         }, null, 2) + "\n");
         committed = true;
+        privateWrite(idFile, id + "\n");
         writeLine("AutoDev ChatGPT tunnel ready: " + id);
         writeLine("ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT");
         break;

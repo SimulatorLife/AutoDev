@@ -109,7 +109,7 @@ export function renderChatgptSupergatewayConfig(
 }
 
 function escapeInterpolation(value: string): string {
-  return value.replaceAll("$", () => "$");
+  return value.replaceAll("$", () => "$$");
 }
 
 function contains(parent: string, child: string): boolean {

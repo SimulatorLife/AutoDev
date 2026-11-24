@@ -243,6 +243,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/filesystem-server.ts",
   "runtime/src/mcp/codex-tools-shim-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
+  "runtime/src/mcp/chatgpt-supergateway-probe.ts",
   "runtime/src/mcp/process-registry.ts",
   "runtime/src/cli/diagnostics.ts",
   "runtime/src/cli/router-status.ts",
