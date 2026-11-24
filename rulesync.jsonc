@@ -62,7 +62,6 @@
     {
       "source": "acpx",
       "transport": "npm",
-      "ref": "0.22.0",
       "skills": [
         "acpx"
       ]
@@ -70,7 +69,6 @@
     {
       "source": "quota-axi",
       "transport": "npm",
-      "ref": "0.1.69",
       "skills": [
         "quota-axi"
       ]
@@ -78,7 +76,6 @@
     {
       "source": "@jackwener/opencli",
       "transport": "npm",
-      "ref": "2.0.3",
       "skills": [
         "opencli-autofix",
         "opencli-browser",
@@ -88,7 +85,6 @@
     {
       "source": "@tanstack/react-table",
       "transport": "npm",
-      "ref": "9.3.1",
       "skills": [
         "getting-started",
         "table-state"

@@ -635,12 +635,13 @@ test("RuleSync project config and CI cover the repository projections", () => {
  * A skill that documents a CLI must document the CLI this repository runs.
  *
  * The npm-transport sources fetch the skills a published package ships, so
- * the pin in `rulesync.jsonc` is a package version. When the workspace bumps
- * that package, the fetched skill is the one that describes the new CLI, so
- * the two versions must be the same number; a skill pinned to an older
- * version describes commands the installed CLI does not have.
+ * the locked release has to be the one the workspace installs: a skill from an
+ * older release describes commands the installed CLI does not have. The
+ * manifest declares no version, the way the GitHub sources declare no ref:
+ * `rulesync install --frozen` fetches the release the lockfile resolved, and
+ * the lockfile is what pins it.
  */
-test("every npm-transport source pins the version the workspace installs", () => {
+test("every npm-transport source locks the version the workspace installs", () => {
   const config = readJson(rulesyncConfigPath);
   const sources = config.sources as Array<Record<string, unknown>>;
   const npmSources = new Map(
@@ -672,13 +673,14 @@ test("every npm-transport source pins the version the workspace installs", () =>
       [version],
       `${source} is installed at a version other than ${version}`
     );
-    assert.equal(npmSources.get(source)?.ref, version, source);
+    // The manifest names the package, not a version: the lockfile pins it.
+    assert.equal(npmSources.get(source)?.ref, undefined, source);
   }
   const npmLock = _asObject(readJson(rulesyncNpmLockPath));
   const npmLocked = _asObject(npmLock.sources);
   for (const { source, version } of npmSourcePackages) {
     const entry = _asObject(npmLocked[source]);
-    assert.equal(entry.requestedVersion, version, source);
+    assert.equal(entry.requestedVersion, "latest", source);
     assert.equal(entry.resolvedVersion, version, source);
   }
 });

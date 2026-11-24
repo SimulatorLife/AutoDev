@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "sources": {
     "acpx": {
-      "requestedVersion": "0.22.0",
+      "requestedVersion": "latest",
       "resolvedVersion": "0.22.0",
       "integrity": "sha512-dD+xgRwLFOfwL7/VEdn3zrVNFleFoIA0EUETK35w/e+MeYB5FN5+vKERoV60d4SUirTqX610yb/wN+2OFcjpMQ==",
       "resolvedAt": "2026-11-24T13:41:54.435Z",
@@ -17,7 +17,7 @@
       "skillsPath": "skills"
     },
     "quota-axi": {
-      "requestedVersion": "0.1.69",
+      "requestedVersion": "latest",
       "resolvedVersion": "0.1.69",
       "integrity": "sha512-SfRYsaKhumK1A9Rkfm7JNlZM1tviIbDo5HJVZ1KdmklJz4EOnncveRLzCBC2dFVSj4s2N3jlBPS+Qq8nkcolwQ==",
       "resolvedAt": "2026-11-24T13:41:57.582Z",
@@ -32,7 +32,7 @@
       "skillsPath": "skills"
     },
     "@jackwener/opencli": {
-      "requestedVersion": "2.0.3",
+      "requestedVersion": "latest",
       "resolvedVersion": "2.0.3",
       "integrity": "sha512-CkmardXwEYYh80sIMXNL0I8LtdLJNGMhSA+E9v2eFn16AhariIjtJjOsMZZuM7j/i5Kt60rIPKa/cHPFMmVxeA==",
       "resolvedAt": "2026-11-24T13:42:01.433Z",
@@ -55,7 +55,7 @@
       "skillsPath": "skills"
     },
     "@tanstack/react-table": {
-      "requestedVersion": "9.3.1",
+      "requestedVersion": "latest",
       "resolvedVersion": "9.3.1",
       "integrity": "sha512-E6Ya5TnY6EaGyZYIUqig/29Lr/gJSAubQkLJFqiWkUl5nRCr0Xr9hvJot+NiRTtG+TzGxHTiqUW3bnLtQxlHug==",
       "resolvedAt": "2026-11-24T13:42:04.711Z",

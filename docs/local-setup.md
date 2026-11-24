@@ -607,9 +607,11 @@ skills that the packages this repository already depends on ship -- `acpx`
 from `acpx`, `quota-axi` from `quota-axi`, `opencli-autofix`,
 `opencli-browser`, and `opencli-usage` from `@jackwener/opencli`, and
 `getting-started` and `table-state` from `@tanstack/react-table` -- are
-fetched from the npm registry and pinned in `rulesync-npm.lock.json`. Each
-npm source is pinned to the version the workspace installs, so a skill always
-documents the CLI this repository runs.
+fetched from the npm registry and pinned in `rulesync-npm.lock.json`. The
+manifest names the package and no version, the way the GitHub sources name a
+repository and no ref: the lockfile records the release the frozen install
+fetches, and that release is the version the workspace installs, so a skill
+always documents the CLI this repository runs.
 
 Keep the canonical registered user-level skill content in AutoDev; update the
 skill directories there and rerun the installer when changing this setup. The
