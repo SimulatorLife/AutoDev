@@ -118,6 +118,10 @@ export function shellWord(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
+export function gatewayStdioCommand(executable: string, config: string, env: Record<string, string>): string {
+  return ["/usr/bin/env", "-i", ...Object.entries(env).map(([name, value]) => name + "=" + value), executable, "--config", config].map(shellWord).join(" ");
+}
+
 export function tunnelClientSupported(version: string): boolean {
   const parsed = parseCliVersion(version);
   if (!parsed || !/^\d+\.\d+\.\d+$/u.test(parsed)) return false;
@@ -173,6 +177,13 @@ export function tunnelMetadata(
     const reason = status === "401" || status === "403" ? "credential unauthorized" : status === "404" ? "tunnel not found" : status === "429" ? "rate limited" : "invalid response or transport failure";
     throw new TunnelMetadataError(`OpenAI tunnel ${args[0]} failed (${reason}); verify account authorization and tunnel scope in Platform`, status === "404");
   }
+}
+
+export function assertTunnelScope(metadata: z.infer<typeof tunnelMetadataSchema>, id: string, org: string, workspace: string): void {
+  if ((metadata.id ?? metadata.tunnel_id) !== id ||
+      metadata.organization_ids?.length !== 1 || !metadata.organization_ids.includes(org) ||
+      metadata.workspace_ids?.length !== 1 || !metadata.workspace_ids.includes(workspace))
+    throw new Error("Tunnel does not belong to the configured organization and ChatGPT workspace");
 }
 
 export function createTunnel(binary: string, env: NodeJS.ProcessEnv, org: string, workspace: string): string {
@@ -359,10 +370,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     }
   }, 45_000) || !observation.metadata) throw new Error("New tunnel metadata did not become available");
   const metadata = observation.metadata;
-  if ((metadata.id ?? metadata.tunnel_id) !== id ||
-      metadata.organization_ids?.length !== 1 || !metadata.organization_ids.includes(org) ||
-      metadata.workspace_ids?.length !== 1 || !metadata.workspace_ids.includes(workspaceId))
-    throw new Error("Tunnel does not belong to the configured organization and ChatGPT workspace");
+  assertTunnelScope(metadata, id, org, workspaceId);
 
   if (state?.enabled && prior &&
       prior.workspace === workspace && prior.policyFile === policyFile &&
@@ -398,11 +406,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
       path.join(paths.codexHome, "src/mcp/chatgpt-supergateway-probe.ts"),
       supergateway, config
     ], { cwd: workspace, env: gatewayEnv, stdio: ["ignore", "inherit", "inherit"], timeout: 60_000 });
-    const gatewayCommand = [
-      "/usr/bin/env", "-i",
-      ...Object.entries(gatewayEnv).map(([name, value]) => name + "=" + value),
-      supergateway, "--config", config
-    ].map(shellWord).join(" ");
+    const gatewayCommand = gatewayStdioCommand(supergateway, config, gatewayEnv);
     execFileSync(binary, [
       "init", "--sample", "sample_mcp_stdio_local", "--profile", "autodev",
       "--profile-dir", generation, "--tunnel-id", id,

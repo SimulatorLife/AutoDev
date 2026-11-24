@@ -59,6 +59,8 @@ function runToolFilter(args: string[]): void {
   const allowed = new Set<string>(allowedTools);
   const pendingToolLists = new Set<JsonRpcId>();
   const pendingInitialize = new Set<JsonRpcId>();
+  const deadlines = new Map<JsonRpcId, NodeJS.Timeout>();
+  const cancelledRequests = new Set<JsonRpcId>();
   const observations = new Map<JsonRpcId, (outcome: ToolCallOutcome) => void>();
   const spans = new Set<Promise<ToolCallOutcome>>();
   const finish = (id: JsonRpcId, outcome: ToolCallOutcome): void => {
@@ -74,6 +76,21 @@ function runToolFilter(args: string[]): void {
       : process.env,
     stdio: ["pipe", "pipe", "inherit"]
   });
+  const clearDeadline = (id: JsonRpcId): void => {
+    const timer = deadlines.get(id);
+    if (timer) clearTimeout(timer);
+    deadlines.delete(id);
+  };
+  const armDeadline = (id: JsonRpcId, milliseconds: number): void => {
+    const timer = setTimeout(() => {
+      clearDeadline(id);
+      finish(id, { status: "error", errorType: "timeout" });
+      process.stdout.write(jsonLine(errorResponse(id, "External MCP request timed out")));
+      backend.kill("SIGKILL");
+    }, milliseconds);
+    timer.unref();
+    deadlines.set(id, timer);
+  };
   const clientLines = createInterface({ input: process.stdin });
   const backendLines = createInterface({ input: backend.stdout! });
 
@@ -91,13 +108,28 @@ function runToolFilter(args: string[]): void {
       if (id !== null && typeof message.method === "string") process.stdout.write(jsonLine(errorResponse(id, "MCP capability is not externally approved")));
       return;
     }
+    if (external && id !== null && deadlines.has(id)) {
+      process.stdout.write(jsonLine(errorResponse(id, "Duplicate outstanding MCP request")));
+      return;
+    }
     if (external && message.method === "initialize" && id !== null) {
       pendingInitialize.add(id);
       if (isRecord(message.params)) message.params = { ...message.params, capabilities: {} };
     }
     if (external && message.method === "notifications/cancelled" && isRecord(message.params)) {
       const cancelled = message.params.requestId;
-      if (typeof cancelled === "number" || typeof cancelled === "string") finish(cancelled, { status: "error", errorType: "cancelled" });
+      if (typeof cancelled === "number" || typeof cancelled === "string") {
+        if (deadlines.has(cancelled)) {
+          finish(cancelled, { status: "error", errorType: "cancelled" });
+          clearDeadline(cancelled);
+          // The upstream may ignore cancellation. End that backend session
+          // if it has not answered within the bounded cancellation grace.
+          const timer = setTimeout(() => backend.kill("SIGKILL"), 5000);
+          timer.unref();
+          deadlines.set(cancelled, timer);
+          cancelledRequests.add(cancelled);
+        }
+      }
     }
     if (message.method === "tools/list" && id !== null)
       pendingToolLists.add(id);
@@ -126,6 +158,7 @@ function runToolFilter(args: string[]): void {
         void span.then(() => spans.delete(span), () => spans.delete(span));
       }
     }
+    if (external && id !== null) armDeadline(id, message.method === "tools/call" ? 60_000 : 15_000);
     backend.stdin?.write(external ? jsonLine(message) : `${line}\n`);
   });
 
@@ -141,6 +174,13 @@ function runToolFilter(args: string[]): void {
         return;
       }
       if (id !== null) {
+        if (!deadlines.has(id)) return;
+        clearDeadline(id);
+        if (cancelledRequests.delete(id)) {
+          pendingToolLists.delete(id);
+          pendingInitialize.delete(id);
+          return;
+        }
         finish(id, message.error || result?.isError === true ? { status: "error", errorType: "tool_error" } : { status: "ok" });
         if (pendingInitialize.delete(id) && result) {
           const capabilities = isRecord(result.capabilities) ? result.capabilities : {};
@@ -173,8 +213,15 @@ function runToolFilter(args: string[]): void {
   });
 
   clientLines.on("close", () => {
-    if (backend.exitCode === null && backend.signalCode === null)
+    if (backend.exitCode === null && backend.signalCode === null) {
       backend.kill("SIGTERM");
+      if (external) {
+        const timer = setTimeout(() => {
+          if (backend.exitCode === null && backend.signalCode === null) backend.kill("SIGKILL");
+        }, 5000);
+        timer.unref();
+      }
+    }
   });
   backend.on("error", (error) => {
     process.stderr.write(external ? "external MCP backend failed to start\n" : `role MCP backend failed to start: ${error.message}\n`);
@@ -182,6 +229,7 @@ function runToolFilter(args: string[]): void {
   });
   backend.on("close", (code) => {
     if (external) {
+      for (const id of deadlines.keys()) clearDeadline(id);
       for (const id of observations.keys()) finish(id, { status: "error", errorType: "backend_closed" });
       void Promise.allSettled([...spans]).then(() => shutdownTelemetry());
     }
