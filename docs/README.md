@@ -8,11 +8,11 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Focused operational/design docs
 
-- [`xacpx-subagent-delegation.md`](xacpx-subagent-delegation.md) — Codex-agnostic ACP (`@agentclientprotocol/sdk` / `@ganglion/xacpx` / `acpx`) session orchestration, strict per-session provider pinning, native auto-compaction, and direct `opencli` `github-worker` execution.
+- [`xacpx-subagent-delegation.md`](xacpx-subagent-delegation.md) — Codex-agnostic ACP (`@agentclientprotocol/sdk` / `@ganglion/xacpx` / `acpx`) session orchestration, strict per-session provider pinning, native auto-compaction, exclusive `xacpx` MCP subagent delegation via the shared gateway, and direct `opencli` `github-worker` execution.
 - [`autodev-console-migration.md`](autodev-console-migration.md) — current Console/OpenLIT migration state, current gaps, cutover dependencies, and current acceptance evidence. It must not redefine target requirements.
 - [`local-setup.md`](local-setup.md) — current installation/materialization/runtime setup plus Console/OpenLIT commands, ports, service credentials, and local operational entry points. It may describe transitional native projections but does not override canonical ownership.
 - [`provider-routing.md`](provider-routing.md) — current provider/router execution, retry, fallback, limits, and ACP/`opencli` policy contract. Current native role projections are transitional where the canonical target moves them to RuleSync.
-- [`opencli-separate-browser.md`](opencli-separate-browser.md) — investigated, not implemented: test results and design for running the opencli providers in a dedicated browser over CDP instead of the user's Chrome, and why headless is not viable; subordinate to `provider-routing.md`.
+- [`opencli-separate-browser.md`](opencli-separate-browser.md) — implemented as an opt-in dedicated-browser mode; live acceptance and dedicated-browser-only target convergence remain open. Includes the browser isolation investigation; subordinate to the canonical target.
 - [`prompt-ownership.md`](prompt-ownership.md) — editable ownership of AutoDev RuleSync prompts versus target-repository prompts.
 - [`organization-routing.md`](organization-routing.md) — GitHub organization scheduler/repository routing. “Organization” here refers to SimulatorLife GitHub automation, not the removed OpenLIT organization concept.
 - [`private-target-validation.md`](private-target-validation.md) — centralized validation for private target repositories.
@@ -32,4 +32,4 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 Removed/superseded documents must not be recreated as active guidance: the old platform-migration ledger, TypeScript migration target, UI control-plane target, observability target/runbook, metrics-dashboard runbook, and prompt-catalog migration ledger have all been folded into current authorities or completed.
 
-- [ChatGPT Secure MCP Tunnel](chatgpt-secure-mcp-tunnel.md) — installer-managed Supergateway integration.
+- [ChatGPT Secure MCP Tunnel](chatgpt-secure-mcp-tunnel.md) — current installer-managed tunnel integration; the canonical target's [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) governs its migration to optional external ingress.

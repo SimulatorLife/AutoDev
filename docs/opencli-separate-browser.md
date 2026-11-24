@@ -6,7 +6,7 @@ remains.** This document records the
 2026-11-11 investigation into moving the opencli providers
 (`opencli-chatgpt`, `opencli-gemini`) out of the user's own Chrome. It is
 subordinate to [`provider-routing.md`](provider-routing.md), which remains the
-authority for how the opencli bridge works today.
+focused routing guide. The [canonical target](autodev-console-target-state.md#role-oriented-execution-and-provider-routing) requires dedicated-browser isolation exclusively; the current opt-in/shared-extension mode is a migration gap, not a permanent alternative.
 
 ## Implementation status
 

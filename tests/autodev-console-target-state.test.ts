@@ -438,7 +438,8 @@ test("documentation keeps one broad target-state authority", () => {
     "docs/typescript-target-state.md",
     "docs/prompt-catalog-migration.md",
     "docs/observability-target-state.md",
-    "docs/metrics-dashboard.md"
+    "docs/metrics-dashboard.md",
+    "docs/opencli-hybrid-concept.md"
   ];
 
   for (const path of removed) {
@@ -2109,4 +2110,75 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
   };
   for (const name of manifests.keys()) check(name);
   assert.deepEqual(dependencies.get("@simulatorlife/autodev-core"), []);
+});
+
+test("canonical MCP target requires one gateway for every provider", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const section = doc.slice(
+    doc.indexOf("### Mandatory shared MCP gateway"),
+    doc.indexOf("### File interaction surface")
+  );
+  assert.match(
+    section,
+    /all AutoDev-managed MCP access goes through one provider-agnostic Supergateway service/u
+  );
+  assert.match(section, /No direct-provider MCP connections or fallback/u);
+  assert.match(section, /Only the gateway starts\/manages local MCP backends/u);
+  assert.match(
+    section,
+    /Disabling or losing the tunnel must not disable local MCP access/u
+  );
+  assert.match(section, /Server-side authorization and confinement/u);
+  assert.match(section, /Session and workspace isolation/u);
+  assert.match(section, /provider matrix and isolation gates are observed/u);
+});
+
+test("canonical delegation target uses only XACPX MCP across providers", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const section = doc.slice(
+    doc.indexOf("### Cross-provider agent delegation contract"),
+    doc.indexOf("### Resilience mechanics and provider cooldown policy")
+  );
+  assert.match(section, /canonical `xacpx` MCP server/u);
+  assert.match(section, /exclusively through Supergateway/u);
+  assert.match(section, /no parallel delegation mechanism or fallback/u);
+  assert.match(section, /no permanent host-native delegation fallback/u);
+  assert.doesNotMatch(
+    doc,
+    /Shell and delegation \(`multi_agent_v1__\*`\) retain/u
+  );
+  assert.doesNotMatch(doc, /Keep host-native delegation until/u);
+});
+
+test("canonical target does not restore pre-ACP provider hopping or removed memory", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  assert.match(doc, /Mid-session provider hopping is retired/u);
+  assert.match(doc, /never a mid-session hop/u);
+  assert.doesNotMatch(doc, /the provider an agent runs on is not fixed/u);
+  assert.doesNotMatch(
+    doc,
+    /Existing PostgreSQL\/pgvector memory is transitional/u
+  );
+  assert.doesNotMatch(doc, /memory-target-state\.md owns/u);
+  const setup = readFileSync(
+    new URL("docs/local-setup.md", repositoryRoot),
+    "utf8"
+  );
+  assert.doesNotMatch(setup, /There is no spawn MCP server/u);
+  assert.match(setup, /The `xacpx` MCP is declared here/u);
+});
+
+test("active documentation does not prescribe retired execution paths", () => {
+  const todo = readFileSync(new URL("docs/TODO.md", repositoryRoot), "utf8");
+  const active = todo
+    .split("\n")
+    .filter((entry) => /^- \[[ ~]\]/u.test(entry))
+    .join("\n");
+  assert.doesNotMatch(active, /Preserve direct CLI\/Responses/u);
+  assert.doesNotMatch(active, /Mirror the shim/u);
+  const playtesting = readFileSync(
+    new URL("docs/playtesting-target-state.md", repositoryRoot),
+    "utf8"
+  );
+  assert.doesNotMatch(playtesting, /Playtesting \| Memory/u);
 });

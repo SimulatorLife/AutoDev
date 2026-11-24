@@ -1,5 +1,7 @@
 # Local AI and provider setup
 
+> **MCP migration target:** The direct provider MCP launch/configuration paths described below are current operational behavior, not the end state. The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway) requires all AutoDev-managed provider MCP traffic to use Supergateway, with no direct backend fallback. Canonical Rulesync declarations and role/workspace contracts remain authoritative; the optional ChatGPT tunnel is not a prerequisite for local access. Subagent delegation likewise converges on the [single XACPX MCP interface](autodev-console-target-state.md#cross-provider-agent-delegation-contract) through the gateway. References below to native Codex spawn tools, code-mode spawn or the removed Codex-tools bridge describe pre-ACP behavior, not target requirements or fallback mechanisms.
+
 > This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
 **JavaScript prerequisite:** install standalone pnpm (v12.21.0 for this
@@ -225,7 +227,7 @@ Codex user-level configuration is managed via a composed model rather than a dir
 - **Portable runtime/provider source (`config/config.autodev.toml`):** Contains AutoDev-owned model/provider, telemetry, feature, and shell/runtime settings that are not canonical RuleSync agent-facing configuration. Agent/skill/MCP/hook/permission definitions belong in RuleSync where supported; `.rulesync/mcp.jsonc` is canonical for MCP declarations and `.rulesync/permissions.jsonc` is canonical for Codex and Antigravity permissions and command rules (`default_permissions = ":danger-full-access"`, `approval_policy`, `approvals_reviewer`, `tools.web_search`, and `$CODEX_HOME/rules/rulesync.rules`).
 - **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source, the Rulesync-generated Codex MCP projection, and the Rulesync-generated Codex permissions projection (`codexcli`) with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved. Legacy `[permissions.*]`, `sandbox_mode`, and `[sandbox_workspace_write]` keys from older installations are stripped so stale sandboxes cannot linger.
 - **Root role settings:** The root turn is the orchestrator, so the composer overlays `agents/roles/orchestrator.toml`'s per-server settings (`enabled`, `enabled_tools`, `default_tools_approval_mode`) onto each server the MCP projection declares, the same keys a child role's TOML owns for that child. Launch keys stay with the projection. Orchestrator entries the projection does not declare (the plugin-owned `codex_app`) add nothing to `mcp_servers`. This is what gives native and Claude-served root turns the orchestrator's scoped CodeGraphContext tools rather than CGC's full surface.
-- **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills. Codex hooks are written only to `$CODEX_HOME/hooks.json` (a regular file rendered by Rulesync's user-level projection): Codex loads that file and the working project's `.codex/hooks.json`, so a repository copy ran every hook twice in AutoDev sessions; the installer removes it and trusts only the user-level path. `--check` validates those outputs, including that the repository carries no `.codex/hooks.json`. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`; Copilot projects `SubagentStart`, `UserPromptSubmitted`, and `PreToolUse` but not `SessionStart`; Antigravity projects `SessionStart` and `PreToolUse` but not `SubagentStart` or `UserPromptSubmitted`. The root-delegation `beforeSubmitPrompt` hook is declared per target, for `codexcli` and `copilot` only: it injects Codex's orchestrator bootstrap (spawn tools reached through code-mode `exec` cells), and as a shared hook it put about 8 KB of Codex-only instructions into every Claude Code prompt in this repository.
+- **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills. Codex hooks are written only to `$CODEX_HOME/hooks.json` (a regular file rendered by Rulesync's user-level projection): Codex loads that file and the working project's `.codex/hooks.json`, so a repository copy ran every hook twice in AutoDev sessions; the installer removes it and trusts only the user-level path. `--check` validates those outputs, including that the repository carries no `.codex/hooks.json`. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`; Copilot projects `SubagentStart`, `UserPromptSubmitted`, and `PreToolUse` but not `SessionStart`; Antigravity projects `SessionStart` and `PreToolUse` but not `SubagentStart` or `UserPromptSubmitted`. Root delegation hooks must direct orchestrators to the canonical XACPX interface, not to the retired Codex-native spawn surface. Validate the actual provider projection and hook behavior against the current Rulesync sources.
 - **Root delegation context and idempotency:** The hook emits its policy once per context window: when the session's `transcript_path` already carries the injected bootstrap (a Codex developer message or a Claude Code `hook_additional_context` attachment) after its last compaction record (Codex `compacted`, Claude Code `compact_boundary`), later prompts inject nothing, and the first prompt after a compaction (which drops hook context) injects it again. Tool output that only quotes the bootstrap does not count. An unreadable or missing transcript injects. Within a turn it also emits at most once per non-empty `session_id`, `turn_id`, and root model, so duplicate global/workspace submissions do not repeat context. A short-lived, bounded state file under `$CODEX_HOME/hooks` coordinates concurrent processes and stores only hashed turn identities with timestamps (never prompt content). The bootstrap has the root size its task first, points to the enabled orchestration skill (read before the first spawn, not for trivial work the root does itself) rather than copying its full body, keeps the spawn surface and lifecycle details in that canonical skill, bounds command output, keeps the root out of git history, and stays below the observed hook-message truncation limit; the recovery reminder is injected only as a compact exceptional-path summary. Missing identifiers are not deduplicated; different turns/models still receive policy.
 - **Regular file output:** Writes an atomic regular file to `$CODEX_HOME/config.toml` (never a symlink). Codex resolves configuration at startup, and symlinking would cause local overrides to be overwritten or lost.
 - **Legacy seed retirement:** `config/config.toml` is no longer tracked or authoritative. An older installation with a valid symlink target is migrated once into a regular composed file at `$CODEX_HOME/config.toml`; a broken legacy symlink fails closed rather than discarding machine-local state.
@@ -324,16 +326,7 @@ is missing" or "AutoDev MCP binary is missing or not executable: `<temporary
 home>/.local/bin/ccc`". `ccc` also reads its global settings from that home, so
 the same home decides whether the server can serve at all.
 
-The role contract is what tells a server whose home it runs with: the roles
-that use `cocoindex-code` and `codegraphcontext` declare `HOME` in their
-`[mcp_servers.<name>]` `env_vars`, and the bridge passes the user's own home
-to exactly those servers. That is the same home the native Codex path already
-gives them, so a bridged turn and a native turn run the same tool the same way.
-The launcher checks every candidate it resolves before answering with it, so a
-home that holds no install falls through to `PATH` rather than shadowing a
-working copy with a path that names a file that is not there.
-`tests/config/mcp-launcher.test.ts` and `tests/antigravity-mcp-isolation.test.ts`
-cover both halves.
+Backend execution must resolve the installed binary and permitted configuration from trusted Runtime context, independently of a provider's isolated HOME. The launcher checks each candidate before selecting it; a nonexistent home-local binary must not shadow a working installation. The gateway target centralizes this backend environment selection and restricts access to approved workspace/index roots and required runtime dependencies. Do not solve missing tools by granting arbitrary home-directory access.
 
 Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
 than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
@@ -351,9 +344,7 @@ bundles it), `lsp_call_hierarchy`, `lsp_file_imports`, or `lsp_related_files`
 server-lifecycle tools. `explorer`, `validator`, `smart`, and `orchestrator`
 keep the full LSP surface as the fallback for questions the preferred owner
 cannot answer. `tests/config/config-rendering.test.ts` freezes that split.
-Copilot registers `lsp` per session, as it does `codegraphcontext`, so the
-bridge can apply each role's allowlist: `.rulesync/mcp.jsonc` removes both from
-Copilot's user-level file. The `browser-tester` and `smart`
+The canonical Rulesync configuration contains provider-specific current projection overrides. The ACP profile and gateway target must deliver the exact effective role tools, regardless of the provider's user-level registry. The `browser-tester` and `smart`
 roles use the pinned TypeScript language server from AutoDev's devDependencies;
 the installer also installs `python-lsp-server==1.15.0` with pipx so Python
 files have a working `pylsp` backend. The launcher adds both AutoDev's
@@ -374,19 +365,7 @@ fetching/opening and is the appropriate search/open/read path for authoritative
 websites. Do not add a separate Codex `web_fetch` tool. Their rendered remote
 MCP entries set `transport = "streamable_http"`, which the installed Codex
 0.153.x role loader requires even when `url` is present.
-The Playwright MCP remains strictly for UI and browser testing roles and is disabled
-for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
-`smart` and `orchestrator` follow the web-research policy. A Claude-served turn acts only
-through Codex's own tools, so it reaches exactly the MCP servers and Playwright tools its
-Codex role TOML enables; the Claude bridge passes `--strict-mcp-config` with only the
-per-turn Codex tools server, so user-level `~/.claude.json` servers and a workspace's own
-`.mcp.json` never reach a bridged turn. Only `browser-tester` and `smart` receive Playwright.
-Playwright is never exposed to the root orchestrator. Antigravity's registry is
-global, so its bridge creates an invocation-scoped temporary home that exposes
-only the current role's contracted MCP servers and tools. This lets `browser-tester`
-and `smart` use their Playwright allowlists without changing the global registry
-or exposing Playwright to other roles. For documentation and web research,
-Antigravity uses its native `search_web` and `read_url_content` tools.
+Playwright is reserved for explicitly granted UI/browser testing roles; documentation-only and ungranted root roles do not receive it. Resolve tool names and grants from the current role contract, rather than relying on a provider's native tool surface. All ACP profiles and the future gateway enforce the same role/workspace policy, with separate authorization for external ChatGPT access.
 
 The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
 `0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts
@@ -410,42 +389,15 @@ none of `codex mcp add`, `copilot mcp add`, or `agy mcp add`: Rulesync writes
 user-level MCP files from the canonical declaration. Install pipx before running
 the installer if it is not already present.
 
-Native role contracts enable CodeGraphContext, CocoIndex, and LSP for the
-root orchestrator and code-capable profiles, and omit them from
-`docs-researcher` and `browser-tester`. Codex-native and bridged providers
-enforce these role contracts. Antigravity is the exception: its MCP registry is
-global and has no per-role server filtering, so its four explicitly permitted
-CodeGraphContext tools are also visible to `docs-researcher` sessions despite
-that role's contract. The docs-researcher prompt forbids using local-code tools;
-this is prompt policy, not a capability boundary. Antigravity rejects
-`browser-tester` requests because Playwright cannot be isolated there.
+Code-capable roles receive the contracted CodeGraphContext, CocoIndex and LSP tools; other roles must not receive ungranted code-navigation tools. The current ACP provider profile implementation (`runtime/src/acp/provider-profiles.ts`) isolates native settings and effective role capabilities. Missing required tool exposure is an integration defect, not a reason to weaken a role or exclude a provider on tool support. At gateway cutover every provider connects only to its role-scoped gateway endpoints.
 
-The installer exposes these AutoDev-owned shared skill directories in
-`$HOME/.agents/skills/` through symlinks. A Claude-served turn reads them through
-Codex's tools from the skills catalogue in Codex's own context, like any Codex-served
-turn, so there is no Claude-specific skill view; the installer removes the obsolete
-`$CODEX_HOME/provider-runtime/claude/` views. The root `orchestration` skill is
-also enabled in the parent user config and injected deterministically into root
-turns by the delegation hook and provider bridges; leaf role TOMLs keep it
-disabled so child agents do not inherit parent orchestration policy.
-
-Antigravity has a global MCP registry and workspace customization discovery.
-The installer registers the pinned `codegraphcontext`, `cocoindex-code`, and
-`lsp` MCP servers with `agy`; `.agents/skills.json` continues to expose the
-`ccc` and `lsp-mcp-server` skills from the canonical `.rulesync/skills/` source.
-The shared code-search prompt directs code roles to CGC first. The bridge filters
-the installed MCP catalogue for each invocation and creates a temporary home
-containing only that role's contracted servers and tool grants. It preserves
-explicit user denies and does not rewrite the global registry or settings.
-CodeGraphContext tool grants remain explicit rather than wildcarded.
+The installer exposes the shared canonical skills through `$HOME/.agents/skills/`; root orchestrators receive the orchestration skill, and leaf roles receive only their own contracted skills. XACPX manages delegation; no parent-native spawn path or provider-specific tool mirroring is required.
 
 Headless subagents run noninteractively and cannot answer interactive permission
 prompts. The installer projects static Antigravity CLI permissions from
 `.rulesync/permissions.jsonc` (via `rulesync`) into
 `~/.gemini/antigravity-cli/settings.json` and layers dynamic, machine-local
-workspace `read_file` grants on top; for router-managed turns the bridge
-replaces only MCP allow grants in a temporary settings copy with grants from the
-selected role contract. Read-only roles keep the Antigravity sandbox and never
+workspace `read_file` grants on top; for AutoDev-managed turns the ACP profile must apply the selected role's effective grants without widening user or operator denies. Read-only roles keep the Antigravity sandbox and never
 receive `--dangerously-skip-permissions` or `command(*)`. If a native command is
 not allowed, the leaf prompt directs the model to stop retrying it and return a
 visible summary that records the limitation.
@@ -475,8 +427,7 @@ execution. These installer grants support direct CLI use. AutoDev-managed
 read-only turns build an isolated settings copy from the validated request
 workspace, preserve explicit denies, and do not inherit user command, write, or
 `unsandboxed(...)` grants. User-configured `read_url(...)` rules remain separate
-from local file access. The bridge passes agy's `--sandbox` flag to read-only
-roles; write-capable roles retain their existing permission policy. Broad shell
+from local file access. Read-only roles must retain enforceable sandbox restrictions; write-capable roles retain their authorized policy. Broad shell
 execution is never granted to read-only validation roles.
 
 Run the installer with `--check` to validate that all configured workspace roots
@@ -947,19 +898,13 @@ active repository.
 ### Execution contract
 
 The versioned execution contract is `config/execution-contract.json`.
-It is generated by `runtime/src/config/render-execution-contract.ts` from the native
-role TOMLs plus the root orchestrator configuration, then installed beside the
-bridge modules. Provider bridges consume it for role kind, the sandbox a role
+It is generated by `runtime/src/config/render-execution-contract.ts` from the current
+role TOMLs plus the root orchestrator configuration. Runtime consumes it for role kind, the sandbox a role
 declares, expected MCP/skill capabilities, and adapter spawn-tool metadata. Canonical role prose lives in
-`agents/prompts/roles/*.md`; bridges and the native-role renderer share
-those fragments instead of duplicating them. A bridge must report missing
-capabilities rather than silently substituting a different workflow. Native role
+`agents/prompts/roles/*.md`; the execution integration and role renderer share those fragments instead of duplicating them. A provider integration must report missing capabilities rather than silently substituting a different workflow. Native role
 TOMLs remain the **current transitional capability input** until the RuleSync subagent/agent-role migration reaches parity; they are not the long-term canonical source. The installer fails when the generated contract drifts from the current input. The root orchestrator uses the
 capability-only `agents/roles/orchestrator.toml` declaration but is not
-installed as a child role. A native child receives only its `agent_type` and task
-message; Codex resolves the installed role TOML to bootstrap its enabled MCP
-servers and skills. Skill paths and MCP lists are intentionally not copied into
-individual spawn payloads.
+installed as a child role. A child must be resolved through the canonical role and workspace contract, with exact effective MCP/skill grants. The XACPX-only delegation target does not depend on native Codex child inheritance. Skill paths and grants are derived by Runtime, not trusted from agent-supplied spawn prose.
 
 Workspace-local `.codex/agents/*.toml` roles are allowed when they use names
 outside AutoDev's managed flat roles. A project-local role that reuses a managed
@@ -973,7 +918,7 @@ AutoDev runs Codex without OS-level `sandbox_mode` (`default_permissions = ":dan
 
 - Read-only role TOMLs declare `# role-access: read-only`, and shell-free roles (`browser-tester`, `playtester`, `playtest-analyst`) set `[features] shell_tool = false` and restrict MCP tools via `enabled_tools`.
 - Read-only roles with file access (`explorer`, `docs-researcher`) pass `AUTODEV_MCP_READ_ONLY` to `filesystem` MCP (`--read-only`), which removes file-mutation tools from the server schema, while `runtime/src/hooks/role-sandbox.ts` + `runtime/src/agents/read-only-policy.ts` enforce the read-only shell allowlist in `PreToolUse`.
-- Across non-Codex provider bridges, the router forwards `x-autodev-read-only` (`"1"` | `"0"`) and the bridges combine it with `isReadOnlyRole` in `config/execution-contract.json` to start `filesystem` with `--read-only`, inject the read-only system instruction, and keep CLI write gates active (such as Antigravity `--sandbox` and Copilot `--deny-tool=write`).
+- ACP Runtime evaluates `session/request_permission` against the effective role/read-only contract; the gateway target requires matching server-side tool and workspace enforcement for all callers. Do not rely on a provider-specific header or direct launch path as the only security boundary.
 
 - `runtime/src/hooks/role-sandbox.ts` is a Codex `PreToolUse` hook. Codex runs
   a hook for every tool call, inside the thread that made it, and the hook is
@@ -992,35 +937,9 @@ AutoDev runs Codex without OS-level `sandbox_mode` (`default_permissions = ":dan
 - The hook is registered in `.rulesync/hooks.jsonc` and materialized to
   `$CODEX_HOME/src/hooks/role-sandbox.ts`.
 
-The same hook holds the root orchestrator to its delegation boundary. A root
-turn carries no role; the hook recognizes it by the turn's model
-(`autodev/orchestrator`, or a Codex-native model the operator chose -- the same
-rule the root-delegation hook uses) and applies
-`runtime/src/agents/orchestrator-policy.ts`, which refuses the `git`
-subcommands that read history (`log`, `show`, `blame`, `reflog`, `rev-list`,
-and the rest of `GIT_HISTORY_SUBCOMMANDS`). Current-state and integration
-commands (`git status`, `git diff`, `git add`, `git commit`) still run, and
-children are unaffected: a regression investigation that needs history is
-delegated to one child with a scoped brief. Codex executes the root's tools for
-the Codex-native, Claude, Antigravity, MiniMax and opencli roots, so the hook
-covers them; Copilot runs its own shell, so the Copilot bridge passes the same
-list as `--deny-tool=shell(git <subcommand>)` arguments for the orchestrator.
-Claude Code reports no model, so its sessions are never treated as the root.
+The root orchestrator is subject to the same role-aware policy regardless of host. Existing `runtime/src/agents/orchestrator-policy.ts` restricts Git history access; scoped regression investigations belong to an authorized child. Native provider shell and file gates are defense in depth. ACP permission handling and the gateway/backend must enforce effective role and workspace bounds independently; provider hooks alone are not an OS security boundary.
 
-The provider bridges enforce the same tier from the other side. The router
-forwards the tier a bridge must enforce in `x-autodev-sandbox-mode`, and the
-bridge refuses a read-only role's writes. A bridge has two tiers -- read-only
-and writable -- so a role that declares the unrestricted sandbox runs in the
-writable tier there; the mode a role declared is the contract's answer, and the
-header names the tier a bridge can act on.
-
-The limits are explicit. The hook enforces the **read-only** tier; the
-`workspace-write` tier a child runs in is the session's own sandbox, so a
-widened operator policy widens it for the roles that do not narrow it. The
-network dimension stays where the session's sandbox puts it, and the MCP
-servers a role may reach are the role's own contract. A role-scoped run
-(`runtime/src/cli/provider-agent.ts`) is given the same effective sandbox as
-the session that would have spawned it.
+A role-scoped run receives only the authorized sandbox and tool grants. The provider's actual enforceable restrictions must be verified; unsupported restrictions fail closed. Network access follows the effective policy, not a client-controlled header.
 
 The Console's role capability matrix publishes both answers: the sandbox a
 role runs in (the effective mode) and the sandbox it declared. A role whose
@@ -1042,19 +961,15 @@ so `runtime/src/hooks/file-surface.ts`, a `PreToolUse` hook registered in
 does not render. Refusals are logged to `$CODEX_HOME/hooks/hooks.log` with
 `"hook":"file-surface"`.
 
-The bridges launch the server per turn with `AUTODEV_MCP_WORKSPACE` (the turn's
-workspace) and, on a read-only turn, `AUTODEV_MCP_READ_ONLY=1`; the launcher
-adds `--confine-roots` and the skill roots outside the workspace as
-`--read-only-dir`. A read-only role's Codex config sets the same variable in its
-`[mcp_servers.filesystem]` table.
+The existing launcher accepts `AUTODEV_MCP_WORKSPACE` and `AUTODEV_MCP_READ_ONLY=1` from trusted execution context, adds `--confine-roots` and the approved skill roots as `--read-only-dir`. In the mandatory gateway target, these are gateway/backend launch parameters, not client-controlled grants.
 
 ### Rulesync shared configuration
 
-`.rulesync/` is the only tracked Rulesync input, and nothing Rulesync generates is tracked as a test fixture. The repository projections use `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`; the separate `copilotcli` target is used for user-level MCP generation. `rulesync.jsonc` is the only RuleSync configuration, and it declares the features **per target** rather than one list for all of them, because a shared output tree needs a single writer. `.agents/skills/` is read by Codex CLI and Antigravity CLI alike: two targets writing it would have to produce byte-identical files, and a skill whose frontmatter one client reads and the other ignores -- `user-invocable` in the `quota-axi` skill, which Antigravity turns into `disable-slash-command` and Codex ignores -- makes that impossible, so the check reports the tree as drifted on every run. The `codexcli` target therefore owns `.agents/skills/` and the `antigravity-cli` target owns the commands projected into the same directory; the `codexcli` target owns no `hooks`, because Codex hooks are written only at user level. A Rulesync run that names its features or targets replaces this per-target map with a flat selection, so the Runtime and the test suites name the owning targets explicitly whenever they generate a single feature. A hook in the shared `hooks` section reaches every target, and a per-target section **replaces** the shared section for the event it names rather than adding to it: a `codexcli.hooks.preToolUse` entry leaves Codex without the shared `PreToolUse` hooks, so a hook that belongs to one host only has to be listed there together with the shared ones it needs. **Current state:** its project-mode generation covers repository projections that have reached parity. RuleSync 43.8.0 supports native subagent generation for the four configured targets, but native role TOMLs/execution-contract code remain transitional because those projections do not encode AutoDev's complete shared role contract losslessly; the `subagents` and `permissions` features are not currently enabled. **Target:** move every losslessly representable agent-facing definition into canonical RuleSync sources, then delete the duplicate native authority only after field-level and runtime parity is proven. Do not add another AutoDev-specific declarative schema during that migration.
+`.rulesync/` is the only tracked Rulesync input, and nothing Rulesync generates is tracked as a test fixture. The repository projections use `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`; the separate `copilotcli` target is used for user-level MCP generation. `rulesync.jsonc` is the only RuleSync configuration, and it declares the features **per target** rather than one list for all of them, because a shared output tree needs a single writer. `.agents/skills/` is read by Codex CLI and Antigravity CLI alike: two targets writing it would have to produce byte-identical files, and a skill whose frontmatter one client reads and the other ignores -- `user-invocable` in the `quota-axi` skill, which Antigravity turns into `disable-slash-command` and Codex ignores -- makes that impossible, so the check reports the tree as drifted on every run. The `codexcli` target therefore owns `.agents/skills/` and the `antigravity-cli` target owns the commands projected into the same directory; the `codexcli` target owns no `hooks`, because Codex hooks are written only at user level. A Rulesync run that names its features or targets replaces this per-target map with a flat selection, so the Runtime and the test suites name the owning targets explicitly whenever they generate a single feature. A hook in the shared `hooks` section reaches every target, and a per-target section **replaces** the shared section for the event it names rather than adding to it: a `codexcli.hooks.preToolUse` entry leaves Codex without the shared `PreToolUse` hooks, so a hook that belongs to one host only has to be listed there together with the shared ones it needs. **Current state:** its project-mode generation covers repository projections that have reached parity. The pinned RuleSync version supports native subagent generation for the four configured targets, but native role TOMLs/execution-contract code remain transitional because those projections do not encode AutoDev's complete shared role contract losslessly; the `subagents` and `permissions` features are not currently enabled. **Target:** move every losslessly representable agent-facing definition into canonical RuleSync sources, then delete the duplicate native authority only after field-level and runtime parity is proven. Do not add another AutoDev-specific declarative schema during that migration.
 
 `.rulesync/rules/overview.md` is the canonical source for repository-wide agent instructions. RuleSync targets only `agentsmd` for this rule and generates the tracked root `AGENTS.md` projection, which Codex, Antigravity, and Copilot (cloud agent, code review, CLI, VS Code chat) read natively. `CLAUDE.md` remains a symlink to the projection for Claude Code. Copilot Chat on github.com reads only `.github/copilot-instructions.md`, which is intentionally absent. `tests/agent-instructions.test.ts` and `tests/rulesync-rules.test.ts` guard the ownership and generated output.
 
-`.rulesync/mcp.jsonc` is the only static MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `43.8.0`. There is no spawn MCP server: every provider delegates through Codex's own `exec` tool, which the Claude and Antigravity bridges mirror per turn through the `codex` MCP shim, so no global MCP registration grants any turn a delegation path:
+`.rulesync/mcp.jsonc` is the canonical MCP backend source; use the Rulesync version pinned by `package.json`. The `xacpx` MCP is declared here and the existing launcher runs its native `mcp-stdio` entrypoint. Its exposure is role-scoped. The canonical target requires all provider-facing MCP projections to reference the shared gateway, including XACPX; the direct launch projections below describe the existing materialization path until cutover:
 
 - **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` that is installed, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. `claude` and `agy` are looked for on `PATH`; `copilot` is looked for the way its bridge looks for it, so a CLI installed under a version manager counts as installed. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
 - **Codex:** Rulesync's global output ignores `CODEX_HOME`. The installer therefore generates the Codex projection into a temporary root, and the composer merges its servers into `$CODEX_HOME/config.toml`, keeping any server you added there. The role renderer and execution-contract builder read the same projection.
@@ -1066,7 +981,7 @@ The suites generate from `.rulesync/` into temporary roots:
 - `tests/rulesync-hooks-shadow.test.ts` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse, and that Claude Code gets no root-delegation hook. Rulesync omits `SessionStart` for Copilot and `SubagentStart`/`UserPromptSubmitted` for Antigravity, and omits Codex-only fields such as `prevent_idle_sleep`; the tests freeze each target's actual projection.
 - `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: Data reads every canonical file, Runtime selects only `codexcli` and wildcard targets (including RuleSync's default target), the Rulesync projection contains exactly those commands with description-only frontmatter (no `targets` leak), the project-mode projection writes the whole catalog to Claude Code, Copilot, and Antigravity CLI, and real materialization preserves prompt bodies, reconciles stale files, reports changed prompts, and is idempotent.
 
-AutoDev scripts remain the hook implementations, while Rulesync owns declarations. The installer materializes the generated projections in the active repository and validates them with `--check`; no duplicate hook declarations remain in `config.autodev.toml`. RuleSync permissions generation is not yet the current runtime authority, but the canonical target requires permissions to migrate into RuleSync once the existing effective policy has been inventoried and represented losslessly. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
+AutoDev scripts remain the hook implementations, while Rulesync owns declarations. The installer materializes the generated projections in the active repository and validates them with `--check`; no duplicate hook declarations remain in `config.autodev.toml`. `.rulesync/permissions.jsonc` is the canonical portable permission source, with generated Codex and Antigravity permission/command-rule projections where supported. The role execution contract and runtime enforcement remain responsible for restrictions that are not expressible losslessly in those projections. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
 
 ```bash
 node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts
@@ -1081,13 +996,7 @@ node_modules/.bin/rulesync generate --features skills --targets copilot,claudeco
 node_modules/.bin/rulesync generate --features skills --targets copilot,claudecode,codexcli --check
 ```
 
-The installer also provisions `CODEX_ROUTER_COPILOT_API_KEY` in the private
-`$CODEX_HOME/.env`. It is a local Router-to-Copilot bridge bearer credential,
-not a GitHub or Copilot provider API key. The Router and Copilot proxy launcher
-load the same value; the Copilot CLI subprocess does not inherit it. A
-materialize-only install stages a newly generated key without restarting the
-Router or Copilot proxy, so both services must be reloaded before Copilot can
-serve routed tasks with that key.
+Copilot execution now uses its native ACP CLI rather than a separate Responses proxy. Do not provision or reload the removed Copilot bridge as a prerequisite; confirm the current executable, provider authentication and ACP session readiness.
 
 The Codex CLI is found by one lookup in `runtime/src/shared/executables.ts`,
 and every surface that runs it uses that lookup: an explicit `CODEX_BIN` wins,
@@ -1095,7 +1004,7 @@ and otherwise the newest CLI installed wins over a stale one on the default
 `PATH`. The candidates are `~/.local/bin/codex`, the first `codex` on `PATH`,
 and the pnpm-global `PNPM_HOME/bin/codex`. A machine usually holds more than
 one copy -- a stale one in the system bin directory is common -- and the stale
-one rejects the flags the role bridge and the command rules depend on, so the
+one rejects the flags the role integration and command rules depend on, so the
 newest one is the one that runs. A `CODEX_BIN` that names something unusable
 is reported as the misconfiguration it is, and a machine with no Codex CLI at
 all reports that none is installed rather than guessing at one.
@@ -1103,10 +1012,9 @@ all reports that none is installed rather than guessing at one.
 The Copilot CLI itself is found the way the Codex CLI is found, by one lookup
 in `runtime/src/shared/executables.ts`: `COPILOT_BIN` when it is set, then the
 first `copilot` on `PATH`, then `PNPM_HOME/bin/copilot`, then
-`~/.local/bin/copilot`. The bridge, installer dependency check, and Router
-ensure hook all share that lookup. The explicit pnpm-global fallback works
+`~/.local/bin/copilot`. The installer and execution integration should reuse that lookup. The explicit pnpm-global fallback works
 under launchd even when its minimal `PATH` omits pnpm's bin directory. The Copilot CLI's launcher is a
-`#!/usr/bin/env node` script, so the bridge puts its own Node first on the
+`#!/usr/bin/env node` script, so the execution integration must supply the pinned Node on the
 CLI's `PATH` and the CLI runs natively rather than through Rosetta.
 
 The installer provisions `CODEX_ROUTER_OPENCLI_API_KEY` the same way for the
@@ -1294,13 +1202,7 @@ plus the trusted `AUTODEV_PLAYTEST_CONTROL_API_ACTOR` and exact
 configured run-control role); the configured role must match the MCP role. The
 Runtime accepts that role-bound credential only on typed Playtesting
 capability/run routes and rejects missing or role-escalated session context.
-Codex-native `multi_agent_v1` subagents inherit the parent session's MCP set;
-a custom agent's `mcp_servers` table does not enable or narrow MCP servers for
-that child ([Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents)). AutoDev intentionally keeps `playtest` and `playwright` disabled in
-the root session, so a native Codex child must not be assumed to have those
-tools just because its role TOML declares them. Do not enable either server at
-the root as a workaround: every native child would inherit the same set, and
-Playtest run authority is bound to trusted Runtime-provided session context.
+Playtest and Playwright exposure must follow the child's effective role and trusted Runtime-provided session context, not the root's inherited tool set. The XACPX/ACP delegation target resolves separate child grants through Supergateway. Do not enable either server at the root as a workaround for missing child tools; report a role-projection or gateway authorization defect.
 For an isolated Browser Tester CLI run, use the `browser-tester` role through
 `run-provider-agent.sh`; that path reasserts the exact Playwright tool and
 environment allowlists. Playtester MCP launches require the dedicated trusted
@@ -1331,7 +1233,7 @@ when enabling the private listener. Neither Playtesting credential is inherited
 by the game adapter. To query Usage, set
 `AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
-`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: **currently**, durable records, experiences, and outcome cohorts are read through the AutoDev PostgreSQL-backed Control API in `console/app/memory`. The [new target](memory-target-state.md) makes **Mem0 Platform** the only long-term memory engine and uses the **OpenLIT Mem0 connector** and OTel inside the same Console. Current local PostgreSQL commands remain transitional until a verified, reversible cutover; this section does not define Mem0 API keys, MCP configuration, or a completed deployment. The transitional external OpenLIT Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
+`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The custom PostgreSQL/pgvector memory store and `/memory` product surface have been removed. Mem0 integration is postponed; do not bootstrap a legacy memory connector or database. The external OpenLIT Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
 
 If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`. Verify that OpenLIT serves the required AutoDev Usage v5 contract; if that live contract is valid, rebuild and restart the managed Console so its long-lived server process loads the matching bundle. Neither failure state renders metric panels or substitutes sample values.
 

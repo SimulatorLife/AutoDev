@@ -1,5 +1,7 @@
 # Unified Session Diagnostics & Session-Scoped Console Usage
 
+> **Architecture boundary:** This diagnostics design includes historical Codex rollouts and Router/bridge log evidence. Current execution uses strictly pinned ACP sessions and XACPX delegation. New session/provider/child attribution must come from the owning Runtime/ACP lifecycle; old provider-hop and bridge events remain historical observations only. The [canonical target](autodev-console-target-state.md#session-diagnostics-and-session-scoped-usage) owns current behavior.
+
 ## Goal Description
 
 Today AutoDev has two disconnected ways to inspect a session:

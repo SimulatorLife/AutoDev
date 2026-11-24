@@ -2,6 +2,8 @@
 
 > **Phase 2 cutover implemented.** AutoDev orchestrates every interactive agent provider natively over ACP (`@agentclientprotocol/sdk`, `@ganglion/xacpx`, `acpx`) with RuleSync-projected MCPs, skills, prompts, permissions, and provider-neutral hooks. All legacy `/v1/responses` provider bridges, `codex-tools-shim`, custom compaction/continuation/item-id/transcript shims, Codex SQLite state polling (`codex-state-collector`), mid-session provider hopping (`provider-hops`), and the custom PostgreSQL/pgvector memory stack have been removed.
 
+> **Canonical delegation target:** The existing `xacpx` MCP declaration launches `@ganglion/xacpx` using its native `mcp-stdio` entry point. All orchestrators, including Codex, must use this one MCP for child delegation and lifecycle, via the [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-shared-mcp-gateway). ACP/acpx remains the execution transport; AutoDev remains the allocation, authorization and child-ownership authority. No Codex-native `multi_agent_v1__*`, custom spawn shim or provider-specific fallback survives cutover. Native host UI must display the XACPX-owned child lifecycle, not create a competing child. This is a target requirement, not a claim that the gateway/delegation parity gates are already complete.
+
 ## Architecture Overview
 
 1. **Single Policy Authority (AutoDev Router):**
