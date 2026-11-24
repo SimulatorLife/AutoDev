@@ -4,7 +4,7 @@
 >
 > **Goal:** Reuse useful cross-task experience without turning stale model-generated summaries into hidden policy or a competing source of truth.
 >
-> **Selected target (decision):** Use **Mem0 Platform** as the managed long-term memory engine and its maintained hosted MCP as the agent interoperability option. Use **OpenLIT/OpenTelemetry** for memory management UI and telemetry inside the **AutoDev Console**. AutoDev owns only integration, trusted identity/scoping, current-state applicability checks, bounded injection, and effectiveness evaluation—not a custom durable memory database, extractor, indexer, consolidator, general-purpose memory server, or second memory UI.
+> **Selected target (decision):** Use **self-hosted Mem0 OSS** as the sole long-term memory engine, exposed to agents by a **self-hosted Python Mem0 MCP server with OpenLIT initialized in that same Python process**; neither Mem0 Platform nor its hosted MCP is the target. Use **OpenLIT/OpenTelemetry** for memory management UI and telemetry inside the **AutoDev Console**. AutoDev owns only integration, trusted identity/scoping, current-state applicability checks, bounded injection, and effectiveness evaluation—not a custom durable memory database, extractor, indexer, consolidator, general-purpose memory server, or second memory UI.
 >
 > **Status:** This is a **migration target, not a claim of implementation**. The currently deployed/code-backed memory foundation remains AutoDev PostgreSQL/pgvector + `MemoryService` + its own MCP; see [current local setup](../config/memory/README.md) and [evaluation contracts](memory-injection-outcome-evaluation.md). Do not remove working paths or claim Mem0/OpenLIT parity until tested.
 
@@ -15,7 +15,7 @@
 3. **Treat memory as evidence, not authority.** Git/repository state, RuleSync, version-controlled policy, and live runtime state override remembered claims.
 4. **Separate types and scopes.** Episodic, semantic, and procedural memory have different lifecycles; task-private, role, repository/workspace, and global memory must not collapse into one shared store.
 5. **Promote proven procedures.** Stable, repeatedly validated procedures should become explicit skills, rules, tests, or documentation.
-6. **Buy the memory engine, keep policy thin.** Mem0 owns learning, consolidation, persistence, indexing, and retrieval; AutoDev retains only responsibilities coupled to its execution, Git, authorization, and product contracts.
+6. **Reuse the memory engine, keep policy thin.** Mem0 owns learning, consolidation, persistence, indexing, and retrieval; AutoDev retains only responsibilities coupled to its execution, Git, authorization, and product contracts.
 
 The target is not conversation history plus vector search. It is a provenance-bearing, scoped, temporal memory lifecycle.
 
@@ -26,14 +26,14 @@ AutoDev execution / tool evidence / native transcripts
        |  bounded, redacted, provenance-bearing capture
        v
 AutoDev integration (trusted repository/task/agent scope)
-       |  Mem0 Platform SDK/API: add + search
+       |  Local Python Mem0 OSS SDK: add + search
        v
-Mem0 Platform (managed memory authority)
+Self-hosted Mem0 OSS (local memory authority)
        |  extraction, consolidation, storage, semantic recall, updates
        +------------------------+
        |                        |
        v                        v
-AutoDev JIT retrieval      Official Mem0 hosted MCP
+AutoDev JIT retrieval      Self-hosted Python Mem0 MCP
        |                   (only trusted/scoped clients)
        v
 Scope + Git/current-state verification
@@ -41,16 +41,19 @@ Scope + Git/current-state verification
        v
 Small, cited advisory memory packet -> agent
 
-OpenLIT Mem0 connector + OpenTelemetry -> AutoDev Console /memory
+OpenLIT SDK in Python MCP process -> OTLP -> OpenLIT / AutoDev Console
+OpenLIT Mem0 operator adapter (OSS parity verified) -> Console /memory
 ~~~
 
 **Single durable memory authority:** Mem0. AutoDev's existing PostgreSQL memory records, full-text/pgvector search, consolidator/curator, and `autodev_memory` MCP are **transitional implementations**, not components to maintain indefinitely alongside Mem0. Do not instantiate both active memory write paths in production.
 
 **Distinct non-memory authorities:** Git/RuleSync/runtime configuration remains authoritative for current code and policy. AutoDev retains its existing execution evidence and telemetry contracts; that evidence is not a second searchable long-term memory product.
 
-**Transport is not authority:** the [Mem0 Platform API](https://docs.mem0.ai/platform/quickstart) is the trusted in-process integration route for orchestration. The [official Mem0 MCP](https://docs.mem0.ai/platform/mem0-mcp) is an optional tool interface for authenticated, explicitly scoped agents. OpenLIT's provider connector is for operator views, not the source of memory truth.
+**Transport is not authority:** the self-hosted Python Mem0 OSS SDK is the memory engine API; the local Python MCP server exposes narrowly scoped memory tools to approved agents. Internal orchestrator code can use trusted local SDK/API calls rather than routing every call through MCP. Do not connect agents to the hosted Mem0 Platform MCP or rely on Mem0 Cloud for durable storage.
 
-Prefer the **managed Mem0 Platform** to minimize ongoing memory infrastructure maintenance. Self-hosted Mem0 OSS is a **separate, opt-in deployment choice**, not a transparent drop-in for the managed API, hosted MCP, or OpenLIT connector; validate API and UI parity if chosen.
+**Instrumentation boundary (required):** initialize OpenLIT inside the **same Python process** that hosts the Mem0 MCP tools, before loading/using the Mem0 library. Instrument both compatible MCP operations and Mem0 `Memory`/`AsyncMemory` methods; export OpenTelemetry spans to the existing OpenLIT OTLP receiver. A separate OpenLIT process or MCP-side tool-call telemetry alone does **not** provide visibility into Mem0 internals. Verify correlated end-to-end spans, including Mem0 add/search/update/delete, with a real local deployment. OpenLIT instrumentation is version-sensitive and may not cover arbitrary internal storage calls.
+
+**Local operation:** deploy and persist Mem0's local store/vector database and configure an approved local embedding/LLM backend if a fully offline installation is required. Validate storage, model, OS, resource, and backup requirements; self-hosted does not imply offline unless every dependency is local. Reuse a maintained community/local Python MCP adapter only after security and compatibility validation; do not assume Mem0's official hosted MCP supports OSS.
 
 ## 3. Memory model
 
@@ -186,8 +189,8 @@ Link to existing execution/evaluation evidence for history the provider does not
 
 | Concern | Target owner | Boundary |
 | --- | --- | --- |
-| Durable memories, extraction, updates, storage, indexing, search, consolidation | **Mem0 Platform** | One managed memory authority; avoid custom PostgreSQL/pgvector tables or duplicate search pipelines |
-| Provider lifecycle, hosted MCP and provider-specific memory APIs | **Mem0** | Version/pin the API contract and MCP tools; supported operations vary between Platform and OSS |
+| Durable memories, extraction, updates, storage, indexing, search, consolidation | **Self-hosted Mem0 OSS** | One local memory authority; avoid custom PostgreSQL/pgvector tables or duplicate search pipelines |
+| Local Mem0 lifecycle, Python MCP tool interface and SDK compatibility | **Mem0 OSS + self-hosted Python MCP adapter** | Pin and validate the SDK/tool contract and local persistence; do not assume Platform API parity |
 | Historical task execution and trajectory source references | **AutoDev runtime + approved existing telemetry/artifacts** | Evidence and outcome events are not a second long-term memory store |
 | Trusted identity, allowlists, scope policy, Git/current-state verification, injection budgets, experiment assignment | **AutoDev runtime/core** | Thin integration/safety wrapper; do not rebuild general memory logic |
 | Memory operator browse/manage, connector health, search/detail/graph/chart primitives | **OpenLIT provider connector adapted into AutoDev Console** | Single operator surface; provider mutations happen only through authorized server routes |
@@ -195,7 +198,7 @@ Link to existing execution/evaluation evidence for history the provider does not
 
 The existing `runtime/src/memory/`, `data/src/memory/`, PostgreSQL migrations, `autodev_memory` MCP, and PostgreSQL-backed Control API are **current implementation only**. During migration, isolate their writes and keep them readable for audit/rollback. After parity and data portability gates pass, retire redundant memory storage, indexes, service methods, custom MCP facade, UI proxies, migrations, and dependencies. Preserve distinct execution evidence/telemetry and needed historical outcome comparisons; never destructively purge prior evidence without retention approval.
 
-Privacy must be explicit: approve hosted data egress by repository/workspace; redact secrets and unnecessary sensitive files; avoid exporting raw transcripts by default; restrict keys to server-side trusted processes and do not expose them to browser, tool subprocesses, or arbitrary agents. Define provider retention, delete propagation, export/backup, tenant isolation, breach response and reversible cutover **before** ingesting production code-derived memory.
+Privacy must be explicit: forbid unapproved external memory/model data egress by repository/workspace; redact secrets and unnecessary sensitive files; avoid exporting raw transcripts by default; restrict keys to server-side trusted processes and do not expose them to browser, tool subprocesses, or arbitrary agents. Define provider retention, delete propagation, export/backup, tenant isolation, breach response and reversible cutover **before** ingesting production code-derived memory.
 
 Mem0's delete/update history and retention semantics must be tested; do not claim its API provides immutable append-only evidence or all current AutoDev provenance guarantees. Preserve an independently auditable, minimal **non-memory** action/outcome trail in existing telemetry where necessary, with no extra long-term memory database.
 
@@ -203,25 +206,25 @@ Mem0's delete/update history and retention semantics must be tested; do not clai
 
 ### Selection and rationale
 
-**Adopt [Mem0 Platform](https://docs.mem0.ai/) as the sole long-term memory engine.** It is an established, maintained product with automatic memory extraction and updates, structured identity/metadata, semantic recall, TypeScript/Python SDKs, and an [official hosted MCP](https://docs.mem0.ai/platform/mem0-mcp). This avoids ongoing AutoDev ownership of memory databases, embedding pipelines, consolidation, retrieval ranking, generic CRUD, and a separately maintained memory MCP server.
+**Adopt self-hosted [Mem0 OSS](https://github.com/mem0ai/mem0) as the sole long-term memory engine.** Use a **local Python MCP server** that calls Mem0's Python SDK and initializes **OpenLIT in the same server process** before invoking Mem0. Mem0 owns extraction, consolidation, indexing, search, updates and deletion; AutoDev owns deployment/configuration, boundary enforcement and operational validation, not a competing memory engine. The MCP adapter is an integration layer, not a second durable memory store.
 
-**Keep [OpenLIT](https://github.com/openlit/openlit) as AutoDev's memory UI/telemetry framework.** OpenLIT has a Mem0 provider connector and reusable list/search/detail/action/chart and trace/metric patterns. Port/adapt these **into the sole AutoDev Console**; do not restore a separate OpenLIT Memory page, generic dashboard builder, Otter/chat, or another operator console. Verify the stock provider connector's exact API, filters and capabilities against the selected Mem0 Platform version and AutoDev's pinned/forked OpenLIT component set; its upstream existence is **not** proof the current fork still exposes it or that it supports OSS.
+**Keep [OpenLIT](https://github.com/openlit/openlit) as AutoDev's memory UI/telemetry framework.** OpenLIT has a Mem0 provider connector and reusable list/search/detail/action/chart and trace/metric patterns. Port/adapt these **into the sole AutoDev Console**; do not restore a separate OpenLIT Memory page, generic dashboard builder, Otter/chat, or another operator console. Verify that the adapted connector actually supports the selected Mem0 OSS API and AutoDev's pinned/forked OpenLIT components; the upstream Platform connector's existence is **not** proof of OSS compatibility.
 
 **Why not maintain the native engine?** It duplicates a general memory product inside a coding orchestrator and increases storage, retrieval, extraction, migration, test, and UI maintenance. AutoDev's differentiator is execution orchestration plus current-repository applicability, not owning a vector store. Hindsight/Claude-Mem/Graphiti remain comparison benchmarks or references, not parallel production memory authorities.
 
 ### Integration surfaces
 
 ~~~text
-AutoDev runtime capture -> trusted Mem0 Platform client (add/ingest)
-AutoDev root-turn JIT  -> trusted Mem0 Platform client (search)
+AutoDev runtime capture -> trusted local Mem0 Python SDK (add/ingest)
+AutoDev root-turn JIT  -> trusted local Mem0 Python SDK (search)
                              -> AutoDev minimal validation + packet builder
-Authorized external agent -> official Mem0 MCP (only with enforced scope)
+Authorized agent -> self-hosted Python Mem0 MCP (enforced scope)
 Mem0 operator reads/writes -> OpenLIT Mem0 connector/adapted server API
                                   -> AutoDev Console /memory
 AutoDev runtime/provider calls -> OpenTelemetry/OTLP -> OpenLIT -> Console
 ~~~
 
-Use the **native Mem0 SDK/API for internal orchestrator calls**, not serializing every in-process call through MCP. Prefer the **official Mem0 MCP** where agents need explicit interoperable memory tools. No new generic AutoDev memory MCP server is a target. A small host-side scope/credential adapter may still be required; if the hosted MCP cannot be restricted to an agent's exact authorized tenant/workspace, **do not expose it directly**. Use a trusted server-side operation or omit direct agent MCP rather than leaking a global key.
+Use the **local Mem0 SDK/API for internal orchestrator calls**, not serializing every in-process call through MCP. Agent-facing interoperability uses the **self-hosted Python Mem0 MCP server**, with OpenLIT initialized in that exact process. The adapter must enforce authenticated/host-verified workspace, repository, agent and role scope on every read/write; do not expose unrestricted local memory tools or model-selected identities. No second AutoDev-owned memory engine or generic memory database is a target. If the MCP adapter cannot enforce scope, omit direct agent MCP and use trusted server-side operations.
 
 ### Minimal AutoDev-owned contract
 
@@ -231,9 +234,9 @@ Use the **native Mem0 SDK/API for internal orchestrator calls**, not serializing
 - Record attempted/retrieved/injected/used outcomes and attribution through existing execution telemetry and evaluator reports, not an alternative memory store.
 - Keep operator mutations permission-checked, display provider-side failures honestly, and never label provider memory presence as proof of agent usage or task success.
 
-### Mem0 Platform versus OSS
+### Self-hosted OSS deployment and compatibility
 
-The **managed Platform is the default target** because it minimizes infrastructure ownership and supplies the maintained hosted MCP. OSS/self-hosted Mem0 is a **distinct alternative** for approved data-sovereignty requirements; it changes deployment, API compatibility, hosted MCP availability, connector behavior and operations. Do not describe OSS as a drop-in Platform replacement or adopt archived `mem0-mcp` / OpenMemory repositories. If managed deployment cannot satisfy security/egress/retention constraints, pause the rollout and make an explicit platform-versus-OSS decision rather than quietly substituting a new local memory stack.
+**Self-hosted Python Mem0 OSS + co-process OpenLIT + local MCP is the selected target**, not a fallback to managed Platform. Pin compatible `mem0ai`, Python MCP SDK, OpenLIT and backing-store versions. Initialize OpenLIT before Mem0/MCP handler imports where auto-instrumentation requires it; configure a protected OTLP exporter and test parent/child trace correlation across inbound MCP calls, Mem0 operations and underlying model/embedding calls. Test process restarts, persistent data, offline/no-egress expectations, multi-agent concurrency, read/write scoping and retention/backup. Do not assume Mem0 Platform API/hosted MCP/UI connector parity, or adopt archived `mem0-mcp` / OpenMemory repositories.
 
 ### OpenLIT and Console reuse
 
@@ -243,15 +246,15 @@ Reuse the upstream Mem0 connector's capability/descriptor patterns and useful Re
 
 Preserve the existing `autodev.memory.*` operation, candidate, injection, outcome, use, and packet-size metrics wherever their meanings still apply; adapt internal stage labels to the real Mem0 operations and distinguish **provider-observed** from **AutoDev-assessed** facts. Include capture queue/ingestion result, provider read/write/update/delete/timeout/error, filter-rejection reason, packet bytes/characters/tokens, retries, provider latency, additional model/embedding charges where observed, and end-to-end task outcome comparisons.
 
-Trace memory calls inside the same logical agent execution, with bounded operation names and status. Keep workspace/repository IDs, provider memory IDs, claims, transcripts, evidence paths, and correlation tokens **out of metric dimensions**; identifiers can appear only in appropriately protected, sampled and retention-governed traces/records. Do not double-count Mem0 and AutoDev token/cost observations. Unknown or vendor-unreported provider costs stay unknown.
+Initialize OpenLIT inside the self-hosted Python Mem0 MCP process and trace memory calls inside the same logical agent execution, with bounded operation names and status. Verify MCP tool spans and Mem0 SDK spans are both emitted and correlated; tracing only the MCP boundary is insufficient. Keep workspace/repository IDs, provider memory IDs, claims, transcripts, evidence paths, and correlation tokens **out of metric dimensions**; identifiers can appear only in appropriately protected, sampled and retention-governed traces/records. Do not double-count Mem0 and AutoDev token/cost observations. Unknown or vendor-unreported provider costs stay unknown.
 
 Maintain explicit cohort isolation: `disabled` cannot call Mem0 or offer an alternative memory MCP; `retrieval-only` and `jit` experiments must have defined, matched capture histories and session-level assignment. Outcomes and use assessments are not inferred from successful API calls, packet injection, PR links, or provider status. See [memory injection/outcome evaluation](memory-injection-outcome-evaluation.md).
 
 ### Migration and rollout gates (documentation target, not implementation claim)
 
-1. **Compatibility/discovery:** pin the Mem0 Platform SDK/API, official hosted MCP tool schema/auth, data/export/delete behavior, and OpenLIT Mem0 connector version; test scopes, metadata, filters, pagination, UI actions, and error mapping against a real non-production account.
-2. **Security:** approve repository-data egress, redaction, service-account ownership, secret handling, per-workspace/agent isolation, data retention, export/deletion and outage behavior; no unrestricted shared agent MCP credentials.
-3. **Adapter prototype:** implement a thin native capture/recall wrapper to Mem0; leave existing read-only memory and historical telemetry intact; disable duplicate write/injection paths.
+1. **Compatibility/discovery:** pin Mem0 OSS Python SDK, Python MCP SDK, OpenLIT instrumentation, local vector store and model/embedding versions; test local add/search/update/delete, access scopes, metadata, pagination, UI action compatibility and error mapping in a non-production deployment.
+2. **Security:** enforce no unapproved repository-data egress, redaction, local service identity, per-workspace/agent isolation, data retention, backup/export/deletion and outage behavior; no unrestricted shared agent MCP access.
+3. **Adapter/observability prototype:** run a self-hosted Python Mem0 MCP server with OpenLIT initialized in the same Python process, export OTLP to OpenLIT, and verify correlated MCP + Mem0 add/search/update/delete spans. Keep the native trusted capture/recall wrapper thin; leave legacy read-only memory and historical telemetry intact; disable duplicate write/injection paths.
 4. **Controlled evaluation:** compare no memory, current AutoDev JIT, and Mem0 JIT on matched coding tasks. Measure task/PR success, repeated investigation, memory usefulness, retrieval accuracy, stale advice, token and provider costs, p50/p95 latency, and missed/erroneous memory.
 5. **Console parity:** port/reuse OpenLIT Mem0 UI primitives in `console/`, expose provider health, browse/search/detail, supported CRUD and trace-linked metrics; verify browser acceptance and unavailable/error states.
 6. **Reversible cutover:** export/verify historical useful memories with evidence and scope mapping; switch the canonical production memory owner to Mem0 only after parity and rollback tests; freeze legacy writes, preserve audit data, and then retire redundant PostgreSQL, custom search, `MemoryService` memory CRUD, custom memory MCP, and legacy UI plumbing.
