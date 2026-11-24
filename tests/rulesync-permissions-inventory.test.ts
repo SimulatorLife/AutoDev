@@ -49,7 +49,7 @@ test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not 
   assert.equal(typeof asObject(codexcli.tools).web_search, "boolean");
   assert.equal(sharedBash["sudo *"], "deny");
   assert.equal(sharedBash["git checkout *"], "deny");
-  assert.equal(sharedBash["git commit --amend *"], "ask");
+  assert.equal(sharedBash["git commit --amend *"], "deny");
   assert.equal(sharedBash["rm -rf .git *"], "deny");
 
   for (const forbidden of [

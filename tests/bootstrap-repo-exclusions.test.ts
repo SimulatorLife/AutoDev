@@ -160,8 +160,7 @@ test("preserves pre-existing info/exclude content and only appends missing entri
   try {
     mkdirSync(join(repo, ".git", "info"), { recursive: true });
     writeFileSync(excludePath(repo), "# operator note\n/local-scratch/\n");
-    mkdirSync(join(repo, ".rulesync", "skills"), { recursive: true });
-    mkdirSync(join(repo, ".agents"), { recursive: true });
+    writeFileSync(join(repo, ".cgcignore"), "*.log\n");
     const env = withEffectiveGlobalExcludes(repo);
 
     const result = runScript(repo, { args: [repo], env });
@@ -169,7 +168,7 @@ test("preserves pre-existing info/exclude content and only appends missing entri
     const content = readExclude(repo);
     assert.match(content, /# operator note/);
     assert.match(content, /^\/local-scratch\/$/m);
-    assert.match(content, /^\/\.agents\/skills\/$/m);
+    assert.match(content, /^\.cgcignore$/m);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -178,8 +177,7 @@ test("preserves pre-existing info/exclude content and only appends missing entri
 test("--check reports pending changes without writing and exits non-zero", () => {
   const repo = makeRepo("autodev-bootstrap-check-");
   try {
-    mkdirSync(join(repo, ".rulesync", "skills"), { recursive: true });
-    mkdirSync(join(repo, ".agents"), { recursive: true });
+    writeFileSync(join(repo, ".cgcignore"), "*.log\n");
     const env = withEffectiveGlobalExcludes(repo);
     const before = readExclude(repo);
 
