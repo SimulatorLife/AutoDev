@@ -33,6 +33,7 @@ import {
   missingAntigravityPermissions
 } from "./antigravity-settings.ts";
 import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
+import { checkChatgptTunnel } from "./chatgpt-tunnel-install.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
@@ -1241,6 +1242,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       failures
     );
     checkLaunchAgents(paths, failures);
+    check("configured ChatGPT tunnel readiness", checkChatgptTunnel(paths), failures);
     return failures.value;
   } finally {
     rmSync(permissionsProjection.root, { recursive: true, force: true });

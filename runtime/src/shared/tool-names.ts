@@ -96,6 +96,8 @@ export const MCP_SERVER_XACPX = "xacpx" as const;
 export const MCP_SERVER_FILESYSTEM = "filesystem" as const;
 /** Set to "1" in a read-only role's MCP environment to start it `--read-only`. */
 export const MCP_FILESYSTEM_READ_ONLY_ENV = "AUTODEV_MCP_READ_ONLY" as const;
+export const MCP_FILESYSTEM_WORKSPACE_ONLY_ENV =
+  "AUTODEV_MCP_WORKSPACE_ONLY" as const;
 
 /**
  * Codex App tools live behind the codex-app-tools plugin and are surfaced to

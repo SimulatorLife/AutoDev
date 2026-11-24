@@ -80,6 +80,30 @@ test("Supergateway receives an explicit credential-free process environment", ()
     AUTODEV_REPO_ROOT: "/project",
     AUTODEV_NODE_BIN: "/bin/node",
     AUTODEV_MCP_WORKSPACE: "/project",
-    AUTODEV_MCP_READ_ONLY: "1"
+    AUTODEV_MCP_READ_ONLY: "1",
+    AUTODEV_MCP_WORKSPACE_ONLY: "1"
   });
+});
+
+
+test("local grants may narrow but not expand reviewed external permissions", () => {
+  const reviewed = { filesystem: ["read_text_file"] };
+  assert.throws(() => renderChatgptSupergatewayConfig(
+    catalogue, { "future-server": ["search"] }, "/project", reviewed
+  ), /reviewed external policy/);
+  assert.throws(() => renderChatgptSupergatewayConfig(
+    catalogue, { filesystem: ["write_file"] }, "/project", reviewed
+  ), /reviewed external policy/);
+  assert.doesNotThrow(() => renderChatgptSupergatewayConfig(
+    catalogue, { filesystem: ["read_text_file"] }, "/project", reviewed
+  ));
+});
+
+test("canonical shell expressions survive Supergateway interpolation", () => {
+  const result = JSON.parse(renderChatgptSupergatewayConfig({
+    filesystem: { command: "bash", args: ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'] }
+  }, { filesystem: ["read_text_file"] }, "/a$b"));
+  const entry = result.mcpServers.autodev.mcpServers.filesystem;
+  assert.equal(entry.args[1], 'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem');
+  assert.equal(entry.cwd, "/a$$b");
 });

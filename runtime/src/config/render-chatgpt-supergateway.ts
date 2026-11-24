@@ -1,7 +1,10 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { MCP_FILESYSTEM_READ_ONLY_ENV } from "../shared/tool-names.ts";
+import {
+  MCP_FILESYSTEM_READ_ONLY_ENV,
+  MCP_FILESYSTEM_WORKSPACE_ONLY_ENV
+} from "../shared/tool-names.ts";
 
 type Catalogue = Record<string, Record<string, unknown>>;
 
@@ -20,13 +23,17 @@ interface StdioServer {
 export function renderChatgptSupergatewayConfig(
   catalogue: Catalogue,
   grants: unknown,
-  workspace: string
+  workspace: string,
+  reviewedGrants: unknown = grants
 ): string {
   if (!grants || typeof grants !== "object" || Array.isArray(grants))
     throw new Error("ChatGPT MCP grants must be an object");
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
 
+  if (!reviewedGrants || typeof reviewedGrants !== "object" || Array.isArray(reviewedGrants))
+    throw new Error("Invalid reviewed ChatGPT MCP policy");
+  const approved = reviewedGrants as Record<string, unknown>;
   const entries: Array<[string, StdioServer]> = [];
   const prefixes = new Set<string>();
   for (const [name, tools] of Object.entries(grants)) {
@@ -42,6 +49,9 @@ export function renderChatgptSupergatewayConfig(
     )
       throw new Error(`Explicit tool grants required for ${name}; wildcards are not allowed`);
 
+    const reviewed = Object.hasOwn(approved, name) ? approved[name] : undefined;
+    if (!Array.isArray(reviewed) || tools.some((tool) => !reviewed.includes(tool)))
+      throw new Error(`MCP grant exceeds the reviewed external policy: ${name}`);
     const descriptor = catalogue[name]!;
     // The external gateway initially supports local, credential-free stdio
     // descriptors only. Do not silently translate remote/authenticated MCPs.
@@ -73,9 +83,11 @@ export function renderChatgptSupergatewayConfig(
     entries.push([
       name,
       {
-        command: descriptor.command,
-        args,
-        cwd: workspace,
+        // Supergateway interpolates ${VAR} in config strings. Preserve the
+        // canonical shell argument verbatim using its literal-dollar escape.
+        command: escapeInterpolation(descriptor.command),
+        args: args.map(escapeInterpolation),
+        cwd: escapeInterpolation(workspace),
         toolPrefix,
         tools: [...new Set<string>(tools)]
       }
@@ -94,6 +106,10 @@ export function renderChatgptSupergatewayConfig(
       }
     }
   }, null, 2) + "\n";
+}
+
+function escapeInterpolation(value: string): string {
+  return value.replaceAll("$", () => "$");
 }
 
 function contains(parent: string, child: string): boolean {
@@ -143,6 +159,7 @@ export function chatgptSupergatewayEnvironment(
     AUTODEV_REPO_ROOT: paths.repositoryRoot,
     AUTODEV_NODE_BIN: node,
     AUTODEV_MCP_WORKSPACE: workspace,
-    [MCP_FILESYSTEM_READ_ONLY_ENV]: "1"
+    [MCP_FILESYSTEM_READ_ONLY_ENV]: "1",
+    [MCP_FILESYSTEM_WORKSPACE_ONLY_ENV]: "1"
   };
 }

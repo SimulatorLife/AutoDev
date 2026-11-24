@@ -17,6 +17,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
+  MCP_FILESYSTEM_WORKSPACE_ONLY_ENV,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_GITHUB,
@@ -103,7 +104,11 @@ export function resolveMcpCommand(
     // tools that cannot change the filesystem.
     return {
       binary: path.join(repoRoot, "node_modules/.bin/mcp-server-filesystem"),
-      args: env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [],
+      args:
+        env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ||
+        env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
+          ? ["--read-only"]
+          : [],
       pathPrepend: [path.dirname(process.execPath)]
     };
   if (tool === "cocoindex-code") {
@@ -325,7 +330,9 @@ export function runMcp(
   }
   const args =
     name === MCP_SERVER_FILESYSTEM
-      ? [...command.args, ...filesystemDirectoryArgs(workspace, repoRoot)]
+      ? [...command.args, ...(env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
+          ? ["--confine-roots", "--", physicalPath(workspace)]
+          : filesystemDirectoryArgs(workspace, repoRoot))]
       : command.args;
   const result = spawnSync(command.binary, args, {
     cwd: workspace,
