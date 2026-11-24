@@ -1,16 +1,9 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
+import { isEntryPoint } from "../shared/entry-point.ts";
+import { qualifiedToolNames, supergatewayConfigSchema } from "../config/render-chatgpt-supergateway.ts";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-interface GatewayConfig {
-  mcpServers: {
-    autodev: {
-      mcpServers: Record<string, { toolPrefix: string; tools: string[] }>;
-    };
-  };
-}
 
 /** A real MCP round trip using the official SDK, not a proxy implementation. */
 export async function probeSupergateway(
@@ -20,12 +13,8 @@ export async function probeSupergateway(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
   )
 ): Promise<void> {
-  const config = JSON.parse(
-    readFileSync(configFile, "utf8")
-  ) as GatewayConfig;
-  const expected = Object.values(config.mcpServers.autodev.mcpServers)
-    .flatMap(({ toolPrefix, tools }) => tools.map((tool) => toolPrefix + tool))
-    .sort();
+  const config = supergatewayConfigSchema.parse(JSON.parse(readFileSync(configFile, "utf8")));
+  const expected = qualifiedToolNames(config);
   const client = new Client({ name: "autodev-install-check", version: "1.0.0" });
   try {
     await client.connect(new StdioClientTransport({
@@ -55,7 +44,7 @@ export async function probeSupergateway(
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
+if (isEntryPoint(import.meta.url)) {
   const [, , executable, configFile] = process.argv;
   if (!executable || !configFile) throw new Error("Expected Supergateway executable and config");
   probeSupergateway(executable, configFile).catch(() => {

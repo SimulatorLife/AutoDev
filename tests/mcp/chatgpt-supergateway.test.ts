@@ -13,7 +13,7 @@ const catalogue = {
 
 test("Supergateway config is generated from the canonical catalogue, not a fixed server inventory", () => {
   const result = JSON.parse(renderChatgptSupergatewayConfig(
-    catalogue, { "future-server": ["search"], filesystem: ["read_text_file"] }, "/project"
+    catalogue, { "future-server": ["search"], filesystem: ["read_text_file"] }, "/project", { "future-server": ["search"], filesystem: ["read_text_file"] }
   ));
   assert.deepEqual(result, {
     logLevel: "info",
@@ -44,28 +44,28 @@ test("Supergateway config is generated from the canonical catalogue, not a fixed
 
 test("ungranted servers, unknown names, wildcard and empty grants fail closed", () => {
   const result = JSON.parse(renderChatgptSupergatewayConfig(
-    catalogue, { "future-server": ["search"] }, "/project"
+    catalogue, { "future-server": ["search"] }, "/project", { "future-server": ["search"] }
   ));
   assert.deepEqual(Object.keys(result.mcpServers.autodev.mcpServers), ["future-server"]);
-  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { shell: ["exec"] }, "/project"), /Unknown/);
-  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { filesystem: ["*"] }, "/project"), /wildcards/);
-  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { filesystem: [] }, "/project"), /Explicit/);
-  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, {}, "/project"), /No MCP/);
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { shell: ["exec"] }, "/project", { shell: ["exec"] }), /Unknown/);
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { filesystem: ["*"] }, "/project", { filesystem: ["read_text_file"] }), /wildcards/);
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, { filesystem: [] }, "/project", { filesystem: ["read_text_file"] }), /Explicit/);
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, {}, "/project", {}), /No MCP/);
 });
 
 test("reject incompatible transports, credentials, workspace and colliding namespaces", () => {
   assert.throws(() => renderChatgptSupergatewayConfig(
-    { docs: { url: "https://example.test/mcp" } }, { docs: ["search"] }, "/project"
+    { docs: { url: "https://example.test/mcp" } }, { docs: ["search"] }, "/project", { docs: ["search"] }
   ), /Unsupported/);
   assert.throws(() => renderChatgptSupergatewayConfig(
-    { docs: { command: "example", env: { SECRET: "x" } } }, { docs: ["search"] }, "/project"
+    { docs: { command: "example", env: { SECRET: "x" } } }, { docs: ["search"] }, "/project", { docs: ["search"] }
   ), /Unsupported/);
   assert.throws(() => renderChatgptSupergatewayConfig(
-    { docs: { command: "example", cwd: "/other" } }, { docs: ["search"] }, "/project"
+    { docs: { command: "example", cwd: "/other" } }, { docs: ["search"] }, "/project", { docs: ["search"] }
   ), /cwd/);
   assert.throws(() => renderChatgptSupergatewayConfig(
     { "a-b": { command: "example" }, a_b: { command: "example" } },
-    { "a-b": ["search"], a_b: ["search"] }, "/project"
+    { "a-b": ["search"], a_b: ["search"] }, "/project", { "a-b": ["search"], a_b: ["search"] }
   ), /Colliding/);
 });
 
@@ -102,8 +102,22 @@ test("local grants may narrow but not expand reviewed external permissions", () 
 test("canonical shell expressions survive Supergateway interpolation", () => {
   const result = JSON.parse(renderChatgptSupergatewayConfig({
     filesystem: { command: "bash", args: ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'] }
-  }, { filesystem: ["read_text_file"] }, "/a$b"));
+  }, { filesystem: ["read_text_file"] }, "/a$b", { filesystem: ["read_text_file"] }));
   const entry = result.mcpServers.autodev.mcpServers.filesystem;
   assert.equal(entry.args[1], 'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem');
   assert.equal(entry.cwd, "/a$$b");
+});
+
+
+test("missing or malformed reviewed policy fails closed", () => {
+  const grants = { filesystem: ["read_text_file"] };
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, grants, "/project", undefined), /reviewed/);
+  assert.throws(() => renderChatgptSupergatewayConfig(catalogue, grants, "/project", { filesystem: ["*"] }), /reviewed/);
+});
+test("different prefixes cannot produce identical qualified names", () => {
+  const grants = { a: ["b__c"], a__b: ["c"] };
+  assert.throws(() => renderChatgptSupergatewayConfig(
+    { a: { command: "example" }, a__b: { command: "example" } },
+    grants, "/project", grants
+  ), /Colliding MCP qualified tool name/);
 });
