@@ -1,4 +1,5 @@
 /** OS confinement for the only currently admitted external MCP backend. */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
@@ -15,6 +16,32 @@ const manifestSchema = z.object({
 export interface ExternalBackend {
   command: string;
   args: string[];
+}
+
+function resolveDirectNodeExecutable(node: string, cwd: string): string {
+  const resolved = realpathSync(node);
+  if (resolved === realpathSync(process.execPath)) return resolved;
+  // Version-manager/package-manager shims (such as ~/Library/pnpm/bin/node)
+  // re-exec the real Node binary at runtime, which Seatbelt's closed sandbox
+  // blocks. Resolve the underlying Node executable before building the profile.
+  try {
+    const target = execFileSync(
+      resolved,
+      ["-e", "process.stdout.write(process.execPath)"],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5000
+      }
+    ).trim();
+    if (target && path.isAbsolute(target) && existsSync(target)) {
+      return realpathSync(target);
+    }
+  } catch {
+    /* Fall back cleanly if the supplied path cannot evaluate a JS probe. */
+  }
+  return resolved;
 }
 
 /** No generic sandbox claim: admit a backend only after its specific scope,
@@ -42,7 +69,7 @@ export function externalFilesystemBackend(
       : manifest.bin["mcp-server-filesystem"];
   if (!entry) throw new Error("Filesystem MCP executable is missing");
   const script = realpathSync(path.join(packageRoot, entry));
-  const binary = realpathSync(node);
+  const binary = resolveDirectNodeExecutable(node, workspace);
   return {
     command: sandboxExecutable,
     args: [

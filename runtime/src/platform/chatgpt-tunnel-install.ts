@@ -299,8 +299,13 @@ export function resolveSupergateway(repositoryRoot: string): string {
 
 export function tunnelClientSupported(version: string): boolean {
   const parsed = parseCliVersion(version);
-  if (!parsed || !/^\d+\.\d+\.\d+$/u.test(parsed)) return false;
-  const [major = 0, minor = 0, patch = 0] = parsed.split(".").map(Number);
+  const match = parsed
+    ? /^(\d+)\.(\d+)\.(\d+)(?:\+[\da-z.-]+)?$/iu.exec(parsed)
+    : null;
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
   return major > 0 || minor > 0 || patch >= 21;
 }
 

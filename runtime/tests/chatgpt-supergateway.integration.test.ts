@@ -56,8 +56,19 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 
 test("supported tunnel-client version floor", () => {
   assert.equal(tunnelClientSupported("tunnel-client version v0.0.21"), true);
+  assert.equal(
+    tunnelClientSupported(
+      "0.0.21+714f2d67844b660af25754f1d19b0360b346b13b (git sha: 714f2d67844b660af25754f1d19b0360b346b13b)"
+    ),
+    true
+  );
   assert.equal(tunnelClientSupported("tunnel-client version 0.1.0"), true);
   assert.equal(tunnelClientSupported("tunnel-client version 0.0.20"), false);
+  assert.equal(
+    tunnelClientSupported("0.0.20+714f2d67844b660af25754f1d19b0360b346b13b"),
+    false
+  );
+  assert.equal(tunnelClientSupported("0.0.21-rc.1"), false);
   assert.equal(tunnelClientSupported("unknown"), false);
 });
 
@@ -174,6 +185,7 @@ test(
         if (result.isError) throw new Error("tool denied");
       });
       assert.equal(readFileSync(inside, "utf8"), "expected-value");
+      await client.close();
       // The same exact inventory check used by the installer must succeed.
       await probeSupergateway(executable, config, env);
     } finally {
@@ -223,6 +235,23 @@ test("external sandbox rejects every backend without a reviewed confinement prof
       () => externalFilesystemBackend(server, repo, repo, process.execPath),
       /No externally confined/
     );
+});
+
+test("externalFilesystemBackend resolves wrapper Node shims to the direct Node binary for sandbox-exec", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-node-shim-"));
+  try {
+    const shim = path.join(root, "node");
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+      { mode: 0o700 }
+    );
+    const backend = externalFilesystemBackend("filesystem", repo, repo, shim);
+    assert.equal(backend.command, "/usr/bin/sandbox-exec");
+    assert.equal(backend.args[2], realpathSync(process.execPath));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test(
