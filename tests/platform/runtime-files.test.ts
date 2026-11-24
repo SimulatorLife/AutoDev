@@ -278,17 +278,17 @@ test("repo install cache persists across reads and fingerprints detect file modi
     writeRepoInstallCache(directory, {
       schema: "autodev-install-cache-v1",
       rulesyncInstallFingerprint: initialFingerprint,
-      rulesyncGenerate: { skills: initialFingerprint },
+      rulesyncGenerate: initialFingerprint,
       openlitWorkspacesSync: { stamp: "ws-stamp" }
     });
     writeRepoInstallCache(directory, {
       schema: "autodev-install-cache-v1",
       rulesyncInstallFingerprint: initialFingerprint,
-      rulesyncGenerate: { skills: initialFingerprint }
+      rulesyncGenerate: initialFingerprint
     });
     const loaded = readRepoInstallCache(directory);
     assert.equal(loaded.rulesyncInstallFingerprint, initialFingerprint);
-    assert.equal(loaded.rulesyncGenerate?.skills, initialFingerprint);
+    assert.equal(loaded.rulesyncGenerate, initialFingerprint);
     assert.deepEqual(loaded.openlitWorkspacesSync, { stamp: "ws-stamp" });
 
     writeFileSync(skillFile, "# demo v2\n");

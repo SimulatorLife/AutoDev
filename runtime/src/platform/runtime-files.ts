@@ -170,7 +170,12 @@ const REPO_INSTALL_CACHE_SCHEMA = "autodev-install-cache-v1";
 export interface RepoInstallCache {
   schema: string;
   rulesyncInstallFingerprint?: string;
-  rulesyncGenerate?: Record<string, string>;
+  /**
+   * The fingerprint of the repository generation, recorded after the run that
+   * produced it. The repository runs the whole Rulesync configuration, so one
+   * fingerprint covers the run.
+   */
+  rulesyncGenerate?: string;
   [key: string]: unknown;
 }
 
@@ -201,9 +206,8 @@ function readDiskInstallCache(
         ...(typeof parsed.rulesyncInstallFingerprint === "string"
           ? { rulesyncInstallFingerprint: parsed.rulesyncInstallFingerprint }
           : {}),
-        ...(parsed.rulesyncGenerate &&
-        typeof parsed.rulesyncGenerate === "object"
-          ? { rulesyncGenerate: { ...parsed.rulesyncGenerate } }
+        ...(typeof parsed.rulesyncGenerate === "string"
+          ? { rulesyncGenerate: parsed.rulesyncGenerate }
           : {})
       };
     }
@@ -245,7 +249,7 @@ export function writeRepoInstallCache(
       : { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }),
     ...(cache.rulesyncGenerate === undefined
       ? {}
-      : { rulesyncGenerate: { ...cache.rulesyncGenerate } })
+      : { rulesyncGenerate: cache.rulesyncGenerate })
   };
   memoryRepoInstallCache.set(resolved, next);
   if (!cachePath) return;

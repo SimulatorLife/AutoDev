@@ -50,7 +50,10 @@ test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not 
   assert.equal(sharedBash["sudo *"], "deny");
   assert.equal(sharedBash["git checkout *"], "deny");
   assert.equal(sharedBash["git commit --amend *"], "deny");
-  assert.equal(sharedBash["rm -rf .git *"], "deny");
+  // The recursive forced deletions are denied as a family, which covers the
+  // `.git` case that used to carry its own rule.
+  assert.equal(sharedBash["rm -rf *"], "deny");
+  assert.equal(sharedBash["rm -fr *"], "deny");
 
   for (const forbidden of [
     "approval_policy",

@@ -81,5 +81,7 @@ test("the repository configuration routes the exclusions to the exclude file", (
     readFileSync(path.join(repositoryRoot, "rulesync.jsonc"), "utf8")
   ) as Record<string, unknown>;
   assert.equal(config.gitignoreDestination, "gitexclude");
-  assert.ok(existsSync(path.join(repositoryRoot, "node_modules", ".bin", "rulesync")));
+  assert.ok(
+    existsSync(path.join(repositoryRoot, "node_modules", ".bin", "rulesync"))
+  );
 });

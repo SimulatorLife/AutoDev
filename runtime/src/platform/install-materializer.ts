@@ -78,14 +78,6 @@ import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
 
-/**
- * The install cache key of the repository generation.
- *
- * The repository runs the whole Rulesync configuration, so one fingerprint
- * covers the run; there is no per-feature selection to key it by.
- */
-const REPOSITORY_GENERATE_CACHE_KEY = "repository";
-
 export const RUNTIME_MODULES = [
   "runtime/src/router/quota-poll.ts",
   "runtime/src/router/telemetry.ts",
@@ -1556,13 +1548,13 @@ export function generateRepositoryRulesync(
   const forceRulesync = process.env.AUTODEV_FORCE_RULESYNC === "1";
   if (!forceRulesync) {
     const cache = readRepoInstallCache(repositoryRoot);
-    const generateCache = cache.rulesyncGenerate;
-    if (generateCache) {
-      const preFingerprint =
-        computeRepositoryRulesyncFingerprint(repositoryRoot);
-      if (generateCache[REPOSITORY_GENERATE_CACHE_KEY] === preFingerprint) {
-        return;
-      }
+    const generateFingerprint = cache.rulesyncGenerate;
+    if (
+      generateFingerprint !== undefined &&
+      generateFingerprint ===
+        computeRepositoryRulesyncFingerprint(repositoryRoot)
+    ) {
+      return;
     }
   }
   if (options.check !== true) {
@@ -1580,7 +1572,7 @@ export function generateRepositoryRulesync(
   const latestCache = readRepoInstallCache(repositoryRoot);
   writeRepoInstallCache(repositoryRoot, {
     ...latestCache,
-    rulesyncGenerate: { [REPOSITORY_GENERATE_CACHE_KEY]: postFingerprint }
+    rulesyncGenerate: postFingerprint
   });
 }
 

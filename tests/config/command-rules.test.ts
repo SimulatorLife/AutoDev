@@ -76,7 +76,7 @@ const COMMAND_DECISIONS: readonly [string, string | null][] = [
   ["git commit -m message", null],
   ["git status --short", null],
   ["git push", null],
-  ["git commit --amend -m message", "prompt"],
+  ["git commit --amend -m message", "forbidden"],
   ["git -c core.hooksPath=hooks commit -m message", null],
   ["git config core.hooksPath hooks", null],
   ["git push -f", "forbidden"],
@@ -97,7 +97,7 @@ const COMMAND_DECISIONS: readonly [string, string | null][] = [
   ["rm -rf ..", "forbidden"],
   ["rm -rf .git", "forbidden"],
   ["rm -fr .git", "forbidden"],
-  ["rm -rf build", null]
+  ["rm -rf build", "forbidden"]
 ];
 
 test(
