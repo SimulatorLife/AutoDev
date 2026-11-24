@@ -1,11 +1,17 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { writeErrorLine, writeLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { defaultGatewayPolicy, parseGatewayPolicy, validateWorkspace } from "../mcp/chatgpt-gateway.ts";
+import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
+import {
+  chatgptSupergatewayEnvironment,
+  renderChatgptSupergatewayConfig,
+  validateChatgptWorkspace
+} from "../config/render-chatgpt-supergateway.ts";
+import { ensureSupergateway } from "./supergateway-install.ts";
 import { resolveServiceNode } from "./host-arch.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { resolveCommandOnPath } from "./runtime-files.ts";
@@ -72,6 +78,7 @@ function createTunnel(binary: string, env: NodeJS.ProcessEnv): string {
 export function ensureChatgptTunnel(paths: Paths, enabled: boolean, env = process.env): void {
   const directory = path.join(paths.codexHome, "chatgpt-tunnel");
   const configFile = path.join(directory, "gateway.json");
+  const supergatewayConfig = path.join(directory, "supergateway.json");
   if (!enabled && !existsSync(configFile)) return;
   if (process.platform !== "darwin") throw new Error("AutoDev ChatGPT tunnel installation currently requires macOS");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -79,31 +86,61 @@ export function ensureChatgptTunnel(paths: Paths, enabled: boolean, env = proces
   chmodSync(directory, 0o700);
 
   const oldConfig = privateRead(configFile);
-  const prior = oldConfig ? JSON.parse(oldConfig) as { workspace: string; policy: unknown } : undefined;
-  const workspace = validateWorkspace(
+  const prior = oldConfig
+    ? JSON.parse(oldConfig) as { workspace: string; policyFile?: string }
+    : undefined;
+  const workspace = validateChatgptWorkspace(
     env.AUTODEV_CHATGPT_MCP_WORKSPACE ?? prior?.workspace ?? paths.repositoryRoot,
     paths.home, paths.codexHome
   );
-  const policy = parseGatewayPolicy(env.AUTODEV_CHATGPT_MCP_POLICY
-    ? JSON.parse(env.AUTODEV_CHATGPT_MCP_POLICY)
-    : prior?.policy ?? defaultGatewayPolicy);
+  const policyFile = path.resolve(
+    env.AUTODEV_CHATGPT_MCP_POLICY_FILE ?? prior?.policyFile ??
+      path.join(paths.repositoryRoot, "config", "chatgpt-mcp-policy.json")
+  );
+  const grants: unknown = JSON.parse(readFileSync(policyFile, "utf8"));
+  const generated = renderChatgptSupergatewayConfig(
+    readBridgeMcpCatalogue(paths.codexHome), grants, workspace
+  );
 
   const keyFile = path.join(directory, "runtime.key");
   const key = env.CONTROL_PLANE_API_KEY?.trim() || privateRead(keyFile);
   if (!key) throw new Error("Set CONTROL_PLANE_API_KEY to a restricted OpenAI runtime key with Tunnels Read + Use (Platform organization API keys)");
-  if (/\\s/u.test(key)) throw new Error("Invalid tunnel runtime key");
+  if (/\s/u.test(key)) throw new Error("Invalid tunnel runtime key");
+  if (key === env.OPENAI_ADMIN_KEY)
+    throw new Error("Do not use the administrator key as a tunnel runtime key");
   const binary = tunnelBinary();
+  const supergateway = ensureSupergateway(directory);
   const idFile = path.join(directory, "tunnel-id");
   const id = env.CONTROL_PLANE_TUNNEL_ID?.trim() || privateRead(idFile) || createTunnel(binary, env);
   if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
   privateWrite(idFile, id + "\n");
   privateWrite(keyFile, key + "\n");
 
-  const launcher = path.join(paths.repositoryRoot, "scripts", "run-autodev-mcp.sh");
-  const gateway = path.join(paths.repositoryRoot, "runtime", "src", "mcp", "chatgpt-gateway.ts");
   const node = resolveServiceNode(paths.home);
-  if (!statSync(launcher).isFile() || !statSync(gateway).isFile())
-    throw new Error("AutoDev MCP launcher or gateway is missing");
+  const servicePath = [
+    path.dirname(node), path.dirname(binary), path.dirname(supergateway),
+    "/opt/homebrew/bin", "/usr/local/bin",
+    path.join(paths.home, ".local/bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"
+  ].join(":");
+  const gatewayEnv = chatgptSupergatewayEnvironment(paths, workspace, node, servicePath);
+  // Check the exact generated config with the installed version before
+  // replacing a live service. Never give the gateway the tunnel/admin key.
+  const candidate = supergatewayConfig + ".next";
+  privateWrite(candidate, generated);
+  try {
+    execFileSync(supergateway, ["--config", candidate, "--checkConfig"], {
+      cwd: workspace,
+      env: gatewayEnv,
+      stdio: ["ignore", "inherit", "inherit"]
+    });
+  } finally {
+    rmSync(candidate, { force: true });
+  }
+  const gatewayCommand = [
+    "/usr/bin/env", "-i",
+    ...Object.entries(gatewayEnv).map(([name, value]) => name + "=" + value),
+    supergateway, "--config", supergatewayConfig
+  ].map(shellWord).join(" ");
 
   const plistFile = path.join(paths.home, "Library", "LaunchAgents", label + ".plist");
   mkdirSync(path.dirname(plistFile), { recursive: true, mode: 0o700 });
@@ -111,18 +148,10 @@ export function ensureChatgptTunnel(paths: Paths, enabled: boolean, env = proces
     binary, "run",
     "--control-plane.tunnel-id", id,
     "--control-plane.api-key", "file:" + keyFile,
-    "--mcp.command", [node, gateway].map(shellWord).join(" "),
+    "--mcp.command", gatewayCommand,
     "--health.listen-addr", healthAddress
   ];
-  const servicePath = [path.dirname(node), path.dirname(binary), "/opt/homebrew/bin", "/usr/local/bin", path.join(paths.home, ".local/bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
-  const serviceEnv = {
-    HOME: paths.home,
-    PATH: servicePath,
-    CODEX_HOME: paths.codexHome,
-    AUTODEV_REPO_ROOT: paths.repositoryRoot,
-    AUTODEV_NODE_BIN: node,
-    AUTODEV_CHATGPT_GATEWAY_CONFIG: configFile
-  };
+  const serviceEnv = { HOME: paths.home, PATH: servicePath };
   const plist = '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
     '<plist version="1.0"><dict>\n' +
@@ -138,7 +167,8 @@ export function ensureChatgptTunnel(paths: Paths, enabled: boolean, env = proces
   const launchd = new LaunchdClient();
   // Stop the old client before changing its config: one active stdio client per tunnel.
   launchd.bootout(label);
-  privateWrite(configFile, JSON.stringify({ workspace, launcher, policy }, null, 2) + "\n");
+  privateWrite(supergatewayConfig, generated);
+  privateWrite(configFile, JSON.stringify({ workspace, policyFile }, null, 2) + "\n");
   privateWrite(plistFile, plist);
   launchd.enable(label);
   launchd.bootstrap(plistFile);
