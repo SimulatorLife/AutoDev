@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import React from "react";
 
+import { ChatgptTunnelPanel } from "../../src/features/mcps/ChatgptTunnelPanel.ts";
 import { McpsView } from "../../src/features/mcps/McpsView.ts";
 import {
   controlApiFailureCode,
+  fetchChatgptTunnel,
   fetchMcpRuntime,
   fetchMcps
 } from "../../src/lib/server/control-api.ts";
@@ -32,9 +34,10 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
   // Two reads, fetched together. The catalog is the configuration read and
   // the runtime read is the observation; the page composes them, and neither
   // read has to carry the other's claim.
-  const [result, runtimeResult] = await Promise.all([
+  const [result, runtimeResult, tunnelResult] = await Promise.all([
     fetchMcps(config),
-    fetchMcpRuntime(config)
+    fetchMcpRuntime(config),
+    fetchChatgptTunnel(config)
   ]);
   if (result.kind !== "ok") {
     return React.createElement(
@@ -57,6 +60,7 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
       section,
       counts: result.data.valid ? { MCPs: servers.length } : {}
     },
+    React.createElement(ChatgptTunnelPanel, { status: tunnelResult.kind === "ok" ? tunnelResult.data : null }),
     React.createElement(McpsView, {
       servers,
       runtime,

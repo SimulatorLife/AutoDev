@@ -1,4 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import type { ChatgptTunnelStatus } from "@simulatorlife/autodev-core";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -14,6 +16,7 @@ import { writeLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
 import {
+  chatgptGrantsSchema,
   chatgptSupergatewayEnvironment,
   renderChatgptSupergatewayConfig,
   validateChatgptWorkspace
@@ -29,6 +32,7 @@ export type ChatgptTunnelMode = "reconcile" | "enable" | "disable";
 const installedStateSchema = z.object({
   workspace: z.string().refine(path.isAbsolute),
   policyFile: z.string().refine(path.isAbsolute),
+  grants: chatgptGrantsSchema,
   generation: z.string().regex(/^generation-[a-zA-Z0-9_-]+$/u),
   port: z.number().int().min(1024).max(65535),
   organizationId: z.string().min(1),
@@ -44,6 +48,15 @@ const stateSchema = z.discriminatedUnion("enabled", [
   z.object({ version: z.literal(1), enabled: z.literal(false), prior: installedStateSchema.optional() }).strict()
 ]);
 type TunnelState = z.infer<typeof stateSchema>;
+const revision = z.string().regex(/^[a-f0-9]{64}$/u);
+export const tunnelMutationSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("disable"), expectedRevision: revision }).strict(),
+  z.object({ action: z.literal("enable"), expectedRevision: revision }).strict(),
+  z.object({ action: z.literal("forget"), expectedRevision: revision }).strict(),
+  z.object({ action: z.literal("configure"), expectedRevision: revision, workspace: z.string().min(1), grants: chatgptGrantsSchema }).strict(),
+  z.object({ action: z.literal("rotate"), expectedRevision: revision, runtimeKey: z.string().min(1).max(4096) }).strict()
+]);
+type TunnelMutation = z.infer<typeof tunnelMutationSchema>;
 type InstalledState = z.infer<typeof installedStateSchema>;
 function installedState(state: TunnelState | undefined): InstalledState | undefined {
   if (!state) return undefined;
@@ -150,6 +163,13 @@ function healthPort(value: string | number | undefined): number {
   return port;
 }
 
+function reviewedPolicy(paths: Paths) {
+  return chatgptGrantsSchema.parse(JSON.parse(readFileSync(path.join(paths.repositoryRoot, "config", "chatgpt-mcp-policy.json"), "utf8")));
+}
+function stateRevision(file: string, reviewed: unknown): string {
+  return createHash("sha256").update(privateRead(file)).update(JSON.stringify(reviewed)).digest("hex");
+}
+
 function stateAt(file: string): TunnelState | undefined {
   const text = privateRead(file);
   return text ? stateSchema.parse(JSON.parse(text)) : undefined;
@@ -189,10 +209,25 @@ export async function checkChatgptTunnel(paths: Paths): Promise<boolean> {
   }
 }
 
+export async function chatgptTunnelStatus(paths: Paths): Promise<ChatgptTunnelStatus> {
+  const stateFile = path.join(paths.codexHome, "chatgpt-tunnel", "gateway.json");
+  const state = stateAt(stateFile);
+  const prior = installedState(state);
+  const reviewed = reviewedPolicy(paths);
+  return {
+    schema: "autodev-chatgpt-tunnel-v1", revision: stateRevision(stateFile, reviewed),
+    configured: prior !== undefined, enabled: state?.enabled === true,
+    ready: state?.enabled === true && await checkChatgptTunnel(paths),
+    workspace: prior?.workspace ?? null, tunnelId: prior?.tunnelId ?? null,
+    reviewed, grants: prior?.grants ?? reviewed
+  };
+}
+
 export async function ensureChatgptTunnel(
   paths: Paths,
   mode: ChatgptTunnelMode,
-  env = process.env
+  env = process.env,
+  mutation?: TunnelMutation
 ): Promise<void> {
   const directory = path.join(paths.codexHome, "chatgpt-tunnel");
   const stateFile = path.join(directory, "gateway.json");
@@ -208,13 +243,17 @@ export async function ensureChatgptTunnel(
     throw new Error("ChatGPT tunnel install is locked; check for another installer before removing install.lock");
   }
   try {
-    await reconcile(paths, directory, stateFile, mode, env);
+    if (mutation) {
+      if (!installedState(stateAt(stateFile))) throw new Error("Complete initial installation first");
+      if (stateRevision(stateFile, reviewedPolicy(paths)) !== mutation.expectedRevision) throw new Error("Tunnel configuration revision conflict");
+    }
+    await reconcile(paths, directory, stateFile, mode, env, mutation);
   } finally {
     rmSync(lock, { recursive: true, force: true });
   }
 }
 
-async function reconcile(paths: Paths, directory: string, stateFile: string, mode: ChatgptTunnelMode, env: NodeJS.ProcessEnv): Promise<void> {
+async function reconcile(paths: Paths, directory: string, stateFile: string, mode: ChatgptTunnelMode, env: NodeJS.ProcessEnv, mutation?: TunnelMutation): Promise<void> {
   const state = stateAt(stateFile);
   const prior = installedState(state);
   const launchd = new LaunchdClient();
@@ -222,18 +261,23 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     privateWrite(stateFile, JSON.stringify({ version: 1, enabled: false, prior }, null, 2) + "\n");
     launchd.bootout(label);
     rmSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"), { force: true });
+    if (mutation?.action === "forget" && prior) {
+      rmSync(path.join(generationPath(directory, prior.generation), "runtime.key"), { force: true });
+      rmSync(path.join(directory, "runtime.key"), { force: true });
+      // Only local credentials are forgotten. Remote revocation belongs to Platform.
+    }
     writeLine("AutoDev ChatGPT tunnel disabled; normal installs will not re-enable it.");
     return;
   }
 
   const workspace = validateChatgptWorkspace(
-    env.AUTODEV_CHATGPT_MCP_WORKSPACE ?? prior?.workspace ?? paths.repositoryRoot,
+    (mutation?.action === "configure" ? mutation.workspace : undefined) ?? env.AUTODEV_CHATGPT_MCP_WORKSPACE ?? prior?.workspace ?? paths.repositoryRoot,
     paths.home, paths.codexHome
   );
   const reviewedFile = path.join(paths.repositoryRoot, "config", "chatgpt-mcp-policy.json");
   const policyFile = path.resolve(env.AUTODEV_CHATGPT_MCP_POLICY_FILE ?? prior?.policyFile ?? reviewedFile);
-  const reviewed: unknown = JSON.parse(readFileSync(reviewedFile, "utf8"));
-  const grants: unknown = JSON.parse(readFileSync(policyFile, "utf8"));
+  const reviewed = reviewedPolicy(paths);
+  const grants = chatgptGrantsSchema.parse(mutation?.action === "configure" ? mutation.grants : env.AUTODEV_CHATGPT_MCP_POLICY_FILE || !prior ? JSON.parse(readFileSync(policyFile, "utf8")) : prior.grants);
   const node = resolveServiceNode(paths.home);
   const generated = renderChatgptSupergatewayConfig(
     readBridgeMcpCatalogue(paths.codexHome), grants, workspace, reviewed,
@@ -243,7 +287,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const workspaceId = env.AUTODEV_CHATGPT_WORKSPACE_ID ?? prior?.workspaceId;
   if (!org || !workspaceId)
     throw new Error("Set AUTODEV_CHATGPT_ORGANIZATION_ID and AUTODEV_CHATGPT_WORKSPACE_ID to verify tunnel scope");
-  const rawKey = env.CONTROL_PLANE_API_KEY ??
+  const rawKey = (mutation?.action === "rotate" ? mutation.runtimeKey : undefined) ?? env.CONTROL_PLANE_API_KEY ??
     (prior?.generation ? privateRead(path.join(generationPath(directory, prior.generation), "runtime.key")) : privateRead(path.join(directory, "runtime.key")));
   if (!rawKey || /\s/u.test(rawKey) || rawKey === env.OPENAI_ADMIN_KEY || rawKey.startsWith("sk-admin"))
     throw new Error("Supply a restricted runtime API key with Tunnels Read + Use, not an administrator key");
@@ -342,7 +386,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     });
 
     const nextState = installedStateSchema.parse({
-      workspace, policyFile, generation: path.basename(generation), port,
+      workspace, policyFile, grants, generation: path.basename(generation), port,
       organizationId: org, workspaceId, tunnelId: id, binary, node, supergateway, servicePath
     });
     const candidatePlist = path.join(generation, label + ".plist");
@@ -405,13 +449,24 @@ if (isEntryPoint(import.meta.url)) {
   if (!repositoryRoot || !home || !codexHome)
     throw new Error("Expected tunnel mode and install paths");
   const paths = { repositoryRoot, home, codexHome };
-  if (mode === "check") {
+  if (mode === "control") {
+    // The authorized Control API passes mutations via stdin, never argv or logs.
+    try {
+      const mutation = tunnelMutationSchema.parse(JSON.parse(readFileSync(0, "utf8")));
+      await ensureChatgptTunnel(paths, mutation.action === "disable" || mutation.action === "forget" ? "disable" : "enable", dependencyEnvironment(process.env), mutation);
+    } catch {
+      process.stderr.write("ChatGPT tunnel mutation refused or failed; reload status before retrying\n");
+      process.exitCode = 1;
+    }
+  } else if (mode === "check") {
     process.exitCode = await checkChatgptTunnel(paths) ? 0 : 1;
   } else if (mode === "reconcile" || mode === "enable" || mode === "disable") {
     try {
       await ensureChatgptTunnel(paths, mode);
     } catch (error) {
-      process.stderr.write((error instanceof Error ? error.message : "ChatGPT tunnel setup failed") + "\n");
+      // Only locally constructed errors are printed; subprocess failures may contain sensitive output.
+      const safe = error instanceof Error && !("stdout" in error) && !("stderr" in error) && !(error instanceof z.ZodError);
+      process.stderr.write((safe ? error.message : "ChatGPT tunnel setup failed; inspect local configuration") + "\n");
       process.exitCode = 1;
     }
   } else throw new Error("Invalid ChatGPT tunnel mode");

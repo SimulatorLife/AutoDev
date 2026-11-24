@@ -13,7 +13,7 @@ import {
 type Catalogue = Record<string, Record<string, unknown>>;
 
 const identifier = z.string().regex(/^[a-zA-Z0-9_-]+$/u);
-const grantsSchema = z.record(identifier, z.array(identifier).min(1));
+export const chatgptGrantsSchema = z.record(identifier, z.array(identifier).min(1));
 const stdioServerSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()),
@@ -53,9 +53,9 @@ export function renderChatgptSupergatewayConfig(
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
-  const reviewed = grantsSchema.safeParse(reviewedGrants);
+  const reviewed = chatgptGrantsSchema.safeParse(reviewedGrants);
   if (!reviewed.success) throw new Error("Invalid reviewed ChatGPT MCP policy");
-  const desired = grantsSchema.safeParse(grants);
+  const desired = chatgptGrantsSchema.safeParse(grants);
   if (!desired.success) throw new Error("Explicit tool grants required; wildcards are not allowed");
   const approved = reviewed.data;
   const entries: Array<[string, StdioServer]> = [];
