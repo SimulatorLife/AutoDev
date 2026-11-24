@@ -1,6 +1,6 @@
 # OpenLIT local build / pin scripts
 
-> **Memory provider target / legacy-patch notice:** AutoDev's [Memory target state](../../docs/memory-target-state.md) now selects **Mem0 Platform** for long-term memory and the **OpenLIT Mem0 connector/component patterns** for the sole AutoDev Console Memory UI and OpenTelemetry analytics. The legacy `autodev` connector and historical standalone OpenLIT Memory-page patch instructions below describe the **current/previous implementation and patch lineage**, not the intended provider or a second operator UI. Verify the Mem0 connector remains available in the pinned/reduced OpenLIT build, and test its API-version/permission/capability mapping before replacing the current paths; no cutover has been performed by this documentation change.
+> **Memory retirement:** The custom AutoDev PostgreSQL/pgvector connector and standalone Memory product surface have been removed. Mem0 integration is postponed, as specified in the [canonical Memory contract](../../docs/autodev-console-target-state.md#memory). Any older Memory patch notes below are historical evidence only; do not install or reactivate the removed connector, routes or UI.
 
 These scripts implement the OpenLIT integration described in
 [`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md).

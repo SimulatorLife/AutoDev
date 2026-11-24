@@ -48,8 +48,7 @@ type generation and its bundler resolver. The aggregate command still checks
 all workspaces. The target-aware runner requires pnpm for JavaScript target repositories
 and refuses a target without a `pnpm@<version>` package-manager declaration
 instead of falling back to npm. Run `pnpm autodev -- --help` to list the typed CLI commands;
-the help output uses this canonical pnpm invocation. Native Codex role MCP
-entries must use a complete stdio or streamable-HTTP transport shape; see
+the help output uses this canonical pnpm invocation. Existing native role MCP entries must use a complete transport shape. The [mandatory shared MCP gateway](docs/autodev-console-target-state.md#mandatory-shared-mcp-gateway) target replaces provider-direct backend launches with gateway endpoints for every provider; see
 [`docs/local-setup.md`](docs/local-setup.md) for the role and installer contract.
 
 ## Configure target repositories

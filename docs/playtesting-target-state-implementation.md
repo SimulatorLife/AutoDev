@@ -1,5 +1,7 @@
 # Playtesting target-state implementation plan
 
+> **Evidence boundary:** This implementation ledger records historical pre-ACP provider/Playtesting acceptance evidence. Native `multi_agent_v1` dispatch, Responses bridges and provider-specific tool injection described in older entries are superseded, not current instructions. Revalidate role-scoped Playtesting through XACPX/ACP and the mandatory shared MCP gateway without exposing Playtest or Playwright to ungranted roles. The [canonical target](autodev-console-target-state.md) governs.
+
 Canonical execution plan for `docs/playtesting-measurement-contract.md` and
 `docs/playtesting-target-state.md`. The target-state documents remain the
 normative specification; this checklist tracks implementation and evidence.

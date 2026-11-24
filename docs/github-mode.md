@@ -146,8 +146,8 @@ Codex `default.rules` prefix patterns cannot glob `autodev/*`, so the work is sp
   - **github-pr unavailable:** "BLOCKED: <reason>; do not implement; tell the user";
   - **unknown:** nothing appended.
 - `runtime/src/hooks/root-delegation.ts`: read `cwd` from the hook input and resolve the delivery mode.
-- `runtime/src/router/proxy.ts` `recoverOrchestratorBootstrap`: resolve from the workspace already in scope, so the section survives compaction.
-- Tests: the root-delegation hook, the router post-compaction bootstrap, and `tests/bridge-role.test.ts`.
+- Preserve the delivery-mode policy across native ACP continuation/compaction through the current trusted role/workspace bootstrap. Do not restore the retired Responses proxy bootstrap-recovery path.
+- Tests: the root-delegation hook, native ACP continuation and role/workspace policy acceptance.
 
 ### 8. Policy docs, skill and prompts
 
