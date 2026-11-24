@@ -9,7 +9,6 @@ export * from "./evaluations/types.ts";
 export * from "./github/types.ts";
 export * from "./hooks/types.ts";
 export * from "./mcps/types.ts";
-export * from "./memory/types.ts";
 export * from "./navigation.ts";
 export * from "./permissions/types.ts";
 export * from "./playtesting/index.ts";

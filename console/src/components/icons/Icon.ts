@@ -70,11 +70,6 @@ export const ICON_PATHS = {
     "M16 11h.01",
     "M19 13h.01"
   ],
-  Memory: [
-    "M12 2a9 3 0 1 0 0 6 9 3 0 0 0 0-6",
-    "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3",
-    "M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"
-  ],
   Workspaces: [
     "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
   ],
@@ -312,7 +307,6 @@ const NAV_ICON_SOURCES = [
   "Usage",
   "Evaluations",
   "Playtesting",
-  "Memory",
   "Workspaces",
   "GitHub"
 ] as const satisfies readonly (Extract<IconName, string> & string)[];

@@ -20,13 +20,11 @@
     "@octokit/rest": "22.0.1",
     "@simulatorlife/autodev-core": "workspace:*",
     "jsonc-parser": "3.3.1",
-    "pg": "8.23.1",
     "smol-toml": "^1.9.1",
     "write-file-atomic": "^8.0.0",
     "yaml": "^2.9.1"
   },
   "scripts": {
-    "memory:migrate": "node src/memory/migrate.ts",
     "openlit:sync-models": "node src/openlit/sync-model-catalogue.ts",
     "openlit:sync-workspaces": "node src/openlit/sync-workspace-catalogue.ts",
     "test": "node --test",
@@ -34,7 +32,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "@types/pg": "8.23.1",
     "@types/write-file-atomic": "^4.0.3"
   }
 }
