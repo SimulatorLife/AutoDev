@@ -234,8 +234,10 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const policyFile = path.resolve(env.AUTODEV_CHATGPT_MCP_POLICY_FILE ?? prior?.policyFile ?? reviewedFile);
   const reviewed: unknown = JSON.parse(readFileSync(reviewedFile, "utf8"));
   const grants: unknown = JSON.parse(readFileSync(policyFile, "utf8"));
+  const node = resolveServiceNode(paths.home);
   const generated = renderChatgptSupergatewayConfig(
-    readBridgeMcpCatalogue(paths.codexHome), grants, workspace, reviewed
+    readBridgeMcpCatalogue(paths.codexHome), grants, workspace, reviewed,
+    { command: node, script: path.join(paths.codexHome, "src/mcp/tool-filter.ts") }
   );
   const org = env.AUTODEV_CHATGPT_ORGANIZATION_ID ?? prior?.organizationId;
   const workspaceId = env.AUTODEV_CHATGPT_WORKSPACE_ID ?? prior?.workspaceId;
@@ -250,7 +252,6 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const binary = tunnelBinary(dependencyEnv);
   const supergateway = ensureSupergateway(directory, dependencyEnv);
   const port = healthPort(env.AUTODEV_CHATGPT_TUNNEL_PORT ?? prior?.port);
-  const node = resolveServiceNode(paths.home);
   const servicePath = [
     path.dirname(node), path.dirname(binary), path.dirname(supergateway),
     "/opt/homebrew/bin", "/usr/local/bin",
@@ -268,19 +269,20 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   if (!existsSync(idFile) && !env.CONTROL_PLANE_TUNNEL_ID) privateWrite(idFile, id + "\n");
   // Newly created metadata can take up to 30 seconds to propagate. Retry
   // only explicit transient not-found responses, not permission failures.
-  let metadata: ReturnType<typeof tunnelMetadata> | undefined;
+  const observation: { metadata?: ReturnType<typeof tunnelMetadata> } = {};
   if (!await waitForProbe({
     sleep,
     probe: async () => {
       try {
-        metadata = tunnelMetadata(binary, ["get", id], runtimeEnv);
+        observation.metadata = tunnelMetadata(binary, ["get", id], runtimeEnv);
         return true;
       } catch (error) {
         if (!existingId && error instanceof TunnelMetadataError && error.transient) return false;
         throw error;
       }
     }
-  }, 45_000) || !metadata) throw new Error("New tunnel metadata did not become available");
+  }, 45_000) || !observation.metadata) throw new Error("New tunnel metadata did not become available");
+  const metadata = observation.metadata;
   if ((metadata.id ?? metadata.tunnel_id) !== id ||
       metadata.organization_ids?.length !== 1 || !metadata.organization_ids.includes(org) ||
       metadata.workspace_ids?.length !== 1 || !metadata.workspace_ids.includes(workspaceId))

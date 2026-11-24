@@ -1,5 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import { z } from "zod";
@@ -21,7 +22,7 @@ const stdioServerSchema = z.object({
   tools: z.array(identifier).min(1)
 }).strict();
 export const supergatewayConfigSchema = z.object({
-  logLevel: z.literal("info"),
+  logLevel: z.literal("none"),
   logFormat: z.literal("json"),
   mcpServers: z.object({
     autodev: z.object({
@@ -47,7 +48,8 @@ export function renderChatgptSupergatewayConfig(
   catalogue: Catalogue,
   grants: unknown,
   workspace: string,
-  reviewedGrants: unknown
+  reviewedGrants: unknown,
+  filter = { command: process.execPath, script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url)) }
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
@@ -104,8 +106,8 @@ export function renderChatgptSupergatewayConfig(
       {
         // Supergateway interpolates ${VAR} in config strings. Preserve the
         // canonical shell argument verbatim using its literal-dollar escape.
-        command: escapeInterpolation(descriptor.command),
-        args: args.map(escapeInterpolation),
+        command: escapeInterpolation(filter.command),
+        args: [filter.script, descriptor.command, JSON.stringify(args), JSON.stringify([...new Set(tools)]), "external", name].map(escapeInterpolation),
         cwd: escapeInterpolation(workspace),
         toolPrefix,
         tools: [...new Set<string>(tools)]
@@ -116,7 +118,7 @@ export function renderChatgptSupergatewayConfig(
 
   // A combined stdio entry deliberately creates no HTTP/SSE listener.
   return JSON.stringify(supergatewayConfigSchema.parse({
-    logLevel: "info",
+    logLevel: "none",
     logFormat: "json",
     mcpServers: {
       autodev: {

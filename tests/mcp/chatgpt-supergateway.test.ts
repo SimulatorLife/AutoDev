@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   chatgptSupergatewayEnvironment,
@@ -16,22 +17,22 @@ test("Supergateway config is generated from the canonical catalogue, not a fixed
     catalogue, { "future-server": ["search"], filesystem: ["read_text_file"] }, "/project", { "future-server": ["search"], filesystem: ["read_text_file"] }
   ));
   assert.deepEqual(result, {
-    logLevel: "info",
+    logLevel: "none",
     logFormat: "json",
     mcpServers: {
       autodev: {
         outputTransport: "stdio",
         mcpServers: {
           "future-server": {
-            command: "example",
-            args: ["--mcp", "a b"],
+            command: process.execPath,
+            args: [fileURLToPath(new URL("../../runtime/src/mcp/tool-filter.ts", import.meta.url)), "example", JSON.stringify(["--mcp", "a b"]), JSON.stringify(["search"]), "external", "future-server"],
             cwd: "/project",
             toolPrefix: "future_server__",
             tools: ["search"]
           },
           filesystem: {
-            command: "bash",
-            args: ["-lc", "exec launcher filesystem"],
+            command: process.execPath,
+            args: [fileURLToPath(new URL("../../runtime/src/mcp/tool-filter.ts", import.meta.url)), "bash", JSON.stringify(["-lc", "exec launcher filesystem"]), JSON.stringify(["read_text_file"]), "external", "filesystem"],
             cwd: "/project",
             toolPrefix: "filesystem__",
             tools: ["read_text_file"]
@@ -104,7 +105,7 @@ test("canonical shell expressions survive Supergateway interpolation", () => {
     filesystem: { command: "bash", args: ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'] }
   }, { filesystem: ["read_text_file"] }, "/a$b", { filesystem: ["read_text_file"] }));
   const entry = result.mcpServers.autodev.mcpServers.filesystem;
-  assert.equal(entry.args[1], 'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem');
+  assert.equal(JSON.parse(entry.args[2])[1], 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem');
   assert.equal(entry.cwd, "/a$$b");
 });
 

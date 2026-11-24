@@ -62,6 +62,7 @@ test("pinned Supergateway and actual AutoDev filesystem server enforce external 
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       "filesystem__list_allowed_directories", "filesystem__read_text_file"
     ]);
+    assert.ok(tools.tools.every((tool) => tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint === false));
     const read = await client.callTool({
       name: "filesystem__read_text_file", arguments: { path: inside }
     });

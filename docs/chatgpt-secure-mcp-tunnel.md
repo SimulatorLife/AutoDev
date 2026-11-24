@@ -50,3 +50,5 @@ References: [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/gu
 ## Local protocol acceptance test
 
 After the repository dependencies are installed, run `AUTODEV_TEST_SUPERGATEWAY=1 pnpm --filter @simulatorlife/autodev-runtime exec node --test tests/chatgpt-supergateway.integration.test.ts`. This installs the pinned gateway in a temporary directory and tests its real stdio protocol and the actual workspace-confined AutoDev filesystem MCP, including out-of-workspace and symlink reads and direct calls to hidden write tools. It requires no OpenAI credentials; a separate authorized ChatGPT round trip is still required.
+
+The existing AutoDev MCP tool filter runs in its external read-only profile before each approved backend. It denies non-tool RPC capabilities, normalizes read-only annotations, and reuses AutoDev's MCP OpenTelemetry span implementation with the private OpenLIT receiver key. The filter forwards tool results unchanged and never exports arguments or content. Supergateway remains the sole aggregator; the reviewed policy is restricted to stateless, read-only tools until stronger per-server isolation is available.
