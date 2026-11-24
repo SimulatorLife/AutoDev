@@ -284,11 +284,11 @@ Provider CRUD is not a substitute for AutoDev's permission checks. Provider-owne
 
 The target is achieved only when all of the following are demonstrated:
 
-- A supported, version-pinned **Mem0 Platform** account owns production long-term memories, extraction, deduplication/updates, and retrieval. There is no active competing AutoDev long-term memory database/search or general-purpose MCP server after cutover.
+- A supported, version-pinned **self-hosted Mem0 OSS** deployment owns production long-term memories, extraction, deduplication/updates and retrieval, with persistent local storage and no active competing AutoDev memory database/search after cutover.
 - Automatic capture from supported agent/provider paths yields useful, source-linked memories without blocking tools or exposing unapproved source content. Failed and unknown outcomes remain distinguishable.
-- Trusted workspace/repository/agent identity and publication controls prevent cross-repo leakage and unauthorized shared-memory writes, including through hosted MCP tools and the Console connector.
+- Trusted workspace/repository/agent identity and publication controls prevent cross-repo leakage and unauthorized shared-memory writes, including through the local Python MCP tools and Console adapter.
 - The JIT path rejects out-of-scope, stale or unsupported claims against current Git/RuleSync/runtime facts and injects only a small advisory packet. Unavailable Mem0 skips clearly and does not block execution.
-- The official Mem0 MCP is used only where its authentication/scope are actually enforceable; AutoDev does not maintain a replacement generic memory MCP.
+- The **self-hosted Python Mem0 MCP server** enforces authenticated scope on every operation and initializes **OpenLIT in the same Python process** before Mem0 use. A real integration test confirms correlated MCP-tool and Mem0 SDK spans reach OpenLIT. The adapter does not become another durable memory authority.
 - OpenLIT's Mem0 connector/UI capabilities appear **within AutoDev Console**, including real read/write error states and trace-linked latency, token/cost, capture, retrieval and injection telemetry.
 - Operator mutation, exports, deletions and retention follow explicit policy. Credentials never appear in prompts, browser code or model-spawned tools.
 - No-memory and incumbent-memory baselines demonstrate that Mem0 improves or at least meets task outcomes within accepted cost/latency limits; extraction/ingestion cost and actual memory use are measured, not inferred.
@@ -298,10 +298,11 @@ Use [injection/outcome evaluation](memory-injection-outcome-evaluation.md) for t
 
 ## 13. Design basis and references
 
-This decision adopts a maintained memory product rather than assembling a custom one. Ideas retained from existing agent-memory work are: just-in-time state-aware retrieval, explicit evidence provenance, compact working-context packets, task-scoped multi-agent isolation, and promoting repeatedly verified procedures into canonical skills/rules/tests/docs.
+This decision adopts a maintained open-source memory engine rather than assembling a custom one. Ideas retained from existing agent-memory work are: just-in-time state-aware retrieval, explicit evidence provenance, compact working-context packets, task-scoped multi-agent isolation, and promoting repeatedly verified procedures into canonical skills/rules/tests/docs.
 
-- [Mem0 Platform quickstart/API](https://docs.mem0.ai/platform/quickstart) — managed memory storage, extraction and retrieval SDK/API.
-- [Official Mem0 MCP](https://docs.mem0.ai/platform/mem0-mcp) — supported agent tool transport. Archived historical MCP repositories are not the target.
+- [Mem0 OSS](https://github.com/mem0ai/mem0) — self-hosted Python memory engine and SDK.
+- [OpenLIT Python Mem0 instrumentation](https://github.com/openlit/openlit/tree/main/sdk/python/src/openlit/instrumentation/mem0) — native instrumentation of supported synchronous/asynchronous Mem0 SDK methods.
+- [OpenLIT Python MCP instrumentation](https://github.com/openlit/openlit/tree/main/sdk/python/src/openlit/instrumentation/mcp) — compatible Python MCP transport/tool tracing. Validate correlation with Mem0 spans; archived historical Mem0 MCP repositories are not the target.
 - [OpenLIT](https://github.com/openlit/openlit) — Mem0 memory connector and telemetry/UI building blocks; verify compatibility with AutoDev's pinned fork.
 - [AutoDev operational memory notes](../config/memory/README.md) — **current implementation** and migration baseline, not the new provider target.
 - [AutoDev evaluation and outcome rules](memory-injection-outcome-evaluation.md) — current append-only reporting/attribution rules that must survive provider cutover.
