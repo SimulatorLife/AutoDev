@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,7 +16,7 @@ import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/typ
 import { chatgptSupergatewayEnvironment, renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import { externalFilesystemBackend, filesystemSandboxProfile } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
-import { assertTunnelScope, createTunnel, dependencyEnvironment, gatewayStdioCommand, privateRead, privateWrite, ready, resolveSupergateway, shellWord, tunnelClientSupported, tunnelMetadata, validateRuntimeKey } from "../src/platform/chatgpt-tunnel-install.ts";
+import { assertTunnelScope, chatgptTunnelStatus, createTunnel, dependencyEnvironment, ensureChatgptTunnel, type ChatgptTunnelDependencies, gatewayStdioCommand, privateRead, privateWrite, ready, resolveSupergateway, shellWord, tunnelClientSupported, tunnelMetadata, validateRuntimeKey } from "../src/platform/chatgpt-tunnel-install.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -364,5 +364,103 @@ test("gateway command uses argv-safe paths and replaces the parent environment",
     assert.deepEqual(result.stdout.trimEnd().split("\n"), ["--config", config, directory, "unset"]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("mocked installer lifecycle retains working state on failure and supports persistent disable and rotation", { timeout: 30_000 }, async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "external-mcp-install-")));
+  const home = path.join(root, "home");
+  const codexHome = path.join(home, ".codex");
+  const workspace = path.join(home, "project");
+  const paths = { home, codexHome, repositoryRoot: repo };
+  const events: string[] = [];
+  let running = false;
+  let failReady = false;
+  let wrongScope = false;
+  let rejectKey = false;
+  const launchd = {
+    isLoaded: () => running,
+    print: () => "pid = 123",
+    bootout: () => { events.push("stop"); running = false; },
+    disable: () => { events.push("disable"); },
+    enable: () => { events.push("enable"); },
+    bootstrap: () => { events.push("start"); running = true; }
+  };
+  const deps: ChatgptTunnelDependencies = {
+    platform: "darwin",
+    launchd: () => launchd,
+    node: () => process.execPath,
+    tunnelBinary: () => "/fixture/tunnel-client",
+    supergateway: () => "/fixture/supergateway",
+    backend: () => ({ command: "/fixture/filesystem", args: [] }),
+    launchValues: () => ({ ...paths, nodeBin: process.execPath, codexBin: "", consolePort: "3300" }),
+    metadata: (_binary, _args, env) => {
+      if (rejectKey || !env.CONTROL_PLANE_API_KEY) throw new Error("unauthorized");
+      return { id: "tunnel_fixture", organization_ids: ["org_fixture"], workspace_ids: [wrongScope ? "ws_wrong" : "ws_fixture"] };
+    },
+    create: () => { events.push("create"); return "tunnel_fixture"; },
+    ready: async () => running && !failReady,
+    portFree: () => true,
+    wait: async ({ probe }) => probe(),
+    run: (_command, args, options) => {
+      assert.ok(!options.env.CONTROL_PLANE_API_KEY && !options.env.OPENAI_ADMIN_KEY);
+      events.push(args[0] ?? "command");
+      if (args[0] === "init") {
+        const generation = args[args.indexOf("--profile-dir") + 1]!;
+        assert.equal(args[args.indexOf("--sample") + 1], "sample_mcp_stdio_local");
+        assert.match(args[args.indexOf("--control-plane-api-key-ref") + 1]!, /^file:/);
+        writeFileSync(path.join(generation, "autodev.yaml"), "fixture");
+      }
+    }
+  };
+  const env = { HOME: home, PATH: "/bin", AUTODEV_CHATGPT_MCP_WORKSPACE: workspace, AUTODEV_CHATGPT_ORGANIZATION_ID: "org_fixture", AUTODEV_CHATGPT_WORKSPACE_ID: "ws_fixture", OPENAI_ADMIN_KEY: "fixture-admin", CONTROL_PLANE_API_KEY: "fixture-runtime" };
+  const directory = path.join(codexHome, "chatgpt-tunnel");
+  const stateFile = path.join(directory, "gateway.json");
+  const plistFile = path.join(home, "Library", "LaunchAgents", "com.codex.autodev-chatgpt-tunnel.plist");
+  try {
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(path.join(codexHome, "provider-runtime"), { recursive: true });
+    writeFileSync(path.join(codexHome, "provider-runtime", "mcp-servers.json"), JSON.stringify({ filesystem: { command: "/fixture/filesystem", args: [] } }));
+    await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
+    assert.ok(!existsSync(stateFile));
+    await ensureChatgptTunnel(paths, "enable", env, undefined, deps);
+    const first = privateRead(stateFile);
+    assert.equal((await chatgptTunnelStatus(paths, deps)).ready, true);
+    assert.equal(events.filter(event => event === "create").length, 1);
+    const count = events.length;
+    await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
+    assert.equal(events.length, count);
+    assert.equal(privateRead(stateFile), first);
+    wrongScope = true;
+    await assert.rejects(ensureChatgptTunnel(paths, "reconcile", env, undefined, deps), /does not belong/);
+    wrongScope = false;
+    rejectKey = true;
+    await assert.rejects(ensureChatgptTunnel(paths, "reconcile", env, undefined, deps), /unauthorized/);
+    rejectKey = false;
+    const status = await chatgptTunnelStatus(paths, deps);
+    const oldPlist = readFileSync(plistFile, "utf8");
+    failReady = true;
+    await assert.rejects(ensureChatgptTunnel(paths, "enable", env, { action: "rotate", expectedRevision: status.revision, runtimeKey: "fixture-new" }, deps), /previous service configuration retained/);
+    failReady = false;
+    assert.equal(privateRead(stateFile), first);
+    assert.equal(readFileSync(plistFile, "utf8"), oldPlist);
+    assert.equal(running, true);
+    await ensureChatgptTunnel(paths, "enable", env, { action: "rotate", expectedRevision: status.revision, runtimeKey: "fixture-new" }, deps);
+    const rotated = await chatgptTunnelStatus(paths, deps);
+    assert.notEqual(rotated.revision, status.revision);
+    assert.ok(!JSON.stringify(rotated).includes("fixture-new"));
+    await assert.rejects(ensureChatgptTunnel(paths, "disable", {}, { action: "disable", expectedRevision: status.revision }, deps), /revision conflict/);
+    await ensureChatgptTunnel(paths, "disable", {}, { action: "disable", expectedRevision: rotated.revision }, deps);
+    assert.equal(running, false);
+    assert.ok(!existsSync(plistFile));
+    await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
+    assert.equal(running, false);
+    const disabled = await chatgptTunnelStatus(paths, deps);
+    await ensureChatgptTunnel(paths, "disable", {}, { action: "forget", expectedRevision: disabled.revision }, deps);
+    const persisted = JSON.parse(privateRead(stateFile));
+    assert.ok(!existsSync(path.join(directory, persisted.prior.generation, "runtime.key")));
+    await assert.rejects(ensureChatgptTunnel(paths, "enable", {}, undefined, deps), /restricted runtime/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

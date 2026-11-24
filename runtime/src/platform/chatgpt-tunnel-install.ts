@@ -241,26 +241,26 @@ export async function ready(launchd: Pick<LaunchdClient, "print">, port: number,
   }
 }
 
-export async function checkChatgptTunnel(paths: Paths): Promise<boolean> {
+export async function checkChatgptTunnel(paths: Paths, deps = defaultTunnelDependencies()): Promise<boolean> {
   try {
     const directory = path.join(paths.codexHome, "chatgpt-tunnel");
     const state = stateAt(path.join(directory, "gateway.json"));
-    if (!state) return true;
-    const launchd = new LaunchdClient();
+    if (!state) return !existsSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"));
+    const launchd = deps.launchd();
     if (state.enabled === false) return !launchd.isLoaded(label) &&
       !existsSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"));
     const generation = generationPath(directory, state.generation);
     const plist = path.join(paths.home, "Library", "LaunchAgents", label + ".plist");
     return Boolean(privateRead(path.join(generation, "runtime.key")) &&
       existsSync(path.join(generation, "autodev.yaml")) &&
-      launchAgentMatches(templatePath(paths), plist, tunnelLaunchValues(paths, state, generation)) &&
-      await ready(launchd, healthPort(state.port)));
+      launchAgentMatches(templatePath(paths), plist, tunnelLaunchValues(paths, state, generation, deps.launchValues(paths))) &&
+      await deps.ready(launchd, healthPort(state.port)));
   } catch {
     return false;
   }
 }
 
-export async function chatgptTunnelStatus(paths: Paths): Promise<ChatgptTunnelStatus> {
+export async function chatgptTunnelStatus(paths: Paths, deps = defaultTunnelDependencies()): Promise<ChatgptTunnelStatus> {
   const stateFile = path.join(paths.codexHome, "chatgpt-tunnel", "gateway.json");
   const state = stateAt(stateFile);
   const prior = installedState(state);
@@ -268,9 +268,49 @@ export async function chatgptTunnelStatus(paths: Paths): Promise<ChatgptTunnelSt
   return {
     schema: "autodev-chatgpt-tunnel-v1", revision: stateRevision(stateFile, reviewed),
     configured: prior !== undefined, enabled: state?.enabled === true,
-    ready: state?.enabled === true && await checkChatgptTunnel(paths),
+    ready: state?.enabled === true && await checkChatgptTunnel(paths, deps),
     workspace: prior?.workspace ?? null, tunnelId: prior?.tunnelId ?? null,
     reviewed, grants: prior?.grants ?? reviewed
+  };
+}
+
+type TunnelLaunchd = Pick<LaunchdClient, "isLoaded" | "bootout" | "disable" | "enable" | "bootstrap" | "print">;
+export interface ChatgptTunnelDependencies {
+  platform: NodeJS.Platform;
+  launchd(): TunnelLaunchd;
+  node(home: string): string;
+  tunnelBinary(env: NodeJS.ProcessEnv): string;
+  supergateway(repositoryRoot: string): string;
+  backend: typeof externalFilesystemBackend;
+  launchValues(paths: Paths): LaunchAgentValues;
+  metadata: typeof tunnelMetadata;
+  create: typeof createTunnel;
+  ready(job: TunnelLaunchd, port: number): Promise<boolean>;
+  portFree(port: number): boolean;
+  wait: typeof waitForProbe;
+  run(command: string, args: string[], options: { env: NodeJS.ProcessEnv; cwd?: string; timeout: number }): void;
+}
+
+function defaultTunnelDependencies(): ChatgptTunnelDependencies {
+  return {
+    platform: process.platform,
+    launchd: () => new LaunchdClient(),
+    node: resolveServiceNode,
+    tunnelBinary,
+    supergateway: resolveSupergateway,
+    backend: externalFilesystemBackend,
+    launchValues: resolveLaunchAgentValues,
+    metadata: tunnelMetadata,
+    create: createTunnel,
+    ready,
+    portFree: (port) => {
+      const result = spawnSync("/usr/sbin/lsof", ["-nP", "-tiTCP:" + port, "-sTCP:LISTEN"], { encoding: "utf8" });
+      return result.status === 1 && !result.stderr?.trim();
+    },
+    wait: waitForProbe,
+    run: (command, args, options) => {
+      execFileSync(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    }
   };
 }
 
@@ -278,12 +318,13 @@ export async function ensureChatgptTunnel(
   paths: Paths,
   mode: ChatgptTunnelMode,
   env = process.env,
-  mutation?: TunnelMutation
+  mutation?: TunnelMutation,
+  deps = defaultTunnelDependencies()
 ): Promise<void> {
   const directory = path.join(paths.codexHome, "chatgpt-tunnel");
   const stateFile = path.join(directory, "gateway.json");
   if (mode === "reconcile" && !existsSync(stateFile)) return;
-  if (process.platform !== "darwin") throw new Error("AutoDev ChatGPT tunnel installation currently requires macOS");
+  if (deps.platform !== "darwin") throw new Error("AutoDev ChatGPT tunnel installation currently requires macOS");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const directoryStat = lstatSync(directory);
   if (!directoryStat.isDirectory() || (process.getuid && directoryStat.uid !== process.getuid())) throw new Error("ChatGPT tunnel directory must be an owned directory, not a symlink");
@@ -299,19 +340,20 @@ export async function ensureChatgptTunnel(
       if (!installedState(stateAt(stateFile))) throw new Error("Complete initial installation first");
       if (stateRevision(stateFile, reviewedPolicy(paths)) !== mutation.expectedRevision) throw new Error("Tunnel configuration revision conflict");
     }
-    await reconcile(paths, directory, stateFile, mode, env, mutation);
+    await reconcile(paths, directory, stateFile, mode, env, mutation, deps);
   } finally {
     rmSync(lock, { recursive: true, force: true });
   }
 }
 
-async function reconcile(paths: Paths, directory: string, stateFile: string, mode: ChatgptTunnelMode, env: NodeJS.ProcessEnv, mutation?: TunnelMutation): Promise<void> {
+async function reconcile(paths: Paths, directory: string, stateFile: string, mode: ChatgptTunnelMode, env: NodeJS.ProcessEnv, mutation: TunnelMutation | undefined, deps: ChatgptTunnelDependencies): Promise<void> {
   const state = stateAt(stateFile);
   const prior = installedState(state);
-  const launchd = new LaunchdClient();
+  const launchd = deps.launchd();
   if (mode === "disable" || (mode === "reconcile" && state?.enabled === false)) {
-    launchd.bootout(label);
     privateWrite(stateFile, JSON.stringify({ version: 1, enabled: false, prior }, null, 2) + "\n");
+    launchd.disable(label);
+    launchd.bootout(label);
     rmSync(path.join(paths.home, "Library", "LaunchAgents", label + ".plist"), { force: true });
     if (mutation?.action === "forget" && prior) {
       rmSync(path.join(generationPath(directory, prior.generation), "runtime.key"), { force: true });
@@ -330,11 +372,11 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const policyFile = path.resolve(env.AUTODEV_CHATGPT_MCP_POLICY_FILE ?? prior?.policyFile ?? reviewedFile);
   const reviewed = reviewedPolicy(paths);
   const grants = chatgptGrantsSchema.parse(mutation?.action === "configure" ? mutation.grants : env.AUTODEV_CHATGPT_MCP_POLICY_FILE || !prior ? JSON.parse(readFileSync(policyFile, "utf8")) : prior.grants);
-  const node = resolveServiceNode(paths.home);
+  const node = deps.node(paths.home);
   const generated = renderChatgptSupergatewayConfig(
     readBridgeMcpCatalogue(paths.codexHome), grants, workspace, reviewed,
     { command: node, script: path.join(paths.codexHome, "src/mcp/tool-filter.ts") },
-    (server) => externalFilesystemBackend(server, paths.repositoryRoot, workspace, node)
+    (server) => deps.backend(server, paths.repositoryRoot, workspace, node)
   );
   const org = env.AUTODEV_CHATGPT_ORGANIZATION_ID ?? prior?.organizationId;
   const workspaceId = env.AUTODEV_CHATGPT_WORKSPACE_ID ?? prior?.workspaceId;
@@ -345,8 +387,8 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   validateRuntimeKey(rawKey, env.OPENAI_ADMIN_KEY);
 
   const dependencyEnv = dependencyEnvironment(env);
-  const binary = tunnelBinary(dependencyEnv);
-  const supergateway = resolveSupergateway(paths.repositoryRoot);
+  const binary = deps.tunnelBinary(dependencyEnv);
+  const supergateway = deps.supergateway(paths.repositoryRoot);
   const port = healthPort(env.AUTODEV_CHATGPT_TUNNEL_PORT ?? prior?.port);
   const servicePath = [
     path.dirname(node), path.dirname(binary), path.dirname(supergateway),
@@ -358,7 +400,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const runtimeEnv = { ...cleanEnv, CONTROL_PLANE_API_KEY: rawKey };
   const idFile = path.join(directory, "tunnel-id");
   const existingId = env.CONTROL_PLANE_TUNNEL_ID?.trim() || prior?.tunnelId || privateRead(idFile);
-  const id = existingId || createTunnel(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
+  const id = existingId || deps.create(binary, { ...cleanEnv, OPENAI_ADMIN_KEY: env.OPENAI_ADMIN_KEY }, org, workspaceId);
   if (!/^tunnel_[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Invalid tunnel ID");
   // Save newly created remote identity before further steps; never overwrite
   // a working tunnel ID with an unverified user-supplied replacement.
@@ -366,11 +408,11 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   // Newly created metadata can take up to 30 seconds to propagate. Retry
   // only explicit transient not-found responses, not permission failures.
   const observation: { metadata?: ReturnType<typeof tunnelMetadata> } = {};
-  if (!await waitForProbe({
+  if (!await deps.wait({
     sleep,
     probe: async () => {
       try {
-        observation.metadata = tunnelMetadata(binary, ["get", id], runtimeEnv);
+        observation.metadata = deps.metadata(binary, ["get", id], runtimeEnv);
         return true;
       } catch (error) {
         if (!existingId && error instanceof TunnelMetadataError && error.transient) return false;
@@ -390,7 +432,7 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     const active = generationPath(directory, prior.generation);
     if (privateRead(path.join(active, "runtime.key")) === rawKey &&
         privateRead(path.join(active, "supergateway.json")) === generated.trim() &&
-        await checkChatgptTunnel(paths)) {
+        await checkChatgptTunnel(paths, deps)) {
       writeLine("AutoDev ChatGPT tunnel already ready: " + id);
       return;
     }
@@ -405,29 +447,25 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
   const wasRunning = launchd.isLoaded(label);
   let stopped = false;
   let committed = false;
+  let rollbackFailed = false;
   try {
     privateWrite(config, generated);
     privateWrite(keyFile, rawKey + "\n");
-    execFileSync(supergateway, ["--config", config, "--checkConfig"], {
-      cwd: workspace, env: gatewayEnv, stdio: ["ignore", "inherit", "inherit"], timeout: 30_000
-    });
-    execFileSync(node, [
-      path.join(paths.codexHome, "src/mcp/chatgpt-supergateway-probe.ts"),
-      supergateway, config
-    ], { cwd: workspace, env: gatewayEnv, stdio: ["ignore", "inherit", "inherit"], timeout: 60_000 });
+    deps.run(supergateway, ["--config", config, "--checkConfig"], { cwd: workspace, env: gatewayEnv, timeout: 30_000 });
+    deps.run(node, [path.join(paths.codexHome, "src/mcp/chatgpt-supergateway-probe.ts"), supergateway, config], { cwd: workspace, env: gatewayEnv, timeout: 60_000 });
     const gatewayCommand = gatewayStdioCommand(supergateway, config, gatewayEnv);
-    execFileSync(binary, [
+    deps.run(binary, [
       "init", "--sample", "sample_mcp_stdio_local", "--profile", "autodev",
       "--profile-dir", generation, "--tunnel-id", id,
       "--control-plane-api-key-ref", "file:" + keyFile,
       "--mcp-command", gatewayCommand,
       "--health-listen-addr", `127.0.0.1:${port}`
-    ], { env: cleanEnv, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
+    ], { env: cleanEnv, timeout: 30_000 });
     chmodSync(profile, 0o600);
     // The prior service may own the desired port. Doctor can validate the
     // candidate using an ephemeral health port without interrupting it.
-    execFileSync(binary, ["doctor", "--profile-file", profile, "--health.listen-addr", "127.0.0.1:0", "--explain"], {
-      env: cleanEnv, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000
+    deps.run(binary, ["doctor", "--profile-file", profile, "--health.listen-addr", "127.0.0.1:0", "--explain"], {
+      env: cleanEnv, timeout: 60_000
     });
 
     const nextState = installedStateSchema.parse({
@@ -435,17 +473,16 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
       organizationId: org, workspaceId, tunnelId: id, binary, node, supergateway, servicePath
     });
     const candidatePlist = path.join(generation, label + ".plist");
-    renderLaunchAgent(templatePath(paths), candidatePlist, tunnelLaunchValues(paths, nextState, generation));
+    renderLaunchAgent(templatePath(paths), candidatePlist, tunnelLaunchValues(paths, nextState, generation, deps.launchValues(paths)));
 
     launchd.bootout(label);
     stopped = true;
-    const listeners = spawnSync("/usr/sbin/lsof", ["-nP", "-tiTCP:" + port, "-sTCP:LISTEN"], { encoding: "utf8" });
-    if (listeners.status === 0 || listeners.status !== 1 || listeners.stderr?.trim())
+    if (!deps.portFree(port))
       throw new Error("Tunnel readiness port is already in use or could not be checked");
     privateWrite(plistFile, readFileSync(candidatePlist, "utf8"));
     launchd.enable(label);
     launchd.bootstrap(plistFile);
-    if (!await waitForProbe({ probe: () => ready(launchd, port), sleep }, 60_000))
+    if (!await deps.wait({ probe: () => deps.ready(launchd, port), sleep }, 60_000))
       throw new Error("Tunnel did not become ready");
     privateWrite(stateFile, JSON.stringify({ version: 1, enabled: true, ...nextState }, null, 2) + "\n");
     committed = true;
@@ -453,17 +490,26 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
     writeLine("ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT");
   } catch {
     if (stopped) {
-      launchd.bootout(label);
-      if (previousPlist) {
-        privateWrite(plistFile, previousPlist);
-        if (wasRunning) launchd.bootstrap(plistFile);
-      } else {
-        rmSync(plistFile, { force: true });
+      try {
+        launchd.bootout(label);
+        if (previousPlist) {
+          privateWrite(plistFile, previousPlist);
+          if (wasRunning) {
+            launchd.enable(label);
+            launchd.bootstrap(plistFile);
+          } else launchd.disable(label);
+        } else {
+          rmSync(plistFile, { force: true });
+          launchd.disable(label);
+        }
+      } catch {
+        rollbackFailed = true;
+        throw new Error("ChatGPT tunnel setup and rollback failed; candidate generation retained for recovery");
       }
     }
     throw new Error("ChatGPT tunnel setup failed; previous service configuration retained. Check tunnel diagnostics and " + path.join(directory, "stderr.log"));
   } finally {
-    if (!committed) rmSync(generation, { recursive: true, force: true });
+    if (!committed && !rollbackFailed) rmSync(generation, { recursive: true, force: true });
   }
   // A previous generation is not needed after the new one is ready. Retain
   // only the active runtime credential; never remove an arbitrary state path.
@@ -477,9 +523,9 @@ async function reconcile(paths: Paths, directory: string, stateFile: string, mod
 function templatePath(paths: Paths): string {
   return path.join(paths.repositoryRoot, "config", "launchagents", label + ".plist");
 }
-function tunnelLaunchValues(paths: Paths, state: InstalledState, generation: string): LaunchAgentValues {
+function tunnelLaunchValues(paths: Paths, state: InstalledState, generation: string, values: LaunchAgentValues): LaunchAgentValues {
   return {
-    ...resolveLaunchAgentValues(paths),
+    ...values,
     tunnel: {
       binary: state.binary,
       profile: path.join(generation, "autodev.yaml"),
