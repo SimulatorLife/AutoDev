@@ -17,12 +17,16 @@
     },
     "bash": {
       "ccc *": "deny",
+      "aws *": "deny",
+      "cgc *": "deny",
       "sudo *": "deny",
+      "eval *": "deny",
       "su *": "deny",
       "doas *": "deny",
       "dd *": "deny",
       "mkfs *": "deny",
       "fdisk *": "deny",
+      "gh *": "deny",
       "git checkout *": "deny",
       "git reset *": "deny",
       "git stash *": "deny",
@@ -32,8 +36,10 @@
       "git clean *": "deny",
       "git rebase *": "deny",
       "git restore . *": "deny",
+      "git remote set-url *": "deny",
       "git branch -D *": "deny",
       "git branch --delete-force *": "deny",
+      "git remote add *": "deny",
       "git push -f *": "deny",
       "git push --force *": "deny",
       "git push --force-with-lease *": "deny",
@@ -47,7 +53,15 @@
       "rm -fr ~ *": "deny",
       "rm -fr . *": "deny",
       "rm -fr .. *": "deny",
-      "rm -fr .git *": "deny"
+      "rm -fr .git *": "deny",
+      "rmdir *": "deny",
+      "npm publish *": "deny",
+      "pnpm publish *": "deny",
+      "curl * | *sh*": "deny",
+      "wget * | *sh*": "deny"
+    },
+    "mcp__filesystem": {
+      "*": "allow"
     },
     "mcp__cocoindex-code__search": {
       "*": "allow"
@@ -70,7 +84,16 @@
     "mcp__openaiDeveloperDocs": {
       "*": "allow"
     },
+    "mcp__context7": {
+      "*": "allow"
+    },
+    "mcp__googleDeveloperKnowledge": {
+      "*": "allow"
+    },
     "mcp__playwright": {
+      "*": "deny"
+    },
+    "mcp__playtest": {
       "*": "deny"
     }
   },
@@ -87,7 +110,13 @@
     "permission": {
       "read": {
         "~/.agents/**": "allow",
-        "~/.codex/**": "allow"
+        "~/.codex/**": "allow",
+        "~/.claude/**": "allow",
+        "~/.gemini/**": "allow",
+        "~/.minimax/**": "allow",
+        "~/.mmx/**": "allow",
+        "~/.opencli/**": "allow",
+        "~/.copilot/**": "allow"
       },
       "unsandboxed": {
         "pwd *": "allow",

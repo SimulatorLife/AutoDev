@@ -231,6 +231,34 @@ function readRegularPolicyFile(
   return { ok: true, content };
 }
 
+export interface AntigravityCliPermissionDefaults {
+  readonly agentMode: string | null;
+  readonly toolPermission: string | null;
+}
+
+function nonEmptyStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/**
+Read Antigravity CLI defaults declared under `antigravity-cli` in `.rulesync/permissions.jsonc`.
+*/
+export function readAntigravityCliPermissionDefaults(
+  file: string
+): AntigravityCliPermissionDefaults {
+  const read = readRegularPolicyFile(file);
+  if (!read.ok) return { agentMode: null, toolPermission: null };
+  const parsed = parseJsoncObject(read.content);
+  if (parsed.value === null || !isRecord(parsed.value["antigravity-cli"])) {
+    return { agentMode: null, toolPermission: null };
+  }
+  const section = parsed.value["antigravity-cli"];
+  return {
+    agentMode: nonEmptyStringOrNull(section.agentMode),
+    toolPermission: nonEmptyStringOrNull(section.toolPermission)
+  };
+}
+
 /**
 Read the canonical permission policy from `.rulesync/permissions.jsonc`.
 */

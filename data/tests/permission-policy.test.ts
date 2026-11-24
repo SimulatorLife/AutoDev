@@ -10,6 +10,7 @@ import {
   permissionPolicyGeneration,
   permissionPolicyRevision,
   PermissionPolicyValidationError,
+  readAntigravityCliPermissionDefaults,
   readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
   updatePermissionPolicy
@@ -247,4 +248,32 @@ test("the generation of a policy is its values, not its bytes", () => {
     webSearch: true
   });
   assert.notEqual(first, other);
+});
+
+test("readAntigravityCliPermissionDefaults reads antigravity-cli overrides and handles absent files", async () => {
+  const { directory, file } = await policyFixture(
+    JSON.stringify({
+      "antigravity-cli": {
+        agentMode: "accept-edits",
+        toolPermission: "always-proceed"
+      }
+    })
+  );
+  try {
+    assert.deepEqual(readAntigravityCliPermissionDefaults(file), {
+      agentMode: "accept-edits",
+      toolPermission: "always-proceed"
+    });
+    assert.deepEqual(
+      readAntigravityCliPermissionDefaults(
+        path.join(directory, "missing.jsonc")
+      ),
+      {
+        agentMode: null,
+        toolPermission: null
+      }
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

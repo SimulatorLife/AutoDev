@@ -24,6 +24,10 @@ import { homedir, tmpdir } from "node:os";
 import pathApi from "node:path";
 import { createInterface } from "node:readline";
 
+import {
+  ConfigRepository,
+  readAntigravityCliPermissionDefaults
+} from "@simulatorlife/autodev-data";
 import { type AntigravityProvider } from "@simulatorlife/autodev-core";
 import {
   bridgeSkillContext,
@@ -148,8 +152,7 @@ const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002");
 const CLI = resolveAgyBinary();
 const DEFAULT_MODEL = "gemini-3.8-flash-medium";
 const DEFAULT_EFFORT = "medium";
-const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";
-const AGY_SKIP_PERMISSIONS = process.env.AGY_SKIP_PERMISSIONS ?? "true";
+const DEFAULT_AGY_MODE = "accept-edits";
 const PRINT_TIMEOUT = process.env.AGY_PRINT_TIMEOUT ?? "0";
 const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
 const PROJECT_ROOT =
@@ -2857,6 +2860,56 @@ function agyEnvironment(isolatedHome: string | null = null): NodeJS.ProcessEnv {
   };
 }
 
+/**
+Resolve `agy` mode and headless permission-skip defaults from env overrides,
+then canonical `.rulesync/permissions.jsonc`, then (for `agentMode` in a
+materialized `$CODEX_HOME` without a repo root) the projected user settings.
+*/
+function resolveAgyRuntimeDefaults(): {
+  readonly mode: string;
+  readonly shouldSkipPermissions: boolean;
+} {
+  const environmentMode = process.env.AGY_MODE?.trim();
+  const environmentSkip = process.env.AGY_SKIP_PERMISSIONS?.trim();
+  const canonical = readAntigravityCliPermissionDefaults(
+    new ConfigRepository(REPO_ROOT).permissionPolicyPath()
+  );
+  let settingsAgentMode: string | null = null;
+  if (!environmentMode && !canonical.agentMode) {
+    const home = process.env.HOME?.trim() || homedir();
+    const settingsPath = pathApi.join(
+      home,
+      GEMINI_DIRECTORY,
+      AGY_CLI_DIRECTORY,
+      SETTINGS_FILENAME
+    );
+    if (existsSync(settingsPath)) {
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(settingsPath, "utf8"));
+        if (
+          isJsonRecord(parsed) &&
+          typeof parsed.agentMode === "string" &&
+          parsed.agentMode.trim()
+        ) {
+          settingsAgentMode = parsed.agentMode.trim();
+        }
+      } catch {
+        // Ignore malformed local settings here; buildInvocationSettings enforces strictness.
+      }
+    }
+  }
+  const mode =
+    environmentMode ||
+    canonical.agentMode ||
+    settingsAgentMode ||
+    DEFAULT_AGY_MODE;
+  const shouldSkipPermissions = environmentSkip
+    ? environmentSkip === "true"
+    : !canonical.toolPermission ||
+      canonical.toolPermission === "always-proceed";
+  return { mode, shouldSkipPermissions };
+}
+
 function agyArgs(
   prompt: string,
   model: string,
@@ -2870,13 +2923,15 @@ function agyArgs(
   // the authoritative wire signal for this turn, and falls back to the
   // contract for bridges that have not been updated to send it yet.
   const readOnly = turnIsReadOnly(readOnlyHeader, agentRole);
+  const defaults = resolveAgyRuntimeDefaults();
   // Headless print mode (-p) cannot prompt interactively for tool approvals.
-  // AGY_SKIP_PERMISSIONS ("true" by default) auto-approves tool permission
-  // requests so the turn does not crash on unpromptable tool confirmations.
+  // Unless overridden via AGY_SKIP_PERMISSIONS or antigravity-cli.toolPermission,
+  // auto-approve tool permission requests so the turn does not stall.
   // Read-only turns are restricted by settings.json permissions scoping and
   // agy's --sandbox terminal restrictions.
-  const permissionArgs =
-    AGY_SKIP_PERMISSIONS === "true" ? ["--dangerously-skip-permissions"] : [];
+  const permissionArgs = defaults.shouldSkipPermissions
+    ? ["--dangerously-skip-permissions"]
+    : [];
   const sandboxArgs = readOnly ? ["--sandbox"] : [];
   // Only pass --effort when the model id does not already fix it; see
   // MODEL_EFFORT_SUFFIX.
@@ -2888,7 +2943,7 @@ function agyArgs(
     model,
     ...effortArgs,
     "--mode",
-    AGY_MODE,
+    defaults.mode,
     ...permissionArgs,
     ...sandboxArgs,
     "--output-format",

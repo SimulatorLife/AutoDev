@@ -129,12 +129,24 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
 
   assert.equal(agyOverride.agentMode, "accept-edits");
   assert.deepEqual(sharedPermission.webfetch, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__filesystem, { "*": "allow" });
   assert.deepEqual(sharedPermission["mcp__cocoindex-code__search"], {
     "*": "allow"
   });
   assert.deepEqual(sharedPermission.mcp__lsp, { "*": "allow" });
   assert.deepEqual(sharedPermission.mcp__openaiDeveloperDocs, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__context7, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__googleDeveloperKnowledge, {
+    "*": "allow"
+  });
   assert.deepEqual(sharedPermission.mcp__playwright, { "*": "deny" });
+  assert.deepEqual(sharedPermission.mcp__playtest, { "*": "deny" });
+  assert.ok(
+    read("runtime/src/providers/antigravity.ts").includes(
+      "readAntigravityCliPermissionDefaults"
+    ),
+    "antigravity.ts must read agentMode from .rulesync/permissions.jsonc"
+  );
   for (const tool of [
     "list_indexed_repositories",
     "find_code",
@@ -157,7 +169,13 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
   assert.deepEqual(asObject(sharedPermission.bash)["ccc *"], "deny");
   assert.deepEqual(agyPermission.read, {
     "~/.agents/**": "allow",
-    "~/.codex/**": "allow"
+    "~/.codex/**": "allow",
+    "~/.claude/**": "allow",
+    "~/.gemini/**": "allow",
+    "~/.minimax/**": "allow",
+    "~/.mmx/**": "allow",
+    "~/.opencli/**": "allow",
+    "~/.copilot/**": "allow"
   });
   assert.deepEqual(agyPermission.unsandboxed, {
     "pwd *": "allow",

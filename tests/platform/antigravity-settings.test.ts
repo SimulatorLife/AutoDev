@@ -40,6 +40,10 @@ test("permission update projects .rulesync/permissions.jsonc, preserves user gra
     assert.ok(baseline.deny.includes("command(ccc)"));
     assert.ok(baseline.deny.includes("unsandboxed(ccc)"));
     assert.ok(baseline.deny.includes("mcp(playwright/*)"));
+    assert.ok(baseline.deny.includes("mcp(playtest/*)"));
+    assert.ok(baseline.allow.includes("mcp(filesystem/*)"));
+    assert.ok(baseline.allow.includes("mcp(context7/*)"));
+    assert.ok(baseline.allow.includes("mcp(googleDeveloperKnowledge/*)"));
     assert.equal(baseline.topLevelOverrides.agentMode, "accept-edits");
 
     writeFileSync(
@@ -50,6 +54,8 @@ test("permission update projects .rulesync/permissions.jsonc, preserves user gra
             "user-grant",
             "mcp(playwright)",
             "mcp(playwright/*)",
+            "mcp(playtest)",
+            "mcp(playtest/*)",
             "mcp(codegraphcontext/*)",
             "mcp(codegraphcontext/delete_repository)"
           ]
@@ -90,6 +96,12 @@ test("permission update projects .rulesync/permissions.jsonc, preserves user gra
     assert.deepEqual(
       config.permissions.allow.filter((entry) =>
         entry.startsWith("mcp(playwright")
+      ),
+      []
+    );
+    assert.deepEqual(
+      config.permissions.allow.filter((entry) =>
+        entry.startsWith("mcp(playtest")
       ),
       []
     );

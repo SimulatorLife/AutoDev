@@ -1,6 +1,7 @@
 export * from "./clickhouse/clickhouse-client.ts";
 export * from "./config/config-repository.ts";
 export {
+  type AntigravityCliPermissionDefaults,
   approvalPolicyFromConfig,
   PermissionPolicyConflictError,
   permissionPolicyGeneration,
@@ -10,6 +11,7 @@ export {
   type PermissionPolicyUpdate,
   PermissionPolicyValidationError,
   type PermissionPolicyWrite,
+  readAntigravityCliPermissionDefaults,
   readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
   updatePermissionPolicy
