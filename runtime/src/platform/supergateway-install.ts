@@ -12,7 +12,7 @@ export const SUPERGATEWAY_VERSION = "4.2.2";
  * No registry resolution or package installation occurs during service startup.
  * The private installation retains its own lockfile across normal installs.
  */
-export function ensureSupergateway(directory: string): string {
+export function ensureSupergateway(directory: string, env: NodeJS.ProcessEnv = { HOME: process.env.HOME, PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }): string {
   const root = path.join(directory, "supergateway");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const manifest = path.join(root, "package.json");
@@ -41,7 +41,7 @@ export function ensureSupergateway(directory: string): string {
   execFileSync(pnpm, [
     "--dir", root, "install", "--prod", "--ignore-scripts",
     manifestMatches && existsSync(lock) ? "--frozen-lockfile" : "--no-frozen-lockfile"
-  ], { cwd: root, stdio: "inherit" });
+  ], { cwd: root, env, stdio: "inherit" });
   if (!installed()) throw new Error("Pinned Supergateway installation could not be verified");
   return executable;
 }

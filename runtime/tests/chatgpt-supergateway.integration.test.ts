@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,7 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { chatgptSupergatewayEnvironment, renderChatgptSupergatewayConfig } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import { ensureSupergateway } from "../src/platform/supergateway-install.ts";
-import { tunnelClientSupported } from "../src/platform/chatgpt-tunnel-install.ts";
+import { dependencyEnvironment, tunnelClientSupported } from "../src/platform/chatgpt-tunnel-install.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -84,5 +85,22 @@ test("pinned Supergateway and actual AutoDev filesystem server enforce external 
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("dependency setup excludes both OpenAI credentials", () => {
+  assert.deepEqual(dependencyEnvironment({ HOME: "/home/test", PATH: "/bin", OPENAI_ADMIN_KEY: "test", CONTROL_PLANE_API_KEY: "test", OPENAI_API_KEY: "test" }), { HOME: "/home/test", PATH: "/bin" });
+});
+test("MCP probe executes when started through the installed source symlink", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "autodev-probe-link-"));
+  try {
+    const link = path.join(directory, "probe.ts");
+    symlinkSync(path.join(repo, "runtime/src/mcp/chatgpt-supergateway-probe.ts"), link);
+    const result = spawnSync(process.execPath, [link], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Expected Supergateway executable and config/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -21,7 +21,7 @@ import {
 import { materializeInstallation } from "./install-materializer.ts";
 import { ensureBridgeRouterAuth, ensureRouterAuth } from "./install-state.ts";
 import { installOpencliBrowser } from "./opencli-browser-install.ts";
-import { ensureChatgptTunnel, type ChatgptTunnelMode } from "./chatgpt-tunnel-install.ts";
+import { type ChatgptTunnelMode } from "./chatgpt-tunnel-install.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -127,7 +127,10 @@ export function runInstallCommand(
         "Materialized AutoDev integration without restarting services."
       );
     } else {
-      ensureChatgptTunnel({ repositoryRoot, home, codexHome }, flags.chatgptTunnel);
+      runNodeModule(
+        resolveRuntimeSourcePath(repositoryRoot, "platform/chatgpt-tunnel-install.ts"),
+        [flags.chatgptTunnel, repositoryRoot, home, codexHome], env
+      );
       runNodeModule(
         resolveRuntimeSourcePath(repositoryRoot, "platform/service-restart.ts"),
         [],
