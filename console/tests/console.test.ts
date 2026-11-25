@@ -20102,6 +20102,7 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
     enabled: true,
     ready: true,
     role: "orchestrator",
+    roles: ["orchestrator"],
     availableRoles: ["default", "explorer", "orchestrator", "worker"],
     workspace: "/Users/test/project",
     tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
@@ -20141,6 +20142,23 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
     }
   );
 
+  // The panel reads `roles` to list the published surfaces, so a status
+  // without them is a contract break the Console must refuse rather than
+  // render.
+  await withControlRouteEnvironment(
+    "chatgpt-tunnel-missing-roles",
+    async () => {
+      const { roles: _roles, ...withoutRoles } = validStatus;
+      return Response.json(withoutRoles);
+    },
+    async () => {
+      const config = readControlApiConfig();
+      assert.ok(config);
+      const invalid = await fetchChatgptTunnel(config);
+      assert.equal(invalid.kind, "invalid-response");
+    }
+  );
+
   const unconfiguredMarkup = renderToStaticMarkup(
     React.createElement(ChatgptTunnelPanel, {
       status: {
@@ -20161,6 +20179,7 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
   );
   assert.match(readyMarkup, /Ready/u);
   assert.match(readyMarkup, /tunnel_0123456789abcdef0123456789abcdef/u);
+  assert.match(readyMarkup, /Published roles: orchestrator/u);
   assert.match(readyMarkup, /Disconnect and disable/u);
   assert.match(readyMarkup, /checked="" value="filesystem:read_text_file"/u);
   assert.match(readyMarkup, /value="filesystem:list_directory"/u);
