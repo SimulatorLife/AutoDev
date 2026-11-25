@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -9,10 +10,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { isEntryPoint } from "../shared/entry-point.ts";
+import { MCP_SERVER_XACPX } from "../shared/tool-names.ts";
 import {
   qualifiedToolNames,
   supergatewayConfigSchema
 } from "../config/render-chatgpt-supergateway.ts";
+import { XacpxSessionManager } from "../xacpx/manager.ts";
+import {
+  startXacpxOrchestrationIpcServer,
+  type XacpxOrchestrationIpcHandle
+} from "../xacpx/orchestration-ipc.ts";
 import {
   CHATGPT_MCP_POOL_PORT_ENV,
   CHATGPT_MCP_POOL_TOKEN_ENV,
@@ -20,6 +27,21 @@ import {
   type ChatgptBackendPoolHandle,
   startChatgptBackendPool
 } from "./chatgpt-backend-pool.ts";
+
+function isUnixSocketReachable(socketPath: string): Promise<boolean> {
+  if (!socketPath || !existsSync(socketPath)) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    const socket = createConnection(socketPath);
+    const finish = (ok: boolean): void => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
 
 async function allocateLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -89,18 +111,43 @@ export async function probeSupergateway(
   const usesBackendPool = Object.values(
     config.mcpServers.autodev.mcpServers
   ).some((entry) => "type" in entry && entry.type === "streamableHttp");
+  let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
+  let effectiveEnv = env;
+  if (
+    Object.prototype.hasOwnProperty.call(
+      config.mcpServers.autodev.mcpServers,
+      MCP_SERVER_XACPX
+    ) &&
+    !(await isUnixSocketReachable(env.XACPX_ORCHESTRATION_SOCKET ?? ""))
+  ) {
+    const probeSocket = path.join(
+      "/tmp",
+      `autodev-xacpx-probe-${randomBytes(8).toString("hex")}.sock`
+    );
+    probeXacpxIpc = await startXacpxOrchestrationIpcServer({
+      socketPath: probeSocket,
+      manager: new XacpxSessionManager(),
+      authorizedWorkspaceRoot: env.AUTODEV_XACPX_WORKSPACE || process.cwd(),
+      repositoryRoot: env.AUTODEV_REPO_ROOT || process.cwd()
+    });
+    effectiveEnv = {
+      ...env,
+      XACPX_ORCHESTRATION_SOCKET: probeSocket,
+      AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:policy-probe"
+    };
+  }
   let pool: ChatgptBackendPoolHandle | undefined;
-  let gatewayEnv = env;
+  let gatewayEnv = effectiveEnv;
   if (usesBackendPool && existsSync(poolConfigPath)) {
     const poolConfig = chatgptBackendPoolConfigSchema.parse(
       JSON.parse(readFileSync(poolConfigPath, "utf8"))
     );
     pool = await startChatgptBackendPool(poolConfig, {
-      gatewayEnv: env,
+      gatewayEnv: effectiveEnv,
       secretEnv: process.env
     });
     gatewayEnv = {
-      ...env,
+      ...effectiveEnv,
       [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
       [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
     };
@@ -211,6 +258,7 @@ export async function probeSupergateway(
       }
     }
     if (pool) await pool.close().catch(() => {});
+    if (probeXacpxIpc) await probeXacpxIpc.close().catch(() => {});
   }
 }
 

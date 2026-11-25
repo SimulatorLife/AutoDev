@@ -1212,20 +1212,65 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
           (entry): entry is [string, string] => entry[1] !== undefined
         )
       );
-      let pool: ChatgptBackendPoolHandle | undefined;
+      // Run the candidate backend pool in its own child process so synchronous
+      // `tunnel-client doctor` checks (`execFileSync`) cannot block its HTTP
+      // event loop.
+      let poolChild: ChildProcess | undefined;
+      let candidateEnv: NodeJS.ProcessEnv = env;
       if (poolRaw) {
-        pool = await startChatgptBackendPool(
-          chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw)),
-          { gatewayEnv: cleanGatewayEnv, secretEnv: process.env }
+        const poolToken = randomBytes(32).toString("hex");
+        const poolScript = path.join(
+          import.meta.dirname,
+          "..",
+          "mcp",
+          "chatgpt-backend-pool.ts"
         );
+        poolChild = spawn(process.execPath, [poolScript, poolConfigPath], {
+          cwd: workspace,
+          env: {
+            ...process.env,
+            [CHATGPT_MCP_POOL_TOKEN_ENV]: poolToken
+          },
+          stdio: ["pipe", "pipe", "ignore"]
+        });
+        poolChild.stdin?.write(
+          `${JSON.stringify({ gatewayEnv: cleanGatewayEnv })}\n`
+        );
+        const poolPort = await new Promise<number>((resolve, reject) => {
+          let buf = "";
+          const timer = setTimeout(
+            () => reject(new Error("Candidate MCP backend pool timed out")),
+            15_000
+          );
+          const onData = (chunk: Buffer): void => {
+            buf += chunk.toString("utf8");
+            const nl = buf.indexOf("\n");
+            if (nl === -1) return;
+            clearTimeout(timer);
+            poolChild?.stdout?.off("data", onData);
+            try {
+              const info = JSON.parse(buf.slice(0, nl)) as { port?: unknown };
+              if (typeof info.port === "number" && info.port > 0) {
+                resolve(info.port);
+              } else {
+                reject(new Error("Invalid candidate MCP backend pool port"));
+              }
+            } catch (error) {
+              reject(error);
+            }
+          };
+          poolChild?.stdout?.on("data", onData);
+          poolChild?.once("exit", () => {
+            clearTimeout(timer);
+            reject(new Error("Candidate MCP backend pool exited early"));
+          });
+        });
+        candidateEnv = {
+          ...env,
+          [CHATGPT_MCP_POOL_PORT_ENV]: String(poolPort),
+          [CHATGPT_MCP_POOL_TOKEN_ENV]: poolToken
+        };
       }
-      const candidateEnv: NodeJS.ProcessEnv = pool
-        ? {
-            ...env,
-            [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
-            [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
-          }
-        : env;
       const child = spawn(
         executable,
         [
@@ -1260,7 +1305,7 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
         return await fn(`http://127.0.0.1:${doctorPort}/mcp`);
       } finally {
         await stopChildProcess(child);
-        if (pool) await pool.close().catch(() => {});
+        if (poolChild) await stopChildProcess(poolChild);
       }
     },
     run: (command, args, options) => {

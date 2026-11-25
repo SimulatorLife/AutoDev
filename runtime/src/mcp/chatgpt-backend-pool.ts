@@ -30,7 +30,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -45,6 +45,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { z } from "zod";
 
+import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   KEYCHAIN_SECRET_NAMES,
   readRuntimeSecret
@@ -136,6 +137,8 @@ export interface ChatgptBackendPoolOptions {
   readonly gatewayEnv: Record<string, string>;
   /** Host environment used solely for resolving per-remote-server credentials in memory. */
   readonly secretEnv?: NodeJS.ProcessEnv;
+  /** Optional pre-generated Bearer token; defaults to a freshly minted 256-bit token. */
+  readonly token?: string;
   /** Idle duration before an unused local backend process is gracefully reaped. */
   readonly idleTimeoutMs?: number;
   /** Maximum duration for an individual `tools/call` before timing out. */
@@ -1098,7 +1101,7 @@ export async function startChatgptBackendPool(
   options: ChatgptBackendPoolOptions
 ): Promise<ChatgptBackendPoolHandle> {
   const config = chatgptBackendPoolConfigSchema.parse(rawConfig);
-  const token = randomBytes(32).toString("hex");
+  const token = options.token?.trim() || randomBytes(32).toString("hex");
   const controllers = new Map<string, PooledBackendController>();
   for (const [name, spec] of Object.entries(config.servers)) {
     controllers.set(name, new PooledBackendController(name, spec, options));
@@ -1301,4 +1304,50 @@ export async function startChatgptBackendPool(
       }
     }
   };
+}
+
+if (isEntryPoint(import.meta.url)) {
+  const configFile = process.argv[2];
+  if (!configFile) {
+    process.stderr.write("Expected backend-pool.json path\n");
+    process.exit(2);
+  }
+  const token = process.env[CHATGPT_MCP_POOL_TOKEN_ENV]?.trim();
+  if (!token) {
+    process.stderr.write(`Missing ${CHATGPT_MCP_POOL_TOKEN_ENV}\n`);
+    process.exit(2);
+  }
+  void (async () => {
+    const rl = createInterface({ input: process.stdin });
+    const firstLine = await new Promise<string>((resolve, reject) => {
+      rl.once("line", resolve);
+      rl.once("close", () => reject(new Error("Missing gatewayEnv handshake")));
+    });
+    const parsed = JSON.parse(firstLine) as {
+      gatewayEnv?: Record<string, string>;
+    };
+    const gatewayEnv = parsed.gatewayEnv ?? {};
+    const config = chatgptBackendPoolConfigSchema.parse(
+      JSON.parse(readFileSync(configFile, "utf8"))
+    );
+    const pool = await startChatgptBackendPool(config, {
+      gatewayEnv,
+      secretEnv: process.env,
+      token
+    });
+    process.stdout.write(`${JSON.stringify({ port: pool.port })}\n`);
+    let closing = false;
+    const shutdown = (): void => {
+      if (closing) return;
+      closing = true;
+      rl.close();
+      void pool.close().finally(() => process.exit(0));
+    };
+    rl.once("close", shutdown);
+    process.once("SIGTERM", shutdown);
+    process.once("SIGINT", shutdown);
+  })().catch(() => {
+    process.stderr.write("ChatGPT MCP backend pool failed to start\n");
+    process.exit(1);
+  });
 }

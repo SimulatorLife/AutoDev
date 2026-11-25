@@ -42,6 +42,7 @@ import {
 } from "../src/platform/mcode-projection.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
 import { findMcodeBinary } from "../src/shared/executables.ts";
 import {
   extractSkillReadPath,
@@ -453,6 +454,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
 
   const events: AcpConsoleSessionEvent[] = [];
   let transportCalls = 0;
+  let launchedPromptMode: string | undefined;
   const opencliCalls: string[] = [];
   const manager = new XacpxSessionManager({
     consoleSink: {
@@ -460,8 +462,9 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
         events.push(event);
       }
     },
-    acpTransportFactory: () => {
+    acpTransportFactory: (launch) => {
       transportCalls += 1;
+      launchedPromptMode = launch.isolation.systemPromptInjection;
       return { target: createMockAcpAgent() };
     },
     githubWorkerRunner: async (task) => {
@@ -480,7 +483,12 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     promptOrTask: "attempt-write"
   });
   assert.equal(firstTurn.kind, "acp");
-  assert.match(firstTurn.outputText, /^echo:<system_instructions>\nExplorer prompt\n<\/system_instructions>\n\nattempt-write$/u);
+  assert.equal(
+    firstTurn.outputText,
+    launchedPromptMode === "initial_turn"
+      ? "echo:<system_instructions>\nExplorer prompt\n</system_instructions>\n\nattempt-write"
+      : "echo:attempt-write"
+  );
   assert.equal(firstTurn.stopReason, "end_turn");
   assert.equal(transportCalls, 1);
 
