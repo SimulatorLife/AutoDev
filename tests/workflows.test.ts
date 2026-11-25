@@ -343,7 +343,11 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   );
-  assert.equal(packageJson.packageManager, "pnpm@12.21.0");
+  // The pnpm version has exactly one owner: the repository's own
+  // `packageManager` field. Restating the number here would make every pnpm
+  // bump need a matching test edit, and CI reads the version from the same
+  // field.
+  assert.match(packageJson.packageManager, /^pnpm@\d+\.\d+\.\d+$/u);
   // pnpm 12 writes the lockfile as YAML documents (the package-manager
   // environment, then the project), each opening with its lockfileVersion.
   const lockfile = await readFile(path.join(root, "pnpm-lock.yaml"), "utf8");

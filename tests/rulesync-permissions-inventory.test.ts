@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path, { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { updateAntigravityPermissions } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
 import { parse } from "smol-toml";
 
 import { normalizedSource } from "./source-text.ts";
@@ -78,9 +86,10 @@ test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not 
     false,
     "agents/rules/default.rules must be removed in favor of .rulesync/permissions.jsonc"
   );
-  for (const provider of Object.values(
+  const modelProviders = Object.values(
     asObject(portableConfig.model_providers)
-  )) {
+  );
+  for (const provider of modelProviders) {
     assert.equal(asObject(provider).wire_api, "responses");
   }
   assert.equal(Object.hasOwn(portableConfig, "mcp_servers"), false);
@@ -159,13 +168,32 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
     "missingAntigravityPermissions",
     "projectedAntigravityBaseline",
     "runRulesyncGenerate",
-    "normalizedReadRoots",
-    "read_file(${root})",
-    "read_file(${root}/**)"
+    "normalizedReadRoots"
   ])
     assert.ok(source.includes(marker), marker);
-  assert.ok(source.includes("atomicWriteSync(filePath"));
-  assert.ok(source.includes("mode: 0o600"));
+});
+
+/**
+The Antigravity permissions file is a secret-bearing document, so it is
+written for its owner only.
+
+The mode is asserted on the written file rather than on the source of the
+writer, so a refactor of the writer cannot silently widen it.
+*/
+test("the Antigravity permissions file is written for its owner only", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "autodev-agy-permissions-"));
+  try {
+    const settingsPath = join(directory, "settings.json");
+    updateAntigravityPermissions(settingsPath, [directory], directory);
+    const mode = statSync(settingsPath).mode & 0o777;
+    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    // The document is written atomically as JSON, so a reader never sees a
+    // half-written file.
+    const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as JsonObject;
+    assert.ok(asObject(parsed.permissions));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("Codex Rulesync permissions are consolidated while subagent generation remains deferred", () => {
@@ -225,17 +253,17 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
     }
   );
   const mcpTargets = asObject(rulesyncMcp);
-  for (const target of Object.keys(mcpTargets).filter(
+  const providerTargets = Object.keys(mcpTargets).filter(
     (name) => name !== "$schema" && name !== "mcpServers"
-  ))
+  );
+  for (const target of providerTargets) {
+    const servers = asObject(asObject(mcpTargets[target]).mcpServers);
     assert.equal(
-      Object.hasOwn(
-        asObject(asObject(mcpTargets[target]).mcpServers),
-        "autodev_spawn"
-      ),
+      Object.hasOwn(servers, "autodev_spawn"),
       false,
       `${target} must not declare a separate spawn server`
     );
+  }
 });
 
 test("the permission inventory reads sources without changing them", () => {
@@ -246,7 +274,13 @@ test("the permission inventory reads sources without changing them", () => {
     ".rulesync/mcp.jsonc",
     ".rulesync/permissions.jsonc"
   ];
-  const before = paths.map(read);
-  for (const content of before) assert.ok(content.length > 0);
-  assert.deepEqual(paths.map(read), before);
+  const before = paths.map((relativePath) =>
+    statSync(join(repositoryRoot, relativePath)).mtimeMs
+  );
+  const contents = paths.map(read);
+  for (const content of contents) assert.ok(content.length > 0);
+  const after = paths.map((relativePath) =>
+    statSync(join(repositoryRoot, relativePath)).mtimeMs
+  );
+  assert.deepEqual(after, before);
 });

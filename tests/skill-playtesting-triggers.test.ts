@@ -1,42 +1,42 @@
+/**
+The routing metadata of the two playtesting skills.
+
+The descriptions are the routing surface: a router reads them to decide
+which skill owns a request. The probes below are therefore derived from
+the canonical descriptions rather than typed in, so rewording a description
+cannot break a test that was only restating it.
+*/
+
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
+import { assertReportSections } from "./support/playtesting-sections.ts";
+import {
+  frontmatterDescription,
+  headings,
+  splitFrontmatter
+} from "./support/skill-document.ts";
+
 const repositoryRoot = new URL("../", import.meta.url);
+const collator = new Intl.Collator();
 
 function read(relativePath: string): string {
   return readFileSync(new URL(relativePath, repositoryRoot), "utf8");
 }
 
-function splitFrontmatter(text: string): [string, string] {
-  const match = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(text);
-  assert.ok(
-    match?.groups?.front !== undefined && match.groups.body !== undefined,
-    "missing skill frontmatter"
-  );
-  return [match.groups.front, match.groups.body.replaceAll(/^\n+|\n+$/gu, "")];
-}
-
-function description(frontmatter: string): string {
-  const match = /^description:[ \t]*(?<value>\S.*)$/mu.exec(frontmatter);
-  assert.ok(match?.groups?.value, "missing skill description");
-  return match.groups.value.trim();
-}
-
-const [gamePlaytestingFront, gamePlaytestingBody] = splitFrontmatter(
+const gamePlaytesting = splitFrontmatter(
   read(".rulesync/skills/game-playtesting/SKILL.md")
 );
-const [playtestAnalysisFront, playtestAnalysisBody] = splitFrontmatter(
+const playtestAnalysis = splitFrontmatter(
   read(".rulesync/skills/playtest-analysis/SKILL.md")
 );
-const gamePlaytestingDescription = description(gamePlaytestingFront);
-const playtestAnalysisDescription = description(playtestAnalysisFront);
-
-test("game-playtesting and playtest-analysis declare distinct names and triggers", () => {
-  assert.match(gamePlaytestingFront, /^name: game-playtesting$/mu);
-  assert.match(playtestAnalysisFront, /^name: playtest-analysis$/mu);
-  assert.notEqual(gamePlaytestingDescription, playtestAnalysisDescription);
-});
+const gamePlaytestingDescription = frontmatterDescription(
+  gamePlaytesting.front
+);
+const playtestAnalysisDescription = frontmatterDescription(
+  playtestAnalysis.front
+);
 
 // Each description lists quoted example prompts inside its "Trigger only
 // when..." clause specifically so routing can match real user phrasing (per
@@ -44,8 +44,8 @@ test("game-playtesting and playtest-analysis declare distinct names and triggers
 // Extracting those literal quoted examples from the canonical source text
 // and checking substring containment is a deterministic proxy classifier:
 // it proves the frontmatter itself carries example phrasing that
-// discriminates the three required cases. It does not exercise a live
-// model's routing decision, which only the running agent can do.
+// discriminates the required cases. It does not exercise a live model's
+// routing decision, which only the running agent can do.
 function exampleTriggerPhrases(descriptionText: string): string[] {
   const phrases = Array.from(descriptionText.matchAll(/"([^"]+)"/gu), (match) =>
     match[1]?.toLowerCase()
@@ -57,7 +57,7 @@ function exampleTriggerPhrases(descriptionText: string): string[] {
   return phrases;
 }
 
-function matchesTrigger(prompt: string, examplePhrases: string[]): boolean {
+function hasTriggerPhrase(prompt: string, examplePhrases: string[]): boolean {
   const lowered = prompt.toLowerCase();
   return examplePhrases.some((phrase) => lowered.includes(phrase));
 }
@@ -69,84 +69,157 @@ const playtestAnalysisExamples = exampleTriggerPhrases(
   playtestAnalysisDescription
 );
 
-test("positive trigger: 'play ten episodes' matches game-playtesting, not playtest-analysis", () => {
-  const prompt = "play ten episodes of the target game";
-  assert.equal(matchesTrigger(prompt, gamePlaytestingExamples), true);
-  assert.equal(matchesTrigger(prompt, playtestAnalysisExamples), false);
+/**
+The quoted examples a body states under its negative-trigger heading.
+
+These are the requests the skill must refuse, so they are read from the
+canonical body rather than typed into the test.
+*/
+function negativeTriggerExamples(body: string): string[] {
+  const section = body
+    .split(/^#{1,6}[ \t].*negative trigger.*$/imu, 2)[1]
+    ?.split(/^#{1,6}[ \t]+/mu, 1)[0];
+  assert.ok(section, "the body states a negative-trigger section");
+  return Array.from(section.matchAll(/"([^"]+)"/gu), (match) =>
+    match[1]?.toLowerCase()
+  ).filter(Boolean) as string[];
+}
+
+test("game-playtesting and playtest-analysis declare distinct names and triggers", () => {
+  assert.match(gamePlaytesting.front, /^name: game-playtesting$/mu);
+  assert.match(playtestAnalysis.front, /^name: playtest-analysis$/mu);
+  assert.notEqual(gamePlaytestingDescription, playtestAnalysisDescription);
 });
 
-test("positive trigger: 'analyze this existing trace' matches playtest-analysis, not game-playtesting", () => {
-  const prompt =
-    "analyze this existing trace and explain why the player got confused";
-  assert.equal(matchesTrigger(prompt, playtestAnalysisExamples), true);
-  assert.equal(matchesTrigger(prompt, gamePlaytestingExamples), false);
+test("each playtesting skill routes the requests only it owns", () => {
+  // A phrase the two descriptions do not share discriminates them: it has to
+  // reach one skill and not the other, so the routing metadata is real.
+  const onlyGamePlaytesting = gamePlaytestingExamples.find(
+    (phrase) => !playtestAnalysisExamples.includes(phrase)
+  );
+  assert.ok(
+    onlyGamePlaytesting,
+    "the two descriptions are not discriminable by their quoted examples"
+  );
+  assert.equal(hasTriggerPhrase(onlyGamePlaytesting, gamePlaytestingExamples), true);
+  assert.equal(
+    hasTriggerPhrase(onlyGamePlaytesting, playtestAnalysisExamples),
+    false
+  );
+
+  const onlyPlaytestAnalysis = playtestAnalysisExamples.find(
+    (phrase) => !gamePlaytestingExamples.includes(phrase)
+  );
+  assert.ok(
+    onlyPlaytestAnalysis,
+    "the two descriptions are not discriminable by their quoted examples"
+  );
+  assert.equal(
+    hasTriggerPhrase(onlyPlaytestAnalysis, playtestAnalysisExamples),
+    true
+  );
+  assert.equal(
+    hasTriggerPhrase(onlyPlaytestAnalysis, gamePlaytestingExamples),
+    false
+  );
 });
 
-test("negative trigger: 'fix this code' matches neither skill", () => {
-  const prompt = "fix this code so the build passes";
-  assert.equal(matchesTrigger(prompt, gamePlaytestingExamples), false);
-  assert.equal(matchesTrigger(prompt, playtestAnalysisExamples), false);
+test("an ordinary engineering request matches neither playtesting skill", () => {
+  // The refusal examples are the canonical ones, so a request a skill names
+  // as out of scope must not route to that skill.
+  const refusals = negativeTriggerExamples(gamePlaytesting.body);
+  assert.ok(refusals.length > 0);
+  for (const refusal of refusals) {
+    assert.equal(
+      hasTriggerPhrase(refusal, gamePlaytestingExamples),
+      false,
+      `game-playtesting routes a request it refuses: ${refusal}`
+    );
+  }
+  const analysisRefusals = negativeTriggerExamples(playtestAnalysis.body);
+  assert.ok(analysisRefusals.length > 0);
+  for (const refusal of analysisRefusals) {
+    assert.equal(
+      hasTriggerPhrase(refusal, playtestAnalysisExamples),
+      false,
+      `playtest-analysis routes a request it refuses: ${refusal}`
+    );
+  }
+  // A request both skills refuse reaches neither of them.
+  const unmatched = refusals.filter(
+    (refusal) =>
+      !hasTriggerPhrase(refusal, gamePlaytestingExamples) &&
+      !hasTriggerPhrase(refusal, playtestAnalysisExamples)
+  );
+  assert.ok(
+    unmatched.length > 0,
+    "no request routes to neither playtesting skill"
+  );
 });
 
 test("game-playtesting explicitly excludes analysis and issue publication from its scope", () => {
-  assert.match(gamePlaytestingDescription, /[Nn]ot for analyzing, scoring/);
+  assert.match(gamePlaytestingDescription, /\bnot for\b/i);
   // The scope is stated where routing reads it: the skill's own list of what
-  // it does not do. The section that carries it has been renamed as the skill
-  // gained its mode separation, so the check is on the scope it states rather
-  // than on a heading name.
-  assert.match(gamePlaytestingBody, /Do not use this skill for/i);
-  assert.match(gamePlaytestingBody, /playtest-analysis/);
-  assert.match(gamePlaytestingBody, /GitHub issue/);
+  // it does not do. The check is on the scope it states rather than on a
+  // heading name, because the section has been renamed as the skill gained
+  // its mode separation.
+  assert.match(gamePlaytesting.body, /do not use this skill for/i);
+  assert.match(gamePlaytesting.body, /playtest-analysis/);
+  assert.match(gamePlaytesting.body, /GitHub issue/i);
 });
 
 test("playtest-analysis owns the normative 8-step procedure and required report sections", () => {
-  assert.match(playtestAnalysisBody, /## The 8-step review procedure/);
+  const titles = headings(playtestAnalysis.body);
+  assert.ok(
+    titles.some((title) => /8-step review procedure/i.test(title)),
+    "the skill states its review procedure"
+  );
   for (let step = 1; step <= 8; step += 1) {
     assert.match(
-      playtestAnalysisBody,
+      playtestAnalysis.body,
       new RegExp(String.raw`^${step}\. `, "mu"),
       `missing step ${step}`
     );
   }
-  assert.match(playtestAnalysisBody, /## Required report sections/);
-  assert.match(playtestAnalysisBody, /playtest\.prepareReview/);
+  assert.ok(
+    titles.some((title) => /required report sections/i.test(title)),
+    "the skill states its required report sections"
+  );
+  assert.match(playtestAnalysis.body, /playtest\.prepareReview/);
   assert.match(
-    playtestAnalysisBody,
+    playtestAnalysis.body,
     /exact packet ID, packet artifact ID, and SHA-256/
   );
-  for (const section of [
-    "provenance/coverage",
-    "chronological episode summary",
-    "authoritative metrics",
-    "scored experience dimensions",
-    "evidence-linked observations",
-    "alternative explanations",
-    "cross-session context",
-    "testable hypotheses/experiments",
-    "evidence-status decision",
-    "suggested follow-up"
-  ]) {
-    assert.match(playtestAnalysisBody, new RegExp(section, "iu"), section);
-  }
+  assertReportSections(playtestAnalysis.body, "playtest-analysis");
 });
 
 test("playtest-analysis is null-safe and never creates a GitHub issue directly", () => {
-  assert.match(playtestAnalysisBody, /## Null-safe evidence and scores/);
-  assert.match(playtestAnalysisBody, /null, never a mid-scale category/);
-  assert.match(playtestAnalysisBody, /Never produce a GitHub issue directly/);
-  assert.match(playtestAnalysisBody, /propose findings\/hypotheses only/i);
+  assert.ok(
+    headings(playtestAnalysis.body).some((title) =>
+      /null-safe evidence and scores/i.test(title)
+    ),
+    "the skill states its null-safe scoring rules"
+  );
+  assert.match(playtestAnalysis.body, /null,? never a mid-scale/i);
+  assert.match(playtestAnalysis.body, /never produce a GitHub issue/i);
+  assert.match(playtestAnalysis.body, /propose findings\/hypotheses only/i);
 });
 
 test("playtest-analysis proposes experiments for root approval instead of running them", () => {
   assert.match(
-    playtestAnalysisBody,
-    /Request execution via the root; you cannot run it yourself/
+    playtestAnalysis.body,
+    /cannot run it yourself|request execution via the root/i
   );
 });
 
 test("human validation stays a conditional reference, not a third skill", () => {
-  assert.match(playtestAnalysisBody, /## Human validation \(conditional\)/);
-  assert.match(playtestAnalysisBody, /not a separate skill/);
+  assert.ok(
+    headings(playtestAnalysis.body).some((title) =>
+      /human validation/i.test(title)
+    ),
+    "the skill references human validation conditionally"
+  );
+  assert.match(playtestAnalysis.body, /not a separate skill/i);
   assert.equal(
     existsSync(
       new URL(
@@ -158,22 +231,22 @@ test("human validation stays a conditional reference, not a third skill", () => 
   );
   // No third overlapping skill directory (e.g. a standalone gameplay-critic
   // or human-validation skill) exists alongside the two target skills.
-  const playtestingSkillDirs = readdirSync(
+  const playtestingSkillDirectories = readdirSync(
     new URL(".rulesync/skills", repositoryRoot)
   ).filter((name) => /playtest|gameplay/i.test(name));
-  assert.deepEqual(playtestingSkillDirs.sort(), [
-    "game-playtesting",
-    "playtest-analysis"
-  ]);
+  assert.deepEqual(
+    playtestingSkillDirectories.sort((left, right) => collator.compare(left, right)),
+    ["game-playtesting", "playtest-analysis"]
+  );
 });
 
 test("neither new skill duplicates orchestration/delegation policy", () => {
-  for (const body of [gamePlaytestingBody, playtestAnalysisBody]) {
+  for (const body of [gamePlaytesting.body, playtestAnalysis.body]) {
     assert.doesNotMatch(body, /spawn_agent/i);
     assert.doesNotMatch(body, /## Delegation/);
     assert.doesNotMatch(
       body,
-      /root orchestrator['\u2019]s? (?:scheduling|delegation) policy/i
+      /root orchestrator['\u{2019}]s? (?:scheduling|delegation) policy/iu
     );
   }
 });

@@ -61,4 +61,4 @@ jobs:
       # Provider projections are tested from temporary roots. Root AGENTS.md is
       # the one tracked projection because all repository agents read that path.
       - name: Check Rulesync projections generated from the canonical source
-        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts tests/rulesync-gitignore.test.ts
+        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts tests/rulesync-rules.test.ts tests/rulesync-gitignore.test.ts tests/rulesync-config.test.ts

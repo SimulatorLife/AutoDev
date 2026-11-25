@@ -21,6 +21,12 @@ import {
   materializeCommands
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
+import { compareText } from "./support/ordering.ts";
+import {
+  readRulesyncConfig,
+  targetsOwningFeature
+} from "./support/rulesync-config.ts";
+
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const catalogRoot = join(repositoryRoot, ".rulesync", "commands");
 const rulesyncConfigPath = join(repositoryRoot, "rulesync.jsonc");
@@ -34,12 +40,6 @@ const rulesyncCli = join(
   "dist",
   "cli",
   "index.js"
-);
-const driftWorkflowPath = join(
-  repositoryRoot,
-  ".github",
-  "workflows",
-  "rulesync-mcp-shadow-drift.yml"
 );
 const installerPath = join(repositoryRoot, "scripts", "install.sh");
 const checkModulePath = join(
@@ -58,7 +58,7 @@ const materializerPath = join(
 );
 const codexCommandNames = loadCodexCommands(repositoryRoot)
   .map((command) => command.name)
-  .sort();
+  .sort(compareText);
 
 function splitFrontmatter(text: string): { front: string; body: string } {
   const match = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(text);
@@ -89,33 +89,14 @@ function splitFrontmatter(text: string): { front: string; body: string } {
   return { front: match.groups.front, body: match.groups.body };
 }
 
-function readConfig(): {
-  targets: Record<string, string[]>;
-  features?: string[];
-  outputRoots: string[];
-  delete: boolean;
-  global: boolean;
-} {
-  return JSON.parse(readFileSync(rulesyncConfigPath, "utf8")) as {
-    targets: Record<string, string[]>;
-    features?: string[];
-    outputRoots: string[];
-    delete: boolean;
-    global: boolean;
-  };
-}
-
 /**
- * The targets that own a feature, read from the configuration.
- *
- * A run that names its targets replaces the configuration's per-target map
- * with a flat selection, so the owners are named explicitly.
- */
-function featureOwners(feature: string): string[] {
-  const { targets } = readConfig();
-  return Object.entries(targets)
-    .filter(([, features]) => features.includes(feature))
-    .map(([target]) => target);
+The targets that own a feature, read from the configuration.
+
+A run that names its targets replaces the configuration's per-target map
+with a flat selection, so the owners are named explicitly.
+*/
+function commandFeatureOwners(): string[] {
+  return targetsOwningFeature(readRulesyncConfig(repositoryRoot), "commands");
 }
 
 function generateGlobal(outputHome: string): void {
@@ -174,7 +155,7 @@ test("Data exposes the canonical RuleSync command catalog without a Runtime inve
   const onDisk = readdirSync(catalogRoot)
     .filter((file) => file.endsWith(".md"))
     .map((file) => file.replace(/\.md$/u, ""))
-    .sort();
+    .sort(compareText);
   assert.deepEqual(
     state.commands.map((command) => command.name),
     onDisk,
@@ -228,17 +209,17 @@ test("RuleSync's codexcli projection contains exactly the canonical Codex comman
   const outputHome = mkdtempSync(join(tmpdir(), "autodev-rulesync-commands-"));
   try {
     generateGlobal(outputHome);
-    const promptsDir = join(outputHome, ".codex", "prompts");
-    const projected = readdirSync(promptsDir)
+    const promptsDirectory = join(outputHome, ".codex", "prompts");
+    const projected = readdirSync(promptsDirectory)
       .filter((file) => file.endsWith(".md"))
-      .sort();
+      .sort(compareText);
     assert.deepEqual(
       projected,
       codexCommandNames.map((name) => `${name}.md`),
       "Rulesync must project only canonical commands targeted at codexcli or *"
     );
     for (const name of codexCommandNames) {
-      const text = readFileSync(join(promptsDir, `${name}.md`), "utf8");
+      const text = readFileSync(join(promptsDirectory, `${name}.md`), "utf8");
       assert.match(
         text,
         /^---\ndescription:/mu,
@@ -275,7 +256,7 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
         "--features",
         "commands",
         "--targets",
-        featureOwners("commands").join(","),
+        commandFeatureOwners().join(","),
         "--silent"
       ],
       { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
@@ -289,7 +270,7 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
       readdirSync(join(outputRoot, directory))
         .filter((entry) => entry.endsWith(suffix))
         .map((entry) => entry.slice(0, -suffix.length))
-        .sort();
+        .sort(compareText);
     // Every canonical command targets `*`, so each project target receives
     // the whole catalog in its native command surface. Antigravity CLI has no
     // command format, so Rulesync projects commands as skills.
@@ -299,7 +280,7 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
       codexCommandNames
     );
     assert.deepEqual(
-      readdirSync(join(outputRoot, ".agents", "skills")).sort(),
+      readdirSync(join(outputRoot, ".agents", "skills")).sort(compareText),
       codexCommandNames
     );
     for (const name of codexCommandNames)
@@ -317,7 +298,7 @@ test("RuleSync's project projection installs every command for Claude Code, Copi
 
 test("materializeCommands applies, reconciles, and reports real Codex prompt changes", () => {
   const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-codex-"));
-  const promptsDir = join(codexHome, "prompts");
+  const promptsDirectory = join(codexHome, "prompts");
   const canonicalCommands = new Map(
     new RuleSyncRepository(repositoryRoot)
       .loadCommands()
@@ -325,17 +306,17 @@ test("materializeCommands applies, reconciles, and reports real Codex prompt cha
   );
   try {
     assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
+      materializeCommands({ repositoryRoot }, promptsDirectory),
       codexCommandNames,
       "a first install reports each projected Codex prompt"
     );
     assert.deepEqual(
-      readdirSync(promptsDir).sort(),
+      readdirSync(promptsDirectory).sort(compareText),
       codexCommandNames.map((name) => `${name}.md`),
       "only Codex-targeted commands are installed"
     );
     for (const name of codexCommandNames) {
-      const target = join(promptsDir, `${name}.md`);
+      const target = join(promptsDirectory, `${name}.md`);
       const stat = lstatSync(target);
       assert.equal(stat.isFile(), true, `${name} must be a regular file`);
       assert.equal(
@@ -359,25 +340,25 @@ test("materializeCommands applies, reconciles, and reports real Codex prompt cha
       );
     }
     assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
+      materializeCommands({ repositoryRoot }, promptsDirectory),
       [],
       "an unchanged install reports no prompt changes"
     );
 
-    writeFileSync(join(promptsDir, "bug-fix.md"), "old wording\n");
-    writeFileSync(join(promptsDir, "retired.md"), "# retired\n");
+    writeFileSync(join(promptsDirectory, "bug-fix.md"), "old wording\n");
+    writeFileSync(join(promptsDirectory, "retired.md"), "# retired\n");
     assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
+      materializeCommands({ repositoryRoot }, promptsDirectory),
       ["bug-fix", "retired"],
       "a rewritten prompt and removed stale prompt are both reported"
     );
     assert.notEqual(
-      readFileSync(join(promptsDir, "bug-fix.md"), "utf8"),
+      readFileSync(join(promptsDirectory, "bug-fix.md"), "utf8"),
       "old wording\n"
     );
-    assert.equal(existsSync(join(promptsDir, "retired.md")), false);
+    assert.equal(existsSync(join(promptsDirectory, "retired.md")), false);
     assert.deepEqual(
-      readdirSync(promptsDir).sort(),
+      readdirSync(promptsDirectory).sort(compareText),
       codexCommandNames.map((name) => `${name}.md`)
     );
   } finally {
@@ -402,33 +383,18 @@ test("installer and install-check both use the Data-owned RuleSync catalog", () 
   // Project-mode commands reach Claude Code, Copilot, and Antigravity CLI.
   // Rulesync skips codexcli (its commands are global-only), so the installer
   // projects Codex prompts into $CODEX_HOME/prompts separately.
-  const config = readConfig();
-  assert.deepEqual(config.targets, {
-    copilot: ["skills", "commands", "hooks", "rules"],
-    claudecode: ["skills", "commands", "hooks", "rules"],
-    codexcli: ["skills", "rules"],
-    "antigravity-cli": ["commands", "hooks", "rules"],
-    agentsmd: ["rules"]
-  });
-  assert.equal(config.features, undefined);
+  const config = readRulesyncConfig(repositoryRoot);
+  assert.ok(
+    commandFeatureOwners().includes("copilot"),
+    "Copilot is a project-mode command surface"
+  );
+  assert.equal(
+    config.features.length,
+    0,
+    "the configuration must not narrow the per-target feature map"
+  );
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
-  assert.deepEqual(config.outputRoots, {
-    copilot: ["."],
-    claudecode: ["."],
-    codexcli: ["."],
-    "antigravity-cli": ["."],
-    agentsmd: ["."]
-  });
   const installer = readFileSync(installerPath, "utf8");
   assert.match(installer, /src\/cli\/install\.ts/);
-});
-
-test("drift workflow runs the commands suite alongside the other RuleSync suites", () => {
-  const workflow = readFileSync(driftWorkflowPath, "utf8");
-  assert.match(
-    workflow,
-    /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts tests\/rulesync-rules\.test\.ts/
-  );
-  assert.match(workflow, /- "tests\/rulesync-\*\.test\.ts"/);
 });

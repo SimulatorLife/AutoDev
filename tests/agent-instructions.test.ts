@@ -7,13 +7,11 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const agentsPath = join(repositoryRoot, "AGENTS.md");
-const rulesyncSourcePath = join(repositoryRoot, ".rulesync/rules/overview.md");
 
 test("AGENTS.md is the generated regular repository instruction file", () => {
   const stat = lstatSync(agentsPath);
   assert.equal(stat.isSymbolicLink(), false);
   assert.ok(readFileSync(agentsPath, "utf8").trim());
-  assert.ok(readFileSync(rulesyncSourcePath, "utf8").trim());
 });
 
 test("CLAUDE.md is a symlink to AGENTS.md", () => {
@@ -34,7 +32,7 @@ test("no other instruction copies exist", () => {
     "GEMINI.md"
   ]) {
     assert.equal(
-      lstatSafe(join(repositoryRoot, relativePath)),
+      isPresent(join(repositoryRoot, relativePath)),
       false,
       relativePath
     );
@@ -50,7 +48,7 @@ test("no other instruction copies exist", () => {
     const absolutePath = join(repositoryRoot, relativePath);
     return (
       relativePath !== "AGENTS.md" &&
-      lstatSafe(absolutePath) &&
+      isPresent(absolutePath) &&
       !lstatSync(absolutePath).isSymbolicLink() &&
       readFileSync(absolutePath).equals(expected)
     );
@@ -58,7 +56,7 @@ test("no other instruction copies exist", () => {
   assert.deepEqual(copies, []);
 });
 
-function lstatSafe(path: string): boolean {
+function isPresent(path: string): boolean {
   try {
     lstatSync(path);
     return true;

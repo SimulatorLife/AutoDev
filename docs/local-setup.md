@@ -958,6 +958,23 @@ The existing launcher accepts `AUTODEV_MCP_WORKSPACE` and `AUTODEV_MCP_READ_ONLY
 
 `.rulesync/` is the only tracked Rulesync input, and nothing Rulesync generates is tracked as a test fixture. The repository projections use `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`; the separate `copilotcli` target is used for user-level MCP generation. `rulesync.jsonc` is the only RuleSync configuration, and it declares the features **per target** rather than one list for all of them, because a shared output tree needs a single writer. `.agents/skills/` is read by Codex CLI and Antigravity CLI alike: two targets writing it would have to produce byte-identical files, and a skill whose frontmatter one client reads and the other ignores -- `user-invocable` in the `quota-axi` skill, which Antigravity turns into `disable-slash-command` and Codex ignores -- makes that impossible, so the check reports the tree as drifted on every run. The `codexcli` target therefore owns `.agents/skills/` and the `antigravity-cli` target owns the commands projected into the same directory; the `codexcli` target owns no `hooks`, because Codex hooks are written only at user level. A Rulesync run that names its features or targets replaces this per-target map with a flat selection, and a flat selection cannot express "this target owns that feature", so the Runtime runs the whole configuration and lets Rulesync resolve the owners from the map. `rulesync.jsonc` also declares the output root per target, so each target's projections are named in the configuration instead of being implied by a single shared root. A hook in the shared `hooks` section reaches every target, and a per-target section **replaces** the shared section for the event it names rather than adding to it: a `codexcli.hooks.preToolUse` entry leaves Codex without the shared `PreToolUse` hooks, so a hook that belongs to one host only has to be listed there together with the shared ones it needs. **Current state:** its project-mode generation covers repository projections that have reached parity. The pinned RuleSync version supports native subagent generation for the four configured targets, but native role TOMLs/execution-contract code remain transitional because those projections do not encode AutoDev's complete shared role contract losslessly; the `subagents` and `permissions` features are not currently enabled. **Target:** move every losslessly representable agent-facing definition into canonical RuleSync sources, then delete the duplicate native authority only after field-level and runtime parity is proven. Do not add another AutoDev-specific declarative schema during that migration.
 
+**Drift gate.** RuleSync's own `--check` mode decides whether a tracked
+projection is current, and `tests/rulesync-config.test.ts` runs it and fails
+when a tracked projection drifted. The generated trees are untracked, so only
+a tracked projection matters there; the check reads the same `rulesync.jsonc`
+the installer does, so the gate and the installer agree by construction. After
+editing anything under `.rulesync/`, regenerate and then check:
+
+```bash
+node_modules/.bin/rulesync generate --config rulesync.jsonc
+node_modules/.bin/rulesync generate --config rulesync.jsonc --check
+```
+
+**Test expectations.** The suites derive their expectations from the
+canonical sources rather than from copies of them, so an ordinary content edit
+does not need a matching test edit. [`docs/testing-conventions.md`](testing-conventions.md)
+states the conventions and the shared helpers they use.
+
 `.rulesync/rules/overview.md` is the canonical source for repository-wide agent instructions. RuleSync targets only `agentsmd` for this rule and generates the tracked root `AGENTS.md` projection, which Codex, Antigravity, and Copilot (cloud agent, code review, CLI, VS Code chat) read natively. `CLAUDE.md` remains a symlink to the projection for Claude Code. Copilot Chat on github.com reads only `.github/copilot-instructions.md`, which is intentionally absent. `tests/agent-instructions.test.ts` and `tests/rulesync-rules.test.ts` guard the ownership and generated output.
 
 `.rulesync/mcp.jsonc` is the canonical MCP backend source; use the Rulesync version pinned by `package.json`. The `xacpx` MCP is declared here and the existing launcher runs its native `mcp-stdio` entrypoint. Its exposure is role-scoped. The canonical target requires all provider-facing MCP projections to reference the shared gateway, including XACPX; the direct launch projections below describe the existing materialization path until cutover:

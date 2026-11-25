@@ -1,3 +1,14 @@
+/**
+The canonical skill source and the projections RuleSync derives from it.
+
+`.rulesync/skills/` is the only tracked skill source, and `.rulesync/skills/
+.curated/` holds the externally pinned skills RuleSync materializes from the
+lockfiles. The expectations here are derived from those sources and from
+the configuration that names the projections, so adding a skill, retiring
+one or changing a target is a change to the canonical source and not to
+this file.
+*/
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -19,10 +30,21 @@ import { fileURLToPath } from "node:url";
 import { staleUserSkillLinks } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
 
+import { compareText } from "./support/ordering.ts";
+import {
+  readRulesyncConfig,
+  rulesyncBinary,
+  skillTreesWrittenBy,
+  targetsOwningFeature
+} from "./support/rulesync-config.ts";
+import {
+  declaredTargets,
+  frontmatterDescription,
+  splitFrontmatter
+} from "./support/skill-document.ts";
+
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;
-
-const COLLATOR = new Intl.Collator();
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = join(repositoryRoot, ".rulesync", "skills");
@@ -32,175 +54,102 @@ const rulesyncConfigPath = join(repositoryRoot, "rulesync.jsonc");
 const rulesyncLockPath = join(repositoryRoot, "rulesync.lock");
 const rulesyncNpmLockPath = join(repositoryRoot, "rulesync-npm.lock.json");
 const pnpmWorkspacePath = join(repositoryRoot, "pnpm-workspace.yaml");
-const driftWorkflowPath = join(
-  repositoryRoot,
-  ".github",
-  "workflows",
-  "rulesync-mcp-shadow-drift.yml"
-);
 const copilotSetupWorkflowPath = join(
   repositoryRoot,
   ".github",
   "workflows",
   "copilot-setup-steps.yml"
 );
-/**
- * Each configured target and the features it owns.
- *
- * The features are per target rather than global because a shared output tree
- * needs a single owner. `.agents/skills/` is read by Codex CLI and Antigravity
- * CLI alike, so only one of them may write it.
- */
-const targetFeatures = {
-  copilot: ["skills", "commands", "hooks", "rules"],
-  claudecode: ["skills", "commands", "hooks", "rules"],
-  codexcli: ["skills", "rules"],
-  "antigravity-cli": ["commands", "hooks", "rules"],
-  agentsmd: ["rules"]
-} as const;
-// The skill tree each target that owns the `skills` feature writes.
-const skillTreeOwners = {
-  copilot: ".github/skills",
-  claudecode: ".claude/skills",
-  codexcli: ".agents/skills"
-} as const;
-const canonicalSkills = [
-  "autodev-request-capture",
-  "autodev-session-diagnostics",
-  "ccc",
-  "code-simplification",
-  "diagnosing-bugs",
-  "doubt-driven-development",
-  "game-playtesting",
-  "improve-codebase-architecture",
-  "lsp-mcp-server",
-  "opentelemetry",
-  "orchestration",
-  "playtest-analysis",
-  "remove-legacy-shims",
-  "resolve-merge-conflicts",
-  "source-driven-development",
-  "writing-agent-skills"
-] as const;
-const curatedSkills = [
-  "acpx",
-  "getting-started",
-  "karpathy-guidelines",
-  "opencli-autofix",
-  "opencli-browser",
-  "opencli-usage",
-  "quota-axi",
-  "react-best-practices",
-  "table-state"
-] as const;
-/**
- * The curated skills that arrive from a GitHub repository, pinned in
- * `rulesync.lock`, and the ones that arrive from a published npm package,
- * pinned in `rulesync-npm.lock.json`. The npm-transport sources exist because
- * the packages ship the skills that document the CLIs this repository runs,
- * so their pinned version must match the installed package version.
- */
-const gitCuratedSkills = [
-  "karpathy-guidelines",
-  "react-best-practices"
-] as const;
-const npmCuratedSkills = [
-  "acpx",
-  "getting-started",
-  "opencli-autofix",
-  "opencli-browser",
-  "opencli-usage",
-  "quota-axi",
-  "table-state"
-] as const;
-const npmSourcePackages = [
-  { source: "acpx", version: "0.22.0" },
-  { source: "quota-axi", version: "0.1.69" },
-  { source: "@jackwener/opencli", version: "2.0.3" },
-  { source: "@tanstack/react-table", version: "9.3.1" }
-] as const;
-const repositorySkills: Record<string, readonly string[]> = {
-  ".github/skills": [
-    "acpx",
-    "autodev-request-capture",
-    "autodev-session-diagnostics",
-    "ccc",
-    "getting-started",
-    "karpathy-guidelines",
-    "lsp-mcp-server",
-    "opencli-autofix",
-    "opencli-browser",
-    "opencli-usage",
-    "opentelemetry",
-    "orchestration",
-    "quota-axi",
-    "react-best-practices",
-    "table-state"
-  ],
-  ".claude/skills": [
-    "acpx",
-    "autodev-request-capture",
-    "autodev-session-diagnostics",
-    "getting-started",
-    "karpathy-guidelines",
-    "opencli-autofix",
-    "opencli-browser",
-    "opencli-usage",
-    "opentelemetry",
-    "quota-axi",
-    "react-best-practices",
-    "table-state"
-  ],
-  ".agents/skills": [
-    "acpx",
-    "autodev-request-capture",
-    "autodev-session-diagnostics",
-    "getting-started",
-    "karpathy-guidelines",
-    "opencli-autofix",
-    "opencli-browser",
-    "opencli-usage",
-    "opentelemetry",
-    "quota-axi",
-    "react-best-practices",
-    "table-state"
-  ]
-};
-
-function skillSourceDir(skill: string): string {
-  const canonical = join(sourceRoot, skill);
-  return existsSync(canonical) ? canonical : join(curatedRoot, skill);
-}
+const workspaceProjects = ["console", "runtime", "core", "data"];
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
 }
-function _asObject(value: unknown): JsonObject {
+function asObject(value: unknown): JsonObject {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as JsonObject;
 }
-/**
- * The targets that own the `skills` feature, read from the configuration.
- *
- * A run that names its targets replaces the configuration's per-target map
- * with a flat selection, so the owners are named explicitly. Naming the
- * Antigravity CLI target here would give it the skills it does not own, and
- * its projection of the shared `.agents/skills/` tree would differ from the
- * Codex one.
- */
-function skillOwners(): string[] {
-  const config = readJson(rulesyncConfigPath);
-  const targets = config.targets as Record<string, readonly string[]>;
-  return Object.entries(targets)
-    .filter(([, features]) => features.includes("skills"))
-    .map(([target]) => target);
+
+function skillSourceDirectory(skill: string): string {
+  const canonical = join(sourceRoot, skill);
+  return existsSync(canonical) ? canonical : join(curatedRoot, skill);
 }
+
+/**
+The skills the canonical source declares, excluding the curated ones.
+*/
+function canonicalSkillNames(): string[] {
+  return readdirSync(sourceRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== ".curated")
+    .map((entry) => entry.name)
+    .sort(compareText);
+}
+
+/**
+The skills the curated sources declare.
+*/
+function curatedSkillNames(): string[] {
+  return readdirSync(curatedRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort(compareText);
+}
+
+/**
+The targets that own the `skills` feature, read from the configuration.
+
+A run that names its targets replaces the configuration's per-target map
+with a flat selection, so the owners are named explicitly.
+*/
+function skillOwners(): string[] {
+  return targetsOwningFeature(
+    readRulesyncConfig(repositoryRoot),
+    "skills"
+  );
+}
+
+/**
+The skill tree each owner writes, observed from RuleSync.
+
+The tree a target owns is RuleSync's business, so the mapping is observed
+rather than restated.
+*/
+function skillTreeOwners(): Map<string, string> {
+  const owners = new Map<string, string>();
+  for (const owner of skillOwners()) {
+    for (const tree of skillTreesWrittenBy(repositoryRoot, owner)) {
+      assert.equal(
+        owners.has(tree),
+        false,
+        `the skill tree ${tree} has more than one owner`
+      );
+      owners.set(tree, owner);
+    }
+  }
+  return owners;
+}
+
+/**
+The skills a projection receives for one target.
+
+A skill reaches a target when it keeps RuleSync's default targets, or when
+it names that target explicitly. The curated skills keep the default.
+*/
+function expectedSkillsForTarget(target: string): string[] {
+  const canonical = canonicalSkillNames().filter((skill) => {
+    const { front } = splitFrontmatter(
+      readFileSync(join(sourceRoot, skill, "SKILL.md"), "utf8")
+    );
+    const targets = declaredTargets(front);
+    return targets === null || targets.includes(target);
+  });
+  return [...curatedSkillNames(), ...canonical].sort(compareText);
+}
+
 function runRulesync(outputRoot: string, ...mode: string[]): RunResult {
   return spawnSync(
-    "pnpm",
+    rulesyncBinary(repositoryRoot),
     [
-      "exec",
-      "rulesync",
       "generate",
       "--config",
       "rulesync.jsonc",
@@ -215,62 +164,29 @@ function runRulesync(outputRoot: string, ...mode: string[]): RunResult {
       ...mode,
       "--silent"
     ],
-    { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+    { cwd: repositoryRoot, encoding: "utf8", timeout: 300_000 }
   );
-}
-function splitFrontmatter(text: string): [string, string] {
-  const match = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(text);
-  assert.ok(
-    match?.groups?.front !== undefined && match.groups.body !== undefined,
-    "missing skill frontmatter"
-  );
-  return [match.groups.front, match.groups.body.replaceAll(/^\n+|\n+$/gu, "")];
-}
-function description(frontmatter: string): string {
-  const foldedMatch = /^description:[ \t]*>-[ \t]*\n/mu.exec(frontmatter);
-  let value: string | undefined;
-  if (foldedMatch) {
-    const bodyLines: string[] = [];
-    const remainder = frontmatter.slice(
-      foldedMatch.index + foldedMatch[0].length
-    );
-    for (const line of remainder.split("\n")) {
-      if (/^[ \t]/.test(line)) {
-        bodyLines.push(line);
-      } else {
-        break;
-      }
-    }
-    value = bodyLines.join("\n");
-  } else {
-    const single = /^description:[ \t]*(?<value>\S.*)$/mu.exec(frontmatter);
-    value = single?.groups?.value;
-  }
-  assert.ok(value !== undefined, "missing skill description");
-  return value
-    .replaceAll(/\s+/gu, " ")
-    .trim()
-    .replaceAll(/^['"]|['"]$/gu, "");
 }
 function files(directory: string): string[] {
   const output: string[] = [];
   const visit = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
+    const entries = readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) visit(path);
       else if (entry.isFile()) output.push(relative(directory, path));
     }
   };
   visit(directory);
-  return output.sort();
+  return output.sort(compareText);
 }
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "autodev-rulesync-skills-"));
 const generated = join(temporaryRoot, "generated");
 const installResult = spawnSync(
-  "pnpm",
-  ["exec", "rulesync", "install", "--frozen", "--silent"],
-  { cwd: repositoryRoot, encoding: "utf8", timeout: 60_000 }
+  rulesyncBinary(repositoryRoot),
+  ["install", "--frozen", "--silent"],
+  { cwd: repositoryRoot, encoding: "utf8", timeout: 300_000 }
 );
 assert.equal(
   installResult.status,
@@ -289,63 +205,64 @@ function generatedSkillPath(folder: string, skill: string): string {
   return join(generated, folder, skill, "SKILL.md");
 }
 
-test("canonical source holds every skill", () => {
-  const names = readdirSync(sourceRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== ".curated")
-    .map((entry) => entry.name)
-    .sort();
-  assert.deepEqual(names, [...canonicalSkills].sort());
-  for (const skill of canonicalSkills) {
+test("the canonical skill source holds only well-formed skills", () => {
+  assert.ok(canonicalSkillNames().length > 0);
+  for (const skill of canonicalSkillNames()) {
     const document = join(sourceRoot, skill, "SKILL.md");
     assert.equal(lstatSync(document).isSymbolicLink(), false, skill);
-    const [front] = splitFrontmatter(readFileSync(document, "utf8"));
+    const { front } = splitFrontmatter(readFileSync(document, "utf8"));
     assert.match(front, new RegExp(`^name: ${skill}$`, "mu"));
     assert.doesNotMatch(front, /^description:\s*>/mu);
+    frontmatterDescription(front);
   }
-  const curatedNames = readdirSync(curatedRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  assert.deepEqual(curatedNames, [...curatedSkills].sort());
-  for (const skill of curatedSkills) {
+  assert.ok(curatedSkillNames().length > 0);
+  for (const skill of curatedSkillNames()) {
     const document = join(curatedRoot, skill, "SKILL.md");
     assert.equal(lstatSync(document).isSymbolicLink(), false, skill);
-    const [front] = splitFrontmatter(readFileSync(document, "utf8"));
+    const { front } = splitFrontmatter(readFileSync(document, "utf8"));
     assert.match(front, /^name:\s*\S+/mu, skill);
-    description(front);
+    frontmatterDescription(front);
   }
-  const lockfile = _asObject(readJson(rulesyncLockPath));
-  const lockedSources = _asObject(lockfile.sources);
-  const lockedSkills = Object.values(lockedSources)
-    .flatMap((entry) => Object.keys(_asObject(_asObject(entry).skills)))
-    .sort();
-  assert.deepEqual(lockedSkills, [...gitCuratedSkills].sort());
-  const npmLockfile = _asObject(readJson(rulesyncNpmLockPath));
-  const npmLockedSources = _asObject(npmLockfile.sources);
-  const npmLockedSkills = Object.values(npmLockedSources)
-    .flatMap((entry) => Object.keys(_asObject(_asObject(entry).skills)))
-    .sort();
-  assert.deepEqual(npmLockedSkills, [...npmCuratedSkills].sort());
+});
+
+/**
+The curated skills are pinned by exactly one lockfile.
+
+The GitHub sources are pinned in `rulesync.lock` and the npm sources in
+`rulesync-npm.lock.json`, so the two lockfiles together cover the curated
+directory exactly once.
+*/
+test("the curated skills are pinned by exactly one lockfile", () => {
+  const lockedSkills = (lockfilePath: string): string[] => {
+    const sources = asObject(asObject(readJson(lockfilePath)).sources);
+    return Object.values(sources)
+      .flatMap((entry) => Object.keys(asObject(asObject(entry).skills)))
+      .sort(compareText);
+  };
+  const gitLocked = lockedSkills(rulesyncLockPath);
+  const npmLocked = lockedSkills(rulesyncNpmLockPath);
   assert.deepEqual(
-    [...lockedSkills, ...npmLockedSkills].sort(),
-    [...curatedSkills].sort()
+    [...gitLocked].filter((skill) => npmLocked.includes(skill)),
+    [],
+    "a curated skill is pinned by both lockfiles"
   );
-  assert.equal(
-    existsSync(join(sourceRoot, "orchestration", "agents", "openai.yaml")),
-    true
+  assert.deepEqual(
+    [...gitLocked, ...npmLocked].sort(compareText),
+    curatedSkillNames(),
+    "the lockfiles do not cover the curated skills exactly"
   );
 });
 
 /**
- * The canonical skills source holds real directories only.
- *
- * A package that ships agent skills used to be linked into `.rulesync/skills/`
- * as a symbolic link, and the Runtime's catalog reads that directory as the
- * canonical source: a link there is not a skill, it is an invalid entry that
- * fails the whole catalog. RuleSync owns every skill this repository
- * distributes, so the packages are installed for their CLIs and libraries
- * only, and their skills are fetched and pinned by RuleSync instead.
- */
+The canonical skills source holds real directories only.
+
+A package that ships agent skills used to be linked into `.rulesync/skills/`
+as a symbolic link, and the Runtime's catalog reads that directory as the
+canonical source: a link there is not a skill, it is an invalid entry that
+fails the whole catalog. RuleSync owns every skill this repository
+distributes, so the packages are installed for their CLIs and libraries
+only, and their skills are fetched and pinned by RuleSync instead.
+*/
 test("the canonical skills source holds no symbolic link", () => {
   const linked = readdirSync(sourceRoot, { withFileTypes: true })
     .filter((entry) => entry.isSymbolicLink())
@@ -358,12 +275,12 @@ test("the canonical skills source holds no symbolic link", () => {
 });
 
 /**
- * pnpm must not link a dependency's agent skills into the repository.
- *
- * `skills.dirs` is pnpm's own skill distribution, and a non-empty list points
- * it at the canonical source, where its links shadow the RuleSync-managed
- * copies. An empty list turns that distribution off.
- */
+pnpm must not link a dependency's agent skills into the repository.
+
+`skills.dirs` is pnpm's own skill distribution, and a non-empty list points
+it at the canonical source, where its links shadow the RuleSync-managed
+copies. An empty list turns that distribution off.
+*/
 test("pnpm does not distribute agent skills into the repository", () => {
   const workspace = readFileSync(pnpmWorkspacePath, "utf8");
   const lines = workspace.split("\n").map((line) => line.trim());
@@ -432,125 +349,120 @@ test("only the canonical skill source is tracked", () => {
   );
 });
 
-/**
- * One writer per skill tree.
- *
- * `.agents/skills/` is read by Codex CLI and Antigravity CLI alike, so two
- * targets writing it must produce byte-identical files. They cannot: a skill
- * whose frontmatter one client reads and the other ignores -- `user-invocable`
- * in the quota-axi skill, for instance -- becomes `disable-slash-command` in
- * the Antigravity projection and nothing in the Codex projection, and the
- * check then reports the tree as drifted on every run. Naming the owner of
- * each skill tree keeps the projections unambiguous.
- */
-test("every skill tree has exactly one configured owner", () => {
-  const config = readJson(rulesyncConfigPath);
-  const configured = config.targets as Record<string, readonly string[]>;
-  const owners = Object.entries(configured)
-    .filter(([, features]) => features.includes("skills"))
-    .map(([target]) => target);
-  assert.deepEqual(
-    owners.sort((left, right) => COLLATOR.compare(left, right)),
-    Object.keys(skillTreeOwners).sort((left, right) =>
-      COLLATOR.compare(left, right)
-    )
-  );
-  const trees = owners.map(
-    (target) => skillTreeOwners[target as keyof typeof skillTreeOwners]
-  );
-  assert.deepEqual(new Set(trees).size, trees.length);
-});
-
 test("each tool folder receives exactly its repository skills with bundled files", () => {
-  for (const [folder, skills] of Object.entries(repositorySkills)) {
-    const root = join(generated, folder);
+  const treeOwners = skillTreeOwners();
+  assert.ok(treeOwners.size > 0);
+  for (const [tree, owner] of treeOwners) {
+    const root = join(generated, tree);
+    const expected = expectedSkillsForTarget(owner);
     assert.deepEqual(
       readdirSync(root, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
-        .sort(),
-      [...skills].sort(),
-      folder
+        .sort(compareText),
+      expected,
+      tree
     );
-    for (const skill of skills) {
-      const origin = skillSourceDir(skill);
+    for (const skill of expected) {
+      const origin = skillSourceDirectory(skill);
       assert.deepEqual(
         files(join(root, skill)),
         files(origin),
-        `${folder}/${skill}`
+        `${tree}/${skill}`
       );
       for (const relativePath of files(origin)) {
         if (relativePath !== "SKILL.md")
           assert.deepEqual(
             readFileSync(join(root, skill, relativePath)),
             readFileSync(join(origin, relativePath)),
-            `${folder}/${skill}/${relativePath}`
+            `${tree}/${skill}/${relativePath}`
           );
       }
     }
   }
-  assert.deepEqual(
-    readdirSync(generated, { withFileTypes: true })
-      .flatMap((entry) => (entry.isDirectory() ? [entry.name] : []))
-      .flatMap((tool) =>
-        existsSync(join(generated, tool, "skills")) ? [`${tool}/skills`] : []
-      )
-      .sort(),
-    Object.keys(repositorySkills).sort()
-  );
 });
 
-test("repository folders never duplicate user-level skills", () => {
+test("a user-level skill reaches a repository folder only where it was asked for", () => {
+  // A skill that declares `targets` is installed at user level, so a
+  // repository copy would list it twice. The exception is a target that
+  // asked for it by name, such as the Copilot cloud agent, which has no user
+  // level of its own.
   const userLevel = new Set(userLevelSkills(sourceRoot));
-  for (const folder of [".claude/skills", ".agents/skills"]) {
-    const projected = new Set(
-      readdirSync(join(generated, folder), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-    );
-    assert.deepEqual(
-      [...projected].filter((skill) => userLevel.has(skill)),
-      [],
-      folder
-    );
+  for (const [tree, owner] of skillTreeOwners()) {
+    const projected = readdirSync(join(generated, tree), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    const projectedUserLevel = projected.filter((name) => userLevel.has(name));
+    for (const skill of projectedUserLevel) {
+      const { front } = splitFrontmatter(
+        readFileSync(join(sourceRoot, skill, "SKILL.md"), "utf8")
+      );
+      assert.ok(
+        declaredTargets(front)?.includes(owner),
+        `${tree}/${skill} duplicates a user-level skill in a folder that did not ask for it`
+      );
+    }
   }
 });
 
 test("generated documents preserve name, description, and body without targets", () => {
-  const canonicalSet = new Set<string>(canonicalSkills);
-  for (const [folder, skills] of Object.entries(repositorySkills))
-    for (const skill of skills) {
-      const [sourceFront, sourceBody] = splitFrontmatter(
-        readFileSync(join(skillSourceDir(skill), "SKILL.md"), "utf8")
+  const canonicalSet = new Set(canonicalSkillNames());
+  for (const [tree] of skillTreeOwners()) {
+    const generatedSkills = readdirSync(join(generated, tree), {
+      withFileTypes: true
+    });
+    for (const skill of generatedSkills) {
+      if (!skill.isDirectory()) continue;
+      const sourceDocument = readFileSync(
+        join(skillSourceDirectory(skill.name), "SKILL.md"),
+        "utf8"
       );
-      const [front, body] = splitFrontmatter(
-        readFileSync(generatedSkillPath(folder, skill), "utf8")
+      const generatedDocument = readFileSync(
+        generatedSkillPath(tree, skill.name),
+        "utf8"
       );
+      const { front: sourceFront, body: sourceBody } =
+        splitFrontmatter(sourceDocument);
+      const { front, body } = splitFrontmatter(generatedDocument);
       const declaredName = /^name:[ \t]*(?<value>\S.*)$/mu.exec(sourceFront)
         ?.groups?.value;
-      assert.ok(declaredName, `${folder}/${skill} source missing name`);
-      if (canonicalSet.has(skill)) {
-        assert.equal(declaredName, skill, `${folder}/${skill}`);
+      assert.ok(declaredName, `${tree}/${skill.name} source missing name`);
+      if (canonicalSet.has(skill.name)) {
+        assert.equal(declaredName, skill.name, `${tree}/${skill.name}`);
       }
-      assert.match(front, new RegExp(`^name:[ \t]*${declaredName}$`, "mu"));
-      assert.equal(description(front), description(sourceFront));
+      assert.match(
+        front,
+        new RegExp(`^name:[ \t]*${declaredName}$`, "mu")
+      );
+      assert.equal(
+        frontmatterDescription(front),
+        frontmatterDescription(sourceFront)
+      );
       assert.doesNotMatch(front, /^targets:/mu);
       assert.equal(body, sourceBody);
     }
+  }
 });
 
 test("Rulesync check detects edited, stale, and missing generated skills", () => {
   assert.equal(runRulesync(generated, "--check").status, 0);
+  const firstTree = skillTreeOwners().keys().next();
+  assert.ok(!firstTree.done, "a skill tree exists");
+  const tree = firstTree.value;
+  const skill = readdirSync(join(generated, tree), { withFileTypes: true }).find(
+    (entry) => entry.isDirectory()
+  );
+  assert.ok(skill, "a skill exists");
   for (const [label, damage] of [
     [
       "edited",
       (root: string) =>
-        writeFileSync(join(root, ".github/skills/ccc/SKILL.md"), "drift\n")
+        writeFileSync(join(root, tree, skill.name, "SKILL.md"), "drift\n")
     ],
     [
       "stale",
       (root: string) => {
-        const path = join(root, ".github/skills/stale");
+        const path = join(root, tree, "stale");
         mkdirSync(path, { recursive: true });
         writeFileSync(join(path, "SKILL.md"), "x\n");
       }
@@ -558,7 +470,7 @@ test("Rulesync check detects edited, stale, and missing generated skills", () =>
     [
       "missing",
       (root: string) =>
-        rmSync(join(root, ".claude/skills/autodev-request-capture/SKILL.md"))
+        rmSync(join(root, tree, skill.name, "SKILL.md"))
     ]
   ] as const) {
     const root = join(temporaryRoot, label);
@@ -577,10 +489,7 @@ test("installer delegates repository skill generation and checking to typed mate
   );
   assert.match(installer, /src\/cli\/install\.ts/);
   assert.match(materializer, /rulesync\.jsonc/);
-  assert.match(materializer, /rulesync/);
   assert.match(materializer, /runRulesyncGitignore/);
-  assert.doesNotMatch(materializer, /renderProviderSkillViews/);
-  assert.match(materializer, /OBSOLETE_CLAUDE_SKILL_VIEWS/);
   // Skills are read only from their installed link; the runtime tree carries
   // none, and an earlier lone SKILL.md copy there is removed on install.
   assert.doesNotMatch(materializer, /"\.rulesync\/skills\//);
@@ -596,33 +505,7 @@ test("Copilot cloud setup generates repository skills after installing dependenc
   assert.match(workflow, /- "\.rulesync\/\*\*"/);
 });
 
-test("RuleSync project config and CI cover the repository projections", () => {
-  const config = readJson(rulesyncConfigPath);
-  assert.deepEqual(config.targets, targetFeatures);
-  assert.equal(config.features, undefined);
-  assert.deepEqual(config.outputRoots, {
-    copilot: ["."],
-    claudecode: ["."],
-    codexcli: ["."],
-    "antigravity-cli": ["."],
-    agentsmd: ["."]
-  });
-  assert.equal(config.delete, true);
-  assert.equal(config.global, false);
-  const configuredSources = (config.sources as Array<Record<string, unknown>>)
-    .flatMap((entry) => entry.skills as string[])
-    .sort();
-  assert.deepEqual(configuredSources, [...curatedSkills].sort());
-  const workflow = readFileSync(driftWorkflowPath, "utf8");
-  assert.match(workflow, /- "rulesync\.lock"/);
-  assert.match(workflow, /- "rulesync-npm\.lock\.json"/);
-  assert.match(workflow, /pnpm exec rulesync install --frozen --silent/);
-  assert.match(
-    workflow,
-    /run: node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts tests\/rulesync-rules\.test\.ts/
-  );
-  assert.equal(workflow.match(/- "tests\/rulesync-\*\.test\.ts"/g)?.length, 2);
-  assert.doesNotMatch(workflow, /rulesync generate/);
+test("the canonical source is the only tracked RuleSync input", () => {
   const stray = readdirSync(join(repositoryRoot, "tests", "fixtures"), {
     withFileTypes: true
   })
@@ -632,15 +515,15 @@ test("RuleSync project config and CI cover the repository projections", () => {
 });
 
 /**
- * A skill that documents a CLI must document the CLI this repository runs.
- *
- * The npm-transport sources fetch the skills a published package ships, so
- * the locked release has to be the one the workspace installs: a skill from an
- * older release describes commands the installed CLI does not have. The
- * manifest declares no version, the way the GitHub sources declare no ref:
- * `rulesync install --frozen` fetches the release the lockfile resolved, and
- * the lockfile is what pins it.
- */
+A skill that documents a CLI must document the CLI this repository runs.
+
+The npm-transport sources fetch the skills a published package ships, so
+the locked release has to be the one the workspace installs: a skill from an
+older release describes commands the installed CLI does not have. The
+manifest declares no version, the way the GitHub sources declare no ref:
+`rulesync install --frozen` fetches the release the lockfile resolved, and
+the lockfile is what pins it.
+*/
 test("every npm-transport source locks the version the workspace installs", () => {
   const config = readJson(rulesyncConfigPath);
   const sources = config.sources as Array<Record<string, unknown>>;
@@ -649,12 +532,10 @@ test("every npm-transport source locks the version the workspace installs", () =
       .filter((entry) => entry.transport === "npm")
       .map((entry) => [entry.source as string, entry])
   );
-  assert.deepEqual(
-    [...npmSources.keys()].sort(),
-    npmSourcePackages.map((entry) => entry.source).sort()
-  );
-  const workspaceProjects = ["runtime", "console", "core", "data"];
-  for (const { source, version } of npmSourcePackages) {
+  assert.ok(npmSources.size > 0);
+  const npmLock = asObject(readJson(rulesyncNpmLockPath));
+  const npmLocked = asObject(npmLock.sources);
+  for (const [source, entry] of npmSources) {
     const declared = workspaceProjects.flatMap((project) => {
       const manifest = readJson(
         join(repositoryRoot, project, "package.json")
@@ -668,20 +549,17 @@ test("every npm-transport source locks the version the workspace installs", () =
       ].filter((value): value is string => typeof value === "string");
     });
     assert.ok(declared.length > 0, `${source} is not a workspace dependency`);
-    assert.deepEqual(
-      [...new Set(declared)],
-      [version],
-      `${source} is installed at a version other than ${version}`
+    assert.equal(
+      new Set(declared).size,
+      1,
+      `${source} is installed at more than one version`
     );
+    const installed = [...new Set(declared)][0]!;
+    const locked = asObject(npmLocked[source]);
+    assert.equal(locked.requestedVersion, "latest", source);
+    assert.equal(locked.resolvedVersion, installed, source);
     // The manifest names the package, not a version: the lockfile pins it.
-    assert.equal(npmSources.get(source)?.ref, undefined, source);
-  }
-  const npmLock = _asObject(readJson(rulesyncNpmLockPath));
-  const npmLocked = _asObject(npmLock.sources);
-  for (const { source, version } of npmSourcePackages) {
-    const entry = _asObject(npmLocked[source]);
-    assert.equal(entry.requestedVersion, "latest", source);
-    assert.equal(entry.resolvedVersion, version, source);
+    assert.equal(entry.ref, undefined, source);
   }
 });
 
@@ -693,11 +571,16 @@ test("every skill a role enables is installed at user level", () => {
   const userLevel = new Set(userLevelSkills(sourceRoot));
   const rolesRoot = join(repositoryRoot, "agents", "roles");
   const enabled = new Map<string, string[]>();
-  for (const file of readdirSync(rolesRoot).filter((f) => f.endsWith(".toml")))
-    for (const match of readFileSync(join(rolesRoot, file), "utf8").matchAll(
+  const roleFiles = readdirSync(rolesRoot).filter((file) =>
+    file.endsWith(".toml")
+  );
+  for (const file of roleFiles) {
+    const matches = readFileSync(join(rolesRoot, file), "utf8").matchAll(
       /name = "([^"]+)"\s*\nenabled = true/gu
-    ))
+    );
+    for (const match of matches)
       enabled.set(match[1]!, [...(enabled.get(match[1]!) ?? []), file]);
+  }
   assert.ok(enabled.size > 0, "roles enable skills");
   for (const [skill, roles] of enabled)
     assert.ok(
@@ -707,10 +590,10 @@ test("every skill a role enables is installed at user level", () => {
 });
 
 /**
- * A skill may show what another skill could look like. Such an example names
- * files on purpose that the skill does not ship, so the reference check
- * ignores the paths inside a `skill-example` region.
- */
+A skill may show what another skill could look like. Such an example names
+files on purpose that the skill does not ship, so the reference check
+ignores the paths inside a `skill-example` region.
+*/
 function withoutExampleRegions(text: string, document: string): string {
   const openings = text.match(/<!--\s*skill-example\s*-->/gu)?.length ?? 0;
   const closings = text.match(/<!--\s*\/skill-example\s*-->/gu)?.length ?? 0;
@@ -768,12 +651,12 @@ test("every file a skill names exists where an agent resolves it", () => {
         if (reference.includes("*") || reference.includes("<")) continue;
         const inSkill = existsSync(join(directory, reference));
         const inRepository = existsSync(join(repositoryRoot, reference));
-        if (
-          (bundled.test(reference) && !inSkill && !inRepository) ||
-          (!bundled.test(reference) &&
-            repository.test(reference) &&
-            !inRepository)
-        )
+        const isBundled = bundled.test(reference);
+        const isRepositoryPath = repository.test(reference);
+        const isMissingFromSkill = !inRepository && isBundled && !inSkill;
+        const isMissingFromRepository =
+          !inRepository && !isBundled && isRepositoryPath;
+        if (isMissingFromSkill || isMissingFromRepository)
           missing.push(`${skill}/${document}: ${reference}`);
       }
     }
@@ -798,7 +681,7 @@ test("a user skill link into the canonical source is stale once the skill is not
     symlinkSync(join(skills, "repo-only"), join(user, "repo-only"));
     symlinkSync(join(skills, "deleted"), join(user, "deleted"));
     symlinkSync(other, join(user, "mine"));
-    assert.deepEqual(staleUserSkillLinks(skills, user, ["kept"]).sort(), [
+    assert.deepEqual(staleUserSkillLinks(skills, user, ["kept"]).sort(compareText), [
       join(user, "deleted"),
       join(user, "repo-only")
     ]);

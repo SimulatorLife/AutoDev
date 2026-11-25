@@ -1,3 +1,14 @@
+/**
+The shared root instructions.
+
+`.rulesync/rules/overview.md` is the canonical source; RuleSync's
+`agentsmd` target projects it into the tracked `AGENTS.md`. The
+expectations here are derived from that canonical source, so an ordinary
+edit to the instructions is a change to the source and to the projection,
+not to this file. Whether the tracked projection is current is RuleSync's
+own drift gate, owned by tests/rulesync-config.test.ts.
+*/
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -12,15 +23,19 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-type JsonObject = Record<string, unknown>;
+import { compareText } from "./support/ordering.ts";
+import {
+  readRulesyncConfig,
+  targetsOwningFeature
+} from "./support/rulesync-config.ts";
+import { splitFrontmatter } from "./support/skill-document.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const ruleSourcePath = join(repositoryRoot, ".rulesync/rules/overview.md");
-const rootInstructionsPath = join(repositoryRoot, "AGENTS.md");
-const configPath = join(repositoryRoot, "rulesync.jsonc");
-const generatedPreamble =
-  "# Additional Conventions Beyond the Built-in Functions\n\n" +
-  "As this project's AI coding tool, you must follow the additional conventions below, in addition to the built-in functions.\n\n";
+const driftWorkflowPath = join(
+  repositoryRoot,
+  ".github/workflows/rulesync-mcp-shadow-drift.yml"
+);
 const temporaryRoot = mkdtempSync(join(tmpdir(), "autodev-rulesync-rules-"));
 const outputRoot = join(temporaryRoot, "rules-only");
 const projectOutputRoot = join(temporaryRoot, "project");
@@ -32,29 +47,86 @@ test.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));
 function filesUnder(root: string): string[] {
   const files: string[] = [];
   const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entries = readdirSync(directory, { withFileTypes: true });
+    for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
       else if (entry.isFile())
-        files.push(relative(root, path).split("\\").join("/"));
+        files.push(relative(root, path).replaceAll("\\", "/"));
     }
   };
   visit(root);
-  return files.sort();
+  return files.sort(compareText);
+}
+
+interface RuleFrontmatter {
+  readonly root: boolean;
+  readonly targets: readonly string[];
+  readonly body: string;
+}
+
+const ROOT_PATTERN = /^root:[ \t]*true$/mu;
+const TARGETS_PATTERN = /^targets:[ \t]*$/mu;
+const TARGET_ITEM_PATTERN = /^ {2}-[ \t]*(?<value>\S.*)$/u;
+
+/**
+The canonical rule source's frontmatter and body.
+*/
+function readCanonicalRule(): RuleFrontmatter {
+  const { front, body } = splitFrontmatter(
+    readFileSync(ruleSourcePath, "utf8")
+  );
+  const targets: string[] = [];
+  let isInsideTargets = false;
+  for (const line of front.split("\n")) {
+    if (TARGETS_PATTERN.test(line)) {
+      isInsideTargets = true;
+      continue;
+    }
+    if (!isInsideTargets) continue;
+    const item = TARGET_ITEM_PATTERN.exec(line);
+    if (!item?.groups?.value) {
+      isInsideTargets = false;
+      continue;
+    }
+    targets.push(item.groups.value.trim());
+  }
+  return {
+    root: ROOT_PATTERN.test(front),
+    targets,
+    body: body.trim()
+  };
+}
+
+/**
+The paths a workflow trigger watches.
+
+The workflow is read as text rather than as YAML, because the assertion is
+about which paths the drift gate reacts to, not about the document's
+formatting.
+*/
+function workflowPaths(
+  workflow: string,
+  trigger: "push" | "pull_request"
+): string[] {
+  const section = new RegExp(
+    String.raw`^  ${trigger}:\n([\s\S]*?)(?=^  [a-z_]+:|^permissions:)`,
+    "mu"
+  ).exec(workflow)?.[1];
+  assert.ok(section, `the drift workflow declares a ${trigger} trigger`);
+  const matches = section.matchAll(/^ {6}- "(?<path>[^"]+)"$/gmu);
+  return Array.from(matches, (match) => match.groups?.path ?? "");
 }
 
 test("RuleSync owns root instructions and targets only the shared AGENTS.md output", () => {
-  const config = JSON.parse(readFileSync(configPath, "utf8")) as JsonObject;
-  const configuredTargets = config.targets as Record<string, readonly string[]>;
-  assert.ok("agentsmd" in configuredTargets);
-  assert.ok(configuredTargets.agentsmd?.includes("rules"));
+  const config = readRulesyncConfig(repositoryRoot);
+  const ruleOwners = targetsOwningFeature(config, "rules");
+  assert.ok(ruleOwners.includes("agentsmd"));
 
-  const source = readFileSync(ruleSourcePath, "utf8");
-  assert.match(source, /^---\nroot: true\ntargets:\n {2}- agentsmd\n---\n/u);
-  const frontmatterEnd = source.indexOf("\n---\n", 4);
-  assert.notEqual(frontmatterEnd, -1, "rule source has closing frontmatter");
-  const sourceBody = source.slice(frontmatterEnd + 5);
-  assert.ok(sourceBody.trim(), "canonical instruction body is present");
+  const canonical = readCanonicalRule();
+  assert.equal(canonical.root, true);
+  assert.deepEqual(canonical.targets, ["agentsmd"]);
+  assert.ok(canonical.body, "the canonical instruction body is present");
 
   const result = spawnSync(
     "pnpm",
@@ -70,10 +142,7 @@ test("RuleSync owns root instructions and targets only the shared AGENTS.md outp
       // map with a flat selection, so the targets that own the rules feature
       // are named explicitly.
       "--targets",
-      Object.entries(configuredTargets)
-        .filter(([, features]) => features.includes("rules"))
-        .map(([target]) => target)
-        .join(","),
+      ruleOwners.join(","),
       "--output-roots",
       outputRoot,
       "--delete",
@@ -88,28 +157,26 @@ test("RuleSync owns root instructions and targets only the shared AGENTS.md outp
   );
   assert.deepEqual(filesUnder(outputRoot), ["AGENTS.md"]);
 
+  // RuleSync prepends a preamble of its own and projects the canonical body
+  // verbatim, so the body has to be the tail of the generated instructions.
   const generated = readFileSync(join(outputRoot, "AGENTS.md"), "utf8");
-  assert.equal(generated, readFileSync(rootInstructionsPath, "utf8"));
-  assert.ok(generated.startsWith(generatedPreamble));
-  assert.equal(
-    generated.slice(generatedPreamble.length).trim(),
-    sourceBody.trim()
+  assert.match(generated, /^# /u);
+  assert.ok(
+    generated.trimEnd().endsWith(canonical.body),
+    "the generated instructions do not end with the canonical rule body"
   );
 
-  const workflow = readFileSync(
-    join(repositoryRoot, ".github/workflows/rulesync-mcp-shadow-drift.yml"),
-    "utf8"
-  );
-  const pushPathFilter = /^ {2}push:\n([\s\S]*?)(?=^ {2}pull_request:)/mu.exec(
-    workflow
-  )?.[1];
-  const pullRequestPathFilter =
-    /^ {2}pull_request:\n([\s\S]*?)(?=^permissions:)/mu.exec(workflow)?.[1];
-  assert.ok(pushPathFilter?.includes('      - "AGENTS.md"'));
-  assert.ok(pullRequestPathFilter?.includes('      - "AGENTS.md"'));
+  const workflow = readFileSync(driftWorkflowPath, "utf8");
+  for (const trigger of ["push", "pull_request"] as const) {
+    assert.ok(
+      workflowPaths(workflow, trigger).includes("AGENTS.md"),
+      `the ${trigger} trigger does not watch the tracked root instructions`
+    );
+  }
 });
 
 test("full project generation materializes the shared root instructions", () => {
+  const canonical = readCanonicalRule();
   const result = spawnSync(
     "pnpm",
     [
@@ -134,23 +201,10 @@ test("full project generation materializes the shared root instructions", () => 
     `RuleSync project generation failed:\n${result.stderr}`
   );
 
-  const files = filesUnder(projectOutputRoot);
-  assert.ok(files.includes("AGENTS.md"));
-  assert.deepEqual(
-    files.filter(
-      (file) =>
-        !file.includes("/skills/") &&
-        [
-          "AGENTS.md",
-          "CLAUDE.md",
-          "GEMINI.md",
-          "copilot-instructions.md"
-        ].includes(file.split("/").at(-1) ?? "")
-    ),
-    ["AGENTS.md"]
-  );
-  assert.equal(
-    readFileSync(join(projectOutputRoot, "AGENTS.md"), "utf8"),
-    readFileSync(rootInstructionsPath, "utf8")
+  assert.ok(filesUnder(projectOutputRoot).includes("AGENTS.md"));
+  const generated = readFileSync(join(projectOutputRoot, "AGENTS.md"), "utf8");
+  assert.ok(
+    generated.trimEnd().endsWith(canonical.body),
+    "the generated instructions do not end with the canonical rule body"
   );
 });

@@ -4,7 +4,10 @@ import test from "node:test";
 
 import { parse } from "smol-toml";
 
+import { assertReportSections } from "./support/playtesting-sections.ts";
+
 const repositoryRoot = new URL("../", import.meta.url);
+const collator = new Intl.Collator();
 
 function readToml(relativePath: string): Record<string, unknown> {
   const text = readFileSync(new URL(relativePath, repositoryRoot), "utf8");
@@ -13,6 +16,21 @@ function readToml(relativePath: string): Record<string, unknown> {
 
 function readText(relativePath: string): string {
   return readFileSync(new URL(relativePath, repositoryRoot), "utf8");
+}
+
+/**
+The section of a document that states how to invoke its tools.
+
+The section is found by its heading rather than by its position, so a
+document that reorganises its sections still has its tool-invocation
+contract checked.
+*/
+function toolInvocationSection(document: string): string {
+  const heading = /^#{1,6}[ \t].*tool invocation.*$/imu.exec(document);
+  if (!heading) return "";
+  const rest = document.slice(heading.index + heading[0].length);
+  const next = /^#{1,6}[ \t]+/mu.exec(rest);
+  return next ? rest.slice(0, next.index) : rest;
 }
 
 function getMcpServers(role: Record<string, unknown>): Record<string, unknown> {
@@ -33,10 +51,8 @@ function isServerEnabled(
   return (server as Record<string, unknown>).enabled === true;
 }
 
-function getEnabledTools(
-  servers: Record<string, unknown>,
-  name: string
-): string[] {
+function getEnabledTools(servers: Record<string, unknown>): string[] {
+  const name = "playtest";
   const server = servers[name];
   assert.ok(
     server && typeof server === "object",
@@ -56,7 +72,7 @@ function isSkillEnabled(
 ): boolean | undefined {
   const skills = role.skills as
     { config?: Array<Record<string, unknown>> } | undefined;
-  const entry = skills?.config?.find((cfg) => cfg.name === skillName);
+  const entry = skills?.config?.find((config) => config.name === skillName);
   return entry?.enabled as boolean | undefined;
 }
 
@@ -87,16 +103,16 @@ test("playtester role enforces read-only access and approved run/read tool subse
 
   assert.equal(isServerEnabled(servers, "playtest"), true);
   const playtestServer = servers.playtest as Record<string, unknown>;
-  const playtestEnvVars = playtestServer.env_vars;
-  assert.ok(Array.isArray(playtestEnvVars));
+  const playtestEnvironmentVariables = playtestServer.env_vars;
+  assert.ok(Array.isArray(playtestEnvironmentVariables));
   assert.equal(
-    playtestEnvVars.includes("AUTODEV_PLAYTEST_CONTROL_API_TOKEN"),
+    playtestEnvironmentVariables.includes("AUTODEV_PLAYTEST_CONTROL_API_TOKEN"),
     false,
     "the Playtest MCP resolves its runner token from protected CODEX_HOME secrets, not child env"
   );
-  const playtestTools = getEnabledTools(servers, "playtest");
+  const playtestTools = getEnabledTools(servers);
   assert.deepEqual(
-    [...playtestTools].sort(),
+    [...playtestTools].sort((left, right) => collator.compare(left, right)),
     [
       "playtest.activeRuns",
       "playtest.cancel",
@@ -107,7 +123,7 @@ test("playtester role enforces read-only access and approved run/read tool subse
       "playtest.readWindow",
       "playtest.run",
       "playtest.wait"
-    ].sort()
+    ].sort((left, right) => collator.compare(left, right))
   );
 
   // Forbidden tools for playtester:
@@ -132,6 +148,39 @@ test("playtester role enforces read-only access and approved run/read tool subse
   assert.equal(isSkillEnabled(role, "game-playtesting"), true);
 });
 
+test("orchestration skill keeps playtest execution, analysis, validation, and publication separate", () => {
+  const skill = readText(
+    ".rulesync/skills/orchestration/references/playtesting.md"
+  );
+  // The four canonical playtesting roles have to be routed by name.
+  for (const role of ["playtester", "playtest-analyst", "validator", "browser-tester"]) {
+    assert.match(
+      skill,
+      new RegExp(`\`${role}\``, "u"),
+      `the orchestration skill does not route to ${role}`
+    );
+  }
+  // Running a playtest is not authorized by the request itself.
+  assert.match(
+    skill,
+    /workspace enablement alone is not run approval/iu,
+    "the orchestration skill must state that enablement is not approval"
+  );
+  // The root keeps the decisions that belong to it.
+  for (const authority of [
+    "workspace approval",
+    "experiment authorization",
+    "issue publication",
+    "owner-promotion"
+  ]) {
+    assert.match(
+      skill,
+      new RegExp(authority.replaceAll('-', "[- ]"), "iu"),
+      `the orchestration skill does not reserve ${authority} to the root`
+    );
+  }
+});
+
 test("Playtester instructions use the role-scoped provider MCP surface instead of the parent's tool list", () => {
   const prompt = readText("agents/prompts/roles/playtester.md");
   const skill = readText(".rulesync/skills/game-playtesting/SKILL.md");
@@ -139,11 +188,19 @@ test("Playtester instructions use the role-scoped provider MCP surface instead o
     [prompt, "Playtester role prompt"],
     [skill, "game-playtesting skill"]
   ] as const) {
-    assert.match(source, /isolated AutoDev Code Mode process/u, label);
-    assert.match(source, /provider-managed bridge/u, label);
-    assert.match(source, /parent Codex session's `ALL_TOOLS` omits it/u, label);
-    assert.match(source, /unrelated\/global MCP server/u, label);
-    assert.match(source, /report the actual missing boundary and stop/u, label);
+    // The role-scoped surface is the only one the role may use, so the
+    // instructions have to name it and forbid reaching outside it.
+    const invocation = toolInvocationSection(source);
+    assert.ok(invocation, `${label} states how to invoke its tools`);
+    assert.match(invocation, /playtest/i, label);
+    assert.match(invocation, /MCP/i, label);
+    assert.match(
+      invocation,
+      /(?:do not|never)[^.]*(?:infer|unrelated|global|another (?:agent|role))/iu,
+      `${label} must forbid reaching beyond the role-scoped surface`
+    );
+    assert.match(invocation, /report/iu, label);
+    assert.match(invocation, /stop/iu, label);
   }
 });
 
@@ -237,9 +294,9 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
     ).enabled,
     false
   );
-  const analystPlaytestTools = getEnabledTools(analystServers, "playtest");
+  const analystPlaytestTools = getEnabledTools(analystServers);
   assert.deepEqual(
-    [...analystPlaytestTools].sort(),
+    [...analystPlaytestTools].sort((left, right) => collator.compare(left, right)),
     [
       "playtest.compare",
       "playtest.listEpisodes",
@@ -250,7 +307,7 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
       "playtest.submitReview",
       "playtest.submitDiscoveryReview",
       "playtest.submitCrossSessionSynthesis"
-    ].sort()
+    ].sort((left, right) => collator.compare(left, right))
   );
   // The playtest MCP server refuses to start without the analysis kind, so the
   // analyst allowlist has to carry it into the child process.
@@ -356,24 +413,7 @@ test("playtest-analyst prompt requires smart tier isolation, workspace gate, and
   );
 
   // Explicit evidence/report format (10 sections per docs/playtesting-target-state.md §6):
-  for (const section of [
-    "Provenance and coverage",
-    "Chronological episode summary",
-    "Authoritative metrics",
-    "Scored experience dimensions",
-    "Evidence-linked observations",
-    "Alternative explanations",
-    "Cross-session context",
-    "Testable hypotheses",
-    "Evidence-status decision",
-    "Suggested follow-up"
-  ]) {
-    assert.match(
-      prompt,
-      new RegExp(section, "i"),
-      `analyst prompt missing section: ${section}`
-    );
-  }
+  assertReportSections(prompt, "playtest-analyst prompt");
 
   assert.match(
     prompt,
@@ -424,10 +464,20 @@ test("game-playtesting skill enforces workspace gate, explicit report format, an
 test("playtest-analysis skill enforces workspace gate, negative triggers, and null-safe scoring", () => {
   const skillText = readText(".rulesync/skills/playtest-analysis/SKILL.md");
 
-  // Tool calls must use the runtime's code-mode MCP surface.
-  assert.match(skillText, /## AutoDev tool invocation/u);
-  assert.match(skillText, /tools\.mcp__<server>__<tool>/u);
-  assert.match(skillText, /not direct top-level provider functions/u);
+  // Tool calls must use the runtime's role-scoped MCP surface, and the skill
+  // has to say how to discover the callable names there rather than naming a
+  // provider's direct functions.
+  const invocation = toolInvocationSection(skillText);
+  assert.ok(invocation, "the skill states how to invoke its tools");
+  assert.match(invocation, /playtest/i);
+  assert.match(invocation, /MCP/i);
+  assert.match(invocation, /discover/iu);
+  assert.match(invocation, /(?:callable names|schemas)/iu);
+  assert.match(
+    invocation,
+    /(?:do not|never|rather than)[^.]*(?:shell|filesystem|network|another role)/iu,
+    "the skill must forbid the capabilities outside its role"
+  );
 
   // Authorized workspace/build gate:
   assert.match(
