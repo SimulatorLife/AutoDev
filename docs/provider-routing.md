@@ -46,7 +46,7 @@ A browser-backed conversation must be bound to one role, one workspace and one c
 
 - ChatGPT exposes installed apps in the composer's own "+" menu. `opencli chatgpt ask --app <app>` selects that app in the conversation before the prompt is sent, so only the selected app's tools reach the model. ChatGPT stores the app reference with the submitted turn, and the reply is matched against the app-attached turn.
 - AutoDev names the app per role (`AUTODEV_CHATGPT_MCP_APP`, or `AUTODEV_CHATGPT_MCP_APP_BASE` plus the role), and the Runtime passes that name with every role turn. The operator connects the matching app in ChatGPT.
-- The shared Supergateway publishes one named surface per published role at its own path, each carrying that role's tool allowlist and a role-scoped backend environment (the role identity, that role's own coordinator, and read-only confinement for read-only roles). The secure tunnel publishes one channel per role so each surface is independently addressable.
+- The shared Supergateway publishes one named surface per published role at its own path, each carrying that role's tool allowlist and a role-scoped backend environment (the role identity, that role's own coordinator, and read-only confinement for read-only roles). The secure tunnel publishes one channel per role so each surface is independently addressable: the primary role on tunnel-client's required `main` channel, every additional role on a channel named after it.
 
 No Responses translation bridge, custom tool-call text protocol, Codex-native delegation or parallel execution infrastructure is part of this path.
 

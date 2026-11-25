@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import {
+  type ChildProcess,
+  execFileSync,
+  spawn,
+  spawnSync
+} from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
@@ -49,7 +54,9 @@ import {
 import {
   assertTunnelScope,
   chatgptTunnelStatus,
+  chatgptTunnelChannels,
   checkChatgptTunnel,
+  commandFailureReport,
   createTunnel,
   dependencyEnvironment,
   ensureChatgptTunnel,
@@ -1017,6 +1024,57 @@ test("tunnelClientMcpEnv references private auth header file without exposing se
   });
 });
 
+test("a failing command's own report reaches the installer instead of being discarded", () => {
+  // `tunnel-client doctor` writes its check report to stdout, so an installer
+  // that only kept stderr would leave the operator with a stage name and no
+  // reason.
+  const report = [
+    "CHECK config_source            PASS profile file: /tmp/autodev.yaml",
+    "CHECK mcp_target               FAIL main channel is required; add channel=main to one --mcp.server-url or --mcp.command entry",
+    "RESULT fail"
+  ].join("\n");
+  let failure: unknown;
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(${JSON.stringify(report)}); process.exit(2)`
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure, "the fixture command must fail");
+  const detail = commandFailureReport("tunnel-client", ["doctor"], failure);
+  assert.match(detail, /exit 2/u);
+  assert.match(detail, /main channel is required/u);
+});
+
+test("published roles map onto tunnel channels that keep the required main channel", () => {
+  // tunnel-client refuses to validate or start a tunnel whose MCP targets
+  // carry no `main` channel, so the primary role has to be published there.
+  assert.deepEqual(chatgptTunnelChannels(["orchestrator"]), [
+    { role: "orchestrator", channel: "main" }
+  ]);
+  assert.deepEqual(chatgptTunnelChannels(["orchestrator", "explorer"]), [
+    { role: "orchestrator", channel: "main" },
+    { role: "explorer", channel: "explorer" }
+  ]);
+  // A role name that is not a usable channel name is spelled out instead.
+  assert.deepEqual(chatgptTunnelChannels(["orchestrator", "role.with.dots"]), [
+    { role: "orchestrator", channel: "main" },
+    { role: "role.with.dots", channel: "role-with-dots" }
+  ]);
+  // Two roles that would claim one channel are a configuration error, never a
+  // silently dropped route.
+  assert.throws(
+    () => chatgptTunnelChannels(["orchestrator", "a-b", "a.b"]),
+    /share the tunnel channel/u
+  );
+});
+
 test(
   "mocked installer lifecycle stores credential in Keychain, migrates legacy stdio/runtime.key, and supports disable and rotation",
   { timeout: 30_000 },
@@ -1149,10 +1207,23 @@ test(
             options.env.MCP_DISCOVERY_EXTRA_HEADERS ?? "",
             /^Authorization: file:/
           );
+          const serverUrls = args.filter(
+            (_, index) => args[index - 1] === "--mcp.server-url"
+          );
+          assert.ok(serverUrls.length > 0);
           assert.match(
-            args[args.indexOf("--mcp.server-url") + 1]!,
+            serverUrls[0]!,
             /^url=http:\/\/127\.0\.0\.1:49999\/[a-z0-9-]+\/mcp,channel=[a-z0-9-]+$/u
           );
+          // The real tunnel-client fails `doctor` when no target is published
+          // on its `main` channel, and writes the check report to stdout.
+          const mainChannelPublished = serverUrls.some((value) =>
+            value.endsWith(",channel=main")
+          );
+          if (!mainChannelPublished)
+            throw new Error(
+              "CHECK mcp_target               FAIL main channel is required; add channel=main to one --mcp.server-url or --mcp.command entry"
+            );
         }
       },
       readKey: () => keychainValue,
@@ -1240,6 +1311,15 @@ test(
       assert.match(
         readFileSync(plistFile, "utf8"),
         /<key>ProcessType<\/key>\s*<string>Interactive<\/string>/
+      );
+      // The tunnel's routing table publishes the primary role's surface on
+      // tunnel-client's required `main` channel.
+      assert.match(
+        readFileSync(
+          path.join(directory, firstState.generation, "autodev.yaml"),
+          "utf8"
+        ),
+        /- channel: main\n\s+url: "http:\/\/127\.0\.0\.1:3312\/orchestrator\/mcp"/u
       );
       assert.equal((await chatgptTunnelStatus(paths, deps)).ready, true);
       assert.equal(events.filter((event) => event === "create").length, 1);

@@ -670,6 +670,61 @@ export function chatgptRoleChannel(role: string): string {
   return role.replace(/[^a-zA-Z0-9_-]/gu, "-");
 }
 
+/*
+The channel `tunnel-client` requires every tunnel to publish.
+
+The daemon refuses to start, and `doctor` fails, unless one MCP target is
+addressed by this channel: it is the tunnel's default route, the one a
+connector that names no channel of its own lands on.
+*/
+export const CHATGPT_TUNNEL_MAIN_CHANNEL = "main";
+
+/*
+The tunnel channel that carries each published role's surface.
+
+`tunnel-client` requires one target on its `main` channel, so the primary
+role's surface is published there and every additional published role gets a
+channel named after it. The plan is the single source of both the profile's
+routing table and the arguments `doctor` validates, so the two can never
+disagree about which channel carries which surface.
+*/
+export function chatgptTunnelChannels(
+  roles: readonly string[]
+): { role: string; channel: string }[] {
+  const plan: { role: string; channel: string }[] = [];
+  const taken = new Set<string>();
+  for (const [index, role] of roles.entries()) {
+    const channel =
+      index === 0 ? CHATGPT_TUNNEL_MAIN_CHANNEL : chatgptRoleChannel(role);
+    if (taken.has(channel))
+      throw new Error(
+        `Two published roles share the tunnel channel "${channel}"; publish one role at a time`
+      );
+    taken.add(channel);
+    plan.push({ role, channel });
+  }
+  return plan;
+}
+
+/*
+The profile lines that route each channel to its surface.
+
+The profile is the tunnel's own routing table, so each role's surface is
+addressed by its own channel.
+*/
+export function renderTunnelProfileChannels(
+  channels: ReadonlyArray<{ readonly channel: string; readonly url: string }>
+): string[] {
+  return [
+    "mcp:",
+    "  server_urls:",
+    ...channels.flatMap((entry) => [
+      `    - channel: ${entry.channel}`,
+      `      url: "${entry.url}"`
+    ])
+  ];
+}
+
 /**
  * Rewrite the generated tunnel profile so it publishes one channel per role.
  *
@@ -690,14 +745,7 @@ export function withTunnelProfileChannels(
     if (!/^\s/u.test(line)) break;
     end += 1;
   }
-  const block = [
-    "mcp:",
-    "  server_urls:",
-    ...channels.flatMap((entry) => [
-      `    - channel: ${entry.channel}`,
-      `      url: "${entry.url}"`
-    ])
-  ];
+  const block = renderTunnelProfileChannels(channels);
   return [...lines.slice(0, start), ...block, ...lines.slice(end)].join("\n");
 }
 
@@ -1190,16 +1238,24 @@ export async function checkChatgptTunnel(
     const key =
       process.env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
       deps.readKey(process.env);
+    const publishedRoles = state.roles ?? [resolveChatgptRole(state.role)];
+    // The profile is the tunnel's routing table: a surface published under the
+    // wrong channel is a surface no connector can reach.
+    const expectedRouting =
+      publishedMcpPort === undefined
+        ? ""
+        : renderTunnelProfileChannels(
+            chatgptTunnelChannels(publishedRoles).map((entry) => ({
+              channel: entry.channel,
+              url: chatgptRoleSurfaceUrl(publishedMcpPort, entry.role)
+            }))
+          ).join("\n");
     return Boolean(
       key &&
       legacyRuntimeKeyPaths(directory, state).length === 0 &&
       profileText.includes(CHATGPT_TUNNEL_API_KEY_REF) &&
       publishedMcpPort !== undefined &&
-      (state.roles ?? [resolveChatgptRole(state.role)]).every((published) =>
-        profileText.includes(
-          chatgptRoleSurfaceUrl(publishedMcpPort!, published)
-        )
-      ) &&
+      profileText.includes(expectedRouting) &&
       !profileText.includes("commands:") &&
       !/api_key:\s*["']?file:/u.test(profileText) &&
       launchAgentMatches(
@@ -1292,6 +1348,60 @@ export interface ChatgptTunnelDependencies {
   readKey(env: NodeJS.ProcessEnv): string | null;
   writeKey(key: string, env: NodeJS.ProcessEnv): void;
   deleteKey(env: NodeJS.ProcessEnv): boolean;
+}
+
+/*
+The failing command's own report.
+
+`tunnel-client doctor` writes its check report to stdout, so an installer
+that discards the subprocess output leaves the operator with a stage name
+and nothing else to act on.
+*/
+export function commandFailureReport(
+  command: string,
+  argv: string[],
+  error: unknown
+): string {
+  const failure = error as {
+    stdout?: unknown;
+    stderr?: unknown;
+    status?: number;
+  };
+  const report = [failure.stdout, failure.stderr]
+    .map(commandOutput)
+    .filter(Boolean)
+    .join("\n");
+  return [
+    `Command failed (exit ${failure.status ?? "unknown"}): ${command} ${argv.join(" ")}`,
+    report
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/*
+A subprocess stream as text, whether it was read as a string or as bytes.
+*/
+function commandOutput(stream: unknown): string {
+  if (typeof stream === "string") return stream.trim();
+  if (stream instanceof Uint8Array)
+    return Buffer.from(stream).toString("utf8").trim();
+  return "";
+}
+
+/*
+The reason a stage failed, as short as the operator can act on.
+
+A stage's own report is the diagnosis; the stage name alone is not, and
+`stderr.log` holds the running service's output rather than the installer's.
+*/
+function failureDetail(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "unknown error");
+  const trimmed = message.trim();
+  return trimmed.length > 4000
+    ? `${trimmed.slice(0, 4000)}...`
+    : trimmed || "unknown error";
 }
 
 function defaultTunnelDependencies(): ChatgptTunnelDependencies {
@@ -1424,10 +1534,17 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
       }
     },
     run: (command, args, options) => {
-      execFileSync(command, args, {
-        ...options,
-        stdio: ["ignore", "pipe", "pipe"]
-      });
+      try {
+        execFileSync(command, args, {
+          ...options,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+      } catch (error) {
+        throw new Error(commandFailureReport(command, args, error), {
+          cause: error
+        });
+      }
     },
     readKey: (env) => readKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, env),
     writeKey: (key, env) =>
@@ -1892,19 +2009,20 @@ async function reconcile(
       ],
       { env: cleanEnv, timeout: 30_000 }
     );
+    // The prior service may own the desired ports. Doctor validates the
+    // candidate against an ephemeral candidate Supergateway and health port.
+    const channelPlan = chatgptTunnelChannels(roles);
     privateWrite(
       profile,
       withTunnelProfileChannels(
         readFileSync(profile, "utf8"),
-        roles.map((published) => ({
-          channel: chatgptRoleChannel(published),
-          url: chatgptRoleSurfaceUrl(mcpPort, published)
+        channelPlan.map((entry) => ({
+          channel: entry.channel,
+          url: chatgptRoleSurfaceUrl(mcpPort, entry.role)
         }))
       )
     );
     chmodSync(profile, 0o600);
-    // The prior service may own the desired ports. Doctor validates the
-    // candidate against an ephemeral candidate Supergateway and health port.
     stage = "tunnel-client doctor";
     const runDoctor = (doctorBaseUrl: string): void => {
       deps.run(
@@ -1915,12 +2033,12 @@ async function reconcile(
           profile,
           "--health.listen-addr",
           "127.0.0.1:0",
-          ...roles.flatMap((published) => [
+          ...channelPlan.flatMap((entry) => [
             "--mcp.server-url",
             `url=${chatgptRoleSurfaceUrl(
               Number(new URL(doctorBaseUrl).port),
-              published
-            )},channel=${chatgptRoleChannel(published)}`
+              entry.role
+            )},channel=${entry.channel}`
           ]),
           "--mcp.oauth-discovery=disabled",
           "--explain"
@@ -2018,7 +2136,7 @@ async function reconcile(
     writeLine(
       "ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT"
     );
-  } catch {
+  } catch (error) {
     rmSync(stagedFile, { force: true });
     if (keyUpdated) {
       try {
@@ -2049,7 +2167,8 @@ async function reconcile(
       }
     }
     throw new Error(
-      `ChatGPT tunnel setup failed (${stage}); previous service configuration retained. Check tunnel diagnostics and ${path.join(directory, "stderr.log")}`
+      `ChatGPT tunnel setup failed (${stage}): ${failureDetail(error)}; previous service configuration retained. Check tunnel diagnostics and ${path.join(directory, "stderr.log")}`,
+      { cause: error }
     );
   } finally {
     rmSync(stagedFile, { force: true });
