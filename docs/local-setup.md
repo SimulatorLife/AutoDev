@@ -930,7 +930,7 @@ AutoDev runs Codex without OS-level `sandbox_mode` (`default_permissions = ":dan
 - The hook is registered in `.rulesync/hooks.jsonc` and materialized to
   `$CODEX_HOME/src/hooks/role-sandbox.ts`.
 
-The root orchestrator is subject to the same role-aware policy regardless of host. Existing `runtime/src/agents/orchestrator-policy.ts` restricts Git history access; scoped regression investigations belong to an authorized child. Native provider shell and file gates are defense in depth. ACP permission handling and the gateway/backend must enforce effective role and workspace bounds independently; provider hooks alone are not an OS security boundary.
+The root orchestrator is subject to the same role-aware policy regardless of host. Existing `runtime/src/agents/orchestrator-policy.ts` restricts Git history access; scoped regression investigations belong to an authorized child. The hook applies that restriction to an explicitly reported `orchestrator` role or the exact `autodev/orchestrator` alias on an otherwise role-less native turn; a concrete model name or missing role does not imply orchestrator status. This is a restrictive policy signal, never a role grant. Native provider shell and file gates are defense in depth. ACP permission handling and the gateway/backend must enforce effective role and workspace bounds independently; provider hooks alone are not an OS security boundary.
 
 A role-scoped run receives only the authorized sandbox and tool grants. The provider's actual enforceable restrictions must be verified; unsupported restrictions fail closed. Network access follows the effective policy, not a client-controlled header.
 

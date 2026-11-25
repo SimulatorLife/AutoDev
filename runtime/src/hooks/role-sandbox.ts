@@ -18,9 +18,10 @@
  * The refusal is the tool call's own permission decision, so the model is
  * told why the call did not run and can report what it needed instead.
  *
- * The root orchestrator's own turns carry no role, and the root runs in the
- * session's sandbox. Its tool calls are held to the orchestrator policy
- * instead: the root delegates investigation, so it may not read git history.
+ * An explicitly assigned orchestrator role (or the explicit AutoDev root
+ * alias on a native Codex turn without a role) uses the orchestrator policy.
+ * A standalone host's concrete model or missing role does not identify an
+ * AutoDev orchestrator. Hook policy is defense in depth, not an execution grant.
  *
  * The role's declaration is read from the installed execution contract, which
  * is the projection of the role files. A contract left behind by an older
@@ -88,8 +89,10 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
   const turn = context.turnId;
   const tool = toolName || null;
   const call = { toolName, toolInput };
-  if (role === null) {
-    if (!isRootOrchestratorModel(model ?? "")) return emptyEvaluation();
+  if (
+    role === "orchestrator" ||
+    (role === null && isRootOrchestratorModel(model ?? ""))
+  ) {
     const decision = evaluateOrchestratorToolCall(call);
     return decision.allowed
       ? emptyEvaluation()
@@ -106,7 +109,7 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
         };
   }
 
-  if (!isReadOnlyRole(role)) return emptyEvaluation();
+  if (role === null || !isReadOnlyRole(role)) return emptyEvaluation();
 
   const decision = evaluateReadOnlyToolCall(call);
   if (decision.allowed) return emptyEvaluation();

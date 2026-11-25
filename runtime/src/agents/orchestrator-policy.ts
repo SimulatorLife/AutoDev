@@ -61,24 +61,13 @@ export const GIT_HISTORY_SUBCOMMANDS: readonly string[] = [
 const GIT_HISTORY: ReadonlySet<string> = new Set(GIT_HISTORY_SUBCOMMANDS);
 
 /**
- * Models that are never the root orchestrator: AutoDev child aliases and the
- * provider model ids a bridge or provider CLI reports for its own turns.
- * `autodev/orchestrator` is the root alias and is checked first.
- */
-const NON_ROOT_MODEL =
-  /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot|opencli-)/u;
-
-/**
- * Whether a turn's model is the root orchestrator's.
- *
- * Codex reports the turn's model in every hook payload. The root runs as
- * `autodev/orchestrator`, or as a Codex-native model the operator selected
- * directly; a child alias or a provider's own model id is not the root.
- * Claude Code reports no model, and an empty model is not a root turn.
+ * The explicit AutoDev orchestrator alias is a restrictive hook-policy signal
+ * for native Codex turns that do not report a role. A concrete provider model
+ * is not a role identifier. Neither the alias nor a hook payload grants
+ * Runtime/MCP authorization; that is enforced independently.
  */
 export function isRootOrchestratorModel(model: string): boolean {
-  if (!model) return false;
-  return model === "autodev/orchestrator" || !NON_ROOT_MODEL.test(model);
+  return model === "autodev/orchestrator";
 }
 
 const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;

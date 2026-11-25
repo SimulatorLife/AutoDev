@@ -37,6 +37,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   unlinkSync
@@ -442,8 +443,44 @@ function removeObsoleteProfileFiles(
 }
 
 /**
+ * Resolve existing ancestors even when the final profile is not created yet.
+ * In particular, a symlinked parent must not turn managed-profile cleanup
+ * into writes inside the operator's standalone profile.
+ */
+function resolvedProfilePath(value: string): string {
+  const absolute = path.resolve(value);
+  try {
+    return realpathSync(absolute);
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      (error as NodeJS.ErrnoException).code !== "ENOENT"
+    ) {
+      throw error;
+    }
+    const parent = path.dirname(absolute);
+    if (parent === absolute) throw error;
+    return path.join(resolvedProfilePath(parent), path.basename(absolute));
+  }
+}
+
+function profilesOverlap(left: string, right: string): boolean {
+  const within = (root: string, candidate: string): boolean => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative === "" ||
+      (!path.isAbsolute(relative) &&
+        relative !== ".." &&
+        !relative.startsWith(".." + path.sep))
+    );
+  };
+  return within(left, right) || within(right, left);
+}
+
+/**
  * Materialize (or verify, with `check: true`) the AutoDev-managed MiniMax
- * Code profile.
+ * Code profile. Never apply its destructive reconciliation rules to the
+ * operator's standalone profile.
  */
 export function materializeMcodeProfile(options: {
   readonly repositoryRoot: string;
@@ -453,11 +490,22 @@ export function materializeMcodeProfile(options: {
 }): McodeProfileResult {
   const home = options.home ?? process.env.HOME?.trim() ?? homedir();
   const operatorProfile = path.join(home, OPERATOR_PROFILE_DIRECTORY);
+  const profileDirectory = path.resolve(options.profileDirectory);
+  if (
+    profilesOverlap(profileDirectory, path.resolve(operatorProfile)) ||
+    profilesOverlap(
+      resolvedProfilePath(profileDirectory),
+      resolvedProfilePath(operatorProfile)
+    )
+  ) {
+    throw new Error(
+      "Managed MiniMax Code profile overlaps the operator profile."
+    );
+  }
   const artifacts = renderMcodeProfileArtifacts({
     repositoryRoot: options.repositoryRoot,
     home
   });
-  const profileDirectory = path.resolve(options.profileDirectory);
   const isCheck = options.check === true;
 
   const files = writeProfileFiles(

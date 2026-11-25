@@ -122,14 +122,15 @@ function sharedIsolationEnvironment(
 ): Record<string, string> {
   const homeDirectory = autodevHome(options.env);
   const mcpServers = contract.mcp;
-  const context7ApiKey = mcpServers.includes("context7")
-    ? resolveManagedSecret("CONTEXT7_API_KEY", options.env)
-    : null;
-  const googleDeveloperKnowledgeApiKey = mcpServers.includes(
-    "googleDeveloperKnowledge"
-  )
-    ? resolveManagedSecret("GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY", options.env)
-    : null;
+  // Gateway-owned remote credentials must not enter the provider process.
+  const context7ApiKey =
+    !options.supergateway && mcpServers.includes("context7")
+      ? resolveManagedSecret("CONTEXT7_API_KEY", options.env)
+      : null;
+  const googleDeveloperKnowledgeApiKey =
+    !options.supergateway && mcpServers.includes("googleDeveloperKnowledge")
+      ? resolveManagedSecret("GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY", options.env)
+      : null;
   return {
     AUTODEV_HOME: homeDirectory,
     AUTODEV_AGENT_ROLE: options.role,
@@ -167,22 +168,41 @@ function buildAcpMcpServers(
   contract: ReturnType<typeof roleContract>,
   baseEnvironment: Readonly<Record<string, string>>
 ): McpServer[] {
-  if (options.supergateway?.url) {
-    return [
-      {
-        type: "http",
-        name: "autodev",
-        url: options.supergateway.url,
-        headers: options.supergateway.bearerToken
-          ? [
-              {
-                name: "Authorization",
-                value: `Bearer ${options.supergateway.bearerToken}`
-              }
-            ]
-          : []
-      }
-    ];
+  if (options.supergateway) {
+    const { url, bearerToken } = options.supergateway;
+    // This endpoint is a Runtime-provisioned local connection, not an
+    // arbitrary remote MCP URL. Never send a grant to an unrelated host.
+    const endpoint = URL.canParse(url) ? new URL(url) : null;
+    if (
+      !endpoint ||
+      endpoint.protocol !== "http:" ||
+      !["127.0.0.1", "[::1]"].includes(endpoint.hostname) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !bearerToken ||
+      /\s/u.test(bearerToken)
+    ) {
+      throw new Error(
+        "ACP requires an authenticated loopback Supergateway endpoint."
+      );
+    }
+    if (options.mcpConfigPath) {
+      throw new Error(
+        "ACP cannot combine a Supergateway grant with an independent MCP configuration."
+      );
+    }
+    return contract.mcp.length === 0
+      ? []
+      : [
+          {
+            type: "http",
+            name: "autodev",
+            url: endpoint.href,
+            headers: [{ name: "Authorization", value: `Bearer ${bearerToken}` }]
+          }
+        ];
   }
 
   const launcherPath = resolveLauncherPath(options.env);

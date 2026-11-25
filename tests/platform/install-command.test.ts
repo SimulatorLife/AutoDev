@@ -16,9 +16,22 @@ import { fileURLToPath } from "node:url";
 
 import { findStaleCodexPids } from "@simulatorlife/autodev-runtime/platform/install-check";
 import { runInstallCommand } from "@simulatorlife/autodev-runtime/platform/install-command";
+import { installedGlobalMcpTargets } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const installerScriptPath = path.join(repositoryRoot, "scripts", "install.sh");
+
+test("global MCP projection targets follow installed CLI harnesses", () => {
+  assert.deepEqual(installedGlobalMcpTargets(() => false), []);
+  assert.deepEqual(
+    installedGlobalMcpTargets((command) => command === "copilot"),
+    ["copilotcli"]
+  );
+  assert.deepEqual(
+    installedGlobalMcpTargets((command) => command === "agy"),
+    ["antigravity-cli"]
+  );
+});
 
 test("typed install command rejects check mode until diagnostic ownership migrates", () => {
   assert.throws(

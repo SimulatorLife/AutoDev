@@ -14,11 +14,13 @@ const shell = (cmd: unknown) =>
     toolInput: { cmd }
   });
 
-test("the root orchestrator model is the root alias or a Codex-native model", () => {
-  for (const model of ["autodev/orchestrator", "gpt-5.5", "gpt-5.3-codex"])
-    assert.equal(isRootOrchestratorModel(model), true, model);
+test("only the explicit AutoDev root alias identifies root model policy", () => {
+  assert.equal(isRootOrchestratorModel("autodev/orchestrator"), true);
   for (const model of [
     "",
+    "gpt-5.5",
+    "gpt-5.3-codex",
+    "unrecognized-native-model",
     "autodev/worker",
     "autodev/explorer",
     "claude-opus-5-5",

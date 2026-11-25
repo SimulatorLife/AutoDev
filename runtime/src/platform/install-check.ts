@@ -22,7 +22,6 @@ import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundle
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
-import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   writeErrorLine,
   writeLine
@@ -56,6 +55,7 @@ import {
   checkHookTrust,
   generateRepositoryRulesync,
   HOOKS,
+  installedGlobalMcpTargets,
   LAUNCH_LABELS,
   loadCodexCommands,
   MCP_LAUNCHERS,
@@ -143,18 +143,6 @@ function commandAvailable(command: string): boolean {
   return resolveCommandOnPath(command) !== null;
 }
 
-/**
- * Whether a provider's CLI is installed, asked the way that provider's bridge
- * asks it. The Copilot CLI is found by the shared lookup -- an explicit
- * setting, then PATH, then the newest version-managed install -- because a
- * PATH lookup alone misses a CLI installed in PNPM_HOME, and the user-level MCP
- * config written for a provider whose bridge cannot start is a config for
- * nothing.
- */
-function providerCliInstalled(command: string): boolean {
-  if (command === "copilot") return findCopilotBinary() !== null;
-  return commandAvailable(command);
-}
 function sourceRoot(options: InstallCheckOptions): string {
   return path.resolve(
     options.repositoryRoot ??
@@ -929,15 +917,7 @@ function checkRulesync(
     );
     failures.value = 1;
   }
-  const userTargetList = (
-    [
-      ["claude", "claudecode"],
-      ["copilot", "copilotcli"],
-      ["agy", "antigravity-cli"]
-    ] as const
-  )
-    .filter(([command]) => providerCliInstalled(command))
-    .map(([, target]) => target);
+  const userTargetList = installedGlobalMcpTargets();
   if (userTargetList.length === 0) return;
   const userTargets = userTargetList.join(",");
   try {

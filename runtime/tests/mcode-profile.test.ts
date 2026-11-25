@@ -258,6 +258,44 @@ test("the MiniMax Code profile denies without ever answering a tool call", () =>
   );
 });
 
+test("managed MiniMax profile reconciliation cannot touch the operator profile", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "autodev-mcode-home-"));
+  try {
+    const operatorProfile = path.join(home, ".minimax");
+    mkdirSync(operatorProfile);
+    const nativeMcp = path.join(operatorProfile, "mcp.json");
+    const original = '{"mcpServers":{"operator-owned":{}}}\n';
+    writeFileSync(nativeMcp, original);
+    const alias = path.join(home, "alias");
+    symlinkSync(operatorProfile, alias, "dir");
+
+    for (const profileDirectory of [
+      operatorProfile,
+      home,
+      path.join(operatorProfile, "nested"),
+      alias,
+      path.join(alias, "not-created")
+    ]) {
+      for (const check of [true, false]) {
+        assert.throws(
+          () =>
+            materializeMcodeProfile({
+              repositoryRoot: REPO_ROOT,
+              profileDirectory,
+              home,
+              check
+            }),
+          /overlaps the operator profile/u
+        );
+      }
+    }
+    assert.equal(readFileSync(nativeMcp, "utf8"), original);
+    assert.equal(existsSync(path.join(operatorProfile, "AGENTS.md")), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("the MiniMax Code profile holds no MCP configuration", () => {
   const home = mkdtempSync(path.join(tmpdir(), "autodev-mcode-home-"));
   const profileDirectory = path.join(home, "providers", "mcode");

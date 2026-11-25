@@ -183,6 +183,60 @@ test("MCP launcher resolves newly added github and xacpx servers", () => {
   ]);
 });
 
+test("ACP gateway profiles reject unauthenticated or conflicting MCP configuration and withhold remote backend credentials", () => {
+  const options = {
+    provider: "claude" as const,
+    role: "docs-researcher",
+    model: "sonnet",
+    cwd: REPO_ROOT,
+    systemPrompt: "Research",
+    sessionId: "sess-gateway",
+    env: {
+      CONTEXT7_API_KEY: "context7-secret",
+      GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY: "google-secret"
+    }
+  };
+  const gateway = {
+    url: "http://127.0.0.1:4199/mcp",
+    bearerToken: "gateway-token"
+  };
+  const spec = buildAcpProviderLaunchSpec({
+    ...options,
+    supergateway: gateway
+  });
+  assert.equal(spec.env.CONTEXT7_API_KEY, undefined);
+  assert.equal(spec.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY, undefined);
+  assert.deepEqual(spec.acpMcpServers, [
+    {
+      type: "http",
+      name: "autodev",
+      url: gateway.url,
+      headers: [{ name: "Authorization", value: "Bearer gateway-token" }]
+    }
+  ]);
+  for (const supergateway of [
+    { url: gateway.url },
+    { url: "", bearerToken: gateway.bearerToken },
+    { ...gateway, url: "https://example.com/mcp" },
+    { ...gateway, url: "http://user@127.0.0.1:4199/mcp" },
+    { ...gateway, bearerToken: "invalid token" }
+  ]) {
+    assert.throws(
+      () => buildAcpProviderLaunchSpec({ ...options, supergateway }),
+      /authenticated loopback Supergateway endpoint/u
+    );
+  }
+  assert.throws(
+    () =>
+      buildAcpProviderLaunchSpec({
+        ...options,
+        supergateway: gateway,
+        mcpConfigPath: "/tmp/independent-mcp.json"
+      }),
+    /independent MCP configuration/u
+  );
+});
+
 test("ACP provider profiles project canonical role capabilities, native mcpServers, and truthful isolation", () => {
   for (const provider of ACP_PROVIDER_IDS) {
     const spec = buildAcpProviderLaunchSpec({

@@ -508,16 +508,26 @@ function commandAvailable(command: string): boolean {
 }
 
 /**
- * Whether a provider's CLI is installed, asked the way that provider's bridge
- * asks it. The Copilot CLI is found by the shared lookup -- an explicit
- * setting, then PATH, then the newest version-managed install -- because a
- * PATH lookup alone misses a CLI installed in PNPM_HOME, and the user-level MCP
- * config written for a provider whose bridge cannot start is a config for
- * nothing.
+ * Installed native CLI harnesses whose global MCP configuration RuleSync can
+ * project today. Both materialization and read-only drift checks consume this
+ * discovery function. App-only enrollment must qualify the native harness and
+ * its configuration scope before adding a target.
  */
-function providerCliInstalled(command: string): boolean {
-  if (command === "copilot") return findCopilotBinary() !== null;
-  return commandAvailable(command);
+export function installedGlobalMcpTargets(
+  isInstalled: (command: string) => boolean = (command) =>
+    command === "copilot"
+      ? findCopilotBinary() !== null
+      : commandAvailable(command)
+): string[] {
+  return (
+    [
+      ["claude", "claudecode"],
+      ["copilot", "copilotcli"],
+      ["agy", "antigravity-cli"]
+    ] as const
+  )
+    .filter(([command]) => isInstalled(command))
+    .map(([, target]) => target);
 }
 
 /**
@@ -1917,15 +1927,7 @@ function composeAndLinkConfigs(
 }
 
 function renderGlobalMcpIfNeeded(options: MaterializeOptions): void {
-  const targets = (
-    [
-      ["claude", "claudecode"],
-      ["copilot", "copilotcli"],
-      ["agy", "antigravity-cli"]
-    ] as const
-  )
-    .filter(([command]) => providerCliInstalled(command))
-    .map(([, targetName]) => targetName);
+  const targets = installedGlobalMcpTargets();
   if (targets.length > 0)
     runRulesyncGenerate(
       options.repositoryRoot,

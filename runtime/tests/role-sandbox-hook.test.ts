@@ -97,8 +97,12 @@ test("the root session's own turns are left to the session's sandbox", () => {
   assert.equal(outcome.denied, false);
 });
 
-test("the root orchestrator may not read git history, on any root model", () => {
-  for (const model of ["autodev/orchestrator", "gpt-5.5"]) {
+test("explicit orchestrator roles and the AutoDev root alias may not read git history", () => {
+  for (const [agentType, model] of [
+    [undefined, "autodev/orchestrator"],
+    ["orchestrator", "gpt-5.5"],
+    ["orchestrator", "claude-opus"]
+  ] as const) {
     for (const cmd of [
       "git log -p -- src/a.ts",
       "git show abc123",
@@ -108,7 +112,12 @@ test("the root orchestrator may not read git history, on any root model", () => 
       "bash -lc 'git reflog'"
     ]) {
       const outcome = evaluateRoleSandboxHook(
-        payload({ model, toolName: "exec_command", toolInput: { cmd } })
+        payload({
+          ...(agentType === undefined ? {} : { agentType }),
+          model,
+          toolName: "exec_command",
+          toolInput: { cmd }
+        })
       );
       assert.equal(outcome.denied, true, `${model}: ${cmd} was allowed`);
       assert.match(outcome.reason ?? "", /does not read git history/u);
@@ -140,12 +149,14 @@ test("the root orchestrator still integrates and delegates", () => {
   }
 });
 
-test("children and Claude Code sessions may read git history", () => {
-  // A child carries its role; Claude Code reports no model at all.
+test("children and unrelated standalone sessions may read git history", () => {
+  // A concrete native model, or no model at all, is not an AutoDev role.
   for (const [agentType, model] of [
     ["worker", "autodev/worker"],
     ["explorer", "autodev/explorer"],
-    [undefined, ""]
+    [undefined, ""],
+    [undefined, "gpt-5.5"],
+    [undefined, "unrecognized-native-model"]
   ] as const) {
     const outcome = evaluateRoleSandboxHook(
       payload({
